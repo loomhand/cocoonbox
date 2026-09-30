@@ -443,6 +443,9 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats.len(), 2);
     let msgs = chats[1]["messages"].as_array().unwrap();
+    assert!(msgs[0]["content"].as_str().unwrap().starts_with(
+        "You are deepseek/deepseek-v4.1-flash, served through the cocoonbox gateway."
+    ));
     let tool_msg = msgs.iter().find(|m| m["role"] == "tool").unwrap();
     assert_eq!(tool_msg["tool_call_id"], "call_1");
     assert_eq!(msgs.iter().filter(|m| m["role"] == "user").count(), 1);

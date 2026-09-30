@@ -33,6 +33,7 @@ pub struct Runtime {
     pub bus: Bus,
     pub(crate) llm: llm::Client,
     pub(crate) computer_tools: Vec<ToolSpec>,
+    pub(crate) computer_prompt: String,
     pub(crate) screen: tokio::sync::Mutex<()>,
     toolhost: rpc::Client,
     main_tools: Vec<ToolSpec>,
@@ -54,6 +55,7 @@ impl Runtime {
             main_tools: tools::main_tools(false),
             main_vision_tools: tools::main_tools(true),
             computer_tools: tools::computer_tools(),
+            computer_prompt: prompts::computer(&cfg.model_computer),
             screen: tokio::sync::Mutex::new(()),
             slots: Mutex::new(HashMap::new()),
             cfg,
@@ -433,10 +435,11 @@ impl Runtime {
         } else {
             &self.main_tools
         };
+        let system = prompts::main(&ctx.model, &self.cfg.model_computer, vision);
         for _ in 0..MAIN_MAX_STEPS {
             let req = Request {
                 model: &ctx.model,
-                system: prompts::MAIN,
+                system: &system,
                 messages: &messages,
                 tools,
                 max_tokens: MAIN_MAX_TOKENS,

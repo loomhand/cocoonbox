@@ -3,9 +3,9 @@
 use serde_json::{Value, json};
 
 use crate::llm::{Message, Part, Request, Usage};
+use crate::new_id;
 use crate::runner::{Runtime, ToolOutput, TurnCtx};
 use crate::toolhost::rpc::{self, Call};
-use crate::{new_id, prompts};
 
 const SUBAGENT: &str = "computer";
 const MAX_STEPS: usize = 30;
@@ -81,7 +81,7 @@ async fn drive(
         }
         let req = Request {
             model: &rt.cfg.model_computer,
-            system: prompts::COMPUTER,
+            system: &rt.computer_prompt,
             messages: &messages,
             tools: &rt.computer_tools,
             max_tokens: MAX_TOKENS,
