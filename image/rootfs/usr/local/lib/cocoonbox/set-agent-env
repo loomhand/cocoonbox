@@ -3,7 +3,7 @@
 set -eu
 tmp=$(mktemp /etc/cocoonbox/.agent.env.XXXXXX)
 cat > "$tmp"
-for k in GW_BASE_URL GW_API_KEY MODEL_MAIN MODEL_COMPUTER EDGE_TOKEN AGENT_LISTEN; do
+for k in GW_BASE_URL GW_API_KEY MODEL_MAIN MODEL_COMPUTER AGENT_LISTEN; do
 	grep -q "^$k=." "$tmp" || { rm -f "$tmp"; echo "set-agent-env: missing $k" >&2; exit 1; }
 done
 chown root:cbagent "$tmp"
