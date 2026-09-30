@@ -80,7 +80,9 @@ final class ScreenController {
                 self.bridge = bridge
             }
             guard let port = bridgePort else { return }
-            let rfb = RFBSession(port: port, device: device, probeEncodings: probe) { [weak self] status in
+            // CB_RFB_RAW=1 forces Raw for throughput baselines
+            let raw = ProcessInfo.processInfo.environment["CB_RFB_RAW"] == "1"
+            let rfb = RFBSession(port: port, device: device, probeEncodings: probe, encodings: raw ? [.raw] : RFBSession.preferredEncodings) { [weak self] status in
                 Task { @MainActor in self?.rfbStatus(status) }
             }
             rfb.sink = view

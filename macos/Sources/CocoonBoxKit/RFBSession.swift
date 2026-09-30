@@ -29,7 +29,13 @@ public final class RFBSession: NSObject, VNCConnectionDelegate, @unchecked Senda
     private let probe: EncodingProbe?
     private let timing = Mutex<(connectAt: Double, firstUpdate: Bool, inputAt: Double?)>((0, false, nil))
 
-    public init(port: UInt16, device: MTLDevice, probeEncodings: Bool, onStatus: @escaping @Sendable (Status) -> Void) {
+    public init(
+        port: UInt16,
+        device: MTLDevice,
+        probeEncodings: Bool,
+        encodings: [VNCFrameEncodingType] = RFBSession.preferredEncodings,
+        onStatus: @escaping @Sendable (Status) -> Void
+    ) {
         let settings = VNCConnection.Settings(
             isDebugLoggingEnabled: probeEncodings,
             hostname: "127.0.0.1",
@@ -40,7 +46,7 @@ public final class RFBSession: NSObject, VNCConnectionDelegate, @unchecked Senda
             inputMode: .forwardKeyboardShortcutsIfNotInUseLocally,
             isClipboardRedirectionEnabled: false,
             colorDepth: .depth24Bit,
-            frameEncodings: Self.preferredEncodings
+            frameEncodings: encodings
         )
         let probe = probeEncodings ? EncodingProbe() : nil
         let logger = VNCCustomLogger(
