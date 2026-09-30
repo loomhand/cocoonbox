@@ -14,6 +14,9 @@ use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde_json::Value;
 
+/// Placeholder text for images sent to a text-only model.
+pub const IMAGE_OMITTED: &str = "[screenshot omitted: this model has no vision]";
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(180);
 const ERROR_BODY_BYTES: usize = 2048;
@@ -191,11 +194,6 @@ pub struct Stream {
     finished: bool,
 }
 
-enum Parser {
-    Chat(openai::Parser),
-    Messages(anthropic::Parser),
-}
-
 impl Stream {
     /// Returns the next delta; `None` after `Delta::Done` or end of body.
     pub async fn next(&mut self) -> Result<Option<Delta>, String> {
@@ -236,6 +234,11 @@ impl Stream {
     }
 }
 
+enum Parser {
+    Chat(openai::Parser),
+    Messages(anthropic::Parser),
+}
+
 /// Returns the MIME type of an encoded image by its magic bytes.
 pub fn image_mime(data: &[u8]) -> &'static str {
     if data.starts_with(&[0xff, 0xd8]) {
@@ -251,6 +254,3 @@ pub fn image_mime(data: &[u8]) -> &'static str {
 pub fn b64(data: &[u8]) -> String {
     B64.encode(data)
 }
-
-/// Placeholder text for images sent to a text-only model.
-pub const IMAGE_OMITTED: &str = "[screenshot omitted: this model has no vision]";

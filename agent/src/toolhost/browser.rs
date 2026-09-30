@@ -1,5 +1,6 @@
 //! Chrome over CDP: page snapshots as ref-tagged element lists, actions by ref.
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -151,43 +152,6 @@ pub struct Browser {
     lock: Mutex<()>,
 }
 
-#[derive(Deserialize)]
-struct Target {
-    #[serde(rename = "type")]
-    kind: String,
-    url: String,
-    #[serde(rename = "webSocketDebuggerUrl", default)]
-    ws_url: String,
-}
-
-#[derive(Deserialize)]
-struct NavigateArgs {
-    url: String,
-}
-
-#[derive(Deserialize)]
-struct RefArgs {
-    #[serde(rename = "ref")]
-    element: String,
-}
-
-#[derive(Deserialize)]
-struct TypeArgs {
-    #[serde(rename = "ref")]
-    element: String,
-    text: String,
-    #[serde(default)]
-    clear: bool,
-    #[serde(default)]
-    submit: bool,
-}
-
-#[derive(Deserialize)]
-struct ReadArgs {
-    #[serde(rename = "ref", default)]
-    element: Option<String>,
-}
-
 impl Browser {
     /// Creates a browser handle; Chrome starts on first use.
     pub fn new(bin: String, profile: PathBuf, port: u16) -> Self {
@@ -284,7 +248,7 @@ impl Browser {
                 let total = text.chars().count();
                 let mut out: String = text.chars().take(READ_CHARS).collect();
                 if total > READ_CHARS {
-                    out.push_str(&format!("\n[truncated: {total} characters total]"));
+                    let _ = write!(out, "\n[truncated: {total} characters total]");
                 }
                 Ok(out)
             }
@@ -370,6 +334,43 @@ impl Browser {
             LAUNCH_WAIT.as_secs()
         ))
     }
+}
+
+#[derive(Deserialize)]
+struct Target {
+    #[serde(rename = "type")]
+    kind: String,
+    url: String,
+    #[serde(rename = "webSocketDebuggerUrl", default)]
+    ws_url: String,
+}
+
+#[derive(Deserialize)]
+struct NavigateArgs {
+    url: String,
+}
+
+#[derive(Deserialize)]
+struct RefArgs {
+    #[serde(rename = "ref")]
+    element: String,
+}
+
+#[derive(Deserialize)]
+struct TypeArgs {
+    #[serde(rename = "ref")]
+    element: String,
+    text: String,
+    #[serde(default)]
+    clear: bool,
+    #[serde(default)]
+    submit: bool,
+}
+
+#[derive(Deserialize)]
+struct ReadArgs {
+    #[serde(rename = "ref", default)]
+    element: Option<String>,
 }
 
 struct Cdp {

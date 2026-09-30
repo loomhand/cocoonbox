@@ -1,6 +1,7 @@
 //! Per-agent turn queue and the main agent loop.
 
 use std::collections::HashMap;
+use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use base64::Engine;
@@ -35,44 +36,6 @@ pub struct Runtime {
     toolhost: rpc::Client,
     main_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
-}
-
-/// Result of a tool as recorded in the transcript.
-pub struct ToolOutput {
-    pub text: String,
-    pub image: Option<Bytes>,
-    pub is_error: bool,
-}
-
-/// Identity of the running turn.
-pub struct TurnCtx {
-    pub agent_id: String,
-    pub turn_id: String,
-    model: String,
-    slot: Arc<Slot>,
-}
-
-/// One model step: its text, requested tool calls and usage.
-pub struct StepOut {
-    pub text: String,
-    pub calls: Vec<ToolCall>,
-    pub usage: Usage,
-}
-
-struct Slot {
-    queue: mpsc::Sender<String>,
-    state: Mutex<SlotState>,
-}
-
-#[derive(Default)]
-struct SlotState {
-    cancel: Option<CancellationToken>,
-    approvals: HashMap<String, oneshot::Sender<Reply>>,
-}
-
-struct Reply {
-    approve: bool,
-    text: String,
 }
 
 impl Runtime {
@@ -157,12 +120,13 @@ impl Runtime {
             if out.is_error {
                 return Err(Status::internal(out.text));
             }
-            text.push_str(&format!(
+            let _ = write!(
+                text,
                 "\n[attached file: {} ({}, {} bytes)]",
                 out.text,
                 a.mime_type,
                 a.data.len()
-            ));
+            );
         }
         let queued = self
             .store
@@ -547,7 +511,7 @@ impl Runtime {
             "The user declined the take-over.".to_owned()
         };
         if !reply.text.is_empty() {
-            text.push_str(&format!(" User note: {}", reply.text));
+            let _ = write!(text, " User note: {}", reply.text);
         }
         Ok(ToolOutput {
             text,
@@ -635,6 +599,13 @@ impl Runtime {
     }
 }
 
+/// Result of a tool as recorded in the transcript.
+pub struct ToolOutput {
+    pub text: String,
+    pub image: Option<Bytes>,
+    pub is_error: bool,
+}
+
 impl ToolOutput {
     /// A failed tool result.
     pub fn error(text: impl Into<String>) -> Self {
@@ -644,6 +615,37 @@ impl ToolOutput {
             is_error: true,
         }
     }
+}
+
+/// Identity of the running turn.
+pub struct TurnCtx {
+    pub agent_id: String,
+    pub turn_id: String,
+    model: String,
+    slot: Arc<Slot>,
+}
+
+/// One model step: its text, requested tool calls and usage.
+pub struct StepOut {
+    pub text: String,
+    pub calls: Vec<ToolCall>,
+    pub usage: Usage,
+}
+
+struct Slot {
+    queue: mpsc::Sender<String>,
+    state: Mutex<SlotState>,
+}
+
+#[derive(Default)]
+struct SlotState {
+    cancel: Option<CancellationToken>,
+    approvals: HashMap<String, oneshot::Sender<Reply>>,
+}
+
+struct Reply {
+    approve: bool,
+    text: String,
 }
 
 /// Rebuilds the main agent's model messages from its transcript.

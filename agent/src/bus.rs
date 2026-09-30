@@ -13,8 +13,7 @@ const RING_EVENTS: usize = 4096;
 const RING_BYTES: usize = 32 << 20;
 const LIVE_CAPACITY: usize = 1024;
 
-/// Fan-out of agent events; offsets start at the boot time in microseconds so
-/// they keep growing across restarts and stale offsets fall out of range.
+/// Fan-out of agent events; offsets start at boot time in microseconds so stale offsets fall out of range.
 pub struct Bus {
     ring: Mutex<Ring>,
     live: broadcast::Sender<Arc<Event>>,

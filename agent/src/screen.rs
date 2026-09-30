@@ -36,6 +36,7 @@ pub async fn relay(
     let _ = tcp.set_nodelay(true);
     let (mut rd, mut wr) = tcp.into_split();
     let (tx, rx) = mpsc::channel(OUT_FRAMES);
+    // detached pumps: each ends when its peer closes
     tokio::spawn(async move {
         while let Ok(Some(frame)) = inbound.message().await {
             if let Some(screen_client_frame::Body::Data(data)) = frame.body

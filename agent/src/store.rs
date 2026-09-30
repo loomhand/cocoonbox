@@ -49,12 +49,6 @@ pub struct Store {
     conn: Arc<Mutex<Connection>>,
 }
 
-/// Result of a Send: the turn id and, for a new turn, the persisted user entry.
-pub struct Queued {
-    pub turn_id: String,
-    pub entry: Option<TranscriptEntry>,
-}
-
 impl Store {
     /// Opens or creates the database at `path`.
     pub fn open(path: &Path) -> Result<Self, String> {
@@ -269,6 +263,12 @@ impl Store {
         .await
         .map_err(|e| format!("store task: {e}"))?
     }
+}
+
+/// Result of a Send: the turn id and, for a new turn, the persisted user entry.
+pub struct Queued {
+    pub turn_id: String,
+    pub entry: Option<TranscriptEntry>,
 }
 
 fn insert_entry(

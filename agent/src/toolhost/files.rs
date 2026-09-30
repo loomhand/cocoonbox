@@ -1,6 +1,7 @@
 //! File tools. Relative paths resolve under the workspace; absolute paths are
 //! used as given, so the toolhost's uid (`user`) is the access boundary.
 
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -76,7 +77,7 @@ pub async fn read(workspace: &Path, args: serde_json::Value) -> Result<String, S
             continue;
         }
         let line: String = line.chars().take(LINE_CHARS).collect();
-        out.push_str(&format!("{total:>6}\t{line}\n"));
+        let _ = writeln!(out, "{total:>6}\t{line}");
         shown += 1;
     }
     if shown == 0 {
@@ -87,9 +88,10 @@ pub async fn read(workspace: &Path, args: serde_json::Value) -> Result<String, S
     }
     let last = start + shown - 1;
     if last < total {
-        out.push_str(&format!(
-            "[showing lines {start}-{last} of {total}; pass offset to read more]\n"
-        ));
+        let _ = writeln!(
+            out,
+            "[showing lines {start}-{last} of {total}; pass offset to read more]"
+        );
     }
     Ok(out)
 }
@@ -165,10 +167,7 @@ pub async fn list(workspace: &Path, args: serde_json::Value) -> Result<String, S
         out.push('\n');
     }
     if total > LIST_ENTRIES {
-        out.push_str(&format!(
-            "[{} more entries not shown]\n",
-            total - LIST_ENTRIES
-        ));
+        let _ = writeln!(out, "[{} more entries not shown]", total - LIST_ENTRIES);
     }
     Ok(out)
 }
@@ -232,11 +231,10 @@ mod tests {
         );
         let listing = list(ws, json!({})).await.unwrap();
         assert!(listing.contains("a/\n"), "{listing}");
-        let abs = ws.join("a/b.txt").display().to_string();
         let listing = list(ws, json!({"path": ws.join("a").display().to_string()}))
             .await
             .unwrap();
-        assert!(listing.contains("b.txt  (6 bytes)"), "{listing} {abs}");
+        assert!(listing.contains("b.txt  (6 bytes)"), "{listing}");
     }
 
     #[test]
