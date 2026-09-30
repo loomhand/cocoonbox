@@ -63,6 +63,33 @@ func TestImageOverrideAndDelete(t *testing.T) {
 	}
 }
 
+func TestMetaIncarnationAndExec(t *testing.T) {
+	env := newTestEnv(t)
+	env.putSet(t, testSet(1, false, cocoonv1.CocoonSetPhaseRunning))
+	if _, err := env.backend.Exec(t.Context(), boxID, []string{"id"}, nil); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("Exec without a pod: %v, want ErrNotFound", err)
+	}
+	pod := testPod(true, meta.LifecycleStateReady, 1)
+	pod.UID = "uid-1"
+	meta.VMRuntime{VMID: "vm-1", IP: "10.203.0.10"}.Apply(pod)
+	env.putPod(t, pod)
+	env.waitAddress(t)
+
+	if err := env.backend.SetMeta(t.Context(), boxID, "wake", "uid-1/vm-1:w1"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	m, err := env.backend.Get(t.Context(), boxID)
+	if err != nil || m.Meta["wake"] != "uid-1/vm-1:w1" || m.Incarnation != "uid-1/vm-1" {
+		t.Errorf("Get = meta %v incarnation %q, %v", m.Meta, m.Incarnation, err)
+	}
+	if _, err := env.backend.Exec(t.Context(), boxID, []string{"sh", "-c", "cat > /x"}, []byte("data")); err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if len(env.execs) != 1 || env.execs[0].pod != boxID+"-0" || env.execs[0].stdin != "data" {
+		t.Errorf("exec calls = %+v", env.execs)
+	}
+}
+
 func TestHibernate(t *testing.T) {
 	env := newTestEnv(t)
 	if _, err := env.backend.Hibernate(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {
@@ -137,10 +164,17 @@ func TestAddress(t *testing.T) {
 	}
 }
 
+type execCall struct {
+	pod   string
+	cmd   []string
+	stdin string
+}
+
 type testEnv struct {
 	backend *Backend
 	dyn     *dynamicfake.FakeDynamicClient
 	kube    *kubefake.Clientset
+	execs   []execCall
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -149,11 +183,16 @@ func newTestEnv(t *testing.T) *testEnv {
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{Resource: "CocoonSetList"})
 	kube := kubefake.NewClientset()
-	backend, err := newBackend(t.Context(), opts, dyn, kube)
+	env := &testEnv{dyn: dyn, kube: kube}
+	backend, err := newBackend(t.Context(), opts, dyn, kube, func(_ context.Context, pod string, cmd []string, stdin []byte) ([]byte, error) {
+		env.execs = append(env.execs, execCall{pod: pod, cmd: cmd, stdin: string(stdin)})
+		return []byte("ok"), nil
+	})
 	if err != nil {
 		t.Fatalf("newBackend: %v", err)
 	}
-	return &testEnv{backend: backend, dyn: dyn, kube: kube}
+	env.backend = backend
+	return env
 }
 
 func (e *testEnv) set(t *testing.T) *cocoonv1.CocoonSet {

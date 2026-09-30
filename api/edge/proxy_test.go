@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -21,6 +22,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/credential"
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 )
 
@@ -51,6 +53,20 @@ func TestUnaryRewritesHeaders(t *testing.T) {
 	}
 	if got := trailer.Get("x-agent-trailer"); len(got) != 1 || got[0] != "t" {
 		t.Errorf("trailer x-agent-trailer = %v", got)
+	}
+}
+
+func TestUnarySendsBoxCredential(t *testing.T) {
+	env := newProxyEnv(t)
+	env.resolver.wake = "w1"
+	ctx := metadata.AppendToOutgoingContext(env.aliceCtx(t), credential.Header, "forged")
+	resp, err := env.client.Hello(ctx, &agentv1.HelloRequest{})
+	if err != nil {
+		t.Fatalf("Hello: %v", err)
+	}
+	box := boxes.BoxID("alice")
+	if want := box + " cred:" + box + ":w1"; resp.GetDefaultMainModel() != want {
+		t.Errorf("agent saw %q, want %q", resp.GetDefaultMainModel(), want)
 	}
 }
 
@@ -266,7 +282,7 @@ func newProxyEnvAt(t *testing.T, token, agentAddr string) *proxyEnv {
 
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
-	proxy := NewProxy(resolver, token)
+	proxy := NewProxy(resolver, token, fakeCreds{})
 	t.Cleanup(proxy.Close)
 	edgeSrv := grpc.NewServer(
 		grpc.ForceServerCodecV2(NewCodec()),
@@ -303,15 +319,21 @@ func serve(t *testing.T, srv *grpc.Server) string {
 // fakeResolver applies the Boxes ownership rule and routes every owned box to addr.
 type fakeResolver struct {
 	addr string
+	wake string
 	err  error
 }
 
-func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (string, error) {
+func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (string, string, error) {
 	if boxID != boxes.BoxID(user) {
-		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
+		return "", "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
-	return r.addr, r.err
+	return r.addr, r.wake, r.err
 }
+
+// fakeCreds issues "cred:<box>:<wake>".
+type fakeCreds struct{}
+
+func (fakeCreds) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
 
 // fakeAgent echoes what the edge delivered: Hello returns the edge token as agent_version, authorization values as models and the box header as default_main_model.
 type fakeAgent struct {
@@ -332,7 +354,7 @@ func (a *fakeAgent) Hello(ctx context.Context, _ *agentv1.HelloRequest) (*agentv
 	return &agentv1.HelloResponse{
 		AgentVersion:     first(md.Get(HeaderEdgeToken)),
 		Models:           md.Get(auth.HeaderAuthorization),
-		DefaultMainModel: first(md.Get(HeaderBox)),
+		DefaultMainModel: strings.TrimSpace(first(md.Get(HeaderBox)) + " " + first(md.Get(credential.Header))),
 	}, nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
+	"strings"
 
 	cocoonv1 "github.com/cocoonstack/cocoon-common/apis/v1"
 	"github.com/cocoonstack/cocoon-common/meta"
@@ -18,6 +19,7 @@ const (
 	gib = 1 << 30
 
 	annotationOwner = "cocoonbox.example.com/user"
+	metaPrefix      = "meta.cocoonbox.example.com/"
 	labelManagedBy  = "app.kubernetes.io/managed-by"
 	managedBy       = "cocoonbox-api"
 )
@@ -34,6 +36,10 @@ func observe(cs *cocoonv1.CocoonSet, main *corev1.Pod, gen int64) machines.Machi
 		Waiting:   main != nil && slices.ContainsFunc(main.Status.Conditions, unschedulable),
 		CreatedAt: cs.CreationTimestamp.Time,
 		Revision:  cs.Generation,
+		Meta:      metaOf(cs),
+	}
+	if main != nil {
+		m.Incarnation = string(main.UID) + "/" + meta.ParseVMRuntime(main).VMID
 	}
 	statusCurrent := cs.Status.ObservedGeneration >= max(cs.Generation, gen)
 	setFailed := statusCurrent && cs.Status.Phase == cocoonv1.CocoonSetPhaseFailed
@@ -52,6 +58,16 @@ func observe(cs *cocoonv1.CocoonSet, main *corev1.Pod, gen int64) machines.Machi
 		m.State, m.Reason = machines.StateFailed, failureReason(main, "cocoonset failed")
 	}
 	return m
+}
+
+func metaOf(cs *cocoonv1.CocoonSet) map[string]string {
+	out := map[string]string{}
+	for k, v := range cs.Annotations {
+		if name, ok := strings.CutPrefix(k, metaPrefix); ok {
+			out[name] = v
+		}
+	}
+	return out
 }
 
 func podFailed(pod *corev1.Pod, gen int64) bool {

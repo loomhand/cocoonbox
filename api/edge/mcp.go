@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/credential"
 )
 
 const (
@@ -40,12 +41,13 @@ type MCP struct {
 	resolver  Resolver
 	authn     *auth.Authenticator
 	edgeToken string
+	creds     Credentials
 	transport *http.Transport
 }
 
-// NewMCP builds the MCP proxy; an empty edgeToken refuses every exchange.
-func NewMCP(resolver Resolver, authn *auth.Authenticator, edgeToken string) *MCP {
-	return &MCP{resolver: resolver, authn: authn, edgeToken: edgeToken, transport: newH2CTransport()}
+// NewMCP builds the MCP proxy; creds, when set, adds box credentials, and an empty edgeToken refuses every exchange.
+func NewMCP(resolver Resolver, authn *auth.Authenticator, edgeToken string, creds Credentials) *MCP {
+	return &MCP{resolver: resolver, authn: authn, edgeToken: edgeToken, creds: creds, transport: newH2CTransport()}
 }
 
 func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,7 +57,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
-	user, addr, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
+	user, addr, wake, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
 	defer func() {
 		log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %q user=%s box=%q addr=%s code=%s in %s",
 			r.Method, r.URL.Path, user, boxID, addr, status.Code(err), time.Since(start).Round(time.Millisecond))
@@ -65,7 +67,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy := &httputil.ReverseProxy{
-		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, addr) },
+		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, addr, boxID, wake) },
 		Transport:     m.transport,
 		FlushInterval: -1,
 		ErrorHandler:  m.upstreamError,
@@ -73,22 +75,21 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-func (m *MCP) route(ctx context.Context, authorization, boxID string) (string, string, error) {
-	user, err := m.authn.Authenticate(authorization)
-	if err != nil {
-		return "", "", err
+func (m *MCP) route(ctx context.Context, authorization, boxID string) (user, addr, wake string, err error) {
+	if user, err = m.authn.Authenticate(authorization); err != nil {
+		return "", "", "", err
 	}
 	if m.edgeToken == "" {
-		return user, "", status.Error(codes.Unavailable, "agent edge is not configured")
+		return user, "", "", status.Error(codes.Unavailable, "agent edge is not configured")
 	}
 	if boxID == "" {
-		return user, "", status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
+		return user, "", "", status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
-	addr, err := m.resolver.Resolve(ctx, user, boxID)
-	return user, addr, err
+	addr, wake, err = m.resolver.Resolve(ctx, user, boxID)
+	return user, addr, wake, err
 }
 
-func (m *MCP) rewrite(pr *httputil.ProxyRequest, addr string) {
+func (m *MCP) rewrite(pr *httputil.ProxyRequest, addr, box, wake string) {
 	_, rest, _ := strings.Cut(strings.TrimPrefix(pr.In.URL.Path, MCPPrefix), "/")
 	pr.Out.URL.Scheme = "http"
 	pr.Out.URL.Host = addr
@@ -99,7 +100,11 @@ func (m *MCP) rewrite(pr *httputil.ProxyRequest, addr string) {
 	pr.Out.URL.RawPath = ""
 	pr.Out.Host = pr.Out.URL.Host
 	pr.Out.Header.Del("Authorization")
+	pr.Out.Header.Del(credential.Header)
 	pr.Out.Header.Set(HeaderEdgeToken, m.edgeToken)
+	if m.creds != nil && wake != "" {
+		pr.Out.Header.Set(credential.Header, m.creds.Credential(box, wake))
+	}
 }
 
 func (m *MCP) upstreamError(w http.ResponseWriter, r *http.Request, err error) {

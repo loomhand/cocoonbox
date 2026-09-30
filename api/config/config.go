@@ -84,6 +84,13 @@ type State struct {
 	PresignTTL     Duration `json:"presign_ttl"`
 }
 
+// Provision names the edge signing key, the gw key helper socket and the users whose boxes are provisioned.
+type Provision struct {
+	SigningKeyFile string   `json:"signing_key_file"`
+	GWKeySocket    string   `json:"gw_key_socket"`
+	Users          []string `json:"users"`
+}
+
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
 	Listen        string   `json:"listen"`
@@ -96,10 +103,12 @@ type Config struct {
 	ProbePort     int32    `json:"probe_port"`
 	AgentPort     int      `json:"agent_port"`
 	EdgeTokenFile string   `json:"edge_token_file"`
-	Flavor        Flavor   `json:"flavor"`
-	Flavors       []Flavor `json:"flavors"`
-	State         State    `json:"state"`
-	Users         []User   `json:"users"`
+	// Provision configures box identity files and per-box gw keys; an empty SigningKeyFile turns it off.
+	Provision Provision `json:"provision"`
+	Flavor    Flavor    `json:"flavor"`
+	Flavors   []Flavor  `json:"flavors"`
+	State     State     `json:"state"`
+	Users     []User    `json:"users"`
 }
 
 // Load reads, defaults and validates the file at path.
@@ -172,7 +181,7 @@ func (c *Config) applyDefaults() {
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.Kubeconfig, &c.EdgeTokenFile, &c.State.CredentialsFile} {
+	for _, p := range []*string{&c.Kubeconfig, &c.EdgeTokenFile, &c.State.CredentialsFile, &c.Provision.SigningKeyFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}

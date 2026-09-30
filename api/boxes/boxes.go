@@ -31,10 +31,11 @@ type Defaults struct {
 type Service struct {
 	controlv1.UnimplementedBoxesServer
 
-	machines machines.Machines
-	defaults Defaults
-	ops      *operations
-	state    *stateLayer
+	machines  machines.Machines
+	defaults  Defaults
+	ops       *operations
+	state     *stateLayer
+	provision *provisioner
 }
 
 // New serves boxes on backend with defaults.
@@ -79,7 +80,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		logger.Info(ctx, "waking box")
 		return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_WAKING), nil
 	}
-	if m.State == machines.StateRunning {
+	if s.ready(m) {
 		return &controlv1.EnsureResponse{Box: s.toBox(ctx, box, m)}, nil
 	}
 	phase := controlv1.Phase_PHASE_CREATING
@@ -170,29 +171,32 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 	}
 }
 
-// Resolve returns the agent address of boxID after checking that user owns it and it runs.
-func (s *Service) Resolve(ctx context.Context, user, boxID string) (string, error) {
+// Resolve returns the agent address of boxID and its wake id after checking that user owns it and it is ready.
+func (s *Service) Resolve(ctx context.Context, user, boxID string) (string, string, error) {
 	if boxID != BoxID(user) {
-		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
+		return "", "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
 	cur, err := s.current(ctx, user)
 	var addr string
+	if err == nil && !s.ready(cur) && cur.State == machines.StateRunning {
+		err = &machines.NotRunningError{State: machines.StateStarting}
+	}
 	if err == nil {
 		addr, err = s.machines.Address(ctx, cur.ID)
 	}
 	var notRunning *machines.NotRunningError
 	switch {
 	case err == nil:
-		return addr, nil
+		return addr, wakeOf(cur), nil
 	case errors.Is(err, machines.ErrNotFound):
-		return "", status.Error(codes.NotFound, "box not found")
+		return "", "", status.Error(codes.NotFound, "box not found")
 	case errors.As(err, &notRunning):
-		return "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
+		return "", "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
 	case errors.Is(err, machines.ErrNoAddress):
-		return "", status.Error(codes.Unavailable, "box has no address yet")
+		return "", "", status.Error(codes.Unavailable, "box has no address yet")
 	default:
 		log.WithFunc("boxes.Service.Resolve").WithField("box", boxID).Error(ctx, err, "resolve box")
-		return "", status.Error(codes.Unavailable, "resolve box failed")
+		return "", "", status.Error(codes.Unavailable, "resolve box failed")
 	}
 }
 
@@ -231,6 +235,15 @@ func (s *Service) follow(op *operation, machine string) {
 		if m.State == machines.StateFailed {
 			log.WithFunc("boxes.Service.follow").WithField("box", op.boxID).Warnf(op.ctx, "machine %s failed: %s (%s)", machine, m.Reason, m.Detail)
 		}
+		if m.State == machines.StateRunning && !s.ready(m) {
+			op.record(observation{state: controlv1.BoxState_BOX_STATE_STARTING, detail: "provisioning"})
+			if err := s.provisionMachine(op.ctx, m); err != nil {
+				log.WithFunc("boxes.Service.follow").WithField("box", op.boxID).Error(op.ctx, err, "provision "+machine)
+				op.fail(cmp.Or(failureWords[op.phase], "machine failed"))
+				return
+			}
+			continue
+		}
 		op.record(toObservation(m, op.phase))
 	}
 	if errors.Is(op.ctx.Err(), context.DeadlineExceeded) {
@@ -240,6 +253,9 @@ func (s *Service) follow(op *operation, machine string) {
 
 func (s *Service) toBox(ctx context.Context, box string, m machines.Machine) *controlv1.Box {
 	b := toBox(box, m)
+	if m.State == machines.StateRunning && !s.ready(m) {
+		b.State = controlv1.BoxState_BOX_STATE_STARTING
+	}
 	b.LatestImage = s.defaults.Image
 	if s.state != nil {
 		b.LastSavedAtMs = s.state.lastSaved(ctx, box)

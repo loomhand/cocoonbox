@@ -20,6 +20,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/credential"
 )
 
 func TestMCPPostRoundTrip(t *testing.T) {
@@ -27,6 +28,8 @@ func TestMCPPostRoundTrip(t *testing.T) {
 	req := env.request(t, http.MethodPost, boxes.BoxID("alice")+"/extra?x=1", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	req.Header.Set("Mcp-Session-Id", "s0")
 	req.Header.Set(HeaderEdgeToken, "forged")
+	req.Header.Set(credential.Header, "forged")
+	env.resolver.wake = "w1"
 	resp := env.do(t, req)
 	defer resp.Body.Close()
 
@@ -39,7 +42,8 @@ func TestMCPPostRoundTrip(t *testing.T) {
 	}
 	want := map[string]string{
 		"path": "/mcp/extra", "query": "x=1", "session": "s0", "edge_token": edgeToken, "authorization": "",
-		"body": `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		"credential": "cred:" + boxes.BoxID("alice") + ":w1",
+		"body":       `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
 	}
 	for k, v := range want {
 		if got[k] != v {
@@ -172,7 +176,7 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
 	served := make(chan string, 16)
-	mcp := NewMCP(resolver, authn, edgeToken)
+	mcp := NewMCP(resolver, authn, edgeToken, fakeCreds{})
 	addr := serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { served <- r.Method }()
 		mcp.ServeHTTP(w, r)
@@ -238,6 +242,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"path": r.URL.Path, "query": r.URL.RawQuery, "session": r.Header.Get("Mcp-Session-Id"),
 		"edge_token": r.Header.Get(HeaderEdgeToken), "authorization": r.Header.Get("Authorization"), "body": string(body),
+		"credential": r.Header.Get(credential.Header),
 	})
 }
 

@@ -125,7 +125,7 @@ func TestRebase(t *testing.T) {
 	if !strings.HasPrefix(newID, aliceBox+"-r") {
 		t.Fatalf("rebase machine id = %q", newID)
 	}
-	if addr, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || addr != aliceBox+":7443" {
+	if addr, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || addr != aliceBox+":7443" {
 		t.Errorf("during rebase Resolve = %q, %v, want the old machine", addr, err)
 	}
 	env.fake.push(machines.Machine{ID: newID, State: machines.StateRunning})
@@ -165,7 +165,7 @@ func TestRebase(t *testing.T) {
 	if env.fake.deletedIDs() != aliceBox {
 		t.Errorf("deleted = %q, want the old machine", env.fake.deletedIDs())
 	}
-	if addr, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || addr != newID+":7443" {
+	if addr, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || addr != newID+":7443" {
 		t.Errorf("after rebase Resolve = %q, %v, want the new machine", addr, err)
 	}
 }
@@ -187,7 +187,7 @@ func TestRebaseKeepsOldMachineWhenRestoreFails(t *testing.T) {
 	if env.fake.deletedIDs() != newID {
 		t.Errorf("deleted = %q, want only the new machine", env.fake.deletedIDs())
 	}
-	if addr, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || addr != aliceBox+":7443" {
+	if addr, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || addr != aliceBox+":7443" {
 		t.Errorf("Resolve = %q, %v, want the old machine", addr, err)
 	}
 }
@@ -419,16 +419,19 @@ type fakeAgent struct {
 	snapshotID string
 	restoreErr error
 
-	mu        sync.Mutex
-	planReqs  []*agentv1.PlanRequest
-	uploads   []*agentv1.UploadRequest
-	restores  []restoreCall
-	snapshots int
+	mu          sync.Mutex
+	planReqs    []*agentv1.PlanRequest
+	uploads     []*agentv1.UploadRequest
+	restores    []restoreCall
+	snapshots   int
+	planCred    string
+	restoreCred string
 }
 
-func (a *fakeAgent) Plan(_ context.Context, _ string, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
+func (a *fakeAgent) Plan(ctx context.Context, _ string, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.planCred = outgoingCredential(ctx)
 	a.planReqs = append(a.planReqs, req)
 	a.snapshots++
 	resp := &agentv1.PlanResponse{SnapshotId: cmp.Or(a.snapshotID, snapshotID(a.snapshots)), Files: 7, LogicalBytes: 3 << 20, TakenAtMs: time.Now().UnixMilli()}
@@ -464,8 +467,9 @@ func (a *fakeAgent) Upload(_ context.Context, _ string, req *agentv1.UploadReque
 	return final, nil
 }
 
-func (a *fakeAgent) Restore(_ context.Context, addr string, req *agentv1.RestoreRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) Restore(ctx context.Context, addr string, req *agentv1.RestoreRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	a.mu.Lock()
+	a.restoreCred = outgoingCredential(ctx)
 	a.restores = append(a.restores, restoreCall{addr: addr, req: req})
 	a.mu.Unlock()
 	if a.restoreErr != nil {
@@ -481,6 +485,18 @@ func (a *fakeAgent) Restore(_ context.Context, addr string, req *agentv1.Restore
 	final := &agentv1.TransferProgress{DoneBytes: 2, TotalBytes: 2, DoneChunks: n, TotalChunks: n, Finished: true, ManifestId: req.GetManifest().GetChunkId()}
 	progress(final)
 	return final, nil
+}
+
+func (a *fakeAgent) planCredential() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.planCred
+}
+
+func (a *fakeAgent) restoreCredential() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.restoreCred
 }
 
 func (a *fakeAgent) chunkSize() uint64 {

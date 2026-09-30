@@ -22,6 +22,10 @@ state:
   interval: 15m
   presign_ttl: 10m
   scheduled_flavors: []                  # flavors Ensure accepts besides the default one; anything else is refused
+provision:                  # box identity files (design §12) and per-box gw keys
+  signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519
+  gw_key_socket: /run/cb-gw-key.sock
+  users: []                  # users whose boxes are provisioned
 users: []           # users whose boxes get scheduled live saves
 users:
   # token_sha256 = printf %s "$TOKEN" | sha256sum

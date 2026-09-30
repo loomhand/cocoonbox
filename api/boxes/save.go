@@ -65,7 +65,7 @@ func (s *Service) saveStale(ctx context.Context, interval time.Duration, users [
 	}
 	for _, m := range ms {
 		box := BoxID(m.Owner)
-		if !slices.Contains(users, m.Owner) || m.State != machines.StateRunning || s.ops.activeFor(box) != nil {
+		if !slices.Contains(users, m.Owner) || !s.ready(m) || s.ops.activeFor(box) != nil {
 			continue
 		}
 		if time.Since(time.UnixMilli(s.state.lastSaved(ctx, box))) < interval {
@@ -85,7 +85,7 @@ func (s *Service) runningMachine(ctx context.Context, box, user string) (machine
 	if err != nil {
 		return machines.Machine{}, serviceError(ctx, log.WithFunc("boxes.Service.runningMachine").WithField("box", box), err, "get box")
 	}
-	if m.State != machines.StateRunning {
+	if !s.ready(m) {
 		return machines.Machine{}, status.Errorf(codes.FailedPrecondition, "box is %s, not running", boxStates[m.State])
 	}
 	if active := s.ops.activeFor(box); active != nil {
@@ -121,7 +121,7 @@ func (s *Service) save(op *operation, m machines.Machine, consistency agentv1.Co
 		return nil, fmt.Errorf("address of %s: %w", m.ID, err)
 	}
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING, fmt.Sprintf("planning a %s snapshot", consistencyName(consistency)))
-	return s.state.save(op.ctx, op.boxID, addr, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
+	return s.state.save(s.agentContext(op.ctx, m), op.boxID, addr, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
 }
 
 // progressNotes turns transfer progress into operation events, at most one per progressInterval.

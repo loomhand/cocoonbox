@@ -20,9 +20,11 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/credential"
 	"github.com/CMGS/cocoonbox/api/dialer"
 	"github.com/CMGS/cocoonbox/api/edge"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/keyring/file"
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/machines/cocoonset"
@@ -30,6 +32,7 @@ import (
 )
 
 const (
+	provisionInterval = 10 * time.Second
 	shutdownGrace     = 5 * time.Second
 	readHeaderTimeout = 10 * time.Second
 )
@@ -82,7 +85,15 @@ func main() {
 			logger.Fatalf(ctx, err, "enable state layer")
 		}
 	}
-	proxy := edge.NewProxy(svc, edgeToken)
+	var creds edge.Credentials
+	if cfg.Provision.SigningKeyFile != "" {
+		var signer *credential.Signer
+		if signer, err = enableProvisioning(ctx, cfg, svc); err != nil {
+			logger.Fatalf(ctx, err, "enable provisioning")
+		}
+		creds = signer
+	}
+	proxy := edge.NewProxy(svc, edgeToken, creds)
 	defer proxy.Close()
 
 	authn := auth.New(cfg.Users)
@@ -101,7 +112,7 @@ func main() {
 	protocols.SetUnencryptedHTTP2(true)
 	mcpServer := &http.Server{
 		Addr:              cfg.MCPListen,
-		Handler:           edge.NewMCP(svc, authn, edgeToken),
+		Handler:           edge.NewMCP(svc, authn, edgeToken, creds),
 		Protocols:         &protocols,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
@@ -129,6 +140,21 @@ func main() {
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
 	}
+}
+
+func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Service) (*credential.Signer, error) {
+	signer, err := credential.Load(cfg.Provision.SigningKeyFile)
+	if err != nil {
+		return nil, err
+	}
+	var gw boxes.GWKeys
+	if cfg.Provision.GWKeySocket != "" {
+		gw = gwkeys.New(cfg.Provision.GWKeySocket)
+	}
+	svc.EnableProvisioning(signer, gw, cfg.Provision.Users)
+	go svc.RunProvisioner(ctx, provisionInterval)
+	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning boxes of %v with key %s, gw keys %t", cfg.Provision.Users, signer.KeyID(), gw != nil)
+	return signer, nil
 }
 
 func machineFlavor(f config.Flavor) machines.Flavor {

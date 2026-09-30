@@ -4,6 +4,7 @@ package cocoonset
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -62,6 +63,7 @@ type Backend struct {
 	sets      dynamic.ResourceInterface
 	setLister cache.GenericNamespaceLister
 	podLister corelisters.PodNamespaceLister
+	exec      podExecFunc
 
 	mu       sync.Mutex
 	watchers map[string]map[chan struct{}]struct{}
@@ -81,10 +83,10 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build clientset: %w", err)
 	}
-	return newBackend(ctx, opts, dyn, kube)
+	return newBackend(ctx, opts, dyn, kube, newPodExec(restCfg, kube, opts.Namespace))
 }
 
-func newBackend(ctx context.Context, opts Options, dyn dynamic.Interface, kube kubernetes.Interface) (*Backend, error) {
+func newBackend(ctx context.Context, opts Options, dyn dynamic.Interface, kube kubernetes.Interface, exec podExecFunc) (*Backend, error) {
 	setFactory := dynamicinformer.NewFilteredDynamicSharedInformerFactory(dyn, 0, opts.Namespace, nil)
 	setInformer := setFactory.ForResource(Resource)
 	podFactory := informers.NewSharedInformerFactoryWithOptions(kube, 0,
@@ -97,6 +99,7 @@ func newBackend(ctx context.Context, opts Options, dyn dynamic.Interface, kube k
 		sets:      dyn.Resource(Resource).Namespace(opts.Namespace),
 		setLister: setInformer.Lister().ByNamespace(opts.Namespace),
 		podLister: podInformer.Lister().Pods(opts.Namespace),
+		exec:      exec,
 		watchers:  map[string]map[chan struct{}]struct{}{},
 	}
 	handler := cache.ResourceEventHandlerFuncs{
@@ -240,6 +243,23 @@ func (b *Backend) Delete(ctx context.Context, id string) error {
 		return kubeError(err, "delete cocoonset")
 	}
 	return nil
+}
+
+func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{"annotations": map[string]string{metaPrefix + key: value}}})
+	if err != nil {
+		return fmt.Errorf("encode meta patch: %w", err)
+	}
+	_, err = b.patchSet(ctx, id, patch)
+	return err
+}
+
+func (b *Backend) Exec(ctx context.Context, id string, cmd []string, stdin []byte) ([]byte, error) {
+	main := b.mainPod(id)
+	if main == nil {
+		return nil, machines.ErrNotFound
+	}
+	return b.exec(ctx, main.Name, cmd, stdin)
 }
 
 func (b *Backend) machine(cs *cocoonv1.CocoonSet, gen int64) machines.Machine {

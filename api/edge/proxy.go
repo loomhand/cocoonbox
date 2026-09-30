@@ -18,6 +18,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/credential"
 )
 
 const (
@@ -34,7 +35,7 @@ const (
 )
 
 var (
-	droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, "content-type", "user-agent", "te"}
+	droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, credential.Header, "content-type", "user-agent", "te"}
 
 	// agentConnectParams caps redial backoff at 1s so an agent that starts after a refused dial is reachable at once.
 	agentConnectParams = grpc.ConnectParams{
@@ -43,24 +44,30 @@ var (
 	}
 )
 
-// Resolver maps a caller and box id to the box agent's address.
+// Resolver maps a caller and box id to the box agent's address and the wake id its credential names.
 type Resolver interface {
-	Resolve(ctx context.Context, user, boxID string) (string, error)
+	Resolve(ctx context.Context, user, boxID string) (addr, wake string, err error)
+}
+
+// Credentials issues the credential an agent accepts for a box at a wake.
+type Credentials interface {
+	Credential(box, wake string) string
 }
 
 // Proxy is the unknown-service handler that forwards agent calls frame by frame.
 type Proxy struct {
 	resolver  Resolver
 	edgeToken string
+	creds     Credentials
 	codec     Codec
 
 	mu    sync.Mutex
 	conns map[string]*boxConn
 }
 
-// NewProxy builds a Proxy that authenticates to agents with edgeToken; an empty edgeToken refuses every call.
-func NewProxy(resolver Resolver, edgeToken string) *Proxy {
-	return &Proxy{resolver: resolver, edgeToken: edgeToken, codec: NewCodec(), conns: map[string]*boxConn{}}
+// NewProxy builds a Proxy that authenticates to agents with edgeToken and, when creds is set, a box credential; an empty edgeToken refuses every call.
+func NewProxy(resolver Resolver, edgeToken string, creds Credentials) *Proxy {
+	return &Proxy{resolver: resolver, edgeToken: edgeToken, creds: creds, codec: NewCodec(), conns: map[string]*boxConn{}}
 }
 
 // Handle proxies one call; install it with grpc.UnknownServiceHandler.
@@ -85,7 +92,7 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	if len(boxes) != 1 || boxes[0] == "" {
 		return status.Errorf(codes.InvalidArgument, "exactly one %s header is required", HeaderBox)
 	}
-	addr, err := p.resolver.Resolve(ctx, user, boxes[0])
+	addr, wake, err := p.resolver.Resolve(ctx, user, boxes[0])
 	if err != nil {
 		return err
 	}
@@ -95,7 +102,7 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	}
 
 	start := time.Now()
-	upCtx, cancel := context.WithCancel(metadata.NewOutgoingContext(ctx, p.outgoing(md)))
+	upCtx, cancel := context.WithCancel(metadata.NewOutgoingContext(ctx, p.outgoing(md, boxes[0], wake)))
 	defer cancel()
 	up, err := conn.NewStream(upCtx, &grpc.StreamDesc{ServerStreams: true, ClientStreams: true}, method, grpc.ForceCodecV2(p.codec))
 	if err == nil {
@@ -169,7 +176,7 @@ func (p *Proxy) conn(ctx context.Context, boxID, addr string) (*grpc.ClientConn,
 	return conn, nil
 }
 
-func (p *Proxy) outgoing(in metadata.MD) metadata.MD {
+func (p *Proxy) outgoing(in metadata.MD, box, wake string) metadata.MD {
 	out := metadata.MD{}
 	for k, v := range in {
 		if strings.HasPrefix(k, ":") || strings.HasPrefix(k, "grpc-") {
@@ -181,6 +188,9 @@ func (p *Proxy) outgoing(in metadata.MD) metadata.MD {
 		delete(out, k)
 	}
 	out.Set(HeaderEdgeToken, p.edgeToken)
+	if p.creds != nil && wake != "" {
+		out.Set(credential.Header, p.creds.Credential(box, wake))
+	}
 	return out
 }
 

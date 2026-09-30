@@ -67,6 +67,10 @@ type Machine struct {
 	CreatedAt time.Time
 	// Revision increases with every lifecycle request; Watch judges state no older than it.
 	Revision int64
+	// Incarnation changes whenever the machine boots anew: first boot, wake, rebuild.
+	Incarnation string
+	// Meta holds the service's small key/value records stored with the machine.
+	Meta map[string]string
 }
 
 // NotRunningError is returned by Address for a machine that cannot take traffic.
@@ -91,4 +95,8 @@ type Machines interface {
 	Address(ctx context.Context, id string) (string, error)
 	// Delete removes the machine and its disk.
 	Delete(ctx context.Context, id string) error
+	// SetMeta stores value under key in the machine's Meta.
+	SetMeta(ctx context.Context, id, key, value string) error
+	// Exec runs cmd as root inside the running machine with stdin, returning its stdout.
+	Exec(ctx context.Context, id string, cmd []string, stdin []byte) ([]byte, error)
 }

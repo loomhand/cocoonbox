@@ -10,6 +10,8 @@ MCP has its own listener so gRPC stays on grpc-go's native transport; Caddy send
 
 State layer (design §11): `SaveState` (quiesced), `Rebase` and a scheduled live save every `state.interval` move each box's home, `/workspace` and `agent.db` into an S3 bucket under `<box id>/`. The api owns timing, the per-box keys (`keyring`, 0600 files under `state.keyring_dir`; losing them loses the data), the chunk index and the snapshot chain; the agent chunks and encrypts through presigned URLs (`store`) over the internal `dialer`. Clients cannot call `cocoonbox.agent.v1.State`.
 
+Box identity (design §12): with `provision.signing_key_file` set, the api writes `/run/cocoonbox-identity/identity` (box id, a fresh wake id, the edge key id and public key) into each provisioned box on every boot, wake and Rebase machine through pods/exec, installs the box's own gw key from the host helper on first boot, and reports the box RUNNING only after that. The edge then signs `x-cocoonbox-credential` for (box, wake), cached until 2 minutes before expiry, and strips any client-sent copy.
+
 Layers: `boxes` (the gRPC service: users, ownership, operations) and `edge` (proxies) call only the `machines.Machines` interface and a resolver; `machines/cocoonset` is the one backend and the only package that imports client-go or cocoon-common. `cmd/cocoonbox-api` wires them.
 
 Callers authenticate with `authorization: Bearer <token>`; `/etc/cocoonbox/api.yaml` holds only `sha256(token)` per user (see `deploy/api.yaml.example`).

@@ -1,0 +1,225 @@
+package boxes
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+
+	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/credential"
+	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/CMGS/cocoonbox/api/machines"
+)
+
+func TestEnsureProvisionsBeforeRunning(t *testing.T) {
+	fake := newFakeMachines()
+	gw := &fakeGW{}
+	svc := New(fake, testDefaults)
+	svc.EnableProvisioning(fakeSigner{}, gw, []string{alice})
+	ctx := auth.WithUser(t.Context(), alice)
+
+	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning, Incarnation: "pod1/vm1"})
+	events := watch(t, svc, ctx, resp.GetOperation().GetId(), "")
+	last := events[len(events)-1]
+	if last.GetPhase() != controlv1.Phase_PHASE_DONE || last.GetBoxState() != controlv1.BoxState_BOX_STATE_RUNNING {
+		t.Fatalf("last event = %v", last)
+	}
+	if !hasDetail(events, "provisioning") {
+		t.Errorf("no provisioning event in %v", events)
+	}
+
+	execs := fake.execCalls()
+	if len(execs) != 2 || !strings.Contains(execs[0].script, "set-agent-env") || execs[0].stdin != "gw-key-"+aliceBox+"\n" {
+		t.Fatalf("exec calls = %+v, want the gw key install first", execs)
+	}
+	var file identityFile
+	if err := json.Unmarshal([]byte(execs[1].stdin), &file); err != nil || !strings.Contains(execs[1].script, "/run/cocoonbox-identity/identity") {
+		t.Fatalf("identity exec = %+v, %v", execs[1], err)
+	}
+	if file.BoxID != aliceBox || file.KeyID != "k1" || file.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(file.WakeID) {
+		t.Errorf("identity file = %+v", file)
+	}
+	if gw.calls() != "add "+aliceBox {
+		t.Errorf("gw calls = %q", gw.calls())
+	}
+	addr, wake, err := svc.Resolve(ctx, alice, aliceBox)
+	if err != nil || wake != file.WakeID || addr == "" {
+		t.Errorf("Resolve = %q, %q, %v, want wake %s", addr, wake, err, file.WakeID)
+	}
+}
+
+func TestWakeReprovisionsIdentityOnly(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
+	gw := &fakeGW{}
+	svc := New(fake, testDefaults)
+	svc.EnableProvisioning(fakeSigner{}, gw, []string{alice})
+	ctx := auth.WithUser(t.Context(), alice)
+
+	if _, wake, err := svc.Resolve(ctx, alice, aliceBox); err != nil || wake != "w-old" {
+		t.Fatalf("Resolve before wake = %q, %v", wake, err)
+	}
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm2", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
+	if _, _, err := svc.Resolve(ctx, alice, aliceBox); status.Code(err) != codes.Unavailable || status.Convert(err).Message() != "box is BOX_STATE_STARTING" {
+		t.Errorf("Resolve of an unprovisioned incarnation: %v, want Unavailable box is BOX_STATE_STARTING", err)
+	}
+	if box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
+		t.Errorf("Get = %v, %v, want STARTING", box, err)
+	}
+
+	runCtx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	go svc.RunProvisioner(runCtx, 10*time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, wake, err := svc.Resolve(ctx, alice, aliceBox); err == nil && wake != "w-old" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("provisioner did not provision the new incarnation")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if gw.calls() != "" {
+		t.Errorf("wake asked for a gw key again: %q", gw.calls())
+	}
+	if execs := fake.execCalls(); len(execs) != 1 || !strings.Contains(execs[0].script, "cocoonbox-identity") {
+		t.Errorf("exec calls = %+v, want one identity write", execs)
+	}
+}
+
+func TestProvisioningLeavesOtherUsersAlone(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
+	svc := New(fake, testDefaults)
+	svc.EnableProvisioning(fakeSigner{}, &fakeGW{}, []string{"dev"})
+	addr, wake, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox)
+	if err != nil || addr == "" || wake != "" {
+		t.Errorf("Resolve for an unprovisioned user = %q, %q, %v", addr, wake, err)
+	}
+	svc.provisionStale(t.Context())
+	if n := len(fake.execCalls()); n != 0 {
+		t.Errorf("provisioned a box outside provision users: %d execs", n)
+	}
+}
+
+func TestProvisioningFailureFailsTheOperation(t *testing.T) {
+	fake := newFakeMachines()
+	fake.execErr = errors.New("exec: 502")
+	svc := New(fake, testDefaults)
+	svc.EnableProvisioning(fakeSigner{}, nil, []string{alice})
+	svc.provision.backoff = time.Millisecond
+	ctx := auth.WithUser(t.Context(), alice)
+	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning, Incarnation: "pod1/vm1"})
+	events := watchWithin(t, svc, ctx, resp.GetOperation().GetId(), 20*time.Second)
+	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != "machine failed to start" {
+		t.Errorf("last event = %v", last)
+	}
+}
+
+func TestRebaseProvisionsTheNewMachineAndRevokesTheOld(t *testing.T) {
+	env := newStateEnv(t)
+	gw := &fakeGW{}
+	env.fake.put(machines.Machine{
+		ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop-v1", Revision: 1,
+		Incarnation: "pod0/vm0", Meta: map[string]string{metaGW: "1", metaWake: "pod0/vm0|w0"},
+	})
+	env.svc.EnableProvisioning(fakeSigner{}, gw, []string{alice})
+	env.agent.chunks = []string{hexID("c1")}
+	op, err := env.svc.Rebase(env.ctx, &controlv1.RebaseRequest{BoxId: aliceBox})
+	if err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+	newID := env.fake.waitSpec(t, 1).ID
+	env.fake.push(machines.Machine{ID: newID, State: machines.StateRunning, Incarnation: "pod1/vm1"})
+	events := watch(t, env.svc, env.ctx, op.GetId(), "")
+	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("last event = %v", last)
+	}
+	if got := env.agent.planCredential(); got != "cred:"+aliceBox+":w0" {
+		t.Errorf("save on the old machine sent credential %q", got)
+	}
+	restoreCred := env.agent.restoreCredential()
+	if !strings.HasPrefix(restoreCred, "cred:"+aliceBox+":") || restoreCred == "cred:"+aliceBox+":w0" {
+		t.Errorf("restore on the new machine sent credential %q", restoreCred)
+	}
+	if want := "add " + newID + ";revoke " + aliceBox; gw.calls() != want {
+		t.Errorf("gw calls = %q, want %q", gw.calls(), want)
+	}
+}
+
+func watchWithin(t *testing.T, svc *Service, ctx context.Context, opID string, d time.Duration) []*controlv1.OperationEvent {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(ctx, d)
+	defer cancel()
+	stream := &eventStream{ctx: ctx}
+	if err := svc.WatchOperation(&controlv1.WatchOperationRequest{OperationId: opID}, stream); err != nil {
+		t.Fatalf("WatchOperation: %v", err)
+	}
+	return stream.events
+}
+
+func hasDetail(events []*controlv1.OperationEvent, detail string) bool {
+	for _, ev := range events {
+		if ev.GetDetail() == detail {
+			return true
+		}
+	}
+	return false
+}
+
+func outgoingCredential(ctx context.Context) string {
+	md, _ := metadata.FromOutgoingContext(ctx)
+	if v := md.Get(credential.Header); len(v) == 1 {
+		return v[0]
+	}
+	return ""
+}
+
+type fakeSigner struct{}
+
+func (fakeSigner) KeyID() string                      { return "k1" }
+func (fakeSigner) PublicKey() string                  { return "pub1" }
+func (fakeSigner) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
+
+type fakeGW struct {
+	mu  sync.Mutex
+	log []string
+}
+
+func (g *fakeGW) Add(_ context.Context, machine string) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.log = append(g.log, "add "+machine)
+	return "gw-key-" + machine, nil
+}
+
+func (g *fakeGW) Revoke(_ context.Context, machine string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.log = append(g.log, "revoke "+machine)
+	return nil
+}
+
+func (g *fakeGW) calls() string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return strings.Join(g.log, ";")
+}

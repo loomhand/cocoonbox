@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"maps"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -187,7 +189,7 @@ func TestOwnership(t *testing.T) {
 	if _, err := svc.Hibernate(bob, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("Hibernate other's box: %v, want PermissionDenied", err)
 	}
-	if _, err := svc.Resolve(bob, "bob", aliceBox); status.Code(err) != codes.PermissionDenied {
+	if _, _, err := svc.Resolve(bob, "bob", aliceBox); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("Resolve other's box: %v, want PermissionDenied", err)
 	}
 	if list, err := svc.List(bob, &controlv1.ListBoxesRequest{}); err != nil || len(list.GetBoxes()) != 0 {
@@ -262,7 +264,7 @@ func TestResolve(t *testing.T) {
 			fake := newFakeMachines()
 			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 			fake.addr, fake.addrErr = "10.203.0.10:7443", tt.addrErr
-			addr, err := New(fake, testDefaults).Resolve(t.Context(), alice, aliceBox)
+			addr, _, err := New(fake, testDefaults).Resolve(t.Context(), alice, aliceBox)
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Resolve: %v, want %s %q", err, tt.want, tt.message)
 			}
@@ -271,6 +273,10 @@ func TestResolve(t *testing.T) {
 			}
 		})
 	}
+}
+
+type execCall struct {
+	machine, script, stdin string
 }
 
 // fakeMachines keeps machines in memory; Ensure mirrors the cocoonset backend and each pushed event reaches exactly one live Watch.
@@ -286,6 +292,8 @@ type fakeMachines struct {
 	ensureErr error
 	addr      string
 	addrErr   error
+	execErr   error
+	execs     []execCall
 }
 
 func newFakeMachines() *fakeMachines {
@@ -386,12 +394,47 @@ func (f *fakeMachines) Address(_ context.Context, id string) (string, error) {
 	return f.addr, f.addrErr
 }
 
+func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.machines[id]
+	if !ok {
+		return machines.ErrNotFound
+	}
+	m.Meta = maps.Clone(m.Meta)
+	if m.Meta == nil {
+		m.Meta = map[string]string{}
+	}
+	m.Meta[key] = value
+	f.machines[id] = m
+	f.pending = append(f.pending, m)
+	close(f.pushed)
+	f.pushed = make(chan struct{})
+	return nil
+}
+
+func (f *fakeMachines) Exec(_ context.Context, id string, cmd []string, stdin []byte) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.execErr != nil {
+		return nil, f.execErr
+	}
+	f.execs = append(f.execs, execCall{machine: id, script: cmd[len(cmd)-1], stdin: string(stdin)})
+	return nil, nil
+}
+
 func (f *fakeMachines) Delete(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.machines, id)
 	f.deleted = append(f.deleted, id)
 	return nil
+}
+
+func (f *fakeMachines) execCalls() []execCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.execs)
 }
 
 func (f *fakeMachines) put(m machines.Machine) {
@@ -422,6 +465,10 @@ func (f *fakeMachines) take(ctx context.Context) (machines.Machine, bool, <-chan
 	f.pending = f.pending[1:]
 	cur := f.machines[m.ID]
 	m.Owner, m.Flavor, m.Image, m.CreatedAt = cmp.Or(m.Owner, cur.Owner), cmp.Or(m.Flavor, cur.Flavor), cmp.Or(m.Image, cur.Image), cur.CreatedAt
+	m.Incarnation = cmp.Or(m.Incarnation, cur.Incarnation)
+	if m.Meta == nil {
+		m.Meta = cur.Meta
+	}
 	f.machines[m.ID] = m
 	return m, true, f.pushed
 }
