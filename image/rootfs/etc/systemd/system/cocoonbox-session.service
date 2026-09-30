@@ -12,6 +12,7 @@ Environment=LANG=en_US.UTF-8
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=/run/cocoonbox-x/Xauthority
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=XDG_RUNTIME_DIR=/run/user/1000
 Environment=XDG_SESSION_TYPE=x11
 Environment=XDG_SESSION_CLASS=user
 Environment=XDG_SESSION_DESKTOP=xfce
@@ -19,6 +20,8 @@ Environment=XDG_CURRENT_DESKTOP=XFCE
 Environment=GTK_MODULES=gail:atk-bridge
 Environment=QT_ACCESSIBILITY=1
 ExecStart=/usr/local/lib/cocoonbox/desktop-session
+ExecStartPost=-/usr/bin/systemctl --user start cua-driver.service
+ExecStopPost=-/usr/bin/systemctl --user stop cua-driver.service
 Restart=always
 RestartSec=3s
 
