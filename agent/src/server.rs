@@ -1,4 +1,4 @@
-//! gRPC surface: Agents and Session behind the edge-token check.
+//! gRPC surface: Agents, Session and State behind the edge credential check.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +12,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::config::ServeConfig;
+use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate};
 use crate::llm;
 use crate::mcp::Mcp;
 use crate::pb::agents_server::{Agents, AgentsServer};
@@ -23,8 +24,6 @@ use crate::screen;
 use crate::state::{StateEngine, StateError};
 use crate::toolhost::rpc;
 
-/// Header the edge adds to every forwarded call.
-pub const EDGE_TOKEN_HEADER: &str = "x-cocoonbox-edge-token";
 const MAX_REQUEST_BYTES: usize = 64 << 20;
 const DEFAULT_PAGE: u32 = 100;
 const MAX_PAGE: u32 = 1000;
@@ -34,23 +33,23 @@ const SCREEN_HEIGHT: u32 = 800;
 const CONNECTION_GRACE: Duration = Duration::from_millis(1000);
 const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 
-/// Rejects calls whose edge token is missing or wrong.
+/// Rejects calls the gate does not admit.
 #[derive(Clone)]
 pub struct EdgeAuth {
-    token: Arc<str>,
+    gate: Arc<Gate>,
 }
 
 impl Interceptor for EdgeAuth {
     fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
-        let got = req
-            .metadata()
-            .get(EDGE_TOKEN_HEADER)
-            .map(|v| v.as_bytes())
-            .unwrap_or_default();
-        if constant_time_eq(got, self.token.as_bytes()) {
-            Ok(req)
-        } else {
-            Err(Status::unauthenticated("missing or invalid edge token"))
+        let md = req.metadata();
+        let verdict = self.gate.check(
+            md.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()),
+            md.get(EDGE_TOKEN_HEADER).map(|v| v.as_bytes()),
+        );
+        match verdict {
+            Ok(()) => Ok(req),
+            Err(Denied::Unprovisioned(m)) => Err(Status::unavailable(m)),
+            Err(Denied::Unauthenticated(m)) => Err(Status::unauthenticated(m)),
         }
     }
 }
@@ -296,8 +295,13 @@ pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
 /// Serves both services on `listener` until `shutdown` resolves.
 /// Serves both services and `/mcp` on `listener` until `rt.stop` is cancelled, then winds down within a bounded time.
 pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), String> {
+    let gate = Arc::new(Gate::new(
+        rt.cfg.identity_path.clone(),
+        rt.cfg.identity_owner,
+        rt.cfg.edge_token.clone(),
+    ));
     let auth = EdgeAuth {
-        token: Arc::from(rt.cfg.edge_token.as_str()),
+        gate: Arc::clone(&gate),
     };
     let agents = AgentsServer::new(AgentsSvc {
         rt: Arc::clone(&rt),
@@ -318,7 +322,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         rt: Arc::clone(&rt),
         engine: Arc::new(engine),
     });
-    let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle);
+    let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
     mcp.spawn_reaper();
     let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
         .add_service(InterceptedService::new(session, auth.clone()))
@@ -391,9 +395,4 @@ fn state_status(e: StateError) -> Status {
         StateError::Invalid(m) => Status::invalid_argument(m),
         StateError::Failed(m) => Status::internal(m),
     }
-}
-
-/// Compares two secrets without an early exit.
-pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }

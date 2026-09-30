@@ -27,7 +27,8 @@ toolhost: shell · files · CDP browser · cua-driver
 
 | File | Role |
 |---|---|
-| `server.rs` | gRPC services and the `x-cocoonbox-edge-token` check (`UNAUTHENTICATED` otherwise) |
+| `server.rs` | gRPC services behind the edge check of `identity.rs` |
+| `identity.rs` | Box identity from `/run/cocoonbox-identity/identity` and the `x-cocoonbox-credential` check; the edge token only while that file is absent |
 | `dispatch.rs` | The one tool path: `Tools` interface, `Dispatcher` (record call and result, ComputerAction, driver-session injection) |
 | `journal.rs` | Store plus event bus: every transcript and status write is persisted, then published |
 | `runner.rs` | Per-agent turn queue, the main agent loop, take-over approvals, cancel |
@@ -52,7 +53,7 @@ toolhost: shell · files · CDP browser · cua-driver
 
 ## MCP (mode B)
 
-External agents such as Claude Code, Codex or Cursor use the box through `POST|GET|DELETE /mcp`, with protocol 2025-03-26, 2025-06-18 or 2025-11-25. Every request needs `x-cocoonbox-edge-token`, which the edge adds.
+External agents such as Claude Code, Codex or Cursor use the box through `POST|GET|DELETE /mcp`, with protocol 2025-03-26, 2025-06-18 or 2025-11-25. Every request needs the edge credential, which the edge adds; refusals are 401 and, before the box has an identity, 503.
 
 - `initialize` returns an `Mcp-Session-Id`. The session appears as an agent `mcp:<clientInfo.name>` whose status is RUNNING while the session lives.
 - Each tool call and its result go into that agent's transcript and onto `Session.Events`. `computer_act` also publishes a `ComputerAction` event.
@@ -66,7 +67,7 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
 
 ## State (object storage)
 
-`cocoonbox.agent.v1.State` is called by the api only. It is served on the same listener behind the same edge token.
+`cocoonbox.agent.v1.State` is called by the api only. It is served on the same listener behind the same edge check.
 
 - **Plan.** The toolhost walks `/home/user` and `/workspace` as `user`, applying the exclude list in `state::excludes()`: caches, Chrome cache dirs and runtime files, `-shm` files and restore leftovers.
   - It streams every file to `serve`, which splits the bytes with FastCDC (256 KiB / 1 MiB / 4 MiB).
@@ -94,7 +95,7 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
 
 ## Environment
 
-These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER`, `EDGE_TOKEN`, `AGENT_LISTEN`.
+These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER`, `AGENT_LISTEN`, and `EDGE_TOKEN` while boxes switch to credentials.
 
 Optional overrides with contract defaults, used by tests:
 

@@ -15,10 +15,10 @@ use axum::routing::post;
 use serde_json::{Value, json};
 
 use crate::dispatch::{Caller, uses_driver};
+use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate};
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, transcript_entry::Body as Entry};
 use crate::runner::Runtime;
-use crate::server::{EDGE_TOKEN_HEADER, constant_time_eq};
 use crate::{new_id, tools};
 
 /// Path of the MCP endpoint on the agent listener.
@@ -40,7 +40,7 @@ The user watches the screen live and sees every call.";
 /// MCP sessions of external agents, each shown as an agent `mcp:<client>`.
 pub struct Mcp {
     rt: Arc<Runtime>,
-    token: Arc<str>,
+    gate: Arc<Gate>,
     tools: Value,
     names: Vec<&'static str>,
     idle: Duration,
@@ -48,8 +48,8 @@ pub struct Mcp {
 }
 
 impl Mcp {
-    /// Creates the server; sessions idle for `idle` are closed.
-    pub fn new(rt: Arc<Runtime>, idle: Duration) -> Arc<Self> {
+    /// Creates the server behind `gate`; sessions idle for `idle` are closed.
+    pub fn new(rt: Arc<Runtime>, idle: Duration, gate: Arc<Gate>) -> Arc<Self> {
         let specs = tools::remote_tools();
         let names = specs.iter().map(|t| t.name).collect();
         let tools = specs
@@ -61,8 +61,8 @@ impl Mcp {
             })
             .collect();
         Arc::new(Self {
-            token: Arc::from(rt.cfg.edge_token.as_str()),
             rt,
+            gate,
             tools,
             names,
             idle,
@@ -129,12 +129,15 @@ impl Mcp {
         }
     }
 
-    fn authorized(&self, headers: &HeaderMap) -> bool {
-        let got = headers
-            .get(EDGE_TOKEN_HEADER)
-            .map(|v| v.as_bytes())
-            .unwrap_or_default();
-        constant_time_eq(got, self.token.as_bytes())
+    fn admit(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
+        let verdict = self.gate.check(
+            headers.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()),
+            headers.get(EDGE_TOKEN_HEADER).map(|v| v.as_bytes()),
+        );
+        verdict.map_err(|d| match d {
+            Denied::Unprovisioned(_) => StatusCode::SERVICE_UNAVAILABLE,
+            Denied::Unauthenticated(_) => StatusCode::UNAUTHORIZED,
+        })
     }
 
     fn session(
@@ -344,8 +347,8 @@ impl Drop for StreamGuard {
 }
 
 async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) -> Response {
-    if !mcp.authorized(&headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(code) = mcp.admit(&headers) {
+        return code.into_response();
     }
     let Ok(msg) = serde_json::from_slice::<Value>(&body) else {
         return rpc_failure(StatusCode::BAD_REQUEST, -32700, "parse error");
@@ -396,8 +399,8 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
 }
 
 async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
-    if !mcp.authorized(&headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(code) = mcp.admit(&headers) {
+        return code.into_response();
     }
     let session = match mcp.session(&headers) {
         Ok(s) => s,
@@ -429,8 +432,8 @@ async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
 }
 
 async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
-    if !mcp.authorized(&headers) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    if let Err(code) = mcp.admit(&headers) {
+        return code.into_response();
     }
     let removed = headers
         .get(SESSION_HEADER)

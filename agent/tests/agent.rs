@@ -1,10 +1,13 @@
 #![cfg(test)]
 
 use std::collections::{HashMap, VecDeque};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use cocoonbox_agent::config::{ServeConfig, ToolhostConfig};
 use cocoonbox_agent::pb::agents_client::AgentsClient;
 use cocoonbox_agent::pb::session_client::SessionClient;
@@ -12,7 +15,9 @@ use cocoonbox_agent::pb::{self, event, screen_client_frame, transcript_entry::Bo
 use cocoonbox_agent::runner::Runtime;
 use cocoonbox_agent::toolhost::state::Root;
 use cocoonbox_agent::{server, toolhost};
+use ed25519_dalek::{Signer, SigningKey};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, UnixListener};
 use tonic::metadata::MetadataValue;
@@ -26,6 +31,7 @@ type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
 struct Harness {
     _dir: tempfile::TempDir,
+    identity: PathBuf,
     workspace: PathBuf,
     home: PathBuf,
     endpoint: String,
@@ -50,6 +56,7 @@ impl Harness {
         std::fs::create_dir_all(&workspace).unwrap();
         let home = dir.path().join("home");
         std::fs::create_dir_all(&home).unwrap();
+        let identity = dir.path().join("identity").join("identity");
         let gw_log = Log::default();
         let gw = mock_gw(script, Arc::clone(&gw_log)).await;
         let cua_log = Log::default();
@@ -71,7 +78,9 @@ impl Harness {
             gw_api_key: "k".into(),
             model_main: "deepseek/deepseek-v4.1-flash".into(),
             model_computer: "anthropic/claude-sonnet-5".into(),
-            edge_token: TOKEN.into(),
+            edge_token: Some(TOKEN.into()),
+            identity_path: identity.clone(),
+            identity_owner: std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()),
             listen: "127.0.0.1:0".parse().unwrap(),
             state_dir: dir.path().join("state"),
             toolhost_socket: toolhost_socket.clone(),
@@ -114,6 +123,7 @@ impl Harness {
         }
         Self {
             _dir: dir,
+            identity,
             workspace,
             home,
             endpoint,
@@ -378,6 +388,115 @@ fn gw_bodies(log: &Log, path: &str) -> Vec<Value> {
         .filter(|(p, _)| p.ends_with(path))
         .map(|(_, b)| b.clone())
         .collect()
+}
+
+fn write_identity(path: &Path, key: &SigningKey, wake_id: &str) -> String {
+    let public_key = key.verifying_key().to_bytes();
+    let key_id = hex::encode(Sha256::digest(public_key))[..16].to_owned();
+    let dir = path.parent().unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let identity = json!({
+        "box_id": "cb-box",
+        "wake_id": wake_id,
+        "key_id": key_id,
+        "public_key": URL_SAFE_NO_PAD.encode(public_key),
+    });
+    std::fs::write(dir.join("tmp"), identity.to_string()).unwrap();
+    std::fs::set_permissions(dir.join("tmp"), std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::rename(dir.join("tmp"), path).unwrap();
+    key_id
+}
+
+fn credential(key: &SigningKey, key_id: &str, box_id: &str, wake_id: &str) -> String {
+    let exp = cocoonbox_agent::now_ms() / 1000 + 600;
+    let signed = format!(
+        "v1.{}",
+        URL_SAFE_NO_PAD.encode(format!("{key_id}|{box_id}|{wake_id}|{exp}"))
+    );
+    let sig = URL_SAFE_NO_PAD.encode(key.sign(signed.as_bytes()).to_bytes());
+    format!("{signed}.{sig}")
+}
+
+async fn surface_codes(h: &Harness, credential: Option<&str>, token: Option<&str>) -> Vec<String> {
+    fn with<T>(msg: T, credential: Option<&str>, token: Option<&str>) -> Request<T> {
+        let mut req = Request::new(msg);
+        if let Some(c) = credential {
+            req.metadata_mut()
+                .insert("x-cocoonbox-credential", c.parse().unwrap());
+        }
+        if let Some(t) = token {
+            req.metadata_mut()
+                .insert("x-cocoonbox-edge-token", t.parse().unwrap());
+        }
+        req
+    }
+    fn code<T>(r: Result<T, tonic::Status>) -> String {
+        r.map_or_else(|e| format!("{:?}", e.code()), |_| "Ok".into())
+    }
+    let agents = h
+        .agents()
+        .await
+        .list(with(pb::ListAgentsRequest {}, credential, token))
+        .await;
+    let hello = h
+        .session()
+        .await
+        .hello(with(pb::HelloRequest::default(), credential, token))
+        .await;
+    let plan = state_client(h)
+        .await
+        .plan(with(pb::PlanRequest::default(), credential, token))
+        .await;
+    let mut mcp = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}));
+    if let Some(c) = credential {
+        mcp = mcp.header("x-cocoonbox-credential", c);
+    }
+    if let Some(t) = token {
+        mcp = mcp.header("x-cocoonbox-edge-token", t);
+    }
+    let mcp = mcp.send().await.unwrap().status().as_u16();
+    vec![code(agents), code(hello), code(plan), mcp.to_string()]
+}
+
+#[tokio::test]
+async fn credential_guards_every_surface() {
+    let h = Harness::start(Vec::new(), false).await;
+    let admitted = ["Ok", "Ok", "InvalidArgument", "200"];
+    let refused = [
+        "Unauthenticated",
+        "Unauthenticated",
+        "Unauthenticated",
+        "401",
+    ];
+    let unavailable = ["Unavailable", "Unavailable", "Unavailable", "503"];
+    assert_eq!(surface_codes(&h, None, Some(TOKEN)).await, admitted);
+
+    let key = SigningKey::from_bytes(&[5; 32]);
+    let key_id = write_identity(&h.identity, &key, "w1");
+    let good = credential(&key, &key_id, "cb-box", "w1");
+    assert_eq!(surface_codes(&h, Some(&good), None).await, admitted);
+    assert_eq!(surface_codes(&h, None, Some(TOKEN)).await, refused);
+    let other_box = credential(&key, &key_id, "cb-other", "w1");
+    assert_eq!(surface_codes(&h, Some(&other_box), None).await, refused);
+    let forged = credential(&SigningKey::from_bytes(&[6; 32]), &key_id, "cb-box", "w1");
+    assert_eq!(surface_codes(&h, Some(&forged), Some(TOKEN)).await, refused);
+
+    write_identity(&h.identity, &key, "w2");
+    let woken = credential(&key, &key_id, "cb-box", "w2");
+    assert_eq!(surface_codes(&h, Some(&woken), None).await, admitted);
+    assert_eq!(surface_codes(&h, Some(&good), None).await, refused);
+
+    let attacker = SigningKey::from_bytes(&[8; 32]);
+    let swapped = write_identity(&h.identity, &attacker, "w2");
+    std::fs::set_permissions(&h.identity, std::fs::Permissions::from_mode(0o666)).unwrap();
+    let self_signed = credential(&attacker, &swapped, "cb-box", "w2");
+    assert_eq!(
+        surface_codes(&h, Some(&self_signed), Some(TOKEN)).await,
+        unavailable
+    );
 }
 
 #[tokio::test]
