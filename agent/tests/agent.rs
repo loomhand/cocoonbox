@@ -519,8 +519,8 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
     assert_eq!(
         deltas,
         [
-            (0, "Let me check.".to_owned()),
-            (1, "Wrote ok.txt.".to_owned())
+            (1, "Let me check.".to_owned()),
+            (2, "Wrote ok.txt.".to_owned())
         ]
     );
     let blocks: Vec<(u32, &str)> = bodies
@@ -530,7 +530,7 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
             _ => None,
         })
         .collect();
-    assert_eq!(blocks, [(0, "Let me check."), (1, "Wrote ok.txt.")]);
+    assert_eq!(blocks, [(1, "Let me check."), (2, "Wrote ok.txt.")]);
     assert!(
         !chats[0]["tools"]
             .as_array()
@@ -1931,5 +1931,73 @@ async fn live_snapshot_skips_a_file_that_keeps_changing() {
     assert!(
         paths.contains(&"steady.txt") && !paths.contains(&"growing.bin"),
         "{paths:?}"
+    );
+}
+
+#[tokio::test]
+async fn upload_can_span_several_calls_with_the_manifest_last() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    std::fs::write(h.workspace.join("big.bin"), noise(6 << 20, 11)).unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    let ids: Vec<String> = planned.chunks.iter().map(|c| c.id.clone()).collect();
+    assert!(ids.len() >= 3, "{}", ids.len());
+    let put = |id: &str| pb::PresignedPut {
+        chunk_id: id.into(),
+        url: format!("{base}/{id}"),
+        headers: HashMap::new(),
+    };
+    let (first, rest) = ids.split_at(ids.len() / 2);
+    let call = |puts: Vec<pb::PresignedPut>, manifest: Option<pb::PresignedPut>| {
+        let snapshot_id = planned.snapshot_id.clone();
+        let h = &h;
+        async move {
+            let mut stream = state_client(h)
+                .await
+                .upload(authed(pb::UploadRequest {
+                    snapshot_id,
+                    key: Some(state_key()),
+                    puts,
+                    manifest,
+                }))
+                .await
+                .unwrap()
+                .into_inner();
+            let mut last = None;
+            while let Some(p) = stream.message().await.unwrap() {
+                last = Some(p);
+            }
+            last.unwrap()
+        }
+    };
+    let part = call(first.iter().map(|id| put(id)).collect(), None).await;
+    assert!(!part.finished);
+    assert_eq!(part.done_chunks as usize, first.len());
+    let done = call(
+        rest.iter().map(|id| put(id)).collect(),
+        Some(put(&planned.snapshot_id)),
+    )
+    .await;
+    assert!(done.finished);
+    assert_eq!(done.manifest_id, planned.snapshot_id);
+    assert_eq!(objects.lock().unwrap().len(), ids.len() + 1);
+    let again = state_client(&h)
+        .await
+        .upload(authed(pb::UploadRequest {
+            snapshot_id: planned.snapshot_id.clone(),
+            key: Some(state_key()),
+            puts: Vec::new(),
+            manifest: Some(put(&planned.snapshot_id)),
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .message()
+        .await
+        .unwrap_err();
+    assert_eq!(
+        again.code(),
+        Code::InvalidArgument,
+        "the snapshot is unpinned after the manifest"
     );
 }

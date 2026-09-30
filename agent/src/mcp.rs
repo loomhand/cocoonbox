@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -167,6 +168,7 @@ impl Mcp {
             id: new_id("mcp"),
             agent_id: agent.id,
             turn_id,
+            blocks: AtomicU32::new(0),
             driver: Mutex::new(Driver::default()),
         });
         let note = format!("MCP session opened by {client} {version}");
@@ -284,6 +286,7 @@ impl Mcp {
     async fn note(&self, s: &Session, text: &str) {
         let body = Entry::Text(pb::TextBlock {
             text: text.to_owned(),
+            block: s.blocks.fetch_add(1, Ordering::Relaxed),
             ..Default::default()
         });
         self.record(s, Role::System, body).await;
@@ -305,6 +308,7 @@ struct Session {
     id: String,
     agent_id: String,
     turn_id: String,
+    blocks: AtomicU32,
     driver: Mutex<Driver>,
 }
 

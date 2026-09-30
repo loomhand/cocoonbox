@@ -356,7 +356,8 @@ impl Runtime {
         let ctx = TurnCtx {
             agent_id: agent_id.to_owned(),
             turn_id,
-            blocks: AtomicU32::new(0),
+            // block 0 is the user's entry
+            blocks: AtomicU32::new(1),
             model,
             slot,
         };
