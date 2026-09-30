@@ -92,7 +92,9 @@ Optional overrides with contract defaults, used by tests:
 
 ```
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
-cargo build --release --locked
+./build-release.sh        # cargo build --release --locked with path remapping; prints the sha256
 ```
+
+`build-release.sh` remaps the target dir, `CARGO_HOME` and the source dir, so the same commit builds to the same bytes in any directory.
 
 `protoc` must be on `PATH`. The protos are read from `../proto`.
