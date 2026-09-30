@@ -9,14 +9,14 @@ public protocol ScreenTransport: Sendable {
     func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws
 }
 
-public struct GRPCScreenTransport: ScreenTransport {
+struct GRPCScreenTransport: ScreenTransport {
     let session: SessionClient
 
-    public init(session: SessionClient) {
+    init(session: SessionClient) {
         self.session = session
     }
 
-    public func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws {
+    func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws {
         var options = CallOptions.defaults
         options.maxResponseMessageBytes = 32 << 20
         try await session.screen(

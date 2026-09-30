@@ -2,13 +2,9 @@ import AppKit
 import CocoonBoxKit
 import Observation
 import QuartzCore
-import RFB
-import RFBMetal
-import Synchronization
 
-// ScreenController owns the live view: the RFB session over Session.Screen,
-// the Metal view and the ComputerAction marker overlay. It reconnects the
-// session while the box is running.
+// ScreenController adapts CocoonBoxKit's LiveScreen to SwiftUI state and
+// hosts it with the ComputerAction marker overlay.
 @MainActor @Observable
 final class ScreenController {
     enum Status: Equatable {
@@ -18,7 +14,7 @@ final class ScreenController {
         case failed(String)
     }
 
-    // eagerHandshakeKey turns on RFBClient.eagerHandshake (one write before the
+    // eagerHandshakeKey turns on the eager RFB handshake (one write before the
     // server's banner); only for a box whose RFB server speaks 3.8 without a
     // password. CB_RFB_EAGER=1 overrides it.
     static let eagerHandshakeKey = "rfbEagerHandshake"
@@ -27,150 +23,67 @@ final class ScreenController {
     var framebufferSize = CGSize.zero
     var poppedOut = false
     var takeOver = false {
-        didSet { view?.isInputEnabled = takeOver }
+        didSet { screen?.inputEnabled = takeOver }
     }
 
     @ObservationIgnored let container = LiveScreenContainer()
-    @ObservationIgnored private var view: RFBView?
-    @ObservationIgnored private var session: ScreenSession?
-    @ObservationIgnored private var sessionTask: Task<Void, Never>?
-    @ObservationIgnored private var sessionClient: SessionClient?
-    @ObservationIgnored private var attempt = 0
-    @ObservationIgnored private var reconnectTask: Task<Void, Never>?
-    @ObservationIgnored private let latency = InputLatency()
-    @ObservationIgnored private let environment = ProcessInfo.processInfo.environment
+    @ObservationIgnored private var screen: LiveScreen?
+    @ObservationIgnored private var connection: BoxConnection?
 
-    var screenStats: ScreenSession.Stats? { session?.stats }
+    var screenStats: ScreenSession.Stats? { screen?.stats }
 
-    var updateCount: Int { latency.updates.load(ordering: .relaxed) }
+    var updateCount: Int { screen?.updateCount ?? 0 }
 
-    func start(session client: SessionClient) {
-        sessionClient = client
-        if view == nil, let metal = RFBView() {
-            metal.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 1).cgColor
-            metal.onFirstFrame = { [weak self] in
-                Perf.mark("first_frame_presented")
-                self?.status = .live
-            }
-            metal.onInput = { [latency] in latency.input() }
-            metal.onPresent = { [latency] in latency.presented() }
-            container.install(metal)
-            view = metal
-            Perf.mark("render_path", "metal")
+    var encodingSummary: String { screen?.encodingSummary ?? "" }
+
+    var framebufferImage: CGImage? { screen?.snapshot() }
+
+    func start(_ connection: BoxConnection) {
+        self.connection = connection
+        if screen == nil, let live = LiveScreen(options: Self.options) {
+            live.onStatus = { [weak self] in self?.apply($0) }
+            container.install(live)
+            screen = live
         }
-        guard let view else {
+        guard let screen else {
             status = .failed("Metal unavailable")
             return
         }
-        view.isInputEnabled = takeOver
-        reconnectTask?.cancel()
-        reconnectTask = Task { self.open() }
+        screen.inputEnabled = takeOver
+        screen.start(connection)
     }
 
     func stop() {
-        sessionClient = nil
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        sessionTask?.cancel()
-        sessionTask = nil
-        session = nil
-        view?.client = nil
-        status = .idle
+        connection = nil
+        screen?.stop()
         takeOver = false
     }
 
     func reopen() {
-        guard let client = sessionClient else { return }
+        guard let connection else { return }
         stop()
-        start(session: client)
+        start(connection)
     }
 
-    private var configuration: RFBClient.Configuration {
-        var configuration = RFBClient.Configuration()
-        // CB_RFB_RAW=1 forces Raw for throughput baselines
-        if environment["CB_RFB_RAW"] == "1" {
-            configuration.encodings = [.raw]
-            configuration.jpegQuality = nil
-        }
-        // CB_RFB_PACE=0 turns off request pacing, for A/B runs
-        if environment["CB_RFB_PACE"] == "0" {
-            configuration.requestInterval = nil
-        }
-        configuration.eagerHandshake = environment["CB_RFB_EAGER"].map { $0 == "1" }
-            ?? UserDefaults.standard.bool(forKey: Self.eagerHandshakeKey)
-        configuration.collectsStatistics = environment["CB_RFB_PROBE"] == "1"
-        return configuration
+    private static var options: LiveScreen.Options {
+        let environment = ProcessInfo.processInfo.environment
+        var options = LiveScreen.Options()
+        options.rawOnly = environment["CB_RFB_RAW"] == "1"
+        options.pacing = environment["CB_RFB_PACE"] != "0"
+        options.eagerHandshake = environment["CB_RFB_EAGER"].map { $0 == "1" }
+            ?? UserDefaults.standard.bool(forKey: eagerHandshakeKey)
+        options.collectsStatistics = environment["CB_RFB_PROBE"] == "1"
+        options.tracedChunks = environment["CB_SCREEN_TRACE"].flatMap { Int($0) } ?? 8
+        return options
     }
 
-    private func open() {
-        guard let client = sessionClient, let view else { return }
-        status = .connecting
-        sessionTask?.cancel()
-        let session = ScreenSession(
-            transport: GRPCScreenTransport(session: client),
-            configuration: configuration,
-            tracedChunks: environment["CB_SCREEN_TRACE"].flatMap { Int($0) } ?? 8
-        )
-        self.session = session
-        view.client = session.client
-        let draw = view.eventHandler
-        let latency = latency
-        let connectAt = Perf.sinceStartMs
-        Perf.mark("rfb_connect")
-        sessionTask = Task { [weak self] in
-            let first = Atomic(true)
-            let outcome: String
-            do {
-                try await session.run { event in
-                    draw(event)
-                    switch event {
-                    case .connected(let info):
-                        Perf.mark("rfb_status", "connected \(info.width)x\(info.height) rfb=\(info.version)")
-                        Task { @MainActor in self?.connected(info) }
-                    case .resized(let framebuffer):
-                        Perf.mark("rfb_framebuffer", "\(framebuffer.width)x\(framebuffer.height)")
-                    case .updated(_, let dirty):
-                        if first.exchange(false, ordering: .relaxed) {
-                            Perf.mark("rfb_first_update", String(format: "since_connect_ms=%.1f", Perf.sinceStartMs - connectAt))
-                        }
-                        latency.updated(dirty)
-                    default:
-                        break
-                    }
-                }
-                outcome = "ended"
-            } catch {
-                outcome = "\(error)"
-            }
-            guard !Task.isCancelled else { return }
-            Perf.mark("rfb_status", "disconnected \(outcome)")
-            self?.disconnected(outcome, session: session)
-        }
-    }
-
-    private func connected(_ info: RFBServerInfo) {
-        attempt = 0
-        framebufferSize = CGSize(width: info.width, height: info.height)
-    }
-
-    private func disconnected(_ reason: String, session: ScreenSession) {
-        guard self.session === session else { return }
-        if configuration.collectsStatistics {
-            Perf.mark("rfb_encodings", encodingSummary)
-        }
-        status = .failed(reason)
-        scheduleReconnect()
-    }
-
-    private func scheduleReconnect() {
-        guard sessionClient != nil else { return }
-        let delay = Backoff(initial: .milliseconds(500), max: .seconds(10)).delay(attempt: attempt)
-        attempt += 1
-        reconnectTask?.cancel()
-        reconnectTask = Task {
-            try? await pause(delay)
-            guard !Task.isCancelled else { return }
-            open()
+    private func apply(_ screenStatus: LiveScreen.Status) {
+        switch screenStatus {
+        case .idle: status = .idle
+        case .connecting: status = .connecting
+        case .connected(let width, let height): framebufferSize = CGSize(width: width, height: height)
+        case .live: status = .live
+        case .failed(let reason): status = .failed(reason)
         }
     }
 
@@ -178,80 +91,27 @@ final class ScreenController {
         container.showMarker(x: Int(action.x), y: Int(action.y), label: action.action)
     }
 
-    var framebufferImage: CGImage? { view?.snapshot() }
-
-    var encodingSummary: String {
-        guard let statistics = session?.client.statistics else { return "" }
-        return statistics.encodings.map { "\($0.key)=\($0.value.rects)" }.sorted().joined(separator: " ")
-    }
-
     // typeText drives the take-over path from automation.
     func typeText(_ text: String) {
         guard takeOver else { return }
-        latency.input()
-        view?.typeText(text)
+        screen?.typeText(text)
     }
 
-    // click sends a left click at framebuffer coordinates through the take-over path.
     func click(x: Int, y: Int) {
-        guard takeOver, let client = session?.client else { return }
-        latency.input()
-        client.pointer(x: x, y: y, buttons: [])
-        client.pointer(x: x, y: y, buttons: .left)
-        client.pointer(x: x, y: y, buttons: [])
+        guard takeOver else { return }
+        screen?.click(x: x, y: y)
     }
 
-    // control sends Control+<character> through the take-over path.
     func control(_ character: String) {
-        guard takeOver, let client = session?.client else { return }
-        latency.input()
-        let controlKey: UInt32 = 0xFFE3
-        client.key(controlKey, down: true)
-        client.type(character)
-        client.key(controlKey, down: false)
-    }
-}
-
-// InputLatency marks input_rtt, from an input to the next decoded update,
-// and input_to_present, to the next frame on the display after that update.
-final class InputLatency: Sendable {
-    let updates = Atomic(0)
-    private let state = Mutex<(inputAt: Double?, updatedAt: Double?)>((nil, nil))
-
-    func input() {
-        state.withLock { s in
-            if s.inputAt == nil { s = (Perf.sinceStartMs, nil) }
-        }
-    }
-
-    func updated(_ dirty: RFBRect) {
-        updates.add(1, ordering: .relaxed)
-        let inputAt = state.withLock { s -> Double? in
-            guard let inputAt = s.inputAt, s.updatedAt == nil else { return nil }
-            s.updatedAt = Perf.sinceStartMs
-            return inputAt
-        }
-        if let inputAt {
-            Perf.mark("input_rtt", String(format: "ms=%.1f rect=%dx%d", Perf.sinceStartMs - inputAt, dirty.width, dirty.height))
-        }
-    }
-
-    func presented() {
-        let inputAt = state.withLock { s -> Double? in
-            guard let inputAt = s.inputAt, s.updatedAt != nil else { return nil }
-            s = (nil, nil)
-            return inputAt
-        }
-        if let inputAt {
-            Perf.mark("input_to_present", String(format: "ms=%.1f", Perf.sinceStartMs - inputAt))
-        }
+        guard takeOver else { return }
+        screen?.control(character)
     }
 }
 
 // LiveScreenContainer stacks the Metal view and a non-interactive overlay
 // that draws ComputerAction markers.
 final class LiveScreenContainer: NSView {
-    private var metal: RFBView?
+    private var screen: LiveScreen?
     private let overlay = MarkerOverlay()
 
     init() {
@@ -266,26 +126,26 @@ final class LiveScreenContainer: NSView {
         fatalError("init(coder:) is not supported")
     }
 
-    func install(_ view: RFBView) {
-        metal = view
-        addSubview(view, positioned: .below, relativeTo: overlay)
+    func install(_ screen: LiveScreen) {
+        self.screen = screen
+        addSubview(screen.view, positioned: .below, relativeTo: overlay)
         needsLayout = true
     }
 
     override func layout() {
         super.layout()
         overlay.frame = bounds
-        metal?.frame = bounds
+        screen?.view.frame = bounds
     }
 
     var framebufferRectInWindow: CGRect? {
-        guard let metal, metal.window != nil, metal.contentRect.width > 0 else { return nil }
-        return metal.convert(metal.contentRect, to: nil)
+        guard let screen, screen.view.window != nil, screen.contentRect.width > 0 else { return nil }
+        return screen.view.convert(screen.contentRect, to: nil)
     }
 
     func showMarker(x: Int, y: Int, label: String) {
-        guard let metal, let point = metal.viewPoint(framebufferX: x, y: y) else { return }
-        overlay.pulse(at: convert(point, from: metal), label: label)
+        guard let screen, let point = screen.viewPoint(framebufferX: x, y: y) else { return }
+        overlay.pulse(at: convert(point, from: screen.view), label: label)
     }
 }
 

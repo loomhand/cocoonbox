@@ -78,7 +78,7 @@ actor MockWorld {
         let steps: [(Cocoonbox_Control_V1_Phase, String, Cocoonbox_Control_V1_BoxState)] = [
             (phase, "scheduling on cocoon-cb", .starting),
             (phase, waking ? "restoring memory snapshot" : "cloning cocoonbox-desktop-v1", .starting),
-            (phase, "waiting for agent on :7443", .starting),
+            (phase, "waiting for the agent", .starting),
             (.done, "box is running", .running),
         ]
         let delay = bootDelay

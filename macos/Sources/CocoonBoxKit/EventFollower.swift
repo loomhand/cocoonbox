@@ -107,7 +107,7 @@ public struct EventFollower<Event: Sendable>: Sendable {
 }
 
 extension EventFollower where Event == Cocoonbox_Agent_V1_Event {
-    public static func session(backoff: Backoff = Backoff()) -> Self {
+    static func session(backoff: Backoff = Backoff()) -> Self {
         Self(
             backoff: backoff,
             offsetOf: { $0.offset },
@@ -126,7 +126,7 @@ extension EventFollower where Event == Cocoonbox_Agent_V1_Event {
 
 extension SessionClient {
     // subscribeEvents adapts Session.Events to EventFollower.Subscribe.
-    public func subscribeEvents(
+    func subscribeEvents(
         from offset: UInt64,
         deliver: @escaping @Sendable (Cocoonbox_Agent_V1_Event) async -> Void
     ) async throws {

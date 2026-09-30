@@ -4,7 +4,7 @@ Native client for cocoonbox: sign in, start or wake the box, talk to its agents,
 
 | Target | What |
 |---|---|
-| `CocoonBoxKit` | generated protobuf and gRPC clients, the shared HTTP/2 connection, resumable event follower, the RFB session over `Session.Screen` |
+| `CocoonBoxKit` | the app's only interface below the UI: `BoxConnection` (one HTTP/2 connection; Boxes, Agents and Session calls and the resumable event follower, with the gRPC clients kept internal) and `LiveScreen` (the swift-rfb client and view over `Session.Screen`) |
 | `CocoonBox` | the SwiftUI + AppKit app |
 | `MockBox` | a local server for Boxes, Agents and Session with canned turns and a synthetic RFB desktop |
 | `RFBTestServer` | the synthetic RFB 3.8 server used by MockBox and the tests |
@@ -40,7 +40,7 @@ Each MCP session appears under Agents as `mcp:<client>`, with an External badge.
 
 ## Live view
 
-The app opens `Session.Screen` and runs a [swift-rfb](https://github.com/CMGS/swift-rfb) client directly on it: server bytes feed an `RFBPipe`, and the client's bytes go back as `ScreenClientFrame`s. There is no loopback socket. The client decodes into page-aligned memory that `RFBView` shows as a Metal texture without a copy. It draws on the display link only after a change, and asks for the next update once the GPU has read the frame, so an idle screen costs no CPU and no wakeups. It uses ContinuousUpdates when the server offers them (TigerVNC). Otherwise it paces incremental requests every 33 ms while updates arrive (x11vnc), so a high-latency path is not held to one update per round trip.
+The app opens `Session.Screen` and runs a [swift-rfb](https://github.com/CMGS/swift-rfb) client directly on it: server bytes feed an `RFBPipe`, and the client's bytes go back as `ScreenClientFrame`s. There is no loopback socket. The client decodes into page-aligned memory that `RFBView` shows as a Metal texture without a copy. It draws on the display link only after a change, and asks for the next update once the GPU has read the frame, so an idle screen costs no CPU and no wakeups. It uses ContinuousUpdates when the server offers them. Otherwise it paces incremental requests every 33 ms while updates arrive, so a high-latency path is not held to one update per round trip.
 
 swift-rfb is a local path package (`../../swift-rfb`), so it must be checked out next to this repository.
 

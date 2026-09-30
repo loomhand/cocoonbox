@@ -31,16 +31,13 @@ let package = Package(
                 .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
                 .product(name: "RFB", package: "swift-rfb"),
+                .product(name: "RFBMetal", package: "swift-rfb"),
             ]
         ),
         .target(name: "RFBTestServer"),
         .executableTarget(
             name: "CocoonBox",
-            dependencies: [
-                "CocoonBoxKit",
-                .product(name: "RFB", package: "swift-rfb"),
-                .product(name: "RFBMetal", package: "swift-rfb"),
-            ]
+            dependencies: ["CocoonBoxKit"]
         ),
         .executableTarget(
             name: "MockBox",

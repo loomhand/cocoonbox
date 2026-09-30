@@ -1,7 +1,6 @@
 import AppKit
 import CocoonBoxKit
 import Foundation
-import GRPCCore
 import Observation
 
 typealias Box = Cocoonbox_Control_V1_Box
@@ -176,8 +175,7 @@ final class AppModel {
     func refreshBox() async -> Bool {
         guard let connection else { return false }
         do {
-            let list = try await connection.boxes.list(Cocoonbox_Control_V1_ListBoxesRequest())
-            apply(box: list.boxes.first)
+            apply(box: try await connection.firstBox())
             lastError = nil
             return true
         } catch {
@@ -206,7 +204,7 @@ final class AppModel {
             defer { busy = false }
             do {
                 Perf.mark("ensure_start")
-                let response = try await connection.boxes.ensure(Cocoonbox_Control_V1_EnsureRequest())
+                let response = try await connection.ensure()
                 apply(box: response.box)
                 if response.hasOperation, !response.operation.id.isEmpty {
                     watch(operation: response.operation.id, title: response.box.state == .starting ? "Starting box" : "Ensure")
@@ -224,7 +222,7 @@ final class AppModel {
         Task {
             defer { busy = false }
             do {
-                let op = try await connection.boxes.hibernate(.with { $0.boxID = box.id })
+                let op = try await connection.hibernate(boxID: box.id)
                 watch(operation: op.id, title: "Hibernating")
             } catch {
                 report("hibernate", error)
@@ -242,13 +240,8 @@ final class AppModel {
                 guard let self, let connection = self.connection else { return }
                 let from = self.operation?.events.last?.offsetKey ?? ""
                 do {
-                    try await connection.boxes.watchOperation(.with {
-                        $0.operationID = id
-                        $0.fromOffsetKey = from
-                    }) { response in
-                        for try await event in response.messages {
-                            await self.record(operationEvent: event)
-                        }
+                    try await connection.watchOperation(id, after: from) { event in
+                        await self.record(operationEvent: event)
                     }
                 } catch {
                     if Task.isCancelled { return }
@@ -285,21 +278,15 @@ final class AppModel {
         guard let connection, let box else { return }
         connection.boxID = box.id
         eventsTask?.cancel()
-        let follower = EventFollower<Cocoonbox_Agent_V1_Event>.session()
-        let session = connection.session
         eventsTask = Task {
             await loadHello()
-            await follower.run(
-                from: 0,
-                subscribe: { offset, deliver in
-                    try await session.subscribeEvents(from: offset, deliver: deliver)
-                },
+            await connection.followEvents(
                 onEvent: { event in await self.handle(event: event) },
                 onResync: { await self.resync() },
                 onDisconnect: { error in await self.eventsDropped(error) }
             )
         }
-        screen.start(session: connection.session)
+        screen.start(connection)
     }
 
     private func stopAgentSide() {
@@ -313,7 +300,7 @@ final class AppModel {
         guard let connection else { return }
         for attempt in 0..<8 {
             do {
-                hello = try await connection.session.hello(.with { $0.clientVersion = "cocoonbox-macos/0.1" })
+                hello = try await connection.hello(clientVersion: "cocoonbox-macos/0.1")
                 Perf.mark("hello", "agent=\(hello?.agentVersion ?? "") screen=\(hello?.screenWidth ?? 0)x\(hello?.screenHeight ?? 0)")
                 return
             } catch {
@@ -334,8 +321,7 @@ final class AppModel {
     private func resync() async {
         guard let connection else { return }
         do {
-            let list = try await connection.agents.list(Cocoonbox_Agent_V1_ListAgentsRequest())
-            agents = list.agents.sorted { $0.createdAtMs < $1.createdAtMs }
+            agents = try await connection.listAgents().sorted { $0.createdAtMs < $1.createdAtMs }
             live = [:]
             if selectedAgentID == nil || !agents.contains(where: { $0.id == selectedAgentID }) {
                 selectedAgentID = agents.last?.id
@@ -355,11 +341,7 @@ final class AppModel {
         var after: UInt64 = 0
         while true {
             do {
-                let page = try await connection.agents.transcript(.with {
-                    $0.agentID = agentID
-                    $0.afterSeq = after
-                    $0.limit = 200
-                })
+                let page = try await connection.transcript(agentID: agentID, after: after, limit: 200)
                 for entry in page.entries {
                     upsert(entry)
                 }
@@ -448,10 +430,7 @@ final class AppModel {
         guard let connection else { return }
         Task {
             do {
-                let agent = try await connection.agents.create(.with {
-                    $0.name = name
-                    $0.clientNonce = UUID().uuidString
-                })
+                let agent = try await connection.createAgent(name: name)
                 if !agents.contains(where: { $0.id == agent.id }) {
                     agents.append(agent)
                 }
@@ -469,11 +448,7 @@ final class AppModel {
         Perf.mark("send", "agent=\(agentID)")
         Task {
             do {
-                _ = try await connection.agents.send(.with {
-                    $0.agentID = agentID
-                    $0.text = text
-                    $0.clientNonce = UUID().uuidString
-                })
+                try await connection.send(agentID: agentID, text: text)
             } catch {
                 report("send", error)
             }
@@ -488,12 +463,7 @@ final class AppModel {
         }
         Task {
             do {
-                _ = try await connection.agents.respond(.with {
-                    $0.agentID = agentID
-                    $0.approvalID = approval.approvalID
-                    $0.approve = approve
-                    $0.text = text
-                })
+                try await connection.respond(agentID: agentID, approvalID: approval.approvalID, approve: approve, text: text)
             } catch {
                 answeredApprovals.remove(approval.approvalID)
                 report("respond", error)
@@ -505,7 +475,7 @@ final class AppModel {
         guard let connection, let agentID = selectedAgentID else { return }
         Task {
             do {
-                _ = try await connection.agents.cancel(.with { $0.agentID = agentID })
+                try await connection.cancel(agentID: agentID)
             } catch {
                 report("cancel", error)
             }
@@ -513,12 +483,7 @@ final class AppModel {
     }
 
     private func report(_ what: String, _ error: any Error) {
-        let message: String
-        if let rpc = error as? RPCError {
-            message = "\(what): \(rpc.code) \(rpc.message)"
-        } else {
-            message = "\(what): \(error)"
-        }
+        let message = "\(what): \(BoxConnection.describe(error))"
         lastError = message
         Perf.mark("error", message)
     }
