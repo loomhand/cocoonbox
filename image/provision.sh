@@ -14,6 +14,7 @@ PACKAGES=(
 	tigervnc-xorg-extension xauth x11-xserver-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
 	mousepad nftables sudo libnss-myhostname
+	locales fonts-noto-cjk fonts-noto-color-emoji
 )
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -72,7 +73,9 @@ setup_users() {
 	passwd -l root >/dev/null
 	sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/; s/^AcceptEnv /#AcceptEnv /' /etc/ssh/sshd_config
 	usermod -c "cocoonbox user" user
-	printf 'LANG=C.UTF-8\n' > /etc/default/locale
+	sed -i -E 's/^# *(en_US\.UTF-8 UTF-8|zh_CN\.UTF-8 UTF-8)$/\1/' /etc/locale.gen
+	locale-gen >/dev/null
+	printf 'LANG=en_US.UTF-8\n' > /etc/default/locale
 }
 
 install_rootfs() {

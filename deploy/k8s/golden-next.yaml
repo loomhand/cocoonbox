@@ -8,7 +8,7 @@ spec:
   nodePool: default
   snapshotPolicy: never
   agent:
-    image: cocoonbox-desktop-v3
+    image: cocoonbox-desktop-v4
     mode: clone
     network: cb
     probePort: 22
