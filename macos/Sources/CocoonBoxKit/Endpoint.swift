@@ -39,9 +39,9 @@ public struct Endpoint: Sendable, Hashable {
 public enum Keychain {
     // CB_KEYCHAIN_SERVICE lets dev builds keep their token apart from the
     // installed app's item, whose ACL would prompt for a new binary.
-    static let service = ProcessInfo.processInfo.environment["CB_KEYCHAIN_SERVICE"] ?? "me.cmgs.cocoonbox"
+    public static let service = ProcessInfo.processInfo.environment["CB_KEYCHAIN_SERVICE"] ?? "me.cmgs.cocoonbox"
 
-    public static func token(for endpoint: Endpoint) -> String? {
+    public static func token(for endpoint: Endpoint, service: String = service) -> String? {
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -56,7 +56,7 @@ public enum Keychain {
         return String(data: data, encoding: .utf8)
     }
 
-    public static func setToken(_ token: String, for endpoint: Endpoint) throws {
+    public static func setToken(_ token: String, for endpoint: Endpoint, service: String = service) throws {
         let match: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -71,7 +71,7 @@ public enum Keychain {
         }
     }
 
-    public static func deleteToken(for endpoint: Endpoint) {
+    public static func deleteToken(for endpoint: Endpoint, service: String = service) {
         let match: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,

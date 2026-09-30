@@ -10,12 +10,15 @@ fi
 source scripts/toolchain.sh
 
 swift build -c release --product CocoonBox
+swift build -c release --product cocoonbox-cli
 bin="$(swift build -c release --show-bin-path)"
 
 app=dist/CocoonBox.app
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Helpers"
 cp "$bin/CocoonBox" "$app/Contents/MacOS/CocoonBox"
+# the CLI sits in Helpers: next to CocoonBox in MacOS it would collide on a case-insensitive volume
+cp "$bin/cocoonbox-cli" "$app/Contents/Helpers/cocoonbox"
 cp -R "$bin/GhosttyKit_GhosttyTerminal.bundle" "$app/Contents/Resources/"
 version="$(git describe --tags --always 2>/dev/null || echo dev)"
 
@@ -40,7 +43,8 @@ cat >"$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-strip -x "$app/Contents/MacOS/CocoonBox"
+strip -x "$app/Contents/MacOS/CocoonBox" "$app/Contents/Helpers/cocoonbox"
+codesign --force --sign - --identifier me.cmgs.cocoonbox.cli "$app/Contents/Helpers/cocoonbox"
 codesign --force --sign - --identifier me.cmgs.cocoonbox "$app"
 codesign --verify --strict "$app"
 du -sh "$app"

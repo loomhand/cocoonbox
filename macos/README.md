@@ -55,7 +55,26 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 
 Each MCP session appears in the sidebar's collapsible **External** section as `mcp:<client>`, with an External badge. Open sessions (running or waiting for the user) are listed; closed sessions cannot be reused and fold into **Closed sessions (N)** as history. A session that closes while selected stays listed until you select something else. Session notes from the agent (opened, closed) render as separate system lines. Its tool calls and ComputerAction markers render like the box agent's. The composer is replaced by a note, because the agent is prompted from the local client.
 
-## Saved state and upgrades
+## The `cocoonbox` CLI and the stdio MCP bridge
+
+`cocoonbox` (product `cocoonbox-cli`; `Contents/Helpers/cocoonbox` inside the app) lets Claude Code, Codex or Cursor drive the box with the app closed (design.md §13).
+
+```bash
+cocoonbox install                 # link into ~/.local/bin
+cocoonbox login                   # token from stdin or a prompt, into the Keychain (service me.cmgs.cocoonbox.cli)
+cocoonbox setup claude            # local marketplace + plugin: claude plugin marketplace add / install
+cocoonbox setup codex             # codex plugin marketplace add / codex plugin add
+cocoonbox setup cursor            # merges {"command": "<cli>", "args": ["mcp"]} into ~/.cursor/mcp.json
+cocoonbox status | ensure | save | hibernate | upgrade --yes
+```
+
+Every client runs `cocoonbox mcp`, a stdio MCP server. It reads the token from the Keychain and keeps it only in memory. Lifecycle tools go to the control MCP (`/cocoonbox.mcp/control`) and box tools to `/cocoonbox.mcp/<box id>`. The client's own `initialize` is passed through, so the app lists the session under the client's name. With the box hibernated, `tools/list` answers from the box's last list (`~/Library/Caches/cocoonbox`), and the first box-tool call wakes the box, reporting progress on the caller's token; `--no-wake` refuses instead. No client config holds a token or a URL.
+
+The endpoint comes from `login` (`~/Library/Application Support/CocoonBox/cli.json`), not from the environment, because Codex passes MCP servers only a fixed set of variables. The CLI keeps its own Keychain item while builds are ad hoc signed. Each rebuild has a new code hash, so the first read after a rebuild raises a Keychain prompt, and the bridge waits on it, which a client may count as a failed start; run `cocoonbox login` again after rebuilding. `cocoonbox login --from-app` copies the app's token after one "Always Allow".
+
+`scripts/test-cli.sh` runs the CLI and the bridge against MockBox, which also serves the control MCP.
+
+
 
 The box header shows when the box's user data (home, `/workspace`, agent history) was last saved to storage, with **Save now** (`Boxes.SaveState`; the browser in the box closes during the save). **Upgrade desktop…** is enabled only when `Box.latest_image` differs from `Box.image`; it runs `Boxes.Rebase` after a confirmation that running programs restart while files, logins and agent history are kept. Both show their operation's steps, with a byte progress bar while saving or restoring. MockBox starts on `cocoonbox-desktop-v1` with `v2` available and plays both operations.
 

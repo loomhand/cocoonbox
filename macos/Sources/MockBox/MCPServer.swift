@@ -91,7 +91,15 @@ private final class HTTPConnection: @unchecked Sendable {
         let path = requestLine.count > 1 ? String(requestLine[1]) : ""
         Task {
             let response = await mcp.handle(method: method, path: path, headers: headers, body: Data(body))
-            connection.send(content: response.encoded(), completion: .contentProcessed { [self] _ in drain() })
+            guard let events = response.events else {
+                connection.send(content: response.encoded(), completion: .contentProcessed { [self] _ in drain() })
+                return
+            }
+            connection.send(content: response.encoded(), completion: .idempotent)
+            for await event in events {
+                connection.send(content: Data("data: ".utf8) + event + Data("\n\n".utf8), completion: .idempotent)
+            }
+            connection.send(content: nil, contentContext: .finalMessage, isComplete: true, completion: .contentProcessed { [connection] _ in connection.cancel() })
         }
     }
 
@@ -107,13 +115,21 @@ private final class HTTPConnection: @unchecked Sendable {
     }
 }
 
+// HTTPResponse is a whole body, or with `events` an SSE stream written as it
+// arrives on a connection that closes after it.
 struct HTTPResponse {
     var status: Int
     var reason: String
     var headers: [String: String] = [:]
     var body = Data()
+    var events: AsyncStream<Data>?
 
     func encoded() -> Data {
+        if events != nil {
+            var head = "HTTP/1.1 \(status) \(reason)\r\nConnection: close\r\nCache-Control: no-cache\r\n"
+            for (name, value) in headers { head += "\(name): \(value)\r\n" }
+            return Data((head + "\r\n").utf8)
+        }
         var head = "HTTP/1.1 \(status) \(reason)\r\nContent-Length: \(body.count)\r\n"
         for (name, value) in headers { head += "\(name): \(value)\r\n" }
         return Data((head + "\r\n").utf8) + body
@@ -144,11 +160,13 @@ final class MCPServer: Sendable {
     private let token: String
     private let boxID: String
     private let sessions = Mutex<[String: String]>([:])
+    private let control: ControlMCP
 
     init(world: MockWorld, token: String, boxID: String) {
         self.world = world
         self.token = token
         self.boxID = boxID
+        control = ControlMCP(world: world)
     }
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: String]) -> [String: Any] {
@@ -164,11 +182,22 @@ final class MCPServer: Sendable {
         let auth = authorization == "Bearer \(token)" ? "ok" : authorization.contains("${") ? "unexpanded" : authorization.isEmpty ? "missing" : "bad"
         var line = "mcp \(method) \(path) auth=\(auth) ua=\(headers["user-agent"]?.split(separator: " ").first ?? "-")"
         defer { print(line) }
-        guard path.split(separator: "?").first == "/cocoonbox.mcp/\(boxID)" else {
+        let target = path.split(separator: "?").first.map(String.init) ?? ""
+        guard target == "/cocoonbox.mcp/\(boxID)" || target == ControlMCP.path else {
             return HTTPResponse(status: 404, reason: "Not Found")
         }
         guard auth == "ok" else {
             return HTTPResponse(status: 401, reason: "Unauthorized")
+        }
+        if target == ControlMCP.path {
+            guard method == "POST" else { return HTTPResponse(status: 405, reason: "Method Not Allowed", headers: ["Allow": "POST"]) }
+            guard let message = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any] else {
+                return HTTPResponse(status: 400, reason: "Bad Request")
+            }
+            return await control.handle(message, line: &line)
+        }
+        guard await world.box.state == .running else {
+            return HTTPResponse(status: 503, reason: "Service Unavailable")
         }
         let sessionID = headers["mcp-session-id"] ?? ""
         switch method {

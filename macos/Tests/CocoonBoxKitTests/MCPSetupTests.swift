@@ -1,3 +1,4 @@
+import CocoonBoxBridge
 import CocoonBoxKit
 import Foundation
 import Testing
@@ -33,5 +34,28 @@ import Testing
         #expect(throws: ConnectionError.self) { try BoxConnection(endpoint: Endpoint(url: "https://box.example.com")!, token: "t") }
         let local = try BoxConnection(endpoint: Endpoint(url: "http://127.0.0.1:50051")!, token: "t")
         local.close()
+    }
+}
+
+@Suite struct PluginTests {
+    @Test func pluginFilesCarryNoTokenOrURL() {
+        let files = Plugin.files(command: "/Users/me/.local/bin/cocoonbox")
+        #expect(files.values.allSatisfy { !$0.contains("Bearer") && !$0.contains("https://") && !$0.contains("http://127") })
+        #expect(files.keys.contains("cocoonbox/.claude-plugin/plugin.json") && files.keys.contains("cocoonbox/.codex-plugin/plugin.json"))
+        #expect(files.keys.contains(".claude-plugin/marketplace.json") && files.keys.contains(".agents/plugins/marketplace.json"))
+    }
+
+    @Test func everyClientRunsTheBridge() throws {
+        let data = Data(Plugin.mcpConfig(command: "/Users/me/.local/bin/cocoonbox").utf8)
+        let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
+        #expect(server["command"] as? String == "/Users/me/.local/bin/cocoonbox")
+        #expect(server["args"] as? [String] == ["mcp"])
+        #expect(server.count == 2)
+    }
+
+    @Test func controlToolsMatchTheContract() {
+        #expect(ToolCatalog.controlNames == ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"])
+        #expect(ToolCatalog.boxNames.count == 13)
     }
 }

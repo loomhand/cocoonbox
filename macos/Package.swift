@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "CocoonBoxTerminal", targets: ["CocoonBoxTerminal"]),
         .executable(name: "CocoonBox", targets: ["CocoonBox"]),
         .executable(name: "MockBox", targets: ["MockBox"]),
+        .executable(name: "cocoonbox-cli", targets: ["CocoonBoxCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.4.3"),
@@ -40,6 +41,14 @@ let package = Package(
             name: "CocoonBoxTerminal",
             dependencies: [.product(name: "GhosttyTerminal", package: "libghostty-spm")]
         ),
+        .target(
+            name: "CocoonBoxBridge",
+            dependencies: ["CocoonBoxKit"]
+        ),
+        .executableTarget(
+            name: "CocoonBoxCLI",
+            dependencies: ["CocoonBoxKit", "CocoonBoxBridge"]
+        ),
         .target(name: "RFBTestServer"),
         .executableTarget(
             name: "CocoonBox",
@@ -53,6 +62,7 @@ let package = Package(
             name: "CocoonBoxKitTests",
             dependencies: [
                 "CocoonBoxKit",
+                "CocoonBoxBridge",
                 "CocoonBoxTerminal",
                 "RFBTestServer",
                 .product(name: "RFB", package: "swift-rfb"),
