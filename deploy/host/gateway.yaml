@@ -25,6 +25,7 @@ tenants:
   - name: cocoonbox
     qps: 4
     daily_cost_quota_micros: 20000000
+    key_daily_cost_quota_micros: 10000000
     models:
       - deepseek/deepseek-v4.1-flash
       - anthropic/claude-sonnet-5
@@ -37,3 +38,4 @@ access_keys:
     tenant: cocoonbox
     qps: 4
     daily_token_quota: 50000000
+  # __CB_BOX_KEYS__
