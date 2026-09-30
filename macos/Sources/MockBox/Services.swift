@@ -45,6 +45,14 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         await world.hibernate()
     }
 
+    func saveState(request: Cocoonbox_Control_V1_BoxRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
+        await world.saveState()
+    }
+
+    func rebase(request: Cocoonbox_Control_V1_RebaseRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
+        await world.rebase(image: request.image)
+    }
+
     func watchOperation(request: Cocoonbox_Control_V1_WatchOperationRequest, response: RPCWriter<Cocoonbox_Control_V1_OperationEvent>, context: ServerContext) async throws {
         let (replay, live) = try await world.watch(operation: request.operationID, after: request.fromOffsetKey)
         for event in replay {

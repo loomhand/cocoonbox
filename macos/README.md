@@ -55,6 +55,10 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 
 Each MCP session appears in the sidebar's collapsible **External** section as `mcp:<client>`, with an External badge. Running sessions, sessions active in the last hour, the newest session of each client and the selected one stay visible; older idle sessions fold behind **Show N earlier**. Its tool calls and ComputerAction markers render like the box agent's. The composer is replaced by a note, because the agent is prompted from the local client.
 
+## Saved state and upgrades
+
+The box header shows when the box's user data (home, `/workspace`, agent history) was last saved to storage, with **Save now** (`Boxes.SaveState`; the browser in the box closes during the save). **Upgrade desktop…** is enabled only when `Box.latest_image` differs from `Box.image`; it runs `Boxes.Rebase` after a confirmation that running programs restart while files, logins and agent history are kept. Both show their operation's steps, with a byte progress bar while saving or restoring. MockBox starts on `cocoonbox-desktop-v1` with `v2` available and plays both operations.
+
 ## Live view
 
 The app opens `Session.Screen` and runs a [swift-rfb](https://github.com/CMGS/swift-rfb) client directly on it: server bytes feed an `RFBPipe`, and the client's bytes go back as `ScreenClientFrame`s. There is no loopback socket. The client decodes into page-aligned memory that `RFBView` shows as a Metal texture without a copy. It draws on the display link only after a change, and asks for the next update once the GPU has read the frame, so an idle screen costs no CPU and no wakeups. It uses ContinuousUpdates when the server offers them. Otherwise it paces incremental requests every 33 ms while updates arrive, so a high-latency path is not held to one update per round trip.

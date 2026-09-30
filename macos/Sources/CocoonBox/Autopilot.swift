@@ -12,7 +12,8 @@ import Foundation
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
-// show-earlier[:off], end-local, quit.
+// show-earlier[:off], confirm:<save|upgrade|off>, save-now, upgrade, wait-operation[:seconds],
+// end-local, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -111,6 +112,17 @@ enum Autopilot {
         case "wait-pointer":
             let seen = model.computerActions
             await until(Double(arg) ?? 120) { model.computerActions > seen && model.screen.lastMarkerAt > Date().addingTimeInterval(-1) }
+        case "confirm":
+            model.confirmSave = arg == "save"
+            model.confirmUpgrade = arg == "upgrade"
+        case "save-now":
+            model.saveNow()
+            await until(10) { model.operation?.finished == false }
+        case "upgrade":
+            model.upgrade()
+            await until(10) { model.operation?.finished == false }
+        case "wait-operation":
+            await until(Double(arg) ?? 300) { model.operation?.finished ?? true }
         case "show-earlier":
             model.showEarlierExternal = arg != "off"
         case "end-local":
@@ -161,7 +173,7 @@ enum Autopilot {
         if let stats = model.screen.screenStats {
             Perf.mark("screen_stats", "from_server=\(stats.bytesFromServer) to_server=\(stats.bytesToServer) status=\(model.screen.status)")
         }
-        let windows = NSApp.windows.filter { $0.isVisible && $0.contentView != nil && $0.frame.width > 300 }
+        let windows = NSApp.windows.filter { $0.isVisible && $0.contentView != nil && $0.frame.width > 200 }
         for (index, window) in windows.enumerated() {
             let file = windows.count == 1 ? path : path.replacingOccurrences(of: ".png", with: "-\(index).png")
             let inWindow = model.screen.container.window === window

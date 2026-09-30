@@ -85,13 +85,41 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
                 type: .serverStreaming
             )
         }
+        /// Namespace for "SaveState" metadata.
+        public enum SaveState: Sendable {
+            /// Request type for "SaveState".
+            public typealias Input = Cocoonbox_Control_V1_BoxRef
+            /// Response type for "SaveState".
+            public typealias Output = Cocoonbox_Control_V1_Operation
+            /// Descriptor for "SaveState".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "SaveState",
+                type: .unary
+            )
+        }
+        /// Namespace for "Rebase" metadata.
+        public enum Rebase: Sendable {
+            /// Request type for "Rebase".
+            public typealias Input = Cocoonbox_Control_V1_RebaseRequest
+            /// Response type for "Rebase".
+            public typealias Output = Cocoonbox_Control_V1_Operation
+            /// Descriptor for "Rebase".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "Rebase",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.control.v1.Boxes" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Ensure.descriptor,
             Get.descriptor,
             List.descriptor,
             Hibernate.descriptor,
-            WatchOperation.descriptor
+            WatchOperation.descriptor,
+            SaveState.descriptor,
+            Rebase.descriptor
         ]
     }
 }
@@ -197,6 +225,45 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_WatchOperationRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_OperationEvent>
+
+        /// Handle the "SaveState" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SaveState writes a quiesced snapshot of the box's user state (home,
+        /// > /workspace, agent.db) to object storage. The browser closes for the copy.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Operation` messages.
+        func saveState(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation>
+
+        /// Handle the "Rebase" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rebase moves the box to another image and carries its user state over:
+        /// > quiesced save, new machine from the image, restore, switch, delete the old
+        /// > machine. The box id stays the same; running programs restart.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_RebaseRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Operation` messages.
+        func rebase(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RebaseRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation>
     }
 
     /// Service protocol for the "cocoonbox.control.v1.Boxes" service.
@@ -286,6 +353,45 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_WatchOperationRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_OperationEvent>
+
+        /// Handle the "SaveState" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SaveState writes a quiesced snapshot of the box's user state (home,
+        /// > /workspace, agent.db) to object storage. The browser closes for the copy.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Operation` message.
+        func saveState(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>
+
+        /// Handle the "Rebase" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rebase moves the box to another image and carries its user state over:
+        /// > quiesced save, new machine from the image, restore, switch, delete the old
+        /// > machine. The box id stays the same; running programs restart.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RebaseRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Operation` message.
+        func rebase(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RebaseRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>
     }
 
     /// Simple service protocol for the "cocoonbox.control.v1.Boxes" service.
@@ -374,6 +480,45 @@ extension Cocoonbox_Control_V1_Boxes {
             response: GRPCCore.RPCWriter<Cocoonbox_Control_V1_OperationEvent>,
             context: GRPCCore.ServerContext
         ) async throws
+
+        /// Handle the "SaveState" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SaveState writes a quiesced snapshot of the box's user state (home,
+        /// > /workspace, agent.db) to object storage. The browser closes for the copy.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_Operation` to respond with.
+        func saveState(
+            request: Cocoonbox_Control_V1_BoxRef,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_Operation
+
+        /// Handle the "Rebase" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rebase moves the box to another image and carries its user state over:
+        /// > quiesced save, new machine from the image, restore, switch, delete the old
+        /// > machine. The box id stays the same; running programs restart.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_RebaseRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_Operation` to respond with.
+        func rebase(
+            request: Cocoonbox_Control_V1_RebaseRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_Operation
     }
 }
 
@@ -431,6 +576,28 @@ extension Cocoonbox_Control_V1_Boxes.StreamingServiceProtocol {
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_OperationEvent>(),
             handler: { request, context in
                 try await self.watchOperation(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.SaveState.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BoxRef>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Operation>(),
+            handler: { request, context in
+                try await self.saveState(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.Rebase.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_RebaseRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Operation>(),
+            handler: { request, context in
+                try await self.rebase(
                     request: request,
                     context: context
                 )
@@ -495,6 +662,28 @@ extension Cocoonbox_Control_V1_Boxes.ServiceProtocol {
             context: context
         )
         return response
+    }
+
+    public func saveState(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation> {
+        let response = try await self.saveState(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func rebase(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RebaseRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation> {
+        let response = try await self.rebase(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
     }
 }
 
@@ -567,6 +756,32 @@ extension Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
                 )
                 return [:]
             }
+        )
+    }
+
+    public func saveState(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>(
+            message: try await self.saveState(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func rebase(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RebaseRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>(
+            message: try await self.rebase(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
         )
     }
 }
@@ -683,6 +898,55 @@ extension Cocoonbox_Control_V1_Boxes {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_OperationEvent>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Control_V1_OperationEvent>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SaveState" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SaveState writes a quiesced snapshot of the box's user state (home,
+        /// > /workspace, agent.db) to object storage. The browser closes for the copy.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func saveState<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Rebase" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rebase moves the box to another image and carries its user state over:
+        /// > quiesced save, new machine from the image, restore, switch, delete the old
+        /// > machine. The box id stays the same; running programs restart.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RebaseRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RebaseRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func rebase<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RebaseRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RebaseRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -859,6 +1123,77 @@ extension Cocoonbox_Control_V1_Boxes {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "SaveState" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SaveState writes a quiesced snapshot of the box's user state (home,
+        /// > /workspace, agent.db) to object storage. The browser closes for the copy.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func saveState<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.SaveState.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Rebase" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rebase moves the box to another image and carries its user state over:
+        /// > quiesced save, new machine from the image, restore, switch, delete the old
+        /// > machine. The box id stays the same; running programs restart.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RebaseRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RebaseRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func rebase<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RebaseRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RebaseRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.Rebase.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -988,6 +1323,67 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_WatchOperationRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_OperationEvent>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SaveState" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SaveState writes a quiesced snapshot of the box's user state (home,
+    /// > /workspace, agent.db) to object storage. The browser closes for the copy.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func saveState<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.saveState(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BoxRef>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Operation>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rebase" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Rebase moves the box to another image and carries its user state over:
+    /// > quiesced save, new machine from the image, restore, switch, delete the old
+    /// > machine. The box id stays the same; running programs restart.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_RebaseRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rebase<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RebaseRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.rebase(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RebaseRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Operation>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1139,6 +1535,75 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             metadata: metadata
         )
         return try await self.watchOperation(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SaveState" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SaveState writes a quiesced snapshot of the box's user state (home,
+    /// > /workspace, agent.db) to object storage. The browser closes for the copy.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func saveState<Result>(
+        _ message: Cocoonbox_Control_V1_BoxRef,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.saveState(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rebase" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Rebase moves the box to another image and carries its user state over:
+    /// > quiesced save, new machine from the image, restore, switch, delete the old
+    /// > machine. The box id stays the same; running programs restart.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rebase<Result>(
+        _ message: Cocoonbox_Control_V1_RebaseRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_RebaseRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.rebase(
             request: request,
             options: options,
             onResponse: handleResponse

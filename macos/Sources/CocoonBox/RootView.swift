@@ -215,6 +215,9 @@ struct BoxHeader: View {
                     .disabled(model.busy || !model.boxRunning)
             }
             .controlSize(.small)
+            if let box = model.box {
+                StateLayerControls(box: box)
+            }
             if let operation = model.operation {
                 OperationView(progress: operation)
             }
@@ -223,6 +226,64 @@ struct BoxHeader: View {
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+// StateLayerControls shows when the user's data was last saved to object
+// storage and offers a manual save and the desktop upgrade.
+struct StateLayerControls: View {
+    @Environment(AppModel.self) private var model
+    let box: Box
+
+    var body: some View {
+        @Bindable var model = model
+        let idle = !model.busy && model.operation.map(\.finished) ?? true
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    Text(Self.saved(box.lastSavedAtMs, now: context.date))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Save now") { model.confirmSave = true }
+                    .controlSize(.small)
+                    .disabled(!idle || !model.boxRunning)
+                    .help("Save files, logins and agent history now. The box's browser closes during the save.")
+            }
+            if model.upgradeAvailable {
+                Label("Update available: \(box.latestImage)", systemImage: "arrow.up.circle")
+                    .font(.caption)
+                    .foregroundStyle(.blue)
+            }
+            Button("Upgrade desktop…") { model.confirmUpgrade = true }
+                .controlSize(.small)
+                .disabled(!idle || !model.upgradeAvailable)
+                .help(model.upgradeAvailable ? "Move this box to \(box.latestImage)" : "Already on the latest desktop")
+        }
+        .alert("Save your box now?", isPresented: $model.confirmSave) {
+            Button("Save") { model.saveNow() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Files, logins and agent history are saved to storage. The browser in your box closes during the save.")
+        }
+        .alert("Upgrade the desktop to \(box.latestImage)?", isPresented: $model.confirmUpgrade) {
+            Button("Upgrade") { model.upgrade() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Running programs restart. Your files, logins and agent history are kept.")
+        }
+    }
+
+    static func saved(_ ms: Int64, now: Date) -> String {
+        guard ms > 0 else { return "Not saved yet" }
+        let minutes = Int(now.timeIntervalSince1970 - Double(ms) / 1000) / 60
+        switch minutes {
+        case ..<1: return "Saved just now"
+        case ..<60: return "Saved \(minutes) min ago"
+        case ..<(24 * 60): return "Saved \(minutes / 60) h ago"
+        default: return "Saved \(Date(timeIntervalSince1970: Double(ms) / 1000).formatted(date: .abbreviated, time: .shortened))"
         }
     }
 }
@@ -274,7 +335,7 @@ struct OperationView: View {
                 }
                 Text(progress.title).font(.caption.bold())
             }
-            ForEach(Array(progress.events.enumerated()), id: \.offset) { _, event in
+            ForEach(Array(steps.enumerated()), id: \.offset) { _, event in
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(phase(event.phase))
                         .font(.caption2.monospaced())
@@ -282,9 +343,23 @@ struct OperationView: View {
                     Text(event.detail).font(.caption2)
                 }
             }
+            if !progress.finished, let transfer = progress.events.last, transfer.totalBytes > 0 {
+                ProgressView(value: Double(transfer.doneBytes), total: Double(transfer.totalBytes))
+                    .controlSize(.small)
+                Text("\(transfer.doneBytes.formatted(.byteCount(style: .file))) of \(transfer.totalBytes.formatted(.byteCount(style: .file)))")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(8)
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    // steps drops repeated progress events of one step, which differ only in bytes.
+    private var steps: [OperationEvent] {
+        progress.events.enumerated().filter { index, event in
+            index == 0 || progress.events[index - 1].phase != event.phase || progress.events[index - 1].detail != event.detail
+        }.map(\.element)
     }
 
     private func phase(_ phase: Cocoonbox_Control_V1_Phase) -> String {
@@ -292,6 +367,8 @@ struct OperationView: View {
         case .creating: "create"
         case .waking: "wake"
         case .snapshotting: "snapshot"
+        case .saving: "save"
+        case .restoring: "restore"
         case .done: "done"
         case .failed: "failed"
         default: "…"

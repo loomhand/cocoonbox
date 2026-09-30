@@ -78,6 +78,12 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
   case snapshotting // = 3
   case done // = 4
   case failed // = 5
+
+  /// Uploading the user state to object storage.
+  case saving // = 6
+
+  /// Writing the user state into a new machine.
+  case restoring // = 7
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -92,6 +98,8 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
     case 3: self = .snapshotting
     case 4: self = .done
     case 5: self = .failed
+    case 6: self = .saving
+    case 7: self = .restoring
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -104,6 +112,8 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
     case .snapshotting: return 3
     case .done: return 4
     case .failed: return 5
+    case .saving: return 6
+    case .restoring: return 7
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -116,6 +126,8 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
     .snapshotting,
     .done,
     .failed,
+    .saving,
+    .restoring,
   ]
 
 }
@@ -171,6 +183,12 @@ public nonisolated struct Cocoonbox_Control_V1_Box: Sendable {
   public var failureReason: String = String()
 
   public var createdAtMs: Int64 = 0
+
+  /// Time of the latest user-state snapshot in object storage; 0 before the first.
+  public var lastSavedAtMs: Int64 = 0
+
+  /// Image a new box gets today, and the default Rebase target; differs from image when an upgrade is available.
+  public var latestImage: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -246,6 +264,21 @@ public nonisolated struct Cocoonbox_Control_V1_EnsureResponse: Sendable {
   fileprivate var _operation: Cocoonbox_Control_V1_Operation? = nil
 }
 
+public nonisolated struct Cocoonbox_Control_V1_RebaseRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var boxID: String = String()
+
+  /// Target image; empty selects the current default image.
+  public var image: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Cocoonbox_Control_V1_GetBoxRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -312,6 +345,11 @@ public nonisolated struct Cocoonbox_Control_V1_OperationEvent: Sendable {
 
   public var boxState: Cocoonbox_Control_V1_BoxState = .unspecified
 
+  /// Transfer progress while saving or restoring; 0 otherwise.
+  public var doneBytes: UInt64 = 0
+
+  public var totalBytes: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -326,7 +364,7 @@ nonisolated extension Cocoonbox_Control_V1_BoxState: SwiftProtobuf._ProtoNamePro
 }
 
 nonisolated extension Cocoonbox_Control_V1_Phase: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PHASE_UNSPECIFIED\0\u{1}PHASE_CREATING\0\u{1}PHASE_WAKING\0\u{1}PHASE_SNAPSHOTTING\0\u{1}PHASE_DONE\0\u{1}PHASE_FAILED\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PHASE_UNSPECIFIED\0\u{1}PHASE_CREATING\0\u{1}PHASE_WAKING\0\u{1}PHASE_SNAPSHOTTING\0\u{1}PHASE_DONE\0\u{1}PHASE_FAILED\0\u{1}PHASE_SAVING\0\u{1}PHASE_RESTORING\0")
 }
 
 nonisolated extension Cocoonbox_Control_V1_BoxRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -401,7 +439,7 @@ nonisolated extension Cocoonbox_Control_V1_Flavor: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Box"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{1}flavor\0\u{3}failure_reason\0\u{3}created_at_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{1}flavor\0\u{3}failure_reason\0\u{3}created_at_ms\0\u{3}last_saved_at_ms\0\u{3}latest_image\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -415,6 +453,8 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
       case 4: try { try decoder.decodeSingularMessageField(value: &self._flavor) }()
       case 5: try { try decoder.decodeSingularStringField(value: &self.failureReason) }()
       case 6: try { try decoder.decodeSingularInt64Field(value: &self.createdAtMs) }()
+      case 7: try { try decoder.decodeSingularInt64Field(value: &self.lastSavedAtMs) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.latestImage) }()
       default: break
       }
     }
@@ -443,6 +483,12 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     if self.createdAtMs != 0 {
       try visitor.visitSingularInt64Field(value: self.createdAtMs, fieldNumber: 6)
     }
+    if self.lastSavedAtMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastSavedAtMs, fieldNumber: 7)
+    }
+    if !self.latestImage.isEmpty {
+      try visitor.visitSingularStringField(value: self.latestImage, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -453,6 +499,8 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     if lhs._flavor != rhs._flavor {return false}
     if lhs.failureReason != rhs.failureReason {return false}
     if lhs.createdAtMs != rhs.createdAtMs {return false}
+    if lhs.lastSavedAtMs != rhs.lastSavedAtMs {return false}
+    if lhs.latestImage != rhs.latestImage {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -561,6 +609,41 @@ nonisolated extension Cocoonbox_Control_V1_EnsureResponse: SwiftProtobuf.Message
   public static func ==(lhs: Cocoonbox_Control_V1_EnsureResponse, rhs: Cocoonbox_Control_V1_EnsureResponse) -> Bool {
     if lhs._box != rhs._box {return false}
     if lhs._operation != rhs._operation {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_RebaseRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RebaseRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}box_id\0\u{1}image\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.boxID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.image) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.boxID.isEmpty {
+      try visitor.visitSingularStringField(value: self.boxID, fieldNumber: 1)
+    }
+    if !self.image.isEmpty {
+      try visitor.visitSingularStringField(value: self.image, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_RebaseRequest, rhs: Cocoonbox_Control_V1_RebaseRequest) -> Bool {
+    if lhs.boxID != rhs.boxID {return false}
+    if lhs.image != rhs.image {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -682,7 +765,7 @@ nonisolated extension Cocoonbox_Control_V1_WatchOperationRequest: SwiftProtobuf.
 
 nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".OperationEvent"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}operation_id\0\u{1}phase\0\u{1}detail\0\u{3}offset_key\0\u{3}at_ms\0\u{3}box_state\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}operation_id\0\u{1}phase\0\u{1}detail\0\u{3}offset_key\0\u{3}at_ms\0\u{3}box_state\0\u{3}done_bytes\0\u{3}total_bytes\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -696,6 +779,8 @@ nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message
       case 4: try { try decoder.decodeSingularStringField(value: &self.offsetKey) }()
       case 5: try { try decoder.decodeSingularInt64Field(value: &self.atMs) }()
       case 6: try { try decoder.decodeSingularEnumField(value: &self.boxState) }()
+      case 7: try { try decoder.decodeSingularUInt64Field(value: &self.doneBytes) }()
+      case 8: try { try decoder.decodeSingularUInt64Field(value: &self.totalBytes) }()
       default: break
       }
     }
@@ -720,6 +805,12 @@ nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message
     if self.boxState != .unspecified {
       try visitor.visitSingularEnumField(value: self.boxState, fieldNumber: 6)
     }
+    if self.doneBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.doneBytes, fieldNumber: 7)
+    }
+    if self.totalBytes != 0 {
+      try visitor.visitSingularUInt64Field(value: self.totalBytes, fieldNumber: 8)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -730,6 +821,8 @@ nonisolated extension Cocoonbox_Control_V1_OperationEvent: SwiftProtobuf.Message
     if lhs.offsetKey != rhs.offsetKey {return false}
     if lhs.atMs != rhs.atMs {return false}
     if lhs.boxState != rhs.boxState {return false}
+    if lhs.doneBytes != rhs.doneBytes {return false}
+    if lhs.totalBytes != rhs.totalBytes {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

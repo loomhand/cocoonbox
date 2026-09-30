@@ -56,6 +56,8 @@ final class AppModel {
     var showSignIn = false
     var showConnectAgent = false
     var showEarlierExternal = false
+    var confirmSave = false
+    var confirmUpgrade = false
     var box: Box?
     var operation: OperationProgress?
     var agents: [Agent] = []
@@ -293,6 +295,40 @@ final class AppModel {
         }
     }
 
+    var upgradeAvailable: Bool {
+        guard let box, !box.latestImage.isEmpty else { return false }
+        return box.latestImage != box.image
+    }
+
+    func saveNow() {
+        guard let connection, let box else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let op = try await connection.saveState(boxID: box.id)
+                watch(operation: op.id, title: "Saving")
+            } catch {
+                report("save", error)
+            }
+        }
+    }
+
+    func upgrade() {
+        guard let connection, let box, upgradeAvailable else { return }
+        busy = true
+        let target = box.latestImage
+        Task {
+            defer { busy = false }
+            do {
+                let op = try await connection.rebase(boxID: box.id, image: target)
+                watch(operation: op.id, title: "Upgrading to \(target)")
+            } catch {
+                report("upgrade", error)
+            }
+        }
+    }
+
     func hibernate() {
         guard let connection, let box else { return }
         busy = true
@@ -335,7 +371,7 @@ final class AppModel {
     private func record(operationEvent event: OperationEvent) async {
         guard var progress = operation, progress.id == event.operationID else { return }
         progress.events.append(event)
-        Perf.mark("operation", "\(event.phase) \(event.detail) box=\(event.boxState)")
+        Perf.mark("operation", "\(event.phase) \(event.detail) box=\(event.boxState) bytes=\(event.doneBytes)/\(event.totalBytes)")
         if event.phase == .done || event.phase == .failed {
             progress.finished = true
             progress.failed = event.phase == .failed

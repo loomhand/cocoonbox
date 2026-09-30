@@ -44,6 +44,8 @@ actor MockWorld {
         box.id = "cb-mock00000000"
         box.state = .hibernated
         box.image = "cocoonbox-desktop-v1"
+        box.latestImage = "cocoonbox-desktop-v2"
+        box.lastSavedAtMs = Self.now() - 12 * 60_000
         box.flavor.vcpus = 4
         box.flavor.memoryMib = 8192
         box.flavor.diskGib = 40
@@ -117,23 +119,74 @@ actor MockWorld {
     }
 
     func hibernate() -> Cocoonbox_Control_V1_Operation {
-        let id = "op-\(UUID().uuidString.prefix(8).lowercased())"
-        operations[id] = []
+        let id = newOperation()
         box.state = .hibernating
-        var op = Cocoonbox_Control_V1_Operation()
-        op.id = id
-        op.boxID = box.id
         Task {
             try? await Task.sleep(for: .milliseconds(400))
             self.emitOperation(id: id, phase: .snapshotting, detail: "snapshotting memory and disk", state: .hibernating)
             try? await Task.sleep(for: .milliseconds(600))
             self.emitOperation(id: id, phase: .done, detail: "hibernated", state: .hibernated)
         }
+        return operation(id)
+    }
+
+    // saveState plays a quiesced save: the browser closes, then chunks upload with byte progress.
+    func saveState() -> Cocoonbox_Control_V1_Operation {
+        let id = newOperation()
+        let state = box.state
+        Task {
+            await self.transfer(id: id, phase: .saving, detail: "uploading changed files", state: state, prefix: [(.snapshotting, "closing the browser and snapshotting home, /workspace and agent.db")])
+            self.box.lastSavedAtMs = Self.now()
+            self.emitOperation(id: id, phase: .done, detail: "saved", state: state)
+        }
+        return operation(id)
+    }
+
+    // rebase plays an image upgrade: save, new machine from the latest image, restore, switch.
+    func rebase(image: String) -> Cocoonbox_Control_V1_Operation {
+        let id = newOperation()
+        let target = image.isEmpty ? box.latestImage : image
+        Task {
+            await self.transfer(id: id, phase: .saving, detail: "uploading changed files", state: .starting, prefix: [(.snapshotting, "closing the browser and snapshotting home, /workspace and agent.db")])
+            self.emitOperation(id: id, phase: .creating, detail: "new machine from \(target)", state: .starting)
+            try? await Task.sleep(for: self.bootDelay)
+            await self.transfer(id: id, phase: .restoring, detail: "restoring files into the new machine", state: .starting, prefix: [])
+            self.box.image = target
+            self.box.lastSavedAtMs = Self.now()
+            self.emitOperation(id: id, phase: .done, detail: "running on \(target)", state: .running)
+        }
+        return operation(id)
+    }
+
+    private func newOperation() -> String {
+        let id = "op-\(UUID().uuidString.prefix(8).lowercased())"
+        operations[id] = []
+        return id
+    }
+
+    private func operation(_ id: String) -> Cocoonbox_Control_V1_Operation {
+        var op = Cocoonbox_Control_V1_Operation()
+        op.id = id
+        op.boxID = box.id
         return op
     }
 
-    private func emitOperation(id: String, phase: Cocoonbox_Control_V1_Phase, detail: String, state: Cocoonbox_Control_V1_BoxState) {
+    private func transfer(id: String, phase: Cocoonbox_Control_V1_Phase, detail: String, state: Cocoonbox_Control_V1_BoxState, prefix: [(Cocoonbox_Control_V1_Phase, String)]) async {
+        for (step, text) in prefix {
+            emitOperation(id: id, phase: step, detail: text, state: state)
+            try? await Task.sleep(for: .milliseconds(700))
+        }
+        let total: UInt64 = 48 << 20
+        for step in 1...6 {
+            emitOperation(id: id, phase: phase, detail: detail, state: state, done: total * UInt64(step) / 6, total: total)
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+    }
+
+    private func emitOperation(id: String, phase: Cocoonbox_Control_V1_Phase, detail: String, state: Cocoonbox_Control_V1_BoxState, done: UInt64 = 0, total: UInt64 = 0) {
         var event = OperationEvent()
+        event.doneBytes = done
+        event.totalBytes = total
         event.operationID = id
         event.phase = phase
         event.detail = detail

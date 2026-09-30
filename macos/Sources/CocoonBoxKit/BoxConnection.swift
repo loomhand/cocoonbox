@@ -65,6 +65,17 @@ public final class BoxConnection: Sendable {
         try await boxes.hibernate(.with { $0.boxID = boxID })
     }
 
+    public func saveState(boxID: String) async throws -> Cocoonbox_Control_V1_Operation {
+        try await boxes.saveState(.with { $0.boxID = boxID })
+    }
+
+    public func rebase(boxID: String, image: String) async throws -> Cocoonbox_Control_V1_Operation {
+        try await boxes.rebase(.with {
+            $0.boxID = boxID
+            $0.image = image
+        })
+    }
+
     public func watchOperation(
         _ id: String,
         after offsetKey: String,

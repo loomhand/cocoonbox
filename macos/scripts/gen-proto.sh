@@ -1,6 +1,7 @@
 #!/bin/bash
 # Regenerates Sources/CocoonBoxKit/Generated from ../proto with the protoc
 # plugins built from the pinned swift-protobuf and grpc-swift-protobuf.
+# agent/v1/state.proto is left out: only the api calls State.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -20,5 +21,5 @@ protoc \
   --swift_out="$out" \
   --grpc-swift_opt=Visibility=Public,Server=true,Client=true,FileNaming=PathToUnderscores \
   --grpc-swift_out="$out" \
-  $(cd ../proto && find cocoonbox -name '*.proto' | sort)
+  $(cd ../proto && find cocoonbox -name '*.proto' ! -name state.proto | sort)
 ls "$out"
