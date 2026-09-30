@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -57,6 +58,24 @@ func TestInitializeAndToolsList(t *testing.T) {
 	}
 	if ping := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"ping"}`); ping.Error != nil || ping.Result == nil {
 		t.Fatalf("ping = %+v", ping)
+	}
+}
+
+func TestBuildVersion(t *testing.T) {
+	rev := "71e9ca3cdd4816ead9287321d39ddde9c13570aa"
+	for _, tc := range []struct {
+		settings []debug.BuildSetting
+		want     string
+	}{
+		{nil, "(devel)"},
+		{[]debug.BuildSetting{{Key: "vcs.modified", Value: "true"}}, "(devel)"},
+		{[]debug.BuildSetting{{Key: "vcs.revision", Value: rev}, {Key: "vcs.modified", Value: "false"}}, "71e9ca3cdd48"},
+		{[]debug.BuildSetting{{Key: "vcs.revision", Value: rev}, {Key: "vcs.modified", Value: "true"}}, "71e9ca3cdd48-dirty"},
+		{[]debug.BuildSetting{{Key: "vcs.revision", Value: "abc"}}, "abc"},
+	} {
+		if got := buildVersion(tc.settings); got != tc.want {
+			t.Errorf("buildVersion(%v) = %q, want %q", tc.settings, got, tc.want)
+		}
 	}
 }
 

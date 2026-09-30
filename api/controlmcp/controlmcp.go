@@ -27,6 +27,7 @@ const (
 	jsonRPCVersion  = "2.0"
 	fallbackVersion = "2025-11-25"
 	sessionHeader   = "Mcp-Session-Id"
+	revisionLen     = 12
 	maxBody         = 1 << 20
 	keepalive       = 25 * time.Second
 
@@ -236,15 +237,36 @@ func initializeResult(params json.RawMessage) map[string]any {
 	if slices.Contains(protocolVersions, req.ProtocolVersion) {
 		version = req.ProtocolVersion
 	}
-	serverVersion := "(devel)"
+	var settings []debug.BuildSetting
 	if info, ok := debug.ReadBuildInfo(); ok {
-		serverVersion = info.Main.Version
+		settings = info.Settings
 	}
 	return map[string]any{
 		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": "cocoonbox-control", "version": serverVersion},
+		"serverInfo":      map[string]any{"name": "cocoonbox-control", "version": buildVersion(settings)},
 	}
+}
+
+func buildVersion(settings []debug.BuildSetting) string {
+	var revision string
+	var modified bool
+	for _, s := range settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+		case "vcs.modified":
+			modified = s.Value == "true"
+		}
+	}
+	if revision == "" {
+		return "(devel)"
+	}
+	revision = revision[:min(len(revision), revisionLen)]
+	if modified {
+		revision += "-dirty"
+	}
+	return revision
 }
 
 // handle answers the methods other than initialize and tools/call.
