@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 
 	cocoonv1 "github.com/cocoonstack/cocoon-common/apis/v1"
 	"github.com/cocoonstack/cocoon-common/meta"
@@ -90,7 +91,14 @@ func describe(cs *cocoonv1.CocoonSet, main *corev1.Pod) string {
 	if lc.Message != "" {
 		detail += ": " + lc.Message
 	}
+	if i := slices.IndexFunc(main.Status.Conditions, unschedulable); i >= 0 {
+		detail += "; unschedulable: " + main.Status.Conditions[i].Message
+	}
 	return detail
+}
+
+func unschedulable(c corev1.PodCondition) bool {
+	return c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse
 }
 
 func toBox(cs *cocoonv1.CocoonSet, main *corev1.Pod) *controlv1.Box {

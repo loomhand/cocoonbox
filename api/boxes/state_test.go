@@ -62,6 +62,18 @@ func TestObserve(t *testing.T) {
 	}
 }
 
+func TestDescribeUnschedulable(t *testing.T) {
+	pod := testPod(false, "", 0)
+	pod.Status.Conditions = []corev1.PodCondition{{
+		Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
+		Message: "0/2 nodes are available: 1 Insufficient ephemeral-storage",
+	}}
+	got := describe(testSet(1, false, cocoonv1.CocoonSetPhasePending), pod)
+	if want := "cocoonset=Pending pod=Pending ready=false vm=-; unschedulable: 0/2 nodes are available: 1 Insufficient ephemeral-storage"; got != want {
+		t.Errorf("describe = %q, want %q", got, want)
+	}
+}
+
 func TestBuildCocoonSet(t *testing.T) {
 	cfg := &config.Config{Namespace: "cocoonbox", Image: "cocoonbox-desktop-v1", Network: "cb", ProbePort: 22}
 	flavor := &controlv1.Flavor{Vcpus: 4, MemoryMib: 8192, DiskGib: 40}
