@@ -4,6 +4,7 @@ set -euo pipefail
 
 systemctl stop cocoonbox-agent.service cocoonbox-toolhost.service
 rm -rf /var/lib/cocoonbox/* /run/cocoonbox/*
+sed -i 's/^GW_API_KEY=.*/GW_API_KEY=unprovisioned/' /etc/cocoonbox/agent.env
 
 pkill -u user -x chrome || true
 pkill -u user -x mousepad || true
