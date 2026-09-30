@@ -25,7 +25,7 @@ install -m 0644 deploy/cocoonbox-api.service /etc/systemd/system/
 systemctl enable --now cocoonbox-api
 ```
 
-`/etc/cocoonbox/edge-token` belongs to the infra provisioning, which bakes the same value into the golden image's `agent.env`. Until it exists the service still serves `Boxes` but refuses every agent call with `UNAVAILABLE`; restart the service after the file appears.
+`/etc/cocoonbox/edge-token` belongs to the infra provisioning, which bakes the same value into the golden image's `agent.env`. The unit does not start without it; an empty file keeps `Boxes` serving and refuses every agent call with `UNAVAILABLE`. Restart the service after the file changes.
 
 The service runs as `cocoonbox-api`; systemd `LoadCredential=` hands it `/etc/cocoonbox/{api.yaml,kubeconfig,edge-token}` (all root 0600), and relative paths in `api.yaml` resolve inside that credentials directory.
 

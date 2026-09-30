@@ -10,7 +10,6 @@ Group=cocoonbox-api
 LoadCredential=api.yaml:/etc/cocoonbox/api.yaml
 LoadCredential=kubeconfig:/etc/cocoonbox/kubeconfig
 LoadCredential=edge-token:/etc/cocoonbox/edge-token
-SetCredential=edge-token:
 ExecStart=/usr/local/bin/cocoonbox-api -config %d/api.yaml
 Restart=always
 RestartSec=2
