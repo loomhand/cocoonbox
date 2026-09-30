@@ -78,11 +78,17 @@ impl Host {
             }
             "computer_state" => self.cua.state(call.args).await,
             "computer_act" => self.cua.act(call.args).await,
-            "screenshot" => self.cua.screenshot().await.map(|image_b64| Output {
-                text: String::new(),
-                is_error: false,
-                image_b64,
-            }),
+            "computer_end" => self.cua.end(call.args).await.map(Output::text),
+            "screenshot" => {
+                self.cua
+                    .screenshot(&cua::session_of(&call.args))
+                    .await
+                    .map(|image_b64| Output {
+                        text: String::new(),
+                        is_error: false,
+                        image_b64,
+                    })
+            }
             other => Err(format!("unknown tool {other}")),
         };
         result.unwrap_or_else(Output::error)

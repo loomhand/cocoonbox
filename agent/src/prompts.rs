@@ -25,6 +25,8 @@ Loop: observe, act, verify.
 - Every computer_act returns a fresh screenshot. Check it before the next step: did the click land, did the text appear? Never type after a click you have not confirmed.
 - A menu or dialog that opens is a new window. Call computer_state again to get its elements.
 - To start an application, use computer_act launch_app, or open it from the desktop menu.
+- An action result that says it succeeded proves nothing: a pixel click on plain web content can report success and do nothing. Trust only the screenshot. If an action had no visible effect, retry it once with foreground: true.
+- Do not use desktop-wide shortcuts (super, alt+tab, ctrl+alt, show desktop).
 - Use wait while something loads. After two failed tries at the same step, change approach.
 - Never enter passwords, 2FA codes, captchas or payment details. If the task needs one, stop and report that a human must take over, and where.
 - Say little between tool calls.

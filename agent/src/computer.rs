@@ -3,8 +3,9 @@
 use serde_json::{Value, json};
 
 use crate::llm::{Message, Part, Request, Usage};
-use crate::prompts;
 use crate::runner::{Runtime, ToolOutput, TurnCtx};
+use crate::toolhost::rpc::{self, Call};
+use crate::{new_id, prompts};
 
 const SUBAGENT: &str = "computer";
 const MAX_STEPS: usize = 30;
@@ -12,7 +13,7 @@ const MAX_TOKENS: u32 = 2048;
 const KEEP_IMAGES: usize = 3;
 const IMAGE_DROPPED: &str = "[older screenshot removed]";
 
-/// Runs `task` to completion and returns the subagent's report with a final screenshot.
+/// Runs `task` to completion in its own driver session and returns the report with a final screenshot.
 pub async fn run(
     rt: &Runtime,
     ctx: &TurnCtx,
@@ -20,6 +21,56 @@ pub async fn run(
     usage: &mut Usage,
 ) -> Result<ToolOutput, String> {
     let _screen = rt.screen.lock().await;
+    let session = new_id("cu");
+    let mut guard = EndOnDrop {
+        toolhost: rt.toolhost().clone(),
+        agent_id: ctx.agent_id.clone(),
+        session: session.clone(),
+        armed: true,
+    };
+    let result = drive(rt, ctx, task, &session, usage).await;
+    guard.armed = false;
+    let end = rt
+        .tool(&ctx.agent_id, "computer_end", json!({"session": session}))
+        .await;
+    if end.is_error {
+        eprintln!("end cua session {session}: {}", end.text);
+    }
+    result
+}
+
+/// Ends the driver session from a detached task when a cancelled turn drops the subagent.
+struct EndOnDrop {
+    toolhost: rpc::Client,
+    agent_id: String,
+    session: String,
+    armed: bool,
+}
+
+impl Drop for EndOnDrop {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let call = Call {
+            agent_id: std::mem::take(&mut self.agent_id),
+            tool: "computer_end".to_owned(),
+            args: json!({"session": std::mem::take(&mut self.session)}),
+        };
+        let toolhost = self.toolhost.clone();
+        tokio::spawn(async move {
+            let _ = toolhost.call(&call).await;
+        });
+    }
+}
+
+async fn drive(
+    rt: &Runtime,
+    ctx: &TurnCtx,
+    task: &str,
+    session: &str,
+    usage: &mut Usage,
+) -> Result<ToolOutput, String> {
     let mut messages = vec![Message::User(vec![Part::Text(task.to_owned())])];
     let mut report = None;
     for _ in 0..MAX_STEPS {
@@ -41,12 +92,15 @@ pub async fn run(
         let mut results = Vec::with_capacity(step.calls.len());
         for call in &step.calls {
             let out = match serde_json::from_str::<Value>(&call.arguments) {
-                Ok(args) => {
+                Ok(Value::Object(mut args)) => {
+                    args.insert("session".to_owned(), session.into());
+                    let args = Value::Object(args);
                     if call.name == "computer_act" {
                         rt.announce_action(ctx, &args);
                     }
                     rt.tool(&ctx.agent_id, &call.name, args).await
                 }
+                Ok(_) => ToolOutput::error("arguments must be a JSON object"),
                 Err(e) => ToolOutput::error(format!("arguments are not valid JSON: {e}")),
             };
             results.push(rt.record_result(ctx, &call.id, out, true).await?);
@@ -57,7 +111,9 @@ pub async fn run(
         });
         messages.extend(results);
     }
-    let shot = rt.tool(&ctx.agent_id, "screenshot", json!({})).await;
+    let shot = rt
+        .tool(&ctx.agent_id, "screenshot", json!({"session": session}))
+        .await;
     let (text, is_error) = match report {
         Some(r) if !r.trim().is_empty() => (r, false),
         Some(_) => (

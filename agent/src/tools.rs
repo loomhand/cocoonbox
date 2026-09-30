@@ -157,7 +157,8 @@ pub fn computer_tools() -> Vec<ToolSpec> {
                     "amount": {"type": "integer"},
                     "button": {"type": "string", "enum": ["left", "right", "middle"]},
                     "app": {"type": "string", "description": "launch_app: application name, e.g. mousepad"},
-                    "seconds": {"type": "number", "description": "wait: up to 10"}
+                    "seconds": {"type": "number", "description": "wait: up to 10"},
+                    "foreground": {"type": "boolean", "description": "Raise the target window and inject there; use when a background action had no visible effect"}
                 },
                 "required": ["action"]
             }),

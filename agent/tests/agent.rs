@@ -593,7 +593,19 @@ async fn run_delegate(messages_wire: bool) {
     assert_eq!(typed["pid"], 42);
     assert_eq!(typed["text"], "hello");
     assert_eq!(typed["window_id"], 7);
-    assert_eq!(typed["session"], "cocoonbox");
+    let session = typed["session"].as_str().unwrap().to_owned();
+    assert!(session.starts_with("cu-"), "{session}");
+    let cua_calls = h.cua_log.lock().unwrap().clone();
+    assert!(
+        cua_calls
+            .iter()
+            .all(|(_, a)| a["session"] == session.as_str()),
+        "{cua_calls:?}"
+    );
+    assert_eq!(
+        cua_calls.last().map(|(n, _)| n.as_str()),
+        Some("end_session")
+    );
 
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     let main_after = if messages_wire {

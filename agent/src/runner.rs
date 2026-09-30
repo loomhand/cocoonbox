@@ -186,6 +186,11 @@ impl Runtime {
         }
     }
 
+    /// The toolhost client, for calls that must outlive a dropped turn.
+    pub fn toolhost(&self) -> &rpc::Client {
+        &self.toolhost
+    }
+
     /// Runs one tool in the toolhost; transport failures become tool errors.
     pub async fn tool(&self, agent_id: &str, name: &str, args: Value) -> ToolOutput {
         let call = Call {
