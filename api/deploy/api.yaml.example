@@ -1,0 +1,17 @@
+listen: 127.0.0.1:18200
+# relative paths resolve next to this file (the systemd credentials directory)
+kubeconfig: kubeconfig
+namespace: cocoonbox
+image: cocoonbox-desktop-v1
+network: cb
+probe_port: 22
+agent_port: 7443
+edge_token_file: edge-token
+flavor:
+  vcpus: 4
+  memory_mib: 8192
+  disk_gib: 40
+users:
+  # token_sha256 = printf %s "$TOKEN" | sha256sum
+  - name: example
+    token_sha256: 0000000000000000000000000000000000000000000000000000000000000000

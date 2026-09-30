@@ -1,0 +1,31 @@
+[Unit]
+Description=cocoonbox control plane and agent edge
+Wants=network-online.target
+After=network-online.target k3s.service
+
+[Service]
+Type=simple
+User=cocoonbox-api
+Group=cocoonbox-api
+LoadCredential=api.yaml:/etc/cocoonbox/api.yaml
+LoadCredential=kubeconfig:/etc/cocoonbox/kubeconfig
+LoadCredential=edge-token:/etc/cocoonbox/edge-token
+ExecStart=/usr/local/bin/cocoonbox-api -config %d/api.yaml
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
