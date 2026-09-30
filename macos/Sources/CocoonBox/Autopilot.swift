@@ -5,7 +5,7 @@ import Foundation
 // Autopilot replays a `;`-separated step list from CB_AUTOPILOT so acceptance
 // runs can drive the app without UI scripting permissions. Steps:
 // ensure, hibernate, wait-running, wait-live, agent[:name], send:<text>,
-// wait-idle, takeover:on|off, type:<text> (\n allowed), wait:<ms>,
+// wait-idle, takeover:on|off, type:<text> (\n allowed), click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, popout, quit.
 @MainActor
 enum Autopilot {
@@ -54,6 +54,9 @@ enum Autopilot {
             model.screen.takeOver = arg != "off"
         case "type":
             model.screen.typeText(arg.replacingOccurrences(of: "\\n", with: "\n"))
+        case "click":
+            let xy = arg.split(separator: ",").compactMap { Int($0) }
+            if xy.count == 2 { model.screen.click(x: xy[0], y: xy[1]) }
         case "wait":
             try? await pause(.milliseconds(Int(arg) ?? 1000))
         case "respond-takeover":

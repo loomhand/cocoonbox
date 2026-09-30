@@ -57,6 +57,7 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
     private nonisolated let drawPending = Atomic<Bool>(false)
     private nonisolated let updates = Atomic<Int>(0)
     private var presentedFirst = false
+    private var updatesAtSurface = 0
     private var inputAt: (ms: Double, updates: Int)?
     private var remoteCursor = NSCursor.arrow
     private var scrollAccumulator = CGPoint.zero
@@ -162,6 +163,8 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             framebufferSize = CGSize(width: width, height: height)
+            presentedFirst = false
+            updatesAtSurface = updates.load(ordering: .relaxed)
             superview?.needsLayout = true
             updateDrawableSize()
             needsDisplay = true
@@ -226,7 +229,7 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
         encoder.endEncoding()
-        if current != nil, !presentedFirst, updates.load(ordering: .relaxed) > 0 {
+        if current != nil, !presentedFirst, updates.load(ordering: .relaxed) > updatesAtSurface {
             presentedFirst = true
             let callback = onFirstFrame
             drawable.addPresentedHandler { _ in
@@ -351,6 +354,15 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         guard takeOver, let session else { return }
         markInput()
         session.type(text)
+    }
+
+    // click injects a left click at framebuffer coordinates through the take-over path.
+    public func click(x: Int, y: Int) {
+        guard takeOver, let session else { return }
+        markInput()
+        session.mouseMove(x: x, y: y)
+        session.mouseButton(.left, down: true, x: x, y: y)
+        session.mouseButton(.left, down: false, x: x, y: y)
     }
 
     private func markInput() {

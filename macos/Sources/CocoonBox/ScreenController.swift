@@ -133,6 +133,10 @@ final class ScreenController {
     func typeText(_ text: String) {
         view?.typeText(text)
     }
+
+    func click(x: Int, y: Int) {
+        view?.click(x: x, y: y)
+    }
 }
 
 // LiveScreenContainer stacks the Metal view and a non-interactive overlay

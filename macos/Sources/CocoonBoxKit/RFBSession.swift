@@ -110,9 +110,11 @@ public final class RFBSession: NSObject, VNCConnectionDelegate, @unchecked Senda
 
     public func type(_ text: String) {
         markInput()
-        for code in VNCKeyCode.keyCodesFrom(characters: text) {
-            connection.keyDown(code)
-            connection.keyUp(code)
+        for character in text {
+            for code in character.isNewline ? [VNCKeyCode.return] : VNCKeyCode.keyCodesFrom(characters: String(character)) {
+                connection.keyDown(code)
+                connection.keyUp(code)
+            }
         }
     }
 
