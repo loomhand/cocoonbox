@@ -75,7 +75,12 @@ impl Parser {
 
 /// Builds the chat-completions request body.
 pub fn body(req: &Request<'_>) -> Value {
-    let mut messages = vec![json!({"role": "system", "content": req.system})];
+    let cache = req.model.starts_with("anthropic/");
+    let mut messages = vec![if cache {
+        json!({"role": "system", "content": [{"type": "text", "text": req.system, "cache_control": {"type": "ephemeral"}}]})
+    } else {
+        json!({"role": "system", "content": req.system})
+    }];
     let mut shots: Vec<Part> = Vec::new();
     for m in req.messages {
         if !matches!(m, Message::Tool { .. }) {
@@ -126,6 +131,16 @@ pub fn body(req: &Request<'_>) -> Value {
         }
     }
     flush_shots(&mut messages, &mut shots);
+    if cache
+        && let Some(part) = messages
+            .iter_mut()
+            .rev()
+            .find(|m| m["role"] == "user")
+            .and_then(|m| m["content"].as_array_mut())
+            .and_then(|c| c.last_mut())
+    {
+        part["cache_control"] = json!({"type": "ephemeral"});
+    }
     let mut body = json!({
         "model": req.model,
         "stream": true,
@@ -294,8 +309,18 @@ mod tests {
         assert_eq!(msgs[2]["tool_calls"][0]["function"]["name"], "shell");
         assert!(msgs[3]["content"].as_str().unwrap().contains("omitted"));
         assert_eq!(text_body["tools"][0]["function"]["name"], "shell");
+        assert!(!text_body.to_string().contains("cache_control"));
         req.vision = true;
+        req.model = "anthropic/claude-sonnet-5";
         let vision_body = body(&req);
+        assert_eq!(
+            vision_body["messages"][0]["content"][0]["cache_control"]["type"],
+            "ephemeral"
+        );
+        assert_eq!(
+            vision_body["messages"][5]["content"][1]["cache_control"]["type"],
+            "ephemeral"
+        );
         let msgs = vision_body["messages"].as_array().unwrap();
         let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
         assert_eq!(

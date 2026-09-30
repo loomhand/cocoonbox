@@ -11,6 +11,7 @@ const SUBAGENT: &str = "computer";
 const MAX_STEPS: usize = 30;
 const MAX_TOKENS: u32 = 2048;
 const KEEP_IMAGES: usize = 3;
+const PRUNE_AT: usize = 6;
 const IMAGE_DROPPED: &str = "[older screenshot removed]";
 
 /// Runs `task` to completion in its own driver session and returns the report with a final screenshot.
@@ -74,7 +75,10 @@ async fn drive(
     let mut messages = vec![Message::User(vec![Part::Text(task.to_owned())])];
     let mut report = None;
     for _ in 0..MAX_STEPS {
-        prune_images(&mut messages, KEEP_IMAGES);
+        // prune in batches so the cached prompt prefix survives most steps
+        if image_count(&messages) > PRUNE_AT {
+            prune_images(&mut messages, KEEP_IMAGES);
+        }
         let req = Request {
             model: &rt.cfg.model_computer,
             system: prompts::COMPUTER,
@@ -132,6 +136,13 @@ async fn drive(
         image: shot.image,
         is_error,
     })
+}
+
+fn image_count(messages: &[Message]) -> usize {
+    messages
+        .iter()
+        .filter(|m| matches!(m, Message::Tool { image: Some(_), .. }))
+        .count()
 }
 
 /// Keeps only the newest `keep` screenshots in the conversation.
