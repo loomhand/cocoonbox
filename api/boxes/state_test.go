@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -182,6 +183,51 @@ func TestRebaseKeepsOldMachineWhenRestoreFails(t *testing.T) {
 	}
 }
 
+func TestSaveUploadsInBatches(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.size = 300 << 20
+	env.agent.chunks = []string{hexID("c1"), hexID("c2"), hexID("c3")}
+	events := env.save(t)
+	uploads := env.agent.allUploads()
+	if len(uploads) != 3 {
+		t.Fatalf("%d uploads, want 3 batches of 300 MiB", len(uploads))
+	}
+	for i, up := range uploads {
+		if len(up.GetPuts()) != 1 || (up.GetManifest() != nil) != (i == 2) {
+			t.Errorf("upload %d: %d puts, manifest %v", i, len(up.GetPuts()), up.GetManifest() != nil)
+		}
+	}
+	var done uint64
+	for _, ev := range events {
+		if ev.GetTotalBytes() == 0 {
+			continue
+		}
+		if ev.GetTotalBytes() != 900<<20 || ev.GetDoneBytes() < done {
+			t.Errorf("progress %d/%d after %d", ev.GetDoneBytes(), ev.GetTotalBytes(), done)
+		}
+		done = ev.GetDoneBytes()
+	}
+	if done != 900<<20 {
+		t.Errorf("progress ended at %d, want %d", done, 900<<20)
+	}
+
+	env.save(t)
+	if up := env.agent.lastUpload(); len(up.GetPuts()) != 0 || up.GetManifest() == nil {
+		t.Errorf("unchanged save uploaded %d chunks, manifest %v", len(up.GetPuts()), up.GetManifest() != nil)
+	}
+}
+
+func TestNewKeyReuploadsEverything(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
+	env.save(t)
+	env.keys.id = "rotated"
+	env.save(t)
+	if n := len(env.agent.lastUpload().GetPuts()); n != 2 {
+		t.Errorf("save under a new key uploaded %d chunks, want 2", n)
+	}
+}
+
 func TestSaveRefusesUnsafeIDs(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -236,6 +282,7 @@ type stateEnv struct {
 	fake  *fakeMachines
 	agent *fakeAgent
 	store *fakeStore
+	keys  *fakeKeys
 }
 
 func newStateEnv(t *testing.T) *stateEnv {
@@ -244,9 +291,10 @@ func newStateEnv(t *testing.T) *stateEnv {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop-v1", Revision: 1})
 	st := newFakeStore()
 	agent := &fakeAgent{store: st}
+	keys := &fakeKeys{}
 	svc := New(fake, testDefaults)
-	svc.EnableState(agent, st, &fakeKeys{})
-	return &stateEnv{ctx: auth.WithUser(t.Context(), alice), svc: svc, fake: fake, agent: agent, store: st}
+	svc.EnableState(agent, st, keys)
+	return &stateEnv{ctx: auth.WithUser(t.Context(), alice), svc: svc, fake: fake, agent: agent, store: st, keys: keys}
 }
 
 func (e *stateEnv) save(t *testing.T) []*controlv1.OperationEvent {
@@ -341,10 +389,12 @@ func (s *fakeStore) Put(_ context.Context, key string, data []byte) error {
 	return nil
 }
 
-type fakeKeys struct{}
+type fakeKeys struct {
+	id string
+}
 
-func (fakeKeys) Key(_ context.Context, owner string) (keyring.Key, error) {
-	return keyring.Key{ID: "test:" + owner, Secret: make([]byte, keyring.KeySize)}, nil
+func (k *fakeKeys) Key(_ context.Context, owner string) (keyring.Key, error) {
+	return keyring.Key{ID: cmp.Or(k.id, "test:"+owner), Secret: make([]byte, keyring.KeySize)}, nil
 }
 
 type restoreCall struct {
@@ -356,6 +406,7 @@ type restoreCall struct {
 type fakeAgent struct {
 	store      *fakeStore
 	chunks     []string
+	size       uint64
 	snapshotID string
 	restoreErr error
 
@@ -373,7 +424,7 @@ func (a *fakeAgent) Plan(_ context.Context, _ string, req *agentv1.PlanRequest) 
 	a.snapshots++
 	resp := &agentv1.PlanResponse{SnapshotId: cmp.Or(a.snapshotID, snapshotID(a.snapshots)), Files: 7, LogicalBytes: 3 << 20, TakenAtMs: time.Now().UnixMilli()}
 	for _, id := range a.chunks {
-		resp.Chunks = append(resp.Chunks, &agentv1.ChunkRef{Id: id, Size: 1 << 20})
+		resp.Chunks = append(resp.Chunks, &agentv1.ChunkRef{Id: id, Size: a.chunkSize()})
 	}
 	return resp, nil
 }
@@ -382,14 +433,21 @@ func (a *fakeAgent) Upload(_ context.Context, _ string, req *agentv1.UploadReque
 	a.mu.Lock()
 	a.uploads = append(a.uploads, req)
 	a.mu.Unlock()
-	total := uint64(len(req.GetPuts())) << 20
-	for i, put := range append(req.GetPuts(), req.GetManifest()) {
+	puts := req.GetPuts()
+	if req.GetManifest() != nil {
+		puts = append(puts, req.GetManifest())
+	}
+	total := uint64(len(req.GetPuts())) * a.chunkSize()
+	for i, put := range puts {
 		if err := a.store.Put(context.Background(), strings.TrimPrefix(put.GetUrl(), "fake://put/"), []byte(put.GetChunkId())); err != nil {
 			return nil, err
 		}
-		progress(&agentv1.TransferProgress{DoneBytes: min(uint64(i+1)<<20, total), TotalBytes: total})
+		progress(&agentv1.TransferProgress{DoneBytes: min(uint64(i+1)*a.chunkSize(), total), TotalBytes: total})
 	}
-	final := &agentv1.TransferProgress{DoneBytes: total, TotalBytes: total, Finished: true, ManifestId: req.GetSnapshotId()}
+	final := &agentv1.TransferProgress{DoneBytes: total, TotalBytes: total, Finished: req.GetManifest() != nil}
+	if final.Finished {
+		final.ManifestId = req.GetSnapshotId()
+	}
 	progress(final)
 	return final, nil
 }
@@ -411,6 +469,10 @@ func (a *fakeAgent) Restore(_ context.Context, addr string, req *agentv1.Restore
 	return final, nil
 }
 
+func (a *fakeAgent) chunkSize() uint64 {
+	return cmp.Or(a.size, 1<<20)
+}
+
 func (a *fakeAgent) lastPlan() *agentv1.PlanRequest {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -421,6 +483,12 @@ func (a *fakeAgent) plans() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.planReqs)
+}
+
+func (a *fakeAgent) allUploads() []*agentv1.UploadRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.uploads)
 }
 
 func (a *fakeAgent) uploadCount() int {
