@@ -8,6 +8,7 @@ BRIDGE=cbc0
 BRIDGE_ADDR=10.203.0.1/24
 CLUSTER_CIDR=10.42.0.0/15
 GW_PORT=18090
+STATE_PORT=9000
 
 up() {
 	ip link show "$BRIDGE" >/dev/null 2>&1 || ip link add "$BRIDGE" type bridge
@@ -15,10 +16,11 @@ up() {
 	ip link set "$BRIDGE" up
 
 	iptables -N CB-INPUT 2>/dev/null || iptables -F CB-INPUT
-	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports 5000,6443,10250,10260,$GW_PORT,18200 ! -s "$HOST_IP" -j DROP
+	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports 5000,6443,9000,9001,10250,10260,$GW_PORT,18200,18201 ! -s "$HOST_IP" -j DROP
 	iptables -A CB-INPUT -i "$UPLINK" -p udp --dport 8472 ! -s "$HOST_IP" -j DROP
 	iptables -A CB-INPUT -i "$BRIDGE" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 	iptables -A CB-INPUT -i "$BRIDGE" -p tcp --dport "$GW_PORT" -j RETURN
+	iptables -A CB-INPUT -i "$BRIDGE" -p tcp --dport "$STATE_PORT" -j RETURN
 	iptables -A CB-INPUT -i "$BRIDGE" -j DROP
 	iptables -C INPUT -j CB-INPUT 2>/dev/null || iptables -I INPUT 1 -j CB-INPUT
 
