@@ -139,10 +139,10 @@ enable_units() {
 	nft -f /etc/nftables.conf
 	systemctl reload ssh || systemctl restart ssh
 	systemctl reload systemd-logind
+	systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}' | xargs -r systemctl stop
 	systemctl enable cocoonbox-xorg.service cocoonbox-session.service
 	systemctl start user@1000.service
 	systemctl restart cocoonbox-xorg.service cocoonbox-session.service
-	systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}' | xargs -r systemctl stop
 	systemctl --user -M user@ daemon-reload
 	systemctl --user -M user@ restart cua-driver.service
 }
