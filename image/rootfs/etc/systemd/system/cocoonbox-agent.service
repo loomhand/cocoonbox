@@ -1,0 +1,19 @@
+[Unit]
+Description=cocoonbox in-box agent loop
+ConditionPathExists=/usr/local/bin/cocoonbox-agent
+Wants=network-online.target cocoonbox-toolhost.service
+After=network-online.target cocoonbox-toolhost.service
+
+[Service]
+Type=simple
+User=cbagent
+Group=cbagent
+EnvironmentFile=/etc/cocoonbox/agent.env
+ExecStart=/usr/local/bin/cocoonbox-agent serve
+StateDirectory=cocoonbox
+StateDirectoryMode=0700
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=multi-user.target

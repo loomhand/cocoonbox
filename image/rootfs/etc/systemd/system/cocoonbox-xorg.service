@@ -1,0 +1,13 @@
+[Unit]
+Description=cocoonbox Xorg display :0 (dummy 1280x800)
+After=systemd-udevd.service systemd-user-sessions.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/lib/cocoonbox/xauth-init
+ExecStart=/usr/lib/xorg/Xorg :0 -config /etc/X11/cocoonbox-xorg.conf -auth /run/cocoonbox-x/Xauthority -nolisten tcp -noreset vt7 -novtswitch
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=graphical.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=cocoonbox x11vnc on 127.0.0.1:5900 for display :0
+Requires=cocoonbox-xorg.service
+After=cocoonbox-xorg.service
+
+[Service]
+Type=simple
+User=user
+ExecStart=/usr/bin/x11vnc -display :0 -auth /run/cocoonbox-x/Xauthority -localhost -rfbport 5900 -nopw -forever -shared -quiet
+Restart=always
+RestartSec=2s
+
+[Install]
+WantedBy=graphical.target

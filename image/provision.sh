@@ -1,0 +1,149 @@
+#!/bin/bash
+# Provisions the cocoonbox desktop guest (Ubuntu 24.04 xface base) in place; idempotent.
+# Runs as root inside the guest from an unpacked copy of image/ (see push.sh).
+# Env: CB_HOST_PUBKEY = ssh public key accepted for `user` and `deploy`.
+set -euo pipefail
+
+CUA_VERSION=0.30.4
+CUA_SHA256=84445347ceb3039034ce30577b3b7c19a1f0c1f67639423f9da3a71be0418f90
+CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
+CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/${CUA_TARBALL}"
+CHROME_URL=https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+PACKAGES=(
+	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
+	x11vnc xauth x11-xserver-utils xinput
+	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
+	mousepad nftables sudo libnss-myhostname
+)
+
+SRC="$(cd "$(dirname "$0")" && pwd)"
+: "${CB_HOST_PUBKEY:?CB_HOST_PUBKEY must hold the host ssh public key}"
+export DEBIAN_FRONTEND=noninteractive
+
+log() { printf '[provision] %s\n' "$*"; }
+
+setup_packages() {
+	log "packages"
+	apt-get update -qq
+	apt-get install -y -qq --no-install-recommends "${PACKAGES[@]}" >/dev/null
+	systemctl disable --now xrdp.service xrdp-sesman.service >/dev/null 2>&1 || true
+	pkill -x xrdp || true
+	pkill -x xrdp-sesman || true
+	apt-get purge -y -qq xrdp xorgxrdp xscreensaver xscreensaver-data >/dev/null 2>&1 || true
+	local deb
+	deb=$(mktemp --suffix=.deb)
+	curl -fsSL "$CHROME_URL" -o "$deb"
+	# dpkg -i always unpacks, restoring the stock launcher the base image patched
+	dpkg -i "$deb" >/dev/null || apt-get install -y -qq -f >/dev/null
+	rm -f "$deb"
+	rm -f /etc/xdg/autostart/google-chrome.desktop /etc/xdg/autostart/xscreensaver.desktop
+	apt-get clean
+}
+
+setup_users() {
+	log "users"
+	if id ubuntu >/dev/null 2>&1; then
+		usermod -l user -d /home/user -m ubuntu
+		groupmod -n user ubuntu
+	fi
+	[ "$(id -u user)" = 1000 ] || { echo "user must be uid 1000" >&2; exit 1; }
+	for g in sudo adm; do gpasswd -d user "$g" >/dev/null 2>&1 || true; done
+	usermod -aG input user
+	passwd -l user >/dev/null
+
+	id cbagent >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /var/lib/cocoonbox --shell /usr/sbin/nologin cbagent
+	id deploy >/dev/null 2>&1 || useradd -m -s /bin/bash deploy
+	passwd -l deploy >/dev/null
+	printf 'deploy ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-cocoonbox-deploy
+	chmod 0440 /etc/sudoers.d/90-cocoonbox-deploy
+	visudo -cqf /etc/sudoers.d/90-cocoonbox-deploy
+
+	local u home
+	for u in user deploy; do
+		home=$(getent passwd "$u" | cut -d: -f6)
+		install -d -m 0700 -o "$u" -g "$u" "$home/.ssh"
+		printf '%s\n' "$CB_HOST_PUBKEY" > "$home/.ssh/authorized_keys"
+		chown "$u:$u" "$home/.ssh/authorized_keys"
+		chmod 0600 "$home/.ssh/authorized_keys"
+	done
+
+	passwd -l root >/dev/null
+	sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/; s/^AcceptEnv /#AcceptEnv /' /etc/ssh/sshd_config
+	usermod -c "cocoonbox user" user
+	printf 'LANG=C.UTF-8\n' > /etc/default/locale
+}
+
+install_rootfs() {
+	log "rootfs files"
+	(cd "$SRC/rootfs" && find . -type f ! -path './etc/skel-cocoonbox/*') | while read -r f; do
+		case "$f" in
+		./usr/local/lib/cocoonbox/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
+		*) install -D -m 0644 "$SRC/rootfs/$f" "/${f#./}" ;;
+		esac
+	done
+	chmod 0755 /etc/nftables.conf
+}
+
+setup_desktop() {
+	log "desktop"
+	local cfg=/home/user/.config xfconf=/home/user/.config/xfce4/xfconf/xfce-perchannel-xml
+	install -d -o user -g user "$cfg" "$cfg/xfce4" "$cfg/xfce4/xfconf" "$xfconf" "$cfg/systemd" "$cfg/systemd/user" "$cfg/systemd/user/default.target.wants"
+	install -m 0644 -o user -g user "$SRC"/rootfs/etc/skel-cocoonbox/.config/xfce4/xfconf/xfce-perchannel-xml/*.xml "$xfconf/"
+	[ -f "$xfconf/xfce4-panel.xml" ] || install -m 0644 -o user -g user /etc/xdg/xfce4/panel/default.xml "$xfconf/xfce4-panel.xml"
+	ln -sfn /etc/systemd/user/cua-driver.service "$cfg/systemd/user/default.target.wants/cua-driver.service"
+	chown -h user:user "$cfg/systemd/user/default.target.wants/cua-driver.service"
+	dconf update
+	install -d -m 0755 /var/lib/systemd/linger
+	touch /var/lib/systemd/linger/user
+}
+
+setup_cua_driver() {
+	log "cua-driver $CUA_VERSION"
+	local dir=/opt/cua-driver/$CUA_VERSION tmp
+	if [ ! -x "$dir/cua-driver" ]; then
+		tmp=$(mktemp -d)
+		curl -fsSL "$CUA_URL" -o "$tmp/$CUA_TARBALL"
+		echo "$CUA_SHA256  $tmp/$CUA_TARBALL" | sha256sum -c --quiet -
+		install -d "$dir"
+		tar -xzf "$tmp/$CUA_TARBALL" -C "$dir" --strip-components=1
+		rm -rf "$tmp"
+	fi
+	ln -sfn "$dir/cua-driver" /usr/local/bin/cua-driver
+	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
+	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
+}
+
+setup_cocoonbox_dirs() {
+	log "cocoonbox dirs"
+	install -d -m 0755 -o user -g user /workspace
+	install -d -m 0755 -o root -g root /etc/cocoonbox
+	systemd-tmpfiles --create /etc/tmpfiles.d/cocoonbox.conf
+	if [ ! -f /etc/cocoonbox/golden-marker ]; then
+		printf 'cocoonbox golden provisioned %s\n' "$(date -u +%FT%TZ)" > /etc/cocoonbox/golden-marker
+	fi
+}
+
+enable_units() {
+	log "units"
+	systemctl daemon-reload
+	udevadm control --reload
+	udevadm trigger --name-match=uinput
+	systemctl enable --now nftables.service
+	nft -f /etc/nftables.conf
+	systemctl reload ssh || systemctl restart ssh
+	systemctl enable cocoonbox-xorg.service cocoonbox-session.service cocoonbox-vnc.service
+	systemctl disable cocoonbox-agent.service cocoonbox-toolhost.service >/dev/null 2>&1 || true
+	systemctl start user@1000.service
+	systemctl restart cocoonbox-xorg.service cocoonbox-session.service cocoonbox-vnc.service
+	systemctl --user -M user@ daemon-reload
+	systemctl --user -M user@ restart cua-driver.service
+}
+
+setup_packages
+setup_users
+install_rootfs
+setup_desktop
+setup_cua_driver
+setup_cocoonbox_dirs
+enable_units
+log "done"
