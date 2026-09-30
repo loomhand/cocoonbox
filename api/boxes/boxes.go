@@ -19,9 +19,10 @@ import (
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
-// Defaults size new boxes, name the image they start from, and list the other images Rebase may target.
+// Defaults size new boxes, name the image they start from, and list the other flavors Ensure and images Rebase accept.
 type Defaults struct {
 	Flavor       machines.Flavor
+	Flavors      []machines.Flavor
 	Image        string
 	RebaseImages []string
 }
@@ -48,6 +49,10 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	}
 	box := BoxID(user)
 	flavor := resolveFlavor(req.GetFlavor(), s.defaults.Flavor)
+	if flavor != s.defaults.Flavor && !slices.Contains(s.defaults.Flavors, flavor) {
+		return nil, status.Errorf(codes.InvalidArgument, "flavor vcpus:%d memory_mib:%d disk_gib:%d is not offered",
+			flavor.VCPUs, flavor.MemoryMiB, flavor.DiskGiB)
+	}
 	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", box)
 
 	spec := machines.Spec{ID: box, Owner: user, Flavor: flavor}

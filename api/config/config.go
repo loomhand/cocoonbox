@@ -97,6 +97,7 @@ type Config struct {
 	AgentPort     int      `json:"agent_port"`
 	EdgeTokenFile string   `json:"edge_token_file"`
 	Flavor        Flavor   `json:"flavor"`
+	Flavors       []Flavor `json:"flavors"`
 	State         State    `json:"state"`
 	Users         []User   `json:"users"`
 }

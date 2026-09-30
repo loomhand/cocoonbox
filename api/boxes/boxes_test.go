@@ -26,7 +26,10 @@ const (
 
 var (
 	defaultFlavor = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
-	testDefaults  = Defaults{Flavor: defaultFlavor, Image: "desktop-v2", RebaseImages: []string{"desktop-v3"}}
+	testDefaults  = Defaults{
+		Flavor: defaultFlavor, Flavors: []machines.Flavor{{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 40}},
+		Image: "desktop-v2", RebaseImages: []string{"desktop-v3"},
+	}
 )
 
 func TestBoxID(t *testing.T) {
@@ -218,7 +221,9 @@ func TestEnsureErrors(t *testing.T) {
 		want    codes.Code
 		message string
 	}{
-		{name: "other flavor", stored: &machines.Machine{ID: aliceBox, Owner: alice, Flavor: defaultFlavor}, flavor: &controlv1.Flavor{Vcpus: 2}, want: codes.FailedPrecondition, message: "box exists with flavor vcpus:4 memory_mib:8192 disk_gib:40"},
+		{name: "other flavor", stored: &machines.Machine{ID: aliceBox, Owner: alice, Flavor: defaultFlavor}, flavor: &controlv1.Flavor{Vcpus: 2, MemoryMib: 4096}, want: codes.FailedPrecondition, message: "box exists with flavor vcpus:4 memory_mib:8192 disk_gib:40"},
+		{name: "flavor not offered", flavor: &controlv1.Flavor{Vcpus: 64, MemoryMib: 1 << 20, DiskGib: 10000}, want: codes.InvalidArgument, message: "flavor vcpus:64 memory_mib:1048576 disk_gib:10000 is not offered"},
+		{name: "offered flavor", flavor: &controlv1.Flavor{Vcpus: 2, MemoryMib: 4096, DiskGib: 40}, want: codes.OK},
 		{name: "default flavor spelled out", stored: &machines.Machine{ID: aliceBox, Owner: alice, Flavor: defaultFlavor, State: machines.StateRunning}, flavor: &controlv1.Flavor{Vcpus: 4}, want: codes.OK},
 		{name: "deleting", ensure: machines.ErrDeleting, want: codes.FailedPrecondition, message: "box is being deleted"},
 		{name: "conflict", ensure: machines.ErrConflict, want: codes.Aborted, message: "ensure box: concurrent change, retry"},

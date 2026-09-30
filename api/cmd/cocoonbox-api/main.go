@@ -65,8 +65,13 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "start cocoonset backend")
 	}
+	flavors := make([]machines.Flavor, 0, len(cfg.Flavors))
+	for _, f := range cfg.Flavors {
+		flavors = append(flavors, machineFlavor(f))
+	}
 	svc := boxes.New(backend, boxes.Defaults{
-		Flavor:       machines.Flavor{VCPUs: cfg.Flavor.VCPUs, MemoryMiB: cfg.Flavor.MemoryMiB, DiskGiB: cfg.Flavor.DiskGiB},
+		Flavor:       machineFlavor(cfg.Flavor),
+		Flavors:      flavors,
 		Image:        cfg.Image,
 		RebaseImages: cfg.RebaseImages,
 	})
@@ -123,6 +128,10 @@ func main() {
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
 	}
+}
+
+func machineFlavor(f config.Flavor) machines.Flavor {
+	return machines.Flavor{VCPUs: f.VCPUs, MemoryMiB: f.MemoryMiB, DiskGiB: f.DiskGiB}
 }
 
 func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer) error {
