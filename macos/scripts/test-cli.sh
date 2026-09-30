@@ -138,6 +138,37 @@ check("ensure over gRPC with progress on stderr", "waking" in ensure.stderr and 
 upgrade = run("upgrade")
 check("upgrade without --yes refuses", upgrade.returncode != 0 and "--yes" in upgrade.stderr, upgrade.stderr)
 
+# Writes stay inside the HOME the CLI is given: every file command runs under a
+# sandbox that denies writes outside the test directory and the process temp.
+import os, hashlib, pathlib
+work = os.path.dirname(mocklog)
+home = os.path.join(work, "home")
+os.makedirs(os.path.join(home, ".cursor"))
+profile = os.path.join(work, "confine.sb")
+open(profile, "w").write(f"""(version 1)
+(allow default)
+(deny file-write* (require-all (require-not (subpath "{os.path.realpath(work)}")) (require-not (subpath "/private/var/folders")) (require-not (subpath "/dev"))))
+""")
+def confined(*args):
+    env = dict(os.environ, HOME=home)
+    env.pop("COCOONBOX_CONFIG_DIR", None)
+    env.pop("COCOONBOX_CACHE_DIR", None)
+    return subprocess.run(["sandbox-exec", "-f", profile, cli, *args], capture_output=True, text=True, timeout=60, env=env)
+
+cursor = os.path.join(home, ".cursor", "mcp.json")
+open(cursor, "w").write(json.dumps({"mcpServers": {"other": {"command": "other-server", "args": ["x"]}}, "keep": 1}))
+done = confined("setup", "cursor")
+merged = json.load(open(cursor))
+check("setup cursor merges into an existing mcp.json", done.returncode == 0 and merged["mcpServers"]["other"] == {"command": "other-server", "args": ["x"]} and merged["keep"] == 1 and merged["mcpServers"]["cocoonbox"]["args"] == ["mcp"], done.stderr + json.dumps(merged))
+jsonc = '{\n  // a comment\n  "mcpServers": {"other": {"command": "other-server"}}\n}\n'
+open(cursor, "w").write(jsonc)
+refused = confined("setup", "cursor")
+check("setup cursor leaves a file it cannot parse unchanged", refused.returncode != 0 and open(cursor).read() == jsonc, refused.stderr)
+for args in (["plugin", "export", os.path.join(home, "plugins")], ["install"]):
+    ran = confined(*args)
+    check("confined: " + " ".join(args[:2]), ran.returncode == 0, ran.stderr)
+check("install links inside the given HOME", os.path.islink(os.path.join(home, ".local", "bin", "cocoonbox")))
+
 print(f"{len(failures)} failed" if failures else "all passed")
 sys.exit(1 if failures else 0)
 PY

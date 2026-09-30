@@ -248,7 +248,14 @@ func setup() {
     if client == "cursor" {
         if flags.contains("--print") { return print("Merge into ~/.cursor/mcp.json:\n\(Plugin.mcpConfig(command: executable))") }
         let file = home.appendingPathComponent(".cursor/mcp.json")
-        var config = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
+        // an existing file is merged into; one this cannot parse is left alone
+        var config: [String: Any] = [:]
+        if let data = try? Data(contentsOf: file), !data.isEmpty {
+            guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any], parsed["mcpServers"] == nil || parsed["mcpServers"] is [String: Any] else {
+                fail("\(file.path) is not plain JSON with an mcpServers object; left unchanged. Add this entry by hand:\n\(Plugin.mcpConfig(command: executable))")
+            }
+            config = parsed
+        }
         var servers = config["mcpServers"] as? [String: Any] ?? [:]
         servers[Plugin.name] = ["command": executable, "args": ["mcp"]]
         config["mcpServers"] = servers
