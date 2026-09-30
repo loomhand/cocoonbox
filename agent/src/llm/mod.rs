@@ -17,6 +17,13 @@ use serde_json::Value;
 /// Placeholder text for images sent to a text-only model.
 pub const IMAGE_OMITTED: &str = "[screenshot omitted: this model has no vision]";
 
+const VISION_PREFIXES: [&str; 4] = [
+    "anthropic/",
+    "google/gemini",
+    "openai/gpt-4o",
+    "openai/gpt-5",
+];
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(180);
 const ERROR_BODY_BYTES: usize = 2048;
@@ -239,6 +246,11 @@ impl Stream {
 enum Parser {
     Chat(openai::Parser),
     Messages(anthropic::Parser),
+}
+
+/// Whether a gw model slug accepts image input.
+pub fn has_vision(model: &str) -> bool {
+    VISION_PREFIXES.iter().any(|p| model.starts_with(p)) || model.contains("-vl")
 }
 
 /// Returns the MIME type of an encoded image by its magic bytes.

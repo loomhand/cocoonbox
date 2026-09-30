@@ -4,9 +4,9 @@ use serde_json::json;
 
 use crate::llm::ToolSpec;
 
-/// Tools of the main agent.
-pub fn main_tools() -> Vec<ToolSpec> {
-    vec![
+/// Tools of the main agent; a vision model also gets a read-only screenshot.
+pub fn main_tools(vision: bool) -> Vec<ToolSpec> {
+    let mut tools = vec![
         ToolSpec {
             name: "shell",
             description: "Run a bash command in the agent's persistent shell session (cwd /workspace). Returns merged stdout/stderr and the exit status. Output over ~30 KB keeps only its head and tail.",
@@ -120,7 +120,15 @@ pub fn main_tools() -> Vec<ToolSpec> {
                 "required": ["reason"]
             }),
         },
-    ]
+    ];
+    if vision {
+        tools.push(ToolSpec {
+            name: "screenshot",
+            description: "Look at the desktop: a read-only screenshot of the whole 1280x800 screen.",
+            parameters: json!({"type": "object", "properties": {}}),
+        });
+    }
+    tools
 }
 
 /// Tools of the computer subagent.

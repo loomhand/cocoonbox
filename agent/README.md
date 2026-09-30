@@ -22,12 +22,21 @@ The in-box agent of a cocoonbox. One binary, two subcommands:
 ## Behaviour
 
 - **Turns.** `Send` persists the user entry, then queues the turn. Each agent runs its turns in order. A `client_nonce` seen before returns the first turn id, and `Create` is deduplicated the same way. `Cancel` aborts the running turn: the in-flight model request is dropped, and the toolhost connection closes, which kills the shell command. The turn then records a `TurnEnd` with `ok=false`.
-- **Transcript.** Text and reasoning blocks are recorded when each block completes: text before a tool call is flushed when the call starts. Tool calls and tool results are recorded as they happen. Subagent tool calls carry `subagent: "computer"`. The subagent's own prose is not recorded; its report is the `delegate_computer` result, and that result carries the final screenshot.
-- **Images.** The main model is treated as text-only, so screenshots are replaced with a note. The vision subagent receives screenshots as image parts that follow the tool results.
+- **Transcript and streaming.** Each text or reasoning block streams live as `TextDelta` / `ReasoningDelta` events carrying `(turn_id, block)`. `block` numbers the blocks of a turn. When a block completes, it is recorded once as a `TranscriptEntry` whose `TextBlock` / `ReasoningBlock` carries the same `block`. Deltas take event offsets but are not replayed; a reconnecting client gets the full blocks. Tool calls and tool results are recorded as they happen. Subagent text, reasoning and tool calls carry `subagent: "computer"`, and the subagent's report is the `delegate_computer` result, which carries the final screenshot.
+- **Images.** A main model with vision (`anthropic/`, `google/gemini`, `openai/gpt-4o`, `openai/gpt-5` or a `-vl` slug) gets a read-only `screenshot` tool, and it receives the delegate's final screenshot. Any other main model gets a text note instead. The vision subagent receives screenshots as image parts that follow the tool results.
 - **Shell.** Each agent has one persistent bash session with cwd `/workspace`. Commands are sourced from a script file with stdin set to `/dev/null`. Output is capped to about 30 KB (head and tail). The default timeout is 120 s, up to 600 s. A timeout or cancel kills the session's process group, and the next call starts a fresh session.
 - **File paths.** A relative path resolves under `/workspace`. An absolute path is used as given, so the uid `user` is the access boundary.
 - **Browser.** The toolhost attaches to Chrome on `127.0.0.1:9222`, or launches it with the `/home/user/.config/cocoonbox-chrome` profile. A snapshot is a ref-tagged list (`- link "Learn more" [ref=e1]`) of at most 300 lines. It includes open shadow roots but not iframes. Clicks are CDP mouse events at the element's center.
 - **Computer.** Each `delegate_computer` task runs in its own cua-driver session (`cu-…`). Every call of the task carries that label. `end_session` runs when the task ends, or from a detached task if a cancel drops it. `computer_state` returns the desktop screenshot, the window list and the AT-SPI elements of one window. `computer_act` targets an element by index from the latest state, or screen pixels. Keyboard input with neither goes to the frontmost app window at the moment of the action, and `foreground: true` escalates delivery. A fresh screenshot follows every action, and a `ComputerAction` event is published before each input. For `anthropic/` models on the chat wire, the system prompt and the newest user message carry `cache_control`. Screenshots are pruned in batches (above 6, keep 3) so the cached prefix survives most steps.
+
+## Limits
+
+- Queued turns and pending take-over approvals live in memory. After a restart, every unfinished turn gets a `TurnEnd` with the error "interrupted: the agent restarted".
+- Screenshots are stored in `agent.db` with every subagent tool result, about 50–100 KB each, and there is no retention policy yet.
+- The browser snapshot skips iframes. A click is a CDP mouse event at the element's center, so a covered element gets the click on whatever covers it.
+- On XFCE, a background element click on the Applications toggle has no effect. The subagent is told to trust only screenshots and to retry once with `foreground: true`.
+- Delta events are not coalesced: one gw SSE chunk produces one event. A slow client that falls behind the live channel gets `DATA_LOSS` and reconnects with `from_offset`.
+- The main agent's history from earlier turns keeps no images.
 
 ## Environment
 

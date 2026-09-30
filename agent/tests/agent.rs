@@ -448,7 +448,9 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
     assert_eq!(msgs.iter().filter(|m| m["role"] == "user").count(), 1);
 
     let mut offsets = Vec::new();
+    let mut stored = Vec::new();
     let mut transcript_seqs = Vec::new();
+    let mut deltas = Vec::new();
     while transcript_seqs.len() < entries.len() {
         let ev = tokio::time::timeout(Duration::from_secs(5), events.message())
             .await
@@ -456,25 +458,58 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
             .unwrap()
             .unwrap();
         offsets.push(ev.offset);
-        if let Some(event::Body::Transcript(t)) = ev.body {
-            transcript_seqs.push(t.seq);
+        match ev.body {
+            Some(event::Body::TextDelta(d)) => {
+                assert_eq!(
+                    (d.agent_id.as_str(), d.turn_id.as_str()),
+                    (agent_id.as_str(), turn.as_str())
+                );
+                deltas.push((d.block, d.text));
+            }
+            Some(event::Body::Transcript(t)) => {
+                transcript_seqs.push(t.seq);
+                stored.push(ev.offset);
+            }
+            _ => stored.push(ev.offset),
         }
     }
     assert_eq!(transcript_seqs, seqs);
     assert!(offsets.windows(2).all(|w| w[1] == w[0] + 1), "{offsets:?}");
+    assert_eq!(
+        deltas,
+        [
+            (0, "Let me check.".to_owned()),
+            (1, "Wrote ok.txt.".to_owned())
+        ]
+    );
+    let blocks: Vec<(u32, &str)> = bodies
+        .iter()
+        .filter_map(|b| match b {
+            Body::Text(t) if !t.text.starts_with("run") => Some((t.block, t.text.as_str())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(blocks, [(0, "Let me check."), (1, "Wrote ok.txt.")]);
+    assert!(
+        !chats[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["function"]["name"] == "screenshot")
+    );
 
     let mut replay = session
         .events(authed(pb::EventsRequest {
-            from_offset: offsets[1],
+            from_offset: stored[1],
         }))
         .await
         .unwrap()
         .into_inner();
     let mut replayed = Vec::new();
-    for _ in 2..offsets.len() {
+    for _ in 2..stored.len() {
         replayed.push(replay.message().await.unwrap().unwrap().offset);
     }
-    assert_eq!(replayed, offsets[2..]);
+    assert_eq!(replayed, stored[2..]);
     let stale = session
         .events(authed(pb::EventsRequest { from_offset: 3 }))
         .await
@@ -563,6 +598,17 @@ async fn run_delegate(messages_wire: bool) {
         })
         .collect();
     assert_eq!(sub_calls.len(), 3);
+    let sub_texts: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match &e.body {
+            Some(Body::Text(t)) if t.subagent == "computer" => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        sub_texts.contains(&"Typed hello into Mousepad."),
+        "{sub_texts:?}"
+    );
     let state = entries
         .iter()
         .find_map(|e| match &e.body {
@@ -909,5 +955,64 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
     panic!(
         "cancel did not end the driver session: {:?}",
         h.cua_log.lock().unwrap()
+    );
+}
+
+#[tokio::test]
+async fn vision_main_model_gets_a_screenshot_tool() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("call_s", "screenshot", &json!({})),
+            ),
+            ("chat/completions", chat_text("I see the desktop.")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = agents
+        .create(authed(pb::CreateAgentRequest {
+            name: "v".into(),
+            main_model: "anthropic/claude-sonnet-5".into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .id;
+    send(&mut agents, &agent_id, "what is on screen", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    assert!(
+        chats[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["function"]["name"] == "screenshot")
+    );
+    let last = chats[1]["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(last["role"], "user");
+    assert!(
+        last["content"][1]["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,")
+    );
+    let cua = h.cua_log.lock().unwrap().clone();
+    let names: Vec<&str> = cua.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(names, ["get_desktop_state", "end_session"]);
+    assert!(
+        cua.iter()
+            .all(|(_, a)| a["session"].as_str().unwrap().starts_with("shot-"))
     );
 }

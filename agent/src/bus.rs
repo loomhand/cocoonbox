@@ -76,6 +76,20 @@ impl Bus {
         offset
     }
 
+    /// Delivers `body` to live subscribers only; it takes an offset but is never replayed.
+    pub fn publish_live(&self, body: event::Body) -> u64 {
+        let Ok(mut ring) = self.ring.lock() else {
+            return 0;
+        };
+        let offset = ring.next;
+        ring.next += 1;
+        let _ = self.live.send(Arc::new(Event {
+            offset,
+            body: Some(body),
+        }));
+        offset
+    }
+
     /// Subscribes after `from_offset`; 0 means live events only.
     pub fn subscribe(&self, from_offset: u64) -> Result<Subscription, String> {
         let ring = self
@@ -135,6 +149,29 @@ mod tests {
         assert_eq!(replayed, [101, 102]);
         bus.publish(action(3));
         assert_eq!(sub.live.recv().await.unwrap().offset, 103);
+    }
+
+    #[tokio::test]
+    async fn live_events_take_offsets_but_are_not_replayed() {
+        let bus = Bus::with_base(1);
+        let mut live = bus.subscribe(0).unwrap().live;
+        assert_eq!(bus.publish(action(0)), 1);
+        assert_eq!(bus.publish_live(action(1)), 2);
+        assert_eq!(bus.publish(action(2)), 3);
+        let got: Vec<u64> = [live.recv().await, live.recv().await, live.recv().await]
+            .into_iter()
+            .map(|e| e.unwrap().offset)
+            .collect();
+        assert_eq!(got, [1, 2, 3]);
+        let replayed: Vec<u64> = bus
+            .subscribe(1)
+            .unwrap()
+            .replay
+            .iter()
+            .map(|e| e.offset)
+            .collect();
+        assert_eq!(replayed, [3]);
+        assert!(bus.subscribe(2).is_ok());
     }
 
     #[test]

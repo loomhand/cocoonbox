@@ -80,14 +80,19 @@ impl Host {
             "computer_act" => self.cua.act(call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
             "screenshot" => {
-                self.cua
-                    .screenshot(&cua::session_of(&call.args))
-                    .await
-                    .map(|image_b64| Output {
-                        text: String::new(),
-                        is_error: false,
-                        image_b64,
-                    })
+                let shot = match call.args["session"].as_str() {
+                    Some(session) => self.cua.screenshot(session).await,
+                    None => self.cua.screenshot_once().await,
+                };
+                shot.map(|image_b64| Output {
+                    text: if image_b64.is_some() {
+                        "screenshot of the whole screen".to_owned()
+                    } else {
+                        "no screenshot returned".to_owned()
+                    },
+                    is_error: false,
+                    image_b64,
+                })
             }
             other => Err(format!("unknown tool {other}")),
         };

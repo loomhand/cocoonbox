@@ -154,7 +154,10 @@ impl Store {
                 agent_id,
                 turn_id: turn_id.clone(),
                 role: pb::Role::User.into(),
-                body: Some(transcript_entry::Body::Text(pb::TextBlock { text })),
+                body: Some(transcript_entry::Body::Text(pb::TextBlock {
+                    text,
+                    ..Default::default()
+                })),
                 ..Default::default()
             };
             let entry = insert_entry(&tx, entry, false)?;
@@ -409,6 +412,7 @@ mod tests {
                 role: pb::Role::Assistant.into(),
                 body: Some(transcript_entry::Body::Text(pb::TextBlock {
                     text: format!("t{i}"),
+                    ..Default::default()
                 })),
                 ..Default::default()
             };
@@ -444,6 +448,7 @@ mod tests {
             role: pb::Role::Assistant.into(),
             body: Some(transcript_entry::Body::Text(pb::TextBlock {
                 text: text.into(),
+                ..Default::default()
             })),
             ..Default::default()
         };

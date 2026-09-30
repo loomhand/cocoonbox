@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use base64::Engine;
@@ -35,6 +36,7 @@ pub struct Runtime {
     pub(crate) screen: tokio::sync::Mutex<()>,
     toolhost: rpc::Client,
     main_tools: Vec<ToolSpec>,
+    main_vision_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
 }
 
@@ -49,7 +51,8 @@ impl Runtime {
             toolhost: rpc::Client::new(cfg.toolhost_socket.clone()),
             store,
             bus: Bus::new(),
-            main_tools: tools::main_tools(),
+            main_tools: tools::main_tools(false),
+            main_vision_tools: tools::main_tools(true),
             computer_tools: tools::computer_tools(),
             screen: tokio::sync::Mutex::new(()),
             slots: Mutex::new(HashMap::new()),
@@ -220,21 +223,28 @@ impl Runtime {
     ) -> Result<StepOut, String> {
         let mut stream = self.llm.stream(req).await?;
         let mut text = String::new();
-        let mut pending = String::new();
-        let mut reasoning = String::new();
+        let mut pending = Block::default();
+        let mut reasoning = Block::default();
         let mut calls: Vec<(usize, ToolCall)> = Vec::new();
         let mut usage = Usage::default();
         while let Some(d) = stream.next().await? {
             match d {
-                Delta::Reasoning(t) => reasoning.push_str(&t),
+                Delta::Reasoning(t) => {
+                    self.stream_delta(ctx, &mut reasoning, Kind::Reasoning, &t, subagent);
+                }
                 Delta::Text(t) => {
-                    self.flush_reasoning(ctx, &mut reasoning, subagent).await?;
-                    pending.push_str(&t);
+                    self.flush_block(ctx, &mut reasoning, Kind::Reasoning, subagent)
+                        .await?;
+                    self.stream_delta(ctx, &mut pending, Kind::Text, &t, subagent);
                 }
                 Delta::ToolStart { index, id, name } => {
-                    self.flush_reasoning(ctx, &mut reasoning, subagent).await?;
-                    self.flush_text(ctx, &mut pending, &mut text, subagent)
+                    self.flush_block(ctx, &mut reasoning, Kind::Reasoning, subagent)
                         .await?;
+                    text.push_str(
+                        &self
+                            .flush_block(ctx, &mut pending, Kind::Text, subagent)
+                            .await?,
+                    );
                     calls.push((
                         index,
                         ToolCall {
@@ -253,9 +263,13 @@ impl Runtime {
                 Delta::Done => break,
             }
         }
-        self.flush_reasoning(ctx, &mut reasoning, subagent).await?;
-        self.flush_text(ctx, &mut pending, &mut text, subagent)
+        self.flush_block(ctx, &mut reasoning, Kind::Reasoning, subagent)
             .await?;
+        text.push_str(
+            &self
+                .flush_block(ctx, &mut pending, Kind::Text, subagent)
+                .await?,
+        );
         let mut out = Vec::with_capacity(calls.len());
         for (n, (_, mut call)) in calls.into_iter().enumerate() {
             if call.id.is_empty() {
@@ -362,6 +376,7 @@ impl Runtime {
         let ctx = TurnCtx {
             agent_id: agent_id.to_owned(),
             turn_id,
+            blocks: AtomicU32::new(0),
             model,
             slot,
         };
@@ -412,14 +427,20 @@ impl Runtime {
             .history(ctx.agent_id.clone(), ctx.turn_id.clone())
             .await?;
         let mut messages = history_messages(history);
+        let vision = llm::has_vision(&ctx.model);
+        let tools = if vision {
+            &self.main_vision_tools
+        } else {
+            &self.main_tools
+        };
         for _ in 0..MAIN_MAX_STEPS {
             let req = Request {
                 model: &ctx.model,
                 system: prompts::MAIN,
                 messages: &messages,
-                tools: &self.main_tools,
+                tools,
                 max_tokens: MAIN_MAX_TOKENS,
-                vision: false,
+                vision,
             };
             let step = self.step(ctx, &req, "").await?;
             usage.add(step.usage);
@@ -525,52 +546,67 @@ impl Runtime {
         })
     }
 
-    async fn flush_reasoning(
-        &self,
-        ctx: &TurnCtx,
-        reasoning: &mut String,
-        subagent: &str,
-    ) -> Result<(), String> {
-        if reasoning.is_empty() {
-            return Ok(());
-        }
-        let text = std::mem::take(reasoning);
-        if !subagent.is_empty() {
-            return Ok(());
-        }
-        self.record(
-            ctx,
-            Role::Assistant,
-            Body::Reasoning(pb::ReasoningBlock { text }),
-            false,
-        )
-        .await
+    fn stream_delta(&self, ctx: &TurnCtx, block: &mut Block, kind: Kind, t: &str, subagent: &str) {
+        block.text.push_str(t);
+        let fragment = match block.index {
+            Some(_) => t,
+            None if block.text.trim().is_empty() => return,
+            None => {
+                block.index = Some(ctx.blocks.fetch_add(1, Ordering::Relaxed));
+                block.text.as_str()
+            }
+        };
+        let (agent_id, turn_id) = (ctx.agent_id.clone(), ctx.turn_id.clone());
+        let (block, text, subagent) = (
+            block.index.unwrap_or_default(),
+            fragment.to_owned(),
+            subagent.to_owned(),
+        );
+        self.bus.publish_live(match kind {
+            Kind::Text => event::Body::TextDelta(pb::TextDelta {
+                agent_id,
+                turn_id,
+                block,
+                text,
+                subagent,
+            }),
+            Kind::Reasoning => event::Body::ReasoningDelta(pb::ReasoningDelta {
+                agent_id,
+                turn_id,
+                block,
+                text,
+                subagent,
+            }),
+        });
     }
 
-    async fn flush_text(
+    /// Records a finished block and returns its text; blank blocks were never streamed and are not recorded.
+    async fn flush_block(
         &self,
         ctx: &TurnCtx,
-        pending: &mut String,
-        text: &mut String,
+        block: &mut Block,
+        kind: Kind,
         subagent: &str,
-    ) -> Result<(), String> {
-        if pending.trim().is_empty() {
-            text.push_str(pending);
-            pending.clear();
-            return Ok(());
-        }
-        text.push_str(pending);
-        let block = std::mem::take(pending);
-        if !subagent.is_empty() {
-            return Ok(());
-        }
-        self.record(
-            ctx,
-            Role::Assistant,
-            Body::Text(pb::TextBlock { text: block }),
-            false,
-        )
-        .await
+    ) -> Result<String, String> {
+        let text = std::mem::take(&mut block.text);
+        let Some(index) = block.index.take() else {
+            return Ok(text);
+        };
+        let body = match kind {
+            Kind::Text => Body::Text(pb::TextBlock {
+                text: text.clone(),
+                subagent: subagent.to_owned(),
+                block: index,
+            }),
+            Kind::Reasoning => Body::Reasoning(pb::ReasoningBlock {
+                text: text.clone(),
+                block: index,
+                subagent: subagent.to_owned(),
+            }),
+        };
+        self.record(ctx, Role::Assistant, body, !subagent.is_empty())
+            .await?;
+        Ok(text)
     }
 
     async fn record_raw(
@@ -626,6 +662,7 @@ impl ToolOutput {
 pub struct TurnCtx {
     pub agent_id: String,
     pub turn_id: String,
+    blocks: AtomicU32,
     model: String,
     slot: Arc<Slot>,
 }
@@ -635,6 +672,19 @@ pub struct StepOut {
     pub text: String,
     pub calls: Vec<ToolCall>,
     pub usage: Usage,
+}
+
+/// A streamed text or reasoning block; `index` is assigned when its first non-blank delta goes out.
+#[derive(Default)]
+struct Block {
+    text: String,
+    index: Option<u32>,
+}
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Text,
+    Reasoning,
 }
 
 struct Slot {
@@ -767,7 +817,10 @@ mod tests {
     }
 
     fn text(s: &str) -> Body {
-        Body::Text(pb::TextBlock { text: s.into() })
+        Body::Text(pb::TextBlock {
+            text: s.into(),
+            ..Default::default()
+        })
     }
 
     fn call(id: &str) -> Body {
