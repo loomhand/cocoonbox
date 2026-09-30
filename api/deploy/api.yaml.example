@@ -20,6 +20,7 @@ state:
   keyring_dir: /var/lib/cocoonbox-api/keys
   interval: 15m
   presign_ttl: 10m
+  scheduled_users: []           # users whose boxes get scheduled live saves
 users:
   # token_sha256 = printf %s "$TOKEN" | sha256sum
   - name: example
