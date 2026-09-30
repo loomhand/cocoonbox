@@ -12,7 +12,7 @@ The in-box agent of a cocoonbox. One binary, two subcommands:
 | `server.rs` | gRPC services and the `x-cocoonbox-edge-token` check (`UNAUTHENTICATED` otherwise) |
 | `runner.rs` | Per-agent turn queue, the main agent loop, take-over approvals, cancel |
 | `computer.rs` | Computer subagent: a vision model driving the desktop through `computer_state` / `computer_act` |
-| `llm/` | Streaming gw client. `openai.rs` is chat completions (SSE). `anthropic.rs` is Messages, used when the model slug starts with `anthropic/`. `sse.rs` is the decoder |
+| `llm/` | Streaming gw client. `openai.rs` is chat completions (SSE) and serves every model by default. `anthropic.rs` is Messages, used for `anthropic/` models only when `GW_ANTHROPIC_WIRE=messages`. `sse.rs` is the decoder |
 | `store.rs` | SQLite tables: agents, turns, transcript entries (global monotonic `seq`), client-nonce dedupe |
 | `bus.rs` | Event fan-out. Offsets start at boot time in µs. A bounded replay ring serves `Events(from_offset)` |
 | `screen.rs` | Raw RFB relay to `127.0.0.1:5900` after the `open` frame |
@@ -44,6 +44,7 @@ Optional overrides with contract defaults, used by tests:
 | `CHROME_BIN` | `google-chrome` |
 | `CHROME_PROFILE` | `~/.config/cocoonbox-chrome` |
 | `CUA_DRIVER_SOCKET` | `~/.cache/cua-driver/cua-driver.sock` |
+| `GW_ANTHROPIC_WIRE` | `chat` (`messages` switches `anthropic/` models to `/v1/messages`) |
 
 ## Build
 

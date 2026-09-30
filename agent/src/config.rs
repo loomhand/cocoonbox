@@ -21,6 +21,7 @@ pub struct ServeConfig {
     pub state_dir: PathBuf,
     pub toolhost_socket: PathBuf,
     pub vnc_addr: String,
+    pub anthropic_messages: bool,
 }
 
 impl ServeConfig {
@@ -39,6 +40,7 @@ impl ServeConfig {
             state_dir: optional("CB_STATE_DIR", DEFAULT_STATE_DIR).into(),
             toolhost_socket: optional("TOOLHOST_SOCKET", DEFAULT_TOOLHOST_SOCKET).into(),
             vnc_addr: optional("VNC_ADDR", DEFAULT_VNC_ADDR),
+            anthropic_messages: optional("GW_ANTHROPIC_WIRE", "chat") == "messages",
         })
     }
 }

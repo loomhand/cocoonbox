@@ -76,7 +76,11 @@ impl Parser {
 /// Builds the chat-completions request body.
 pub fn body(req: &Request<'_>) -> Value {
     let mut messages = vec![json!({"role": "system", "content": req.system})];
+    let mut shots: Vec<Part> = Vec::new();
     for m in req.messages {
+        if !matches!(m, Message::Tool { .. }) {
+            flush_shots(&mut messages, &mut shots);
+        }
         match m {
             Message::User(parts) => messages.push(user(parts, req.vision)),
             Message::Assistant { text, calls } => {
@@ -113,17 +117,15 @@ pub fn body(req: &Request<'_>) -> Value {
                 msg["content"] = content.into();
                 messages.push(msg);
                 if let Some(img) = image.as_ref().filter(|_| req.vision) {
-                    messages.push(user(
-                        &[
-                            Part::Text(format!("Screenshot returned by tool call {call_id}:")),
-                            Part::Image(img.clone()),
-                        ],
-                        true,
-                    ));
+                    shots.push(Part::Text(format!(
+                        "Screenshot returned by tool call {call_id}:"
+                    )));
+                    shots.push(Part::Image(img.clone()));
                 }
             }
         }
     }
+    flush_shots(&mut messages, &mut shots);
     let mut body = json!({
         "model": req.model,
         "stream": true,
@@ -144,6 +146,13 @@ pub fn body(req: &Request<'_>) -> Value {
             .collect();
     }
     body
+}
+
+fn flush_shots(messages: &mut Vec<Value>, shots: &mut Vec<Part>) {
+    if !shots.is_empty() {
+        messages.push(user(shots, true));
+        shots.clear();
+    }
 }
 
 fn user(parts: &[Part], vision: bool) -> Value {
@@ -240,16 +249,29 @@ mod tests {
             Message::User(vec![Part::Text("go".into())]),
             Message::Assistant {
                 text: String::new(),
-                calls: vec![ToolCall {
-                    id: "c1".into(),
-                    name: "shell".into(),
-                    arguments: "{}".into(),
-                }],
+                calls: vec![
+                    ToolCall {
+                        id: "c1".into(),
+                        name: "shell".into(),
+                        arguments: "{}".into(),
+                    },
+                    ToolCall {
+                        id: "c2".into(),
+                        name: "shell".into(),
+                        arguments: "{}".into(),
+                    },
+                ],
             },
             Message::Tool {
                 call_id: "c1".into(),
                 text: "ok".into(),
                 image: Some(Bytes::from_static(b"\x89PNG")),
+                is_error: false,
+            },
+            Message::Tool {
+                call_id: "c2".into(),
+                text: "ok".into(),
+                image: None,
                 is_error: false,
             },
         ];
@@ -268,16 +290,20 @@ mod tests {
         };
         let text_body = body(&req);
         let msgs = text_body["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 4);
+        assert_eq!(msgs.len(), 5);
         assert_eq!(msgs[2]["tool_calls"][0]["function"]["name"], "shell");
         assert!(msgs[3]["content"].as_str().unwrap().contains("omitted"));
         assert_eq!(text_body["tools"][0]["function"]["name"], "shell");
         req.vision = true;
         let vision_body = body(&req);
         let msgs = vision_body["messages"].as_array().unwrap();
-        assert_eq!(msgs.len(), 5);
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(
+            roles,
+            ["system", "user", "assistant", "tool", "tool", "user"]
+        );
         assert!(
-            msgs[4]["content"][1]["image_url"]["url"]
+            msgs[5]["content"][1]["image_url"]["url"]
                 .as_str()
                 .unwrap()
                 .starts_with("data:image/png;base64,")

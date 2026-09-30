@@ -32,7 +32,7 @@ struct Harness {
 }
 
 impl Harness {
-    async fn start(script: Vec<(&'static str, String)>) -> Self {
+    async fn start(script: Vec<(&'static str, String)>, anthropic_messages: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
@@ -62,6 +62,7 @@ impl Harness {
             state_dir: dir.path().join("state"),
             toolhost_socket: toolhost_socket.clone(),
             vnc_addr: fake_vnc().await,
+            anthropic_messages,
         };
         let rt = Runtime::open(cfg).await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -336,7 +337,7 @@ fn gw_bodies(log: &Log, path: &str) -> Vec<Value> {
 
 #[tokio::test]
 async fn edge_token_is_required() {
-    let h = Harness::start(Vec::new()).await;
+    let h = Harness::start(Vec::new(), false).await;
     let mut agents = h.agents().await;
     let err = agents
         .list(Request::new(pb::ListAgentsRequest {}))
@@ -371,17 +372,20 @@ async fn edge_token_is_required() {
 
 #[tokio::test]
 async fn shell_tool_loop_streams_into_transcript_and_events() {
-    let h = Harness::start(vec![
-        (
-            "chat/completions",
-            chat_tool_call(
-                "call_1",
-                "shell",
-                &json!({"command": "uname > ok.txt && cat ok.txt"}),
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call(
+                    "call_1",
+                    "shell",
+                    &json!({"command": "uname > ok.txt && cat ok.txt"}),
+                ),
             ),
-        ),
-        ("chat/completions", chat_text("Wrote ok.txt.")),
-    ])
+            ("chat/completions", chat_text("Wrote ok.txt.")),
+        ],
+        false,
+    )
     .await;
     let mut agents = h.agents().await;
     let mut session = h.session().await;
@@ -473,32 +477,54 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
 }
 
 #[tokio::test]
-async fn delegate_runs_the_vision_subagent_over_cua() {
-    let h = Harness::start(vec![
-        (
-            "chat/completions",
-            chat_tool_call(
-                "call_d",
-                "delegate_computer",
-                &json!({"task": "type hello into the editor"}),
+async fn delegate_over_chat_wire() {
+    run_delegate(false).await;
+}
+
+#[tokio::test]
+async fn delegate_over_messages_wire() {
+    run_delegate(true).await;
+}
+
+async fn run_delegate(messages_wire: bool) {
+    let state_args = json!({});
+    let act_args = json!({"action": "type", "element": 0, "text": "hello"});
+    let sub = if messages_wire {
+        vec![
+            (
+                "messages",
+                messages_tool_use("toolu_1", "computer_state", &state_args),
             ),
-        ),
-        (
-            "messages",
-            messages_tool_use("toolu_1", "computer_state", &json!({})),
-        ),
-        (
-            "messages",
-            messages_tool_use(
-                "toolu_2",
-                "computer_act",
-                &json!({"action": "type", "element": 0, "text": "hello"}),
+            (
+                "messages",
+                messages_tool_use("toolu_2", "computer_act", &act_args),
             ),
+            ("messages", messages_text("Typed hello into Mousepad.")),
+        ]
+    } else {
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("toolu_1", "computer_state", &state_args),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("toolu_2", "computer_act", &act_args),
+            ),
+            ("chat/completions", chat_text("Typed hello into Mousepad.")),
+        ]
+    };
+    let mut script = vec![(
+        "chat/completions",
+        chat_tool_call(
+            "call_d",
+            "delegate_computer",
+            &json!({"task": "type hello into the editor"}),
         ),
-        ("messages", messages_text("Typed hello into Mousepad.")),
-        ("chat/completions", chat_text("Done.")),
-    ])
-    .await;
+    )];
+    script.extend(sub);
+    script.push(("chat/completions", chat_text("Done.")));
+    let h = Harness::start(script, messages_wire).await;
     let mut agents = h.agents().await;
     let mut session = h.session().await;
     let agent_id = create_agent(&mut agents).await;
@@ -569,19 +595,34 @@ async fn delegate_runs_the_vision_subagent_over_cua() {
     assert_eq!(typed["window_id"], 7);
     assert_eq!(typed["session"], "cocoonbox");
 
-    let vision = gw_bodies(&h.gw_log, "/v1/messages");
-    assert_eq!(vision.len(), 3);
-    assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
-    let last_user = vision[2]["messages"]
-        .as_array()
-        .unwrap()
-        .last()
-        .unwrap()
-        .clone();
-    assert_eq!(last_user["content"][0]["type"], "tool_result");
-    assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
     let chats = gw_bodies(&h.gw_log, "chat/completions");
-    let main_tool = chats[1]["messages"]
+    let main_after = if messages_wire {
+        let vision = gw_bodies(&h.gw_log, "/v1/messages");
+        assert_eq!(vision.len(), 3);
+        assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
+        let last_user = vision[2]["messages"]
+            .as_array()
+            .unwrap()
+            .last()
+            .unwrap()
+            .clone();
+        assert_eq!(last_user["content"][0]["type"], "tool_result");
+        assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
+        assert_eq!(chats.len(), 2);
+        &chats[1]
+    } else {
+        assert_eq!(chats.len(), 5);
+        assert!(gw_bodies(&h.gw_log, "/v1/messages").is_empty());
+        let models: Vec<&str> = chats.iter().map(|c| c["model"].as_str().unwrap()).collect();
+        assert_eq!(models[1..4], ["anthropic/claude-sonnet-5"; 3]);
+        let msgs = chats[3]["messages"].as_array().unwrap();
+        let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
+        assert_eq!(roles.last(), Some(&"user"), "{roles:?}");
+        let shot = &msgs.last().unwrap()["content"][1]["image_url"]["url"];
+        assert!(shot.as_str().unwrap().starts_with("data:image/png;base64,"));
+        &chats[4]
+    };
+    let main_tool = main_after["messages"]
         .as_array()
         .unwrap()
         .iter()
@@ -589,7 +630,7 @@ async fn delegate_runs_the_vision_subagent_over_cua() {
         .unwrap()
         .clone();
     assert!(main_tool["content"].as_str().unwrap().contains("no vision"));
-    assert!(!chats[1].to_string().contains(PNG));
+    assert!(!main_after.to_string().contains(PNG));
 
     let mut saw_action = false;
     while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(500), events.message())
@@ -607,21 +648,24 @@ async fn delegate_runs_the_vision_subagent_over_cua() {
 
 #[tokio::test]
 async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
-    let h = Harness::start(vec![
-        (
-            "chat/completions",
-            chat_tool_call(
-                "call_t",
-                "request_take_over",
-                &json!({"reason": "sign in to GitHub"}),
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call(
+                    "call_t",
+                    "request_take_over",
+                    &json!({"reason": "sign in to GitHub"}),
+                ),
             ),
-        ),
-        ("chat/completions", chat_text("Signed in.")),
-        (
-            "chat/completions",
-            chat_tool_call("call_s", "shell", &json!({"command": "sleep 30"})),
-        ),
-    ])
+            ("chat/completions", chat_text("Signed in.")),
+            (
+                "chat/completions",
+                chat_tool_call("call_s", "shell", &json!({"command": "sleep 30"})),
+            ),
+        ],
+        false,
+    )
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
@@ -726,7 +770,7 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
 
 #[tokio::test]
 async fn screen_relays_raw_rfb_bytes() {
-    let h = Harness::start(Vec::new()).await;
+    let h = Harness::start(Vec::new(), false).await;
     let mut session = h.session().await;
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     tx.send(pb::ScreenClientFrame {

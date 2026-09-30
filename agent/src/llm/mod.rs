@@ -67,9 +67,9 @@ pub enum Wire {
 }
 
 impl Wire {
-    /// Anthropic models use their native Messages API; everything else uses chat completions.
-    pub fn for_model(model: &str) -> Self {
-        if model.starts_with("anthropic/") {
+    /// Chat completions for every model; Messages for `anthropic/` models only when enabled.
+    pub fn for_model(model: &str, anthropic_messages: bool) -> Self {
+        if anthropic_messages && model.starts_with("anthropic/") {
             Self::Messages
         } else {
             Self::Chat
@@ -128,11 +128,12 @@ pub struct Client {
     http: reqwest::Client,
     base_url: String,
     api_key: String,
+    anthropic_messages: bool,
 }
 
 impl Client {
     /// Creates a client for `base_url` (ending in `/v1`).
-    pub fn new(base_url: &str, api_key: &str) -> Result<Self, String> {
+    pub fn new(base_url: &str, api_key: &str, anthropic_messages: bool) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .connect_timeout(CONNECT_TIMEOUT)
             .read_timeout(READ_TIMEOUT)
@@ -142,12 +143,13 @@ impl Client {
             http,
             base_url: base_url.trim_end_matches('/').to_owned(),
             api_key: api_key.to_owned(),
+            anthropic_messages,
         })
     }
 
     /// Starts a streaming request and returns its delta stream.
     pub async fn stream(&self, req: &Request<'_>) -> Result<Stream, String> {
-        let wire = Wire::for_model(req.model);
+        let wire = Wire::for_model(req.model, self.anthropic_messages);
         let (path, body) = match wire {
             Wire::Chat => ("chat/completions", openai::body(req)),
             Wire::Messages => ("messages", anthropic::body(req)),

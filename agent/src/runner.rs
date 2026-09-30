@@ -45,7 +45,7 @@ impl Runtime {
             .map_err(|e| format!("create {}: {e}", cfg.state_dir.display()))?;
         let store = Store::open(&cfg.state_dir.join("agent.db"))?;
         let rt = Arc::new(Self {
-            llm: llm::Client::new(&cfg.gw_base_url, &cfg.gw_api_key)?,
+            llm: llm::Client::new(&cfg.gw_base_url, &cfg.gw_api_key, cfg.anthropic_messages)?,
             toolhost: rpc::Client::new(cfg.toolhost_socket.clone()),
             store,
             bus: Bus::new(),
