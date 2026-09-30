@@ -28,16 +28,14 @@ up() {
 	iptables -t mangle -A CB-PREROUTING -i "$BRIDGE" -d "$CLUSTER_CIDR" -j DROP
 	iptables -t mangle -C PREROUTING -j CB-PREROUTING 2>/dev/null || iptables -t mangle -I PREROUTING 1 -j CB-PREROUTING
 
-	# M1 egress: a box reaches the internet and the bridge gateway (INPUT) only; no RFC1918, link-local or CGNAT peers
+	# a box reaches the internet and the gateway only
 	iptables -N CB-EGRESS 2>/dev/null || iptables -F CB-EGRESS
 	for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10; do
 		iptables -A CB-EGRESS -i "$BRIDGE" -d "$net" -j DROP
 	done
 	iptables -C FORWARD -j CB-EGRESS 2>/dev/null || iptables -I FORWARD 1 -j CB-EGRESS
 
-	# H1(b) L2 isolation: boxes on cbc0 cannot exchange frames (ARP or IP) with each other,
-	# independent of when each port was added. Port-to-port forwarding within cbc0 is dropped;
-	# frames to the bridge's own address (the gateway, gw, state store) are delivered locally, not forwarded.
+	# boxes never exchange frames; traffic to the gateway is local, not forwarded
 	nft delete table bridge cbfilter 2>/dev/null || true
 	nft add table bridge cbfilter
 	nft add chain bridge cbfilter forward '{ type filter hook forward priority 0; policy accept; }'
