@@ -60,6 +60,8 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
 - Screenshots come back as MCP `image` content (PNG). `max_edge` scales a screenshot, and pixel coordinates then refer to the scaled image: cua-driver maps them back to the screen.
 - Each MCP session owns one cua-driver session label. It is ended by `DELETE`, by closing the GET stream (a later call starts a new label), or after 10 min without activity, which also closes the MCP session.
 - The toolhost holds one input lock per display, so a `computer_act` from mode A and one over MCP never interleave.
+- An `mcp:*` agent whose session has closed is deleted, together with its transcript, once it has gone untouched for 24 h.
+- Unknown methods get JSON-RPC `-32601` with HTTP 200. Without a session this applies to everything except `tools/*`, which needs `Mcp-Session-Id`.
 - POST answers with `application/json`. GET is an SSE stream that carries only keepalive comments, because the server sends no requests of its own.
 
 ## Limits

@@ -10,6 +10,7 @@ const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
 const DEFAULT_WORKSPACE: &str = "/workspace";
 const MCP_IDLE: Duration = Duration::from_secs(600);
+const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 
 /// Settings of `serve`, read from `/etc/cocoonbox/agent.env` via systemd.
 #[derive(Clone, Debug)]
@@ -25,6 +26,7 @@ pub struct ServeConfig {
     pub vnc_addr: String,
     pub anthropic_messages: bool,
     pub mcp_idle: Duration,
+    pub mcp_prune_after: Duration,
 }
 
 impl ServeConfig {
@@ -45,6 +47,7 @@ impl ServeConfig {
             vnc_addr: optional("VNC_ADDR", DEFAULT_VNC_ADDR),
             anthropic_messages: optional("GW_ANTHROPIC_WIRE", "chat") == "messages",
             mcp_idle: MCP_IDLE,
+            mcp_prune_after: MCP_PRUNE_AFTER,
         })
     }
 }

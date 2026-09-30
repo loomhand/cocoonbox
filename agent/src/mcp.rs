@@ -24,6 +24,7 @@ use crate::{new_id, tools};
 pub const PATH: &str = "/mcp";
 
 const SESSION_HEADER: &str = "mcp-session-id";
+const AGENT_PREFIX: &str = "mcp:";
 const PROTOCOLS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const FALLBACK_PROTOCOL: &str = "2025-06-18";
 const KEEPALIVE: Duration = Duration::from_secs(25);
@@ -97,8 +98,26 @@ impl Mcp {
                 for s in idle {
                     mcp.close(&s, "idle").await;
                 }
+                mcp.prune().await;
             }
         });
+    }
+
+    /// Deletes closed `mcp:*` agents untouched for longer than the prune age.
+    async fn prune(&self) {
+        let age = i64::try_from(self.rt.cfg.mcp_prune_after.as_millis()).unwrap_or(i64::MAX);
+        let before = crate::now_ms().saturating_sub(age);
+        match self
+            .rt
+            .journal
+            .store
+            .prune_agents(AGENT_PREFIX.to_owned(), before)
+            .await
+        {
+            Ok(ids) if !ids.is_empty() => eprintln!("mcp: pruned {} idle agent(s)", ids.len()),
+            Ok(_) => {}
+            Err(e) => eprintln!("mcp: prune: {e}"),
+        }
     }
 
     /// Closes every session; used when the agent shuts down.
@@ -137,7 +156,7 @@ impl Mcp {
         let agent = self
             .rt
             .create_agent(pb::CreateAgentRequest {
-                name: format!("mcp:{client}"),
+                name: format!("{AGENT_PREFIX}{client}"),
                 main_model: "external".to_owned(),
                 client_nonce: String::new(),
             })

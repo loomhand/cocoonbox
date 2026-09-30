@@ -184,6 +184,43 @@ impl Store {
         .await
     }
 
+    /// Deletes agents named `prefix*` that are neither running nor waiting and were last
+    /// updated before `before_ms`, with their turns, entries and nonces; returns their ids.
+    pub async fn prune_agents(
+        &self,
+        prefix: String,
+        before_ms: i64,
+    ) -> Result<Vec<String>, String> {
+        self.call(move |c| {
+            let tx = c.transaction()?;
+            let ids: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id FROM agents WHERE substr(name, 1, length(?1)) = ?1
+                     AND status NOT IN (?2, ?3) AND updated_at_ms < ?4",
+                )?;
+                let rows = stmt.query_map(
+                    params![
+                        prefix,
+                        i32::from(AgentStatus::Running),
+                        i32::from(AgentStatus::WaitingForUser),
+                        before_ms
+                    ],
+                    |r| r.get(0),
+                )?;
+                rows.collect::<rusqlite::Result<_>>()?
+            };
+            for id in &ids {
+                tx.execute("DELETE FROM entries WHERE agent_id = ?1", [id])?;
+                tx.execute("DELETE FROM turns WHERE agent_id = ?1", [id])?;
+                tx.execute("DELETE FROM nonces WHERE scope = 'send:' || ?1", [id])?;
+                tx.execute("DELETE FROM agents WHERE id = ?1", [id])?;
+            }
+            tx.commit()?;
+            Ok(ids)
+        })
+        .await
+    }
+
     /// Folds the WAL back into the database file.
     pub async fn checkpoint(&self) -> Result<(), String> {
         self.call(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"))

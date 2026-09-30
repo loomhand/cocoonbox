@@ -33,13 +33,15 @@ struct Harness {
 
 impl Harness {
     async fn start(script: Vec<(&'static str, String)>, anthropic_messages: bool) -> Self {
-        Self::start_with(script, anthropic_messages, Duration::from_secs(600)).await
+        let day = Duration::from_secs(24 * 3600);
+        Self::start_with(script, anthropic_messages, Duration::from_secs(600), day).await
     }
 
     async fn start_with(
         script: Vec<(&'static str, String)>,
         anthropic_messages: bool,
         mcp_idle: Duration,
+        mcp_prune_after: Duration,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -72,6 +74,7 @@ impl Harness {
             vnc_addr: fake_vnc().await,
             anthropic_messages,
             mcp_idle,
+            mcp_prune_after,
         };
         let model = Arc::new(
             cocoonbox_agent::llm::Client::new(
@@ -1319,7 +1322,8 @@ async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
 
 #[tokio::test]
 async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
-    let h = Harness::start_with(Vec::new(), false, Duration::from_millis(400)).await;
+    let day = Duration::from_secs(24 * 3600);
+    let h = Harness::start_with(Vec::new(), false, Duration::from_millis(400), day).await;
     let mut mcp = McpClient::connect(&h).await;
     mcp.call("screenshot", json!({})).await;
     let first = driver_calls(&h, "get_desktop_state")[0]["session"].clone();
@@ -1439,4 +1443,43 @@ async fn non_ascii_text_is_typed_one_character_per_call() {
         .await;
     assert_eq!(ascii["isError"], false);
     assert_eq!(driver_calls(&h, "type_text").len(), 8);
+}
+
+#[tokio::test]
+async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
+    let h = Harness::start_with(
+        Vec::new(),
+        false,
+        Duration::from_millis(400),
+        Duration::from_millis(300),
+    )
+    .await;
+    let closed = McpClient::connect(&h).await;
+    let deleted = reqwest::Client::new()
+        .delete(format!("{}/mcp", h.endpoint))
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .header("mcp-session-id", &closed.session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), 204);
+    let mut open = McpClient::connect(&h).await;
+    let mut agents = h.agents().await;
+    let loop_agent = create_agent(&mut agents).await;
+    for _ in 0..8 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        open.rpc("ping", json!({})).await;
+    }
+    let names: Vec<(String, String)> = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .agents
+        .into_iter()
+        .map(|a| (a.id, a.name))
+        .collect();
+    let mcp_count = names.iter().filter(|(_, n)| n == "mcp:test-client").count();
+    assert_eq!(mcp_count, 1, "{names:?}");
+    assert!(names.iter().any(|(id, _)| *id == loop_agent), "{names:?}");
 }
