@@ -845,3 +845,69 @@ fn tokio_stream_from(
 ) -> tokio_stream::wrappers::ReceiverStream<pb::ScreenClientFrame> {
     tokio_stream::wrappers::ReceiverStream::new(rx)
 }
+
+#[tokio::test]
+async fn cancel_during_computer_task_ends_the_driver_session() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("call_d", "delegate_computer", &json!({"task": "wait"})),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call(
+                    "toolu_w",
+                    "computer_act",
+                    &json!({"action": "wait", "seconds": 10}),
+                ),
+            ),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "wait", "").await;
+    for _ in 0..200 {
+        let page = agents
+            .transcript(authed(pb::TranscriptRequest {
+                agent_id: agent_id.clone(),
+                after_seq: 0,
+                limit: 0,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        if page
+            .entries
+            .iter()
+            .any(|e| matches!(&e.body, Some(Body::ToolCall(c)) if c.call_id == "toolu_w"))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    agents
+        .cancel(authed(pb::CancelRequest {
+            agent_id: agent_id.clone(),
+        }))
+        .await
+        .unwrap();
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.error == "cancelled")
+    );
+    for _ in 0..200 {
+        if h.cua_log.lock().unwrap().iter().any(|(n, a)| {
+            n == "end_session" && a["session"].as_str().is_some_and(|s| s.starts_with("cu-"))
+        }) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!(
+        "cancel did not end the driver session: {:?}",
+        h.cua_log.lock().unwrap()
+    );
+}
