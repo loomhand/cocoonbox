@@ -1392,3 +1392,37 @@ async fn concurrent_computer_acts_do_not_interleave() {
     let init: Value = raw.json().await.unwrap();
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
 }
+
+#[tokio::test]
+async fn non_ascii_text_is_typed_one_character_per_call() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let out = mcp
+        .call(
+            "computer_act",
+            json!({"action": "type", "text": "hi — 你好 🙂"}),
+        )
+        .await;
+    assert_eq!(out["isError"], false, "{out}");
+    let typed: Vec<(String, Value, Value)> = driver_calls(&h, "type_text")
+        .into_iter()
+        .map(|a| {
+            (
+                a["text"].as_str().unwrap().to_owned(),
+                a["pid"].clone(),
+                a["window_id"].clone(),
+            )
+        })
+        .collect();
+    let texts: Vec<&str> = typed.iter().map(|t| t.0.as_str()).collect();
+    assert_eq!(texts, ["hi ", "—", " ", "你", "好", " ", "🙂"]);
+    assert!(typed.iter().all(|t| t.1 == 42 && t.2 == 7), "{typed:?}");
+    let ascii = mcp
+        .call(
+            "computer_act",
+            json!({"action": "type", "text": "plain ascii"}),
+        )
+        .await;
+    assert_eq!(ascii["isError"], false);
+    assert_eq!(driver_calls(&h, "type_text").len(), 8);
+}
