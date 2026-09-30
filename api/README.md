@@ -1,12 +1,12 @@
 # cocoonbox-api
 
-Control plane and edge. One h2c listener behind Caddy serves:
+Control plane and edge. Two listeners behind Caddy serve:
 
-- `cocoonbox.control.v1.Boxes`: one CocoonSet per user in namespace `cocoonbox`, box id `cb-<12 hex of sha256(user)>`. Hibernate sets `spec.suspend`; Ensure creates or wakes. `WatchOperation` streams the operation log (in memory, resumable by offset key within the process lifetime).
+- `cocoonbox.control.v1.Boxes` (native gRPC, h2c on `listen`, default 127.0.0.1:18200): one CocoonSet per user in namespace `cocoonbox`, box id `cb-<12 hex of sha256(user)>`. Hibernate sets `spec.suspend`; Ensure creates or wakes. `WatchOperation` streams the operation log (in memory, resumable by offset key within the process lifetime).
 - every `cocoonbox.agent.v1.*` method: proxied frame by frame to `<box IP>:7443` of the box named in `x-cocoonbox-box`, after the ownership check. The edge drops `authorization` and sets `x-cocoonbox-edge-token`.
-- `/cocoonbox.mcp/<box id>` (plain HTTP, MCP Streamable HTTP): reverse-proxied unbuffered to `http://<box IP>:7443/mcp` over h2c after the same token and ownership checks; the edge drops `Authorization` and sets `x-cocoonbox-edge-token`. Refusals are JSON-RPC error bodies with 401/403/404/400/503.
+- `/cocoonbox.mcp/<box id>` (MCP Streamable HTTP on `mcp_listen`, default 127.0.0.1:18201, HTTP/1.1 and h2c): reverse-proxied unbuffered to `http://<box IP>:7443/mcp` over h2c after the same token and ownership checks; the edge drops `Authorization` and sets `x-cocoonbox-edge-token`. Refusals are JSON-RPC error bodies with 401/403/404/400/503.
 
-gRPC and MCP share one listener: requests with `content-type: application/grpc` go to the gRPC server (`grpc.Server.ServeHTTP`), everything else to the HTTP routes.
+MCP has its own listener so gRPC stays on grpc-go's native transport; Caddy sends `/cocoonbox.mcp/*` to 18201 and the rest of `/cocoonbox.*` to 18200.
 
 Layers: `boxes` (the gRPC service: users, ownership, operations) and `edge` (proxies) call only the `machines.Machines` interface and a resolver; `machines/cocoonset` is the one backend and the only package that imports client-go or cocoon-common. `cmd/cocoonbox-api` wires them.
 

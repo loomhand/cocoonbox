@@ -14,16 +14,12 @@ import (
 	"testing"
 	"time"
 
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 )
 
 func TestMCPPostRoundTrip(t *testing.T) {
@@ -138,27 +134,16 @@ func TestMCPAgentUnreachable(t *testing.T) {
 	}
 }
 
-func TestHandlerServesGRPCBesideMCP(t *testing.T) {
+func TestMCPIgnoresOtherPaths(t *testing.T) {
 	env := newMCPEnv(t)
-	conn, err := grpc.NewClient(env.addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+env.addr+"/cocoonbox.agent.v1.Session/Hello", strings.NewReader("{}"))
 	if err != nil {
-		t.Fatalf("dial: %v", err)
+		t.Fatalf("request: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
-	ctx := metadata.AppendToOutgoingContext(t.Context(), auth.HeaderAuthorization, "Bearer "+aliceToken, HeaderBox, boxes.BoxID("alice"))
-	resp, err := agentv1.NewSessionClient(conn).Hello(ctx, &agentv1.HelloRequest{})
-	if err != nil || resp.GetAgentVersion() != edgeToken {
-		t.Errorf("Hello = %v, %v", resp, err)
-	}
-	stream, err := agentv1.NewSessionClient(conn).Screen(ctx)
-	if err != nil {
-		t.Fatalf("Screen: %v", err)
-	}
-	if err := stream.Send(&agentv1.ScreenClientFrame{Body: &agentv1.ScreenClientFrame_Data{Data: []byte("x")}}); err != nil {
-		t.Fatalf("send: %v", err)
-	}
-	if got, err := stream.Recv(); err != nil || string(got.GetData()) != "x" {
-		t.Errorf("Screen echo = %v, %v", got, err)
+	resp := env.do(t, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status %d, want 404", resp.StatusCode)
 	}
 }
 
@@ -169,31 +154,15 @@ type mcpEnv struct {
 	client   *http.Client
 }
 
-// newMCPEnv serves a fake box agent (gRPC Session plus /mcp on one h2c listener, like cocoonbox-agent) behind the edge handler.
+// newMCPEnv serves a fake agent /mcp over HTTP/1.1 and h2c behind the MCP proxy.
 func newMCPEnv(t *testing.T) *mcpEnv {
 	t.Helper()
 	upstream := &fakeMCP{next: make(chan struct{}), closed: make(chan struct{})}
-	agentSrv := grpc.NewServer()
-	agentv1.RegisterSessionServer(agentSrv, &fakeAgent{screenDone: make(chan error, 1)})
-	resolver := &fakeResolver{addr: serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
-			agentSrv.ServeHTTP(w, r)
-			return
-		}
-		upstream.ServeHTTP(w, r)
-	}))}
+	resolver := &fakeResolver{addr: serveHTTP(t, upstream)}
 
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
-	proxy := NewProxy(resolver, edgeToken)
-	t.Cleanup(proxy.Close)
-	edgeSrv := grpc.NewServer(
-		grpc.ForceServerCodecV2(NewCodec()),
-		grpc.UnknownServiceHandler(proxy.Handle),
-		grpc.ChainUnaryInterceptor(authn.Unary),
-		grpc.ChainStreamInterceptor(authn.Stream),
-	)
-	addr := serveHTTP(t, NewHandler(edgeSrv, NewMCP(resolver, authn, edgeToken)))
+	addr := serveHTTP(t, NewMCP(resolver, authn, edgeToken))
 	return &mcpEnv{addr: addr, resolver: resolver, upstream: upstream, client: &http.Client{Transport: newH2CTransport()}}
 }
 

@@ -14,7 +14,7 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Listen != "127.0.0.1:18200" || cfg.Namespace != "cocoonbox" || cfg.Image != "cocoonbox-desktop-v1" ||
+	if cfg.Listen != "127.0.0.1:18200" || cfg.MCPListen != "127.0.0.1:18201" || cfg.Namespace != "cocoonbox" || cfg.Image != "cocoonbox-desktop-v1" ||
 		cfg.Network != "cb" || cfg.ProbePort != 22 || cfg.AgentPort != 7443 {
 		t.Errorf("defaults = %+v", cfg)
 	}

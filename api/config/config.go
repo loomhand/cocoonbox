@@ -15,6 +15,7 @@ import (
 
 const (
 	defaultListen        = "127.0.0.1:18200"
+	defaultMCPListen     = "127.0.0.1:18201"
 	defaultNamespace     = "cocoonbox"
 	defaultImage         = "cocoonbox-desktop-v1"
 	defaultNetwork       = "cb"
@@ -45,6 +46,7 @@ type User struct {
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
 	Listen        string `json:"listen"`
+	MCPListen     string `json:"mcp_listen"`
 	Kubeconfig    string `json:"kubeconfig"`
 	Namespace     string `json:"namespace"`
 	Image         string `json:"image"`
@@ -89,6 +91,7 @@ func (c *Config) EdgeToken() (string, error) {
 
 func (c *Config) applyDefaults() {
 	c.Listen = cmp.Or(c.Listen, defaultListen)
+	c.MCPListen = cmp.Or(c.MCPListen, defaultMCPListen)
 	c.Namespace = cmp.Or(c.Namespace, defaultNamespace)
 	c.Image = cmp.Or(c.Image, defaultImage)
 	c.Network = cmp.Or(c.Network, defaultNetwork)

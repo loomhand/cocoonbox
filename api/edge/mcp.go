@@ -49,6 +49,10 @@ func NewMCP(resolver Resolver, authn *auth.Authenticator, edgeToken string) *MCP
 }
 
 func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !strings.HasPrefix(r.URL.Path, MCPPrefix) {
+		http.NotFound(w, r)
+		return
+	}
 	start := time.Now()
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
 	user, addr, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
@@ -102,20 +106,6 @@ func (m *MCP) upstreamError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	log.WithFunc("edge.MCP.upstreamError").Warnf(r.Context(), "proxy %s to box agent: %v", r.URL.Path, err)
 	writeJSONRPCError(w, status.Error(codes.Unavailable, "box agent unreachable"))
-}
-
-// NewHandler serves gRPC and MCP on one HTTP/2 listener, dispatching on the gRPC content type.
-func NewHandler(grpcServer http.Handler, mcp http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc"):
-			grpcServer.ServeHTTP(w, r)
-		case strings.HasPrefix(r.URL.Path, MCPPrefix):
-			mcp.ServeHTTP(w, r)
-		default:
-			http.NotFound(w, r)
-		}
-	})
 }
 
 func newH2CTransport() *http.Transport {

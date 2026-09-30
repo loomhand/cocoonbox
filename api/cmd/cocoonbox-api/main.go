@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -78,22 +79,34 @@ func main() {
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
-	httpServer := &http.Server{
-		Addr:              cfg.Listen,
-		Handler:           edge.NewHandler(server, edge.NewMCP(svc, authn, edgeToken)),
+	mcpServer := &http.Server{
+		Addr:              cfg.MCPListen,
+		Handler:           edge.NewMCP(svc, authn, edgeToken),
 		Protocols:         &protocols,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
+	lis, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		logger.Fatalf(ctx, err, "listen on %s", cfg.Listen)
+	}
+	go func() {
+		if err := mcpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Fatalf(ctx, err, "serve mcp on %s", cfg.MCPListen)
+		}
+	}()
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
 		defer cancelShutdown()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			_ = httpServer.Close()
+		if err := mcpServer.Shutdown(shutdownCtx); err != nil {
+			_ = mcpServer.Close()
 		}
+		timer := time.AfterFunc(shutdownGrace, server.Stop)
+		server.GracefulStop()
+		timer.Stop()
 	}()
-	logger.Infof(ctx, "serving gRPC and MCP on %s for %d users, namespace %s", cfg.Listen, len(cfg.Users), cfg.Namespace)
-	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Fatalf(ctx, err, "serve")
+	logger.Infof(ctx, "serving gRPC on %s and MCP on %s for %d users, namespace %s", cfg.Listen, cfg.MCPListen, len(cfg.Users), cfg.Namespace)
+	if err := server.Serve(lis); err != nil {
+		logger.Fatalf(ctx, err, "serve grpc")
 	}
 }
