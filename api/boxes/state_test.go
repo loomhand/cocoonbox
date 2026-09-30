@@ -310,7 +310,9 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
 	events := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), "")
 	last := events[len(events)-1]
-	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !strings.Contains(last.GetDetail(), "restored snapshot "+snapshotID(1)) || !strings.Contains(last.GetDetail(), "are lost") {
+	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !strings.Contains(last.GetDetail(), "(snapshot "+snapshotID(1)) ||
+		!strings.Contains(last.GetDetail(), "restored the state saved at ") || !strings.Contains(last.GetDetail(), "anything written after that save is not in this box") ||
+		strings.Contains(last.GetDetail(), "lost") {
 		t.Fatalf("last event = %v", last)
 	}
 	if !slices.ContainsFunc(events, func(ev *controlv1.OperationEvent) bool {

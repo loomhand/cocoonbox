@@ -27,9 +27,9 @@ func (s *Service) restoreMissing(ctx context.Context, box string, m machines.Mac
 func (s *Service) runRestore(op *operation, m machines.Machine, saved head) {
 	logger := log.WithFunc("boxes.Service.runRestore").WithField("box", op.boxID)
 	start := time.Now()
-	savedAt := time.UnixMilli(saved.SavedAtMs)
+	savedAt := time.UnixMilli(saved.SavedAtMs).UTC().Format(time.RFC3339)
 	op.note(controlv1.Phase_PHASE_CREATING, controlv1.BoxState_BOX_STATE_STARTING,
-		fmt.Sprintf("machine %s for the state saved at %s", m.ID, savedAt.UTC().Format(time.RFC3339)))
+		fmt.Sprintf("machine %s for the state saved at %s", m.ID, savedAt))
 	running, err := s.waitRunning(op, m)
 	if err == nil && s.provision.covers(running) {
 		if err = s.provisionMachine(op.ctx, running); err == nil {
@@ -55,10 +55,9 @@ func (s *Service) runRestore(op *operation, m machines.Machine, saved head) {
 		op.fail("restore failed")
 		return
 	}
-	lost := start.Sub(savedAt).Round(time.Second)
-	logger.Warnf(op.ctx, "restored %s from snapshot %s saved %s before the machine was found missing; changes after it are lost", m.ID, rec.ID, lost)
-	op.succeed(fmt.Sprintf("restored snapshot %s (%.1f MiB logical) into %s; changes in the %s before it was found missing are lost; boot %s, restore %s",
-		rec.ID, float64(rec.LogicalBytes)/mib, m.ID, lost, booted.Round(time.Second), (time.Since(start) - booted).Round(time.Second)))
+	logger.Warnf(op.ctx, "restored %s from snapshot %s saved at %s; anything written after that save is not in the box", m.ID, rec.ID, savedAt)
+	op.succeed(fmt.Sprintf("restored the state saved at %s (snapshot %s, %.1f MiB logical) into %s; anything written after that save is not in this box; boot %s, restore %s",
+		savedAt, rec.ID, float64(rec.LogicalBytes)/mib, m.ID, booted.Round(time.Second), (time.Since(start) - booted).Round(time.Second)))
 }
 
 // restoring reports whether box is being filled from its saved state, so no client or save may reach its machine yet.
