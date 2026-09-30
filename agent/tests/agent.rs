@@ -1483,3 +1483,38 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
     assert_eq!(mcp_count, 1, "{names:?}");
     assert!(names.iter().any(|(id, _)| *id == loop_agent), "{names:?}");
 }
+
+#[tokio::test]
+async fn launch_app_reuses_a_running_apps_window() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let running = mcp
+        .call(
+            "computer_act",
+            json!({"action": "launch_app", "app": "mousepad"}),
+        )
+        .await;
+    assert_eq!(running["isError"], false, "{running}");
+    assert!(
+        running["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("already running"),
+        "{running}"
+    );
+    let raised = driver_calls(&h, "bring_to_front");
+    assert_eq!(
+        (raised[0]["pid"].clone(), raised[0]["window_id"].clone()),
+        (json!(42), json!(7))
+    );
+    assert!(driver_calls(&h, "launch_app").is_empty());
+
+    let fresh = mcp
+        .call(
+            "computer_act",
+            json!({"action": "launch_app", "app": "gedit"}),
+        )
+        .await;
+    assert_eq!(fresh["isError"], false, "{fresh}");
+    assert_eq!(driver_calls(&h, "launch_app")[0]["name"], "gedit");
+}
