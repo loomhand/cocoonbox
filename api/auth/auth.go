@@ -56,16 +56,28 @@ func (a *Authenticator) Stream(srv any, ss grpc.ServerStream, _ *grpc.StreamServ
 	return handler(srv, &authedStream{ServerStream: ss, ctx: ctx})
 }
 
+// Authenticate maps an Authorization header value to its user; the error is a gRPC status.
+func (a *Authenticator) Authenticate(header string) (string, error) {
+	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
+		return "", status.Error(codes.Unauthenticated, "missing bearer token")
+	}
+	sum := sha256.Sum256([]byte(header[len(bearerPrefix):]))
+	user, ok := a.users[hex.EncodeToString(sum[:])]
+	if !ok {
+		return "", status.Error(codes.Unauthenticated, "invalid bearer token")
+	}
+	return user, nil
+}
+
 func (a *Authenticator) authenticate(ctx context.Context) (context.Context, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	values := md.Get(HeaderAuthorization)
-	if len(values) != 1 || len(values[0]) <= len(bearerPrefix) || !strings.EqualFold(values[0][:len(bearerPrefix)], bearerPrefix) {
+	if len(values) != 1 {
 		return nil, status.Error(codes.Unauthenticated, "missing bearer token")
 	}
-	sum := sha256.Sum256([]byte(values[0][len(bearerPrefix):]))
-	user, ok := a.users[hex.EncodeToString(sum[:])]
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
+	user, err := a.Authenticate(values[0])
+	if err != nil {
+		return nil, err
 	}
 	return WithUser(ctx, user), nil
 }

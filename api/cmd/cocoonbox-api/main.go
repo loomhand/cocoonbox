@@ -4,8 +4,9 @@ package main
 import (
 	"cmp"
 	"context"
+	"errors"
 	"flag"
-	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -25,7 +26,10 @@ import (
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
-const shutdownGrace = 5 * time.Second
+const (
+	shutdownGrace     = 5 * time.Second
+	readHeaderTimeout = 10 * time.Second
+)
 
 func main() {
 	configPath := flag.String("config", "/etc/cocoonbox/api.yaml", "config file")
@@ -77,18 +81,25 @@ func main() {
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 
-	lis, err := net.Listen("tcp", cfg.Listen)
-	if err != nil {
-		logger.Fatalf(ctx, err, "listen on %s", cfg.Listen)
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+	httpServer := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           edge.NewHandler(server, edge.NewMCP(svc, authn, edgeToken)),
+		Protocols:         &protocols,
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 	go func() {
 		<-ctx.Done()
-		timer := time.AfterFunc(shutdownGrace, server.Stop)
-		server.GracefulStop()
-		timer.Stop()
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+		defer cancelShutdown()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			_ = httpServer.Close()
+		}
 	}()
-	logger.Infof(ctx, "serving on %s for %d users, namespace %s", cfg.Listen, len(cfg.Users), cfg.Namespace)
-	if err := server.Serve(lis); err != nil {
+	logger.Infof(ctx, "serving gRPC and MCP on %s for %d users, namespace %s", cfg.Listen, len(cfg.Users), cfg.Namespace)
+	if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Fatalf(ctx, err, "serve")
 	}
 }

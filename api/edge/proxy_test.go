@@ -285,13 +285,14 @@ func serve(t *testing.T, srv *grpc.Server) string {
 // fakeResolver applies the Boxes ownership rule and routes every owned box to addr.
 type fakeResolver struct {
 	addr string
+	err  error
 }
 
 func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (string, error) {
 	if boxID != boxes.BoxID(user) {
 		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
-	return r.addr, nil
+	return r.addr, r.err
 }
 
 // fakeAgent echoes what the edge delivered: Hello returns the edge token as agent_version, authorization values as models and the box header as default_main_model.
