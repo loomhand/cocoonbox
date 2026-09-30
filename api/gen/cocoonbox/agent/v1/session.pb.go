@@ -194,6 +194,8 @@ type Event struct {
 	//	*Event_Transcript
 	//	*Event_Agent
 	//	*Event_ComputerAction
+	//	*Event_TextDelta
+	//	*Event_ReasoningDelta
 	Body          isEvent_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -270,6 +272,24 @@ func (x *Event) GetComputerAction() *ComputerAction {
 	return nil
 }
 
+func (x *Event) GetTextDelta() *TextDelta {
+	if x != nil {
+		if x, ok := x.Body.(*Event_TextDelta); ok {
+			return x.TextDelta
+		}
+	}
+	return nil
+}
+
+func (x *Event) GetReasoningDelta() *ReasoningDelta {
+	if x != nil {
+		if x, ok := x.Body.(*Event_ReasoningDelta); ok {
+			return x.ReasoningDelta
+		}
+	}
+	return nil
+}
+
 type isEvent_Body interface {
 	isEvent_Body()
 }
@@ -286,11 +306,179 @@ type Event_ComputerAction struct {
 	ComputerAction *ComputerAction `protobuf:"bytes,12,opt,name=computer_action,json=computerAction,proto3,oneof"`
 }
 
+type Event_TextDelta struct {
+	TextDelta *TextDelta `protobuf:"bytes,13,opt,name=text_delta,json=textDelta,proto3,oneof"`
+}
+
+type Event_ReasoningDelta struct {
+	ReasoningDelta *ReasoningDelta `protobuf:"bytes,14,opt,name=reasoning_delta,json=reasoningDelta,proto3,oneof"`
+}
+
 func (*Event_Transcript) isEvent_Body() {}
 
 func (*Event_Agent) isEvent_Body() {}
 
 func (*Event_ComputerAction) isEvent_Body() {}
+
+func (*Event_TextDelta) isEvent_Body() {}
+
+func (*Event_ReasoningDelta) isEvent_Body() {}
+
+// TextDelta is a live fragment of an assistant text block. Deltas are not
+// replayed on reconnect; the complete block follows as a TranscriptEntry whose
+// TextBlock carries the same (turn_id, block).
+type TextDelta struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	TurnId        string                 `protobuf:"bytes,2,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	Block         uint32                 `protobuf:"varint,3,opt,name=block,proto3" json:"block,omitempty"`
+	Text          string                 `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
+	Subagent      string                 `protobuf:"bytes,5,opt,name=subagent,proto3" json:"subagent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TextDelta) Reset() {
+	*x = TextDelta{}
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TextDelta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TextDelta) ProtoMessage() {}
+
+func (x *TextDelta) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TextDelta.ProtoReflect.Descriptor instead.
+func (*TextDelta) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *TextDelta) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *TextDelta) GetTurnId() string {
+	if x != nil {
+		return x.TurnId
+	}
+	return ""
+}
+
+func (x *TextDelta) GetBlock() uint32 {
+	if x != nil {
+		return x.Block
+	}
+	return 0
+}
+
+func (x *TextDelta) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *TextDelta) GetSubagent() string {
+	if x != nil {
+		return x.Subagent
+	}
+	return ""
+}
+
+// ReasoningDelta is TextDelta for reasoning blocks.
+type ReasoningDelta struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AgentId       string                 `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3" json:"agent_id,omitempty"`
+	TurnId        string                 `protobuf:"bytes,2,opt,name=turn_id,json=turnId,proto3" json:"turn_id,omitempty"`
+	Block         uint32                 `protobuf:"varint,3,opt,name=block,proto3" json:"block,omitempty"`
+	Text          string                 `protobuf:"bytes,4,opt,name=text,proto3" json:"text,omitempty"`
+	Subagent      string                 `protobuf:"bytes,5,opt,name=subagent,proto3" json:"subagent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReasoningDelta) Reset() {
+	*x = ReasoningDelta{}
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReasoningDelta) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReasoningDelta) ProtoMessage() {}
+
+func (x *ReasoningDelta) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReasoningDelta.ProtoReflect.Descriptor instead.
+func (*ReasoningDelta) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ReasoningDelta) GetAgentId() string {
+	if x != nil {
+		return x.AgentId
+	}
+	return ""
+}
+
+func (x *ReasoningDelta) GetTurnId() string {
+	if x != nil {
+		return x.TurnId
+	}
+	return ""
+}
+
+func (x *ReasoningDelta) GetBlock() uint32 {
+	if x != nil {
+		return x.Block
+	}
+	return 0
+}
+
+func (x *ReasoningDelta) GetText() string {
+	if x != nil {
+		return x.Text
+	}
+	return ""
+}
+
+func (x *ReasoningDelta) GetSubagent() string {
+	if x != nil {
+		return x.Subagent
+	}
+	return ""
+}
 
 // ComputerAction mirrors an input the agent is about to inject, so the client
 // can highlight it on the live view.
@@ -307,7 +495,7 @@ type ComputerAction struct {
 
 func (x *ComputerAction) Reset() {
 	*x = ComputerAction{}
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[4]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -319,7 +507,7 @@ func (x *ComputerAction) String() string {
 func (*ComputerAction) ProtoMessage() {}
 
 func (x *ComputerAction) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[4]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -332,7 +520,7 @@ func (x *ComputerAction) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ComputerAction.ProtoReflect.Descriptor instead.
 func (*ComputerAction) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{4}
+	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ComputerAction) GetAgentId() string {
@@ -383,7 +571,7 @@ type ScreenClientFrame struct {
 
 func (x *ScreenClientFrame) Reset() {
 	*x = ScreenClientFrame{}
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[5]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -395,7 +583,7 @@ func (x *ScreenClientFrame) String() string {
 func (*ScreenClientFrame) ProtoMessage() {}
 
 func (x *ScreenClientFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[5]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -408,7 +596,7 @@ func (x *ScreenClientFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScreenClientFrame.ProtoReflect.Descriptor instead.
 func (*ScreenClientFrame) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{5}
+	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *ScreenClientFrame) GetBody() isScreenClientFrame_Body {
@@ -460,7 +648,7 @@ type ScreenOpen struct {
 
 func (x *ScreenOpen) Reset() {
 	*x = ScreenOpen{}
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[6]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -472,7 +660,7 @@ func (x *ScreenOpen) String() string {
 func (*ScreenOpen) ProtoMessage() {}
 
 func (x *ScreenOpen) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[6]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -485,7 +673,7 @@ func (x *ScreenOpen) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScreenOpen.ProtoReflect.Descriptor instead.
 func (*ScreenOpen) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{6}
+	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{8}
 }
 
 type ScreenServerFrame struct {
@@ -497,7 +685,7 @@ type ScreenServerFrame struct {
 
 func (x *ScreenServerFrame) Reset() {
 	*x = ScreenServerFrame{}
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[7]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -509,7 +697,7 @@ func (x *ScreenServerFrame) String() string {
 func (*ScreenServerFrame) ProtoMessage() {}
 
 func (x *ScreenServerFrame) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[7]
+	mi := &file_cocoonbox_agent_v1_session_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -522,7 +710,7 @@ func (x *ScreenServerFrame) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ScreenServerFrame.ProtoReflect.Descriptor instead.
 func (*ScreenServerFrame) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{7}
+	return file_cocoonbox_agent_v1_session_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ScreenServerFrame) GetData() []byte {
@@ -547,7 +735,7 @@ const file_cocoonbox_agent_v1_session_proto_rawDesc = "" +
 	"\x12default_main_model\x18\x05 \x01(\tR\x10defaultMainModel\"0\n" +
 	"\rEventsRequest\x12\x1f\n" +
 	"\vfrom_offset\x18\x01 \x01(\x04R\n" +
-	"fromOffset\"\xf0\x01\n" +
+	"fromOffset\"\xff\x02\n" +
 	"\x05Event\x12\x16\n" +
 	"\x06offset\x18\x01 \x01(\x04R\x06offset\x12E\n" +
 	"\n" +
@@ -555,8 +743,23 @@ const file_cocoonbox_agent_v1_session_proto_rawDesc = "" +
 	" \x01(\v2#.cocoonbox.agent.v1.TranscriptEntryH\x00R\n" +
 	"transcript\x121\n" +
 	"\x05agent\x18\v \x01(\v2\x19.cocoonbox.agent.v1.AgentH\x00R\x05agent\x12M\n" +
-	"\x0fcomputer_action\x18\f \x01(\v2\".cocoonbox.agent.v1.ComputerActionH\x00R\x0ecomputerActionB\x06\n" +
-	"\x04body\"s\n" +
+	"\x0fcomputer_action\x18\f \x01(\v2\".cocoonbox.agent.v1.ComputerActionH\x00R\x0ecomputerAction\x12>\n" +
+	"\n" +
+	"text_delta\x18\r \x01(\v2\x1d.cocoonbox.agent.v1.TextDeltaH\x00R\ttextDelta\x12M\n" +
+	"\x0freasoning_delta\x18\x0e \x01(\v2\".cocoonbox.agent.v1.ReasoningDeltaH\x00R\x0ereasoningDeltaB\x06\n" +
+	"\x04body\"\x85\x01\n" +
+	"\tTextDelta\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
+	"\aturn_id\x18\x02 \x01(\tR\x06turnId\x12\x14\n" +
+	"\x05block\x18\x03 \x01(\rR\x05block\x12\x12\n" +
+	"\x04text\x18\x04 \x01(\tR\x04text\x12\x1a\n" +
+	"\bsubagent\x18\x05 \x01(\tR\bsubagent\"\x8a\x01\n" +
+	"\x0eReasoningDelta\x12\x19\n" +
+	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x17\n" +
+	"\aturn_id\x18\x02 \x01(\tR\x06turnId\x12\x14\n" +
+	"\x05block\x18\x03 \x01(\rR\x05block\x12\x12\n" +
+	"\x04text\x18\x04 \x01(\tR\x04text\x12\x1a\n" +
+	"\bsubagent\x18\x05 \x01(\tR\bsubagent\"s\n" +
 	"\x0eComputerAction\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\x12\x16\n" +
 	"\x06action\x18\x02 \x01(\tR\x06action\x12\f\n" +
@@ -588,35 +791,39 @@ func file_cocoonbox_agent_v1_session_proto_rawDescGZIP() []byte {
 	return file_cocoonbox_agent_v1_session_proto_rawDescData
 }
 
-var file_cocoonbox_agent_v1_session_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_cocoonbox_agent_v1_session_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
 var file_cocoonbox_agent_v1_session_proto_goTypes = []any{
 	(*HelloRequest)(nil),      // 0: cocoonbox.agent.v1.HelloRequest
 	(*HelloResponse)(nil),     // 1: cocoonbox.agent.v1.HelloResponse
 	(*EventsRequest)(nil),     // 2: cocoonbox.agent.v1.EventsRequest
 	(*Event)(nil),             // 3: cocoonbox.agent.v1.Event
-	(*ComputerAction)(nil),    // 4: cocoonbox.agent.v1.ComputerAction
-	(*ScreenClientFrame)(nil), // 5: cocoonbox.agent.v1.ScreenClientFrame
-	(*ScreenOpen)(nil),        // 6: cocoonbox.agent.v1.ScreenOpen
-	(*ScreenServerFrame)(nil), // 7: cocoonbox.agent.v1.ScreenServerFrame
-	(*TranscriptEntry)(nil),   // 8: cocoonbox.agent.v1.TranscriptEntry
-	(*Agent)(nil),             // 9: cocoonbox.agent.v1.Agent
+	(*TextDelta)(nil),         // 4: cocoonbox.agent.v1.TextDelta
+	(*ReasoningDelta)(nil),    // 5: cocoonbox.agent.v1.ReasoningDelta
+	(*ComputerAction)(nil),    // 6: cocoonbox.agent.v1.ComputerAction
+	(*ScreenClientFrame)(nil), // 7: cocoonbox.agent.v1.ScreenClientFrame
+	(*ScreenOpen)(nil),        // 8: cocoonbox.agent.v1.ScreenOpen
+	(*ScreenServerFrame)(nil), // 9: cocoonbox.agent.v1.ScreenServerFrame
+	(*TranscriptEntry)(nil),   // 10: cocoonbox.agent.v1.TranscriptEntry
+	(*Agent)(nil),             // 11: cocoonbox.agent.v1.Agent
 }
 var file_cocoonbox_agent_v1_session_proto_depIdxs = []int32{
-	8, // 0: cocoonbox.agent.v1.Event.transcript:type_name -> cocoonbox.agent.v1.TranscriptEntry
-	9, // 1: cocoonbox.agent.v1.Event.agent:type_name -> cocoonbox.agent.v1.Agent
-	4, // 2: cocoonbox.agent.v1.Event.computer_action:type_name -> cocoonbox.agent.v1.ComputerAction
-	6, // 3: cocoonbox.agent.v1.ScreenClientFrame.open:type_name -> cocoonbox.agent.v1.ScreenOpen
-	0, // 4: cocoonbox.agent.v1.Session.Hello:input_type -> cocoonbox.agent.v1.HelloRequest
-	2, // 5: cocoonbox.agent.v1.Session.Events:input_type -> cocoonbox.agent.v1.EventsRequest
-	5, // 6: cocoonbox.agent.v1.Session.Screen:input_type -> cocoonbox.agent.v1.ScreenClientFrame
-	1, // 7: cocoonbox.agent.v1.Session.Hello:output_type -> cocoonbox.agent.v1.HelloResponse
-	3, // 8: cocoonbox.agent.v1.Session.Events:output_type -> cocoonbox.agent.v1.Event
-	7, // 9: cocoonbox.agent.v1.Session.Screen:output_type -> cocoonbox.agent.v1.ScreenServerFrame
-	7, // [7:10] is the sub-list for method output_type
-	4, // [4:7] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	10, // 0: cocoonbox.agent.v1.Event.transcript:type_name -> cocoonbox.agent.v1.TranscriptEntry
+	11, // 1: cocoonbox.agent.v1.Event.agent:type_name -> cocoonbox.agent.v1.Agent
+	6,  // 2: cocoonbox.agent.v1.Event.computer_action:type_name -> cocoonbox.agent.v1.ComputerAction
+	4,  // 3: cocoonbox.agent.v1.Event.text_delta:type_name -> cocoonbox.agent.v1.TextDelta
+	5,  // 4: cocoonbox.agent.v1.Event.reasoning_delta:type_name -> cocoonbox.agent.v1.ReasoningDelta
+	8,  // 5: cocoonbox.agent.v1.ScreenClientFrame.open:type_name -> cocoonbox.agent.v1.ScreenOpen
+	0,  // 6: cocoonbox.agent.v1.Session.Hello:input_type -> cocoonbox.agent.v1.HelloRequest
+	2,  // 7: cocoonbox.agent.v1.Session.Events:input_type -> cocoonbox.agent.v1.EventsRequest
+	7,  // 8: cocoonbox.agent.v1.Session.Screen:input_type -> cocoonbox.agent.v1.ScreenClientFrame
+	1,  // 9: cocoonbox.agent.v1.Session.Hello:output_type -> cocoonbox.agent.v1.HelloResponse
+	3,  // 10: cocoonbox.agent.v1.Session.Events:output_type -> cocoonbox.agent.v1.Event
+	9,  // 11: cocoonbox.agent.v1.Session.Screen:output_type -> cocoonbox.agent.v1.ScreenServerFrame
+	9,  // [9:12] is the sub-list for method output_type
+	6,  // [6:9] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_agent_v1_session_proto_init() }
@@ -629,8 +836,10 @@ func file_cocoonbox_agent_v1_session_proto_init() {
 		(*Event_Transcript)(nil),
 		(*Event_Agent)(nil),
 		(*Event_ComputerAction)(nil),
+		(*Event_TextDelta)(nil),
+		(*Event_ReasoningDelta)(nil),
 	}
-	file_cocoonbox_agent_v1_session_proto_msgTypes[5].OneofWrappers = []any{
+	file_cocoonbox_agent_v1_session_proto_msgTypes[7].OneofWrappers = []any{
 		(*ScreenClientFrame_Open)(nil),
 		(*ScreenClientFrame_Data)(nil),
 	}
@@ -640,7 +849,7 @@ func file_cocoonbox_agent_v1_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_agent_v1_session_proto_rawDesc), len(file_cocoonbox_agent_v1_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   10,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

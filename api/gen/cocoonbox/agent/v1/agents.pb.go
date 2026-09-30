@@ -828,8 +828,12 @@ func (*TranscriptEntry_Approval) isTranscriptEntry_Body() {}
 func (*TranscriptEntry_TurnEnd) isTranscriptEntry_Body() {}
 
 type TextBlock struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Text  string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// Set when the text belongs to a subagent, e.g. "computer".
+	Subagent string `protobuf:"bytes,2,opt,name=subagent,proto3" json:"subagent,omitempty"`
+	// Index of the streamed block within its turn; matches TextDelta.block.
+	Block         uint32 `protobuf:"varint,3,opt,name=block,proto3" json:"block,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -871,9 +875,26 @@ func (x *TextBlock) GetText() string {
 	return ""
 }
 
+func (x *TextBlock) GetSubagent() string {
+	if x != nil {
+		return x.Subagent
+	}
+	return ""
+}
+
+func (x *TextBlock) GetBlock() uint32 {
+	if x != nil {
+		return x.Block
+	}
+	return 0
+}
+
 type ReasoningBlock struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Text          string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Text  string                 `protobuf:"bytes,1,opt,name=text,proto3" json:"text,omitempty"`
+	// Index of the streamed block within its turn; matches ReasoningDelta.block.
+	Block         uint32 `protobuf:"varint,2,opt,name=block,proto3" json:"block,omitempty"`
+	Subagent      string `protobuf:"bytes,3,opt,name=subagent,proto3" json:"subagent,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -911,6 +932,20 @@ func (*ReasoningBlock) Descriptor() ([]byte, []int) {
 func (x *ReasoningBlock) GetText() string {
 	if x != nil {
 		return x.Text
+	}
+	return ""
+}
+
+func (x *ReasoningBlock) GetBlock() uint32 {
+	if x != nil {
+		return x.Block
+	}
+	return 0
+}
+
+func (x *ReasoningBlock) GetSubagent() string {
+	if x != nil {
+		return x.Subagent
 	}
 	return ""
 }
@@ -1472,11 +1507,15 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"toolResult\x12A\n" +
 	"\bapproval\x18\x0e \x01(\v2#.cocoonbox.agent.v1.ApprovalRequestH\x00R\bapproval\x128\n" +
 	"\bturn_end\x18\x0f \x01(\v2\x1b.cocoonbox.agent.v1.TurnEndH\x00R\aturnEndB\x06\n" +
-	"\x04body\"\x1f\n" +
+	"\x04body\"Q\n" +
 	"\tTextBlock\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"$\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1a\n" +
+	"\bsubagent\x18\x02 \x01(\tR\bsubagent\x12\x14\n" +
+	"\x05block\x18\x03 \x01(\rR\x05block\"V\n" +
 	"\x0eReasoningBlock\x12\x12\n" +
-	"\x04text\x18\x01 \x01(\tR\x04text\"z\n" +
+	"\x04text\x18\x01 \x01(\tR\x04text\x12\x14\n" +
+	"\x05block\x18\x02 \x01(\rR\x05block\x12\x1a\n" +
+	"\bsubagent\x18\x03 \x01(\tR\bsubagent\"z\n" +
 	"\bToolCall\x12\x17\n" +
 	"\acall_id\x18\x01 \x01(\tR\x06callId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12%\n" +
