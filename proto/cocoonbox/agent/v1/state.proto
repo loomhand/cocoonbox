@@ -1,0 +1,91 @@
+syntax = "proto3";
+
+package cocoonbox.agent.v1;
+
+option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1";
+
+// State is called by cocoonbox-api (never by clients) to move the box's user
+// state to and from object storage. The api decides when; the agent decides
+// what and how. The agent never holds storage credentials: every object is
+// read or written through a presigned URL from the api, and the per-user key
+// arrives in each request and is kept only in memory for that request.
+service State {
+  // Plan snapshots the user state and returns the chunk ids it references.
+  // The snapshot stays pinned in the agent until Upload finishes or a newer
+  // Plan replaces it.
+  rpc Plan(PlanRequest) returns (PlanResponse);
+  // Upload writes the listed chunks and the manifest through presigned URLs.
+  rpc Upload(UploadRequest) returns (stream TransferProgress);
+  // Restore replaces the user state with the given manifest.
+  rpc Restore(RestoreRequest) returns (stream TransferProgress);
+}
+
+enum Consistency {
+  CONSISTENCY_UNSPECIFIED = 0;
+  // Copy while the desktop keeps running; SQLite files go through the backup API.
+  CONSISTENCY_LIVE = 1;
+  // Close the browser and quiesce writers first; used before release and rebase.
+  CONSISTENCY_QUIESCED = 2;
+}
+
+message StateKey {
+  // Encrypts chunks and the manifest (AES-256-GCM) and keys chunk ids (HMAC-SHA256).
+  bytes key = 1;
+  string key_id = 2;
+}
+
+message PlanRequest {
+  StateKey key = 1;
+  Consistency consistency = 2;
+  // Parent manifest id, empty for the first snapshot.
+  string parent = 3;
+}
+
+message ChunkRef {
+  // Hex HMAC of the plaintext chunk; the object name in the store.
+  string id = 1;
+  uint64 size = 2;
+}
+
+message PlanResponse {
+  string snapshot_id = 1;
+  repeated ChunkRef chunks = 2;
+  uint64 files = 3;
+  uint64 logical_bytes = 4;
+  int64 taken_at_ms = 5;
+}
+
+message PresignedPut {
+  string chunk_id = 1;
+  string url = 2;
+  map<string, string> headers = 3;
+}
+
+message UploadRequest {
+  string snapshot_id = 1;
+  StateKey key = 2;
+  // Only the chunks the store does not already hold.
+  repeated PresignedPut puts = 3;
+  PresignedPut manifest = 4;
+}
+
+message PresignedGet {
+  string chunk_id = 1;
+  string url = 2;
+}
+
+message RestoreRequest {
+  StateKey key = 1;
+  PresignedGet manifest = 2;
+  repeated PresignedGet gets = 3;
+}
+
+message TransferProgress {
+  uint64 done_bytes = 1;
+  uint64 total_bytes = 2;
+  uint32 done_chunks = 3;
+  uint32 total_chunks = 4;
+  // Set on the final message.
+  bool finished = 5;
+  string manifest_id = 6;
+}
