@@ -22,7 +22,7 @@ if [ -d "$key_dir" ]; then
 		[ -f "$f" ] || continue
 		id=$(basename "$f")
 		printf '%s\n' "$id" | grep -Eq '^cb-[0-9a-f]{12}(-r[0-9a-z]+)?$' || continue
-		printf '  - ak: %s\n    product: cocoonbox\n    tenant: cocoonbox\n    owner: %s\n    qps: 4\n    daily_token_quota: 5000000\n    tokens_per_minute: 200000\n' \
+		printf '  - ak: %s\n    product: cocoonbox\n    tenant: cocoonbox-boxes\n    owner: %s\n    qps: 4\n    daily_token_quota: 5000000\n    tokens_per_minute: 200000\n' \
 			"$(cat "$f")" "${id%%-r*}" >> "$boxes"
 	done
 fi

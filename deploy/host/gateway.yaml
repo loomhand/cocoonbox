@@ -25,6 +25,15 @@ tenants:
   - name: cocoonbox
     qps: 4
     daily_cost_quota_micros: 20000000
+    models:
+      - deepseek/deepseek-v4.1-flash
+      - anthropic/claude-sonnet-5
+      - anthropic/claude-sonnet-4.6
+      - qwen/qwen3-vl-235b-a22b-instruct
+
+  - name: cocoonbox-boxes
+    qps: 16
+    daily_cost_quota_micros: 20000000
     key_daily_cost_quota_micros: 10000000
     models:
       - deepseek/deepseek-v4.1-flash
