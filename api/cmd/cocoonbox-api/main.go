@@ -20,6 +20,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/controlmcp"
 	"github.com/CMGS/cocoonbox/api/credential"
 	"github.com/CMGS/cocoonbox/api/dialer"
 	"github.com/CMGS/cocoonbox/api/edge"
@@ -107,12 +108,15 @@ func main() {
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 
+	mcpMux := http.NewServeMux()
+	mcpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
+	mcpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, edgeToken, creds))
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
 	mcpServer := &http.Server{
 		Addr:              cfg.MCPListen,
-		Handler:           edge.NewMCP(svc, authn, edgeToken, creds),
+		Handler:           mcpMux,
 		Protocols:         &protocols,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}

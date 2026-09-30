@@ -1,0 +1,491 @@
+package controlmcp
+
+import (
+	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
+	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/boxes"
+	"github.com/CMGS/cocoonbox/api/config"
+	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+)
+
+const (
+	aliceToken = "alice-token"
+	bobToken   = "bob-token"
+	carolToken = "carol-token"
+
+	latestImage = "img:2"
+)
+
+func TestInitializeAndToolsList(t *testing.T) {
+	srv, _ := newTestServer(t)
+
+	for requested, want := range map[string]string{"2025-06-18": "2025-06-18", "2025-11-25": "2025-11-25", "2024-11-05": "2025-11-25"} {
+		rec := serve(srv, http.MethodPost, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"`+requested+`","clientInfo":{"name":"cocoonbox"}}}`)
+		init := decode(t, rec)
+		info, _ := init.Result["serverInfo"].(map[string]any)
+		caps, _ := init.Result["capabilities"].(map[string]any)
+		if init.Result["protocolVersion"] != want || info["name"] != "cocoonbox-control" || caps["tools"] == nil || rec.Header().Get("Mcp-Session-Id") == "" {
+			t.Fatalf("initialize %s = %+v, session %q", requested, init, rec.Header().Get("Mcp-Session-Id"))
+		}
+	}
+	list := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
+	var names []string
+	for _, tool := range list.Result["tools"].([]any) {
+		spec := tool.(map[string]any)
+		if spec["inputSchema"].(map[string]any)["type"] != "object" || spec["outputSchema"].(map[string]any)["type"] != "object" || spec["description"] == "" {
+			t.Errorf("%v: incomplete spec %v", spec["name"], spec)
+		}
+		names = append(names, spec["name"].(string))
+	}
+	if want := []string{"box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"}; !slices.Equal(names, want) {
+		t.Fatalf("tools = %v, want %v", names, want)
+	}
+	if ping := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"ping"}`); ping.Error != nil || ping.Result == nil {
+		t.Fatalf("ping = %+v", ping)
+	}
+}
+
+func TestTransportRejects(t *testing.T) {
+	srv, fake := newTestServer(t)
+	cases := []struct {
+		name, method, token, body string
+		want                      int
+	}{
+		{"no token", http.MethodPost, "", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, http.StatusUnauthorized},
+		{"unknown token", http.MethodPost, "mallory", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, http.StatusUnauthorized},
+		{"unauthenticated call", http.MethodPost, "", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_hibernate"}}`, http.StatusUnauthorized},
+		{"get stream", http.MethodGet, aliceToken, "", http.StatusMethodNotAllowed},
+		{"delete session", http.MethodDelete, aliceToken, "", http.StatusMethodNotAllowed},
+		{"parse error", http.MethodPost, aliceToken, `{"jsonrpc":`, http.StatusBadRequest},
+		{"batch", http.MethodPost, aliceToken, `[{"jsonrpc":"2.0","id":1,"method":"ping"}]`, http.StatusBadRequest},
+		{"notification", http.MethodPost, aliceToken, `{"jsonrpc":"2.0","method":"notifications/initialized"}`, http.StatusAccepted},
+	}
+	for _, tc := range cases {
+		rec := serve(srv, tc.method, tc.token, tc.body)
+		if rec.Code != tc.want {
+			t.Errorf("%s: status %d, want %d (%s)", tc.name, rec.Code, tc.want, rec.Body)
+		}
+		if tc.want == http.StatusUnauthorized && rec.Body.Len() != 0 {
+			t.Errorf("%s: 401 carries a body %q", tc.name, rec.Body)
+		}
+	}
+	if calls := fake.recorded(); len(calls) != 0 {
+		t.Fatalf("rejected requests reached Boxes: %v", calls)
+	}
+}
+
+func TestUnknownMethodAndTool(t *testing.T) {
+	srv, fake := newTestServer(t)
+
+	for body, want := range map[string]int{
+		`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`:                                                       codeMethodNotFound,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id"}}}`:    codeInvalidParams,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"box_ensure","arguments":{"wait":"yes"}}}`: codeInvalidParams,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_status","arguments":[]}}`:             codeInvalidParams,
+	} {
+		rec := serve(srv, http.MethodPost, aliceToken, body)
+		var raw map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+			t.Fatalf("decode %s: %v", rec.Body, err)
+		}
+		var rpcErr rpcError
+		if _, hasResult := raw["result"]; hasResult || json.Unmarshal(raw["error"], &rpcErr) != nil || rpcErr.Code != want {
+			t.Errorf("%s = %s, want error %d without a result", body, rec.Body, want)
+		}
+	}
+	if calls := fake.recorded(); len(calls) != 0 {
+		t.Fatalf("refused calls reached Boxes: %v", calls)
+	}
+}
+
+func TestUpgradeRequiresConfirm(t *testing.T) {
+	srv, fake := newTestServer(t)
+
+	for _, args := range []string{``, `,"arguments":{}`, `,"arguments":{"confirm":false}`} {
+		resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_upgrade"`+args+`}}`)
+		if got := refusal(t, resp); got != string(errUpgradeUnconfirmed) {
+			t.Fatalf("upgrade%s = %q", args, got)
+		}
+	}
+	if slices.ContainsFunc(fake.recorded(), func(c fakeCall) bool { return c.method == "Rebase" }) {
+		t.Fatalf("unconfirmed upgrade called Rebase: %v", fake.recorded())
+	}
+
+	resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_upgrade","arguments":{"confirm":true}}}`)
+	got := structured(t, resp)
+	if got["box_id"] != boxes.BoxID("alice") || got["state"] != "running" || got["image"] != latestImage || got["operation_id"] == "" {
+		t.Fatalf("confirmed upgrade = %v", got)
+	}
+	if !slices.Contains(fake.recorded(), fakeCall{method: "Rebase", user: "alice", box: boxes.BoxID("alice")}) {
+		t.Fatalf("confirmed upgrade calls = %v", fake.recorded())
+	}
+	resp = post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"box_upgrade","arguments":{"confirm":true}}}`)
+	if got := refusal(t, resp); got != string(errUpgradeCurrent) {
+		t.Fatalf("upgrade on the latest image = %q", got)
+	}
+}
+
+func TestToolsActOnlyOnCallersBox(t *testing.T) {
+	srv, fake := newTestServer(t)
+	alice := boxes.BoxID("alice")
+
+	for _, call := range []string{
+		`{"name":"box_status"}`,
+		`{"name":"box_ensure"}`,
+		`{"name":"box_save"}`,
+		`{"name":"box_upgrade","arguments":{"confirm":true}}`,
+		`{"name":"box_hibernate"}`,
+	} {
+		got := structured(t, post(t, srv, bobToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":`+call+`}`))
+		if got["box_id"] != boxes.BoxID("bob") {
+			t.Fatalf("bob %s reported box %v", call, got["box_id"])
+		}
+	}
+	for _, call := range []string{
+		`{"name":"box_status","arguments":{"box_id":"` + alice + `"}}`,
+		`{"name":"box_hibernate","arguments":{"box_id":"` + alice + `"}}`,
+		`{"name":"box_save","arguments":{"box_id":"` + alice + `"}}`,
+		`{"name":"box_upgrade","arguments":{"confirm":true,"box_id":"` + alice + `"}}`,
+		`{"name":"box_upgrade","arguments":{"confirm":true,"image":"img:1"}}`,
+		`{"name":"box_ensure","arguments":{"wait":true,"box":"` + alice + `"}}`,
+	} {
+		resp := post(t, srv, bobToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":`+call+`}`)
+		if resp.Error == nil || resp.Error.Code != codeInvalidParams {
+			t.Fatalf("bob %s = %+v, want invalid params", call, resp)
+		}
+	}
+	for _, c := range fake.recorded() {
+		if c.user != "bob" || c.box == alice {
+			t.Fatalf("bob's token reached %+v", c)
+		}
+	}
+}
+
+func TestEnsureStreamsProgress(t *testing.T) {
+	srv, fake := newTestServer(t)
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_status"}}`))
+	want := map[string]any{"box_id": boxes.BoxID("alice"), "state": "hibernated", "image": "img:1", "latest_image": latestImage, "upgrade_available": true, "last_saved_at_ms": float64(0)}
+	if !mapsEqual(got, want) {
+		t.Fatalf("status = %v, want %v", got, want)
+	}
+
+	rec := serve(srv, http.MethodPost, aliceToken, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"box_ensure","_meta":{"progressToken":"tok"}}}`)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("status %d, content type %q", rec.Code, rec.Header().Get("Content-Type"))
+	}
+	msgs := sseMessages(t, rec.Body.String())
+	if len(msgs) != 3 {
+		t.Fatalf("got %d messages, want 2 progress + 1 response: %v", len(msgs), msgs)
+	}
+	for i, message := range []string{"waking: restoring memory snapshot", "done: running"} {
+		params, _ := msgs[i]["params"].(map[string]any)
+		if msgs[i]["method"] != "notifications/progress" || params["progressToken"] != "tok" || params["progress"] != float64(i+1) || params["message"] != message {
+			t.Fatalf("progress %d = %v", i, msgs[i])
+		}
+		if _, ok := params["total"]; ok {
+			t.Fatalf("progress %d carries a total: %v", i, params)
+		}
+	}
+	final := msgs[2]["result"].(map[string]any)["structuredContent"].(map[string]any)
+	if msgs[2]["id"] != float64(7) || final["state"] != "running" || final["operation_id"] == "" {
+		t.Fatalf("response = %v", msgs[2])
+	}
+
+	got = structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"box_ensure"}}`))
+	if got["state"] != "running" || got["operation_id"] != "" {
+		t.Fatalf("ensure of a running box = %v", got)
+	}
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	got = structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"box_ensure","arguments":{"wait":false}}}`))
+	if got["state"] != "hibernated" || got["operation_id"] == "" {
+		t.Fatalf("ensure without wait = %v", got)
+	}
+}
+
+func TestSaveReportsBytesAndRefusals(t *testing.T) {
+	srv, fake := newTestServer(t)
+
+	rec := serve(srv, http.MethodPost, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_save","_meta":{"progressToken":5}}}`)
+	msgs := sseMessages(t, rec.Body.String())
+	if len(msgs) != 3 || msgs[0]["params"].(map[string]any)["message"] != "saving: uploading (40/40 bytes)" {
+		t.Fatalf("save stream = %v", msgs)
+	}
+	got := msgs[2]["result"].(map[string]any)["structuredContent"].(map[string]any)
+	want := map[string]any{"box_id": boxes.BoxID("alice"), "last_saved_at_ms": float64(1700), "operation_id": got["operation_id"], "bytes": float64(40)}
+	if !mapsEqual(got, want) || got["operation_id"] == "" {
+		t.Fatalf("save = %v, want %v", got, want)
+	}
+
+	fake.failNext = true
+	if got := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_save"}}`)); got != "Save failed: save failed" {
+		t.Fatalf("failed save = %q", got)
+	}
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	for _, tool := range []string{"box_save", "box_hibernate"} {
+		if got := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"`+tool+`"}}`)); got != "The box is hibernated." {
+			t.Fatalf("%s of a hibernated box = %q", tool, got)
+		}
+	}
+	if got := refusal(t, post(t, srv, carolToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_hibernate"}}`)); got != "The box is absent." {
+		t.Fatalf("hibernate without a box = %q", got)
+	}
+	got = structured(t, post(t, srv, carolToken, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"box_status"}}`))
+	if want := map[string]any{"box_id": "", "state": "absent", "image": "", "latest_image": "", "upgrade_available": false, "last_saved_at_ms": float64(0)}; !mapsEqual(got, want) {
+		t.Fatalf("status without a box = %v", got)
+	}
+
+	fake.ensureErr = status.Error(codes.Unavailable, "ensure box failed")
+	if resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"box_ensure"}}`); resp.Error == nil || resp.Error.Code != codeInternal {
+		t.Fatalf("ensure on a failing backend = %+v", resp)
+	}
+}
+
+type rpcReply struct {
+	ID     any            `json:"id"`
+	Result map[string]any `json:"result"`
+	Error  *rpcError      `json:"error"`
+}
+
+type fakeCall struct {
+	method, user, box string
+}
+
+// fakeBoxes owns boxes by user like boxes.Service; carol has none, and every operation finishes after two events.
+type fakeBoxes struct {
+	controlv1.UnimplementedBoxesServer
+
+	mu        sync.Mutex
+	calls     []fakeCall
+	states    map[string]controlv1.BoxState
+	images    map[string]string
+	saved     map[string]int64
+	ops       map[string]string
+	failNext  bool
+	ensureErr error
+}
+
+func (f *fakeBoxes) Ensure(ctx context.Context, _ *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
+	user := auth.User(ctx)
+	f.record("Ensure", user, "")
+	if f.ensureErr != nil {
+		return nil, f.ensureErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	box := f.boxLocked(user)
+	f.states[user] = controlv1.BoxState_BOX_STATE_RUNNING
+	if box.GetState() == controlv1.BoxState_BOX_STATE_RUNNING {
+		return &controlv1.EnsureResponse{Box: box}, nil
+	}
+	return &controlv1.EnsureResponse{Box: box, Operation: f.startLocked(user, "wake")}, nil
+}
+
+func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
+	user := auth.User(ctx)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.states[user]; !ok {
+		return &controlv1.ListBoxesResponse{}, nil
+	}
+	return &controlv1.ListBoxesResponse{Boxes: []*controlv1.Box{f.boxLocked(user)}}, nil
+}
+
+func (f *fakeBoxes) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
+	return f.operate(ctx, "Hibernate", ref.GetBoxId())
+}
+
+func (f *fakeBoxes) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
+	return f.operate(ctx, "SaveState", ref.GetBoxId())
+}
+
+func (f *fakeBoxes) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*controlv1.Operation, error) {
+	return f.operate(ctx, "Rebase", req.GetBoxId())
+}
+
+func (f *fakeBoxes) WatchOperation(req *controlv1.WatchOperationRequest, stream grpc.ServerStreamingServer[controlv1.OperationEvent]) error {
+	user := auth.User(stream.Context())
+	f.mu.Lock()
+	owner, ok := f.ops[req.GetOperationId()]
+	fail := f.failNext
+	f.failNext = false
+	f.mu.Unlock()
+	if !ok || owner != user {
+		return status.Error(codes.NotFound, "operation not found")
+	}
+	id := req.GetOperationId()
+	first := &controlv1.OperationEvent{OperationId: id, Phase: controlv1.Phase_PHASE_WAKING, Detail: "restoring memory snapshot"}
+	last := &controlv1.OperationEvent{OperationId: id, Phase: controlv1.Phase_PHASE_DONE, Detail: "running"}
+	if strings.HasPrefix(id, "save") {
+		first = &controlv1.OperationEvent{OperationId: id, Phase: controlv1.Phase_PHASE_SAVING, Detail: "uploading", DoneBytes: 40, TotalBytes: 40}
+		last = &controlv1.OperationEvent{OperationId: id, Phase: controlv1.Phase_PHASE_DONE, Detail: "snapshot s1"}
+	}
+	if fail {
+		last = &controlv1.OperationEvent{OperationId: id, Phase: controlv1.Phase_PHASE_FAILED, Detail: "save failed"}
+	}
+	for _, ev := range []*controlv1.OperationEvent{first, last} {
+		if err := stream.Send(ev); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *fakeBoxes) operate(ctx context.Context, method, box string) (*controlv1.Operation, error) {
+	user := auth.User(ctx)
+	f.record(method, user, box)
+	if box != boxes.BoxID(user) {
+		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	kind := "op"
+	switch method {
+	case "Hibernate":
+		f.states[user] = controlv1.BoxState_BOX_STATE_HIBERNATED
+	case "SaveState":
+		kind = "save"
+		f.saved[user] = 1700
+	case "Rebase":
+		f.images[user] = latestImage
+	}
+	return f.startLocked(user, kind), nil
+}
+
+func (f *fakeBoxes) boxLocked(user string) *controlv1.Box {
+	return &controlv1.Box{Id: boxes.BoxID(user), State: f.states[user], Image: f.images[user], LatestImage: latestImage, LastSavedAtMs: f.saved[user]}
+}
+
+func (f *fakeBoxes) startLocked(user, kind string) *controlv1.Operation {
+	id := kind + "-" + user + "-" + string(rune('a'+len(f.ops)))
+	f.ops[id] = user
+	return &controlv1.Operation{Id: id, BoxId: boxes.BoxID(user)}
+}
+
+func (f *fakeBoxes) setState(user string, state controlv1.BoxState) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.states[user] = state
+}
+
+func (f *fakeBoxes) record(method, user, box string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, fakeCall{method: method, user: user, box: box})
+}
+
+func (f *fakeBoxes) recorded() []fakeCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
+func newTestServer(t *testing.T) (*Server, *fakeBoxes) {
+	t.Helper()
+	var users []config.User
+	for _, token := range []string{aliceToken, bobToken, carolToken} {
+		sum := sha256.Sum256([]byte(token))
+		users = append(users, config.User{Name: strings.TrimSuffix(token, "-token"), TokenSHA256: hex.EncodeToString(sum[:])})
+	}
+	running := controlv1.BoxState_BOX_STATE_RUNNING
+	fake := &fakeBoxes{
+		states: map[string]controlv1.BoxState{"alice": running, "bob": running},
+		images: map[string]string{"alice": "img:1", "bob": "img:1"},
+		saved:  map[string]int64{},
+		ops:    map[string]string{},
+	}
+	return New(fake, auth.New(users)), fake
+}
+
+func serve(srv *Server, method, token, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, Path, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func post(t *testing.T, srv *Server, token, body string) rpcReply {
+	t.Helper()
+	return decode(t, serve(srv, http.MethodPost, token, body))
+}
+
+func decode(t *testing.T, rec *httptest.ResponseRecorder) rpcReply {
+	t.Helper()
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("status %d, content type %q: %s", rec.Code, rec.Header().Get("Content-Type"), rec.Body)
+	}
+	var reply rpcReply
+	if err := json.Unmarshal(rec.Body.Bytes(), &reply); err != nil {
+		t.Fatalf("decode %s: %v", rec.Body, err)
+	}
+	return reply
+}
+
+// refusal returns the text of an isError result, which carries no structured content.
+func refusal(t *testing.T, reply rpcReply) string {
+	t.Helper()
+	content, _ := reply.Result["content"].([]any)
+	if reply.Result["isError"] != true || len(content) != 1 || reply.Result["structuredContent"] != nil {
+		t.Fatalf("not a refusal: %+v", reply)
+	}
+	return content[0].(map[string]any)["text"].(string)
+}
+
+// structured returns a successful result's structured content and checks the text block carries the same JSON.
+func structured(t *testing.T, reply rpcReply) map[string]any {
+	t.Helper()
+	got, ok := reply.Result["structuredContent"].(map[string]any)
+	content, _ := reply.Result["content"].([]any)
+	if !ok || reply.Result["isError"] != false || len(content) != 1 {
+		t.Fatalf("not a structured result: %+v", reply)
+	}
+	var text map[string]any
+	if err := json.Unmarshal([]byte(content[0].(map[string]any)["text"].(string)), &text); err != nil || !mapsEqual(text, got) {
+		t.Fatalf("text block %v does not mirror %v", content[0], got)
+	}
+	return got
+}
+
+func mapsEqual(a, b map[string]any) bool {
+	x, _ := json.Marshal(a)
+	y, _ := json.Marshal(b)
+	return string(x) == string(y)
+}
+
+func sseMessages(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	var msgs []map[string]any
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	for scanner.Scan() {
+		data, ok := strings.CutPrefix(scanner.Text(), "data: ")
+		if !ok {
+			continue
+		}
+		var msg map[string]any
+		if err := json.Unmarshal([]byte(data), &msg); err != nil {
+			t.Fatalf("decode event %q: %v", data, err)
+		}
+		msgs = append(msgs, msg)
+	}
+	return msgs
+}
