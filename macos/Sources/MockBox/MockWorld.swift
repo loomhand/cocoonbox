@@ -461,7 +461,7 @@ actor MockWorld {
 
     // runExternal plays one scripted MCP session from a local Claude Code.
     private func runExternal() async {
-        let id = openExternal(client: "claude-code")
+        let id = openExternal(client: "claude-code", version: "2.1.285")
         let calls: [(String, String)] = [
             ("shell", #"{"command":"uname -sr && ls /workspace"}"#),
             ("screenshot", "{}"),
@@ -473,19 +473,24 @@ actor MockWorld {
             _ = await externalCall(agent: id, tool: tool, arguments: arguments)
             try? await Task.sleep(for: .milliseconds(900))
         }
-        closeExternal(agent: id)
+        closeExternal(agent: id, reason: "deleted by the client")
     }
 
     // MARK: external agents (MCP)
 
-    // openExternal starts an MCP session's agent, named mcp:<clientInfo.name> as the contract says.
-    func openExternal(client: String) -> String {
+    // openExternal starts an MCP session's agent, named mcp:<clientInfo.name>
+    // as the contract says, with the session notes the box's agent writes:
+    // system text entries that share turn and block.
+    func openExternal(client: String, version: String) -> String {
         let id = createAgent(name: "mcp:\(client)", nonce: "", model: "").id
         setStatus(agent: id, .running)
+        append(agent: id, turn: "mcp-\(id)", role: .system, body: .text(.with { $0.text = "MCP session opened by \(client) \(version)" }))
         return id
     }
 
-    func closeExternal(agent id: String) {
+    func closeExternal(agent id: String, reason: String) {
+        append(agent: id, turn: "mcp-\(id)", role: .system, body: .text(.with { $0.text = "MCP session closed: \(reason)" }))
+        append(agent: id, turn: "mcp-\(id)", role: .assistant, body: .turnEnd(.with { $0.ok = true }))
         setStatus(agent: id, .idle)
     }
 

@@ -96,16 +96,17 @@ struct SidebarView: View {
                         AgentRow(agent: agent).tag(agent.id)
                     }
                 }
-                if !external.shown.isEmpty || !external.earlier.isEmpty {
+                if !external.open.isEmpty || !external.closed.isEmpty {
                     Section(isExpanded: $externalExpanded) {
-                        ForEach(external.shown + (model.showEarlierExternal ? external.earlier : []), id: \.id) { agent in
+                        ForEach(external.open, id: \.id) { agent in
                             AgentRow(agent: agent).tag(agent.id)
                         }
-                        if !external.earlier.isEmpty {
-                            Button(model.showEarlierExternal ? "Hide earlier" : "Show \(external.earlier.count) earlier") {
-                                model.showEarlierExternal.toggle()
+                        if !external.closed.isEmpty {
+                            DisclosureGroup("Closed sessions (\(external.closed.count))", isExpanded: $model.showClosedExternal) {
+                                ForEach(external.closed, id: \.id) { agent in
+                                    AgentRow(agent: agent).tag(agent.id)
+                                }
                             }
-                            .buttonStyle(.link)
                             .font(.caption)
                         }
                     } header: {

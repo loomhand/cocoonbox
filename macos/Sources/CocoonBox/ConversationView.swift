@@ -6,6 +6,7 @@ import SwiftUI
 
 enum TranscriptRow: Identifiable {
     case user(UInt64, String)
+    case note(UInt64, String)
     case text(UInt64, String, subagent: String)
     case reasoning(UInt64, String, subagent: String)
     case tool(UInt64, Cocoonbox_Agent_V1_ToolCall, Cocoonbox_Agent_V1_ToolResult?, UInt64?)
@@ -15,7 +16,7 @@ enum TranscriptRow: Identifiable {
 
     var id: UInt64 {
         switch self {
-        case .user(let seq, _), .text(let seq, _, _), .reasoning(let seq, _, _), .tool(let seq, _, _, _),
+        case .user(let seq, _), .note(let seq, _), .text(let seq, _, _), .reasoning(let seq, _, _), .tool(let seq, _, _, _),
              .result(let seq, _), .approval(let seq, _, _), .turnEnd(let seq, _):
             seq
         }
@@ -30,8 +31,8 @@ enum TranscriptRow: Identifiable {
         }
     }
 
-    // rows folds a transcript into display rows: consecutive assistant text in
-    // one turn becomes one paragraph and tool results sit under their call.
+    // rows turns a transcript into display rows: every entry is its own row,
+    // and tool results sit under their call.
     static func rows(_ entries: [Entry], answered: Set<String>) -> [TranscriptRow] {
         var results: [String: (Cocoonbox_Agent_V1_ToolResult, UInt64)] = [:]
         var calls: Set<String> = []
@@ -43,13 +44,10 @@ enum TranscriptRow: Identifiable {
         for (index, entry) in entries.enumerated() {
             switch entry.body {
             case .text(let block):
-                if entry.role == .user {
-                    rows.append(.user(entry.seq, block.text))
-                } else if case .text(let seq, let text, let subagent)? = rows.last, subagent == block.subagent,
-                          index > 0, entries[index - 1].turnID == entry.turnID {
-                    rows[rows.count - 1] = .text(seq, text + block.text, subagent: subagent)
-                } else {
-                    rows.append(.text(entry.seq, block.text, subagent: block.subagent))
+                switch entry.role {
+                case .user: rows.append(.user(entry.seq, block.text))
+                case .system: rows.append(.note(entry.seq, block.text))
+                default: rows.append(.text(entry.seq, block.text, subagent: block.subagent))
                 }
             case .reasoning(let block):
                 rows.append(.reasoning(entry.seq, block.text, subagent: block.subagent))
@@ -82,7 +80,9 @@ struct ConversationView: View {
                 TranscriptView(agent: agent, rows: TranscriptRow.rows(model.transcripts[agent.id] ?? [], answered: model.answeredApprovals))
                 Divider()
                 if let client = agent.externalClient {
-                    Label("\(client) drives this agent over MCP. Prompt it in \(client); its tool calls show here.",
+                    Label(agent.status == .running || agent.status == .waitingForUser
+                              ? "\(client) drives this agent over MCP. Prompt it in \(client); its tool calls show here."
+                              : "This session has ended.",
                           systemImage: "point.3.connected.trianglepath.dotted")
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -196,6 +196,11 @@ struct RowView: View {
                     .padding(.vertical, 8)
                     .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
             }
+        case .note(_, let text):
+            Label(text, systemImage: "info.circle")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
         case .text(_, let text, let subagent):
             AssistantText(text: text, subagent: subagent)
         case .reasoning(_, let text, _):

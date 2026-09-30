@@ -176,7 +176,7 @@ final class MCPServer: Sendable {
             break
         case "DELETE":
             if let agent = sessions.withLock({ $0.removeValue(forKey: sessionID) }) {
-                await world.closeExternal(agent: agent)
+                await world.closeExternal(agent: agent, reason: "deleted by the client")
             }
             return HTTPResponse(status: 200, reason: "OK")
         default:
@@ -195,9 +195,10 @@ final class MCPServer: Sendable {
         let result: [String: Any]
         switch rpc {
         case "initialize":
-            let client = (params["clientInfo"] as? [String: Any])?["name"] as? String ?? "unknown"
+            let info = params["clientInfo"] as? [String: Any]
+            let client = info?["name"] as? String ?? "unknown"
             let newSession = UUID().uuidString.lowercased()
-            let agent = await world.openExternal(client: client)
+            let agent = await world.openExternal(client: client, version: info?["version"] as? String ?? "")
             sessions.withLock { $0[newSession] = agent }
             headersOut["Mcp-Session-Id"] = newSession
             line += " client=\(client) protocol=\(params["protocolVersion"] as? String ?? "-")"

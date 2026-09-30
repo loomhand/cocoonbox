@@ -12,7 +12,7 @@ import Foundation
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
-// show-earlier[:off], confirm:<save|upgrade|off>, save-now, upgrade, wait-operation[:seconds],
+// show-closed[:off], confirm:<save|upgrade|off>, save-now, upgrade, wait-operation[:seconds],
 // end-local, quit.
 @MainActor
 enum Autopilot {
@@ -123,8 +123,8 @@ enum Autopilot {
             await until(10) { model.operation?.finished == false }
         case "wait-operation":
             await until(Double(arg) ?? 300) { model.operation?.finished ?? true }
-        case "show-earlier":
-            model.showEarlierExternal = arg != "off"
+        case "show-closed":
+            model.showClosedExternal = arg != "off"
         case "end-local":
             if let session = model.selectedLocal { model.closeLocal(session) }
         case "copy-mcp":

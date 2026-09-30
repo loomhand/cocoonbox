@@ -53,7 +53,7 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 
 **Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for Claude Code (`claude mcp add --scope user --transport http …`), Codex (`~/.codex/config.toml` with `bearer_token_env_var`) and Cursor (`~/.cursor/mcp.json`). The sheet shows the token masked. Copy reads it from the Keychain and puts the snippet with the real token on the pasteboard. The token is never logged. There is no one-click install: `claude mcp add` takes a header only as an argument, so the token would show up in the process list.
 
-Each MCP session appears in the sidebar's collapsible **External** section as `mcp:<client>`, with an External badge. Running sessions, sessions active in the last hour, the newest session of each client and the selected one stay visible; older idle sessions fold behind **Show N earlier**. Its tool calls and ComputerAction markers render like the box agent's. The composer is replaced by a note, because the agent is prompted from the local client.
+Each MCP session appears in the sidebar's collapsible **External** section as `mcp:<client>`, with an External badge. Open sessions (running or waiting for the user) are listed; closed sessions cannot be reused and fold into **Closed sessions (N)** as history. A session that closes while selected stays listed until you select something else. Session notes from the agent (opened, closed) render as separate system lines. Its tool calls and ComputerAction markers render like the box agent's. The composer is replaced by a note, because the agent is prompted from the local client.
 
 ## Saved state and upgrades
 

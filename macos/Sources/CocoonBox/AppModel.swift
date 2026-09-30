@@ -33,11 +33,11 @@ extension Agent {
     }
 }
 
-// ExternalAgents splits the mcp:* agents into those the sidebar shows and
-// earlier idle sessions it folds away.
+// ExternalAgents splits the mcp:* agents into open sessions, which the
+// sidebar lists, and closed ones, which it folds away as history.
 struct ExternalAgents {
-    var shown: [Agent] = []
-    var earlier: [Agent] = []
+    var open: [Agent] = []
+    var closed: [Agent] = []
 }
 
 struct OperationProgress: Equatable {
@@ -55,7 +55,7 @@ final class AppModel {
     var endpointURL: String
     var showSignIn = false
     var showConnectAgent = false
-    var showEarlierExternal = false
+    var showClosedExternal = false
     var confirmSave = false
     var confirmUpgrade = false
     var box: Box?
@@ -140,20 +140,16 @@ final class AppModel {
         Perf.mark("local_agent", "closed \(session.kind.rawValue)")
     }
 
-    // externalAgents keeps visible every active session, every session active
-    // in the last hour, the newest session of each client and the selection.
-    func externalAgents(now: Date = Date()) -> ExternalAgents {
-        let external = agents.filter { $0.externalClient != nil }
-        let cutoff = Int64(now.timeIntervalSince1970 * 1000) - 3_600_000
-        var newest: [String: Int64] = [:]
-        for agent in external {
-            newest[agent.name] = max(newest[agent.name] ?? .min, agent.createdAtMs)
-        }
+    // externalAgents lists a session as open while it runs or waits for the
+    // user; a closed session stays listed while it is selected.
+    func externalAgents() -> ExternalAgents {
         var split = ExternalAgents()
-        for agent in external {
-            let visible = agent.status == .running || agent.status == .waitingForUser || agent.updatedAtMs >= cutoff
-                || agent.createdAtMs == newest[agent.name] || agent.id == selectedAgentID
-            if visible { split.shown.append(agent) } else { split.earlier.append(agent) }
+        for agent in agents where agent.externalClient != nil {
+            if agent.status == .running || agent.status == .waitingForUser || agent.id == selectedAgentID {
+                split.open.append(agent)
+            } else {
+                split.closed.append(agent)
+            }
         }
         return split
     }
