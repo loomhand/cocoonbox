@@ -1,5 +1,6 @@
 import AppKit
 import CocoonBoxKit
+import CocoonBoxTerminal
 import Foundation
 import Observation
 
@@ -58,6 +59,7 @@ final class AppModel {
     var lastError: String?
     var busy = false
     var answeredApprovals: Set<String> = []
+    var localAgents: [LocalAgentSession] = []
 
     let screen = ScreenController()
 
@@ -69,6 +71,9 @@ final class AppModel {
         endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"]
             ?? UserDefaults.standard.string(forKey: Self.endpointKey)
             ?? Endpoint.defaultURL
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.closeAllLocal() }
+        }
     }
 
     var selectedAgent: Agent? {
@@ -82,6 +87,52 @@ final class AppModel {
     var mcpSetup: MCPSetup? {
         guard let box, let endpoint = Endpoint(url: endpointURL) else { return nil }
         return MCPSetup(endpoint: endpoint, boxID: box.id)
+    }
+
+    var selectedLocal: LocalAgentSession? {
+        localAgents.first { Self.selectionID($0) == selectedAgentID }
+    }
+
+    static func selectionID(_ session: LocalAgentSession) -> String {
+        "local:\(session.id)"
+    }
+
+    // launchLocal starts an agent CLI on this Mac, wired to the box's MCP endpoint.
+    func launchLocal(_ kind: LocalAgentKind) {
+        guard let setup = mcpSetup, let endpoint = Endpoint(url: endpointURL), let token = Keychain.token(for: endpoint) else {
+            lastError = "local agent: sign in and start the box first"
+            return
+        }
+        Task {
+            do {
+                let session = try await LocalAgentSession.start(kind, target: MCPTarget(url: setup.url, token: token))
+                localAgents.append(session)
+                selectedAgentID = Self.selectionID(session)
+                Perf.mark("local_agent", "started \(kind.rawValue)")
+            } catch {
+                report("local agent", error)
+            }
+        }
+    }
+
+    func closeAllLocal() {
+        localAgents.forEach { $0.close(immediately: true) }
+        localAgents = []
+    }
+
+    func closeLocal(_ session: LocalAgentSession) {
+        session.close()
+        localAgents.removeAll { $0 === session }
+        if selectedAgentID == Self.selectionID(session) {
+            selectedAgentID = agents.last { $0.externalClient == nil }?.id
+        }
+        Perf.mark("local_agent", "closed \(session.kind.rawValue)")
+    }
+
+    // externalAgent is the mcp:* agent a local session opened: the newest one from the same client since it started.
+    func externalAgent(for session: LocalAgentSession) -> Agent? {
+        let since = Int64(session.startedAt.timeIntervalSince1970 * 1000) - 5000
+        return agents.last { $0.externalClient == session.kind.title && $0.createdAtMs >= since }
     }
 
     // copyMCP reads the token from the Keychain on each copy and never logs it.

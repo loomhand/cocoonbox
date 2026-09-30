@@ -381,49 +381,89 @@ actor MockWorld {
         }))
     }
 
-    // runExternal plays one MCP session from a local Claude Code: an agent
-    // named mcp:<clientInfo.name> whose tool calls land in its transcript.
+    // runExternal plays one scripted MCP session from a local Claude Code.
     private func runExternal() async {
-        let agent = createAgent(name: "mcp:claude-code", nonce: "", model: "")
-        let id = agent.id
-        let session = "mcp-\(UUID().uuidString.prefix(8).lowercased())"
-        let pause = Duration.milliseconds(900)
-        let calls: [(String, String, String, (String, Int32, Int32, String)?)] = [
-            ("shell", #"{"command":"uname -sr && ls /workspace"}"#, "Linux 6.12.0\nnotes.md", nil),
-            ("screenshot", "{}", "1280x800 PNG", nil),
-            ("computer_act", #"{"action":"click","x":640,"y":380}"#, "click ok", ("click", 640, 380, "")),
-            ("computer_act", #"{"action":"type_text","text":"Typed by Claude Code over MCP\n"}"#, "type_text ok", ("type_text", 640, 380, "Typed by Claude Code over MCP\n")),
-            ("read_file", #"{"path":"/workspace/notes.md"}"#, "# Notes\nThe box is reachable from Claude Code.", nil),
+        let id = openExternal(client: "claude-code")
+        let calls: [(String, String)] = [
+            ("shell", #"{"command":"uname -sr && ls /workspace"}"#),
+            ("screenshot", "{}"),
+            ("computer_act", #"{"action":"click","x":640,"y":380}"#),
+            ("computer_act", #"{"action":"type_text","text":"Typed by Claude Code over MCP\n"}"#),
+            ("read_file", #"{"path":"/workspace/notes.md"}"#),
         ]
-        setStatus(agent: id, .running)
-        for (name, arguments, text, action) in calls {
-            let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
-            append(agent: id, turn: session, role: .assistant, body: .toolCall(.with {
-                $0.callID = call
-                $0.name = name
-                $0.argumentsJson = arguments
-            }))
-            if let (verb, x, y, typed) = action {
-                computer(agent: id, action: verb, x: x, y: y, text: typed)
-                try? await Task.sleep(for: .milliseconds(150))
-                if typed.isEmpty {
-                    screen?.click(x: Int(x), y: Int(y))
-                } else {
-                    desktopText += typed
-                    screen?.type(typed)
-                }
-            }
-            try? await Task.sleep(for: pause)
-            append(agent: id, turn: session, role: .tool, body: .toolResult(.with {
-                $0.callID = call
-                $0.text = text
-                if name == "screenshot" || action != nil {
-                    $0.image = screen?.snapshotPNG() ?? Data()
-                }
-            }))
-            try? await Task.sleep(for: pause)
+        for (tool, arguments) in calls {
+            _ = await externalCall(agent: id, tool: tool, arguments: arguments)
+            try? await Task.sleep(for: .milliseconds(900))
         }
+        closeExternal(agent: id)
+    }
+
+    // MARK: external agents (MCP)
+
+    // openExternal starts an MCP session's agent, named mcp:<clientInfo.name> as the contract says.
+    func openExternal(client: String) -> String {
+        let id = createAgent(name: "mcp:\(client)", nonce: "", model: "").id
+        setStatus(agent: id, .running)
+        return id
+    }
+
+    func closeExternal(agent id: String) {
         setStatus(agent: id, .idle)
+    }
+
+    // externalCall runs one MCP tool call against the mock desktop and records it in the agent's transcript.
+    func externalCall(agent id: String, tool: String, arguments: String) async -> (text: String, image: Data?, isError: Bool) {
+        let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
+        let turn = "mcp-\(id)"
+        append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
+            $0.callID = call
+            $0.name = tool
+            $0.argumentsJson = arguments
+        }))
+        let args = (try? JSONSerialization.jsonObject(with: Data(arguments.utf8))) as? [String: Any] ?? [:]
+        var text: String
+        var image: Data?
+        var isError = false
+        switch tool {
+        case "shell":
+            text = "$ \(args["command"] as? String ?? "")\nLinux 6.12.0 (mockbox)\nnotes.md"
+        case "read_file":
+            text = "# Notes\nThe box is reachable over MCP."
+        case "write_file", "edit_file":
+            text = "wrote \(args["path"] as? String ?? "")"
+        case "list_dir":
+            text = "notes.md"
+        case "screenshot", "computer_state":
+            text = "1280x800 PNG"
+            image = screen?.snapshotPNG()
+        case "computer_act":
+            let action = args["action"] as? String ?? "click"
+            let x = Int32(args["x"] as? Int ?? 640)
+            let y = Int32(args["y"] as? Int ?? 380)
+            let typed = args["text"] as? String ?? ""
+            computer(agent: id, action: action, x: x, y: y, text: typed)
+            try? await Task.sleep(for: .milliseconds(150))
+            if typed.isEmpty {
+                screen?.click(x: Int(x), y: Int(y))
+            } else {
+                desktopText += typed
+                screen?.type(typed)
+            }
+            text = "\(action) ok"
+            image = screen?.snapshotPNG()
+        case let name where name.hasPrefix("browser_"):
+            text = "\(name) ok (mock browser)"
+        default:
+            text = "unknown tool \(tool)"
+            isError = true
+        }
+        append(agent: id, turn: turn, role: .tool, body: .toolResult(.with {
+            $0.callID = call
+            $0.text = text
+            $0.isError = isError
+            $0.image = image ?? Data()
+        }))
+        return (text, image, isError)
     }
 
     // MARK: screen

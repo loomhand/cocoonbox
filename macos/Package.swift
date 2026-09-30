@@ -12,6 +12,7 @@ let package = Package(
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "CocoonBoxKit", targets: ["CocoonBoxKit"]),
+        .library(name: "CocoonBoxTerminal", targets: ["CocoonBoxTerminal"]),
         .executable(name: "CocoonBox", targets: ["CocoonBox"]),
         .executable(name: "MockBox", targets: ["MockBox"]),
     ],
@@ -21,6 +22,7 @@ let package = Package(
         .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.4.1"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1"),
         .package(path: "../../swift-rfb"),
+        .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260929"),
     ],
     targets: [
         .target(
@@ -34,10 +36,14 @@ let package = Package(
                 .product(name: "RFBMetal", package: "swift-rfb"),
             ]
         ),
+        .target(
+            name: "CocoonBoxTerminal",
+            dependencies: [.product(name: "GhosttyTerminal", package: "libghostty-spm")]
+        ),
         .target(name: "RFBTestServer"),
         .executableTarget(
             name: "CocoonBox",
-            dependencies: ["CocoonBoxKit"]
+            dependencies: ["CocoonBoxKit", "CocoonBoxTerminal"]
         ),
         .executableTarget(
             name: "MockBox",
@@ -47,6 +53,7 @@ let package = Package(
             name: "CocoonBoxKitTests",
             dependencies: [
                 "CocoonBoxKit",
+                "CocoonBoxTerminal",
                 "RFBTestServer",
                 .product(name: "RFB", package: "swift-rfb"),
             ],

@@ -1,5 +1,6 @@
 import AppKit
 import CocoonBoxKit
+import CocoonBoxTerminal
 import Foundation
 
 // Autopilot replays a `;`-separated step list from CB_AUTOPILOT so acceptance
@@ -8,7 +9,8 @@ import Foundation
 // wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
-// select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, quit.
+// select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
+// terminal-enter, terminal-paste:<text>, wait-external[:seconds], end-local, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -82,6 +84,20 @@ enum Autopilot {
             model.selectedAgentID = model.agents.first { $0.name == arg }?.id
         case "connect-agent":
             model.showConnectAgent = arg != "off"
+        case "local":
+            if let kind = LocalAgentKind(rawValue: arg) {
+                let before = model.localAgents.count
+                model.launchLocal(kind)
+                await until(15) { model.localAgents.count > before }
+            }
+        case "terminal-enter":
+            model.selectedLocal?.pressEnter()
+        case "terminal-paste":
+            model.selectedLocal?.paste(arg.replacingOccurrences(of: "\\n", with: "\n"))
+        case "wait-external":
+            await until(Double(arg) ?? 60) { model.selectedLocal.flatMap { model.externalAgent(for: $0) } != nil }
+        case "end-local":
+            if let session = model.selectedLocal { model.closeLocal(session) }
         case "copy-mcp":
             if let snippet = MCPSetup.Snippet(rawValue: arg) { model.copyMCP(snippet) }
         case "quit":

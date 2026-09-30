@@ -3,10 +3,13 @@ import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2TransportServices
 
-// MockBox serves Boxes, Agents and Session over plaintext HTTP/2 with canned
-// agent turns and a synthetic RFB desktop, for running the app without a box.
+// MockBox serves Boxes, Agents and Session over plaintext HTTP/2, and MCP at
+// /cocoonbox.mcp/<box id> on the same port, with canned agent turns and a
+// synthetic RFB desktop, for running the app without a box.
 //   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS] [--external-ms MS]
 // --external-ms starts one scripted MCP session (agent mcp:claude-code) MS after the box runs.
+
+setvbuf(stdout, nil, _IOLBF, 0)
 
 var options: [String: String] = [:]
 var args = CommandLine.arguments.dropFirst().makeIterator()
@@ -22,7 +25,7 @@ let external = Int(options["--external-ms"] ?? "").map { Duration.milliseconds($
 let world = MockWorld(token: token, bootDelay: .milliseconds(boot), animateFPS: animate, externalDelay: external)
 let boxID = await world.box.id
 let transport = HTTP2ServerTransport.TransportServices(
-    address: .ipv4(host: "127.0.0.1", port: port),
+    address: .ipv4(host: "127.0.0.1", port: 0),
     transportSecurity: .plaintext
 )
 let server = GRPCServer(
@@ -30,5 +33,10 @@ let server = GRPCServer(
     services: [BoxesService(world: world), AgentsService(world: world), SessionService(world: world)],
     interceptors: [AuthCheck(token: token, boxID: boxID)]
 )
-print("mockbox listening on http://127.0.0.1:\(port) token=\(token) box=\(boxID)")
-try await server.serve()
+try await withThrowingTaskGroup(of: Void.self) { group in
+    group.addTask { try await server.serve() }
+    guard let grpc = try await transport.listeningAddress.ipv4 else { throw CancellationError() }
+    try FrontDoor(grpcPort: UInt16(grpc.port), mcp: MCPServer(world: world, token: token, boxID: boxID)).start(port: UInt16(port))
+    print("mockbox listening on http://127.0.0.1:\(port) token=\(token) box=\(boxID) mcp=/cocoonbox.mcp/\(boxID)")
+    try await group.next()
+}

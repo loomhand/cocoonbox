@@ -1,5 +1,6 @@
 import AppKit
 import CocoonBoxKit
+import CocoonBoxTerminal
 import SwiftUI
 
 @main
@@ -25,6 +26,12 @@ struct CocoonBoxApp: App {
                 Button("New Agent") { model.createAgent() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(!model.boxRunning)
+                Menu("New Local Agent") {
+                    ForEach(LocalAgentKind.allCases) { kind in
+                        Button(kind.title) { model.launchLocal(kind) }
+                    }
+                }
+                .disabled(!model.boxRunning)
                 Button("Connect a Local Agent…") { model.showConnectAgent = true }
                     .disabled(model.box == nil)
                 Button("Sign Out") { model.signOut() }

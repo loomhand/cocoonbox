@@ -30,9 +30,26 @@ swift build --product MockBox && .build/debug/MockBox --port 50051 [--animate 30
 open --env CB_ENDPOINT=http://127.0.0.1:50051 dist/CocoonBox.app   # sign in with token mock-token
 ```
 
-`--external-ms 3000` makes the mock play one MCP session 3 s after the box runs: an agent named `mcp:claude-code` that calls `shell`, `screenshot`, `computer_act` and `read_file`.
+MockBox also serves MCP at `/cocoonbox.mcp/<box id>` on the same port: tools/list with the contract's tool names, and tools/call against the mock desktop, as an `mcp:<clientInfo.name>` agent. `--external-ms 3000` makes the mock play one scripted MCP session 3 s after the box runs: an agent named `mcp:claude-code` that calls `shell`, `screenshot`, `computer_act` and `read_file`.
 
 ## Local agents over MCP
+
+**+ → Local agent → Claude Code / Codex / Cursor** runs that CLI on this Mac in a terminal pane (`CocoonBoxTerminal`: Ghostty's libghostty through [libghostty-spm](https://github.com/Lakr233/libghostty-spm)), already pointed at the box's MCP endpoint. The CLI uses your own login on this Mac. The pane shows the terminal above the transcript of the `mcp:*` agent the CLI opens on the box, and the live screen shows its actions.
+
+| CLI | How it reaches the box |
+|---|---|
+| Claude Code | `--mcp-config` with header `Authorization: Bearer ${COCOONBOX_TOKEN}` (Claude Code expands it), `--append-system-prompt`, `--allowedTools mcp__cocoonbox` |
+| Codex | `-c mcp_servers.cocoonbox.url=…`, `-c mcp_servers.cocoonbox.bearer_token_env_var="COCOONBOX_TOKEN"`, `-c developer_instructions=…` |
+| Cursor | `.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}` and a rule file in its workspace, `--approve-mcps --trust` |
+
+The token reaches the CLI only through `COCOONBOX_TOKEN` in its environment. It is never in argv or on disk. Each CLI runs in a private workspace, `~/Library/Application Support/CocoonBox/local-agents/<cli>` (mode 0700), so its trust prompt is answered once. The app finds the CLI on your login shell's `PATH` and runs it on a pseudo-terminal it owns, feeding Ghostty through the in-memory backend: Ghostty's own exec backend wraps commands in `/usr/bin/login`, which spins when the app was started by launchd. **End** hangs the CLI up. Quitting the app ends every local agent.
+
+macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents` (Claude Code does) makes macOS ask once whether CocoonBox may access Documents. Ad hoc signed builds are asked again after each rebuild.
+
+`scripts/bundle.sh` copies GhosttyTerminal's resources to `Contents/Resources`. SwiftPM's resource accessor looks only in the app's root, where a signed app cannot hold files, so `GhosttyResources` redirects that one lookup.
+
+### Copy-paste setup
+
 
 **Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for Claude Code (`claude mcp add --scope user --transport http …`), Codex (`~/.codex/config.toml` with `bearer_token_env_var`) and Cursor (`~/.cursor/mcp.json`). The sheet shows the token masked. Copy reads it from the Keychain and puts the snippet with the real token on the pasteboard. The token is never logged. There is no one-click install: `claude mcp add` takes a header only as an argument, so the token would show up in the process list.
 

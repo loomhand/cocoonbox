@@ -1,5 +1,6 @@
 import AppKit
 import CocoonBoxKit
+import CocoonBoxTerminal
 import ImageIO
 import SwiftUI
 
@@ -75,7 +76,9 @@ struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let agent = model.selectedAgent {
+            if let session = model.selectedLocal {
+                LocalAgentPane(session: session)
+            } else if let agent = model.selectedAgent {
                 TranscriptView(agent: agent, rows: TranscriptRow.rows(model.transcripts[agent.id] ?? [], answered: model.answeredApprovals))
                 Divider()
                 if let client = agent.externalClient {
@@ -94,6 +97,49 @@ struct ConversationView: View {
                     systemImage: model.boxRunning ? "person.crop.circle.badge.plus" : "moon.zzz",
                     description: Text(model.boxRunning ? "Create an agent with + in the sidebar." : "Press Ensure to start or wake your box.")
                 )
+            }
+        }
+    }
+}
+
+// LocalAgentPane shows a local agent's terminal above the transcript of the
+// mcp:* agent it opened on the box.
+struct LocalAgentPane: View {
+    @Environment(AppModel.self) private var model
+    let session: LocalAgentSession
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "terminal")
+                Text(session.kind.title).font(.headline)
+                Text(session.closed ? "exited" : "on this Mac, driving the box over MCP")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button(session.closed ? "Remove" : "End") { model.closeLocal(session) }
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            VSplitView {
+                LocalAgentTerminal(session: session)
+                    .frame(minHeight: 220, maxHeight: .infinity)
+                    .layoutPriority(1)
+                Group {
+                    if let agent = model.externalAgent(for: session), let entries = model.transcripts[agent.id], !entries.isEmpty {
+                        TranscriptView(agent: agent, rows: TranscriptRow.rows(entries, answered: model.answeredApprovals))
+                    } else {
+                        Text(model.externalAgent(for: session) == nil
+                            ? "\(session.kind.title)'s tool calls on the box appear here once it connects."
+                            : "\(session.kind.title) is connected to the box. Its tool calls appear here.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }
+                .frame(minHeight: 120, idealHeight: 260, maxHeight: .infinity)
             }
         }
     }

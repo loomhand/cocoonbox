@@ -1,4 +1,5 @@
 import CocoonBoxKit
+import CocoonBoxTerminal
 import SwiftUI
 
 struct RootView: View {
@@ -69,20 +70,36 @@ struct SidebarView: View {
             HStack {
                 Text("Agents").font(.headline)
                 Spacer()
-                Button {
-                    model.createAgent()
+                Menu {
+                    Button("Agent in the box") { model.createAgent() }
+                    Menu("Local agent") {
+                        ForEach(LocalAgentKind.allCases) { kind in
+                            Button(kind.title) { model.launchLocal(kind) }
+                        }
+                    }
                 } label: {
                     Image(systemName: "plus")
                 }
-                .buttonStyle(.borderless)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 .disabled(!model.boxRunning)
                 .help("New agent")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             List(selection: $model.selectedAgentID) {
-                ForEach(model.agents, id: \.id) { agent in
-                    AgentRow(agent: agent).tag(agent.id)
+                Section {
+                    ForEach(model.agents, id: \.id) { agent in
+                        AgentRow(agent: agent).tag(agent.id)
+                    }
+                }
+                if !model.localAgents.isEmpty {
+                    Section("On this Mac") {
+                        ForEach(model.localAgents) { session in
+                            LocalAgentRow(session: session).tag(AppModel.selectionID(session))
+                        }
+                    }
                 }
             }
             .listStyle(.sidebar)
@@ -133,6 +150,23 @@ struct AgentRow: View {
         case .waitingForUser: .orange
         case .failed: .red
         default: .secondary
+        }
+    }
+}
+
+struct LocalAgentRow: View {
+    let session: LocalAgentSession
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "terminal")
+                .foregroundStyle(session.closed ? Color.secondary : Color.teal)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(session.kind.title).lineLimit(1)
+                Text(session.closed ? "exited" : "local · MCP")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }

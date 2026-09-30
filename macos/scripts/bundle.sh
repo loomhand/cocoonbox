@@ -16,6 +16,7 @@ app=dist/CocoonBox.app
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/CocoonBox" "$app/Contents/MacOS/CocoonBox"
+cp -R "$bin/GhosttyKit_GhosttyTerminal.bundle" "$app/Contents/Resources/"
 version="$(git describe --tags --always 2>/dev/null || echo dev)"
 
 cat >"$app/Contents/Info.plist" <<PLIST
