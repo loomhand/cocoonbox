@@ -20,6 +20,19 @@ struct LiveBlock: Equatable {
     var text: String
 }
 
+extension Agent {
+    // externalClient names the local client behind an MCP session agent, `mcp:<clientInfo.name>`.
+    var externalClient: String? {
+        guard name.hasPrefix("mcp:") else { return nil }
+        let client = String(name.dropFirst(4))
+        let lower = client.lowercased()
+        if lower.hasPrefix("claude") { return "Claude Code" }
+        if lower.hasPrefix("codex") { return "Codex" }
+        if lower.hasPrefix("cursor") { return "Cursor" }
+        return client
+    }
+}
+
 struct OperationProgress: Equatable {
     var id: String
     var title: String
@@ -34,6 +47,7 @@ final class AppModel {
 
     var endpointURL: String
     var showSignIn = false
+    var showConnectAgent = false
     var box: Box?
     var operation: OperationProgress?
     var agents: [Agent] = []
@@ -64,6 +78,25 @@ final class AppModel {
 
     var boxRunning: Bool {
         box?.state == .running
+    }
+
+    var mcpSetup: MCPSetup? {
+        guard let box, let endpoint = Endpoint(url: endpointURL) else { return nil }
+        return MCPSetup(endpoint: endpoint, boxID: box.id)
+    }
+
+    // copyMCP reads the token from the Keychain on each copy and never logs it.
+    @discardableResult
+    func copyMCP(_ snippet: MCPSetup.Snippet) -> Bool {
+        guard let setup = mcpSetup, let endpoint = Endpoint(url: endpointURL) else { return false }
+        guard let token = [.url, .codexConfig].contains(snippet) ? "" : Keychain.token(for: endpoint) else {
+            lastError = "copy: no token in the Keychain for \(endpoint.url)"
+            return false
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(setup.text(snippet, token: token), forType: .string)
+        Perf.mark("mcp_copy", snippet.rawValue)
+        return true
     }
 
     // MARK: session

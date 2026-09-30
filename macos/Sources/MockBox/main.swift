@@ -5,7 +5,8 @@ import GRPCNIOTransportHTTP2TransportServices
 
 // MockBox serves Boxes, Agents and Session over plaintext HTTP/2 with canned
 // agent turns and a synthetic RFB desktop, for running the app without a box.
-//   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS]
+//   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS] [--external-ms MS]
+// --external-ms starts one scripted MCP session (agent mcp:claude-code) MS after the box runs.
 
 var options: [String: String] = [:]
 var args = CommandLine.arguments.dropFirst().makeIterator()
@@ -16,8 +17,9 @@ let port = Int(options["--port"] ?? "") ?? 50051
 let token = options["--token"] ?? "mock-token"
 let boot = Int(options["--boot-ms"] ?? "") ?? 2000
 let animate = Int(options["--animate"] ?? "") ?? 0
+let external = Int(options["--external-ms"] ?? "").map { Duration.milliseconds($0) }
 
-let world = MockWorld(token: token, bootDelay: .milliseconds(boot), animateFPS: animate)
+let world = MockWorld(token: token, bootDelay: .milliseconds(boot), animateFPS: animate, externalDelay: external)
 let boxID = await world.box.id
 let transport = HTTP2ServerTransport.TransportServices(
     address: .ipv4(host: "127.0.0.1", port: port),

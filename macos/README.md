@@ -30,6 +30,14 @@ swift build --product MockBox && .build/debug/MockBox --port 50051 [--animate 30
 open --env CB_ENDPOINT=http://127.0.0.1:50051 dist/CocoonBox.app   # sign in with token mock-token
 ```
 
+`--external-ms 3000` makes the mock play one MCP session 3 s after the box runs: an agent named `mcp:claude-code` that calls `shell`, `screenshot`, `computer_act` and `read_file`.
+
+## Local agents over MCP
+
+**Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for Claude Code (`claude mcp add --scope user --transport http …`), Codex (`~/.codex/config.toml` with `bearer_token_env_var`) and Cursor (`~/.cursor/mcp.json`). The sheet shows the token masked. Copy reads it from the Keychain and puts the snippet with the real token on the pasteboard. The token is never logged. There is no one-click install: `claude mcp add` takes a header only as an argument, so the token would show up in the process list.
+
+Each MCP session appears under Agents as `mcp:<client>`, with an External badge. Its tool calls and ComputerAction markers render like the box agent's. The composer is replaced by a note, because the agent is prompted from the local client.
+
 ## Live view
 
 The app opens `Session.Screen` and runs a [swift-rfb](https://github.com/CMGS/swift-rfb) client directly on it: server bytes feed an `RFBPipe`, and the client's bytes go back as `ScreenClientFrame`s. There is no loopback socket. The client decodes into page-aligned memory that `RFBView` shows as a Metal texture without a copy. It draws on the display link only after a change, and asks for the next update once the GPU has read the frame, so an idle screen costs no CPU and no wakeups. It uses ContinuousUpdates when the server offers them (TigerVNC). Otherwise it paces incremental requests every 33 ms while updates arrive (x11vnc), so a high-latency path is not held to one update per round trip.

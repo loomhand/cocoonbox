@@ -26,6 +26,13 @@ struct RootView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    model.showConnectAgent = true
+                } label: {
+                    Label("Connect a local agent", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .help("Drive the box from Claude Code, Codex or Cursor over MCP")
+                .disabled(model.box == nil)
                 Toggle(isOn: $screen.takeOver) {
                     Label("Take over", systemImage: model.screen.takeOver ? "hand.raised.fill" : "hand.raised")
                 }
@@ -40,6 +47,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.showSignIn) {
             SignInSheet()
+        }
+        .sheet(isPresented: $model.showConnectAgent) {
+            ConnectAgentSheet()
         }
         .onChange(of: model.screen.poppedOut) { _, poppedOut in
             if poppedOut { openWindow(id: "screen") }
@@ -97,11 +107,22 @@ struct AgentRow: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                Text(agent.name).lineLimit(1)
-                Text(agent.mainModel.split(separator: "/").last.map(String.init) ?? agent.mainModel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                if let client = agent.externalClient {
+                    Text(agent.name.dropFirst(4)).lineLimit(1)
+                    Text("External · \(client)")
+                        .font(.caption2.bold())
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(.teal.opacity(0.2), in: Capsule())
+                        .foregroundStyle(.teal)
+                        .lineLimit(1)
+                } else {
+                    Text(agent.name).lineLimit(1)
+                    Text(agent.mainModel.split(separator: "/").last.map(String.init) ?? agent.mainModel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
             }
         }
     }

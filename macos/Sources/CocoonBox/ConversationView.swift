@@ -78,7 +78,16 @@ struct ConversationView: View {
             if let agent = model.selectedAgent {
                 TranscriptView(agent: agent, rows: TranscriptRow.rows(model.transcripts[agent.id] ?? [], answered: model.answeredApprovals))
                 Divider()
-                ComposerView(agent: agent)
+                if let client = agent.externalClient {
+                    Label("\(client) drives this agent over MCP. Prompt it in \(client); its tool calls show here.",
+                          systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                } else {
+                    ComposerView(agent: agent)
+                }
             } else {
                 ContentUnavailableView(
                     model.boxRunning ? "No agent selected" : "Box is not running",
@@ -274,8 +283,10 @@ struct ToolCard: View {
     private var icon: String {
         switch call.name {
         case "shell": "terminal"
-        case "computer": "cursorarrow.click.2"
-        case "browser": "globe"
+        case "computer", "computer_act", "computer_state": "cursorarrow.click.2"
+        case "screenshot": "camera.viewfinder"
+        case "read_file", "write_file", "edit_file", "list_dir": "doc.text"
+        case let name where name.hasPrefix("browser"): "globe"
         default: "wrench.and.screwdriver"
         }
     }

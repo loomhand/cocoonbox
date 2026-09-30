@@ -33,11 +33,13 @@ actor MockWorld {
     private var desktopText = ""
     private weak var screen: SyntheticRFBServer?
     private var animateFPS = 0
+    private var externalDelay: Duration?
 
-    init(token: String, bootDelay: Duration, animateFPS: Int) {
+    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?) {
         self.token = token
         self.bootDelay = bootDelay
         self.animateFPS = animateFPS
+        self.externalDelay = externalDelay
         var box = Box()
         box.id = "cb-mock00000000"
         box.state = .hibernated
@@ -114,6 +116,13 @@ actor MockWorld {
         event.atMs = Self.now()
         event.boxState = state
         box.state = state
+        if state == .running, let delay = externalDelay {
+            externalDelay = nil
+            Task {
+                try? await Task.sleep(for: delay)
+                await self.runExternal()
+            }
+        }
         operations[id, default: []].append(event)
         for continuation in operationWaiters[id, default: [:]].values {
             continuation.yield(event)
@@ -370,6 +379,51 @@ actor MockWorld {
             $0.callID = "call-delegate"
             $0.text = "typed the text into Mousepad"
         }))
+    }
+
+    // runExternal plays one MCP session from a local Claude Code: an agent
+    // named mcp:<clientInfo.name> whose tool calls land in its transcript.
+    private func runExternal() async {
+        let agent = createAgent(name: "mcp:claude-code", nonce: "", model: "")
+        let id = agent.id
+        let session = "mcp-\(UUID().uuidString.prefix(8).lowercased())"
+        let pause = Duration.milliseconds(900)
+        let calls: [(String, String, String, (String, Int32, Int32, String)?)] = [
+            ("shell", #"{"command":"uname -sr && ls /workspace"}"#, "Linux 6.12.0\nnotes.md", nil),
+            ("screenshot", "{}", "1280x800 PNG", nil),
+            ("computer_act", #"{"action":"click","x":640,"y":380}"#, "click ok", ("click", 640, 380, "")),
+            ("computer_act", #"{"action":"type_text","text":"Typed by Claude Code over MCP\n"}"#, "type_text ok", ("type_text", 640, 380, "Typed by Claude Code over MCP\n")),
+            ("read_file", #"{"path":"/workspace/notes.md"}"#, "# Notes\nThe box is reachable from Claude Code.", nil),
+        ]
+        setStatus(agent: id, .running)
+        for (name, arguments, text, action) in calls {
+            let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
+            append(agent: id, turn: session, role: .assistant, body: .toolCall(.with {
+                $0.callID = call
+                $0.name = name
+                $0.argumentsJson = arguments
+            }))
+            if let (verb, x, y, typed) = action {
+                computer(agent: id, action: verb, x: x, y: y, text: typed)
+                try? await Task.sleep(for: .milliseconds(150))
+                if typed.isEmpty {
+                    screen?.click(x: Int(x), y: Int(y))
+                } else {
+                    desktopText += typed
+                    screen?.type(typed)
+                }
+            }
+            try? await Task.sleep(for: pause)
+            append(agent: id, turn: session, role: .tool, body: .toolResult(.with {
+                $0.callID = call
+                $0.text = text
+                if name == "screenshot" || action != nil {
+                    $0.image = screen?.snapshotPNG() ?? Data()
+                }
+            }))
+            try? await Task.sleep(for: pause)
+        }
+        setStatus(agent: id, .idle)
     }
 
     // MARK: screen

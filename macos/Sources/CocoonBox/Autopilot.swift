@@ -7,7 +7,8 @@ import Foundation
 // ensure, hibernate, wait-running, wait-live, agent[:name], send:<text>,
 // wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
-// respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen, quit.
+// respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
+// select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -38,7 +39,7 @@ enum Autopilot {
             await until(Double(arg) ?? 120) { model.screen.status == .live }
         case "agent":
             await until(60) { model.eventsLive }
-            if let first = model.agents.first {
+            if let first = model.agents.first(where: { $0.externalClient == nil }) {
                 model.selectedAgentID = first.id
             } else {
                 model.createAgent(name: arg)
@@ -76,6 +77,13 @@ enum Autopilot {
             model.screen.poppedOut = true
         case "reopen-screen":
             model.screen.reopen()
+        case "select":
+            await until(60) { model.agents.contains { $0.name == arg } }
+            model.selectedAgentID = model.agents.first { $0.name == arg }?.id
+        case "connect-agent":
+            model.showConnectAgent = arg != "off"
+        case "copy-mcp":
+            if let snippet = MCPSetup.Snippet(rawValue: arg) { model.copyMCP(snippet) }
         case "quit":
             NSApp.terminate(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }
