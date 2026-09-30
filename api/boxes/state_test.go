@@ -86,6 +86,9 @@ func TestBuildCocoonSet(t *testing.T) {
 	if agent.Image != "cocoonbox-desktop-v1" || agent.Mode != cocoonv1.AgentModeClone || agent.Network != "cb" || agent.ProbePort != 22 {
 		t.Errorf("agent = %+v", agent)
 	}
+	if cs.Spec.SnapshotPolicy != cocoonv1.SnapshotPolicyNever {
+		t.Errorf("snapshotPolicy = %q, want never", cs.Spec.SnapshotPolicy)
+	}
 	if got := agent.Resources.Requests.Memory().String(); got != "8Gi" {
 		t.Errorf("memory request = %s, want 8Gi", got)
 	}

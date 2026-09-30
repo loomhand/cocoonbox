@@ -150,6 +150,7 @@ func buildCocoonSet(cfg *config.Config, id, user string, flavor *controlv1.Flavo
 		Labels:      map[string]string{labelManagedBy: managedBy},
 		Annotations: map[string]string{annotationUser: user},
 		Spec: cocoonv1.CocoonSetSpec{
+			SnapshotPolicy: cocoonv1.SnapshotPolicyNever,
 			Agent: cocoonv1.AgentSpec{
 				Image:     cfg.Image,
 				Mode:      cocoonv1.AgentModeClone,
