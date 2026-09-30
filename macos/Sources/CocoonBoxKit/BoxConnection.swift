@@ -22,6 +22,9 @@ public final class BoxConnection: Sendable {
     private let runner: Task<Void, Never>
 
     public init(endpoint: Endpoint, token: String) throws {
+        guard endpoint.usesTLS || endpoint.isLoopback else {
+            throw ConnectionError.plaintext(endpoint.host)
+        }
         var config = BoxTransport.Config.defaults
         config.backoff = .init(initial: .milliseconds(250), max: .seconds(10), multiplier: 1.6, jitter: 0.2)
         config.connection.keepalive = .init(time: .seconds(20), timeout: .seconds(10), allowWithoutCalls: true)
@@ -165,6 +168,16 @@ public final class BoxConnection: Sendable {
             return "\(rpc.code) \(rpc.message)"
         }
         return "\(error)"
+    }
+}
+
+public enum ConnectionError: Error, CustomStringConvertible {
+    case plaintext(String)
+
+    public var description: String {
+        switch self {
+        case .plaintext(let host): "\(host) is not on this Mac, so it needs https: the token would travel in plaintext"
+        }
     }
 }
 

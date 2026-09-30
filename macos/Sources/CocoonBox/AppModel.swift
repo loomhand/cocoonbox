@@ -160,16 +160,11 @@ final class AppModel {
         return agents.last { $0.externalClient == session.kind.title && $0.createdAtMs >= since }
     }
 
-    // copyMCP reads the token from the Keychain on each copy and never logs it.
     @discardableResult
     func copyMCP(_ snippet: MCPSetup.Snippet) -> Bool {
-        guard let setup = mcpSetup, let endpoint = Endpoint(url: endpointURL) else { return false }
-        guard let token = [.url, .codexConfig].contains(snippet) ? "" : Keychain.token(for: endpoint) else {
-            lastError = "copy: no token in the Keychain for \(endpoint.url)"
-            return false
-        }
+        guard let setup = mcpSetup else { return false }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(setup.text(snippet, token: token), forType: .string)
+        NSPasteboard.general.setString(setup.text(snippet), forType: .string)
         Perf.mark("mcp_copy", snippet.rawValue)
         return true
     }
@@ -198,6 +193,7 @@ final class AppModel {
 
     func signIn(endpointURL: String, token: String) -> String? {
         guard let endpoint = Endpoint(url: endpointURL) else { return "Endpoint must be an http(s) URL" }
+        guard endpoint.usesTLS || endpoint.isLoopback else { return "Use https: over http the token would travel in plaintext" }
         let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return "Token is empty" }
         do {

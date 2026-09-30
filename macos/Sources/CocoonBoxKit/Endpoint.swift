@@ -24,6 +24,11 @@ public struct Endpoint: Sendable, Hashable {
         self.port = components.port ?? (usesTLS ? 443 : 80)
     }
 
+    // isLoopback is true for endpoints on this Mac, the only ones allowed over plaintext.
+    public var isLoopback: Bool {
+        host == "localhost" || host == "::1" || host.hasPrefix("127.")
+    }
+
     public var url: String {
         let scheme = usesTLS ? "https" : "http"
         let defaultPort = usesTLS ? 443 : 80

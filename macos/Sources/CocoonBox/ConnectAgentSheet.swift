@@ -2,7 +2,8 @@ import CocoonBoxKit
 import SwiftUI
 
 // ConnectAgentSheet shows how to point Claude Code, Codex or Cursor at the
-// box's MCP endpoint. Snippets show a masked token; Copy inserts the real one.
+// box's MCP endpoint. The token never appears: the clients read it from
+// COCOONBOX_TOKEN, which the environment snippet fills from the Keychain.
 struct ConnectAgentSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -21,16 +22,13 @@ struct ConnectAgentSheet: View {
                         Text(setup.url).font(.callout.monospaced()).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
                         CopyButton(snippet: .url)
                     }
-                    GridRow {
-                        Text("Token").foregroundStyle(.secondary)
-                        Text(MCPSetup.mask).font(.callout.monospaced())
-                        CopyButton(snippet: .token)
-                    }
                 }
-                SnippetBox(title: "Claude Code", caption: "Run once in Terminal. It adds the server for all your projects.",
+                SnippetBox(title: "Token", caption: "Every client reads the token from COCOONBOX_TOKEN. Run this in the shell that starts the client, or add it to your shell profile; macOS asks once whether `security` may read the CocoonBox item.",
+                           setup: setup, snippets: [.environment])
+                SnippetBox(title: "Claude Code", caption: "Run once in Terminal. It adds the server for all your projects and stores ${COCOONBOX_TOKEN}, not the token.",
                            setup: setup, snippets: [.claudeCode])
-                SnippetBox(title: "Codex", caption: "Add to ~/.codex/config.toml, and export the token in the shell that starts Codex.",
-                           setup: setup, snippets: [.codexConfig, .codexEnv])
+                SnippetBox(title: "Codex", caption: "Add to ~/.codex/config.toml.",
+                           setup: setup, snippets: [.codexConfig])
                 SnippetBox(title: "Cursor", caption: "Merge into ~/.cursor/mcp.json.", setup: setup, snippets: [.cursor])
             } else {
                 Text("Sign in and pick a box first.").foregroundStyle(.secondary)
@@ -58,7 +56,7 @@ private struct SnippetBox: View {
             Text(caption).font(.caption).foregroundStyle(.secondary)
             ForEach(snippets, id: \.self) { snippet in
                 HStack(alignment: .top, spacing: 8) {
-                    Text(setup.text(snippet, token: MCPSetup.mask))
+                    Text(setup.text(snippet))
                         .font(.caption.monospaced())
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -87,6 +85,6 @@ private struct CopyButton: View {
             Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
         }
         .controlSize(.small)
-        .help("Copy with the real token")
+        .help("Copy")
     }
 }

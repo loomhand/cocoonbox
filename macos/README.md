@@ -51,7 +51,7 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 ### Copy-paste setup
 
 
-**Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for Claude Code (`claude mcp add --scope user --transport http …`), Codex (`~/.codex/config.toml` with `bearer_token_env_var`) and Cursor (`~/.cursor/mcp.json`). The sheet shows the token masked. Copy reads it from the Keychain and puts the snippet with the real token on the pasteboard. The token is never logged. There is no one-click install: `claude mcp add` takes a header only as an argument, so the token would show up in the process list.
+**Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for Claude Code (`claude mcp add --scope user --transport http … --header 'Authorization: Bearer ${COCOONBOX_TOKEN}'`), Codex (`~/.codex/config.toml` with `bearer_token_env_var = "COCOONBOX_TOKEN"`) and Cursor (`~/.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}`). No snippet contains the token, so none of it lands in a config file or shell history: every client expands `COCOONBOX_TOKEN` at runtime, and one more snippet sets it from the Keychain (`export COCOONBOX_TOKEN="$(security find-generic-password -s me.cmgs.cocoonbox -a <endpoint> -w)"`; macOS asks once whether `security` may read the CocoonBox item).
 
 Each MCP session appears in the sidebar's collapsible **External** section as `mcp:<client>`, with an External badge. Open sessions (running or waiting for the user) are listed; closed sessions cannot be reused and fold into **Closed sessions (N)** as history. A session that closes while selected stays listed until you select something else. Session notes from the agent (opened, closed) render as separate system lines. Its tool calls and ComputerAction markers render like the box agent's. The composer is replaced by a note, because the agent is prompted from the local client.
 
@@ -69,7 +69,7 @@ swift-rfb is a local path package (`../../swift-rfb`), so it must be checked out
 
 These environment variables serve test runs:
 
-- `CB_ENDPOINT`: the endpoint URL. It overrides the saved endpoint.
+- `CB_ENDPOINT`: the endpoint URL. It overrides the saved endpoint. The app speaks plaintext `http://` only to loopback (`127.*`, `::1`, `localhost`), so a bearer token never crosses the network unencrypted.
 - `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `me.cmgs.cocoonbox`). Ad hoc signed dev builds use `me.cmgs.cocoonbox.dev`, so they never read the installed app's item and never raise its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s me.cmgs.cocoonbox.dev -a <endpoint url>`.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.

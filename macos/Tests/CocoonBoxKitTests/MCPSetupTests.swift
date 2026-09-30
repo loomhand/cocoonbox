@@ -11,18 +11,27 @@ import Testing
         #expect(mock.url == "http://127.0.0.1:50051/cocoonbox.mcp/cb-mock00000000")
     }
 
-    @Test func onlyCredentialSnippetsCarryTheToken() {
-        for snippet in MCPSetup.Snippet.allCases {
-            let carries = setup.text(snippet, token: "tok-secret").contains("tok-secret")
-            #expect(carries == ![.url, .codexConfig].contains(snippet), "\(snippet)")
-        }
+    @Test func claudeCodeStoresTheVariableNotTheToken() {
+        #expect(setup.text(.claudeCode).hasSuffix("--header 'Authorization: Bearer ${COCOONBOX_TOKEN}'"))
     }
 
-    @Test func cursorSnippetIsValidJSON() throws {
-        let data = Data(setup.text(.cursor, token: "tok-secret").utf8)
+    @Test func environmentReadsTheTokenFromTheKeychain() {
+        let line = setup.text(.environment)
+        #expect(line.hasPrefix(#"export COCOONBOX_TOKEN="$(security find-generic-password -s "#))
+        #expect(line.contains("-a https://box.example.com -w)"))
+    }
+
+    @Test func cursorSnippetIsValidJSONWithAnEnvReference() throws {
+        let data = Data(setup.text(.cursor).utf8)
         let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
         let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
         #expect(server["url"] as? String == setup.url)
-        #expect((server["headers"] as? [String: String])?["Authorization"] == "Bearer tok-secret")
+        #expect((server["headers"] as? [String: String])?["Authorization"] == "Bearer ${env:COCOONBOX_TOKEN}")
+    }
+
+    @Test func plaintextIsRefusedExceptOnLoopback() throws {
+        #expect(throws: ConnectionError.self) { try BoxConnection(endpoint: Endpoint(url: "https://box.example.com")!, token: "t") }
+        let local = try BoxConnection(endpoint: Endpoint(url: "http://127.0.0.1:50051")!, token: "t")
+        local.close()
     }
 }
