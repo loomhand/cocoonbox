@@ -46,3 +46,9 @@ These environment variables serve test runs:
 Timings go to `~/Library/Logs/CocoonBox/debug.log` and to os_signpost (subsystem `me.cmgs.cocoonbox`), in milliseconds since process start. The key lines are `first_frame_presented`, `rfb_first_update`, `input_rtt` (from input to the decoded update) and `input_to_present` (from input to the frame on glass).
 
 Ad hoc signing gives every build a new code hash. After a rebuild, the Keychain asks before it lets the new binary read a token that an older build stored. A Developer ID signature removes the prompt.
+
+Tokens live in the login Keychain under service `me.cmgs.cocoonbox`, one item per endpoint URL. Builds before the rename used `me.cmgs.cocoonbox`. To remove the old items, run this once per endpoint until it reports that the item could not be found:
+
+```bash
+security delete-generic-password -s me.cmgs.cocoonbox -a https://box.example.com
+```
