@@ -6,7 +6,7 @@ import SwiftUI
 enum TranscriptRow: Identifiable {
     case user(UInt64, String)
     case text(UInt64, String, subagent: String)
-    case reasoning(UInt64, String)
+    case reasoning(UInt64, String, subagent: String)
     case tool(UInt64, Cocoonbox_Agent_V1_ToolCall, Cocoonbox_Agent_V1_ToolResult?, UInt64?)
     case result(UInt64, Cocoonbox_Agent_V1_ToolResult)
     case approval(UInt64, Cocoonbox_Agent_V1_ApprovalRequest, answered: Bool)
@@ -14,9 +14,18 @@ enum TranscriptRow: Identifiable {
 
     var id: UInt64 {
         switch self {
-        case .user(let seq, _), .text(let seq, _, _), .reasoning(let seq, _), .tool(let seq, _, _, _),
+        case .user(let seq, _), .text(let seq, _, _), .reasoning(let seq, _, _), .tool(let seq, _, _, _),
              .result(let seq, _), .approval(let seq, _, _), .turnEnd(let seq, _):
             seq
+        }
+    }
+
+    // subagent names the subagent a row belongs to; those rows nest under the delegating call.
+    var subagent: String {
+        switch self {
+        case .text(_, _, let subagent), .reasoning(_, _, let subagent): subagent
+        case .tool(_, let call, _, _): call.subagent
+        default: ""
         }
     }
 
@@ -42,7 +51,7 @@ enum TranscriptRow: Identifiable {
                     rows.append(.text(entry.seq, block.text, subagent: block.subagent))
                 }
             case .reasoning(let block):
-                rows.append(.reasoning(entry.seq, block.text))
+                rows.append(.reasoning(entry.seq, block.text, subagent: block.subagent))
             case .toolCall(let call):
                 let paired = results[call.callID]
                 rows.append(.tool(entry.seq, call, paired?.0, paired?.1))
@@ -92,6 +101,12 @@ struct TranscriptView: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     ForEach(rows) { row in
                         RowView(agentID: agent.id, row: row)
+                            .padding(.leading, row.subagent.isEmpty ? 0 : 14)
+                            .overlay(alignment: .leading) {
+                                if !row.subagent.isEmpty {
+                                    Rectangle().fill(.purple.opacity(0.35)).frame(width: 2)
+                                }
+                            }
                             .id(row.id)
                     }
                     LiveBlocksView(agentID: agent.id, proxy: proxy)
@@ -128,7 +143,7 @@ struct RowView: View {
             }
         case .text(_, let text, let subagent):
             AssistantText(text: text, subagent: subagent)
-        case .reasoning(_, let text):
+        case .reasoning(_, let text, _):
             DisclosureGroup {
                 Text(text)
                     .font(.callout)

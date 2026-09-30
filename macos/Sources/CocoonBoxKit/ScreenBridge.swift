@@ -110,8 +110,12 @@ public final class ScreenBridge: Sendable {
     private func accept(_ connection: NWConnection) {
         connection.start(queue: queue)
         let counters = counters
+        let traced = Locked((up: 0, down: 0))
         let outbound = Self.receiveStream(connection) { count in
             counters.stats.withLock { $0.bytesToServer += count }
+            if traced.withLock({ t in defer { t.up += 1 }; return t.up < 8 }) {
+                Perf.mark("screen_up", "bytes=\(count)")
+            }
         }
         let pump = pumpUpdates ? UpdatePump { counters.stats.withLock { $0.injectedRequests += 1 } } : nil
         let task = Task { [transport] in
@@ -121,6 +125,9 @@ public final class ScreenBridge: Sendable {
             do {
                 try await transport.run(outbound: pump?.stream ?? outbound) { data in
                     counters.stats.withLock { $0.bytesFromServer += data.count }
+                    if traced.withLock({ t in defer { t.down += 1 }; return t.down < 8 }) {
+                        Perf.mark("screen_down", "bytes=\(data.count)")
+                    }
                     pump?.serverActivity()
                     try await Self.send(data, on: connection)
                 }

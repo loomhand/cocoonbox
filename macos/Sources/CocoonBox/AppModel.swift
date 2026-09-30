@@ -290,8 +290,11 @@ final class AppModel {
         }
     }
 
+    // eventsDropped forgets streaming blocks: deltas are not replayed, so a
+    // block whose entry never arrives would otherwise stay half-written.
     private func eventsDropped(_ error: any Error) {
         eventsLive = false
+        live = [:]
         Perf.mark("events_dropped", "\(error)")
     }
 

@@ -334,6 +334,15 @@ actor MockWorld {
             ("type_text", 640, 380, "Hello from the cocoonbox agent\n"),
             ("click", 1000, 160, ""),
         ]
+        append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
+            $0.callID = "call-delegate"
+            $0.name = "delegate_computer"
+            $0.argumentsJson = #"{"task":"type into Mousepad"}"#
+        }))
+        append(agent: id, turn: turn, role: .assistant, body: .text(.with {
+            $0.text = "Mousepad is open; I will click into the editor and type."
+            $0.subagent = "computer"
+        }))
         for (action, x, y, text) in steps {
             let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
             append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
@@ -357,6 +366,10 @@ actor MockWorld {
                 $0.image = screen?.snapshotPNG() ?? Data()
             }))
         }
+        append(agent: id, turn: turn, role: .tool, body: .toolResult(.with {
+            $0.callID = "call-delegate"
+            $0.text = "typed the text into Mousepad"
+        }))
     }
 
     // MARK: screen

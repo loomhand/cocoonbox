@@ -10,14 +10,17 @@ struct RootView: View {
         @Bindable var screen = model.screen
         NavigationSplitView {
             SidebarView()
-                .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 320)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 300)
         } detail: {
-            HSplitView {
+            if model.screen.poppedOut {
                 ConversationView()
-                    .frame(minWidth: 360, idealWidth: 480, maxHeight: .infinity)
-                if !model.screen.poppedOut {
+            } else {
+                HSplitView {
                     LiveScreenPane()
-                        .frame(minWidth: 480, idealWidth: 860, maxHeight: .infinity)
+                        .frame(minWidth: 480, maxWidth: .infinity, maxHeight: .infinity)
+                        .layoutPriority(1)
+                    ConversationView()
+                        .frame(minWidth: 320, idealWidth: 380, maxWidth: 560, maxHeight: .infinity)
                 }
             }
         }

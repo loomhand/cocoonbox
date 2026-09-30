@@ -229,6 +229,9 @@ final class EncodingProbe: @unchecked Sendable {
     }
 
     func consume(_ message: String) {
+        if message.hasPrefix("Continuous Updates supported") {
+            Perf.mark("rfb_continuous_updates", message)
+        }
         guard message.hasPrefix("Got rectangle header"), let range = message.range(of: "encodingType: ") else { return }
         let value = message[range.upperBound...].prefix { $0 == "-" || $0.isNumber }
         let name = Self.name(Int(value) ?? .min)
