@@ -79,7 +79,7 @@ type State struct {
 	CredentialsFile string   `json:"credentials_file"`
 	KeyringDir      string   `json:"keyring_dir"`
 	Interval        Duration `json:"interval"`
-	// ScheduledUsers limits scheduled saves to these users; empty schedules everyone.
+	// ScheduledUsers lists the users whose boxes get scheduled saves; empty schedules nobody.
 	ScheduledUsers []string `json:"scheduled_users"`
 	PresignTTL     Duration `json:"presign_ttl"`
 }

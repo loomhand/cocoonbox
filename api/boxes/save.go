@@ -42,7 +42,7 @@ func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*contro
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
 
-// RunScheduler saves every running box of users (all users when empty) whose latest snapshot is older than interval, until ctx ends.
+// RunScheduler saves every running box of users whose latest snapshot is older than interval, until ctx ends.
 func (s *Service) RunScheduler(ctx context.Context, interval time.Duration, users []string) {
 	ticker := time.NewTicker(interval / 4)
 	defer ticker.Stop()
@@ -65,8 +65,7 @@ func (s *Service) saveStale(ctx context.Context, interval time.Duration, users [
 	}
 	for _, m := range ms {
 		box := BoxID(m.Owner)
-		if m.Owner == "" || m.State != machines.StateRunning || s.ops.activeFor(box) != nil ||
-			(len(users) > 0 && !slices.Contains(users, m.Owner)) {
+		if !slices.Contains(users, m.Owner) || m.State != machines.StateRunning || s.ops.activeFor(box) != nil {
 			continue
 		}
 		if time.Since(time.UnixMilli(s.state.lastSaved(ctx, box))) < interval {
