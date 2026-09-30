@@ -137,7 +137,8 @@ impl StateEngine {
         Ok(response)
     }
 
-    /// Uploads the listed chunks and the manifest of the pinned snapshot.
+    /// Uploads the listed chunks of the pinned snapshot; the call that carries the manifest
+    /// writes it last and unpins the snapshot, so a large upload may span several calls.
     pub async fn upload(
         &self,
         req: pb::UploadRequest,
@@ -153,9 +154,6 @@ impl StateEngine {
                     req.snapshot_id
                 ))
             })?;
-        let manifest = req
-            .manifest
-            .ok_or_else(|| StateError::Invalid("missing manifest url".to_owned()))?;
         let mut jobs = Vec::with_capacity(req.puts.len() + 1);
         for put in req.puts {
             if !snap.chunks.contains(&put.chunk_id) {
@@ -167,13 +165,16 @@ impl StateEngine {
             let path = snap.spool.join(&put.chunk_id);
             if !path.exists() {
                 return Err(StateError::Invalid(format!(
-                    "chunk {} was not spooled because the last upload held it; plan without a parent",
+                    "chunk {} was not spooled because the last upload held it; plan again without a parent",
                     put.chunk_id
                 )));
             }
             jobs.push((put, path));
         }
-        jobs.push((manifest, snap.spool.join(MANIFEST_FILE)));
+        let has_manifest = req.manifest.is_some();
+        if let Some(manifest) = req.manifest {
+            jobs.push((manifest, snap.spool.join(MANIFEST_FILE)));
+        }
         let mut total = 0;
         for (_, path) in &jobs {
             total += tokio::fs::metadata(path)
@@ -182,15 +183,17 @@ impl StateEngine {
                 .len();
         }
         let mut meter = Meter::new(total, jobs.len(), progress);
-        let manifest_job = jobs.pop();
+        let manifest_job = if has_manifest { jobs.pop() } else { None };
         let mut puts = stream::iter(jobs.into_iter().map(|(put, path)| self.put(put, path)))
             .buffer_unordered(TRANSFERS);
         while let Some(done) = puts.next().await {
             meter.add(done?).await;
         }
-        if let Some((put, path)) = manifest_job {
-            meter.add(self.put(put, path).await?).await;
-        }
+        let Some((put, path)) = manifest_job else {
+            meter.send().await;
+            return Ok(());
+        };
+        meter.add(self.put(put, path).await?).await;
         self.save_known(&snap.key_id, &snap.chunks).await?;
         let _ = tokio::fs::remove_dir_all(&snap.spool).await;
         let id = snap.snapshot_id.clone();
@@ -386,7 +389,11 @@ impl StateEngine {
         tokio::fs::create_dir_all(&spool)
             .await
             .map_err(|e| format!("create {}: {e}", spool.display()))?;
-        let known = self.load_known(key_id).await;
+        let known = if parent.is_empty() {
+            HashSet::new()
+        } else {
+            self.load_known(key_id).await
+        };
         let mut chunker = Chunker {
             keys: Arc::clone(keys),
             spool: spool.clone(),
@@ -788,6 +795,10 @@ impl Meter {
         if self.msg.total_bytes < self.msg.done_bytes {
             self.msg.total_bytes = self.msg.done_bytes;
         }
+        let _ = self.tx.send(self.msg.clone()).await;
+    }
+
+    async fn send(&mut self) {
         let _ = self.tx.send(self.msg.clone()).await;
     }
 

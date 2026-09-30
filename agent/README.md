@@ -74,7 +74,7 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
   - SQLite files are read through the online backup API when possible, and their `-wal` and `-journal` sidecars are then left out. `agent.db` goes through `Store::backup_to`.
   - Under LIVE, a file that changes during two reads is recorded in `skipped`. QUIESCED pauses new turns (it waits up to 30 s for a running one and answers `UNAVAILABLE` otherwise) and closes Chrome through CDP; Chrome restarts afterwards.
   - New chunks and the sealed manifest are spooled under `/var/lib/cocoonbox/state` until Upload. Chunks the last upload already held under the same key are not spooled.
-- **Upload.** It PUTs the requested chunks (8 concurrent, 3 attempts), then the manifest, and streams `TransferProgress`.
+- **Upload.** It PUTs the requested chunks (8 concurrent, 3 attempts) and streams `TransferProgress`. It may span several calls: only the call that carries `manifest` writes it (last), finishes with `manifest_id == snapshot_id`, and unpins the snapshot. A Plan without `parent` spools every chunk; with one, chunks the last upload already held are not spooled.
 - **Restore.** It downloads and verifies every chunk (authentication and id) before touching anything. Then it pauses turns, closes Chrome and writes each root into a staging dir as `user`.
   - Each top-level entry is swapped in with one rename; entries missing from the snapshot are removed, except excluded top-level dirs such as `.cache`.
   - `agent.db` is restored through the SQLite backup API, then open turns are marked interrupted.
