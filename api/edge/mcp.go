@@ -134,7 +134,9 @@ func writeJSONRPCError(w http.ResponseWriter, err error) {
 	body.Error.Message = status.Convert(err).Message()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus(status.Code(err)))
-	_ = json.NewEncoder(w).Encode(body)
+	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(body)
 }
 
 func httpStatus(code codes.Code) int {
