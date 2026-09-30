@@ -308,6 +308,27 @@ func TestDeleteReleasesTheClaim(t *testing.T) {
 	t.Error("watch ended without StateGone")
 }
 
+func TestWatchReportsAMetaChange(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	watch := b.Watch(ctx, boxID, 0)
+	if m := <-watch; m.State != machines.StateRunning {
+		t.Fatalf("first watch state = %+v", m)
+	}
+	if err := b.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	for m := range watch {
+		if m.Meta["wake"] == "inc|w1" {
+			return
+		}
+	}
+	t.Error("watch sent nothing after the meta changed")
+}
+
 func TestRenewExtendsEveryLeaseButArchivedOnes(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	fake.add(&fakeSandbox{row: row{ID: "sb_a", Metadata: map[string]string{"cb_machine": "cb-a", "cb_owner": owner}}})

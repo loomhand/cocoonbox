@@ -178,7 +178,7 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 				seen = true
 				b.probe(ctx, id)
 				if m, err = b.cached(id); err == nil && m.Revision >= revision {
-					if key := fmt.Sprintf("%d|%s|%s|%d", m.State, m.Reason, m.Incarnation, m.Revision); key != last {
+					if key := fmt.Sprintf("%d|%s|%s|%d|%v", m.State, m.Reason, m.Incarnation, m.Revision, m.Meta); key != last {
 						if !send(ctx, out, m) {
 							return
 						}
