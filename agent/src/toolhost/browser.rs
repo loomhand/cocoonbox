@@ -315,16 +315,18 @@ impl Browser {
             .map_err(|e| format!("connect cdp {ws_url}: {e}"))?;
         let mut cdp = Cdp { ws, next_id: 0 };
         let _ = cdp.call("Browser.close", json!({})).await;
+        // the CDP port closes before the profile is flushed; SingletonLock goes last on a clean exit
+        let lock = self.profile.join("SingletonLock");
         let deadline = tokio::time::Instant::now() + LAUNCH_WAIT;
         while tokio::time::Instant::now() < deadline {
-            if self.targets().await.is_err() {
+            if self.targets().await.is_err() && tokio::fs::symlink_metadata(&lock).await.is_err() {
                 return Ok("closed".to_owned());
             }
             tokio::time::sleep(POLL).await;
         }
         Err(format!(
-            "chrome still answers on port {} after Browser.close",
-            self.port
+            "chrome did not exit within {}s of Browser.close",
+            LAUNCH_WAIT.as_secs()
         ))
     }
 
