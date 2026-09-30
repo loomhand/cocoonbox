@@ -669,6 +669,11 @@ async fn run_delegate(messages_wire: bool) {
     let session = typed["session"].as_str().unwrap().to_owned();
     assert!(session.starts_with("cu-"), "{session}");
     let cua_calls = h.cua_log.lock().unwrap().clone();
+    let names: Vec<&str> = cua_calls.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names[..3],
+        ["list_windows", "get_window_state", "get_desktop_state"]
+    );
     assert!(
         cua_calls
             .iter()

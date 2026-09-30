@@ -315,6 +315,8 @@ impl Browser {
                 "--start-maximized",
                 "about:blank",
             ])
+            .env("LANG", "en_US.UTF-8")
+            .env("LANGUAGE", "en_US")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
