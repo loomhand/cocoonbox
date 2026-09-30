@@ -10,7 +10,8 @@ import Foundation
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
-// terminal-enter, terminal-paste:<text>, wait-external[:seconds], end-local, quit.
+// terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
+// wait-external[:seconds], end-local, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -90,8 +91,11 @@ enum Autopilot {
                 model.launchLocal(kind)
                 await until(15) { model.localAgents.count > before }
             }
-        case "terminal-enter":
-            model.selectedLocal?.pressEnter()
+        case "terminal-keys":
+            for name in arg.split(separator: ",") {
+                if let key = LocalAgentSession.Key(rawValue: String(name)) { model.selectedLocal?.press(key) }
+                try? await pause(.milliseconds(150))
+            }
         case "terminal-paste":
             model.selectedLocal?.paste(arg.replacingOccurrences(of: "\\n", with: "\n"))
         case "wait-external":
