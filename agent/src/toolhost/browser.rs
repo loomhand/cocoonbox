@@ -353,6 +353,7 @@ impl Browser {
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-session-crashed-bubble",
+                "--hide-crash-restore-bubble",
                 "--start-maximized",
                 "about:blank",
             ])
