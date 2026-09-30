@@ -33,7 +33,7 @@ tenants:
 
   - name: cocoonbox-boxes
     qps: 16
-    daily_cost_quota_micros: 20000000
+    daily_cost_quota_micros: 10000000
     key_daily_cost_quota_micros: 10000000
     models:
       - deepseek/deepseek-v4.1-flash

@@ -36,7 +36,7 @@ for a in (sys.argv[2], sys.argv[3]):
     e = keys[a]; assert e["owner"] == "cb-0123456789ab" and e["qps"] == 4 and e["tenant"] == "cocoonbox-boxes"
 t = {x["name"]: x for x in cfg["tenants"]}
 assert "key_daily_cost_quota_micros" not in t["cocoonbox"] and t["cocoonbox"]["qps"] == 4
-assert t["cocoonbox-boxes"]["key_daily_cost_quota_micros"] == 10000000 and t["cocoonbox-boxes"]["qps"] == 16
+assert t["cocoonbox-boxes"]["key_daily_cost_quota_micros"] == 10000000 and t["cocoonbox-boxes"]["daily_cost_quota_micros"] == 10000000 and t["cocoonbox-boxes"]["qps"] == 16
 assert keys[shared]["tenant"] == "cocoonbox"
 PY
 [ "$(grep -cF "$key" "$t/gateway.yaml")" = 1 ] && ok "box key appears exactly once in the file" || no "box key count"
