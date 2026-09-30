@@ -567,6 +567,7 @@ async fn delegate_runs_the_vision_subagent_over_cua() {
     assert_eq!(typed["pid"], 42);
     assert_eq!(typed["text"], "hello");
     assert_eq!(typed["window_id"], 7);
+    assert_eq!(typed["session"], "cocoonbox");
 
     let vision = gw_bodies(&h.gw_log, "/v1/messages");
     assert_eq!(vision.len(), 3);
