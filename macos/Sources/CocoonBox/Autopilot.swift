@@ -5,7 +5,8 @@ import Foundation
 // Autopilot replays a `;`-separated step list from CB_AUTOPILOT so acceptance
 // runs can drive the app without UI scripting permissions. Steps:
 // ensure, hibernate, wait-running, wait-live, agent[:name], send:<text>,
-// wait-idle, takeover:on|off, type:<text> (\n allowed), click:<x>,<y>, wait:<ms>,
+// wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
+// through NSWindow.sendEvent), click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, popout, quit.
 @MainActor
 enum Autopilot {
@@ -54,6 +55,8 @@ enum Autopilot {
             model.screen.takeOver = arg != "off"
         case "type":
             model.screen.typeText(arg.replacingOccurrences(of: "\\n", with: "\n"))
+        case "keys":
+            await keys(arg.replacingOccurrences(of: "\\n", with: "\n"), model: model)
         case "click":
             let xy = arg.split(separator: ",").compactMap { Int($0) }
             if xy.count == 2 { model.screen.click(x: xy[0], y: xy[1]) }
@@ -70,6 +73,25 @@ enum Autopilot {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }
         default:
             Perf.mark("autopilot_unknown", step)
+        }
+    }
+
+    // keys sends real key events through the window, as a keyboard would.
+    private static func keys(_ text: String, model: AppModel) async {
+        guard let window = model.screen.container.window else { return }
+        for character in text {
+            let newline = character.isNewline
+            let chars = newline ? "\r" : String(character)
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                if let event = NSEvent.keyEvent(
+                    with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, characters: chars, charactersIgnoringModifiers: chars,
+                    isARepeat: false, keyCode: newline ? 36 : 0
+                ) {
+                    window.sendEvent(event)
+                }
+            }
+            try? await pause(.milliseconds(60))
         }
     }
 
