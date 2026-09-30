@@ -3,3 +3,4 @@
 /macos/.build/
 /macos/dist/
 .DS_Store
+/api/coverage.out
