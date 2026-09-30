@@ -56,19 +56,21 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
 	user, addr, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
+	defer func() {
+		log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %s user=%s box=%s addr=%s code=%s in %s",
+			r.Method, r.URL.Path, user, boxID, addr, status.Code(err), time.Since(start).Round(time.Millisecond))
+	}()
 	if err != nil {
 		writeJSONRPCError(w, err)
-	} else {
-		proxy := &httputil.ReverseProxy{
-			Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, addr) },
-			Transport:     m.transport,
-			FlushInterval: -1,
-			ErrorHandler:  m.upstreamError,
-		}
-		proxy.ServeHTTP(w, r)
+		return
 	}
-	log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %s user=%s box=%s addr=%s code=%s in %s",
-		r.Method, r.URL.Path, user, boxID, addr, status.Code(err), time.Since(start).Round(time.Millisecond))
+	proxy := &httputil.ReverseProxy{
+		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, addr) },
+		Transport:     m.transport,
+		FlushInterval: -1,
+		ErrorHandler:  m.upstreamError,
+	}
+	proxy.ServeHTTP(w, r)
 }
 
 func (m *MCP) route(ctx context.Context, authorization, boxID string) (string, string, error) {

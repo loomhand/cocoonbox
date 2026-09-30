@@ -76,6 +76,14 @@ func TestMCPStreamsEvents(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("upstream stream was not cancelled")
 	}
+	select {
+	case method := <-env.served:
+		if method != http.MethodGet {
+			t.Errorf("edge finished %s, want GET", method)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("edge handler did not return after the client cancelled")
+	}
 }
 
 func TestMCPRejects(t *testing.T) {
@@ -148,6 +156,7 @@ func TestMCPIgnoresOtherPaths(t *testing.T) {
 }
 
 type mcpEnv struct {
+	served   chan string
 	addr     string
 	resolver *fakeResolver
 	upstream *fakeMCP
@@ -162,8 +171,13 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
-	addr := serveHTTP(t, NewMCP(resolver, authn, edgeToken))
-	return &mcpEnv{addr: addr, resolver: resolver, upstream: upstream, client: &http.Client{Transport: newH2CTransport()}}
+	served := make(chan string, 16)
+	mcp := NewMCP(resolver, authn, edgeToken)
+	addr := serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() { served <- r.Method }()
+		mcp.ServeHTTP(w, r)
+	}))
+	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, client: &http.Client{Transport: newH2CTransport()}}
 }
 
 func (e *mcpEnv) request(t *testing.T, method, path, body string) *http.Request {
