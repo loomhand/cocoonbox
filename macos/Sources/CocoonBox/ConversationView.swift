@@ -139,7 +139,7 @@ struct LocalAgentPane: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
-                .frame(minHeight: 120, idealHeight: 260, maxHeight: .infinity)
+                .frame(minHeight: 240, idealHeight: 320, maxHeight: .infinity)
             }
         }
     }

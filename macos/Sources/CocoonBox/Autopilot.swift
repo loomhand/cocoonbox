@@ -11,7 +11,8 @@ import Foundation
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
-// wait-external[:seconds], end-local, quit.
+// wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
+// end-local, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -100,6 +101,16 @@ enum Autopilot {
             model.selectedLocal?.paste(arg.replacingOccurrences(of: "\\n", with: "\n"))
         case "wait-external":
             await until(Double(arg) ?? 60) { model.selectedLocal.flatMap { model.externalAgent(for: $0) } != nil }
+        case "wait-tools":
+            let parts = arg.split(separator: ":").compactMap { Double($0) }
+            await until(parts.count > 1 ? parts[1] : 180) {
+                guard let agent = model.selectedLocal.flatMap({ model.externalAgent(for: $0) }) else { return false }
+                let results = (model.transcripts[agent.id] ?? []).filter { if case .toolResult = $0.body { true } else { false } }
+                return Double(results.count) >= (parts.first ?? 1)
+            }
+        case "wait-pointer":
+            let seen = model.computerActions
+            await until(Double(arg) ?? 120) { model.computerActions > seen && model.screen.lastMarkerAt > Date().addingTimeInterval(-1) }
         case "end-local":
             if let session = model.selectedLocal { model.closeLocal(session) }
         case "copy-mcp":

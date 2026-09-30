@@ -18,7 +18,7 @@ public enum LocalAgentError: Error, CustomStringConvertible {
 // terminal view outlives SwiftUI remounts; close hangs up the CLI.
 @MainActor @Observable
 public final class LocalAgentSession: Identifiable {
-    public let id: UUID
+    public let id = UUID()
     public let kind: LocalAgentKind
     public let startedAt = Date()
     public private(set) var title: String
@@ -26,13 +26,10 @@ public final class LocalAgentSession: Identifiable {
 
     @ObservationIgnored private let terminal: AppTerminalView
     @ObservationIgnored private let process: PTYProcess
-    @ObservationIgnored private let workspace: URL
     @ObservationIgnored private let events = SurfaceEvents()
 
-    private init(id: UUID, kind: LocalAgentKind, terminal: AppTerminalView, process: PTYProcess, workspace: URL) {
-        self.id = id
+    private init(kind: LocalAgentKind, terminal: AppTerminalView, process: PTYProcess) {
         self.kind = kind
-        self.workspace = workspace
         self.terminal = terminal
         self.process = process
         title = kind.title
@@ -43,16 +40,15 @@ public final class LocalAgentSession: Identifiable {
     public var view: NSView { terminal }
 
     // start resolves the CLI on the login shell's PATH, writes the workspace
-    // files and runs the CLI. The workspace is a private directory per
-    // session, outside ~/Documents, removed on close.
+    // files and runs the CLI. The workspace is a private directory per CLI,
+    // outside ~/Documents, so each CLI's trust prompt is answered once.
     public static func start(_ kind: LocalAgentKind, target: MCPTarget) async throws -> LocalAgentSession {
         let shell = await LoginShell.environment()
         guard let executable = LoginShell.find(kind.executable, in: shell["PATH"] ?? "") else {
             throw LocalAgentError.notInstalled(kind)
         }
         let launch = kind.launch(executable: executable, target: target)
-        let id = UUID()
-        let workspace = try Self.workspace(id, files: launch.files)
+        let workspace = try Self.workspace(kind, files: launch.files)
         let process = try PTYProcess(
             arguments: launch.arguments,
             environment: shell.merging(Self.terminal(directory: workspace.path)) { $1 }.merging(launch.environment) { $1 },
@@ -68,7 +64,7 @@ public final class LocalAgentSession: Identifiable {
         let terminal = AppTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         terminal.controller = TerminalController()
         terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(backend))
-        let session = LocalAgentSession(id: id, kind: kind, terminal: terminal, process: process, workspace: workspace)
+        let session = LocalAgentSession(kind: kind, terminal: terminal, process: process)
         let started = Date()
         process.start(
             output: { backend.receive($0) },
@@ -116,7 +112,6 @@ public final class LocalAgentSession: Identifiable {
         process.hangUp(grace: immediately ? .milliseconds(300) : .seconds(2))
         terminal.delegate = nil
         terminal.removeFromSuperview()
-        try? FileManager.default.removeItem(at: workspace)
         closed = true
     }
 
@@ -124,10 +119,10 @@ public final class LocalAgentSession: Identifiable {
         self.title = title.isEmpty ? kind.title : title
     }
 
-    private static func workspace(_ id: UUID, files: [String: String]) throws -> URL {
+    private static func workspace(_ kind: LocalAgentKind, files: [String: String]) throws -> URL {
         let manager = FileManager.default
         let root = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            .appendingPathComponent("CocoonBox/sessions/\(id.uuidString.lowercased())", isDirectory: true)
+            .appendingPathComponent("CocoonBox/local-agents/\(kind.rawValue)", isDirectory: true)
         try manager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         for (relative, content) in files {
             let file = root.appendingPathComponent(relative)

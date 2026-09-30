@@ -60,6 +60,7 @@ public enum LocalAgentKind: String, CaseIterable, Identifiable, Sendable {
         case .cursor:
             arguments = [path, "--approve-mcps", "--trust"]
             files[".cursor/mcp.json"] = #"{"mcpServers":{"\#(server)":{"url":"\#(target.url)","headers":{"Authorization":"Bearer ${env:\#(variable)}"}}}}"#
+            files[".cursor/cli.json"] = #"{"permissions":{"allow":["Mcp(*\#(server):*)"],"deny":[]}}"#
             files[".cursor/rules/cocoonbox.mdc"] = "---\ndescription: cocoonbox\nalwaysApply: true\n---\n\(Self.instructions)\n"
         }
         return LocalAgentLaunch(arguments: arguments, environment: [variable: target.token], files: files)

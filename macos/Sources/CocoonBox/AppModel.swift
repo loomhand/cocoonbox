@@ -60,6 +60,7 @@ final class AppModel {
     var busy = false
     var answeredApprovals: Set<String> = []
     var localAgents: [LocalAgentSession] = []
+    @ObservationIgnored var computerActions = 0
 
     let screen = ScreenController()
 
@@ -423,6 +424,7 @@ final class AppModel {
             appendLive(agentID: delta.agentID, turnID: delta.turnID, block: delta.block, reasoning: true, subagent: delta.subagent, text: delta.text)
         case .computerAction(let action):
             Perf.mark("computer_action", "\(action.action) \(action.x),\(action.y)")
+            computerActions += 1
             screen.showMarker(action)
         case nil:
             break

@@ -22,6 +22,7 @@ final class ScreenController {
     var status = Status.idle
     var framebufferSize = CGSize.zero
     var poppedOut = false
+    @ObservationIgnored private(set) var lastMarkerAt = Date.distantPast
     var takeOver = false {
         didSet { screen?.inputEnabled = takeOver }
     }
@@ -87,7 +88,10 @@ final class ScreenController {
         }
     }
 
+    // showMarker skips actions without a point (launch_app, type), which arrive at 0,0.
     func showMarker(_ action: ComputerAction) {
+        guard action.x != 0 || action.y != 0 else { return }
+        lastMarkerAt = Date()
         container.showMarker(x: Int(action.x), y: Int(action.y), label: action.action)
     }
 
