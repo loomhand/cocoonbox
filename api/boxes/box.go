@@ -14,13 +14,29 @@ const (
 	idHexLen = 12
 )
 
-var boxStates = map[machines.State]controlv1.BoxState{
-	machines.StateStarting:    controlv1.BoxState_BOX_STATE_STARTING,
-	machines.StateRunning:     controlv1.BoxState_BOX_STATE_RUNNING,
-	machines.StateHibernating: controlv1.BoxState_BOX_STATE_HIBERNATING,
-	machines.StateHibernated:  controlv1.BoxState_BOX_STATE_HIBERNATED,
-	machines.StateFailed:      controlv1.BoxState_BOX_STATE_FAILED,
-}
+var (
+	boxStates = map[machines.State]controlv1.BoxState{
+		machines.StateStarting:    controlv1.BoxState_BOX_STATE_STARTING,
+		machines.StateRunning:     controlv1.BoxState_BOX_STATE_RUNNING,
+		machines.StateHibernating: controlv1.BoxState_BOX_STATE_HIBERNATING,
+		machines.StateHibernated:  controlv1.BoxState_BOX_STATE_HIBERNATED,
+		machines.StateFailed:      controlv1.BoxState_BOX_STATE_FAILED,
+	}
+
+	stateWords = map[machines.State]string{
+		machines.StateStarting:    "starting",
+		machines.StateRunning:     "running",
+		machines.StateHibernating: "hibernating",
+		machines.StateHibernated:  "hibernated",
+		machines.StateFailed:      "failed",
+	}
+
+	failureWords = map[controlv1.Phase]string{
+		controlv1.Phase_PHASE_CREATING:     "machine failed to start",
+		controlv1.Phase_PHASE_WAKING:       "wake failed",
+		controlv1.Phase_PHASE_SNAPSHOTTING: "snapshot failed",
+	}
+)
 
 // BoxID returns the id of user's box; its first machine carries the same id.
 func BoxID(user string) string {
@@ -34,13 +50,31 @@ func toBox(box string, m machines.Machine) *controlv1.Box {
 		State:         boxStates[m.State],
 		Image:         m.Image,
 		Flavor:        toFlavor(m.Flavor),
-		FailureReason: m.Reason,
+		FailureReason: failureReason(m),
 		CreatedAtMs:   m.CreatedAt.UnixMilli(),
 	}
 }
 
-func toObservation(m machines.Machine) observation {
-	return observation{state: boxStates[m.State], detail: m.Detail, reason: m.Reason}
+func toObservation(m machines.Machine, phase controlv1.Phase) observation {
+	obs := observation{state: boxStates[m.State], detail: progressWords(m)}
+	if m.State == machines.StateFailed {
+		obs.reason = cmp.Or(failureWords[phase], "machine failed")
+	}
+	return obs
+}
+
+func progressWords(m machines.Machine) string {
+	if m.Waiting {
+		return "waiting for capacity"
+	}
+	return stateWords[m.State]
+}
+
+func failureReason(m machines.Machine) string {
+	if m.State == machines.StateFailed {
+		return "machine failed"
+	}
+	return ""
 }
 
 func toFlavor(f machines.Flavor) *controlv1.Flavor {

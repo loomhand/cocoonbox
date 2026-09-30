@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -58,16 +59,16 @@ func TestEnsureCreatesBox(t *testing.T) {
 		t.Errorf("second Ensure = %v, %v, want operation %s", again.GetOperation(), err, resp.GetOperation().GetId())
 	}
 
-	fake.push(machines.Machine{ID: aliceBox, State: machines.StateStarting, Detail: "vm=creating"})
+	fake.push(machines.Machine{ID: aliceBox, State: machines.StateStarting, Detail: "vm=creating", Waiting: true})
 	fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning, Detail: "vm=ready"})
 	events := watch(t, svc, ctx, resp.GetOperation().GetId(), "")
 	last := events[len(events)-1]
-	if last.GetPhase() != controlv1.Phase_PHASE_DONE || last.GetBoxState() != controlv1.BoxState_BOX_STATE_RUNNING || last.GetDetail() != "vm=ready" {
+	if last.GetPhase() != controlv1.Phase_PHASE_DONE || last.GetBoxState() != controlv1.BoxState_BOX_STATE_RUNNING || last.GetDetail() != "running" {
 		t.Errorf("last event = %v, want DONE/RUNNING", last)
 	}
 	for i, ev := range events[:len(events)-1] {
-		if ev.GetPhase() != controlv1.Phase_PHASE_CREATING {
-			t.Errorf("event %d phase = %s, want CREATING", i, ev.GetPhase())
+		if ev.GetPhase() != controlv1.Phase_PHASE_CREATING || ev.GetDetail() != "waiting for capacity" {
+			t.Errorf("event %d = %s %q, want CREATING waiting for capacity", i, ev.GetPhase(), ev.GetDetail())
 		}
 	}
 	if got := fake.watchRevision(); got != 1 {
@@ -123,7 +124,7 @@ func TestOperationFails(t *testing.T) {
 		event  machines.Machine
 		detail string
 	}{
-		{name: "machine failed", event: machines.Machine{ID: aliceBox, State: machines.StateFailed, Reason: "clone: snapshot not found", Detail: "vm=failed"}, detail: "clone: snapshot not found"},
+		{name: "machine failed", event: machines.Machine{ID: aliceBox, State: machines.StateFailed, Reason: "push http://10.90.0.4:5000/x: refused", Detail: "vm=failed"}, detail: "machine failed to start"},
 		{name: "machine gone", event: machines.Machine{ID: aliceBox, State: machines.StateGone}, detail: "box was deleted"},
 	}
 	for _, tt := range tests {
@@ -139,6 +140,14 @@ func TestOperationFails(t *testing.T) {
 			events := watch(t, svc, ctx, resp.GetOperation().GetId(), "")
 			if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != tt.detail {
 				t.Errorf("last event = %v, want FAILED %q", last, tt.detail)
+			}
+			for _, ev := range events {
+				if strings.Contains(ev.GetDetail(), "10.90.0.4") || strings.Contains(ev.GetDetail(), "vm=") {
+					t.Errorf("event leaks a backend message: %q", ev.GetDetail())
+				}
+			}
+			if box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); err == nil && strings.Contains(box.GetFailureReason(), "10.90.0.4") {
+				t.Errorf("failure_reason leaks a backend message: %q", box.GetFailureReason())
 			}
 		})
 	}

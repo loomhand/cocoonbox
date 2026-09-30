@@ -223,7 +223,10 @@ func (s *Service) follow(op *operation, machine string) {
 			op.fail("box was deleted")
 			return
 		}
-		op.record(toObservation(m))
+		if m.State == machines.StateFailed {
+			log.WithFunc("boxes.Service.follow").WithField("box", op.boxID).Warnf(op.ctx, "machine %s failed: %s (%s)", machine, m.Reason, m.Detail)
+		}
+		op.record(toObservation(m, op.phase))
 	}
 	if errors.Is(op.ctx.Err(), context.DeadlineExceeded) {
 		op.fail(fmt.Sprintf("timed out after %s", operationTimeout))

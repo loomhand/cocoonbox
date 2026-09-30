@@ -61,8 +61,9 @@ type Machine struct {
 	Flavor Flavor
 	// Reason explains StateFailed.
 	Reason string
-	// Detail summarizes the backend's raw status for progress reports.
+	// Detail summarizes the backend's raw status for logs; it may name internal hosts.
 	Detail    string
+	Waiting   bool
 	CreatedAt time.Time
 	// Revision increases with every lifecycle request; Watch judges state no older than it.
 	Revision int64

@@ -31,6 +31,7 @@ func observe(cs *cocoonv1.CocoonSet, main *corev1.Pod, gen int64) machines.Machi
 		Image:     cs.Spec.Agent.Image,
 		Flavor:    flavorOf(cs),
 		Detail:    describe(cs, main),
+		Waiting:   main != nil && slices.ContainsFunc(main.Status.Conditions, unschedulable),
 		CreatedAt: cs.CreationTimestamp.Time,
 		Revision:  cs.Generation,
 	}

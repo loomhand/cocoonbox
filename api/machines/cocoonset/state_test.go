@@ -59,6 +59,17 @@ func TestDescribeUnschedulable(t *testing.T) {
 	}
 }
 
+func TestObserveWaiting(t *testing.T) {
+	pod := testPod(false, "", 0)
+	if observe(testSet(1, false, cocoonv1.CocoonSetPhasePending), pod, 0).Waiting {
+		t.Error("scheduled pod reported as waiting")
+	}
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Message: "0/2 nodes are available"}}
+	if !observe(testSet(1, false, cocoonv1.CocoonSetPhasePending), pod, 0).Waiting {
+		t.Error("unschedulable pod not reported as waiting")
+	}
+}
+
 func TestBuildCocoonSet(t *testing.T) {
 	opts := Options{Namespace: "cocoonbox", Image: "cocoonbox-desktop-v2", Network: "cb", ProbePort: 7443}
 	flavor := machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
