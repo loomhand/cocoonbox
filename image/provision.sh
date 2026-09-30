@@ -32,6 +32,8 @@ setup_packages() {
 	pkill -x xrdp-sesman || true
 	systemctl disable --now cocoonbox-vnc.service >/dev/null 2>&1 || true
 	rm -f /etc/systemd/system/cocoonbox-vnc.service
+	systemctl daemon-reload
+	systemctl reset-failed cocoonbox-vnc.service >/dev/null 2>&1 || true
 	apt-get purge -y -qq xrdp xorgxrdp xscreensaver xscreensaver-data x11vnc >/dev/null 2>&1 || true
 	local deb
 	deb=$(mktemp --suffix=.deb)

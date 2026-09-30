@@ -20,6 +20,7 @@ journalctl --vacuum-time=1s >/dev/null
 
 systemctl restart cocoonbox-xorg.service cocoonbox-session.service
 systemctl --user -M user@ restart cua-driver.service
+systemctl reset-failed
 if systemctl -q is-enabled cocoonbox-agent.service; then
 	systemctl start cocoonbox-toolhost.service cocoonbox-agent.service
 fi
