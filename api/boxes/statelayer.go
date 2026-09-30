@@ -144,17 +144,12 @@ func (l *stateLayer) upload(ctx context.Context, box, addr string, rec *snapshot
 			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
 		}
 		offset, size := sent, batchBytes(batch)
-		final, err := l.agents.Upload(ctx, addr, req, func(p *agentv1.TransferProgress) {
-			done := size
-			if p.GetTotalChunks() > 0 {
-				done = size * uint64(min(p.GetDoneChunks(), p.GetTotalChunks())) / uint64(p.GetTotalChunks())
-			}
-			progress(&agentv1.TransferProgress{
-				DoneBytes: offset + done, TotalBytes: rec.UploadedBytes,
-				DoneChunks: p.GetDoneChunks(), TotalChunks: p.GetTotalChunks(),
-				Finished: p.GetFinished() && last, ManifestId: p.GetManifestId(),
-			})
-		})
+		final, err := l.agents.Upload(ctx, addr, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
+			p.DoneBytes += offset
+			p.TotalBytes = rec.UploadedBytes
+			p.Finished = p.Finished && last
+			progress(p)
+		}))
 		if err != nil {
 			return fmt.Errorf("upload: %w", err)
 		}
@@ -203,6 +198,7 @@ func (l *stateLayer) restore(ctx context.Context, box, addr, id string, progress
 		Manifest: &agentv1.PresignedGet{ChunkId: id, Url: manifest.URL},
 	}
 	seen := map[string]bool{}
+	var total uint64
 	for _, c := range rec.Chunks {
 		if !objectID.MatchString(c.ID) {
 			return nil, fmt.Errorf("snapshot %s lists invalid chunk id %q", id, c.ID)
@@ -211,13 +207,14 @@ func (l *stateLayer) restore(ctx context.Context, box, addr, id string, progress
 			continue
 		}
 		seen[c.ID] = true
+		total += c.Size
 		get, err := l.store.PresignGet(ctx, chunkKey(box, c.ID))
 		if err != nil {
 			return nil, err
 		}
 		req.Gets = append(req.Gets, &agentv1.PresignedGet{ChunkId: c.ID, Url: get.URL})
 	}
-	if _, err := l.agents.Restore(ctx, addr, req, progress); err != nil {
+	if _, err := l.agents.Restore(ctx, addr, req, plaintextProgress(total, progress)); err != nil {
 		return nil, fmt.Errorf("restore: %w", err)
 	}
 	return rec, nil
@@ -335,6 +332,19 @@ func batches(missing []chunk) [][]chunk {
 		size += c.Size
 	}
 	return out
+}
+
+func plaintextProgress(size uint64, progress dialer.ProgressFunc) dialer.ProgressFunc {
+	return func(p *agentv1.TransferProgress) {
+		done := size
+		if p.GetTotalChunks() > 0 {
+			done = size * uint64(min(p.GetDoneChunks(), p.GetTotalChunks())) / uint64(p.GetTotalChunks())
+		}
+		progress(&agentv1.TransferProgress{
+			DoneBytes: done, TotalBytes: size, DoneChunks: p.GetDoneChunks(), TotalChunks: p.GetTotalChunks(),
+			Finished: p.GetFinished(), ManifestId: p.GetManifestId(),
+		})
+	}
 }
 
 func batchBytes(batch []chunk) uint64 {

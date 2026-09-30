@@ -153,6 +153,15 @@ func TestRebase(t *testing.T) {
 	if restore.addr != newID+":7443" || len(restore.req.GetGets()) != 2 || restore.req.GetManifest().GetChunkId() != snapshotID(1) {
 		t.Errorf("restore = %s %v", restore.addr, restore.req)
 	}
+	var restored *controlv1.OperationEvent
+	for _, ev := range events {
+		if ev.GetPhase() == controlv1.Phase_PHASE_RESTORING && ev.GetTotalBytes() > 0 {
+			restored = ev
+		}
+	}
+	if restored == nil || restored.GetTotalBytes() != 2<<20 || restored.GetDoneBytes() != 2<<20 {
+		t.Errorf("last restore progress = %v, want 2 MiB of 2 MiB plaintext", restored)
+	}
 	if env.fake.deletedIDs() != aliceBox {
 		t.Errorf("deleted = %q, want the old machine", env.fake.deletedIDs())
 	}
@@ -467,7 +476,9 @@ func (a *fakeAgent) Restore(_ context.Context, addr string, req *agentv1.Restore
 			return nil, fmt.Errorf("get %s: %w", get.GetUrl(), err)
 		}
 	}
-	final := &agentv1.TransferProgress{Finished: true, ManifestId: req.GetManifest().GetChunkId()}
+	n := uint32(len(req.GetGets()))
+	progress(&agentv1.TransferProgress{DoneBytes: 1, TotalBytes: 2, DoneChunks: n / 2, TotalChunks: n})
+	final := &agentv1.TransferProgress{DoneBytes: 2, TotalBytes: 2, DoneChunks: n, TotalChunks: n, Finished: true, ManifestId: req.GetManifest().GetChunkId()}
 	progress(final)
 	return final, nil
 }
