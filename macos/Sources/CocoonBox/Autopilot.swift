@@ -13,7 +13,9 @@ enum Autopilot {
     static func runIfRequested(model: AppModel) {
         guard let script = ProcessInfo.processInfo.environment["CB_AUTOPILOT"], !script.isEmpty else { return }
         let steps = script.split(separator: ";").map { String($0).trimmingCharacters(in: .whitespaces) }
+        let activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical], reason: "autopilot run")
         Task {
+            defer { ProcessInfo.processInfo.endActivity(activity) }
             for step in steps {
                 Perf.mark("autopilot", step)
                 await run(step, model: model)
