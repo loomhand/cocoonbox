@@ -125,7 +125,7 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
         await world.attach(screen: server)
         defer {
             let text = server.editorText
-            Task { await world.noteTyped(text) }
+            Task { await world.detach(screen: server, text: text) }
         }
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {

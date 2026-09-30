@@ -160,6 +160,14 @@ func eventually(_ timeout: Duration = .seconds(5), _ condition: () -> Bool) asyn
         let redrawn = await eventually { sink.updates.load(ordering: .relaxed) > before }
         #expect(redrawn)
         #expect((session.encodingCounts["raw"] ?? 0) > 0)
+        let afterKeys = sink.updates.load(ordering: .relaxed)
+        server.type("Hello from the agent")
+        let typedRedraw = await eventually { sink.updates.load(ordering: .relaxed) > afterKeys }
+        #expect(typedRedraw)
+        let afterType = sink.updates.load(ordering: .relaxed)
+        server.click(x: 1000, y: 160)
+        let clickRedraw = await eventually { sink.updates.load(ordering: .relaxed) > afterType }
+        #expect(clickRedraw, "updates stalled at \(afterType)")
         session.disconnect()
         bridge.stop()
     }

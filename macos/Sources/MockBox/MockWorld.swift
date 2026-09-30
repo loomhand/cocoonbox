@@ -361,7 +361,9 @@ actor MockWorld {
         screen = server
     }
 
-    func noteTyped(_ text: String) {
+    func detach(screen server: SyntheticRFBServer, text: String) {
+        guard screen === server else { return }
         desktopText = text
+        screen = nil
     }
 }

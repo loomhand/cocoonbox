@@ -2,6 +2,13 @@ import Foundation
 import GRPCCore
 import Synchronization
 
+// pause sleeps via Task.sleep(nanoseconds:); release builds of the app abort
+// with "freed pointer was not the last allocation" in Task.sleep(for:).
+public func pause(_ duration: Duration) async throws {
+    let (seconds, attoseconds) = duration.components
+    try await Task.sleep(nanoseconds: UInt64(max(0, seconds)) * 1_000_000_000 + UInt64(max(0, attoseconds)) / 1_000_000_000)
+}
+
 public struct Backoff: Sendable {
     public var initial: Duration
     public var max: Duration
@@ -37,7 +44,7 @@ public struct EventFollower<Event: Sendable>: Sendable {
         stableAfter: Duration = .seconds(5),
         offsetOf: @escaping @Sendable (Event) -> UInt64,
         isResync: @escaping @Sendable (any Error) -> Bool,
-        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await Task.sleep(for: $0) }
+        sleep: @escaping @Sendable (Duration) async throws -> Void = { try await pause($0) }
     ) {
         self.backoff = backoff
         self.stableAfter = stableAfter

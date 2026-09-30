@@ -124,6 +124,21 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         return (Int(x), Int(y))
     }
 
+    // snapshotImage copies the current framebuffer into a CGImage.
+    public func snapshotImage() -> CGImage? {
+        surface.withLock { s -> CGImage? in
+            guard let s, let buffer = s.buffer else { return nil }
+            let data = Data(bytes: buffer.contents(), count: s.bytesPerRow * s.height)
+            guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+            return CGImage(
+                width: s.width, height: s.height, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: s.bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
+            )
+        }
+    }
+
     // MARK: FramebufferSink (RFB queue)
 
     public nonisolated func framebufferDidChange(_ framebuffer: VNCFramebuffer, buffer: MTLBuffer?) {
@@ -207,7 +222,7 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
             encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
         }
         encoder.endEncoding()
-        if current != nil, !presentedFirst {
+        if current != nil, !presentedFirst, updates.load(ordering: .relaxed) > 0 {
             presentedFirst = true
             let callback = onFirstFrame
             drawable.addPresentedHandler { _ in

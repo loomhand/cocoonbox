@@ -55,13 +55,10 @@ public enum Keychain {
             kSecAttrService: service,
             kSecAttrAccount: endpoint.url,
         ]
-        let data = Data(token.utf8)
-        var status = SecItemUpdate(match as CFDictionary, [kSecValueData: data] as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = match
-            add[kSecValueData] = data
-            status = SecItemAdd(add as CFDictionary, nil)
-        }
+        SecItemDelete(match as CFDictionary)
+        var add = match
+        add[kSecValueData] = Data(token.utf8)
+        let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
