@@ -1,0 +1,47 @@
+[package]
+name = "cocoonbox-agent"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "In-box agent for cocoonbox: agent loop, gRPC surface and tool host"
+license = "AGPL-3.0-only"
+publish = false
+
+[[bin]]
+name = "cocoonbox-agent"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "0.22"
+bytes = "1"
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+libc = "0.2"
+prost = "0.14"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+rusqlite = { version = "0.40", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "process", "sync", "time", "fs", "signal"] }
+tokio-stream = { version = "0.1", default-features = false, features = ["net"] }
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect"] }
+tokio-util = { version = "0.7", default-features = false }
+tonic = { version = "0.14", default-features = false, features = ["transport", "router", "codegen"] }
+tonic-prost = "0.14"
+uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+tonic-prost-build = "0.14"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+undocumented_unsafe_blocks = "deny"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

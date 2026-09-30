@@ -1,0 +1,254 @@
+//! gRPC surface: Agents and Session behind the edge-token check.
+
+use std::sync::Arc;
+
+use tokio::net::TcpListener;
+use tokio::sync::{broadcast, mpsc};
+use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
+use tonic::service::Interceptor;
+use tonic::transport::Server;
+use tonic::{Request, Response, Status, Streaming};
+
+use crate::config::ServeConfig;
+use crate::pb::agents_server::{Agents, AgentsServer};
+use crate::pb::session_server::{Session, SessionServer};
+use crate::pb::{self, Event};
+use crate::runner::Runtime;
+use crate::screen;
+
+const EDGE_TOKEN_HEADER: &str = "x-cocoonbox-edge-token";
+const MAX_REQUEST_BYTES: usize = 64 << 20;
+const DEFAULT_PAGE: u32 = 100;
+const MAX_PAGE: u32 = 1000;
+const EVENT_BUFFER: usize = 256;
+const SCREEN_WIDTH: u32 = 1280;
+const SCREEN_HEIGHT: u32 = 800;
+
+/// Rejects calls whose edge token is missing or wrong.
+#[derive(Clone)]
+pub struct EdgeAuth {
+    token: Arc<str>,
+}
+
+impl Interceptor for EdgeAuth {
+    fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
+        let got = req
+            .metadata()
+            .get(EDGE_TOKEN_HEADER)
+            .map(|v| v.as_bytes())
+            .unwrap_or_default();
+        if constant_time_eq(got, self.token.as_bytes()) {
+            Ok(req)
+        } else {
+            Err(Status::unauthenticated("missing or invalid edge token"))
+        }
+    }
+}
+
+/// `cocoonbox.agent.v1.Agents`.
+pub struct AgentsSvc {
+    rt: Arc<Runtime>,
+}
+
+#[tonic::async_trait]
+impl Agents for AgentsSvc {
+    async fn create(
+        &self,
+        req: Request<pb::CreateAgentRequest>,
+    ) -> Result<Response<pb::Agent>, Status> {
+        self.rt
+            .create_agent(req.into_inner())
+            .await
+            .map(Response::new)
+    }
+
+    async fn list(
+        &self,
+        _req: Request<pb::ListAgentsRequest>,
+    ) -> Result<Response<pb::ListAgentsResponse>, Status> {
+        let agents = self
+            .rt
+            .store
+            .list_agents()
+            .await
+            .map_err(Status::internal)?;
+        Ok(Response::new(pb::ListAgentsResponse { agents }))
+    }
+
+    async fn send(
+        &self,
+        req: Request<pb::SendRequest>,
+    ) -> Result<Response<pb::SendResponse>, Status> {
+        let turn_id = self.rt.send(req.into_inner()).await?;
+        Ok(Response::new(pb::SendResponse { turn_id }))
+    }
+
+    async fn transcript(
+        &self,
+        req: Request<pb::TranscriptRequest>,
+    ) -> Result<Response<pb::TranscriptPage>, Status> {
+        let req = req.into_inner();
+        let limit = match req.limit {
+            0 => DEFAULT_PAGE,
+            n => n.min(MAX_PAGE),
+        };
+        self.rt
+            .store
+            .transcript(req.agent_id, req.after_seq, limit)
+            .await
+            .map(Response::new)
+            .map_err(Status::internal)
+    }
+
+    async fn respond(
+        &self,
+        req: Request<pb::RespondRequest>,
+    ) -> Result<Response<pb::RespondResponse>, Status> {
+        self.rt.respond(req.into_inner())?;
+        Ok(Response::new(pb::RespondResponse {}))
+    }
+
+    async fn cancel(
+        &self,
+        req: Request<pb::CancelRequest>,
+    ) -> Result<Response<pb::CancelResponse>, Status> {
+        self.rt.cancel(&req.into_inner().agent_id);
+        Ok(Response::new(pb::CancelResponse {}))
+    }
+}
+
+/// `cocoonbox.agent.v1.Session`.
+pub struct SessionSvc {
+    rt: Arc<Runtime>,
+}
+
+#[tonic::async_trait]
+impl Session for SessionSvc {
+    type EventsStream = ReceiverStream<Result<Event, Status>>;
+    type ScreenStream = screen::ServerStream;
+
+    async fn hello(
+        &self,
+        _req: Request<pb::HelloRequest>,
+    ) -> Result<Response<pb::HelloResponse>, Status> {
+        let cfg = &self.rt.cfg;
+        let mut models = vec![cfg.model_main.clone()];
+        if cfg.model_computer != cfg.model_main {
+            models.push(cfg.model_computer.clone());
+        }
+        Ok(Response::new(pb::HelloResponse {
+            agent_version: env!("CARGO_PKG_VERSION").to_owned(),
+            screen_width: SCREEN_WIDTH,
+            screen_height: SCREEN_HEIGHT,
+            models,
+            default_main_model: cfg.model_main.clone(),
+        }))
+    }
+
+    async fn events(
+        &self,
+        req: Request<pb::EventsRequest>,
+    ) -> Result<Response<Self::EventsStream>, Status> {
+        let sub = self
+            .rt
+            .bus
+            .subscribe(req.into_inner().from_offset)
+            .map_err(Status::out_of_range)?;
+        let (tx, rx) = mpsc::channel(EVENT_BUFFER);
+        // detached pump: ends when the client goes away or falls behind the live channel
+        tokio::spawn(async move {
+            let mut last = 0;
+            for e in sub.replay {
+                last = e.offset;
+                if tx.send(Ok(Event::clone(&e))).await.is_err() {
+                    return;
+                }
+            }
+            let mut live = sub.live;
+            loop {
+                match live.recv().await {
+                    Ok(e) if e.offset > last => {
+                        last = e.offset;
+                        if tx.send(Ok(Event::clone(&e))).await.is_err() {
+                            return;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        let msg =
+                            format!("event stream fell behind; reconnect with from_offset {last}");
+                        let _ = tx.send(Err(Status::data_loss(msg))).await;
+                        return;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => return,
+                }
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
+    async fn screen(
+        &self,
+        req: Request<Streaming<pb::ScreenClientFrame>>,
+    ) -> Result<Response<Self::ScreenStream>, Status> {
+        screen::relay(&self.rt.cfg.vnc_addr, req.into_inner())
+            .await
+            .map(Response::new)
+    }
+}
+
+/// Binds `AGENT_LISTEN` and serves until SIGTERM or SIGINT.
+pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
+    let listener = TcpListener::bind(cfg.listen)
+        .await
+        .map_err(|e| format!("bind {}: {e}", cfg.listen))?;
+    eprintln!("serve listening on {}", cfg.listen);
+    let rt = Runtime::open(cfg).await?;
+    serve_on(listener, rt, shutdown_signal()).await
+}
+
+/// Serves both services on `listener` until `shutdown` resolves.
+pub async fn serve_on(
+    listener: TcpListener,
+    rt: Arc<Runtime>,
+    shutdown: impl Future<Output = ()>,
+) -> Result<(), String> {
+    let auth = EdgeAuth {
+        token: Arc::from(rt.cfg.edge_token.as_str()),
+    };
+    let agents = AgentsServer::new(AgentsSvc {
+        rt: Arc::clone(&rt),
+    })
+    .max_decoding_message_size(MAX_REQUEST_BYTES);
+    let session = SessionServer::new(SessionSvc { rt });
+    Server::builder()
+        .add_service(tonic::service::interceptor::InterceptedService::new(
+            agents,
+            auth.clone(),
+        ))
+        .add_service(tonic::service::interceptor::InterceptedService::new(
+            session, auth,
+        ))
+        .serve_with_incoming_shutdown(TcpListenerStream::new(listener), shutdown)
+        .await
+        .map_err(|e| format!("grpc server: {e}"))
+}
+
+async fn shutdown_signal() {
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        () = term => {}
+    }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
