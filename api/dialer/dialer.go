@@ -13,16 +13,12 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/grpc/metadata"
 
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
 const (
-	// HeaderEdgeToken carries the shared secret box agents require.
-	HeaderEdgeToken = "x-cocoonbox-edge-token" //nolint:gosec // a header name, not a credential
-
 	idleTimeout    = time.Minute
 	maxMessageSize = 64 << 20
 )
@@ -37,15 +33,13 @@ type ProgressFunc func(*agentv1.TransferProgress)
 
 // Dialer keeps one connection per agent endpoint.
 type Dialer struct {
-	edgeToken string
-
 	mu    sync.Mutex
 	conns map[string]*grpc.ClientConn
 }
 
-// New authenticates to agents with edgeToken.
-func New(edgeToken string) *Dialer {
-	return &Dialer{edgeToken: edgeToken, conns: map[string]*grpc.ClientConn{}}
+// New returns a Dialer; callers put the box credential in each call's context.
+func New() *Dialer {
+	return &Dialer{conns: map[string]*grpc.ClientConn{}}
 }
 
 // Plan calls State.Plan on the agent at ep.
@@ -54,7 +48,7 @@ func (d *Dialer) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.Pl
 	if err != nil {
 		return nil, err
 	}
-	return client.Plan(d.outgoing(ctx), req)
+	return client.Plan(ctx, req)
 }
 
 // Upload calls State.Upload and returns the final progress message.
@@ -63,7 +57,7 @@ func (d *Dialer) Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.
 	if err != nil {
 		return nil, err
 	}
-	stream, err := client.Upload(d.outgoing(ctx), req)
+	stream, err := client.Upload(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +70,7 @@ func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, req *agentv1
 	if err != nil {
 		return nil, err
 	}
-	stream, err := client.Restore(d.outgoing(ctx), req)
+	stream, err := client.Restore(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -110,10 +104,6 @@ func (d *Dialer) state(ep machines.Endpoint) (agentv1.StateClient, error) {
 	}
 	d.conns[ep.Key] = conn
 	return agentv1.NewStateClient(conn), nil
-}
-
-func (d *Dialer) outgoing(ctx context.Context) context.Context {
-	return metadata.AppendToOutgoingContext(ctx, HeaderEdgeToken, d.edgeToken)
 }
 
 func drain(stream grpc.ServerStreamingClient[agentv1.TransferProgress], progress ProgressFunc) (*agentv1.TransferProgress, error) {

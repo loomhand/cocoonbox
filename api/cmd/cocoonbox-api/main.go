@@ -52,10 +52,6 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "load config")
 	}
-	edgeToken, err := cfg.EdgeToken()
-	if err != nil {
-		logger.Warnf(ctx, "agent edge refuses every call until the edge token exists and the service restarts: %v", err)
-	}
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -74,21 +70,17 @@ func main() {
 		RebaseImages: cfg.RebaseImages,
 	})
 	if cfg.State.Bucket != "" {
-		agents := dialer.New(edgeToken)
+		agents := dialer.New()
 		defer agents.Close()
 		if err = enableState(ctx, cfg, svc, agents); err != nil {
 			logger.Fatalf(ctx, err, "enable state layer")
 		}
 	}
-	var creds edge.Credentials
-	if cfg.Provision.SigningKeyFile != "" {
-		var signer *credential.Signer
-		if signer, err = enableProvisioning(ctx, cfg, svc); err != nil {
-			logger.Fatalf(ctx, err, "enable provisioning")
-		}
-		creds = signer
+	signer, err := enableProvisioning(ctx, cfg, svc)
+	if err != nil {
+		logger.Fatalf(ctx, err, "enable provisioning")
 	}
-	proxy := edge.NewProxy(svc, edgeToken, creds)
+	proxy := edge.NewProxy(svc, signer)
 	defer proxy.Close()
 
 	authn := auth.New(cfg.Users)
@@ -104,7 +96,7 @@ func main() {
 
 	mcpMux := http.NewServeMux()
 	mcpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
-	mcpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, edgeToken, creds))
+	mcpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, signer))
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
@@ -149,9 +141,9 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 	if cfg.Provision.GWKeySocket != "" {
 		gw = gwkeys.New(cfg.Provision.GWKeySocket)
 	}
-	svc.EnableProvisioning(signer, gw, cfg.Provision.Users)
+	svc.EnableProvisioning(signer, gw)
 	go svc.RunProvisioner(ctx, provisionInterval)
-	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning boxes of %v with key %s, gw keys %t", cfg.Provision.Users, signer.KeyID(), gw != nil)
+	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, gw keys %t", signer.KeyID(), gw != nil)
 	return signer, nil
 }
 

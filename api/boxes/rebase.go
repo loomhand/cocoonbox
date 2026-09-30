@@ -62,7 +62,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	}
 	op.note(controlv1.Phase_PHASE_CREATING, controlv1.BoxState_BOX_STATE_STARTING, fmt.Sprintf("machine %s from %s", created.ID, image))
 	running, err := s.waitRunning(op, created)
-	if err == nil && s.provision.covers(running) {
+	if err == nil && s.provision != nil {
 		if err = s.provisionMachine(op.ctx, running); err == nil {
 			running, err = s.machines.Get(op.ctx, created.ID)
 		}

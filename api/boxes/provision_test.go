@@ -23,7 +23,7 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	fake := newFakeMachines()
 	gw := &fakeGW{}
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, gw, []string{alice})
+	svc.EnableProvisioning(fakeSigner{}, gw)
 	ctx := auth.WithUser(t.Context(), alice)
 
 	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
@@ -62,7 +62,7 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
 	gw := &fakeGW{}
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, gw, []string{alice})
+	svc.EnableProvisioning(fakeSigner{}, gw)
 	ctx := auth.WithUser(t.Context(), alice)
 
 	if _, wake, err := svc.Resolve(ctx, alice, aliceBox); err != nil || wake != "w-old" {
@@ -97,18 +97,20 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	}
 }
 
-func TestProvisioningLeavesOtherUsersAlone(t *testing.T) {
+func TestProvisioningCoversEveryUser(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, &fakeGW{}, []string{"dev"})
-	ep, wake, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox)
-	if err != nil || ep.Key == "" || wake != "" {
-		t.Errorf("Resolve for an unprovisioned user = %q, %q, %v", ep.Key, wake, err)
+	svc.EnableProvisioning(fakeSigner{}, &fakeGW{})
+	if _, _, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox); status.Code(err) != codes.Unavailable {
+		t.Errorf("Resolve before provisioning: %v, want Unavailable", err)
 	}
 	svc.provisionStale(t.Context())
-	if n := len(fake.execCalls()); n != 0 {
-		t.Errorf("provisioned a box outside provision users: %d execs", n)
+	if execs := fake.execCalls(); len(execs) != 1 || execs[0].identity.BoxID != aliceBox {
+		t.Fatalf("deliveries = %+v, want one for %s", execs, aliceBox)
+	}
+	if _, wake, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox); err != nil || wake == "" {
+		t.Errorf("Resolve after provisioning = %q, %v", wake, err)
 	}
 }
 
@@ -116,7 +118,7 @@ func TestProvisioningFailureFailsTheOperation(t *testing.T) {
 	fake := newFakeMachines()
 	fake.execErr = errors.New("exec: 502")
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, nil, []string{alice})
+	svc.EnableProvisioning(fakeSigner{}, nil)
 	svc.provision.backoff = time.Millisecond
 	ctx := auth.WithUser(t.Context(), alice)
 	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
@@ -137,7 +139,7 @@ func TestRebaseProvisionsTheNewMachineAndRevokesTheOld(t *testing.T) {
 		ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop-v1", Revision: 1,
 		Incarnation: "pod0/vm0", Meta: map[string]string{metaGW: "1", metaWake: "pod0/vm0|w0"},
 	})
-	env.svc.EnableProvisioning(fakeSigner{}, gw, []string{alice})
+	env.svc.EnableProvisioning(fakeSigner{}, gw)
 	env.agent.chunks = []string{hexID("c1")}
 	op, err := env.svc.Rebase(env.ctx, &controlv1.RebaseRequest{BoxId: aliceBox})
 	if err != nil {

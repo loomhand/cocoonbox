@@ -27,10 +27,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
-const (
-	aliceToken = "alice-secret"
-	edgeToken  = "edge-secret"
-)
+const aliceToken = "alice-secret"
 
 func TestUnaryRewritesHeaders(t *testing.T) {
 	env := newProxyEnv(t)
@@ -40,8 +37,8 @@ func TestUnaryRewritesHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Hello: %v", err)
 	}
-	if resp.GetAgentVersion() != edgeToken {
-		t.Errorf("agent saw edge token %q, want %q", resp.GetAgentVersion(), edgeToken)
+	if resp.GetAgentVersion() != "" {
+		t.Errorf("agent saw edge token %q, want none", resp.GetAgentVersion())
 	}
 	if len(resp.GetModels()) != 0 {
 		t.Errorf("agent saw authorization %v, want none", resp.GetModels())
@@ -216,16 +213,6 @@ func TestRejectsNonAgentMethods(t *testing.T) {
 	}
 }
 
-func TestRefusesWithoutEdgeToken(t *testing.T) {
-	env := newProxyEnvWithToken(t, "")
-	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable {
-		t.Errorf("Hello: %v, want Unavailable", err)
-	}
-	if env.agent.calls.Load() != 0 {
-		t.Errorf("agent received %d calls without an edge token", env.agent.calls.Load())
-	}
-}
-
 func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -235,7 +222,7 @@ func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
 	if err := lis.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
-	env := newProxyEnvAt(t, edgeToken, addr)
+	env := newProxyEnvAt(t, addr)
 	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable {
 		t.Fatalf("Hello before the agent listens: %v, want Unavailable", err)
 	}
@@ -272,26 +259,21 @@ type proxyEnv struct {
 
 func newProxyEnv(t *testing.T) *proxyEnv {
 	t.Helper()
-	return newProxyEnvWithToken(t, edgeToken)
-}
-
-func newProxyEnvWithToken(t *testing.T, token string) *proxyEnv {
-	t.Helper()
 	agentSrv := grpc.NewServer(grpc.MaxRecvMsgSize(MaxMessageSize))
-	env := newProxyEnvAt(t, token, "")
+	env := newProxyEnvAt(t, "")
 	agentv1.RegisterSessionServer(agentSrv, env.agent)
 	env.resolver.addr = serve(t, agentSrv)
 	return env
 }
 
-func newProxyEnvAt(t *testing.T, token, agentAddr string) *proxyEnv {
+func newProxyEnvAt(t *testing.T, agentAddr string) *proxyEnv {
 	t.Helper()
 	agent := &fakeAgent{screenDone: make(chan error, 1)}
 	resolver := &fakeResolver{addr: agentAddr}
 
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
-	proxy := NewProxy(resolver, token, fakeCreds{})
+	proxy := NewProxy(resolver, fakeCreds{})
 	t.Cleanup(proxy.Close)
 	edgeSrv := grpc.NewServer(
 		grpc.ForceServerCodecV2(NewCodec()),
@@ -349,7 +331,7 @@ type fakeCreds struct{}
 
 func (fakeCreds) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
 
-// fakeAgent echoes what the edge delivered: Hello returns the edge token as agent_version, authorization values as models and the box header as default_main_model.
+// fakeAgent echoes what the edge delivered: Hello returns any edge token header as agent_version, authorization values as models and the box header as default_main_model.
 type fakeAgent struct {
 	agentv1.UnimplementedSessionServer
 	calls      atomic.Int64
@@ -380,10 +362,6 @@ func (a *fakeAgent) Screen(stream grpc.BidiStreamingServer[agentv1.ScreenClientF
 }
 
 func (a *fakeAgent) screen(stream grpc.BidiStreamingServer[agentv1.ScreenClientFrame, agentv1.ScreenServerFrame]) error {
-	md, _ := metadata.FromIncomingContext(stream.Context())
-	if first(md.Get(HeaderEdgeToken)) != edgeToken {
-		return status.Error(codes.Unauthenticated, "bad edge token")
-	}
 	for {
 		in, err := stream.Recv()
 		if errors.Is(err, io.EOF) {

@@ -19,14 +19,13 @@ const (
 	BackendCocoonSet = "cocoonset"
 	BackendSandboxd  = "sandboxd"
 
-	defaultListen        = "127.0.0.1:18200"
-	defaultMCPListen     = "127.0.0.1:18201"
-	defaultNamespace     = "cocoonbox"
-	defaultImage         = "cocoonbox-desktop-v1"
-	defaultNetwork       = "cb"
-	defaultProbePort     = 22
-	defaultAgentPort     = 7443
-	defaultEdgeTokenFile = "/etc/cocoonbox/edge-token" //nolint:gosec // a path, not a credential
+	defaultListen    = "127.0.0.1:18200"
+	defaultMCPListen = "127.0.0.1:18201"
+	defaultNamespace = "cocoonbox"
+	defaultImage     = "cocoonbox-desktop-v1"
+	defaultNetwork   = "cb"
+	defaultProbePort = 22
+	defaultAgentPort = 7443
 
 	defaultStateInterval = 15 * time.Minute
 	defaultPresignTTL    = 10 * time.Minute
@@ -87,11 +86,10 @@ type State struct {
 	PresignTTL     Duration `json:"presign_ttl"`
 }
 
-// Provision names the edge signing key, the gw key helper socket and the users whose boxes are provisioned.
+// Provision names the edge signing key and the gw key helper socket.
 type Provision struct {
-	SigningKeyFile string   `json:"signing_key_file"`
-	GWKeySocket    string   `json:"gw_key_socket"`
-	Users          []string `json:"users"`
+	SigningKeyFile string `json:"signing_key_file"`
+	GWKeySocket    string `json:"gw_key_socket"`
 }
 
 // Sandboxd names the sandboxd instance of the sandboxd backend and the file holding its root api token.
@@ -103,19 +101,18 @@ type Sandboxd struct {
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
 	// Backend selects the machine backend: cocoonset (default) or sandboxd.
-	Backend       string   `json:"backend"`
-	Sandboxd      Sandboxd `json:"sandboxd"`
-	Listen        string   `json:"listen"`
-	MCPListen     string   `json:"mcp_listen"`
-	Kubeconfig    string   `json:"kubeconfig"`
-	Namespace     string   `json:"namespace"`
-	Image         string   `json:"image"`
-	RebaseImages  []string `json:"rebase_images"`
-	Network       string   `json:"network"`
-	ProbePort     int32    `json:"probe_port"`
-	AgentPort     int      `json:"agent_port"`
-	EdgeTokenFile string   `json:"edge_token_file"`
-	// Provision configures box identity files and per-box gw keys; an empty SigningKeyFile turns it off.
+	Backend      string   `json:"backend"`
+	Sandboxd     Sandboxd `json:"sandboxd"`
+	Listen       string   `json:"listen"`
+	MCPListen    string   `json:"mcp_listen"`
+	Kubeconfig   string   `json:"kubeconfig"`
+	Namespace    string   `json:"namespace"`
+	Image        string   `json:"image"`
+	RebaseImages []string `json:"rebase_images"`
+	Network      string   `json:"network"`
+	ProbePort    int32    `json:"probe_port"`
+	AgentPort    int      `json:"agent_port"`
+	// Provision configures every box's identity file and per-box gw key.
 	Provision Provision `json:"provision"`
 	Flavor    Flavor    `json:"flavor"`
 	Flavors   []Flavor  `json:"flavors"`
@@ -173,19 +170,6 @@ func (c *Config) SandboxdToken() (string, error) {
 	return token, nil
 }
 
-// EdgeToken reads the shared secret the edge presents to box agents.
-func (c *Config) EdgeToken() (string, error) {
-	raw, err := os.ReadFile(c.EdgeTokenFile)
-	if err != nil {
-		return "", fmt.Errorf("read edge token: %w", err)
-	}
-	token := strings.TrimSpace(string(raw))
-	if token == "" {
-		return "", fmt.Errorf("edge token file %s is empty", c.EdgeTokenFile)
-	}
-	return token, nil
-}
-
 func (c *Config) applyDefaults() {
 	c.Backend = cmp.Or(c.Backend, BackendCocoonSet)
 	c.Listen = cmp.Or(c.Listen, defaultListen)
@@ -195,7 +179,6 @@ func (c *Config) applyDefaults() {
 	c.Network = cmp.Or(c.Network, defaultNetwork)
 	c.ProbePort = cmp.Or(c.ProbePort, defaultProbePort)
 	c.AgentPort = cmp.Or(c.AgentPort, defaultAgentPort)
-	c.EdgeTokenFile = cmp.Or(c.EdgeTokenFile, defaultEdgeTokenFile)
 	c.Flavor.VCPUs = cmp.Or(c.Flavor.VCPUs, defaultVCPUs)
 	c.Flavor.MemoryMiB = cmp.Or(c.Flavor.MemoryMiB, defaultMemoryMiB)
 	c.Flavor.DiskGiB = cmp.Or(c.Flavor.DiskGiB, defaultDiskGiB)
@@ -207,7 +190,7 @@ func (c *Config) applyDefaults() {
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.Kubeconfig, &c.EdgeTokenFile, &c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Sandboxd.TokenFile} {
+	for _, p := range []*string{&c.Kubeconfig, &c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Sandboxd.TokenFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -235,6 +218,9 @@ func (c *Config) validate() error {
 	}
 	if c.ProbePort < 0 || c.ProbePort > 65535 {
 		errs = append(errs, fmt.Errorf("probe_port must be in 0..65535, got %d", c.ProbePort))
+	}
+	if c.Provision.SigningKeyFile == "" {
+		errs = append(errs, errors.New("provision.signing_key_file is required: agents admit only edge-signed credentials"))
 	}
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))

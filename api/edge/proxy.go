@@ -26,7 +26,7 @@ import (
 const (
 	// HeaderBox names the target box of an agent call.
 	HeaderBox = "x-cocoonbox-box"
-	// HeaderEdgeToken carries the shared secret box agents require from the edge.
+	// HeaderEdgeToken names the retired shared agent secret; the edge strips it from clients.
 	HeaderEdgeToken = "x-cocoonbox-edge-token" //nolint:gosec // a header name, not a credential
 	// MaxMessageSize bounds one proxied frame in either direction.
 	MaxMessageSize = 64 << 20
@@ -58,18 +58,17 @@ type Credentials interface {
 
 // Proxy is the unknown-service handler that forwards agent calls frame by frame.
 type Proxy struct {
-	resolver  Resolver
-	edgeToken string
-	creds     Credentials
-	codec     Codec
+	resolver Resolver
+	creds    Credentials
+	codec    Codec
 
 	mu    sync.Mutex
 	conns map[string]*boxConn
 }
 
-// NewProxy builds a Proxy that authenticates to agents with edgeToken and, when creds is set, a box credential; an empty edgeToken refuses every call.
-func NewProxy(resolver Resolver, edgeToken string, creds Credentials) *Proxy {
-	return &Proxy{resolver: resolver, edgeToken: edgeToken, creds: creds, codec: NewCodec(), conns: map[string]*boxConn{}}
+// NewProxy builds a Proxy that authenticates to agents with box credentials from creds.
+func NewProxy(resolver Resolver, creds Credentials) *Proxy {
+	return &Proxy{resolver: resolver, creds: creds, codec: NewCodec(), conns: map[string]*boxConn{}}
 }
 
 // Handle proxies one call; install it with grpc.UnknownServiceHandler.
@@ -85,9 +84,6 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	user := auth.User(ctx)
 	if user == "" {
 		return status.Error(codes.Unauthenticated, "unauthenticated")
-	}
-	if p.edgeToken == "" {
-		return status.Error(codes.Unavailable, "agent edge is not configured")
 	}
 	md, _ := metadata.FromIncomingContext(ctx)
 	boxes := md.Get(HeaderBox)
@@ -190,8 +186,7 @@ func (p *Proxy) outgoing(in metadata.MD, box, wake string) metadata.MD {
 	for _, k := range droppedHeaders {
 		delete(out, k)
 	}
-	out.Set(HeaderEdgeToken, p.edgeToken)
-	if p.creds != nil && wake != "" {
+	if wake != "" {
 		out.Set(credential.Header, p.creds.Credential(box, wake))
 	}
 	return out

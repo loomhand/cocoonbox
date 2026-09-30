@@ -41,7 +41,7 @@ func TestMCPPostRoundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	want := map[string]string{
-		"path": "/mcp/extra", "query": "x=1", "session": "s0", "edge_token": edgeToken, "authorization": "",
+		"path": "/mcp/extra", "query": "x=1", "session": "s0", "edge_token": "", "authorization": "",
 		"credential": "cred:" + boxes.BoxID("alice") + ":w1",
 		"body":       `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
 	}
@@ -186,7 +186,7 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
 	served := make(chan string, 16)
-	mcp := NewMCP(resolver, authn, edgeToken, fakeCreds{})
+	mcp := NewMCP(resolver, authn, fakeCreds{})
 	addr := serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { served <- r.Method }()
 		mcp.ServeHTTP(w, r)
@@ -238,10 +238,6 @@ type fakeMCP struct {
 
 func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.calls.Add(1)
-	if r.Header.Get(HeaderEdgeToken) != edgeToken {
-		http.Error(w, "bad edge token", http.StatusUnauthorized)
-		return
-	}
 	if r.Method == http.MethodGet {
 		f.stream(w, r)
 		return

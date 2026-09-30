@@ -9,7 +9,6 @@ User=cocoonbox-api
 Group=cocoonbox-api
 LoadCredential=api.yaml:/etc/cocoonbox/api.yaml
 LoadCredential=kubeconfig:/etc/cocoonbox/kubeconfig
-LoadCredential=edge-token:/etc/cocoonbox/edge-token
 LoadCredential=store.env:/etc/cocoonbox/store.env
 LoadCredential=edge-signing.key:/etc/cocoonbox/edge-signing.key
 StateDirectory=cocoonbox-api

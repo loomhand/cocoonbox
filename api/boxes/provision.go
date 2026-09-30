@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -38,9 +37,9 @@ type GWKeys interface {
 	Revoke(ctx context.Context, machine string) error
 }
 
-// EnableProvisioning gives the machines of users identity files for signer and, when gw is set, per-machine gw keys.
-func (s *Service) EnableProvisioning(signer Signer, gw GWKeys, users []string) {
-	s.provision = &provisioner{signer: signer, gw: gw, users: users, backoff: provisionBackoff, locks: map[string]*sync.Mutex{}}
+// EnableProvisioning gives every machine an identity file for signer and, when gw is set, a per-machine gw key.
+func (s *Service) EnableProvisioning(signer Signer, gw GWKeys) {
+	s.provision = &provisioner{signer: signer, gw: gw, backoff: provisionBackoff, locks: map[string]*sync.Mutex{}}
 }
 
 // RunProvisioner provisions running machines that came up without an operation, until ctx ends.
@@ -64,7 +63,7 @@ func (s *Service) provisionStale(ctx context.Context) {
 		return
 	}
 	for _, m := range ms {
-		if m.State == machines.StateRunning && s.provision.covers(m) && wakeOf(m) == "" {
+		if m.State == machines.StateRunning && wakeOf(m) == "" {
 			_ = s.provisionMachine(ctx, m)
 		}
 	}
@@ -150,24 +149,19 @@ func (s *Service) revokeGW(ctx context.Context, machine string) {
 	}
 }
 
-// ready reports whether clients may reach m: running, not being restored and, when m is provisioned, provisioned for this incarnation.
+// ready reports whether clients may reach m: running, not being restored and, with provisioning on, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
-	return m.State == machines.StateRunning && (s.provision == nil || !s.provision.covers(m) || wakeOf(m) != "") && !s.restoring(BoxID(m.Owner))
+	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !s.restoring(BoxID(m.Owner))
 }
 
 // provisioner writes each machine's identity file on every boot and its gw key on first boot.
 type provisioner struct {
 	signer  Signer
 	gw      GWKeys
-	users   []string
 	backoff time.Duration
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
-}
-
-func (p *provisioner) covers(m machines.Machine) bool {
-	return p != nil && slices.Contains(p.users, m.Owner)
 }
 
 func (p *provisioner) lock(machine string) func() {

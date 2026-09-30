@@ -45,18 +45,17 @@ type boxTransport struct {
 
 // MCP proxies MCP Streamable HTTP exchanges to the agent of the caller's box.
 type MCP struct {
-	resolver  Resolver
-	authn     *auth.Authenticator
-	edgeToken string
-	creds     Credentials
+	resolver Resolver
+	authn    *auth.Authenticator
+	creds    Credentials
 
 	mu         sync.Mutex
 	transports map[string]*boxTransport
 }
 
-// NewMCP builds the MCP proxy; creds, when set, adds box credentials, and an empty edgeToken refuses every exchange.
-func NewMCP(resolver Resolver, authn *auth.Authenticator, edgeToken string, creds Credentials) *MCP {
-	return &MCP{resolver: resolver, authn: authn, edgeToken: edgeToken, creds: creds, transports: map[string]*boxTransport{}}
+// NewMCP builds the MCP proxy that authenticates to agents with box credentials from creds.
+func NewMCP(resolver Resolver, authn *auth.Authenticator, creds Credentials) *MCP {
+	return &MCP{resolver: resolver, authn: authn, creds: creds, transports: map[string]*boxTransport{}}
 }
 
 func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -87,9 +86,6 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (m *MCP) route(ctx context.Context, authorization, boxID string) (user string, ep machines.Endpoint, wake string, err error) {
 	if user, err = m.authn.Authenticate(authorization); err != nil {
 		return "", ep, "", err
-	}
-	if m.edgeToken == "" {
-		return user, ep, "", status.Error(codes.Unavailable, "agent edge is not configured")
 	}
 	if boxID == "" {
 		return user, ep, "", status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
@@ -125,8 +121,8 @@ func (m *MCP) rewrite(pr *httputil.ProxyRequest, addr, box, wake string) {
 	pr.Out.Host = pr.Out.URL.Host
 	pr.Out.Header.Del("Authorization")
 	pr.Out.Header.Del(credential.Header)
-	pr.Out.Header.Set(HeaderEdgeToken, m.edgeToken)
-	if m.creds != nil && wake != "" {
+	pr.Out.Header.Del(HeaderEdgeToken)
+	if wake != "" {
 		pr.Out.Header.Set(credential.Header, m.creds.Credential(box, wake))
 	}
 }

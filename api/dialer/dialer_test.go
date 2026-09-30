@@ -10,25 +10,27 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
+	"github.com/CMGS/cocoonbox/api/credential"
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
-func TestDialerSendsEdgeTokenAndDrainsStreams(t *testing.T) {
+func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	d := New("edge-secret")
+	d := New()
 	t.Cleanup(d.Close)
+	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
 
-	plan, err := d.Plan(t.Context(), ep, &agentv1.PlanRequest{})
+	plan, err := d.Plan(ctx, ep, &agentv1.PlanRequest{})
 	if err != nil || plan.GetSnapshotId() != "s1" {
 		t.Fatalf("Plan = %v, %v", plan, err)
 	}
 	var seen int
-	final, err := d.Upload(t.Context(), ep, &agentv1.UploadRequest{SnapshotId: "s1"}, func(*agentv1.TransferProgress) { seen++ })
+	final, err := d.Upload(ctx, ep, &agentv1.UploadRequest{SnapshotId: "s1"}, func(*agentv1.TransferProgress) { seen++ })
 	if err != nil || !final.GetFinished() || final.GetManifestId() != "s1" || seen != 3 {
 		t.Errorf("Upload = %v, %v after %d messages", final, err, seen)
 	}
-	if _, err := d.Restore(t.Context(), ep, &agentv1.RestoreRequest{}, nil); err == nil {
+	if _, err := d.Restore(ctx, ep, &agentv1.RestoreRequest{}, nil); err == nil {
 		t.Error("Restore without a final message succeeded")
 	}
 }
@@ -36,19 +38,19 @@ func TestDialerSendsEdgeTokenAndDrainsStreams(t *testing.T) {
 func TestDialerDialsTheEndpointNotItsKey(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
 	ep.Key = "box.invalid:1"
-	d := New("edge-secret")
+	d := New()
 	t.Cleanup(d.Close)
-	if _, err := d.Plan(t.Context(), ep, &agentv1.PlanRequest{}); err != nil {
+	if _, err := d.Plan(metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1"), ep, &agentv1.PlanRequest{}); err != nil {
 		t.Errorf("Plan through an endpoint whose key resolves nowhere: %v", err)
 	}
 }
 
-func TestDialerWithoutTokenIsRejected(t *testing.T) {
+func TestDialerAddsNoCredentialOfItsOwn(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	d := New("wrong")
+	d := New()
 	t.Cleanup(d.Close)
 	if _, err := d.Plan(t.Context(), ep, &agentv1.PlanRequest{}); status.Code(err) != codes.Unauthenticated {
-		t.Errorf("Plan with a wrong token: %v, want Unauthenticated", err)
+		t.Errorf("Plan without a credential: %v, want Unauthenticated", err)
 	}
 }
 
@@ -65,20 +67,20 @@ func serveState(t *testing.T, srv agentv1.StateServer) string {
 	return lis.Addr().String()
 }
 
-// fakeState requires edge-secret; Upload sends two progress messages and a final one, Restore ends without a final message.
+// fakeState requires credential cred-1 and no edge token; Upload sends two progress messages and a final one, Restore ends without a final message.
 type fakeState struct {
 	agentv1.UnimplementedStateServer
 }
 
 func (fakeState) Plan(ctx context.Context, _ *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
-	if err := checkToken(ctx); err != nil {
+	if err := checkCredential(ctx); err != nil {
 		return nil, err
 	}
 	return &agentv1.PlanResponse{SnapshotId: "s1"}, nil
 }
 
 func (fakeState) Upload(req *agentv1.UploadRequest, stream grpc.ServerStreamingServer[agentv1.TransferProgress]) error {
-	if err := checkToken(stream.Context()); err != nil {
+	if err := checkCredential(stream.Context()); err != nil {
 		return err
 	}
 	for _, p := range []*agentv1.TransferProgress{{DoneChunks: 1}, {DoneChunks: 2}, {Finished: true, ManifestId: req.GetSnapshotId()}} {
@@ -93,10 +95,10 @@ func (fakeState) Restore(_ *agentv1.RestoreRequest, stream grpc.ServerStreamingS
 	return stream.Send(&agentv1.TransferProgress{DoneChunks: 1})
 }
 
-func checkToken(ctx context.Context) error {
+func checkCredential(ctx context.Context) error {
 	md, _ := metadata.FromIncomingContext(ctx)
-	if v := md.Get(HeaderEdgeToken); len(v) != 1 || v[0] != "edge-secret" {
-		return status.Error(codes.Unauthenticated, "bad edge token")
+	if v := md.Get(credential.Header); len(v) != 1 || v[0] != "cred-1" || len(md.Get("x-cocoonbox-edge-token")) != 0 {
+		return status.Error(codes.Unauthenticated, "bad credential")
 	}
 	return nil
 }

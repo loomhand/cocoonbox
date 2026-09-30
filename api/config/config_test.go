@@ -7,10 +7,13 @@ import (
 	"testing"
 )
 
-const validHash = "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90"
+const (
+	validHash  = "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90"
+	signingKey = "provision:\n  signing_key_file: edge-signing.key\n"
+)
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := Load(writeConfig(t, "users:\n  - name: alice\n    token_sha256: "+validHash+"\n"))
+	cfg, err := Load(writeConfig(t, signingKey+"users:\n  - name: alice\n    token_sha256: "+validHash+"\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -36,6 +39,8 @@ func TestLoadRejects(t *testing.T) {
 		{name: "bad port", body: "agent_port: 70000\n", want: "agent_port"},
 		{name: "unknown backend", body: "backend: nomad\n", want: "backend must be"},
 		{name: "sandboxd without url", body: "backend: sandboxd\nsandboxd:\n  token_file: t\n", want: "sandboxd.url"},
+		{name: "no signing key", body: "users: []\n", want: "provision.signing_key_file is required"},
+		{name: "retired edge token", body: signingKey + "edge_token_file: edge-token\n", want: "unknown field"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -47,14 +52,14 @@ func TestLoadRejects(t *testing.T) {
 }
 
 func TestLoadResolvesRelativePaths(t *testing.T) {
-	path := writeConfig(t, "kubeconfig: kubeconfig\nedge_token_file: edge-token\nbackend: sandboxd\nsandboxd:\n  url: http://127.0.0.1:17800\n  token_file: sandboxd-token\n")
+	path := writeConfig(t, signingKey+"kubeconfig: kubeconfig\nbackend: sandboxd\nsandboxd:\n  url: http://127.0.0.1:17800\n  token_file: sandboxd-token\n")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	dir := filepath.Dir(path)
-	if cfg.Kubeconfig != filepath.Join(dir, "kubeconfig") || cfg.EdgeTokenFile != filepath.Join(dir, "edge-token") || cfg.Sandboxd.TokenFile != filepath.Join(dir, "sandboxd-token") {
-		t.Errorf("paths = %q, %q, want under %s", cfg.Kubeconfig, cfg.EdgeTokenFile, dir)
+	if cfg.Kubeconfig != filepath.Join(dir, "kubeconfig") || cfg.Provision.SigningKeyFile != filepath.Join(dir, "edge-signing.key") || cfg.Sandboxd.TokenFile != filepath.Join(dir, "sandboxd-token") {
+		t.Errorf("paths = %q, %q, %q, want under %s", cfg.Kubeconfig, cfg.Provision.SigningKeyFile, cfg.Sandboxd.TokenFile, dir)
 	}
 }
 
@@ -65,23 +70,6 @@ func TestLoadsTheExampleConfig(t *testing.T) {
 	}
 	if cfg.State.Bucket == "" || cfg.Provision.SigningKeyFile == "" || len(cfg.Users) != 1 || cfg.Image != "cocoonbox-desktop-v7" {
 		t.Errorf("example config = %+v", cfg)
-	}
-}
-
-func TestEdgeToken(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "edge-token")
-	if err := os.WriteFile(path, []byte("s3cret\n"), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	cfg := &Config{EdgeTokenFile: path}
-	if got, err := cfg.EdgeToken(); err != nil || got != "s3cret" {
-		t.Errorf("EdgeToken = %q, %v", got, err)
-	}
-	if err := os.WriteFile(path, []byte("\n"), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	if _, err := cfg.EdgeToken(); err == nil {
-		t.Error("EdgeToken accepted an empty file")
 	}
 }
 

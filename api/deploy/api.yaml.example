@@ -8,7 +8,6 @@ rebase_images: []            # older goldens Rebase may also target; anything el
 network: cb
 probe_port: 7443
 agent_port: 7443
-edge_token_file: edge-token
 backend: cocoonset             # cocoonset | sandboxd (design §14)
 sandboxd:                      # used by backend sandboxd; image then names the template
   url: http://127.0.0.1:17800
@@ -27,10 +26,9 @@ state:
   interval: 15m
   presign_ttl: 10m
   scheduled_users: []          # users whose boxes get scheduled live saves
-provision:                     # box identity files (design §12) and per-box gw keys
+provision:                     # every box's identity file (design §12) and per-box gw key
   signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519
   gw_key_socket: /run/cb-gw-key.sock
-  users: []                    # users whose boxes are provisioned
 users:
   # token_sha256 = printf %s "$TOKEN" | sha256sum
   - name: example

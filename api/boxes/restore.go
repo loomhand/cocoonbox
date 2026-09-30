@@ -31,7 +31,7 @@ func (s *Service) runRestore(op *operation, m machines.Machine, saved head) {
 	op.note(controlv1.Phase_PHASE_CREATING, controlv1.BoxState_BOX_STATE_STARTING,
 		fmt.Sprintf("machine %s for the state saved at %s", m.ID, savedAt))
 	running, err := s.waitRunning(op, m)
-	if err == nil && s.provision.covers(running) {
+	if err == nil && s.provision != nil {
 		if err = s.provisionMachine(op.ctx, running); err == nil {
 			running, err = s.machines.Get(op.ctx, m.ID)
 		}
