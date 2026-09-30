@@ -318,7 +318,7 @@ impl Runtime {
     }
 
     /// Publishes a ComputerAction event for an input the subagent is about to inject.
-    pub fn announce_action(&self, ctx: &TurnCtx, args: &Value) {
+    pub fn announce_action(&self, agent_id: &str, args: &Value) {
         let coord = |k: &str| args[k].as_f64().map_or(0, |v| v.round() as i32);
         let text = ["text", "key", "app"]
             .iter()
@@ -335,7 +335,7 @@ impl Runtime {
             .unwrap_or_default();
         self.bus
             .publish(event::Body::ComputerAction(pb::ComputerAction {
-                agent_id: ctx.agent_id.clone(),
+                agent_id: agent_id.to_owned(),
                 action: args["action"].as_str().unwrap_or_default().to_owned(),
                 x: coord("x"),
                 y: coord("y"),
@@ -612,7 +612,7 @@ impl Runtime {
         Ok(text)
     }
 
-    async fn record_raw(
+    pub(crate) async fn record_raw(
         &self,
         agent_id: &str,
         turn_id: &str,
@@ -632,7 +632,7 @@ impl Runtime {
         Ok(())
     }
 
-    async fn set_status(&self, agent_id: &str, status: AgentStatus) {
+    pub(crate) async fn set_status(&self, agent_id: &str, status: AgentStatus) {
         match self.store.set_status(agent_id.to_owned(), status).await {
             Ok(Some(agent)) => {
                 self.bus.publish(event::Body::Agent(agent));

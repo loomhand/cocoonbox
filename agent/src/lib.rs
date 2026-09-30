@@ -4,6 +4,7 @@ pub mod bus;
 pub mod computer;
 pub mod config;
 pub mod llm;
+pub mod mcp;
 pub mod prompts;
 pub mod runner;
 pub mod screen;

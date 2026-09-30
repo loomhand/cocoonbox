@@ -5,18 +5,21 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
-use tonic::service::Interceptor;
+use tonic::service::interceptor::InterceptedService;
+use tonic::service::{Interceptor, Routes};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::config::ServeConfig;
+use crate::mcp::Mcp;
 use crate::pb::agents_server::{Agents, AgentsServer};
 use crate::pb::session_server::{Session, SessionServer};
 use crate::pb::{self, Event};
 use crate::runner::Runtime;
 use crate::screen;
 
-const EDGE_TOKEN_HEADER: &str = "x-cocoonbox-edge-token";
+/// Header the edge adds to every forwarded call.
+pub const EDGE_TOKEN_HEADER: &str = "x-cocoonbox-edge-token";
 const MAX_REQUEST_BYTES: usize = 64 << 20;
 const DEFAULT_PAGE: u32 = 100;
 const MAX_PAGE: u32 = 1000;
@@ -220,15 +223,18 @@ pub async fn serve_on(
         rt: Arc::clone(&rt),
     })
     .max_decoding_message_size(MAX_REQUEST_BYTES);
-    let session = SessionServer::new(SessionSvc { rt });
+    let session = SessionServer::new(SessionSvc {
+        rt: Arc::clone(&rt),
+    });
+    let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle);
+    mcp.spawn_reaper();
+    let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
+        .add_service(InterceptedService::new(session, auth))
+        .into_axum_router()
+        .merge(mcp.router());
     Server::builder()
-        .add_service(tonic::service::interceptor::InterceptedService::new(
-            agents,
-            auth.clone(),
-        ))
-        .add_service(tonic::service::interceptor::InterceptedService::new(
-            session, auth,
-        ))
+        .accept_http1(true)
+        .add_routes(Routes::from(routes))
         .serve_with_incoming_shutdown(TcpListenerStream::new(listener), shutdown)
         .await
         .map_err(|e| format!("grpc server: {e}"))
@@ -249,6 +255,7 @@ async fn shutdown_signal() {
     }
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+/// Compares two secrets without an early exit.
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }

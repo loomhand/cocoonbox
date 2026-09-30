@@ -2,7 +2,7 @@
 
 The in-box agent of a cocoonbox. One binary, two subcommands:
 
-- `serve` runs as `cbagent`. It serves `cocoonbox.agent.v1.Agents` and `Session` over h2c gRPC on `AGENT_LISTEN` and runs the agent loop. It keeps state in `/var/lib/cocoonbox/agent.db`.
+- `serve` runs as `cbagent`. It serves `cocoonbox.agent.v1.Agents` and `Session` over h2c gRPC on `AGENT_LISTEN` and runs the agent loop. The same listener also answers MCP Streamable HTTP at `/mcp` (mode B). It keeps state in `/var/lib/cocoonbox/agent.db`.
 - `toolhost` runs as the desktop user `user`. It executes every tool behind `/run/cocoonbox/toolhost.sock`.
 
 ## Modules
@@ -15,6 +15,7 @@ The in-box agent of a cocoonbox. One binary, two subcommands:
 | `llm/` | Streaming gw client. `openai.rs` is chat completions (SSE) and serves every model by default. `anthropic.rs` is Messages, used for `anthropic/` models only when `GW_ANTHROPIC_WIRE=messages`. `sse.rs` is the decoder |
 | `store.rs` | SQLite tables: agents, turns, transcript entries (global monotonic `seq`), client-nonce dedupe |
 | `bus.rs` | Event fan-out. Offsets start at boot time in µs. A bounded replay ring serves `Events(from_offset)` |
+| `mcp.rs` | MCP Streamable HTTP at `/mcp` for external agents (mode B), next to gRPC on the same listener |
 | `screen.rs` | Raw RFB relay to `127.0.0.1:5900` after the `open` frame |
 | `toolhost/` | `rpc.rs` (u32-length-prefixed JSON, one call per connection), `shell.rs`, `files.rs`, `browser.rs` (Chrome over CDP), `cua.rs` (cua-driver socket client) |
 | `prompts.rs`, `tools.rs` | System prompts and tool schemas |
@@ -28,6 +29,18 @@ The in-box agent of a cocoonbox. One binary, two subcommands:
 - **File paths.** A relative path resolves under `/workspace`. An absolute path is used as given, so the uid `user` is the access boundary.
 - **Browser.** The toolhost attaches to Chrome on `127.0.0.1:9222`, or launches it with the `/home/user/.config/cocoonbox-chrome` profile. A snapshot is a ref-tagged list (`- link "Learn more" [ref=e1]`) of at most 300 lines. It includes open shadow roots but not iframes. Clicks are CDP mouse events at the element's center.
 - **Computer.** Each `delegate_computer` task runs in its own cua-driver session (`cu-…`). Every call of the task carries that label. `end_session` runs when the task ends, or from a detached task if a cancel drops it. `computer_state` returns the desktop screenshot, the window list and the AT-SPI elements of one window. `computer_act` targets an element by index from the latest state, or screen pixels. Keyboard input with neither goes to the frontmost app window at the moment of the action, and `foreground: true` escalates delivery. A fresh screenshot follows every action, and a `ComputerAction` event is published before each input. For `anthropic/` models on the chat wire, the system prompt and the newest user message carry `cache_control`. Screenshots are pruned in batches (above 6, keep 3) so the cached prefix survives most steps.
+
+## MCP (mode B)
+
+External agents such as Claude Code, Codex or Cursor use the box through `POST|GET|DELETE /mcp`, with protocol 2025-03-26, 2025-06-18 or 2025-11-25. Every request needs `x-cocoonbox-edge-token`, which the edge adds.
+
+- `initialize` returns an `Mcp-Session-Id`. The session appears as an agent `mcp:<clientInfo.name>` whose status is RUNNING while the session lives.
+- Each tool call and its result go into that agent's transcript and onto `Session.Events`. `computer_act` also publishes a `ComputerAction` event.
+- Tools: `shell`, `read_file`, `write_file`, `edit_file`, `list_dir`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_read`, `computer_state`, `computer_act`, `screenshot`. They run in the toolhost exactly as the loop's calls do.
+- Screenshots come back as MCP `image` content (PNG). `max_edge` scales a screenshot, and pixel coordinates then refer to the scaled image: cua-driver maps them back to the screen.
+- Each MCP session owns one cua-driver session label. It is ended by `DELETE`, by closing the GET stream (a later call starts a new label), or after 10 min without activity, which also closes the MCP session.
+- The toolhost holds one input lock per display, so a `computer_act` from mode A and one over MCP never interleave.
+- POST answers with `application/json`. GET is an SSE stream that carries only keepalive comments, because the server sends no requests of its own.
 
 ## Limits
 

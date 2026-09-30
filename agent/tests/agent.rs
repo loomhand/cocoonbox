@@ -33,6 +33,14 @@ struct Harness {
 
 impl Harness {
     async fn start(script: Vec<(&'static str, String)>, anthropic_messages: bool) -> Self {
+        Self::start_with(script, anthropic_messages, Duration::from_secs(600)).await
+    }
+
+    async fn start_with(
+        script: Vec<(&'static str, String)>,
+        anthropic_messages: bool,
+        mcp_idle: Duration,
+    ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
@@ -63,6 +71,7 @@ impl Harness {
             toolhost_socket: toolhost_socket.clone(),
             vnc_addr: fake_vnc().await,
             anthropic_messages,
+            mcp_idle,
         };
         let rt = Runtime::open(cfg).await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1023,4 +1032,352 @@ async fn vision_main_model_gets_a_screenshot_tool() {
         cua.iter()
             .all(|(_, a)| a["session"].as_str().unwrap().starts_with("shot-"))
     );
+}
+
+struct McpClient {
+    http: reqwest::Client,
+    url: String,
+    session: String,
+    next_id: u64,
+}
+
+impl McpClient {
+    async fn connect(h: &Harness) -> Self {
+        let mut c = Self {
+            http: reqwest::Client::new(),
+            url: format!("{}/mcp", h.endpoint),
+            session: String::new(),
+            next_id: 0,
+        };
+        let resp = c
+            .post(
+                json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "test-client", "version": "1.0"}
+                }}),
+            )
+            .await;
+        assert_eq!(resp.status(), 200);
+        c.session = resp.headers()["mcp-session-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let init: Value = resp.json().await.unwrap();
+        assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+        assert_eq!(init["result"]["serverInfo"]["name"], "cocoonbox-agent");
+        assert!(init["result"]["capabilities"]["tools"].is_object());
+        let note = c
+            .post(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .await;
+        assert_eq!(note.status(), 202);
+        c
+    }
+
+    async fn post(&self, body: Value) -> reqwest::Response {
+        let mut req = self
+            .http
+            .post(&self.url)
+            .header("x-cocoonbox-edge-token", TOKEN)
+            .header("accept", "application/json, text/event-stream")
+            .json(&body);
+        if !self.session.is_empty() {
+            req = req.header("mcp-session-id", &self.session);
+        }
+        req.send().await.unwrap()
+    }
+
+    async fn rpc(&mut self, method: &str, params: Value) -> Value {
+        self.next_id += 1;
+        let resp = self
+            .post(json!({"jsonrpc": "2.0", "id": self.next_id, "method": method, "params": params}))
+            .await;
+        assert_eq!(resp.status(), 200);
+        let reply: Value = resp.json().await.unwrap();
+        assert_eq!(reply["id"], self.next_id);
+        reply
+    }
+
+    async fn call(&mut self, name: &str, arguments: Value) -> Value {
+        let reply = self
+            .rpc("tools/call", json!({"name": name, "arguments": arguments}))
+            .await;
+        reply["result"].clone()
+    }
+}
+
+fn driver_calls(h: &Harness, name: &str) -> Vec<Value> {
+    h.cua_log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(n, _)| n == name)
+        .map(|(_, a)| a.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
+    let h = Harness::start(Vec::new(), false).await;
+    let http = reqwest::Client::new();
+    let denied = http
+        .post(format!("{}/mcp", h.endpoint))
+        .json(&json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), 401);
+
+    let mut session = h.session().await;
+    let mut events = session
+        .events(authed(pb::EventsRequest { from_offset: 0 }))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut mcp = McpClient::connect(&h).await;
+
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let mut names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(
+        names,
+        [
+            "browser_click",
+            "browser_navigate",
+            "browser_read",
+            "browser_snapshot",
+            "browser_type",
+            "computer_act",
+            "computer_state",
+            "edit_file",
+            "list_dir",
+            "read_file",
+            "screenshot",
+            "shell",
+            "write_file"
+        ]
+    );
+    assert!(listed["result"]["tools"][0]["inputSchema"]["type"] == "object");
+
+    let shell = mcp
+        .call(
+            "shell",
+            json!({"command": "echo from-mcp > m.txt; cat m.txt"}),
+        )
+        .await;
+    assert_eq!(shell["isError"], false);
+    assert!(
+        shell["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("from-mcp"),
+        "{shell}"
+    );
+    assert!(h.workspace.join("m.txt").exists());
+
+    let shot = mcp.call("screenshot", json!({"max_edge": 640})).await;
+    assert_eq!(shot["content"][1]["type"], "image");
+    assert_eq!(shot["content"][1]["mimeType"], "image/png");
+    assert_eq!(shot["content"][1]["data"], PNG);
+    let captures = driver_calls(&h, "get_desktop_state");
+    assert_eq!(captures[0]["max_image_dimension"], 640);
+    let label = captures[0]["session"].as_str().unwrap().to_owned();
+    assert!(label.starts_with("cu-"), "{label}");
+
+    let act = mcp
+        .call("computer_act", json!({"action": "click", "x": 10, "y": 20}))
+        .await;
+    assert_eq!(act["isError"], false, "{act}");
+    assert_eq!(driver_calls(&h, "click")[0]["session"], label.as_str());
+
+    let unknown = mcp
+        .rpc(
+            "tools/call",
+            json!({"name": "delegate_computer", "arguments": {}}),
+        )
+        .await;
+    assert_eq!(unknown["error"]["code"], -32602);
+
+    let mut agents = h.agents().await;
+    let listed = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner();
+    let agent = listed
+        .agents
+        .iter()
+        .find(|a| a.name == "mcp:test-client")
+        .unwrap();
+    assert_eq!(agent.status, i32::from(pb::AgentStatus::Running));
+    let page = agents
+        .transcript(authed(pb::TranscriptRequest {
+            agent_id: agent.id.clone(),
+            after_seq: 0,
+            limit: 0,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let calls: Vec<&str> = page
+        .entries
+        .iter()
+        .filter_map(|e| match &e.body {
+            Some(Body::ToolCall(c)) => Some(c.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, ["shell", "screenshot", "computer_act"]);
+    let results = page
+        .entries
+        .iter()
+        .filter(|e| matches!(e.body, Some(Body::ToolResult(_))))
+        .count();
+    assert_eq!(results, 3);
+
+    let mut saw_action = false;
+    while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(300), events.message())
+        .await
+        .map(Result::transpose)
+    {
+        if let Some(event::Body::ComputerAction(a)) = ev.body {
+            assert_eq!(
+                (a.agent_id.as_str(), a.action.as_str(), a.x, a.y),
+                (agent.id.as_str(), "click", 10, 20)
+            );
+            saw_action = true;
+        }
+    }
+    assert!(saw_action);
+
+    let no_session = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .json(&json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(no_session.status(), 400);
+
+    let deleted = http
+        .delete(format!("{}/mcp", h.endpoint))
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .header("mcp-session-id", &mcp.session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), 204);
+    let ended = driver_calls(&h, "end_session");
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0]["session"], label.as_str());
+    let gone = mcp
+        .post(json!({"jsonrpc": "2.0", "id": 10, "method": "tools/list"}))
+        .await;
+    assert_eq!(gone.status(), 404);
+    let listed = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner();
+    let agent = listed
+        .agents
+        .iter()
+        .find(|a| a.name == "mcp:test-client")
+        .unwrap();
+    assert_eq!(agent.status, i32::from(pb::AgentStatus::Idle));
+}
+
+#[tokio::test]
+async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
+    let h = Harness::start_with(Vec::new(), false, Duration::from_millis(400)).await;
+    let mut mcp = McpClient::connect(&h).await;
+    mcp.call("screenshot", json!({})).await;
+    let first = driver_calls(&h, "get_desktop_state")[0]["session"].clone();
+
+    let mut stream = mcp
+        .http
+        .get(&mcp.url)
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .header("mcp-session-id", &mcp.session)
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stream.headers()["content-type"], "text/event-stream");
+    assert!(stream.chunk().await.unwrap().is_some());
+    drop(stream);
+    for _ in 0..100 {
+        if !driver_calls(&h, "end_session").is_empty() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(driver_calls(&h, "end_session")[0]["session"], first);
+
+    mcp.call("screenshot", json!({})).await;
+    let second = driver_calls(&h, "get_desktop_state")[1]["session"].clone();
+    assert_ne!(first, second);
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let ended = driver_calls(&h, "end_session");
+    assert_eq!(ended.len(), 2, "{ended:?}");
+    assert_eq!(ended[1]["session"], second);
+    let gone = mcp
+        .post(json!({"jsonrpc": "2.0", "id": 5, "method": "tools/list"}))
+        .await;
+    assert_eq!(gone.status(), 404);
+}
+
+#[tokio::test]
+async fn concurrent_computer_acts_do_not_interleave() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut a = McpClient::connect(&h).await;
+    let mut b = McpClient::connect(&h).await;
+    let (ra, rb) = tokio::join!(
+        a.call("computer_act", json!({"action": "click", "x": 1, "y": 1})),
+        b.call("computer_act", json!({"action": "click", "x": 2, "y": 2}))
+    );
+    assert_eq!(
+        (ra["isError"].clone(), rb["isError"].clone()),
+        (json!(false), json!(false))
+    );
+    let log: Vec<(String, String)> = h
+        .cua_log
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(n, a)| {
+            (
+                n.clone(),
+                a["session"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(log.len(), 4, "{log:?}");
+    assert_eq!(
+        (log[0].0.as_str(), log[1].0.as_str()),
+        ("click", "get_desktop_state")
+    );
+    assert_eq!(
+        (log[2].0.as_str(), log[3].0.as_str()),
+        ("click", "get_desktop_state")
+    );
+    assert_eq!(log[0].1, log[1].1);
+    assert_eq!(log[2].1, log[3].1);
+    assert_ne!(log[0].1, log[2].1);
+
+    let raw = a
+        .post(
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
+                "protocolVersion": "2099-01-01",
+                "clientInfo": {"name": "future"}
+            }}),
+        )
+        .await;
+    let init: Value = raw.json().await.unwrap();
+    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
 }

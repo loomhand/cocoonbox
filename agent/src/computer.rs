@@ -100,7 +100,7 @@ async fn drive(
                     args.insert("session".to_owned(), session.into());
                     let args = Value::Object(args);
                     if call.name == "computer_act" {
-                        rt.announce_action(ctx, &args);
+                        rt.announce_action(&ctx.agent_id, &args);
                     }
                     rt.tool(&ctx.agent_id, &call.name, args).await
                 }

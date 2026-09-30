@@ -171,6 +171,19 @@ impl Store {
         .await
     }
 
+    /// Opens a turn with no user entry, for work that is not a user message.
+    pub async fn open_turn(&self, agent_id: String) -> Result<String, String> {
+        self.call(move |c| {
+            let turn_id = new_id("turn");
+            c.execute(
+                "INSERT INTO turns (id, agent_id) VALUES (?1, ?2)",
+                params![turn_id, agent_id],
+            )?;
+            Ok(turn_id)
+        })
+        .await
+    }
+
     /// Persists an entry and returns it with its seq and timestamp.
     pub async fn append(
         &self,

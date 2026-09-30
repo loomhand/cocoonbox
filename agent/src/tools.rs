@@ -4,6 +4,8 @@ use serde_json::json;
 
 use crate::llm::ToolSpec;
 
+const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
+
 /// Tools of the main agent; a vision model also gets a read-only screenshot.
 pub fn main_tools(vision: bool) -> Vec<ToolSpec> {
     let mut tools = vec![
@@ -125,9 +127,19 @@ pub fn main_tools(vision: bool) -> Vec<ToolSpec> {
         tools.push(ToolSpec {
             name: "screenshot",
             description: "Look at the desktop: a read-only screenshot of the whole 1280x800 screen.",
-            parameters: json!({"type": "object", "properties": {}}),
+            parameters: json!({"type": "object", "properties": {"max_edge": max_edge()}}),
         });
     }
+    tools
+}
+
+/// Tools served over MCP to external agents; the names are the contract.
+pub fn remote_tools() -> Vec<ToolSpec> {
+    let mut tools: Vec<ToolSpec> = main_tools(true)
+        .into_iter()
+        .filter(|t| !LOOP_ONLY.contains(&t.name))
+        .collect();
+    tools.extend(computer_tools());
     tools
 }
 
@@ -142,7 +154,8 @@ pub fn computer_tools() -> Vec<ToolSpec> {
                 "properties": {
                     "pid": {"type": "integer"},
                     "window_id": {"type": "integer"},
-                    "query": {"type": "string", "description": "Only elements whose text contains this"}
+                    "query": {"type": "string", "description": "Only elements whose text contains this"},
+                    "max_edge": max_edge()
                 }
             }),
         },
@@ -166,10 +179,15 @@ pub fn computer_tools() -> Vec<ToolSpec> {
                     "button": {"type": "string", "enum": ["left", "right", "middle"]},
                     "app": {"type": "string", "description": "launch_app: application name, e.g. mousepad"},
                     "seconds": {"type": "number", "description": "wait: up to 10"},
-                    "foreground": {"type": "boolean", "description": "Raise the target window and inject there; use when a background action had no visible effect"}
+                    "foreground": {"type": "boolean", "description": "Raise the target window and inject there; use when a background action had no visible effect"},
+                    "max_edge": max_edge()
                 },
                 "required": ["action"]
             }),
         },
     ]
+}
+
+fn max_edge() -> serde_json::Value {
+    json!({"type": "integer", "description": "Scale the screenshot so its long edge is at most this many pixels; x,y then refer to the scaled image"})
 }

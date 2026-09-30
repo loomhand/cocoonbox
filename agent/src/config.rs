@@ -3,11 +3,13 @@
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
 const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
 const DEFAULT_WORKSPACE: &str = "/workspace";
+const MCP_IDLE: Duration = Duration::from_secs(600);
 
 /// Settings of `serve`, read from `/etc/cocoonbox/agent.env` via systemd.
 #[derive(Clone, Debug)]
@@ -22,6 +24,7 @@ pub struct ServeConfig {
     pub toolhost_socket: PathBuf,
     pub vnc_addr: String,
     pub anthropic_messages: bool,
+    pub mcp_idle: Duration,
 }
 
 impl ServeConfig {
@@ -41,6 +44,7 @@ impl ServeConfig {
             toolhost_socket: optional("TOOLHOST_SOCKET", DEFAULT_TOOLHOST_SOCKET).into(),
             vnc_addr: optional("VNC_ADDR", DEFAULT_VNC_ADDR),
             anthropic_messages: optional("GW_ANTHROPIC_WIRE", "chat") == "messages",
+            mcp_idle: MCP_IDLE,
         })
     }
 }

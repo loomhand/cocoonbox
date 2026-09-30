@@ -12,6 +12,7 @@ name = "cocoonbox-agent"
 path = "src/main.rs"
 
 [dependencies]
+axum = { version = "0.8", default-features = false }
 base64 = "0.22"
 bytes = "1"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

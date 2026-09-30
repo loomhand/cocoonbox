@@ -80,9 +80,12 @@ impl Host {
             "computer_act" => self.cua.act(call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
             "screenshot" => {
+                let max_edge = call.args["max_edge"]
+                    .as_u64()
+                    .and_then(|e| u32::try_from(e).ok());
                 let shot = match call.args["session"].as_str() {
-                    Some(session) => self.cua.screenshot(session).await,
-                    None => self.cua.screenshot_once().await,
+                    Some(session) => self.cua.screenshot(session, max_edge).await,
+                    None => self.cua.screenshot_once(max_edge).await,
                 };
                 shot.map(|image_b64| Output {
                     text: if image_b64.is_some() {
