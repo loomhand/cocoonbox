@@ -9,6 +9,7 @@ A persistent cloud computer per user with a resident agent that any model can dr
 | `api/` | `cocoonbox-api`, control plane and edge (Go) |
 | `macos/` | `CocoonBox.app` and `cocoonboxd` (Swift) |
 | `image/` | guest image provisioning |
-| `docs/` | design |
+| `deploy/` | bench host and cluster configuration |
+| `docs/` | design, contracts, bench runbook, cua-driver spike |
 
 See [docs/design.md](docs/design.md).
