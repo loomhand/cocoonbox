@@ -1,0 +1,7 @@
+[Unit]
+Description=cocoonbox /srv/cb free-space watchdog
+After=k3s.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cb-disk-watchdog

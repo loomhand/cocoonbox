@@ -1,0 +1,22 @@
+#!/bin/sh
+# cordons the cocoon-cb node while the filesystem holding /srv/cb is below the floor; uncordons past floor+5G
+set -eu
+
+DIR=/srv/cb
+NODE=cocoon-cb
+FLOOR_GB=20
+RESUME_GB=25
+KUBECTL="/usr/local/bin/kubectl --kubeconfig /etc/rancher/k3s/k3s.yaml"
+
+avail=$(df -BG --output=avail "$DIR" | tail -1 | tr -dc 0-9)
+cordoned=$($KUBECTL get node "$NODE" -o jsonpath='{.spec.unschedulable}')
+
+if [ "$avail" -lt "$FLOOR_GB" ] && [ "$cordoned" != true ]; then
+	$KUBECTL cordon "$NODE" >/dev/null
+	logger -p user.crit -t cb-disk-watchdog "$DIR has ${avail}G free (< ${FLOOR_GB}G): cordoned $NODE"
+elif [ "$avail" -ge "$RESUME_GB" ] && [ "$cordoned" = true ]; then
+	$KUBECTL uncordon "$NODE" >/dev/null
+	logger -p user.notice -t cb-disk-watchdog "$DIR has ${avail}G free: uncordoned $NODE"
+elif [ "$avail" -lt "$FLOOR_GB" ]; then
+	logger -p user.warning -t cb-disk-watchdog "$DIR still at ${avail}G free; $NODE stays cordoned"
+fi
