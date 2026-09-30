@@ -86,11 +86,12 @@ func main() {
 	defer proxy.Close()
 
 	authn := auth.New(cfg.Users)
+	access := boxes.NewAccessLog(authn.Identify)
 	server := grpc.NewServer(
 		grpc.ForceServerCodecV2(edge.NewCodec()),
 		grpc.UnknownServiceHandler(proxy.Handle),
-		grpc.ChainUnaryInterceptor(authn.Unary),
-		grpc.ChainStreamInterceptor(authn.Stream),
+		grpc.ChainUnaryInterceptor(access.Unary, authn.Unary),
+		grpc.ChainStreamInterceptor(access.Stream, authn.Stream),
 		grpc.MaxRecvMsgSize(edge.MaxMessageSize),
 	)
 	controlv1.RegisterBoxesServer(server, svc)

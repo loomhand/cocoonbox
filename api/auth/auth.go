@@ -69,6 +69,16 @@ func (a *Authenticator) Authenticate(header string) (string, error) {
 	return user, nil
 }
 
+func (a *Authenticator) Identify(ctx context.Context) string {
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get(HeaderAuthorization)
+	if len(values) != 1 {
+		return ""
+	}
+	user, _ := a.Authenticate(values[0])
+	return user
+}
+
 func (a *Authenticator) authenticate(ctx context.Context) (context.Context, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 	values := md.Get(HeaderAuthorization)
