@@ -1,15 +1,6 @@
 {
-  "originHash" : "44c2417b1eb8f73ea2578a5cf09d515c68dab3755ec455d0e95b0c1a95050cef",
+  "originHash" : "68e6b569b9295a448e3c94e5334480efac62890a9dd1943491f2aea824275dd7",
   "pins" : [
-    {
-      "identity" : "cryptoswift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/royalapplications/CryptoSwift.git",
-      "state" : {
-        "branch" : "foundationessentials",
-        "revision" : "a59b4d91ebb22011656c830f874fe7152e183a57"
-      }
-    },
     {
       "identity" : "grpc-swift-2",
       "kind" : "remoteSourceControl",
@@ -35,23 +26,6 @@
       "state" : {
         "revision" : "176c5a434fd76f6f479848d1a8f7d44967534168",
         "version" : "2.4.1"
-      }
-    },
-    {
-      "identity" : "h",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/rarestype/h",
-      "state" : {
-        "revision" : "aa3626829160917d4378330617971977cbd78f5b",
-        "version" : "1.0.1"
-      }
-    },
-    {
-      "identity" : "royalvnc",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/royalapplications/royalvnc.git",
-      "state" : {
-        "revision" : "92d4427c73817d8f849bb289ff190aa4b40c44ea"
       }
     },
     {
@@ -136,15 +110,6 @@
       }
     },
     {
-      "identity" : "swift-jpeg",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tayloraswift/swift-jpeg",
-      "state" : {
-        "revision" : "c7aa48486cd8920120dd69cda5de62aeb93e1708",
-        "version" : "2.1.0"
-      }
-    },
-    {
       "identity" : "swift-log",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-log.git",
@@ -205,15 +170,6 @@
       "state" : {
         "revision" : "0c0290ff6b24942dadb83a929ffaaa1481df04a2",
         "version" : "1.1.1"
-      }
-    },
-    {
-      "identity" : "swift-png",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/tayloraswift/swift-png",
-      "state" : {
-        "revision" : "8a0bcd4df5e4b307c804937776a56dd6ecdf6396",
-        "version" : "4.5.1"
       }
     },
     {

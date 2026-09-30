@@ -117,8 +117,8 @@ enum Autopilot {
         if let frame = model.screen.framebufferImage {
             Snapshot.save(frame, path.replacingOccurrences(of: ".png", with: "-framebuffer.png"))
         }
-        if let stats = model.screen.bridgeStats {
-            Perf.mark("bridge_stats", "sessions=\(stats.sessions) from_server=\(stats.bytesFromServer) to_server=\(stats.bytesToServer) error=\(stats.lastError ?? "-")")
+        if let stats = model.screen.screenStats {
+            Perf.mark("screen_stats", "from_server=\(stats.bytesFromServer) to_server=\(stats.bytesToServer) status=\(model.screen.status)")
         }
         let windows = NSApp.windows.filter { $0.isVisible && $0.contentView != nil && $0.frame.width > 300 }
         for (index, window) in windows.enumerated() {
@@ -140,10 +140,10 @@ enum Autopilot {
         getrusage(RUSAGE_SELF, &usage)
         let cpu = Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000
             + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1000
-        let bridge = model.screen.bridgeStats
-        Perf.mark("stats", String(format: "label=%@ updates=%d from_server=%d to_server=%d injected=%d cpu_ms=%.1f",
-                                  label, model.screen.updateCount, bridge?.bytesFromServer ?? 0, bridge?.bytesToServer ?? 0,
-                                  bridge?.injectedRequests ?? 0, cpu))
+        let screen = model.screen.screenStats
+        Perf.mark("stats", String(format: "label=%@ updates=%d from_server=%d to_server=%d cpu_ms=%.1f %@",
+                                  label, model.screen.updateCount, screen?.bytesFromServer ?? 0, screen?.bytesToServer ?? 0, cpu,
+                                  model.screen.encodingSummary))
     }
 
     private static func split(_ step: String) -> (String, String) {

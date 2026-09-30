@@ -20,8 +20,7 @@ let package = Package(
         .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.10.0"),
         .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.4.1"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1"),
-        // 1.1.0, pinned by revision because it depends on a CryptoSwift branch
-        .package(url: "https://github.com/royalapplications/royalvnc.git", revision: "92d4427c73817d8f849bb289ff190aa4b40c44ea"),
+        .package(path: "../../swift-rfb"),
     ],
     targets: [
         .target(
@@ -31,13 +30,17 @@ let package = Package(
                 .product(name: "GRPCNIOTransportHTTP2TransportServices", package: "grpc-swift-nio-transport"),
                 .product(name: "GRPCProtobuf", package: "grpc-swift-protobuf"),
                 .product(name: "SwiftProtobuf", package: "swift-protobuf"),
-                .product(name: "RoyalVNCKit", package: "royalvnc"),
+                .product(name: "RFB", package: "swift-rfb"),
             ]
         ),
         .target(name: "RFBTestServer"),
         .executableTarget(
             name: "CocoonBox",
-            dependencies: ["CocoonBoxKit"]
+            dependencies: [
+                "CocoonBoxKit",
+                .product(name: "RFB", package: "swift-rfb"),
+                .product(name: "RFBMetal", package: "swift-rfb"),
+            ]
         ),
         .executableTarget(
             name: "MockBox",
@@ -48,7 +51,7 @@ let package = Package(
             dependencies: [
                 "CocoonBoxKit",
                 "RFBTestServer",
-                .product(name: "RoyalVNCKit", package: "royalvnc"),
+                .product(name: "RFB", package: "swift-rfb"),
             ],
             path: "Tests/CocoonBoxKitTests",
             swiftSettings: [.unsafeFlags(["-F", testingFrameworks, "-Xfrontend", "-disable-cross-import-overlays"])],

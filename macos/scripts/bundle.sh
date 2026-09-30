@@ -14,10 +14,8 @@ bin="$(swift build -c release --show-bin-path)"
 
 app=dist/CocoonBox.app
 rm -rf "$app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Frameworks" "$app/Contents/Resources"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin/CocoonBox" "$app/Contents/MacOS/CocoonBox"
-cp "$bin/libRoyalVNCKit.dylib" "$app/Contents/Frameworks/"
-install_name_tool -add_rpath @executable_path/../Frameworks "$app/Contents/MacOS/CocoonBox"
 version="$(git describe --tags --always 2>/dev/null || echo dev)"
 
 cat >"$app/Contents/Info.plist" <<PLIST
@@ -41,8 +39,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-strip -x "$app/Contents/MacOS/CocoonBox" "$app/Contents/Frameworks/libRoyalVNCKit.dylib"
-codesign --force --sign - "$app/Contents/Frameworks/libRoyalVNCKit.dylib"
+strip -x "$app/Contents/MacOS/CocoonBox"
 codesign --force --sign - --identifier me.cmgs.cocoonbox "$app"
 codesign --verify --strict "$app"
 du -sh "$app"
