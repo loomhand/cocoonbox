@@ -34,3 +34,5 @@ The service runs as `cocoonbox-api`; systemd `LoadCredential=` hands it `/etc/co
 - `go 1.27.1`: cocoon-common v0.3.7, the version cocoon-operator v0.3.8 uses, requires it.
 - Operation logs live in memory: `WatchOperation` resumes by offset key within one process lifetime; after a restart an old operation id returns `NOT_FOUND` and a fresh `Ensure` or `Hibernate` starts a new one.
 - `Ensure` with an explicit flavor that differs from the existing box returns `FAILED_PRECONDITION`: a resize would make the operator rebuild the pod.
+- Boxes are created with `snapshotPolicy: never`: deleting a box drops its disk; hibernate snapshots are unaffected.
+- cocoon-operator v0.3.8: the second suspend of the same CocoonSet reported `SuspendTimedOut` about 10 s after it began (bench, 2026-09-30; the first cycle's `suspending-since` annotation was apparently not cleared). The operation then ends `PHASE_FAILED` with the operator's reason.
