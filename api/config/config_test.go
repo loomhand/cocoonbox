@@ -53,6 +53,16 @@ func TestLoadResolvesRelativePaths(t *testing.T) {
 	}
 }
 
+func TestLoadsTheExampleConfig(t *testing.T) {
+	cfg, err := Load("../deploy/api.yaml.example")
+	if err != nil {
+		t.Fatalf("Load example: %v", err)
+	}
+	if cfg.State.Bucket == "" || cfg.Provision.SigningKeyFile == "" || len(cfg.Users) != 1 || cfg.Image != "cocoonbox-desktop-v7" {
+		t.Errorf("example config = %+v", cfg)
+	}
+}
+
 func TestEdgeToken(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "edge-token")
 	if err := os.WriteFile(path, []byte("s3cret\n"), 0o600); err != nil {
