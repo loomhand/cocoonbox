@@ -155,6 +155,24 @@ func TestWatch(t *testing.T) {
 	}
 }
 
+func TestWatchReportsAMetaChange(t *testing.T) {
+	env := newTestEnv(t)
+	env.putSet(t, testSet(1, false, cocoonv1.CocoonSetPhaseRunning))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	watch := env.backend.Watch(ctx, boxID, 1)
+	<-watch
+	if err := env.backend.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	for m := range watch {
+		if m.Meta["wake"] == "inc|w1" {
+			return
+		}
+	}
+	t.Error("watch sent nothing after the meta changed")
+}
+
 func TestAddress(t *testing.T) {
 	env := newTestEnv(t)
 	if _, err := env.backend.Address(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {
