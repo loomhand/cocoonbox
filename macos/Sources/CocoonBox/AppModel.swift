@@ -122,7 +122,14 @@ final class AppModel {
             return
         }
         Perf.mark("connect", endpoint.url)
-        Task { await refreshBox() }
+        let mine = connection
+        Task {
+            var attempt = 0
+            while connection === mine, !(await refreshBox()) {
+                try? await pause(Backoff().delay(attempt: attempt))
+                attempt += 1
+            }
+        }
     }
 
     private func disconnect() {
@@ -132,13 +139,17 @@ final class AppModel {
         connection = nil
     }
 
-    func refreshBox() async {
-        guard let connection else { return }
+    @discardableResult
+    func refreshBox() async -> Bool {
+        guard let connection else { return false }
         do {
             let list = try await connection.boxes.list(Cocoonbox_Control_V1_ListBoxesRequest())
             apply(box: list.boxes.first)
+            lastError = nil
+            return true
         } catch {
             report("list boxes", error)
+            return false
         }
     }
 
