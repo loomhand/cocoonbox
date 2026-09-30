@@ -312,6 +312,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         rt.cfg.state_roots.clone(),
         rt.cfg.state_dir.join("state"),
         Arc::clone(&rt.turns),
+        rt.cfg.desktop_unit.clone(),
     );
     let state = StateServer::new(StateSvc {
         rt: Arc::clone(&rt),

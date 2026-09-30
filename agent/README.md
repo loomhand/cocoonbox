@@ -77,6 +77,7 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
 - **Upload.** It PUTs the requested chunks (8 concurrent, 3 attempts) and streams `TransferProgress`. It may span several calls: only the call that carries `manifest` writes it (last), finishes with `manifest_id == snapshot_id`, and unpins the snapshot. A Plan without `parent` spools every chunk; with one, chunks the last upload already held are not spooled.
 - **Restore.** It downloads and verifies every chunk (authentication and id) before touching anything. Then it pauses turns, closes Chrome and writes each root into a staging dir as `user`.
   - Each top-level entry is swapped in with one rename; entries missing from the snapshot are removed, except excluded top-level dirs such as `.cache`.
+  - The desktop session (`cocoonbox-session.service`, which also stops and starts cua-driver) is stopped for the swaps and started after them, under the contract's polkit grant. Xorg and VNC stay up.
   - `agent.db` is restored through the SQLite backup API, then open turns are marked interrupted.
 
 ## Limits
@@ -87,7 +88,8 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
 - On XFCE, a background element click on the Applications toggle has no effect. The subagent is told to trust only screenshots and to retry once with `foreground: true`.
 - Delta events are not coalesced: one gw SSE chunk produces one event. A slow client that falls behind the live channel gets `DATA_LOSS` and reconnects with `from_offset`.
 - The main agent's history from earlier turns keeps no images.
-- Restore replaces files under a running XFCE session; apps other than Chrome keep their old open files until they restart. Directory mtimes are not restored.
+- Directory mtimes are not restored. If the desktop session cannot be stopped (grant missing), Restore aborts after staging and leaves `.cb-restore-*` dirs behind.
+- A QUIESCED plan waits a fixed 30 s for a running turn; that path has no test.
 - Plan spools every new chunk to disk, so the first snapshot needs free space about the size of the compressed state.
 
 ## Environment

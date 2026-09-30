@@ -79,6 +79,7 @@ impl Harness {
             anthropic_messages,
             mcp_idle,
             mcp_prune_after,
+            desktop_unit: None,
             state_roots: vec![
                 Root {
                     name: "home".into(),

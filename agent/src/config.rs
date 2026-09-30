@@ -11,6 +11,7 @@ const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
 const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
 const DEFAULT_WORKSPACE: &str = "/workspace";
+const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 
@@ -30,6 +31,7 @@ pub struct ServeConfig {
     pub mcp_idle: Duration,
     pub mcp_prune_after: Duration,
     pub state_roots: Vec<Root>,
+    pub desktop_unit: Option<String>,
 }
 
 impl ServeConfig {
@@ -52,6 +54,7 @@ impl ServeConfig {
             mcp_idle: MCP_IDLE,
             mcp_prune_after: MCP_PRUNE_AFTER,
             state_roots: crate::state::default_roots(),
+            desktop_unit: Some(DESKTOP_UNIT.to_owned()),
         })
     }
 }
@@ -103,3 +106,4 @@ fn optional(key: &str, default: &str) -> String {
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| default.to_owned())
 }
+

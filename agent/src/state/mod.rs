@@ -71,6 +71,7 @@ pub struct StateEngine {
     excludes: Excludes,
     work: PathBuf,
     turns: Arc<RwLock<()>>,
+    desktop_unit: Option<String>,
     http: reqwest::Client,
     pinned: Mutex<Option<Pinned>>,
 }
@@ -90,13 +91,15 @@ impl From<String> for StateError {
 }
 
 impl StateEngine {
-    /// Creates an engine over `roots`, keeping its spool under `work`; `turns` pauses the loop.
+    /// Creates an engine over `roots`, keeping its spool under `work`; `turns` pauses the loop
+    /// and `desktop_unit` is the session unit Restore stops around the swap.
     pub fn new(
         toolhost: rpc::Client,
         store: Store,
         roots: Vec<Root>,
         work: PathBuf,
         turns: Arc<RwLock<()>>,
+        desktop_unit: Option<String>,
     ) -> Self {
         Self {
             toolhost,
@@ -105,6 +108,7 @@ impl StateEngine {
             excludes: excludes(),
             work,
             turns,
+            desktop_unit,
             http: reqwest::Client::new(),
             pinned: Mutex::new(None),
         }
@@ -287,6 +291,7 @@ impl StateEngine {
     }
 
     async fn rebuild(&self, manifest: &Manifest, cache: &Path) -> Result<(), StateError> {
+        let mut swaps = Vec::with_capacity(self.roots.len());
         for root in &self.roots {
             let records: Vec<&FileRecord> = manifest
                 .files
@@ -339,11 +344,25 @@ impl StateEngine {
                 .map(String::as_str)
                 .filter(|p| !p.contains('/'))
                 .collect();
-            self.tool(
-                "state_swap",
-                json!({"root": root.path, "staging": staging, "names": names, "keep": keep}),
-            )
-            .await?;
+            swaps
+                .push(json!({"root": root.path, "staging": staging, "names": names, "keep": keep}));
+        }
+        self.desktop("stop").await?;
+        let swapped = self.swap_in(manifest, cache, swaps).await;
+        let started = self.desktop("start").await;
+        swapped?;
+        started.map_err(StateError::Failed)
+    }
+
+    /// Swaps the staged roots in and restores agent.db while the desktop session is stopped.
+    async fn swap_in(
+        &self,
+        manifest: &Manifest,
+        cache: &Path,
+        swaps: Vec<serde_json::Value>,
+    ) -> Result<(), StateError> {
+        for swap in swaps {
+            self.tool("state_swap", swap).await?;
         }
         if let Some(db) = &manifest.agent_db {
             let path = cache.join("agent.db");
@@ -357,6 +376,23 @@ impl StateEngine {
             self.store.restore_from(path).await?;
         }
         Ok(())
+    }
+
+    /// Stops or starts the desktop session unit (the contract grants cbagent exactly this).
+    async fn desktop(&self, verb: &str) -> Result<(), String> {
+        let Some(unit) = &self.desktop_unit else {
+            return Ok(());
+        };
+        let status = tokio::process::Command::new("systemctl")
+            .args([verb, unit.as_str()])
+            .status()
+            .await
+            .map_err(|e| format!("systemctl {verb} {unit}: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("systemctl {verb} {unit}: {status}"))
+        }
     }
 
     async fn write_record(
