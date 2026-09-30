@@ -25,6 +25,7 @@ const SNAPSHOT_JS: &str = r#"(() => {
   window.__cbRefs = refs;
   const out = [`Page: ${document.title} (${location.href})`];
   let truncated = false;
+  let headings = 0;
   const ACTIVE_TAGS = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'SUMMARY']);
   const ACTIVE_ROLES = new Set(['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem',
     'menuitemcheckbox', 'menuitemradio', 'combobox', 'option', 'switch', 'searchbox',
@@ -88,10 +89,13 @@ const SNAPSHOT_JS: &str = r#"(() => {
         out.push(line);
         continue;
       }
-      const level = /^H([1-6])$/.exec(el.tagName);
+      const tag = /^H([1-6])$/.exec(el.tagName);
+      const level = tag ? tag[1] : el.getAttribute('role') === 'heading' && (el.getAttribute('aria-level') || '2');
       const nested = el.querySelector('a[href],button,input,select,textarea,[role],[contenteditable],[onclick]');
-      if (level && !nested) {
-        out.push(`${pad(depth)}- heading "${clip(el.innerText, 150)}" [level=${level[1]}]`);
+      if (level) {
+        headings++;
+        out.push(`${pad(depth)}- heading "${clip(el.innerText, 150)}" [level=${level}]`);
+        if (nested) walk(el, depth + 1);
         continue;
       }
       if (!nested && (TEXT_TAGS.has(el.tagName) || el.children.length === 0)) {
@@ -104,6 +108,7 @@ const SNAPSHOT_JS: &str = r#"(() => {
     }
   };
   if (document.body) walk(document.body, 0);
+  if (!headings && !truncated) out.splice(1, 0, '(this page has no headings)');
   if (truncated) out.push(`[snapshot truncated at ${MAX} lines; use browser_read for page text]`);
   return out.join('\n');
 })()"#;
