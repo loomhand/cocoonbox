@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
@@ -10,6 +11,16 @@ import (
 
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 )
+
+func TestAccessLineCannotBeForged(t *testing.T) {
+	line := accessLine("/cocoonbox.control.v1.Boxes/Get", "", "cb-x\nFAKE user=test box=cb-9f86d081884c code=OK", codes.Unauthenticated, 0)
+	if strings.ContainsAny(line, "\n\r") {
+		t.Fatalf("access line holds a line break: %q", line)
+	}
+	if want := `Get user= box="cb-x\nFAKE user=test box=cb-9f86d081884c code=OK" code=Unauthenticated in 0s`; line != want {
+		t.Errorf("access line = %s, want %s", line, want)
+	}
+}
 
 func TestAccessLogCoversOnlyBoxes(t *testing.T) {
 	var identified []string

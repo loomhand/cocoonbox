@@ -2,11 +2,13 @@ package boxes
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
@@ -41,8 +43,11 @@ func (a *AccessLog) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServe
 }
 
 func (a *AccessLog) write(ctx context.Context, method, box string, err error, start time.Time) {
-	log.WithFunc("boxes.AccessLog").Infof(ctx, "%s user=%s box=%q code=%s in %s",
-		strings.TrimPrefix(method, boxesServicePrefix), a.identify(ctx), box, status.Code(err), time.Since(start).Round(time.Millisecond))
+	log.WithFunc("boxes.AccessLog").Info(ctx, accessLine(method, a.identify(ctx), box, status.Code(err), time.Since(start)))
+}
+
+func accessLine(method, user, box string, code codes.Code, took time.Duration) string {
+	return fmt.Sprintf("%s user=%s box=%q code=%s in %s", strings.TrimPrefix(method, boxesServicePrefix), user, box, code, took.Round(time.Millisecond))
 }
 
 type boxRequest interface {
