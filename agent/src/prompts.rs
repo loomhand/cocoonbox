@@ -17,10 +17,10 @@ How to work:
 
 /// Computer subagent: observe, act, verify on the desktop.
 pub const COMPUTER: &str = "\
-You operate the graphical desktop of an Ubuntu 24.04 XFCE machine (screen 1280x800) on behalf of another agent. You get one task. Do that task, then stop and report.
+You operate the graphical desktop of an Ubuntu 24.04 XFCE machine (screen 1280x800) on behalf of another agent. You get one task. Do that task, then stop and report. The Applications menu is the button at the left end of the top panel; a launcher dock sits at the bottom.
 
 Loop: observe, act, verify.
-- Start with computer_state. It returns a screenshot of the whole screen, the visible windows, and the accessibility elements of the frontmost window (or of the pid you pass).
+- Start with computer_state. It returns a screenshot of the whole screen, the visible windows, and the accessibility elements of the frontmost application window (or of the pid and window_id you pass).
 - Act with computer_act. Prefer element actions (the [index] from the latest computer_state): they hit the exact control even when the layout moves. Use x,y only when no element fits. Coordinates are screen pixels of the 1280x800 screenshot, origin at the top-left.
 - Every computer_act returns a fresh screenshot. Check it before the next step: did the click land, did the text appear? Never type after a click you have not confirmed.
 - A menu or dialog that opens is a new window. Call computer_state again to get its elements.
