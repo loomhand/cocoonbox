@@ -205,14 +205,14 @@ impl Mcp {
         }
     }
 
-    async fn dispatch(&self, s: &Session, msg: &Value) -> Option<Value> {
+    async fn dispatch(&self, s: Option<&Session>, msg: &Value) -> Option<Value> {
         let id = msg.get("id")?.clone();
         let method = msg["method"].as_str()?;
-        let result = match method {
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools": self.tools})),
-            "tools/call" => self.call_tool(s, &msg["params"]).await,
-            "initialize" => Err((-32600, "initialize must be the only message".to_owned())),
+        let result = match (method, s) {
+            ("ping", _) => Ok(json!({})),
+            ("tools/list", Some(_)) => Ok(json!({"tools": self.tools})),
+            ("tools/call", Some(s)) => self.call_tool(s, &msg["params"]).await,
+            ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
         };
         Some(match result {
@@ -341,17 +341,27 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
             Err(e) => rpc_failure(StatusCode::INTERNAL_SERVER_ERROR, -32603, &e),
         };
     }
-    let session = match mcp.session(&headers) {
-        Ok(s) => s,
-        Err((status, code, message)) => return rpc_failure(status, code, message),
-    };
     let (batch, messages) = match msg {
         Value::Array(items) => (true, items),
         single => (false, vec![single]),
     };
+    let sessionless = !headers.contains_key(SESSION_HEADER)
+        && !messages.iter().any(|m| {
+            m["method"]
+                .as_str()
+                .is_some_and(|m| m.starts_with("tools/"))
+        });
+    let session = if sessionless {
+        None
+    } else {
+        match mcp.session(&headers) {
+            Ok(s) => Some(s),
+            Err((status, code, message)) => return rpc_failure(status, code, message),
+        }
+    };
     let mut replies = Vec::new();
     for m in &messages {
-        if let Some(reply) = mcp.dispatch(&session, m).await {
+        if let Some(reply) = mcp.dispatch(session.as_deref(), m).await {
             replies.push(reply);
         }
     }

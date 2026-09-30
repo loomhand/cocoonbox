@@ -1266,6 +1266,20 @@ async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
     }
     assert!(saw_action);
 
+    let discover = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .json(&json!({"jsonrpc": "2.0", "id": 8, "method": "server/discover", "params": {}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(discover.status(), 200);
+    let discover: Value = discover.json().await.unwrap();
+    assert_eq!(discover["error"]["code"], -32601);
+    assert_eq!(discover["id"], 8);
+    let unknown_in_session = mcp.rpc("resources/list", json!({})).await;
+    assert_eq!(unknown_in_session["error"]["code"], -32601);
+
     let no_session = reqwest::Client::new()
         .post(format!("{}/mcp", h.endpoint))
         .header("x-cocoonbox-edge-token", TOKEN)
