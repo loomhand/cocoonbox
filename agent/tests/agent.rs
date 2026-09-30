@@ -283,17 +283,18 @@ fn fake_cua(path: &Path, log: Log) {
                     .unwrap()
                     .push((name.clone(), req["args"].clone()));
                 let result = match name.as_str() {
-                    "list_windows" => json!({
-                        "content": [{"type": "text", "text": "1 window"}],
-                        "structuredContent": {"windows": [{"pid": 42, "window_id": 7, "title": "Mousepad", "bounds": {"x": 0, "y": 0, "width": 800, "height": 600}, "z_index": 1}]}
-                    }),
                     "get_window_state" => json!({
                         "content": [{"type": "text", "text": "tree"}],
-                        "structuredContent": {"elements": [{"element_index": 0, "element_token": "tok-0", "role": "text", "label": "editor", "depth": 0, "frame": {"x": 10, "y": 20, "w": 100, "h": 40}}]}
+                        "structuredContent": {"window_id": 7, "window_bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "elements": [{"element_index": 0, "element_token": "tok-0", "role": "text", "label": "editor", "depth": 0, "frame": {"x": 10, "y": 20, "w": 100, "h": 40}}]}
                     }),
-                    "get_desktop_state" => {
-                        json!({"content": [{"type": "image", "mimeType": "image/png", "data": PNG}]})
-                    }
+                    "get_desktop_state" => json!({
+                        "content": [{"type": "image", "mimeType": "image/png", "data": PNG}],
+                        "structuredContent": {"windows": [
+                            {"pid": 1, "window_id": 2, "app_name": "Xfdesktop", "title": "Desktop", "bounds": {"x": 0, "y": 0, "width": 1280, "height": 800}, "z_index": 0},
+                            {"pid": 42, "window_id": 7, "app_name": "Mousepad", "title": "Untitled", "bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "z_index": 3},
+                            {"pid": 5, "window_id": 9, "app_name": "Xfce4-panel", "title": "hidden", "bounds": {"x": -9999, "y": -9999, "width": 3, "height": 3}, "z_index": 4}
+                        ]}
+                    }),
                     _ => json!({"content": [{"type": "text", "text": format!("✅ {name} done")}]}),
                 };
                 let reply = json!({"ok": true, "result": result}).to_string() + "\n";
@@ -521,6 +522,25 @@ async fn delegate_runs_the_vision_subagent_over_cua() {
         })
         .collect();
     assert_eq!(sub_calls.len(), 2);
+    let state = entries
+        .iter()
+        .find_map(|e| match &e.body {
+            Some(Body::ToolResult(r)) if r.call_id == "toolu_1" => Some(r),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        state.text.contains("[0] text \"editor\" center=(160,90)"),
+        "{}",
+        state.text
+    );
+    assert!(
+        state.text.find("Mousepad") < state.text.find("Xfdesktop"),
+        "{}",
+        state.text
+    );
+    assert!(!state.text.contains("hidden"), "{}", state.text);
+    assert!(state.image.starts_with(b"\x89PNG"));
     let delegate = entries
         .iter()
         .find_map(|e| match &e.body {
@@ -546,6 +566,7 @@ async fn delegate_runs_the_vision_subagent_over_cua() {
     assert_eq!(typed["element_token"], "tok-0");
     assert_eq!(typed["pid"], 42);
     assert_eq!(typed["text"], "hello");
+    assert_eq!(typed["window_id"], 7);
 
     let vision = gw_bodies(&h.gw_log, "/v1/messages");
     assert_eq!(vision.len(), 3);
