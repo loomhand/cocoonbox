@@ -354,6 +354,7 @@ impl Browser {
                 "--no-default-browser-check",
                 "--disable-session-crashed-bubble",
                 "--hide-crash-restore-bubble",
+                "--password-store=basic",
                 "--start-maximized",
                 "about:blank",
             ])
