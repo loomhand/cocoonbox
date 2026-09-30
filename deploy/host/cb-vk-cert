@@ -1,0 +1,25 @@
+#!/bin/sh
+# issues the vk-cocoon kubelet serving cert from the k3s server CA, which the apiserver verifies it against
+set -eu
+
+CA=${CB_K3S_TLS:-/var/lib/rancher/k3s/server/tls}
+OUT=${CB_VK_TLS:-/etc/cocoon/vk/tls}
+NODE=${CB_VK_NODE:-cocoon-cb}
+IP=${1:?usage: cb-vk-cert <node-ip>}
+DAYS=${CB_VK_DAYS:-365}
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+openssl ecparam -name prime256v1 -genkey -noout -out "$tmp/key" 2>/dev/null
+openssl req -new -key "$tmp/key" -subj "/O=system:nodes/CN=system:node:$NODE" -out "$tmp/csr"
+printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s,IP:%s\n' "$NODE" "$IP" > "$tmp/ext"
+openssl x509 -req -in "$tmp/csr" -CA "$CA/server-ca.crt" -CAkey "$CA/server-ca.key" -set_serial "0x$(openssl rand -hex 16)" \
+	-days "$DAYS" -sha256 -extfile "$tmp/ext" -out "$tmp/crt" 2>/dev/null
+openssl verify -CAfile "$CA/server-ca.crt" -purpose sslserver "$tmp/crt" >/dev/null
+
+install -d -m 0700 "$OUT"
+install -m 0600 "$tmp/key" "$OUT/vk-kubelet.key.new"
+install -m 0644 "$tmp/crt" "$OUT/vk-kubelet.crt.new"
+mv -f "$OUT/vk-kubelet.key.new" "$OUT/vk-kubelet.key"
+mv -f "$OUT/vk-kubelet.crt.new" "$OUT/vk-kubelet.crt"
+openssl x509 -in "$OUT/vk-kubelet.crt" -noout -enddate
