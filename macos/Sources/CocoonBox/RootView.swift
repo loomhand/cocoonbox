@@ -30,7 +30,6 @@ struct RootView: View {
                 .disabled(!model.boxRunning)
                 Button {
                     model.screen.poppedOut.toggle()
-                    if model.screen.poppedOut { openWindow(id: "screen") }
                 } label: {
                     Label(model.screen.poppedOut ? "Dock screen" : "Pop out screen", systemImage: "rectangle.on.rectangle")
                 }
@@ -38,6 +37,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.showSignIn) {
             SignInSheet()
+        }
+        .onChange(of: model.screen.poppedOut) { _, poppedOut in
+            if poppedOut { openWindow(id: "screen") }
         }
     }
 }

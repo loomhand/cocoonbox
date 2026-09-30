@@ -161,8 +161,16 @@ final class LiveScreenContainer: NSView {
 
     override func layout() {
         super.layout()
-        metal?.frame = bounds
         overlay.frame = bounds
+        guard let metal else { return }
+        let size = metal.framebufferSize
+        guard size.width > 0, size.height > 0 else {
+            metal.frame = bounds
+            return
+        }
+        let scale = min(bounds.width / size.width, bounds.height / size.height)
+        let fit = CGSize(width: (size.width * scale).rounded(), height: (size.height * scale).rounded())
+        metal.frame = CGRect(x: ((bounds.width - fit.width) / 2).rounded(), y: ((bounds.height - fit.height) / 2).rounded(), width: fit.width, height: fit.height)
     }
 
     var framebufferRectInWindow: CGRect? {

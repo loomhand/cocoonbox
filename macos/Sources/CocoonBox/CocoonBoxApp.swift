@@ -31,7 +31,7 @@ struct CocoonBoxApp: App {
             ScreenWindowView()
                 .environment(model)
         }
-        .defaultSize(width: 1280, height: 836)
+        .defaultSize(width: 1280, height: 856)
         .windowResizability(.contentMinSize)
     }
 }

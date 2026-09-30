@@ -89,8 +89,9 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         framebufferOnly = true
         isPaused = true
         enableSetNeedsDisplay = true
-        autoResizeDrawable = true
+        autoResizeDrawable = false
         layer?.isOpaque = true
+        (layer as? CAMetalLayer)?.maximumDrawableCount = 2
     }
 
     @available(*, unavailable)
@@ -159,8 +160,11 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         Perf.mark("render_surface", "\(width)x\(height) aliased=\(next?.aliased ?? false)")
         surface.withLock { $0 = next }
         DispatchQueue.main.async { [weak self] in
-            self?.framebufferSize = CGSize(width: width, height: height)
-            self?.needsDisplay = true
+            guard let self else { return }
+            framebufferSize = CGSize(width: width, height: height)
+            superview?.needsLayout = true
+            updateDrawableSize()
+            needsDisplay = true
         }
     }
 
@@ -174,7 +178,7 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         updates.add(1, ordering: .relaxed)
         if !drawPending.exchange(true, ordering: .acquiringAndReleasing) {
             DispatchQueue.main.async { [weak self] in
-                self?.needsDisplay = true
+                self?.draw()
             }
         }
     }
@@ -206,7 +210,7 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
               let encoder = commands.makeRenderCommandEncoder(descriptor: pass)
         else { return }
         if let current {
-            let scale = window?.backingScaleFactor ?? 2
+            let scale = bounds.width > 0 ? drawableSize.width / bounds.width : 1
             let rect = contentRect
             encoder.setViewport(MTLViewport(
                 originX: Double(rect.minX * scale),
@@ -260,8 +264,28 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         addCursorRect(contentRect, cursor: takeOver ? remoteCursor : .arrow)
     }
 
+    // updateDrawableSize renders at the view's pixel size but never above the
+    // framebuffer's; the compositor scales up, so the drawables stay small.
+    private func updateDrawableSize() {
+        let scale = window?.backingScaleFactor ?? 2
+        var size = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        if framebufferSize.width > 0, size.width > framebufferSize.width || size.height > framebufferSize.height {
+            let fit = min(framebufferSize.width / size.width, framebufferSize.height / size.height)
+            size = CGSize(width: (size.width * fit).rounded(), height: (size.height * fit).rounded())
+        }
+        if size.width >= 1, size.height >= 1, size != drawableSize {
+            drawableSize = size
+        }
+    }
+
+    public override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        updateDrawableSize()
+    }
+
     public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        updateDrawableSize()
         window?.invalidateCursorRects(for: self)
     }
 

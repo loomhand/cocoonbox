@@ -64,6 +64,7 @@ enum Autopilot {
             model.screen.poppedOut = true
         case "quit":
             NSApp.terminate(nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }
         default:
             Perf.mark("autopilot_unknown", step)
         }
