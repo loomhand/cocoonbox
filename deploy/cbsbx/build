@@ -1,0 +1,27 @@
+#!/bin/bash
+# Builds sandboxd and cocoon for linux/amd64 from clean worktrees (the recipe of the shared versioned binaries), and silkd on a Linux host.
+# usage: deploy/cbsbx/build <sandbox repo> <sandbox commit> <cocoon repo> <cocoon commit> <out dir>
+set -euo pipefail
+export LC_ALL=C
+
+SANDBOX=${1:?usage: build <sandbox repo> <commit> <cocoon repo> <commit> <out dir>}
+SANDBOX_REV=${2:?}
+COCOON=${3:?}
+COCOON_REV=${4:?}
+OUT=${5:?}
+GOENV="GOTOOLCHAIN=auto GOWORK=off CGO_ENABLED=0 GOOS=linux GOARCH=amd64"
+
+W=$(mktemp -d "$OUT.work.XXXXXX")
+trap 'git -C "$SANDBOX" worktree remove --force "$W/sandbox" 2>/dev/null || true; git -C "$COCOON" worktree remove --force "$W/cocoon" 2>/dev/null || true; rm -rf "$W"' EXIT
+mkdir -p "$OUT"
+git -C "$SANDBOX" worktree add --detach "$W/sandbox" "$SANDBOX_REV" >/dev/null
+git -C "$COCOON" worktree add --detach "$W/cocoon" "$COCOON_REV" >/dev/null
+srev=$(git -C "$W/sandbox" rev-parse --short=7 HEAD)
+crev=$(git -C "$W/cocoon" rev-parse HEAD)
+
+(cd "$W/sandbox/sandboxd" && env $GOENV go build -trimpath -ldflags "-X main.version=$srev" -o "$OUT/sandboxd" .)
+(cd "$W/cocoon" && env $GOENV go build -trimpath -ldflags "-X github.com/cocoonstack/cocoon/version.REVISION=$crev -X github.com/cocoonstack/cocoon/version.VERSION=master-${crev:0:7}" -o "$OUT/cocoon" .)
+if [ "$(uname -s)" = Linux ]; then
+	(cd "$W/sandbox/silkd" && cargo build --release --locked && strip target/release/silkd && install -m 0755 target/release/silkd "$OUT/silkd")
+fi
+(cd "$OUT" && sha256sum $(ls sandboxd cocoon silkd 2>/dev/null) > SHA256SUMS && cat SHA256SUMS)

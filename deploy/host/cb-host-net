@@ -6,6 +6,7 @@ UPLINK=ens8
 HOST_IP=$(ip -4 -o addr show dev "$UPLINK" | awk '{print $4}' | cut -d/ -f1)
 BRIDGE=cbc0
 BRIDGE_ADDR=10.203.0.1/24
+BRIDGE_IP=${BRIDGE_ADDR%/*}
 CLUSTER_CIDR=10.42.0.0/15
 GW_PORT=18090
 STATE_PORT=9000
@@ -33,6 +34,14 @@ up() {
 	iptables -t mangle -A CB-PREROUTING -i "$BRIDGE" -d "$CLUSTER_CIDR" -j DROP
 	iptables -t mangle -C PREROUTING -j CB-PREROUTING 2>/dev/null || iptables -t mangle -I PREROUTING 1 -j CB-PREROUTING
 
+	# host-originated traffic to the bridge gateway (the sandboxd egress proxy) reaches gw and the state store only
+	iptables -N CB-OUTPUT 2>/dev/null || iptables -F CB-OUTPUT
+	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
+	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -m multiport --dports "$GW_PORT,$STATE_PORT" -j RETURN
+	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -j REJECT --reject-with tcp-reset
+	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -j REJECT
+	iptables -C OUTPUT -j CB-OUTPUT 2>/dev/null || iptables -I OUTPUT 1 -j CB-OUTPUT
+
 	# a box reaches the internet and the gateway only
 	iptables -N CB-EGRESS 2>/dev/null || iptables -F CB-EGRESS
 	for net in 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 169.254.0.0/16 100.64.0.0/10; do
@@ -54,6 +63,8 @@ down() {
 	done
 	while iptables -t mangle -D PREROUTING -j CB-PREROUTING 2>/dev/null; do :; done
 	iptables -t mangle -F CB-PREROUTING 2>/dev/null && iptables -t mangle -X CB-PREROUTING || true
+	while iptables -D OUTPUT -j CB-OUTPUT 2>/dev/null; do :; done
+	iptables -F CB-OUTPUT 2>/dev/null && iptables -X CB-OUTPUT || true
 	while iptables -D FORWARD -j CB-EGRESS 2>/dev/null; do :; done
 	iptables -F CB-EGRESS 2>/dev/null && iptables -X CB-EGRESS || true
 	nft delete table bridge cbfilter 2>/dev/null || true

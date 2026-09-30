@@ -1,0 +1,10 @@
+root_dir: /srv/cb/sbx/cocoon
+run_dir: /srv/cb/sbx/run
+log_dir: /srv/cb/sbx/log
+ch_binary: /srv/cb/sbx/bin/cloud-hypervisor
+fc_binary: /srv/cb/sbx/bin/firecracker
+meta_backend: sqlite
+net_scope: sx
+cgroup_parent: cbsbx.slice
+cni_conf_dir: ""
+cgroup_cpus: "14-21"

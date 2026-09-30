@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Writes /srv/cb/sbx/sandboxd.json (root 0600) with one pool per template.
+usage: cbsbx-conf <template>=<warm> [<template>=<warm> ...]   the first is the default image"""
+
+import json
+import os
+import sys
+
+S = "/srv/cb/sbx"
+TOKEN = "/etc/cocoonbox/sbx-api-token"
+LISTEN = "127.0.0.1:17780"
+GATEWAY = "10.203.0.1"
+GW_PORT = 18090
+STATE_PORT = 9000
+STORAGE = "40G"
+WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
+          "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
+          "sleep 0.2; done; exit 1")
+
+if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
+    sys.exit(__doc__)
+egress = {"allow": [{"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"},
+                    {"host": GATEWAY, "ports": [STATE_PORT]},
+                    {"host": "*"}]}
+pools = []
+for arg in sys.argv[1:]:
+    template, warm = arg.rsplit("=", 1)
+    pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
+                  "warmup": ["bash", "-c", WARMUP], "egress": egress})
+conf = {
+    "listen": LISTEN,
+    "advertise_addr": LISTEN,
+    "data_dir": f"{S}/data",
+    "cocoon_bin": f"{S}/bin/cocoon-cbsbx",
+    "cocoond_socket": f"{S}/run/cocoond.sock",
+    "restore_mode": "mmap",
+    "no_direct_io": True,
+    "sync_claims": True,
+    "vmm_restart": "cold",
+    "api_token": open(TOKEN).read().strip(),
+    "max_claims": 3,
+    "refill_concurrency": 1,
+    "audit_log": True,
+    "egress_internal_allow": [f"{GATEWAY}/32"],
+    "secrets": [{"name": "GW_KEY", "header": "Authorization"}],
+    "pools": pools,
+}
+path = f"{S}/sandboxd.json"
+fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+with os.fdopen(fd, "w") as f:
+    json.dump(conf, f, indent=1)
+os.replace(path + ".tmp", path)
+print("wrote", path, "pools", [(p["template"], p["warm"]) for p in pools])

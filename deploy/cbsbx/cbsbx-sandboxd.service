@@ -1,0 +1,17 @@
+[Unit]
+Description=cocoonbox sandboxd instance (127.0.0.1:17780)
+After=network-online.target cbsbx-cocoond.service cb-host-net.service
+Wants=network-online.target cbsbx-cocoond.service
+Requires=cb-host-net.service
+RequiresMountsFor=/srv/cb
+
+[Service]
+ExecStart=/srv/cb/sbx/bin/sandboxd -config /srv/cb/sbx/sandboxd.json
+KillMode=process
+Restart=always
+RestartSec=5s
+LimitNOFILE=1048576
+TasksMax=infinity
+
+[Install]
+WantedBy=multi-user.target

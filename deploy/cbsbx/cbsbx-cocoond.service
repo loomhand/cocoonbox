@@ -1,0 +1,13 @@
+[Unit]
+Description=cocoon daemon for the cocoonbox sandboxd instance
+After=network.target
+RequiresMountsFor=/srv/cb
+
+[Service]
+ExecStart=/srv/cb/sbx/bin/cocoon-cbsbx daemon --api-socket /srv/cb/sbx/run/cocoond.sock --api-socket-mode 0600
+Restart=always
+RestartSec=1
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

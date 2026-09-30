@@ -1,0 +1,34 @@
+#!/bin/bash
+# Stages the cocoonbox sandboxd instance under /srv/cb/sbx; idempotent, starts nothing.
+# usage: sudo deploy/cbsbx/install <dir with sandboxd, silkd, cocoon and SHA256SUMS>
+set -euo pipefail
+export LC_ALL=C
+
+BIN_SRC=${1:?usage: install <binary dir>}
+S=/srv/cb/sbx
+QUOTA_ID=44
+QUOTA=200g
+TOKEN=/etc/cocoonbox/sbx-api-token
+SRC="$(cd "$(dirname "$0")" && pwd)"
+
+(cd "$BIN_SRC" && sha256sum -c --quiet SHA256SUMS)
+install -d -m 0755 "$S" "$S/bin" "$S/cocoon" "$S/run" "$S/log" "$S/data" "$S/build"
+grep -q "^$QUOTA_ID:$S\$" /etc/projects 2>/dev/null || echo "$QUOTA_ID:$S" >> /etc/projects
+grep -q "^cbsbx:$QUOTA_ID\$" /etc/projid 2>/dev/null || echo "cbsbx:$QUOTA_ID" >> /etc/projid
+xfs_quota -x -c "project -s cbsbx" /srv/cb >/dev/null
+xfs_quota -x -c "limit -p bhard=$QUOTA cbsbx" /srv/cb
+
+for b in sandboxd silkd cocoon; do
+	[ -e "$S/bin/$b" ] && cp -p "$S/bin/$b" "$S/bin/$b.prev"
+	install -m 0755 "$BIN_SRC/$b" "$S/bin/$b"
+done
+install -m 0755 /usr/local/bin/cloud-hypervisor-cb "$S/bin/cloud-hypervisor"
+install -m 0755 /usr/local/bin/firecracker-cb "$S/bin/firecracker"
+install -m 0644 "$SRC/cocoon.yaml" "$S/cocoon.yaml"
+printf '#!/bin/sh\nexec %s/bin/cocoon --config %s/cocoon.yaml "$@"\n' "$S" "$S" > "$S/bin/cocoon-cbsbx"
+chmod 0755 "$S/bin/cocoon-cbsbx"
+
+[ -s "$TOKEN" ] || (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$TOKEN")
+install -m 0755 "$SRC/cbsbx-conf" /usr/local/sbin/cbsbx-conf
+install -m 0644 "$SRC/cbsbx-cocoond.service" "$SRC/cbsbx-sandboxd.service" /etc/systemd/system/
+systemctl daemon-reload
