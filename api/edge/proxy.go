@@ -11,6 +11,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -28,9 +29,18 @@ const (
 	MaxMessageSize = 64 << 20
 
 	agentServicePrefix = "/cocoonbox.agent.v1."
+	agentIdleTimeout   = time.Minute
 )
 
-var droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, "content-type", "user-agent", "te"}
+var (
+	droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, "content-type", "user-agent", "te"}
+
+	// agentConnectParams caps redial backoff at 1s so an agent that starts after a refused dial is reachable at once.
+	agentConnectParams = grpc.ConnectParams{
+		Backoff:           backoff.Config{BaseDelay: 100 * time.Millisecond, Multiplier: 1.6, Jitter: 0.2, MaxDelay: time.Second},
+		MinConnectTimeout: 5 * time.Second,
+	}
+)
 
 // Resolver maps a caller and box id to the box agent's address.
 type Resolver interface {
@@ -144,7 +154,9 @@ func (p *Proxy) conn(ctx context.Context, boxID, addr string) (*grpc.ClientConn,
 	}
 	conn, err := grpc.NewClient(addr,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize)))
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize)),
+		grpc.WithConnectParams(agentConnectParams),
+		grpc.WithIdleTimeout(agentIdleTimeout))
 	if err != nil {
 		log.WithFunc("edge.Proxy.conn").Errorf(ctx, err, "dial box %s at %s", boxID, addr)
 		return nil, status.Error(codes.Internal, "dial box")

@@ -183,10 +183,48 @@ func TestRefusesWithoutEdgeToken(t *testing.T) {
 	}
 }
 
+func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := lis.Addr().String()
+	if err := lis.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	env := newProxyEnvAt(t, edgeToken, addr)
+	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("Hello before the agent listens: %v, want Unavailable", err)
+	}
+	time.Sleep(3 * time.Second)
+
+	agentSrv := grpc.NewServer()
+	agentv1.RegisterSessionServer(agentSrv, env.agent)
+	lis, err = net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("relisten %s: %v", addr, err)
+	}
+	go func() { _ = agentSrv.Serve(lis) }()
+	t.Cleanup(agentSrv.Stop)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{})
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Hello after the agent started: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 type proxyEnv struct {
-	agent  *fakeAgent
-	conn   *grpc.ClientConn
-	client agentv1.SessionClient
+	agent    *fakeAgent
+	resolver *fakeResolver
+	conn     *grpc.ClientConn
+	client   agentv1.SessionClient
 }
 
 func newProxyEnv(t *testing.T) *proxyEnv {
@@ -196,14 +234,21 @@ func newProxyEnv(t *testing.T) *proxyEnv {
 
 func newProxyEnvWithToken(t *testing.T, token string) *proxyEnv {
 	t.Helper()
-	agent := &fakeAgent{screenDone: make(chan error, 1)}
 	agentSrv := grpc.NewServer(grpc.MaxRecvMsgSize(MaxMessageSize))
-	agentv1.RegisterSessionServer(agentSrv, agent)
-	agentAddr := serve(t, agentSrv)
+	env := newProxyEnvAt(t, token, "")
+	agentv1.RegisterSessionServer(agentSrv, env.agent)
+	env.resolver.addr = serve(t, agentSrv)
+	return env
+}
+
+func newProxyEnvAt(t *testing.T, token, agentAddr string) *proxyEnv {
+	t.Helper()
+	agent := &fakeAgent{screenDone: make(chan error, 1)}
+	resolver := &fakeResolver{addr: agentAddr}
 
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
-	proxy := NewProxy(fakeResolver{addr: agentAddr}, token)
+	proxy := NewProxy(resolver, token)
 	t.Cleanup(proxy.Close)
 	edgeSrv := grpc.NewServer(
 		grpc.ForceServerCodecV2(NewCodec()),
@@ -218,7 +263,7 @@ func newProxyEnvWithToken(t *testing.T, token string) *proxyEnv {
 		t.Fatalf("dial edge: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return &proxyEnv{agent: agent, conn: conn, client: agentv1.NewSessionClient(conn)}
+	return &proxyEnv{agent: agent, resolver: resolver, conn: conn, client: agentv1.NewSessionClient(conn)}
 }
 
 func (e *proxyEnv) aliceCtx(t *testing.T) context.Context {
@@ -242,7 +287,7 @@ type fakeResolver struct {
 	addr string
 }
 
-func (r fakeResolver) Resolve(_ context.Context, user, boxID string) (string, error) {
+func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (string, error) {
 	if boxID != boxes.BoxID(user) {
 		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
