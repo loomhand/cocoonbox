@@ -2,9 +2,37 @@
   "cniVersion": "1.0.0",
   "name": "cb",
   "plugins": [
-    {"type": "bridge", "bridge": "cbc0", "isGateway": true, "ipMasq": true, "hairpinMode": true,
-     "ipam": {"type": "host-local", "ranges": [[{"subnet": "10.203.0.0/24", "gateway": "10.203.0.1"}]], "routes": [{"dst": "0.0.0.0/0"}], "dataDir": "/srv/cb/cni-ipam"}},
-    {"type": "firewall"},
-    {"type": "tuning"}
+    {
+      "type": "bridge",
+      "bridge": "cbc0",
+      "isGateway": true,
+      "ipMasq": true,
+      "hairpinMode": true,
+      "ipam": {
+        "type": "host-local",
+        "ranges": [
+          [
+            {
+              "subnet": "10.203.0.0/24",
+              "gateway": "10.203.0.1"
+            }
+          ]
+        ],
+        "routes": [
+          {
+            "dst": "0.0.0.0/0"
+          }
+        ],
+        "dataDir": "/srv/cb/cni-ipam"
+      },
+      "portIsolation": true,
+      "macspoofchk": true
+    },
+    {
+      "type": "firewall"
+    },
+    {
+      "type": "tuning"
+    }
   ]
 }
