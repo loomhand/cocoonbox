@@ -12,7 +12,7 @@ import Foundation
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
-// end-local, quit.
+// show-earlier[:off], end-local, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -111,6 +111,8 @@ enum Autopilot {
         case "wait-pointer":
             let seen = model.computerActions
             await until(Double(arg) ?? 120) { model.computerActions > seen && model.screen.lastMarkerAt > Date().addingTimeInterval(-1) }
+        case "show-earlier":
+            model.showEarlierExternal = arg != "off"
         case "end-local":
             if let session = model.selectedLocal { model.closeLocal(session) }
         case "copy-mcp":

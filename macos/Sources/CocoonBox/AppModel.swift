@@ -33,6 +33,13 @@ extension Agent {
     }
 }
 
+// ExternalAgents splits the mcp:* agents into those the sidebar shows and
+// earlier idle sessions it folds away.
+struct ExternalAgents {
+    var shown: [Agent] = []
+    var earlier: [Agent] = []
+}
+
 struct OperationProgress: Equatable {
     var id: String
     var title: String
@@ -48,6 +55,7 @@ final class AppModel {
     var endpointURL: String
     var showSignIn = false
     var showConnectAgent = false
+    var showEarlierExternal = false
     var box: Box?
     var operation: OperationProgress?
     var agents: [Agent] = []
@@ -128,6 +136,24 @@ final class AppModel {
             selectedAgentID = agents.last { $0.externalClient == nil }?.id
         }
         Perf.mark("local_agent", "closed \(session.kind.rawValue)")
+    }
+
+    // externalAgents keeps visible every active session, every session active
+    // in the last hour, the newest session of each client and the selection.
+    func externalAgents(now: Date = Date()) -> ExternalAgents {
+        let external = agents.filter { $0.externalClient != nil }
+        let cutoff = Int64(now.timeIntervalSince1970 * 1000) - 3_600_000
+        var newest: [String: Int64] = [:]
+        for agent in external {
+            newest[agent.name] = max(newest[agent.name] ?? .min, agent.createdAtMs)
+        }
+        var split = ExternalAgents()
+        for agent in external {
+            let visible = agent.status == .running || agent.status == .waitingForUser || agent.updatedAtMs >= cutoff
+                || agent.createdAtMs == newest[agent.name] || agent.id == selectedAgentID
+            if visible { split.shown.append(agent) } else { split.earlier.append(agent) }
+        }
+        return split
     }
 
     // externalAgent is the mcp:* agent a local session opened: the newest one from the same client since it started.

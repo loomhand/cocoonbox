@@ -35,7 +35,7 @@ actor MockWorld {
     private var animateFPS = 0
     private var externalDelay: Duration?
 
-    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?) {
+    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false) {
         self.token = token
         self.bootDelay = bootDelay
         self.animateFPS = animateFPS
@@ -49,6 +49,31 @@ actor MockWorld {
         box.flavor.diskGib = 40
         box.createdAtMs = Self.now()
         self.box = box
+        if externalHistory {
+            agents = Self.externalHistory()
+        }
+    }
+
+    // externalHistory is idle MCP sessions of several clients, hours old,
+    // like a box that other clients have used before.
+    private static func externalHistory() -> [String: Agent] {
+        var agents: [String: Agent] = [:]
+        let now = Self.now()
+        let hour: Int64 = 3_600_000
+        let sessions: [(String, Int64)] = [
+            ("cb-api-curl", 5 * hour), ("cb-api-curl", 3 * hour), ("cb-api-curl", 2 * hour),
+            ("inspector-cli", 4 * hour), ("inspector-cli", 90 * 60_000), ("diag", 10 * 60_000),
+        ]
+        for (client, age) in sessions {
+            var agent = Agent()
+            agent.id = "ag-\(UUID().uuidString.prefix(8).lowercased())"
+            agent.name = "mcp:\(client)"
+            agent.status = .idle
+            agent.createdAtMs = now - age
+            agent.updatedAtMs = now - age + 60_000
+            agents[agent.id] = agent
+        }
+        return agents
     }
 
     static func now() -> Int64 {

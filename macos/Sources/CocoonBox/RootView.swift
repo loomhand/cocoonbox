@@ -60,6 +60,7 @@ struct RootView: View {
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @State private var externalExpanded = true
 
     var body: some View {
         @Bindable var model = model
@@ -88,10 +89,27 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
+            let external = model.externalAgents()
             List(selection: $model.selectedAgentID) {
                 Section {
-                    ForEach(model.agents, id: \.id) { agent in
+                    ForEach(model.agents.filter { $0.externalClient == nil }, id: \.id) { agent in
                         AgentRow(agent: agent).tag(agent.id)
+                    }
+                }
+                if !external.shown.isEmpty || !external.earlier.isEmpty {
+                    Section(isExpanded: $externalExpanded) {
+                        ForEach(external.shown + (model.showEarlierExternal ? external.earlier : []), id: \.id) { agent in
+                            AgentRow(agent: agent).tag(agent.id)
+                        }
+                        if !external.earlier.isEmpty {
+                            Button(model.showEarlierExternal ? "Hide earlier" : "Show \(external.earlier.count) earlier") {
+                                model.showEarlierExternal.toggle()
+                            }
+                            .buttonStyle(.link)
+                            .font(.caption)
+                        }
+                    } header: {
+                        Text("External")
                     }
                 }
                 if !model.localAgents.isEmpty {
