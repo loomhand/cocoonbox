@@ -163,6 +163,33 @@ func TestRebaseProvisionsTheNewMachineAndRevokesTheOld(t *testing.T) {
 	}
 }
 
+func TestARestoredMachineGetsItsOwnIDAndGWKey(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	env.save(t)
+	gw := &fakeGW{}
+	env.svc.EnableProvisioning(fakeSigner{}, gw)
+	env.fake.mu.Lock()
+	delete(env.fake.machines, aliceBox)
+	env.fake.mu.Unlock()
+
+	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	newID := env.fake.waitSpec(t, 1).ID
+	if !strings.HasPrefix(newID, aliceBox+"-r") {
+		t.Fatalf("restored machine id = %q, want %s-r<ts>", newID, aliceBox)
+	}
+	env.fake.push(machines.Machine{ID: newID, State: machines.StateRunning, Incarnation: "pod1/vm1"})
+	if last := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("restore ended with %v", last[len(last)-1])
+	}
+	if want := "add " + newID; gw.calls() != want {
+		t.Errorf("gw calls = %q, want %q", gw.calls(), want)
+	}
+}
+
 func watchWithin(t *testing.T, svc *Service, ctx context.Context, opID string, d time.Duration) []*controlv1.OperationEvent {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(ctx, d)

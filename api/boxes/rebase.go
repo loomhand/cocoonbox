@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -53,7 +52,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING,
 		fmt.Sprintf("saved snapshot %s in %s", rec.ID, saved.Round(time.Second)))
 
-	spec := machines.Spec{ID: op.boxID + "-r" + strconv.FormatInt(time.Now().Unix(), 36), Owner: user, Flavor: old.Flavor, Image: image}
+	spec := machines.Spec{ID: newMachineID(op.boxID), Owner: user, Flavor: old.Flavor, Image: image}
 	created, _, err := s.machines.Ensure(op.ctx, spec)
 	if err != nil {
 		logger.Error(op.ctx, err, "create rebase machine")

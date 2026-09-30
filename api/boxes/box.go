@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
+	"time"
 
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
@@ -42,6 +44,10 @@ var (
 func BoxID(user string) string {
 	sum := sha256.Sum256([]byte(user))
 	return idPrefix + hex.EncodeToString(sum[:])[:idHexLen]
+}
+
+func newMachineID(box string) string {
+	return box + "-r" + strconv.FormatInt(time.Now().Unix(), 36)
 }
 
 func toBox(box string, m machines.Machine) *controlv1.Box {

@@ -297,9 +297,11 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 	if err != nil || resp.GetOperation().GetId() == "" || resp.GetBox().GetState() != controlv1.BoxState_BOX_STATE_STARTING {
 		t.Fatalf("Ensure = %v, %v", resp, err)
 	}
-	if spec := env.fake.waitSpec(t, 1); spec.ID != aliceBox || spec.Owner != alice {
-		t.Errorf("restore machine spec = %+v", spec)
+	spec := env.fake.waitSpec(t, 1)
+	if !strings.HasPrefix(spec.ID, aliceBox+"-r") || spec.Owner != alice {
+		t.Errorf("restore machine spec = %+v, want a new %s-r machine", spec, aliceBox)
 	}
+	newID := spec.ID
 	again, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
 	if err != nil || again.GetOperation().GetId() != resp.GetOperation().GetId() || env.fake.specCount() != 1 {
 		t.Errorf("second Ensure = %v, %v, %d specs, want the running restore", again, err, env.fake.specCount())
@@ -307,7 +309,7 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 	if _, err := env.svc.Hibernate(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("Hibernate during the restore = %v, want FailedPrecondition", err)
 	}
-	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	env.fake.push(machines.Machine{ID: newID, State: machines.StateRunning})
 	events := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), "")
 	last := events[len(events)-1]
 	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !strings.Contains(last.GetDetail(), "(snapshot "+snapshotID(1)) ||
@@ -321,10 +323,10 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 		t.Errorf("no restore progress in %v", events)
 	}
 	restore := env.agent.lastRestore()
-	if restore.addr != aliceBox+":7443" || restore.req.GetManifest().GetChunkId() != snapshotID(1) || len(restore.req.GetGets()) != 2 {
+	if restore.addr != newID+":7443" || restore.req.GetManifest().GetChunkId() != snapshotID(1) || len(restore.req.GetGets()) != 2 {
 		t.Errorf("restore = %s %v", restore.addr, restore.req)
 	}
-	if ep, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || ep.Key != aliceBox+":7443" {
+	if ep, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || ep.Key != newID+":7443" {
 		t.Errorf("Resolve after the restore = %q, %v", ep.Key, err)
 	}
 	if env.fake.deletedIDs() != "" {
@@ -346,7 +348,7 @@ func TestNoClientReachesAMachineWhileItIsRestored(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	env.fake.push(machines.Machine{ID: env.fake.waitSpec(t, 1).ID, State: machines.StateRunning})
 	deadline := time.Now().Add(5 * time.Second)
 	for env.agent.restoreCount() == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
@@ -384,20 +386,21 @@ func TestAFailedRestoreDeletesTheMachineSoEnsureRetries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	first := env.fake.waitSpec(t, 1).ID
+	env.fake.push(machines.Machine{ID: first, State: machines.StateRunning})
 	events := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), "")
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != "restore failed" {
 		t.Fatalf("last event = %v", last)
 	}
-	if env.fake.deletedIDs() != aliceBox {
-		t.Errorf("deleted %q, want the empty machine", env.fake.deletedIDs())
+	if env.fake.deletedIDs() != first {
+		t.Errorf("deleted %q, want the empty machine %s", env.fake.deletedIDs(), first)
 	}
 	env.agent.restoreErr = nil
 	retry, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
 	if err != nil || retry.GetOperation().GetId() == resp.GetOperation().GetId() || env.fake.specCount() != 2 {
 		t.Fatalf("retry Ensure = %v, %v, %d specs", retry, err, env.fake.specCount())
 	}
-	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	env.fake.push(machines.Machine{ID: env.fake.waitSpec(t, 2).ID, State: machines.StateRunning})
 	if last := watch(t, env.svc, env.ctx, retry.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Errorf("retried restore ended with %v", last[len(last)-1])
 	}

@@ -73,6 +73,9 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		if saved, err = s.savedHead(ctx, box); err != nil {
 			return nil, serviceError(ctx, logger, err, "read saved state")
 		}
+		if saved.Latest != "" {
+			spec.ID = newMachineID(box)
+		}
 	default:
 		return nil, serviceError(ctx, logger, err, "get box")
 	}
