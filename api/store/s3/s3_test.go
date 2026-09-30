@@ -30,8 +30,8 @@ func TestPresignUsesPublicEndpointAndPrefix(t *testing.T) {
 	if u.Host != "10.203.0.1:9000" || u.Path != "/cocoonbox/state/cb-2bd806c97f0e/chunks/abc" || u.Query().Get("X-Amz-Signature") == "" {
 		t.Errorf("presigned put = %s", put.URL)
 	}
-	if u.Query().Get("X-Amz-Expires") != "3600" {
-		t.Errorf("expires = %s, want 3600", u.Query().Get("X-Amz-Expires"))
+	if u.Query().Get("X-Amz-Expires") != "600" {
+		t.Errorf("expires = %s, want 600", u.Query().Get("X-Amz-Expires"))
 	}
 	get, err := s.PresignGet(t.Context(), "cb-2bd806c97f0e/manifests/s1")
 	if err != nil || !strings.Contains(get.URL, "/cocoonbox/state/cb-2bd806c97f0e/manifests/s1?") {

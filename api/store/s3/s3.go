@@ -18,7 +18,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/store"
 )
 
-const defaultPresignTTL = time.Hour
+const defaultPresignTTL = 10 * time.Minute
 
 // Options configures the bucket and credentials.
 type Options struct {

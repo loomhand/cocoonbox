@@ -26,7 +26,7 @@ const (
 	defaultEdgeTokenFile = "/etc/cocoonbox/edge-token" //nolint:gosec // a path, not a credential
 
 	defaultStateInterval = 15 * time.Minute
-	defaultPresignTTL    = time.Hour
+	defaultPresignTTL    = 10 * time.Minute
 	defaultKeyringDir    = "/var/lib/cocoonbox-api/keys"
 	defaultRegion        = "us-east-1"
 
