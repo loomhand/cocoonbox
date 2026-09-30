@@ -1,0 +1,8 @@
+[Unit]
+Description=cocoonbox registry garbage collection
+After=k3s.service
+RequiresMountsFor=/srv/cb
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cb-registry-gc
