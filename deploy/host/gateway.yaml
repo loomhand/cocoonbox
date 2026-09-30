@@ -1,5 +1,4 @@
 # gw v0.2.6 for the cocoonbox env; installed as /etc/gw/gateway.yaml (root:gw 0640).
-# The access key value comes from /etc/cocoonbox/gw-client.key (install-gw-config substitutes the ak: line only).
 listen:
   host: 10.203.0.1
   port: 18090
@@ -22,18 +21,9 @@ models:
   - {name: qwen/qwen3-vl-235b-a22b-instruct, provider: openrouter, input_price_per_1k_micros: 210, output_price_per_1k_micros: 1900, token_rate: {read_cache: 0.476}}
 
 tenants:
-  - name: cocoonbox
-    qps: 4
-    daily_cost_quota_micros: 20000000
-    models:
-      - deepseek/deepseek-v4.1-flash
-      - anthropic/claude-sonnet-5
-      - anthropic/claude-sonnet-4.6
-      - qwen/qwen3-vl-235b-a22b-instruct
-
   - name: cocoonbox-boxes
     qps: 16
-    daily_cost_quota_micros: 10000000
+    daily_cost_quota_micros: 20000000
     key_daily_cost_quota_micros: 10000000
     models:
       - deepseek/deepseek-v4.1-flash
@@ -42,9 +32,4 @@ tenants:
       - qwen/qwen3-vl-235b-a22b-instruct
 
 access_keys:
-  - ak: __CB_ACCESS_KEY__
-    product: cocoonbox
-    tenant: cocoonbox
-    qps: 4
-    daily_token_quota: 50000000
   # __CB_BOX_KEYS__

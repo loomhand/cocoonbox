@@ -26,18 +26,17 @@ case "$out" in ok\ cb-*) [ ${#key} -eq 48 ] && ok "add returns a 48-char key" ||
 out=$(k add cb-0123456789ab-r2); key2=${out#ok }
 [ -n "$key2" ] && [ "$key2" != "$key" ] && ok "Rebase machine id gets its own key" || no "rebase key: $out"
 
-python3 - "$t/gateway.yaml" "$key" "$key2" <<'PY' && ok "render: shared once, each box key once, owner = base box id" || no "render content"
+python3 - "$t/gateway.yaml" "$key" "$key2" <<'PY' && ok "render: no shared key, each box key once, owner = base box id" || no "render content"
 import sys, yaml
 cfg = yaml.safe_load(open(sys.argv[1])); keys = {k["ak"]: k for k in cfg["access_keys"]}
 aks = [k["ak"] for k in cfg["access_keys"]]
 shared = open(sys.argv[1].rsplit("/", 1)[0] + "/shared.key").read().strip()
-assert aks.count(shared) == 1 and aks.count(sys.argv[2]) == 1 and aks.count(sys.argv[3]) == 1
+assert shared not in aks and len(aks) == 2 and aks.count(sys.argv[2]) == 1 and aks.count(sys.argv[3]) == 1
 for a in (sys.argv[2], sys.argv[3]):
     e = keys[a]; assert e["owner"] == "cb-0123456789ab" and e["qps"] == 4 and e["tenant"] == "cocoonbox-boxes"
 t = {x["name"]: x for x in cfg["tenants"]}
-assert "key_daily_cost_quota_micros" not in t["cocoonbox"] and t["cocoonbox"]["qps"] == 4
-assert t["cocoonbox-boxes"]["key_daily_cost_quota_micros"] == 10000000 and t["cocoonbox-boxes"]["daily_cost_quota_micros"] == 10000000 and t["cocoonbox-boxes"]["qps"] == 16
-assert keys[shared]["tenant"] == "cocoonbox"
+assert list(t) == ["cocoonbox-boxes"]
+assert t["cocoonbox-boxes"]["key_daily_cost_quota_micros"] == 10000000 and t["cocoonbox-boxes"]["daily_cost_quota_micros"] == 20000000 and t["cocoonbox-boxes"]["qps"] == 16
 PY
 [ "$(grep -cF "$key" "$t/gateway.yaml")" = 1 ] && ok "box key appears exactly once in the file" || no "box key count"
 
