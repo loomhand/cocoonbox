@@ -9,20 +9,25 @@ BRIDGE_ADDR=10.203.0.1/24
 CLUSTER_CIDR=10.42.0.0/15
 GW_PORT=18090
 STATE_PORT=9000
+VK_PORT=10260
 
 up() {
 	ip link show "$BRIDGE" >/dev/null 2>&1 || ip link add "$BRIDGE" type bridge
 	ip -4 addr show dev "$BRIDGE" | grep -q "inet $BRIDGE_ADDR" || ip addr add "$BRIDGE_ADDR" dev "$BRIDGE"
 	ip link set "$BRIDGE" up
 
-	iptables -N CB-INPUT 2>/dev/null || iptables -F CB-INPUT
+	for ipt in iptables ip6tables; do
+		$ipt -N CB-INPUT 2>/dev/null || $ipt -F CB-INPUT
+		$ipt -A CB-INPUT ! -i lo -p tcp --dport "$VK_PORT" -j DROP
+		$ipt -C INPUT -j CB-INPUT 2>/dev/null || $ipt -I INPUT 1 -j CB-INPUT
+	done
 	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports 5000,6443,9000,9001,10250,10260,$GW_PORT,18200,18201 ! -s "$HOST_IP" -j DROP
 	iptables -A CB-INPUT -i "$UPLINK" -p udp --dport 8472 ! -s "$HOST_IP" -j DROP
 	iptables -A CB-INPUT -i "$BRIDGE" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
 	iptables -A CB-INPUT -i "$BRIDGE" -p tcp --dport "$GW_PORT" -j RETURN
 	iptables -A CB-INPUT -i "$BRIDGE" -p tcp --dport "$STATE_PORT" -j RETURN
 	iptables -A CB-INPUT -i "$BRIDGE" -j DROP
-	iptables -C INPUT -j CB-INPUT 2>/dev/null || iptables -I INPUT 1 -j CB-INPUT
+	ip6tables -A CB-INPUT -i "$BRIDGE" -j DROP
 
 	iptables -t mangle -N CB-PREROUTING 2>/dev/null || iptables -t mangle -F CB-PREROUTING
 	iptables -t mangle -A CB-PREROUTING -i "$BRIDGE" -d "$CLUSTER_CIDR" -j DROP
@@ -43,9 +48,11 @@ up() {
 }
 
 down() {
-	while iptables -D INPUT -j CB-INPUT 2>/dev/null; do :; done
+	for ipt in iptables ip6tables; do
+		while $ipt -D INPUT -j CB-INPUT 2>/dev/null; do :; done
+		$ipt -F CB-INPUT 2>/dev/null && $ipt -X CB-INPUT || true
+	done
 	while iptables -t mangle -D PREROUTING -j CB-PREROUTING 2>/dev/null; do :; done
-	iptables -F CB-INPUT 2>/dev/null && iptables -X CB-INPUT || true
 	iptables -t mangle -F CB-PREROUTING 2>/dev/null && iptables -t mangle -X CB-PREROUTING || true
 	while iptables -D FORWARD -j CB-EGRESS 2>/dev/null; do :; done
 	iptables -F CB-EGRESS 2>/dev/null && iptables -X CB-EGRESS || true
