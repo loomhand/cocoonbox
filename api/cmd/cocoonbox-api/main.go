@@ -42,7 +42,7 @@ func main() {
 	}
 	edgeToken, err := cfg.EdgeToken()
 	if err != nil {
-		logger.Fatalf(ctx, err, "load edge token")
+		logger.Warnf(ctx, "agent edge refuses every call until the edge token exists and the service restarts: %v", err)
 	}
 	restCfg, err := clientcmd.BuildConfigFromFlags("", cmp.Or(cfg.Kubeconfig, os.Getenv("KUBECONFIG")))
 	if err != nil {

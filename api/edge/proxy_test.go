@@ -173,6 +173,16 @@ func TestRejectsNonAgentMethods(t *testing.T) {
 	}
 }
 
+func TestRefusesWithoutEdgeToken(t *testing.T) {
+	env := newProxyEnvWithToken(t, "")
+	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable {
+		t.Errorf("Hello: %v, want Unavailable", err)
+	}
+	if env.agent.calls.Load() != 0 {
+		t.Errorf("agent received %d calls without an edge token", env.agent.calls.Load())
+	}
+}
+
 type proxyEnv struct {
 	agent  *fakeAgent
 	conn   *grpc.ClientConn
@@ -181,6 +191,11 @@ type proxyEnv struct {
 
 func newProxyEnv(t *testing.T) *proxyEnv {
 	t.Helper()
+	return newProxyEnvWithToken(t, edgeToken)
+}
+
+func newProxyEnvWithToken(t *testing.T, token string) *proxyEnv {
+	t.Helper()
 	agent := &fakeAgent{screenDone: make(chan error, 1)}
 	agentSrv := grpc.NewServer(grpc.MaxRecvMsgSize(MaxMessageSize))
 	agentv1.RegisterSessionServer(agentSrv, agent)
@@ -188,7 +203,7 @@ func newProxyEnv(t *testing.T) *proxyEnv {
 
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
-	proxy := NewProxy(fakeResolver{addr: agentAddr}, edgeToken)
+	proxy := NewProxy(fakeResolver{addr: agentAddr}, token)
 	t.Cleanup(proxy.Close)
 	edgeSrv := grpc.NewServer(
 		grpc.ForceServerCodecV2(NewCodec()),

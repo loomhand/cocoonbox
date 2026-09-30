@@ -47,7 +47,7 @@ type Proxy struct {
 	conns map[string]*boxConn
 }
 
-// NewProxy builds a Proxy that authenticates to agents with edgeToken.
+// NewProxy builds a Proxy that authenticates to agents with edgeToken; an empty edgeToken refuses every call.
 func NewProxy(resolver Resolver, edgeToken string) *Proxy {
 	return &Proxy{resolver: resolver, edgeToken: edgeToken, codec: NewCodec(), conns: map[string]*boxConn{}}
 }
@@ -62,6 +62,9 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	user := auth.User(ctx)
 	if user == "" {
 		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	if p.edgeToken == "" {
+		return status.Error(codes.Unavailable, "agent edge is not configured")
 	}
 	md, _ := metadata.FromIncomingContext(ctx)
 	boxes := md.Get(HeaderBox)

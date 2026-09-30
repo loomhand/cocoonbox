@@ -25,4 +25,12 @@ install -m 0644 deploy/cocoonbox-api.service /etc/systemd/system/
 systemctl enable --now cocoonbox-api
 ```
 
+`/etc/cocoonbox/edge-token` belongs to the infra provisioning, which bakes the same value into the golden image's `agent.env`. Until it exists the service still serves `Boxes` but refuses every agent call with `UNAVAILABLE`; restart the service after the file appears.
+
 The service runs as `cocoonbox-api`; systemd `LoadCredential=` hands it `/etc/cocoonbox/{api.yaml,kubeconfig,edge-token}` (all root 0600), and relative paths in `api.yaml` resolve inside that credentials directory.
+
+## Limits
+
+- `go 1.27.1`: cocoon-common v0.3.7, the version cocoon-operator v0.3.8 uses, requires it.
+- Operation logs live in memory: `WatchOperation` resumes by offset key within one process lifetime; after a restart an old operation id returns `NOT_FOUND` and a fresh `Ensure` or `Hibernate` starts a new one.
+- `Ensure` with an explicit flavor that differs from the existing box returns `FAILED_PRECONDITION`: a resize would make the operator rebuild the pod.
