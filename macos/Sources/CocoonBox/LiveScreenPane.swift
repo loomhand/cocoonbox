@@ -22,9 +22,11 @@ struct LiveScreenPane: View {
                 LiveScreenView(container: model.screen.container)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if model.screen.status != .live {
+                    Color.black.opacity(0.6)
+                        .allowsHitTesting(false)
                     VStack(spacing: 8) {
-                        if model.screen.status == .connecting { ProgressView() }
-                        Text(message).foregroundStyle(.secondary)
+                        if model.screen.status == .connecting || working { ProgressView() }
+                        Text(message).foregroundStyle(.white.opacity(0.85))
                     }
                 }
             }
@@ -44,12 +46,20 @@ struct LiveScreenPane: View {
         }
     }
 
+    private var working: Bool {
+        model.operation.map { !$0.finished } ?? false
+    }
+
+    // message names what the box is doing while the last frame is dimmed.
     private var message: String {
+        if !model.boxRunning, let operation = model.operation, !operation.finished {
+            return "\(operation.title)…"
+        }
         switch model.screen.status {
-        case .idle: model.boxRunning ? "Waiting for the screen…" : "The screen appears when the box runs."
-        case .connecting: "Connecting to the box screen…"
-        case .live: ""
-        case .failed(let reason): "Screen disconnected: \(reason). Retrying…"
+        case .idle: return model.boxRunning ? "Waiting for the screen…" : "The screen appears when the box runs."
+        case .connecting: return "Connecting to the box screen…"
+        case .live: return ""
+        case .failed(let reason): return "Screen disconnected: \(reason). Retrying…"
         }
     }
 }
