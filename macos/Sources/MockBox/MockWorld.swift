@@ -305,10 +305,20 @@ actor MockWorld {
                 $0.text = "Linux cocoonbox 6.12.0 #1 SMP x86_64 GNU/Linux\nFilesystem  Size  Used Avail Use% Mounted on\n/dev/vda1    40G  6.1G   34G  16% /"
             }))
         }
-        for sentence in ["Done. ", "The box runs Linux 6.12 with 34 GB free in /workspace. ", "Tell me what to do next."] {
-            try? await Task.sleep(for: .milliseconds(200))
-            append(agent: id, turn: turn, role: .assistant, body: .text(.with { $0.text = sentence }))
+        let reply = "Done. The box runs Linux 6.12 with 34 GB free in /workspace. Tell me what to do next."
+        for word in reply.split(separator: " ", omittingEmptySubsequences: false) {
+            try? await Task.sleep(for: .milliseconds(40))
+            publish(.textDelta(.with {
+                $0.agentID = id
+                $0.turnID = turn
+                $0.block = 0
+                $0.text = word + " "
+            }))
         }
+        append(agent: id, turn: turn, role: .assistant, body: .text(.with {
+            $0.text = reply
+            $0.block = 0
+        }))
         append(agent: id, turn: turn, role: .assistant, body: .turnEnd(.with {
             $0.ok = true
             $0.usage.inputTokens = 1834

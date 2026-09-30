@@ -103,14 +103,76 @@ public nonisolated struct Cocoonbox_Agent_V1_Event: Sendable {
     set {body = .computerAction(newValue)}
   }
 
+  public var textDelta: Cocoonbox_Agent_V1_TextDelta {
+    get {
+      if case .textDelta(let v)? = body {return v}
+      return Cocoonbox_Agent_V1_TextDelta()
+    }
+    set {body = .textDelta(newValue)}
+  }
+
+  public var reasoningDelta: Cocoonbox_Agent_V1_ReasoningDelta {
+    get {
+      if case .reasoningDelta(let v)? = body {return v}
+      return Cocoonbox_Agent_V1_ReasoningDelta()
+    }
+    set {body = .reasoningDelta(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
     case transcript(Cocoonbox_Agent_V1_TranscriptEntry)
     case agent(Cocoonbox_Agent_V1_Agent)
     case computerAction(Cocoonbox_Agent_V1_ComputerAction)
+    case textDelta(Cocoonbox_Agent_V1_TextDelta)
+    case reasoningDelta(Cocoonbox_Agent_V1_ReasoningDelta)
 
   }
+
+  public init() {}
+}
+
+/// TextDelta is a live fragment of an assistant text block. Deltas are not
+/// replayed on reconnect; the complete block follows as a TranscriptEntry whose
+/// TextBlock carries the same (turn_id, block).
+public nonisolated struct Cocoonbox_Agent_V1_TextDelta: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var agentID: String = String()
+
+  public var turnID: String = String()
+
+  public var block: UInt32 = 0
+
+  public var text: String = String()
+
+  public var subagent: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+/// ReasoningDelta is TextDelta for reasoning blocks.
+public nonisolated struct Cocoonbox_Agent_V1_ReasoningDelta: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var agentID: String = String()
+
+  public var turnID: String = String()
+
+  public var block: UInt32 = 0
+
+  public var text: String = String()
+
+  public var subagent: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
@@ -309,7 +371,7 @@ nonisolated extension Cocoonbox_Agent_V1_EventsRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}offset\0\u{2}\u{9}transcript\0\u{1}agent\0\u{3}computer_action\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}offset\0\u{2}\u{9}transcript\0\u{1}agent\0\u{3}computer_action\0\u{3}text_delta\0\u{3}reasoning_delta\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -357,6 +419,32 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
           self.body = .computerAction(v)
         }
       }()
+      case 13: try {
+        var v: Cocoonbox_Agent_V1_TextDelta?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .textDelta(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .textDelta(v)
+        }
+      }()
+      case 14: try {
+        var v: Cocoonbox_Agent_V1_ReasoningDelta?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .reasoningDelta(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .reasoningDelta(v)
+        }
+      }()
       default: break
       }
     }
@@ -383,6 +471,14 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
       guard case .computerAction(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 12)
     }()
+    case .textDelta?: try {
+      guard case .textDelta(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 13)
+    }()
+    case .reasoningDelta?: try {
+      guard case .reasoningDelta(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -391,6 +487,106 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
   public static func ==(lhs: Cocoonbox_Agent_V1_Event, rhs: Cocoonbox_Agent_V1_Event) -> Bool {
     if lhs.offset != rhs.offset {return false}
     if lhs.body != rhs.body {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_TextDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".TextDelta"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_id\0\u{3}turn_id\0\u{1}block\0\u{1}text\0\u{1}subagent\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.agentID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.turnID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.block) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.subagent) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.agentID.isEmpty {
+      try visitor.visitSingularStringField(value: self.agentID, fieldNumber: 1)
+    }
+    if !self.turnID.isEmpty {
+      try visitor.visitSingularStringField(value: self.turnID, fieldNumber: 2)
+    }
+    if self.block != 0 {
+      try visitor.visitSingularUInt32Field(value: self.block, fieldNumber: 3)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 4)
+    }
+    if !self.subagent.isEmpty {
+      try visitor.visitSingularStringField(value: self.subagent, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_TextDelta, rhs: Cocoonbox_Agent_V1_TextDelta) -> Bool {
+    if lhs.agentID != rhs.agentID {return false}
+    if lhs.turnID != rhs.turnID {return false}
+    if lhs.block != rhs.block {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs.subagent != rhs.subagent {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_ReasoningDelta: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ReasoningDelta"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_id\0\u{3}turn_id\0\u{1}block\0\u{1}text\0\u{1}subagent\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.agentID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.turnID) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.block) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.subagent) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.agentID.isEmpty {
+      try visitor.visitSingularStringField(value: self.agentID, fieldNumber: 1)
+    }
+    if !self.turnID.isEmpty {
+      try visitor.visitSingularStringField(value: self.turnID, fieldNumber: 2)
+    }
+    if self.block != 0 {
+      try visitor.visitSingularUInt32Field(value: self.block, fieldNumber: 3)
+    }
+    if !self.text.isEmpty {
+      try visitor.visitSingularStringField(value: self.text, fieldNumber: 4)
+    }
+    if !self.subagent.isEmpty {
+      try visitor.visitSingularStringField(value: self.subagent, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_ReasoningDelta, rhs: Cocoonbox_Agent_V1_ReasoningDelta) -> Bool {
+    if lhs.agentID != rhs.agentID {return false}
+    if lhs.turnID != rhs.turnID {return false}
+    if lhs.block != rhs.block {return false}
+    if lhs.text != rhs.text {return false}
+    if lhs.subagent != rhs.subagent {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

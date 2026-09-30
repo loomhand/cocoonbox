@@ -342,6 +342,12 @@ public nonisolated struct Cocoonbox_Agent_V1_TextBlock: Sendable {
 
   public var text: String = String()
 
+  /// Set when the text belongs to a subagent, e.g. "computer".
+  public var subagent: String = String()
+
+  /// Index of the streamed block within its turn; matches TextDelta.block.
+  public var block: UInt32 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -353,6 +359,11 @@ public nonisolated struct Cocoonbox_Agent_V1_ReasoningBlock: Sendable {
   // methods supported on all messages.
 
   public var text: String = String()
+
+  /// Index of the streamed block within its turn; matches ReasoningDelta.block.
+  public var block: UInt32 = 0
+
+  public var subagent: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -1013,7 +1024,7 @@ nonisolated extension Cocoonbox_Agent_V1_TranscriptEntry: SwiftProtobuf.Message,
 
 nonisolated extension Cocoonbox_Agent_V1_TextBlock: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TextBlock"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}subagent\0\u{1}block\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1022,6 +1033,8 @@ nonisolated extension Cocoonbox_Agent_V1_TextBlock: SwiftProtobuf.Message, Swift
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.subagent) }()
+      case 3: try { try decoder.decodeSingularUInt32Field(value: &self.block) }()
       default: break
       }
     }
@@ -1031,11 +1044,19 @@ nonisolated extension Cocoonbox_Agent_V1_TextBlock: SwiftProtobuf.Message, Swift
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
     }
+    if !self.subagent.isEmpty {
+      try visitor.visitSingularStringField(value: self.subagent, fieldNumber: 2)
+    }
+    if self.block != 0 {
+      try visitor.visitSingularUInt32Field(value: self.block, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_TextBlock, rhs: Cocoonbox_Agent_V1_TextBlock) -> Bool {
     if lhs.text != rhs.text {return false}
+    if lhs.subagent != rhs.subagent {return false}
+    if lhs.block != rhs.block {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -1043,7 +1064,7 @@ nonisolated extension Cocoonbox_Agent_V1_TextBlock: SwiftProtobuf.Message, Swift
 
 nonisolated extension Cocoonbox_Agent_V1_ReasoningBlock: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ReasoningBlock"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}text\0\u{1}block\0\u{1}subagent\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1052,6 +1073,8 @@ nonisolated extension Cocoonbox_Agent_V1_ReasoningBlock: SwiftProtobuf.Message, 
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.text) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.block) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.subagent) }()
       default: break
       }
     }
@@ -1061,11 +1084,19 @@ nonisolated extension Cocoonbox_Agent_V1_ReasoningBlock: SwiftProtobuf.Message, 
     if !self.text.isEmpty {
       try visitor.visitSingularStringField(value: self.text, fieldNumber: 1)
     }
+    if self.block != 0 {
+      try visitor.visitSingularUInt32Field(value: self.block, fieldNumber: 2)
+    }
+    if !self.subagent.isEmpty {
+      try visitor.visitSingularStringField(value: self.subagent, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_ReasoningBlock, rhs: Cocoonbox_Agent_V1_ReasoningBlock) -> Bool {
     if lhs.text != rhs.text {return false}
+    if lhs.block != rhs.block {return false}
+    if lhs.subagent != rhs.subagent {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -5,7 +5,7 @@ import SwiftUI
 
 enum TranscriptRow: Identifiable {
     case user(UInt64, String)
-    case text(UInt64, String)
+    case text(UInt64, String, subagent: String)
     case reasoning(UInt64, String)
     case tool(UInt64, Cocoonbox_Agent_V1_ToolCall, Cocoonbox_Agent_V1_ToolResult?, UInt64?)
     case result(UInt64, Cocoonbox_Agent_V1_ToolResult)
@@ -14,7 +14,7 @@ enum TranscriptRow: Identifiable {
 
     var id: UInt64 {
         switch self {
-        case .user(let seq, _), .text(let seq, _), .reasoning(let seq, _), .tool(let seq, _, _, _),
+        case .user(let seq, _), .text(let seq, _, _), .reasoning(let seq, _), .tool(let seq, _, _, _),
              .result(let seq, _), .approval(let seq, _, _), .turnEnd(let seq, _):
             seq
         }
@@ -35,10 +35,11 @@ enum TranscriptRow: Identifiable {
             case .text(let block):
                 if entry.role == .user {
                     rows.append(.user(entry.seq, block.text))
-                } else if case .text(let seq, let text)? = rows.last, index > 0, entries[index - 1].turnID == entry.turnID {
-                    rows[rows.count - 1] = .text(seq, text + block.text)
+                } else if case .text(let seq, let text, let subagent)? = rows.last, subagent == block.subagent,
+                          index > 0, entries[index - 1].turnID == entry.turnID {
+                    rows[rows.count - 1] = .text(seq, text + block.text, subagent: subagent)
                 } else {
-                    rows.append(.text(entry.seq, block.text))
+                    rows.append(.text(entry.seq, block.text, subagent: block.subagent))
                 }
             case .reasoning(let block):
                 rows.append(.reasoning(entry.seq, block.text))
@@ -93,6 +94,8 @@ struct TranscriptView: View {
                         RowView(agentID: agent.id, row: row)
                             .id(row.id)
                     }
+                    LiveBlocksView(agentID: agent.id, proxy: proxy)
+                        .id("live")
                 }
                 .padding(14)
             }
@@ -123,10 +126,8 @@ struct RowView: View {
                     .padding(.vertical, 8)
                     .background(Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 12))
             }
-        case .text(_, let text):
-            Text(markdown(text))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        case .text(_, let text, let subagent):
+            AssistantText(text: text, subagent: subagent)
         case .reasoning(_, let text):
             DisclosureGroup {
                 Text(text)
@@ -156,8 +157,58 @@ struct RowView: View {
         }
     }
 
-    private func markdown(_ text: String) -> AttributedString {
+}
+
+struct AssistantText: View {
+    let text: String
+    let subagent: String
+    var streaming = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            if !subagent.isEmpty {
+                Text(subagent)
+                    .font(.caption2)
+                    .padding(.horizontal, 5)
+                    .background(.purple.opacity(0.2), in: Capsule())
+            }
+            Text(markdown)
+                .foregroundStyle(subagent.isEmpty ? .primary : .secondary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if streaming {
+                ProgressView().controlSize(.mini)
+            }
+        }
+    }
+
+    private var markdown: AttributedString {
         (try? AttributedString(markdown: text, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(text)
+    }
+}
+
+// LiveBlocksView renders blocks that are still streaming; it alone observes
+// the per-token deltas, so the settled transcript does not re-render on them.
+struct LiveBlocksView: View {
+    @Environment(AppModel.self) private var model
+    let agentID: String
+    let proxy: ScrollViewProxy
+
+    var body: some View {
+        let blocks = model.live[agentID] ?? []
+        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            if block.reasoning {
+                Label(block.text.suffix(160).description, systemImage: "brain")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            } else {
+                AssistantText(text: block.text, subagent: block.subagent, streaming: true)
+            }
+        }
+        .onChange(of: blocks.last?.text.count) { _, _ in
+            proxy.scrollTo("live", anchor: .bottom)
+        }
     }
 }
 

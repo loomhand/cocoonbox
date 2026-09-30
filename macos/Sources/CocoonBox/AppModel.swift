@@ -11,6 +11,15 @@ typealias Agent = Cocoonbox_Agent_V1_Agent
 typealias Entry = Cocoonbox_Agent_V1_TranscriptEntry
 typealias ComputerAction = Cocoonbox_Agent_V1_ComputerAction
 
+// LiveBlock is an assistant text or reasoning block still streaming as deltas.
+struct LiveBlock: Equatable {
+    var turnID: String
+    var block: UInt32
+    var reasoning: Bool
+    var subagent: String
+    var text: String
+}
+
 struct OperationProgress: Equatable {
     var id: String
     var title: String
@@ -30,6 +39,7 @@ final class AppModel {
     var agents: [Agent] = []
     var selectedAgentID: String?
     var transcripts: [String: [Entry]] = [:]
+    var live: [String: [LiveBlock]] = [:]
     var hello: Cocoonbox_Agent_V1_HelloResponse?
     var eventsLive = false
     var lastError: String?
@@ -279,6 +289,7 @@ final class AppModel {
         do {
             let list = try await connection.agents.list(Cocoonbox_Agent_V1_ListAgentsRequest())
             agents = list.agents.sorted { $0.createdAtMs < $1.createdAtMs }
+            live = [:]
             if selectedAgentID == nil || !agents.contains(where: { $0.id == selectedAgentID }) {
                 selectedAgentID = agents.last?.id
             }
@@ -326,6 +337,10 @@ final class AppModel {
                 agents.append(agent)
                 if selectedAgentID == nil { selectedAgentID = agent.id }
             }
+        case .textDelta(let delta):
+            appendLive(agentID: delta.agentID, turnID: delta.turnID, block: delta.block, reasoning: false, subagent: delta.subagent, text: delta.text)
+        case .reasoningDelta(let delta):
+            appendLive(agentID: delta.agentID, turnID: delta.turnID, block: delta.block, reasoning: true, subagent: delta.subagent, text: delta.text)
         case .computerAction(let action):
             Perf.mark("computer_action", "\(action.action) \(action.x),\(action.y)")
             screen.showMarker(action)
@@ -334,7 +349,37 @@ final class AppModel {
         }
     }
 
+    private func appendLive(agentID: String, turnID: String, block: UInt32, reasoning: Bool, subagent: String, text: String) {
+        var blocks = live[agentID] ?? []
+        if let index = blocks.firstIndex(where: { $0.turnID == turnID && $0.block == block && $0.reasoning == reasoning }) {
+            blocks[index].text += text
+        } else {
+            blocks.append(LiveBlock(turnID: turnID, block: block, reasoning: reasoning, subagent: subagent, text: text))
+        }
+        live[agentID] = blocks
+    }
+
+    // settleLive drops the streamed copy once its complete block arrives.
+    private func settleLive(_ entry: Entry) {
+        guard let blocks = live[entry.agentID], !blocks.isEmpty else { return }
+        let remaining: [LiveBlock]
+        switch entry.body {
+        case .text(let text):
+            remaining = blocks.filter { !($0.turnID == entry.turnID && $0.block == text.block && !$0.reasoning) }
+        case .reasoning(let reasoning):
+            remaining = blocks.filter { !($0.turnID == entry.turnID && $0.block == reasoning.block && $0.reasoning) }
+        case .turnEnd:
+            remaining = blocks.filter { $0.turnID != entry.turnID }
+        default:
+            return
+        }
+        if remaining.count != blocks.count {
+            live[entry.agentID] = remaining
+        }
+    }
+
     private func upsert(_ entry: Entry) {
+        settleLive(entry)
         var list = transcripts[entry.agentID] ?? []
         if let last = list.last, last.seq < entry.seq {
             list.append(entry)
