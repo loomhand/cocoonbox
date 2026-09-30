@@ -1,6 +1,7 @@
 //! gRPC surface: Agents and Session behind the edge-token check.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
@@ -28,6 +29,8 @@ const MAX_PAGE: u32 = 1000;
 const EVENT_BUFFER: usize = 256;
 const SCREEN_WIDTH: u32 = 1280;
 const SCREEN_HEIGHT: u32 = 800;
+const CONNECTION_GRACE: Duration = Duration::from_millis(1000);
+const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 
 /// Rejects calls whose edge token is missing or wrong.
 #[derive(Clone)]
@@ -163,7 +166,8 @@ impl Session for SessionSvc {
             .subscribe(req.into_inner().from_offset)
             .map_err(Status::out_of_range)?;
         let (tx, rx) = mpsc::channel(EVENT_BUFFER);
-        // detached pump: ends when the client goes away or falls behind the live channel
+        let stop = self.rt.stop.clone();
+        // detached pump: ends when the client goes away, falls behind the live channel, or the agent stops
         tokio::spawn(async move {
             let mut last = 0;
             for e in sub.replay {
@@ -174,7 +178,11 @@ impl Session for SessionSvc {
             }
             let mut live = sub.live;
             loop {
-                match live.recv().await {
+                let next = tokio::select! {
+                    r = live.recv() => r,
+                    () = stop.cancelled() => return,
+                };
+                match next {
                     Ok(e) if e.offset > last => {
                         last = e.offset;
                         if tx.send(Ok(Event::clone(&e))).await.is_err() {
@@ -199,9 +207,13 @@ impl Session for SessionSvc {
         &self,
         req: Request<Streaming<pb::ScreenClientFrame>>,
     ) -> Result<Response<Self::ScreenStream>, Status> {
-        screen::relay(&self.rt.cfg.vnc_addr, req.into_inner())
-            .await
-            .map(Response::new)
+        screen::relay(
+            &self.rt.cfg.vnc_addr,
+            req.into_inner(),
+            self.rt.stop.clone(),
+        )
+        .await
+        .map(Response::new)
     }
 }
 
@@ -218,15 +230,19 @@ pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
     )?);
     let tools = Arc::new(rpc::Client::new(cfg.toolhost_socket.clone()));
     let rt = Runtime::open(cfg, model, tools).await?;
-    serve_on(listener, rt, shutdown_signal()).await
+    let stop = rt.stop.clone();
+    // detached: turns the first SIGTERM or SIGINT into a shutdown
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        eprintln!("serve: stopping");
+        stop.cancel();
+    });
+    serve_on(listener, rt).await
 }
 
 /// Serves both services on `listener` until `shutdown` resolves.
-pub async fn serve_on(
-    listener: TcpListener,
-    rt: Arc<Runtime>,
-    shutdown: impl Future<Output = ()>,
-) -> Result<(), String> {
+/// Serves both services and `/mcp` on `listener` until `rt.stop` is cancelled, then winds down within a bounded time.
+pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), String> {
     let auth = EdgeAuth {
         token: Arc::from(rt.cfg.edge_token.as_str()),
     };
@@ -242,13 +258,25 @@ pub async fn serve_on(
     let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
         .add_service(InterceptedService::new(session, auth))
         .into_axum_router()
-        .merge(mcp.router());
-    Server::builder()
+        .merge(Arc::clone(&mcp).router());
+    let server = Server::builder()
         .accept_http1(true)
         .add_routes(Routes::from(routes))
-        .serve_with_incoming_shutdown(TcpListenerStream::new(listener), shutdown)
-        .await
-        .map_err(|e| format!("grpc server: {e}"))
+        .serve_with_incoming_shutdown(
+            TcpListenerStream::new(listener),
+            rt.stop.clone().cancelled_owned(),
+        );
+    let grace = async {
+        rt.stop.cancelled().await;
+        tokio::time::sleep(CONNECTION_GRACE).await;
+    };
+    tokio::select! {
+        r = server => r.map_err(|e| format!("grpc server: {e}"))?,
+        () = grace => eprintln!("serve: connections still open after {CONNECTION_GRACE:?}; closing"),
+    }
+    mcp.close_all().await;
+    rt.drain(DRAIN_LIMIT).await;
+    Ok(())
 }
 
 async fn shutdown_signal() {

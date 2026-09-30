@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
+use tokio_util::task::TaskTracker;
 
 use crate::dispatch::{Dispatcher, ToolOutput};
 use crate::llm::{Message, Part, Request, Usage};
@@ -27,6 +28,7 @@ pub async fn run(
     let driver = new_id("cu");
     let mut guard = EndOnDrop {
         dispatcher: Arc::clone(&rt.dispatcher),
+        tasks: rt.tasks.clone(),
         owner: ctx.agent_id.clone(),
         driver: driver.clone(),
         armed: true,
@@ -43,6 +45,7 @@ pub async fn run(
 /// Ends the driver session from a detached task when a cancelled turn drops the subagent.
 struct EndOnDrop {
     dispatcher: Arc<Dispatcher>,
+    tasks: TaskTracker,
     owner: String,
     driver: String,
     armed: bool,
@@ -56,7 +59,7 @@ impl Drop for EndOnDrop {
         let dispatcher = Arc::clone(&self.dispatcher);
         let owner = std::mem::take(&mut self.owner);
         let driver = std::mem::take(&mut self.driver);
-        tokio::spawn(async move {
+        self.tasks.spawn(async move {
             dispatcher.end_driver(&owner, &driver).await;
         });
     }

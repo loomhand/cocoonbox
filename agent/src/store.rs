@@ -184,6 +184,12 @@ impl Store {
         .await
     }
 
+    /// Folds the WAL back into the database file.
+    pub async fn checkpoint(&self) -> Result<(), String> {
+        self.call(|c| c.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);"))
+            .await
+    }
+
     /// Persists an entry and returns it with its seq and timestamp.
     pub async fn append(
         &self,

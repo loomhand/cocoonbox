@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 use tonic::Status;
 
 use crate::config::ServeConfig;
@@ -22,6 +23,7 @@ const QUEUE_DEPTH: usize = 32;
 const MAIN_MAX_STEPS: usize = 40;
 const MAIN_MAX_TOKENS: u32 = 4096;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
+const SHUTTING_DOWN: &str = "interrupted: the agent is shutting down";
 
 /// Shared state of `serve`: journal, tool dispatcher, model and per-agent queues.
 pub struct Runtime {
@@ -32,6 +34,10 @@ pub struct Runtime {
     pub(crate) computer_tools: Vec<ToolSpec>,
     pub(crate) computer_prompt: String,
     pub(crate) screen: tokio::sync::Mutex<()>,
+    /// Cancelled when the process starts shutting down.
+    pub stop: CancellationToken,
+    /// Work that shutdown waits for: running turns and desktop-session cleanups.
+    pub tasks: TaskTracker,
     main_tools: Vec<ToolSpec>,
     main_vision_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
@@ -56,6 +62,8 @@ impl Runtime {
             computer_tools: tools::computer_tools(),
             computer_prompt: prompts::computer(&cfg.model_computer),
             screen: tokio::sync::Mutex::new(()),
+            stop: CancellationToken::new(),
+            tasks: TaskTracker::new(),
             slots: Mutex::new(HashMap::new()),
             cfg,
         });
@@ -187,6 +195,20 @@ impl Runtime {
             && let Some(token) = &lock(&slot.state).cancel
         {
             token.cancel();
+        }
+    }
+
+    /// Waits up to `limit` for interrupted turns and cleanups, then checkpoints the store.
+    pub async fn drain(&self, limit: std::time::Duration) {
+        self.tasks.close();
+        if tokio::time::timeout(limit, self.tasks.wait())
+            .await
+            .is_err()
+        {
+            eprintln!("shutdown: {} task(s) still running", self.tasks.len());
+        }
+        if let Err(e) = self.journal.store.checkpoint().await {
+            eprintln!("shutdown: checkpoint: {e}");
         }
     }
 
@@ -333,6 +355,7 @@ impl Runtime {
         let result = tokio::select! {
             r = self.main_loop(&ctx, &mut usage) => r,
             () = cancel.cancelled() => Err("cancelled".to_owned()),
+            () = self.stop.cancelled() => Err(SHUTTING_DOWN.to_owned()),
         };
         {
             let mut state = lock(&ctx.slot.state);
@@ -691,7 +714,11 @@ async fn worker(
     mut rx: mpsc::Receiver<String>,
 ) {
     while let Some(turn_id) = rx.recv().await {
-        rt.run_turn(&agent_id, Arc::clone(&slot), turn_id).await;
+        if rt.stop.is_cancelled() {
+            break;
+        }
+        let turn = rt.run_turn(&agent_id, Arc::clone(&slot), turn_id);
+        rt.tasks.track_future(turn).await;
     }
 }
 

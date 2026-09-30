@@ -1,8 +1,10 @@
 use std::process::ExitCode;
+use std::time::Duration;
 
 use cocoonbox_agent::config::{ServeConfig, ToolhostConfig};
 use cocoonbox_agent::{server, toolhost};
 
+const RUNTIME_SHUTDOWN: Duration = Duration::from_millis(200);
 const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost|version>";
 
 fn main() -> ExitCode {
@@ -29,10 +31,12 @@ fn main() -> ExitCode {
 }
 
 fn run(fut: impl Future<Output = Result<(), String>>) -> Result<(), String> {
-    tokio::runtime::Builder::new_multi_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
         .build()
-        .map_err(|e| format!("build runtime: {e}"))?
-        .block_on(fut)
+        .map_err(|e| format!("build runtime: {e}"))?;
+    let result = runtime.block_on(fut);
+    runtime.shutdown_timeout(RUNTIME_SHUTDOWN);
+    result
 }

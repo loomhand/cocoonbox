@@ -5,6 +5,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use tokio_util::sync::CancellationToken;
 use tonic::{Status, Streaming};
 
 use crate::pb::{ScreenClientFrame, ScreenServerFrame, screen_client_frame};
@@ -19,6 +20,7 @@ pub type ServerStream = ReceiverStream<Result<ScreenServerFrame, Status>>;
 pub async fn relay(
     vnc_addr: &str,
     mut inbound: Streaming<ScreenClientFrame>,
+    stop: CancellationToken,
 ) -> Result<ServerStream, Status> {
     match inbound.message().await? {
         Some(ScreenClientFrame {
@@ -36,9 +38,17 @@ pub async fn relay(
     let _ = tcp.set_nodelay(true);
     let (mut rd, mut wr) = tcp.into_split();
     let (tx, rx) = mpsc::channel(OUT_FRAMES);
-    // detached pumps: each ends when its peer closes
+    // detached pumps: each ends when its peer closes or the agent stops
+    let upstream_stop = stop.clone();
     tokio::spawn(async move {
-        while let Ok(Some(frame)) = inbound.message().await {
+        loop {
+            let frame = tokio::select! {
+                f = inbound.message() => f,
+                () = upstream_stop.cancelled() => break,
+            };
+            let Ok(Some(frame)) = frame else {
+                break;
+            };
             if let Some(screen_client_frame::Body::Data(data)) = frame.body
                 && wr.write_all(&data).await.is_err()
             {
@@ -51,7 +61,11 @@ pub async fn relay(
         let mut buf = BytesMut::with_capacity(READ_CHUNK);
         loop {
             buf.reserve(READ_CHUNK);
-            match rd.read_buf(&mut buf).await {
+            let read = tokio::select! {
+                r = rd.read_buf(&mut buf) => r,
+                () = stop.cancelled() => break,
+            };
+            match read {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {
                     let data = buf.split().freeze();

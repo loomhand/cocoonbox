@@ -101,6 +101,14 @@ impl Mcp {
         });
     }
 
+    /// Closes every session; used when the agent shuts down.
+    pub async fn close_all(&self) {
+        let sessions: Vec<Arc<Session>> = lock(&self.sessions).drain().map(|(_, s)| s).collect();
+        for s in sessions {
+            self.close(&s, "agent shutting down").await;
+        }
+    }
+
     fn authorized(&self, headers: &HeaderMap) -> bool {
         let got = headers
             .get(EDGE_TOKEN_HEADER)
@@ -365,7 +373,10 @@ async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
     let guard = StreamGuard { mcp, session };
     let stream = futures_util::stream::unfold((guard, true), |(guard, first)| async move {
         if !first {
-            tokio::time::sleep(KEEPALIVE).await;
+            tokio::select! {
+                () = tokio::time::sleep(KEEPALIVE) => {}
+                () = guard.mcp.rt.stop.cancelled() => return None,
+            }
             lock(&guard.session.driver).last_seen = Instant::now();
         }
         let chunk: Result<Bytes, Infallible> = Ok(Bytes::from_static(b": keepalive\n\n"));

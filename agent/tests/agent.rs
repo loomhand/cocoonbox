@@ -87,7 +87,7 @@ impl Harness {
         let rt = Runtime::open(cfg, model, tools).await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
-        tokio::spawn(server::serve_on(listener, rt, std::future::pending()));
+        tokio::spawn(server::serve_on(listener, rt));
         for _ in 0..100 {
             if toolhost_socket.exists() {
                 break;
