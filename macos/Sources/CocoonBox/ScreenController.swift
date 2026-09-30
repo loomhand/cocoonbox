@@ -66,6 +66,12 @@ final class ScreenController {
         takeOver = false
     }
 
+    func reopen() {
+        guard let client = sessionClient else { return }
+        stop()
+        start(session: client)
+    }
+
     private func open() async {
         guard let client = sessionClient, let view, let device = view.device else { return }
         status = .connecting
@@ -73,7 +79,8 @@ final class ScreenController {
             if bridge == nil {
                 let bridge = ScreenBridge(
                     transport: GRPCScreenTransport(session: client),
-                    pumpUpdates: ProcessInfo.processInfo.environment["CB_RFB_PUMP"] != "0"
+                    pumpUpdates: ProcessInfo.processInfo.environment["CB_RFB_PUMP"] != "0",
+                    tracedChunks: ProcessInfo.processInfo.environment["CB_SCREEN_TRACE"].flatMap { Int($0) } ?? 8
                 )
                 bridgePort = try await bridge.start()
                 Perf.mark("bridge_listen", "port=\(bridgePort ?? 0)")

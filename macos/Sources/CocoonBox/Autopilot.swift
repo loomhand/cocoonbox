@@ -7,7 +7,7 @@ import Foundation
 // ensure, hibernate, wait-running, wait-live, agent[:name], send:<text>,
 // wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
-// respond-takeover, snapshot:<path.png>, stats:<label>, popout, quit.
+// respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -74,6 +74,8 @@ enum Autopilot {
             stats(model, label: arg)
         case "popout":
             model.screen.poppedOut = true
+        case "reopen-screen":
+            model.screen.reopen()
         case "quit":
             NSApp.terminate(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }

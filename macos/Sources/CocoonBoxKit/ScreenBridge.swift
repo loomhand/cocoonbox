@@ -54,13 +54,15 @@ public final class ScreenBridge: Sendable {
 
     private let transport: any ScreenTransport
     private let pumpUpdates: Bool
+    private let tracedChunks: Int
     private let queue = DispatchQueue(label: "cocoonbox.screen-bridge", qos: .userInteractive)
     private let state = Mutex<(listener: NWListener?, session: Task<Void, Never>?)>((nil, nil))
     private let counters = Counters()
 
-    public init(transport: any ScreenTransport, pumpUpdates: Bool = true) {
+    public init(transport: any ScreenTransport, pumpUpdates: Bool = true, tracedChunks: Int = 8) {
         self.transport = transport
         self.pumpUpdates = pumpUpdates
+        self.tracedChunks = tracedChunks
     }
 
     public var stats: Stats {
@@ -111,9 +113,10 @@ public final class ScreenBridge: Sendable {
         connection.start(queue: queue)
         let counters = counters
         let traced = Locked((up: 0, down: 0))
+        let limit = tracedChunks
         let outbound = Self.receiveStream(connection) { count in
             counters.stats.withLock { $0.bytesToServer += count }
-            if traced.withLock({ t in defer { t.up += 1 }; return t.up < 8 }) {
+            if traced.withLock({ t in defer { t.up += 1 }; return t.up < limit }) {
                 Perf.mark("screen_up", "bytes=\(count)")
             }
         }
@@ -125,7 +128,7 @@ public final class ScreenBridge: Sendable {
             do {
                 try await transport.run(outbound: pump?.stream ?? outbound) { data in
                     counters.stats.withLock { $0.bytesFromServer += data.count }
-                    if traced.withLock({ t in defer { t.down += 1 }; return t.down < 8 }) {
+                    if traced.withLock({ t in defer { t.down += 1 }; return t.down < limit }) {
                         Perf.mark("screen_down", "bytes=\(data.count)")
                     }
                     pump?.serverActivity()

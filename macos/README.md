@@ -41,6 +41,8 @@ These environment variables serve test runs:
 - `CB_ENDPOINT`: the endpoint URL. It overrides the saved endpoint.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.
+- `CB_RFB_RAW=1`: offer only Raw, for throughput baselines.
+- `CB_SCREEN_TRACE=<n>`: log the first n Screen chunks each way (`screen_up`/`screen_down`, default 8). Autopilot's `reopen-screen` starts a new RFB session, which begins with a full frame.
 - `CB_RFB_PROBE=1`: count the RFB rectangle encodings the server uses. This turns on RoyalVNCKit's debug log, so don't use it for timing runs.
 
 Timings go to `~/Library/Logs/CocoonBox/debug.log` and to os_signpost (subsystem `me.cmgs.cocoonbox`), in milliseconds since process start. The key lines are `first_frame_presented`, `rfb_first_update`, `input_rtt` (from input to the decoded update) and `input_to_present` (from input to the frame on glass).
