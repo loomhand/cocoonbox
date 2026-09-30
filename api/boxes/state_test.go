@@ -285,6 +285,140 @@ func TestRebaseRefusesImagesOffTheAllowList(t *testing.T) {
 	}
 }
 
+func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
+	env.save(t)
+	env.fake.mu.Lock()
+	delete(env.fake.machines, aliceBox)
+	env.fake.mu.Unlock()
+
+	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil || resp.GetOperation().GetId() == "" || resp.GetBox().GetState() != controlv1.BoxState_BOX_STATE_STARTING {
+		t.Fatalf("Ensure = %v, %v", resp, err)
+	}
+	if spec := env.fake.waitSpec(t, 1); spec.ID != aliceBox || spec.Owner != alice {
+		t.Errorf("restore machine spec = %+v", spec)
+	}
+	again, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil || again.GetOperation().GetId() != resp.GetOperation().GetId() || env.fake.specCount() != 1 {
+		t.Errorf("second Ensure = %v, %v, %d specs, want the running restore", again, err, env.fake.specCount())
+	}
+	if _, err := env.svc.Hibernate(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("Hibernate during the restore = %v, want FailedPrecondition", err)
+	}
+	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	events := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), "")
+	last := events[len(events)-1]
+	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !strings.Contains(last.GetDetail(), "restored snapshot "+snapshotID(1)) || !strings.Contains(last.GetDetail(), "are lost") {
+		t.Fatalf("last event = %v", last)
+	}
+	if !slices.ContainsFunc(events, func(ev *controlv1.OperationEvent) bool {
+		return ev.GetPhase() == controlv1.Phase_PHASE_RESTORING && ev.GetTotalBytes() > 0
+	}) {
+		t.Errorf("no restore progress in %v", events)
+	}
+	restore := env.agent.lastRestore()
+	if restore.addr != aliceBox+":7443" || restore.req.GetManifest().GetChunkId() != snapshotID(1) || len(restore.req.GetGets()) != 2 {
+		t.Errorf("restore = %s %v", restore.addr, restore.req)
+	}
+	if ep, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || ep.Key != aliceBox+":7443" {
+		t.Errorf("Resolve after the restore = %q, %v", ep.Key, err)
+	}
+	if env.fake.deletedIDs() != "" {
+		t.Errorf("deleted %q after a good restore", env.fake.deletedIDs())
+	}
+}
+
+func TestNoClientReachesAMachineWhileItIsRestored(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	env.save(t)
+	env.fake.mu.Lock()
+	delete(env.fake.machines, aliceBox)
+	env.fake.mu.Unlock()
+	block := make(chan struct{})
+	env.agent.restoreGate = block
+
+	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	deadline := time.Now().Add(5 * time.Second)
+	for env.agent.restoreCount() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
+		t.Errorf("Resolve while restoring = %v, want Unavailable", err)
+	}
+	if box, _ := env.svc.Get(env.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
+		t.Errorf("box while restoring = %v, want STARTING", box)
+	}
+	if _, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("SaveState while restoring = %v, want FailedPrecondition", err)
+	}
+	plans := env.agent.plans()
+	env.svc.saveStale(env.ctx, time.Nanosecond, []string{alice})
+	if env.agent.plans() != plans {
+		t.Error("the scheduler saved a box during its restore")
+	}
+	close(block)
+	if last := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("restore ended with %v", last[len(last)-1])
+	}
+}
+
+func TestAFailedRestoreDeletesTheMachineSoEnsureRetries(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	env.save(t)
+	env.fake.mu.Lock()
+	delete(env.fake.machines, aliceBox)
+	env.fake.mu.Unlock()
+	env.agent.restoreErr = errors.New("disk full")
+
+	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	events := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), "")
+	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != "restore failed" {
+		t.Fatalf("last event = %v", last)
+	}
+	if env.fake.deletedIDs() != aliceBox {
+		t.Errorf("deleted %q, want the empty machine", env.fake.deletedIDs())
+	}
+	env.agent.restoreErr = nil
+	retry, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil || retry.GetOperation().GetId() == resp.GetOperation().GetId() || env.fake.specCount() != 2 {
+		t.Fatalf("retry Ensure = %v, %v, %d specs", retry, err, env.fake.specCount())
+	}
+	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	if last := watch(t, env.svc, env.ctx, retry.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Errorf("retried restore ended with %v", last[len(last)-1])
+	}
+}
+
+func TestEnsureWithoutSavedStateCreatesAnEmptyBox(t *testing.T) {
+	env := newStateEnv(t)
+	env.fake.mu.Lock()
+	delete(env.fake.machines, aliceBox)
+	env.fake.mu.Unlock()
+
+	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	env.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
+	events := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), "")
+	restored := slices.ContainsFunc(events, func(ev *controlv1.OperationEvent) bool { return ev.GetPhase() == controlv1.Phase_PHASE_RESTORING })
+	if restored || events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE || env.agent.restoreCount() != 0 {
+		t.Errorf("events = %v, restores %d, want a plain create", events, env.agent.restoreCount())
+	}
+}
+
 type stateEnv struct {
 	ctx   context.Context
 	svc   *Service
@@ -413,11 +547,12 @@ type restoreCall struct {
 
 // fakeAgent plans snapshots s1, s2, ... over chunks and moves objects in the fake store as presigned URLs name them.
 type fakeAgent struct {
-	store      *fakeStore
-	chunks     []string
-	size       uint64
-	snapshotID string
-	restoreErr error
+	store       *fakeStore
+	chunks      []string
+	size        uint64
+	snapshotID  string
+	restoreErr  error
+	restoreGate chan struct{}
 
 	mu          sync.Mutex
 	planReqs    []*agentv1.PlanRequest
@@ -472,6 +607,9 @@ func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, req *agen
 	a.restoreCred = outgoingCredential(ctx)
 	a.restores = append(a.restores, restoreCall{addr: ep.Key, req: req})
 	a.mu.Unlock()
+	if a.restoreGate != nil {
+		<-a.restoreGate
+	}
 	if a.restoreErr != nil {
 		return nil, a.restoreErr
 	}
@@ -531,6 +669,12 @@ func (a *fakeAgent) lastUpload() *agentv1.UploadRequest {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.uploads[len(a.uploads)-1]
+}
+
+func (a *fakeAgent) restoreCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.restores)
 }
 
 func (a *fakeAgent) lastRestore() restoreCall {

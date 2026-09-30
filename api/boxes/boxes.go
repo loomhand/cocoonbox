@@ -57,15 +57,23 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", box)
 
 	spec := machines.Spec{ID: box, Owner: user, Flavor: flavor}
+	var saved head
 	cur, err := s.current(ctx, user)
 	switch {
 	case err == nil:
+		if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_RESTORING {
+			return &controlv1.EnsureResponse{Box: s.toBox(ctx, box, cur), Operation: &controlv1.Operation{Id: active.id, BoxId: box}}, nil
+		}
 		if req.GetFlavor() != nil && cur.Flavor != flavor {
 			return nil, status.Errorf(codes.FailedPrecondition, "box exists with flavor vcpus:%d memory_mib:%d disk_gib:%d",
 				cur.Flavor.VCPUs, cur.Flavor.MemoryMiB, cur.Flavor.DiskGiB)
 		}
 		spec.ID = cur.ID
-	case !errors.Is(err, machines.ErrNotFound):
+	case errors.Is(err, machines.ErrNotFound):
+		if saved, err = s.savedHead(ctx, box); err != nil {
+			return nil, serviceError(ctx, logger, err, "read saved state")
+		}
+	default:
 		return nil, serviceError(ctx, logger, err, "get box")
 	}
 	m, action, err := s.machines.Ensure(ctx, spec)
@@ -74,6 +82,10 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	}
 	switch action {
 	case machines.ActionCreated:
+		if saved.Latest != "" {
+			logger.Infof(ctx, "box of user %s has no machine; restoring snapshot %s into %s", user, saved.Latest, m.ID)
+			return s.restoreMissing(ctx, box, m, saved), nil
+		}
 		logger.Infof(ctx, "created box for user %s", user)
 		return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_CREATING), nil
 	case machines.ActionWoken:
@@ -127,6 +139,9 @@ func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*contro
 	cur, err := s.current(ctx, user)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "get box")
+	}
+	if s.restoring(box) {
+		return nil, status.Error(codes.FailedPrecondition, "box is being restored from its saved state")
 	}
 	m, err := s.machines.Hibernate(ctx, cur.ID)
 	if err != nil {

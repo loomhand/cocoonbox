@@ -150,9 +150,9 @@ func (s *Service) revokeGW(ctx context.Context, machine string) {
 	}
 }
 
-// ready reports whether clients may reach m: running and, when m is provisioned, provisioned for this incarnation.
+// ready reports whether clients may reach m: running, not being restored and, when m is provisioned, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
-	return m.State == machines.StateRunning && (s.provision == nil || !s.provision.covers(m) || wakeOf(m) != "")
+	return m.State == machines.StateRunning && (s.provision == nil || !s.provision.covers(m) || wakeOf(m) != "") && !s.restoring(BoxID(m.Owner))
 }
 
 // provisioner writes each machine's identity file on every boot and its gw key on first boot.
