@@ -11,7 +11,7 @@ CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VE
 CHROME_URL=https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
-	x11vnc xauth x11-xserver-utils xinput
+	tigervnc-xorg-extension xauth x11-xserver-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
 	mousepad nftables sudo libnss-myhostname
 )
@@ -29,7 +29,9 @@ setup_packages() {
 	systemctl disable --now xrdp.service xrdp-sesman.service >/dev/null 2>&1 || true
 	pkill -x xrdp || true
 	pkill -x xrdp-sesman || true
-	apt-get purge -y -qq xrdp xorgxrdp xscreensaver xscreensaver-data >/dev/null 2>&1 || true
+	systemctl disable --now cocoonbox-vnc.service >/dev/null 2>&1 || true
+	rm -f /etc/systemd/system/cocoonbox-vnc.service
+	apt-get purge -y -qq xrdp xorgxrdp xscreensaver xscreensaver-data x11vnc >/dev/null 2>&1 || true
 	local deb
 	deb=$(mktemp --suffix=.deb)
 	curl -fsSL "$CHROME_URL" -o "$deb"
@@ -131,9 +133,9 @@ enable_units() {
 	systemctl enable --now nftables.service
 	nft -f /etc/nftables.conf
 	systemctl reload ssh || systemctl restart ssh
-	systemctl enable cocoonbox-xorg.service cocoonbox-session.service cocoonbox-vnc.service
+	systemctl enable cocoonbox-xorg.service cocoonbox-session.service
 	systemctl start user@1000.service
-	systemctl restart cocoonbox-xorg.service cocoonbox-session.service cocoonbox-vnc.service
+	systemctl restart cocoonbox-xorg.service cocoonbox-session.service
 	systemctl --user -M user@ daemon-reload
 	systemctl --user -M user@ restart cua-driver.service
 }
