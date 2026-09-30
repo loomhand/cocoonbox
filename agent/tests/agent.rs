@@ -290,12 +290,9 @@ fn fake_cua(path: &Path, log: Log) {
                     }),
                     "get_desktop_state" => json!({
                         "content": [{"type": "image", "mimeType": "image/png", "data": PNG}],
-                        "structuredContent": {"windows": [
-                            {"pid": 1, "window_id": 2, "app_name": "Xfdesktop", "title": "Desktop", "bounds": {"x": 0, "y": 0, "width": 1280, "height": 800}, "z_index": 0},
-                            {"pid": 42, "window_id": 7, "app_name": "Mousepad", "title": "Untitled", "bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "z_index": 3},
-                            {"pid": 5, "window_id": 9, "app_name": "Xfce4-panel", "title": "hidden", "bounds": {"x": -9999, "y": -9999, "width": 3, "height": 3}, "z_index": 4}
-                        ]}
+                        "structuredContent": {"windows": fake_windows()}
                     }),
+                    "list_windows" => json!({"structuredContent": {"windows": fake_windows()}}),
                     _ => json!({"content": [{"type": "text", "text": format!("✅ {name} done")}]}),
                 };
                 let reply = json!({"ok": true, "result": result}).to_string() + "\n";
@@ -304,6 +301,15 @@ fn fake_cua(path: &Path, log: Log) {
             });
         }
     });
+}
+
+fn fake_windows() -> Value {
+    json!([
+        {"pid": 1, "window_id": 2, "app_name": "Xfdesktop", "title": "Desktop", "bounds": {"x": 0, "y": 0, "width": 1280, "height": 800}, "z_index": 0},
+        {"pid": 42, "window_id": 7, "app_name": "Mousepad", "title": "Untitled", "bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "z_index": 3},
+        {"pid": 5, "window_id": 9, "app_name": "Xfce4-panel", "title": "hidden", "bounds": {"x": -9999, "y": -9999, "width": 3, "height": 3}, "z_index": 4},
+        {"pid": 5, "window_id": 10, "app_name": "Xfce4-panel", "title": "panel", "bounds": {"x": 0, "y": 0, "width": 1280, "height": 27}, "z_index": 5}
+    ])
 }
 
 async fn fake_vnc() -> String {
@@ -489,6 +495,7 @@ async fn delegate_over_messages_wire() {
 async fn run_delegate(messages_wire: bool) {
     let state_args = json!({});
     let act_args = json!({"action": "type", "element": 0, "text": "hello"});
+    let key_args = json!({"action": "key", "key": "return"});
     let sub = if messages_wire {
         vec![
             (
@@ -498,6 +505,10 @@ async fn run_delegate(messages_wire: bool) {
             (
                 "messages",
                 messages_tool_use("toolu_2", "computer_act", &act_args),
+            ),
+            (
+                "messages",
+                messages_tool_use("toolu_3", "computer_act", &key_args),
             ),
             ("messages", messages_text("Typed hello into Mousepad.")),
         ]
@@ -510,6 +521,10 @@ async fn run_delegate(messages_wire: bool) {
             (
                 "chat/completions",
                 chat_tool_call("toolu_2", "computer_act", &act_args),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("toolu_3", "computer_act", &key_args),
             ),
             ("chat/completions", chat_text("Typed hello into Mousepad.")),
         ]
@@ -547,7 +562,7 @@ async fn run_delegate(messages_wire: bool) {
             _ => None,
         })
         .collect();
-    assert_eq!(sub_calls.len(), 2);
+    assert_eq!(sub_calls.len(), 3);
     let state = entries
         .iter()
         .find_map(|e| match &e.body {
@@ -593,6 +608,18 @@ async fn run_delegate(messages_wire: bool) {
     assert_eq!(typed["pid"], 42);
     assert_eq!(typed["text"], "hello");
     assert_eq!(typed["window_id"], 7);
+    let pressed = h
+        .cua_log
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(n, _)| n == "press_key")
+        .map(|(_, a)| a.clone())
+        .unwrap();
+    assert_eq!(
+        (pressed["pid"].clone(), pressed["window_id"].clone()),
+        (json!(42), json!(7))
+    );
     let session = typed["session"].as_str().unwrap().to_owned();
     assert!(session.starts_with("cu-"), "{session}");
     let cua_calls = h.cua_log.lock().unwrap().clone();
@@ -610,9 +637,9 @@ async fn run_delegate(messages_wire: bool) {
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     let main_after = if messages_wire {
         let vision = gw_bodies(&h.gw_log, "/v1/messages");
-        assert_eq!(vision.len(), 3);
+        assert_eq!(vision.len(), 4);
         assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
-        let last_user = vision[2]["messages"]
+        let last_user = vision[3]["messages"]
             .as_array()
             .unwrap()
             .last()
@@ -623,16 +650,16 @@ async fn run_delegate(messages_wire: bool) {
         assert_eq!(chats.len(), 2);
         &chats[1]
     } else {
-        assert_eq!(chats.len(), 5);
+        assert_eq!(chats.len(), 6);
         assert!(gw_bodies(&h.gw_log, "/v1/messages").is_empty());
         let models: Vec<&str> = chats.iter().map(|c| c["model"].as_str().unwrap()).collect();
-        assert_eq!(models[1..4], ["anthropic/claude-sonnet-5"; 3]);
-        let msgs = chats[3]["messages"].as_array().unwrap();
+        assert_eq!(models[1..5], ["anthropic/claude-sonnet-5"; 4]);
+        let msgs = chats[4]["messages"].as_array().unwrap();
         let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
         assert_eq!(roles.last(), Some(&"user"), "{roles:?}");
         let shot = &msgs.last().unwrap()["content"][1]["image_url"]["url"];
         assert!(shot.as_str().unwrap().starts_with("data:image/png;base64,"));
-        &chats[4]
+        &chats[5]
     };
     let main_tool = main_after["messages"]
         .as_array()
@@ -644,18 +671,23 @@ async fn run_delegate(messages_wire: bool) {
     assert!(main_tool["content"].as_str().unwrap().contains("no vision"));
     assert!(!main_after.to_string().contains(PNG));
 
-    let mut saw_action = false;
+    let mut actions = Vec::new();
     while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(500), events.message())
         .await
         .map(Result::transpose)
     {
         if let Some(event::Body::ComputerAction(a)) = ev.body {
-            assert_eq!((a.action.as_str(), a.text.as_str()), ("type", "hello"));
             assert_eq!(a.agent_id, agent_id);
-            saw_action = true;
+            actions.push((a.action, a.text));
         }
     }
-    assert!(saw_action);
+    assert_eq!(
+        actions,
+        [
+            ("type".to_owned(), "hello".to_owned()),
+            ("key".to_owned(), "return".to_owned())
+        ]
+    );
 }
 
 #[tokio::test]
