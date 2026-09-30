@@ -14,6 +14,7 @@ StateDirectory=cocoonbox
 StateDirectoryMode=0700
 Restart=always
 RestartSec=2s
+TimeoutStopSec=5s
 
 [Install]
 WantedBy=multi-user.target
