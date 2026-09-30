@@ -132,6 +132,8 @@ final class ScreenController {
 
     var framebufferImage: CGImage? { view?.snapshotImage() }
 
+    var updateCount: Int { view?.updateCount ?? 0 }
+
     // typeText drives the take-over path from automation.
     func typeText(_ text: String) {
         view?.typeText(text)
@@ -139,6 +141,10 @@ final class ScreenController {
 
     func click(x: Int, y: Int) {
         view?.click(x: x, y: y)
+    }
+
+    func control(_ character: String) {
+        view?.control(character)
     }
 }
 

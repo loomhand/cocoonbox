@@ -14,10 +14,10 @@ struct RootView: View {
         } detail: {
             HSplitView {
                 ConversationView()
-                    .frame(minWidth: 360, idealWidth: 480)
+                    .frame(minWidth: 360, idealWidth: 480, maxHeight: .infinity)
                 if !model.screen.poppedOut {
                     LiveScreenPane()
-                        .frame(minWidth: 480, idealWidth: 860)
+                        .frame(minWidth: 480, idealWidth: 860, maxHeight: .infinity)
                 }
             }
         }

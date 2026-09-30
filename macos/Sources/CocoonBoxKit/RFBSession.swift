@@ -161,9 +161,14 @@ public final class RFBSession: NSObject, VNCConnectionDelegate, @unchecked Senda
     }
 
     public func connection(_ connection: VNCConnection, didUpdateFramebuffer framebuffer: VNCFramebuffer, x: UInt16, y: UInt16, width: UInt16, height: UInt16) {
+        // a caret blink (a rect one or two pixels wide) is not the echo of an input
+        let echo = width > 2 && height > 2
         let (first, inputAt, connectAt) = timing.withLock { t in
-            defer { t.firstUpdate = true; t.inputAt = nil }
-            return (!t.firstUpdate, t.inputAt, t.connectAt)
+            defer {
+                t.firstUpdate = true
+                if echo { t.inputAt = nil }
+            }
+            return (!t.firstUpdate, echo ? t.inputAt : nil, t.connectAt)
         }
         if first {
             Perf.mark("rfb_first_update", String(format: "since_connect_ms=%.1f", Perf.sinceStartMs - connectAt))

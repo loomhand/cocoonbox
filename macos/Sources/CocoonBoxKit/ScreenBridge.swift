@@ -48,6 +48,7 @@ public final class ScreenBridge: Sendable {
         public var sessions = 0
         public var bytesFromServer = 0
         public var bytesToServer = 0
+        public var injectedRequests = 0
         public var lastError: String?
     }
 
@@ -112,7 +113,7 @@ public final class ScreenBridge: Sendable {
         let outbound = Self.receiveStream(connection) { count in
             counters.stats.withLock { $0.bytesToServer += count }
         }
-        let pump = pumpUpdates ? UpdatePump() : nil
+        let pump = pumpUpdates ? UpdatePump { counters.stats.withLock { $0.injectedRequests += 1 } } : nil
         let task = Task { [transport] in
             if let pump {
                 Task { await pump.forward(outbound) }

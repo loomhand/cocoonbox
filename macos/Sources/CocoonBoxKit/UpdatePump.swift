@@ -115,11 +115,13 @@ final class UpdatePump: Sendable {
     private let linger: Duration
     private let continuation: AsyncStream<Data>.Continuation
     private let state = Mutex(State())
+    private let injected: @Sendable () -> Void
     let stream: AsyncStream<Data>
 
-    init(interval: Duration = .milliseconds(33), linger: Duration = .seconds(1)) {
+    init(interval: Duration = .milliseconds(33), linger: Duration = .seconds(1), injected: @escaping @Sendable () -> Void = {}) {
         self.interval = interval
         self.linger = linger
+        self.injected = injected
         (stream, continuation) = AsyncStream<Data>.makeStream()
     }
 
@@ -153,6 +155,7 @@ final class UpdatePump: Sendable {
                     }
                     if s.tap.atBoundary, let request = s.tap.request {
                         continuation.yield(request)
+                        injected()
                     }
                     return true
                 }

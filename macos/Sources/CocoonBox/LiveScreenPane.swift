@@ -20,6 +20,7 @@ struct LiveScreenPane: View {
             ScreenStatusBar()
             ZStack {
                 LiveScreenView(container: model.screen.container)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 if model.screen.status != .live {
                     VStack(spacing: 8) {
                         if model.screen.status == .connecting { ProgressView() }

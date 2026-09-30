@@ -6,8 +6,8 @@ import Foundation
 // runs can drive the app without UI scripting permissions. Steps:
 // ensure, hibernate, wait-running, wait-live, agent[:name], send:<text>,
 // wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
-// through NSWindow.sendEvent), click:<x>,<y>, wait:<ms>,
-// respond-takeover, snapshot:<path.png>, popout, quit.
+// through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
+// respond-takeover, snapshot:<path.png>, stats:<label>, popout, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -59,6 +59,8 @@ enum Autopilot {
             model.screen.typeText(arg.replacingOccurrences(of: "\\n", with: "\n"))
         case "keys":
             await keys(arg.replacingOccurrences(of: "\\n", with: "\n"), model: model)
+        case "ctrl":
+            model.screen.control(arg)
         case "click":
             let xy = arg.split(separator: ",").compactMap { Int($0) }
             if xy.count == 2 { model.screen.click(x: xy[0], y: xy[1]) }
@@ -68,6 +70,8 @@ enum Autopilot {
             respondTakeOver(model)
         case "snapshot":
             snapshot(model, path: arg)
+        case "stats":
+            stats(model, label: arg)
         case "popout":
             model.screen.poppedOut = true
         case "quit":
@@ -125,6 +129,19 @@ enum Autopilot {
             )
             Perf.mark("snapshot", "\(file) window=\(window.windowNumber) method=\(method)")
         }
+    }
+
+    // stats logs cumulative counters; the difference between two marks gives
+    // update rate, bytes and CPU use over that window.
+    private static func stats(_ model: AppModel, label: String) {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        let cpu = Double(usage.ru_utime.tv_sec + usage.ru_stime.tv_sec) * 1000
+            + Double(usage.ru_utime.tv_usec + usage.ru_stime.tv_usec) / 1000
+        let bridge = model.screen.bridgeStats
+        Perf.mark("stats", String(format: "label=%@ updates=%d from_server=%d to_server=%d injected=%d cpu_ms=%.1f",
+                                  label, model.screen.updateCount, bridge?.bytesFromServer ?? 0, bridge?.bytesToServer ?? 0,
+                                  bridge?.injectedRequests ?? 0, cpu))
     }
 
     private static func split(_ step: String) -> (String, String) {

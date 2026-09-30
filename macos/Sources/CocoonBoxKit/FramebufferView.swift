@@ -126,6 +126,10 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         return (Int(x), Int(y))
     }
 
+    public nonisolated var updateCount: Int {
+        updates.load(ordering: .relaxed)
+    }
+
     // snapshotImage copies the current framebuffer into a CGImage.
     public func snapshotImage() -> CGImage? {
         surface.withLock { s -> CGImage? in
@@ -363,6 +367,14 @@ public final class FramebufferView: MTKView, FramebufferSink, @unchecked Sendabl
         session.mouseMove(x: x, y: y)
         session.mouseButton(.left, down: true, x: x, y: y)
         session.mouseButton(.left, down: false, x: x, y: y)
+    }
+
+    // control sends Control+<character> through the take-over path.
+    public func control(_ character: String) {
+        guard takeOver, let session else { return }
+        session.modifier(keyCode: 59, down: true)
+        session.type(character)
+        session.modifier(keyCode: 59, down: false)
     }
 
     private func markInput() {
