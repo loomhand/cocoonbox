@@ -15,15 +15,14 @@ import (
 	"github.com/projecteru2/core/log"
 	"github.com/projecteru2/core/types"
 	"google.golang.org/grpc"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
 	"github.com/CMGS/cocoonbox/api/edge"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/machines/cocoonset"
 )
 
 const (
@@ -48,26 +47,21 @@ func main() {
 	if err != nil {
 		logger.Warnf(ctx, "agent edge refuses every call until the edge token exists and the service restarts: %v", err)
 	}
-	restCfg, err := clientcmd.BuildConfigFromFlags("", cmp.Or(cfg.Kubeconfig, os.Getenv("KUBECONFIG")))
-	if err != nil {
-		logger.Fatalf(ctx, err, "load kubeconfig")
-	}
-	dyn, err := dynamic.NewForConfig(restCfg)
-	if err != nil {
-		logger.Fatalf(ctx, err, "build dynamic client")
-	}
-	kube, err := kubernetes.NewForConfig(restCfg)
-	if err != nil {
-		logger.Fatalf(ctx, err, "build clientset")
-	}
-
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	svc, err := boxes.New(ctx, cfg, dyn, kube)
+	backend, err := cocoonset.New(ctx, cocoonset.Options{
+		Kubeconfig: cfg.Kubeconfig,
+		Namespace:  cfg.Namespace,
+		Image:      cfg.Image,
+		Network:    cfg.Network,
+		ProbePort:  cfg.ProbePort,
+		AgentPort:  cfg.AgentPort,
+	})
 	if err != nil {
-		logger.Fatalf(ctx, err, "start boxes service")
+		logger.Fatalf(ctx, err, "start cocoonset backend")
 	}
+	svc := boxes.New(backend, machines.Flavor{VCPUs: cfg.Flavor.VCPUs, MemoryMiB: cfg.Flavor.MemoryMiB, DiskGiB: cfg.Flavor.DiskGiB})
 	proxy := edge.NewProxy(svc, edgeToken)
 	defer proxy.Close()
 

@@ -8,6 +8,8 @@ Control plane and edge. One h2c listener behind Caddy serves:
 
 gRPC and MCP share one listener: requests with `content-type: application/grpc` go to the gRPC server (`grpc.Server.ServeHTTP`), everything else to the HTTP routes.
 
+Layers: `boxes` (the gRPC service: users, ownership, operations) and `edge` (proxies) call only the `machines.Machines` interface and a resolver; `machines/cocoonset` is the one backend and the only package that imports client-go or cocoon-common. `cmd/cocoonbox-api` wires them.
+
 Callers authenticate with `authorization: Bearer <token>`; `/etc/cocoonbox/api.yaml` holds only `sha256(token)` per user (see `deploy/api.yaml.example`).
 
 ## Build
