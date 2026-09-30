@@ -66,8 +66,9 @@ func main() {
 		logger.Fatalf(ctx, err, "start cocoonset backend")
 	}
 	svc := boxes.New(backend, boxes.Defaults{
-		Flavor: machines.Flavor{VCPUs: cfg.Flavor.VCPUs, MemoryMiB: cfg.Flavor.MemoryMiB, DiskGiB: cfg.Flavor.DiskGiB},
-		Image:  cfg.Image,
+		Flavor:       machines.Flavor{VCPUs: cfg.Flavor.VCPUs, MemoryMiB: cfg.Flavor.MemoryMiB, DiskGiB: cfg.Flavor.DiskGiB},
+		Image:        cfg.Image,
+		RebaseImages: cfg.RebaseImages,
 	})
 	if cfg.State.Bucket != "" {
 		agents := dialer.New(edgeToken)

@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -62,7 +63,11 @@ func New(opts Options) (*S3, error) {
 }
 
 func (s *S3) PresignPut(ctx context.Context, key string) (store.Presigned, error) {
-	u, err := s.presigner.PresignedPutObject(ctx, s.opts.Bucket, s.object(key), s.opts.PresignTTL)
+	object, err := s.object(key)
+	if err != nil {
+		return store.Presigned{}, err
+	}
+	u, err := s.presigner.PresignedPutObject(ctx, s.opts.Bucket, object, s.opts.PresignTTL)
 	if err != nil {
 		return store.Presigned{}, fmt.Errorf("presign put %s: %w", key, err)
 	}
@@ -70,7 +75,11 @@ func (s *S3) PresignPut(ctx context.Context, key string) (store.Presigned, error
 }
 
 func (s *S3) PresignGet(ctx context.Context, key string) (store.Presigned, error) {
-	u, err := s.presigner.PresignedGetObject(ctx, s.opts.Bucket, s.object(key), s.opts.PresignTTL, nil)
+	object, err := s.object(key)
+	if err != nil {
+		return store.Presigned{}, err
+	}
+	u, err := s.presigner.PresignedGetObject(ctx, s.opts.Bucket, object, s.opts.PresignTTL, nil)
 	if err != nil {
 		return store.Presigned{}, fmt.Errorf("presign get %s: %w", key, err)
 	}
@@ -78,7 +87,11 @@ func (s *S3) PresignGet(ctx context.Context, key string) (store.Presigned, error
 }
 
 func (s *S3) Get(ctx context.Context, key string) ([]byte, error) {
-	obj, err := s.client.GetObject(ctx, s.opts.Bucket, s.object(key), minio.GetObjectOptions{})
+	object, err := s.object(key)
+	if err != nil {
+		return nil, err
+	}
+	obj, err := s.client.GetObject(ctx, s.opts.Bucket, object, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("get %s: %w", key, err)
 	}
@@ -94,7 +107,11 @@ func (s *S3) Get(ctx context.Context, key string) ([]byte, error) {
 }
 
 func (s *S3) Put(ctx context.Context, key string, data []byte) error {
-	_, err := s.client.PutObject(ctx, s.opts.Bucket, s.object(key), bytes.NewReader(data), int64(len(data)),
+	object, err := s.object(key)
+	if err != nil {
+		return err
+	}
+	_, err = s.client.PutObject(ctx, s.opts.Bucket, object, bytes.NewReader(data), int64(len(data)),
 		minio.PutObjectOptions{ContentType: "application/octet-stream"})
 	if err != nil {
 		return fmt.Errorf("put %s: %w", key, err)
@@ -102,8 +119,11 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
-func (s *S3) object(key string) string {
-	return path.Join(s.opts.Prefix, key)
+func (s *S3) object(key string) (string, error) {
+	if key == "" || key == "." || key == ".." || strings.HasPrefix(key, "/") || strings.HasPrefix(key, "../") || path.Clean(key) != key {
+		return "", fmt.Errorf("invalid object key %q", key)
+	}
+	return path.Join(s.opts.Prefix, key), nil
 }
 
 func newClient(endpoint string, opts Options) (*minio.Client, error) {

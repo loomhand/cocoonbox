@@ -25,7 +25,7 @@ const (
 
 var (
 	defaultFlavor = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
-	testDefaults  = Defaults{Flavor: defaultFlavor, Image: "desktop-v2"}
+	testDefaults  = Defaults{Flavor: defaultFlavor, Image: "desktop-v2", RebaseImages: []string{"desktop-v3"}}
 )
 
 func TestBoxID(t *testing.T) {

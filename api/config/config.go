@@ -86,18 +86,19 @@ type State struct {
 
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
-	Listen        string `json:"listen"`
-	MCPListen     string `json:"mcp_listen"`
-	Kubeconfig    string `json:"kubeconfig"`
-	Namespace     string `json:"namespace"`
-	Image         string `json:"image"`
-	Network       string `json:"network"`
-	ProbePort     int32  `json:"probe_port"`
-	AgentPort     int    `json:"agent_port"`
-	EdgeTokenFile string `json:"edge_token_file"`
-	Flavor        Flavor `json:"flavor"`
-	State         State  `json:"state"`
-	Users         []User `json:"users"`
+	Listen        string   `json:"listen"`
+	MCPListen     string   `json:"mcp_listen"`
+	Kubeconfig    string   `json:"kubeconfig"`
+	Namespace     string   `json:"namespace"`
+	Image         string   `json:"image"`
+	RebaseImages  []string `json:"rebase_images"`
+	Network       string   `json:"network"`
+	ProbePort     int32    `json:"probe_port"`
+	AgentPort     int      `json:"agent_port"`
+	EdgeTokenFile string   `json:"edge_token_file"`
+	Flavor        Flavor   `json:"flavor"`
+	State         State    `json:"state"`
+	Users         []User   `json:"users"`
 }
 
 // Load reads, defaults and validates the file at path.

@@ -4,10 +4,13 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
@@ -20,11 +23,14 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	if err != nil {
 		return nil, err
 	}
+	image := cmp.Or(req.GetImage(), s.defaults.Image)
+	if image != s.defaults.Image && !slices.Contains(s.defaults.RebaseImages, image) {
+		return nil, status.Errorf(codes.InvalidArgument, "image %q is not a rebase target", image)
+	}
 	m, err := s.runningMachine(ctx, box, user)
 	if err != nil {
 		return nil, err
 	}
-	image := cmp.Or(req.GetImage(), s.defaults.Image)
 	op, started := s.ops.start(context.WithoutCancel(ctx), box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if started {
 		go s.runRebase(op, user, m, image)
@@ -40,7 +46,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	rec, err := s.save(op, old, agentv1.Consistency_CONSISTENCY_QUIESCED)
 	if err != nil {
 		logger.Error(op.ctx, err, "save before rebase")
-		op.fail("save: " + err.Error())
+		op.fail("save failed")
 		return
 	}
 	saved := time.Since(start)
@@ -51,13 +57,14 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	created, _, err := s.machines.Ensure(op.ctx, spec)
 	if err != nil {
 		logger.Error(op.ctx, err, "create rebase machine")
-		op.fail("create machine: " + err.Error())
+		op.fail("create machine failed")
 		return
 	}
 	op.note(controlv1.Phase_PHASE_CREATING, controlv1.BoxState_BOX_STATE_STARTING, fmt.Sprintf("machine %s from %s", created.ID, image))
 	if err = s.waitRunning(op, created); err != nil {
+		logger.Error(op.ctx, err, "start rebase machine")
 		s.discard(op, created.ID)
-		op.fail(err.Error())
+		op.fail("new machine did not start")
 		return
 	}
 	booted := time.Since(start)
@@ -69,14 +76,14 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	if err != nil {
 		logger.Error(op.ctx, err, "restore into rebase machine")
 		s.discard(op, created.ID)
-		op.fail("restore: " + err.Error())
+		op.fail("restore failed")
 		return
 	}
 	restored := time.Since(start)
 
 	if err := s.machines.Delete(op.ctx, old.ID); err != nil {
 		logger.Error(op.ctx, err, "delete old machine")
-		op.fail(fmt.Sprintf("state restored into %s but deleting %s failed: %v", created.ID, old.ID, err))
+		op.fail("state restored into the new machine, but removing the old machine failed")
 		return
 	}
 	logger.Infof(op.ctx, "rebased %s to %s (%s): saved %s, booted %s, restored %s", old.ID, created.ID, image,

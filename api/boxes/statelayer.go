@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -14,6 +15,8 @@ import (
 	"github.com/CMGS/cocoonbox/api/keyring"
 	"github.com/CMGS/cocoonbox/api/store"
 )
+
+var objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // StateAgents is the agents' State service as the control plane calls it.
 type StateAgents interface {
@@ -78,6 +81,9 @@ func (l *stateLayer) save(ctx context.Context, box, addr string, consistency age
 	if err != nil {
 		return nil, fmt.Errorf("plan: %w", err)
 	}
+	if err = checkPlan(plan); err != nil {
+		return nil, err
+	}
 	stored, err := l.index(ctx, box)
 	if err != nil {
 		return nil, err
@@ -135,6 +141,9 @@ func (l *stateLayer) restore(ctx context.Context, box, addr, id string, progress
 		}
 		id = h.Latest
 	}
+	if !objectID.MatchString(id) {
+		return nil, fmt.Errorf("invalid snapshot id %q", id)
+	}
 	rec, err := l.record(ctx, box, id)
 	if err != nil {
 		return nil, err
@@ -153,6 +162,9 @@ func (l *stateLayer) restore(ctx context.Context, box, addr, id string, progress
 	}
 	seen := map[string]bool{}
 	for _, c := range rec.Chunks {
+		if !objectID.MatchString(c.ID) {
+			return nil, fmt.Errorf("snapshot %s lists invalid chunk id %q", id, c.ID)
+		}
 		if seen[c.ID] {
 			continue
 		}
@@ -250,6 +262,18 @@ func (l *stateLayer) lock(box string) func() {
 	l.mu.Unlock()
 	m.Lock()
 	return m.Unlock
+}
+
+func checkPlan(plan *agentv1.PlanResponse) error {
+	if !objectID.MatchString(plan.GetSnapshotId()) {
+		return fmt.Errorf("agent returned invalid snapshot id %q", plan.GetSnapshotId())
+	}
+	for _, c := range plan.GetChunks() {
+		if !objectID.MatchString(c.GetId()) {
+			return fmt.Errorf("agent returned invalid chunk id %q", c.GetId())
+		}
+	}
+	return nil
 }
 
 func putJSON(ctx context.Context, st store.Store, key string, v any) error {

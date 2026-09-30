@@ -108,7 +108,7 @@ func (s *Service) runSave(op *operation, m machines.Machine, consistency agentv1
 	rec, err := s.save(op, m, consistency)
 	if err != nil {
 		log.WithFunc("boxes.Service.runSave").WithField("box", op.boxID).Error(op.ctx, err, "save state")
-		op.fail(err.Error())
+		op.fail("save failed")
 		return
 	}
 	op.note(controlv1.Phase_PHASE_SAVING, running, fmt.Sprintf("uploaded %d new chunks (%.1f MiB) of %d", rec.NewChunks, float64(rec.UploadedBytes)/mib, len(rec.Chunks)))

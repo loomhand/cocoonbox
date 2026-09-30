@@ -39,6 +39,21 @@ func TestPresignUsesPublicEndpointAndPrefix(t *testing.T) {
 	}
 }
 
+func TestRefusesKeysOutsideTheirPath(t *testing.T) {
+	s, err := New(Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for _, key := range []string{"", ".", "..", "../cb-other/head.json", "cb-a/../cb-b/head.json", "cb-a/chunks/../../cb-b/x", "/cb-a/head.json", "cb-a//head.json", "cb-a/head.json/.."} {
+		if _, err := s.PresignPut(t.Context(), key); err == nil {
+			t.Errorf("PresignPut(%q) accepted", key)
+		}
+		if err := s.Put(t.Context(), key, nil); err == nil {
+			t.Errorf("Put(%q) accepted", key)
+		}
+	}
+}
+
 func TestGetMapsMissingObject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")

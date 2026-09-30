@@ -1,7 +1,10 @@
 package boxes
 
 import (
+	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,10 +26,10 @@ import (
 
 func TestSaveStateIsIncremental(t *testing.T) {
 	env := newStateEnv(t)
-	env.agent.chunks = []string{"c1", "c2", "c3"}
+	env.agent.chunks = []string{hexID("c1"), hexID("c2"), hexID("c3")}
 	events := env.save(t)
 	last := events[len(events)-1]
-	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !strings.Contains(last.GetDetail(), "snapshot s1") {
+	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !strings.Contains(last.GetDetail(), "snapshot "+snapshotID(1)) {
 		t.Fatalf("last event = %v", last)
 	}
 	if !hasProgress(events) {
@@ -36,24 +39,24 @@ func TestSaveStateIsIncremental(t *testing.T) {
 	if plan.GetConsistency() != agentv1.Consistency_CONSISTENCY_QUIESCED || plan.GetParent() != "" || len(plan.GetKey().GetKey()) != keyring.KeySize {
 		t.Errorf("first plan = %v", plan)
 	}
-	if got := env.agent.lastUpload(); len(got.GetPuts()) != 3 || got.GetManifest().GetUrl() != "fake://put/"+aliceBox+"/manifests/s1" {
+	if got := env.agent.lastUpload(); len(got.GetPuts()) != 3 || got.GetManifest().GetUrl() != "fake://put/"+aliceBox+"/manifests/"+snapshotID(1) {
 		t.Errorf("first upload = %v", got)
 	}
 
-	env.agent.chunks = []string{"c1", "c2", "c4", "c4"}
+	env.agent.chunks = []string{hexID("c1"), hexID("c2"), hexID("c4"), hexID("c4")}
 	env.save(t)
-	if plan := env.agent.lastPlan(); plan.GetParent() != "s1" {
-		t.Errorf("second plan parent = %q, want s1", plan.GetParent())
+	if plan := env.agent.lastPlan(); plan.GetParent() != snapshotID(1) {
+		t.Errorf("second plan parent = %q, want %s", plan.GetParent(), snapshotID(1))
 	}
 	puts := env.agent.lastUpload().GetPuts()
-	if len(puts) != 1 || puts[0].GetChunkId() != "c4" {
+	if len(puts) != 1 || puts[0].GetChunkId() != hexID("c4") {
 		t.Errorf("second upload puts = %v, want only c4", puts)
 	}
 	box, err := env.svc.Get(env.ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
 	if err != nil || box.GetLastSavedAtMs() == 0 || box.GetLatestImage() != "desktop-v2" {
 		t.Errorf("box = %v, %v", box, err)
 	}
-	if head := string(env.store.objects[aliceBox+"/head.json"]); !strings.Contains(head, `"latest":"s2"`) {
+	if head := string(env.store.objects[aliceBox+"/head.json"]); !strings.Contains(head, `"latest":"`+snapshotID(2)+`"`) {
 		t.Errorf("head = %s", head)
 	}
 }
@@ -80,7 +83,7 @@ func TestSaveStateRefusals(t *testing.T) {
 
 func TestSchedulerSavesStaleRunningBoxes(t *testing.T) {
 	env := newStateEnv(t)
-	env.agent.chunks = []string{"c1"}
+	env.agent.chunks = []string{hexID("c1")}
 	env.svc.saveStale(env.ctx, time.Hour, []string{"bob"})
 	if active := env.svc.ops.activeFor(aliceBox); active != nil {
 		t.Fatalf("scheduler saved a box outside its users: %s", active.id)
@@ -112,7 +115,7 @@ func TestSchedulerSavesStaleRunningBoxes(t *testing.T) {
 
 func TestRebase(t *testing.T) {
 	env := newStateEnv(t)
-	env.agent.chunks = []string{"c1", "c2"}
+	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
 	op, err := env.svc.Rebase(env.ctx, &controlv1.RebaseRequest{BoxId: aliceBox})
 	if err != nil {
 		t.Fatalf("Rebase: %v", err)
@@ -146,7 +149,7 @@ func TestRebase(t *testing.T) {
 		t.Errorf("rebase save consistency = %s, want QUIESCED", c)
 	}
 	restore := env.agent.lastRestore()
-	if restore.addr != newID+":7443" || len(restore.req.GetGets()) != 2 || restore.req.GetManifest().GetChunkId() != "s1" {
+	if restore.addr != newID+":7443" || len(restore.req.GetGets()) != 2 || restore.req.GetManifest().GetChunkId() != snapshotID(1) {
 		t.Errorf("restore = %s %v", restore.addr, restore.req)
 	}
 	if env.fake.deletedIDs() != aliceBox {
@@ -159,7 +162,7 @@ func TestRebase(t *testing.T) {
 
 func TestRebaseKeepsOldMachineWhenRestoreFails(t *testing.T) {
 	env := newStateEnv(t)
-	env.agent.chunks = []string{"c1"}
+	env.agent.chunks = []string{hexID("c1")}
 	env.agent.restoreErr = errors.New("disk full")
 	op, err := env.svc.Rebase(env.ctx, &controlv1.RebaseRequest{BoxId: aliceBox, Image: "desktop-v3"})
 	if err != nil {
@@ -168,7 +171,7 @@ func TestRebaseKeepsOldMachineWhenRestoreFails(t *testing.T) {
 	newID := env.fake.waitSpec(t, 1).ID
 	env.fake.push(machines.Machine{ID: newID, State: machines.StateRunning})
 	events := watch(t, env.svc, env.ctx, op.GetId(), "")
-	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || !strings.Contains(last.GetDetail(), "disk full") {
+	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != "restore failed" {
 		t.Errorf("last event = %v", last)
 	}
 	if env.fake.deletedIDs() != newID {
@@ -176,6 +179,54 @@ func TestRebaseKeepsOldMachineWhenRestoreFails(t *testing.T) {
 	}
 	if addr, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || addr != aliceBox+":7443" {
 		t.Errorf("Resolve = %q, %v, want the old machine", addr, err)
+	}
+}
+
+func TestSaveRefusesUnsafeIDs(t *testing.T) {
+	tests := []struct {
+		name     string
+		snapshot string
+		chunks   []string
+	}{
+		{name: "snapshot id escapes the box prefix", snapshot: "../cb-000000000000/head", chunks: []string{hexID("c1")}},
+		{name: "chunk id escapes the box prefix", chunks: []string{"../../cb-000000000000/head.json"}},
+		{name: "chunk id is not hex", chunks: []string{strings.Repeat("Z", 64)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newStateEnv(t)
+			env.agent.snapshotID, env.agent.chunks = tt.snapshot, tt.chunks
+			op, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+			if err != nil {
+				t.Fatalf("SaveState: %v", err)
+			}
+			events := watch(t, env.svc, env.ctx, op.GetId(), "")
+			if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != "save failed" {
+				t.Errorf("last event = %v, want FAILED with an opaque detail", last)
+			}
+			if n := env.agent.uploadCount(); n != 0 {
+				t.Errorf("agent received %d uploads", n)
+			}
+			if len(env.store.objects) != 0 {
+				t.Errorf("store written: %v", env.store.objects)
+			}
+		})
+	}
+}
+
+func TestRebaseRefusesImagesOffTheAllowList(t *testing.T) {
+	env := newStateEnv(t)
+	for _, image := range []string{"vk-cocoonbox-cb-9f86d081884c-0-984b48", "cocoonbox-desktop-v9", "desktop-v1"} {
+		_, err := env.svc.Rebase(env.ctx, &controlv1.RebaseRequest{BoxId: aliceBox, Image: image})
+		if status.Code(err) != codes.InvalidArgument {
+			t.Errorf("Rebase to %q: %v, want InvalidArgument", image, err)
+		}
+	}
+	if n := env.fake.specCount(); n != 0 {
+		t.Errorf("Rebase created %d machines", n)
+	}
+	if n := env.agent.plans(); n != 0 {
+		t.Errorf("Rebase planned %d snapshots", n)
 	}
 }
 
@@ -234,6 +285,21 @@ func (f *fakeMachines) deletedIDs() string {
 	return strings.Join(f.deleted, ",")
 }
 
+func (f *fakeMachines) specCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.specs)
+}
+
+func hexID(name string) string {
+	sum := sha256.Sum256([]byte(name))
+	return hex.EncodeToString(sum[:])
+}
+
+func snapshotID(n int) string {
+	return fmt.Sprintf("%064x", n)
+}
+
 func hasProgress(events []*controlv1.OperationEvent) bool {
 	for _, ev := range events {
 		if ev.GetTotalBytes() > 0 {
@@ -290,6 +356,7 @@ type restoreCall struct {
 type fakeAgent struct {
 	store      *fakeStore
 	chunks     []string
+	snapshotID string
 	restoreErr error
 
 	mu        sync.Mutex
@@ -304,7 +371,7 @@ func (a *fakeAgent) Plan(_ context.Context, _ string, req *agentv1.PlanRequest) 
 	defer a.mu.Unlock()
 	a.planReqs = append(a.planReqs, req)
 	a.snapshots++
-	resp := &agentv1.PlanResponse{SnapshotId: fmt.Sprintf("s%d", a.snapshots), Files: 7, LogicalBytes: 3 << 20, TakenAtMs: time.Now().UnixMilli()}
+	resp := &agentv1.PlanResponse{SnapshotId: cmp.Or(a.snapshotID, snapshotID(a.snapshots)), Files: 7, LogicalBytes: 3 << 20, TakenAtMs: time.Now().UnixMilli()}
 	for _, id := range a.chunks {
 		resp.Chunks = append(resp.Chunks, &agentv1.ChunkRef{Id: id, Size: 1 << 20})
 	}
@@ -354,6 +421,12 @@ func (a *fakeAgent) plans() int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return len(a.planReqs)
+}
+
+func (a *fakeAgent) uploadCount() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.uploads)
 }
 
 func (a *fakeAgent) lastUpload() *agentv1.UploadRequest {

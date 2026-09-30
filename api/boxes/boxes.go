@@ -19,10 +19,11 @@ import (
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
-// Defaults size new boxes and name the image they start from.
+// Defaults size new boxes, name the image they start from, and list the other images Rebase may target.
 type Defaults struct {
-	Flavor machines.Flavor
-	Image  string
+	Flavor       machines.Flavor
+	Image        string
+	RebaseImages []string
 }
 
 // Service implements controlv1.BoxesServer and resolves boxes for the edge.

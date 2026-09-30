@@ -4,6 +4,7 @@ mcp_listen: 127.0.0.1:18201
 kubeconfig: kubeconfig
 namespace: cocoonbox
 image: cocoonbox-desktop-v1
+rebase_images: []            # older goldens Rebase may also target; anything else is refused
 network: cb
 probe_port: 22
 agent_port: 7443
