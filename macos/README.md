@@ -90,6 +90,7 @@ These environment variables serve test runs:
 
 - `CB_ENDPOINT`: the endpoint URL. It overrides the saved endpoint. The app speaks plaintext `http://` only to loopback (`127.*`, `::1`, `localhost`), so a bearer token never crosses the network unencrypted.
 - `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `me.cmgs.cocoonbox`). Ad hoc signed dev builds use `me.cmgs.cocoonbox.dev`, so they never read the installed app's item and never raise its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s me.cmgs.cocoonbox.dev -a <endpoint url>`.
+- `CB_KEYCHAIN_FILE`: a keychain file to use instead of the login keychain, so tests never touch the user's own. Create it with `security create-keychain` and unlock it with `security unlock-keychain`; `scripts/test-cli.sh` does this, and also runs with `HOME` set to a test directory.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.
 - `CB_RFB_RAW=1`: offer only Raw, for throughput baselines.

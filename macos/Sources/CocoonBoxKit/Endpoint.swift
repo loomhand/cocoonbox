@@ -41,14 +41,16 @@ public enum Keychain {
     // installed app's item, whose ACL would prompt for a new binary.
     public static let service = ProcessInfo.processInfo.environment["CB_KEYCHAIN_SERVICE"] ?? "me.cmgs.cocoonbox"
 
+    // CB_KEYCHAIN_FILE confines tests to a throwaway keychain file instead of the login keychain.
+    nonisolated(unsafe) static let file: SecKeychain? = ProcessInfo.processInfo.environment["CB_KEYCHAIN_FILE"].flatMap { path in
+        var keychain: SecKeychain?
+        return SecKeychainOpen(path, &keychain) == errSecSuccess ? keychain : nil
+    }
+
     public static func token(for endpoint: Endpoint, service: String = service) -> String? {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: endpoint.url,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
-        ]
+        var query = match(endpoint, service)
+        query[kSecReturnData] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
               let data = item as? Data
@@ -57,14 +59,9 @@ public enum Keychain {
     }
 
     public static func setToken(_ token: String, for endpoint: Endpoint, service: String = service) throws {
-        let match: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: endpoint.url,
-        ]
-        SecItemDelete(match as CFDictionary)
-        var add = match
-        add[kSecValueData] = Data(token.utf8)
+        SecItemDelete(match(endpoint, service) as CFDictionary)
+        var add: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: endpoint.url, kSecValueData: Data(token.utf8)]
+        if let file { add[kSecUseKeychain] = file }
         let status = SecItemAdd(add as CFDictionary, nil)
         guard status == errSecSuccess else {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
@@ -72,11 +69,12 @@ public enum Keychain {
     }
 
     public static func deleteToken(for endpoint: Endpoint, service: String = service) {
-        let match: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: endpoint.url,
-        ]
-        SecItemDelete(match as CFDictionary)
+        SecItemDelete(match(endpoint, service) as CFDictionary)
+    }
+
+    private static func match(_ endpoint: Endpoint, _ service: String) -> [CFString: Any] {
+        var query: [CFString: Any] = [kSecClass: kSecClassGenericPassword, kSecAttrService: service, kSecAttrAccount: endpoint.url]
+        if let file { query[kSecMatchSearchList] = [file] }
+        return query
     }
 }

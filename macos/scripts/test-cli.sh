@@ -2,9 +2,9 @@
 # End-to-end test of the cocoonbox CLI and its stdio MCP bridge against MockBox:
 # lifecycle commands over gRPC, the bridge's tool list while the box is
 # hibernated, the wake on the first box-tool call with progress, the control
-# tools and their refusals, --no-wake, and the headers helper. `login` stores
-# the mock token in a throwaway Keychain item, deleted on exit; the item is the
-# CLI's own, so reading it back raises no prompt.
+# tools and their refusals, --no-wake, and the headers helper. Nothing touches
+# the login keychain or the real HOME: `login` stores the mock token in a
+# throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -19,13 +19,18 @@ export COCOONBOX_ENDPOINT="http://127.0.0.1:$port"
 export CB_KEYCHAIN_SERVICE=me.cmgs.cocoonbox.test
 export COCOONBOX_CACHE_DIR="$work/cache"
 export COCOONBOX_CONFIG_DIR="$work/config"
-service="$CB_KEYCHAIN_SERVICE.cli"
+export HOME="$work/home"
+export CB_KEYCHAIN_FILE="$work/test.keychain-db"
+mkdir -p "$HOME"
+security create-keychain -p test "$CB_KEYCHAIN_FILE"
+security set-keychain-settings "$CB_KEYCHAIN_FILE"
+security unlock-keychain -p test "$CB_KEYCHAIN_FILE"
 
 "$bin/MockBox" --port "$port" --boot-ms 1500 >"$work/mockbox.log" 2>&1 &
 mock=$!
 cleanup() {
   kill "$mock" 2>/dev/null || true
-  security delete-generic-password -s "$service" -a "$COCOONBOX_ENDPOINT" >/dev/null 2>&1 || true
+  security delete-keychain "$CB_KEYCHAIN_FILE" 2>/dev/null || true
   rm -rf "$work"
 }
 trap cleanup EXIT
@@ -142,7 +147,7 @@ check("upgrade without --yes refuses", upgrade.returncode != 0 and "--yes" in up
 # sandbox that denies writes outside the test directory and the process temp.
 import os, hashlib, pathlib
 work = os.path.dirname(mocklog)
-home = os.path.join(work, "home")
+home = os.path.join(work, "confined-home")
 os.makedirs(os.path.join(home, ".cursor"))
 profile = os.path.join(work, "confine.sb")
 open(profile, "w").write(f"""(version 1)
