@@ -32,7 +32,9 @@ public struct Endpoint: Sendable, Hashable {
 }
 
 public enum Keychain {
-    static let service = "me.cmgs.cocoonbox"
+    // CB_KEYCHAIN_SERVICE lets dev builds keep their token apart from the
+    // installed app's item, whose ACL would prompt for a new binary.
+    static let service = ProcessInfo.processInfo.environment["CB_KEYCHAIN_SERVICE"] ?? "me.cmgs.cocoonbox"
 
     public static func token(for endpoint: Endpoint) -> String? {
         let query: [CFString: Any] = [
