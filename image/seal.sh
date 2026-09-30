@@ -21,6 +21,17 @@ journalctl --vacuum-time=1s >/dev/null
 systemctl restart cocoonbox-xorg.service cocoonbox-session.service
 systemctl --user -M user@ restart cua-driver.service
 systemctl reset-failed
+abandoned=$(systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}')
+[ -z "$abandoned" ] || { echo "seal: abandoned session scopes: $abandoned" >&2; exit 1; }
+desktop_session() {
+	local s
+	for s in $(loginctl list-sessions --no-legend | awk '$3 == "user" {print $1}'); do
+		[ "$(loginctl show-session "$s" -p Active -p Remote -p Class -p Type | sort | tr '\n' ' ')" = "Active=yes Class=user Remote=no Type=x11 " ] && return 0
+	done
+	return 1
+}
+for _ in $(seq 20); do desktop_session && break; sleep 0.5; done
+desktop_session || { echo "seal: no active local logind session for user" >&2; exit 1; }
 if systemctl -q is-enabled cocoonbox-agent.service; then
 	systemctl start cocoonbox-toolhost.service cocoonbox-agent.service
 fi
