@@ -278,7 +278,9 @@ func TestResolve(t *testing.T) {
 }
 
 type execCall struct {
-	machine, script, stdin string
+	machine  string
+	identity machines.Identity
+	gwKey    string
 }
 
 // fakeMachines keeps machines in memory; Ensure mirrors the cocoonset backend and each pushed event reaches exactly one live Watch.
@@ -415,14 +417,14 @@ func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {
 	return nil
 }
 
-func (f *fakeMachines) Exec(_ context.Context, id string, cmd []string, stdin []byte) ([]byte, error) {
+func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity, gwKey string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.execErr != nil {
-		return nil, f.execErr
+		return f.execErr
 	}
-	f.execs = append(f.execs, execCall{machine: id, script: cmd[len(cmd)-1], stdin: string(stdin)})
-	return nil, nil
+	f.execs = append(f.execs, execCall{machine: id, identity: identity, gwKey: gwKey})
+	return nil
 }
 
 func (f *fakeMachines) Delete(_ context.Context, id string) error {

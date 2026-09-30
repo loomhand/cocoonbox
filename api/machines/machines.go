@@ -73,6 +73,14 @@ type Machine struct {
 	Meta map[string]string
 }
 
+// Identity tells a box agent which box and wake it serves and which edge key signs its credentials.
+type Identity struct {
+	BoxID     string `json:"box_id"`
+	WakeID    string `json:"wake_id"`
+	KeyID     string `json:"key_id"`
+	PublicKey string `json:"public_key"`
+}
+
 // NotRunningError is returned by Address for a machine that cannot take traffic.
 type NotRunningError struct {
 	State State
@@ -97,6 +105,6 @@ type Machines interface {
 	Delete(ctx context.Context, id string) error
 	// SetMeta stores value under key in the machine's Meta.
 	SetMeta(ctx context.Context, id, key, value string) error
-	// Exec runs cmd as root inside the running machine with stdin, returning its stdout.
-	Exec(ctx context.Context, id string, cmd []string, stdin []byte) ([]byte, error)
+	// Deliver hands the running machine's agent its identity and, when gwKey is set, its gw key.
+	Deliver(ctx context.Context, id string, identity Identity, gwKey string) error
 }

@@ -3,6 +3,7 @@ package cocoonset
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,8 +67,9 @@ func TestImageOverrideAndDelete(t *testing.T) {
 func TestMetaIncarnationAndExec(t *testing.T) {
 	env := newTestEnv(t)
 	env.putSet(t, testSet(1, false, cocoonv1.CocoonSetPhaseRunning))
-	if _, err := env.backend.Exec(t.Context(), boxID, []string{"id"}, nil); !errors.Is(err, machines.ErrNotFound) {
-		t.Errorf("Exec without a pod: %v, want ErrNotFound", err)
+	identity := machines.Identity{BoxID: boxID, WakeID: "w1", KeyID: "k1", PublicKey: "pub"}
+	if err := env.backend.Deliver(t.Context(), boxID, identity, ""); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("Deliver without a pod: %v, want ErrNotFound", err)
 	}
 	pod := testPod(true, meta.LifecycleStateReady, 1)
 	pod.UID = "uid-1"
@@ -82,11 +84,18 @@ func TestMetaIncarnationAndExec(t *testing.T) {
 	if err != nil || m.Meta["wake"] != "uid-1/vm-1:w1" || m.Incarnation != "uid-1/vm-1" {
 		t.Errorf("Get = meta %v incarnation %q, %v", m.Meta, m.Incarnation, err)
 	}
-	if _, err := env.backend.Exec(t.Context(), boxID, []string{"sh", "-c", "cat > /x"}, []byte("data")); err != nil {
-		t.Fatalf("Exec: %v", err)
+	if err := env.backend.Deliver(t.Context(), boxID, identity, "k3y"); err != nil {
+		t.Fatalf("Deliver: %v", err)
 	}
-	if len(env.execs) != 1 || env.execs[0].pod != boxID+"-0" || env.execs[0].stdin != "data" {
-		t.Errorf("exec calls = %+v", env.execs)
+	if len(env.execs) != 2 || env.execs[0].pod != boxID+"-0" || env.execs[0].stdin != "k3y\n" || !strings.Contains(env.execs[0].cmd[2], "set-agent-env") {
+		t.Fatalf("gw key exec = %+v", env.execs)
+	}
+	if env.execs[1].stdin != `{"box_id":"`+boxID+`","wake_id":"w1","key_id":"k1","public_key":"pub"}` || !strings.Contains(env.execs[1].cmd[2], "mv -f") {
+		t.Errorf("identity exec = %+v", env.execs[1])
+	}
+	env.execs = nil
+	if err := env.backend.Deliver(t.Context(), boxID, identity, ""); err != nil || len(env.execs) != 1 {
+		t.Errorf("Deliver without a gw key ran %d execs, %v", len(env.execs), err)
 	}
 }
 

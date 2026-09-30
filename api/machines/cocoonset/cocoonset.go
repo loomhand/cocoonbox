@@ -254,12 +254,24 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	return err
 }
 
-func (b *Backend) Exec(ctx context.Context, id string, cmd []string, stdin []byte) ([]byte, error) {
+func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, gwKey string) error {
 	main := b.mainPod(id)
 	if main == nil {
-		return nil, machines.ErrNotFound
+		return machines.ErrNotFound
 	}
-	return b.exec(ctx, main.Name, cmd, stdin)
+	if gwKey != "" {
+		if _, err := b.exec(ctx, main.Name, writeGWKey, []byte(gwKey+"\n")); err != nil {
+			return fmt.Errorf("install gw key: %w", err)
+		}
+	}
+	file, err := json.Marshal(identity)
+	if err != nil {
+		return fmt.Errorf("encode identity: %w", err)
+	}
+	if _, err := b.exec(ctx, main.Name, writeIdentity, file); err != nil {
+		return fmt.Errorf("write identity: %w", err)
+	}
+	return nil
 }
 
 func (b *Backend) machine(cs *cocoonv1.CocoonSet, gen int64) machines.Machine {

@@ -2,7 +2,6 @@ package boxes
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -42,15 +41,12 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	}
 
 	execs := fake.execCalls()
-	if len(execs) != 2 || !strings.Contains(execs[0].script, "set-agent-env") || execs[0].stdin != "gw-key-"+aliceBox+"\n" {
-		t.Fatalf("exec calls = %+v, want the gw key install first", execs)
+	if len(execs) != 1 || execs[0].gwKey != "gw-key-"+aliceBox {
+		t.Fatalf("deliveries = %+v, want one with the gw key", execs)
 	}
-	var file identityFile
-	if err := json.Unmarshal([]byte(execs[1].stdin), &file); err != nil || !strings.Contains(execs[1].script, "/run/cocoonbox-identity/identity") {
-		t.Fatalf("identity exec = %+v, %v", execs[1], err)
-	}
+	file := execs[0].identity
 	if file.BoxID != aliceBox || file.KeyID != "k1" || file.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(file.WakeID) {
-		t.Errorf("identity file = %+v", file)
+		t.Errorf("identity = %+v", file)
 	}
 	if gw.calls() != "add "+aliceBox {
 		t.Errorf("gw calls = %q", gw.calls())
@@ -96,8 +92,8 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	if gw.calls() != "" {
 		t.Errorf("wake asked for a gw key again: %q", gw.calls())
 	}
-	if execs := fake.execCalls(); len(execs) != 1 || !strings.Contains(execs[0].script, "cocoonbox-identity") {
-		t.Errorf("exec calls = %+v, want one identity write", execs)
+	if execs := fake.execCalls(); len(execs) != 1 || execs[0].gwKey != "" || execs[0].identity.WakeID == "w-old" {
+		t.Errorf("deliveries = %+v, want one identity without a gw key", execs)
 	}
 }
 

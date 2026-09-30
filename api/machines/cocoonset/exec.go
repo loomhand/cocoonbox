@@ -15,6 +15,13 @@ import (
 
 const agentContainer = "agent"
 
+var (
+	writeIdentity = []string{"sh", "-c", `set -e; umask 022; mkdir -p /run/cocoonbox-identity; chmod 0755 /run/cocoonbox-identity
+t=$(mktemp /run/cocoonbox-identity/.identity.XXXXXX); cat > "$t"; chmod 0644 "$t"; mv -f "$t" /run/cocoonbox-identity/identity`}
+	writeGWKey = []string{"sh", "-c", `set -e; read -r key; { grep -v '^GW_API_KEY=' /etc/cocoonbox/agent.env; printf 'GW_API_KEY=%s\n' "$key"; } |
+/usr/local/lib/cocoonbox/set-agent-env; systemctl restart cocoonbox-agent`}
+)
+
 // podExecFunc runs cmd in a pod's container and returns stdout.
 type podExecFunc func(ctx context.Context, pod string, cmd []string, stdin []byte) ([]byte, error)
 

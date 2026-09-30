@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -26,13 +25,6 @@ const (
 	provisionBackoff  = 2 * time.Second
 )
 
-var (
-	writeIdentity = []string{"sh", "-c", `set -e; umask 022; mkdir -p /run/cocoonbox-identity; chmod 0755 /run/cocoonbox-identity
-t=$(mktemp /run/cocoonbox-identity/.identity.XXXXXX); cat > "$t"; chmod 0644 "$t"; mv -f "$t" /run/cocoonbox-identity/identity`}
-	writeGWKey = []string{"sh", "-c", `set -e; read -r key; { grep -v '^GW_API_KEY=' /etc/cocoonbox/agent.env; printf 'GW_API_KEY=%s\n' "$key"; } |
-/usr/local/lib/cocoonbox/set-agent-env; systemctl restart cocoonbox-agent`}
-)
-
 // Signer issues the credentials box agents verify with the key named in their identity file.
 type Signer interface {
 	KeyID() string
@@ -44,13 +36,6 @@ type Signer interface {
 type GWKeys interface {
 	Add(ctx context.Context, machine string) (string, error)
 	Revoke(ctx context.Context, machine string) error
-}
-
-type identityFile struct {
-	BoxID     string `json:"box_id"`
-	WakeID    string `json:"wake_id"`
-	KeyID     string `json:"key_id"`
-	PublicKey string `json:"public_key"`
 }
 
 // EnableProvisioning gives the machines of users identity files for signer and, when gw is set, per-machine gw keys.
@@ -119,34 +104,31 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 
 func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string, error) {
 	p := s.provision
+	var gwKey string
 	if p.gw != nil && m.Meta[metaGW] == "" {
 		key, err := p.gw.Add(ctx, m.ID)
 		if err != nil {
 			return "", fmt.Errorf("gw key: %w", err)
 		}
-		if _, err := s.machines.Exec(ctx, m.ID, writeGWKey, []byte(key+"\n")); err != nil {
-			return "", fmt.Errorf("install gw key: %w", err)
-		}
-		if err := s.machines.SetMeta(ctx, m.ID, metaGW, "1"); err != nil {
-			return "", err
-		}
+		gwKey = key
 	}
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("wake id: %w", err)
 	}
-	wake := hex.EncodeToString(raw)
-	file, err := json.Marshal(identityFile{BoxID: BoxID(m.Owner), WakeID: wake, KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey()})
-	if err != nil {
-		return "", fmt.Errorf("encode identity: %w", err)
-	}
-	if _, err := s.machines.Exec(ctx, m.ID, writeIdentity, file); err != nil {
-		return "", fmt.Errorf("write identity: %w", err)
-	}
-	if err := s.machines.SetMeta(ctx, m.ID, metaWake, m.Incarnation+"|"+wake); err != nil {
+	identity := machines.Identity{BoxID: BoxID(m.Owner), WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey()}
+	if err := s.machines.Deliver(ctx, m.ID, identity, gwKey); err != nil {
 		return "", err
 	}
-	return wake, nil
+	if gwKey != "" {
+		if err := s.machines.SetMeta(ctx, m.ID, metaGW, "1"); err != nil {
+			return "", err
+		}
+	}
+	if err := s.machines.SetMeta(ctx, m.ID, metaWake, m.Incarnation+"|"+identity.WakeID); err != nil {
+		return "", err
+	}
+	return identity.WakeID, nil
 }
 
 // agentContext carries m's credential to its agent on calls the control plane makes itself.
