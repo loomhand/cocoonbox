@@ -210,6 +210,16 @@ func serve() async {
         endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"),
         cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { output.write($0) }
     )
+    // a client that stops the bridge with SIGTERM still gets its sessions closed
+    signal(SIGTERM, SIG_IGN)
+    let terminate = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    terminate.setEventHandler {
+        Task {
+            await bridge.shutdown()
+            exit(0)
+        }
+    }
+    terminate.resume()
     await bridge.run()
 }
 

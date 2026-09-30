@@ -27,16 +27,22 @@ public actor Bridge {
         boxTools = ToolCatalog.loadBox(from: cache) ?? ToolCatalog.boxFallback
     }
 
-    // run serves newline-delimited JSON-RPC from stdin until it closes.
+    // run serves newline-delimited JSON-RPC from stdin until it closes, then ends the upstream sessions.
     public func run(input: FileHandle = .standardInput) async {
         do {
             for try await line in input.bytes.lines where !line.isEmpty {
                 guard let message = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any] else { continue }
                 Task { await self.handle(message) }
             }
-        } catch {
-            return
-        }
+        } catch {}
+        await shutdown()
+    }
+
+    public func shutdown() async {
+        await box?.close()
+        await control?.close()
+        box = nil
+        control = nil
     }
 
     func handle(_ message: [String: Any]) async {
