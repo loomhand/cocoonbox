@@ -13,6 +13,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/dialer"
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/CMGS/cocoonbox/api/keyring"
+	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/store"
 )
 
@@ -22,9 +23,9 @@ var objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // StateAgents is the agents' State service as the control plane calls it.
 type StateAgents interface {
-	Plan(ctx context.Context, addr string, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error)
-	Upload(ctx context.Context, addr string, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
-	Restore(ctx context.Context, addr string, req *agentv1.RestoreRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error)
+	Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	Restore(ctx context.Context, ep machines.Endpoint, req *agentv1.RestoreRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 }
 
 type chunk struct {
@@ -72,8 +73,8 @@ func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *st
 	return &stateLayer{agents: agents, store: st, keys: keys, locks: map[string]*sync.Mutex{}, heads: map[string]head{}}
 }
 
-// save snapshots the state of box's agent at addr and uploads the chunks the store lacks.
-func (l *stateLayer) save(ctx context.Context, box, addr string, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+// save snapshots the state of box's agent at ep and uploads the chunks the store lacks.
+func (l *stateLayer) save(ctx context.Context, box string, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	unlock := l.lock(box)
 	defer unlock()
 	key, err := l.keys.Key(ctx, box)
@@ -85,7 +86,7 @@ func (l *stateLayer) save(ctx context.Context, box, addr string, consistency age
 		return nil, err
 	}
 	stateKey := &agentv1.StateKey{Key: key.Secret, KeyId: key.ID}
-	plan, err := l.agents.Plan(ctx, addr, &agentv1.PlanRequest{Key: stateKey, Consistency: consistency, Parent: h.Latest})
+	plan, err := l.agents.Plan(ctx, ep, &agentv1.PlanRequest{Key: stateKey, Consistency: consistency, Parent: h.Latest})
 	if err != nil {
 		return nil, fmt.Errorf("plan: %w", err)
 	}
@@ -112,7 +113,7 @@ func (l *stateLayer) save(ctx context.Context, box, addr string, consistency age
 		rec.NewChunks++
 		rec.UploadedBytes += c.GetSize()
 	}
-	if err = l.upload(ctx, box, addr, rec, stateKey, missing, progress); err != nil {
+	if err = l.upload(ctx, box, ep, rec, stateKey, missing, progress); err != nil {
 		return nil, err
 	}
 	rec.SavedAtMs = time.Now().UnixMilli()
@@ -123,7 +124,7 @@ func (l *stateLayer) save(ctx context.Context, box, addr string, consistency age
 }
 
 // upload sends missing in batches presigned just before each call, and the manifest with the last batch.
-func (l *stateLayer) upload(ctx context.Context, box, addr string, rec *snapshotRecord, key *agentv1.StateKey, missing []chunk, progress dialer.ProgressFunc) error {
+func (l *stateLayer) upload(ctx context.Context, box string, ep machines.Endpoint, rec *snapshotRecord, key *agentv1.StateKey, missing []chunk, progress dialer.ProgressFunc) error {
 	var sent uint64
 	all := batches(missing)
 	for i, batch := range all {
@@ -144,7 +145,7 @@ func (l *stateLayer) upload(ctx context.Context, box, addr string, rec *snapshot
 			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
 		}
 		offset, size := sent, batchBytes(batch)
-		final, err := l.agents.Upload(ctx, addr, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
+		final, err := l.agents.Upload(ctx, ep, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
 			p.DoneBytes += offset
 			p.TotalBytes = rec.UploadedBytes
 			p.Finished = p.Finished && last
@@ -164,8 +165,8 @@ func (l *stateLayer) upload(ctx context.Context, box, addr string, rec *snapshot
 	return nil
 }
 
-// restore writes snapshot id of box (the latest when empty) into the agent at addr.
-func (l *stateLayer) restore(ctx context.Context, box, addr, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+// restore writes snapshot id of box (the latest when empty) into the agent at ep.
+func (l *stateLayer) restore(ctx context.Context, box string, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	unlock := l.lock(box)
 	defer unlock()
 	if id == "" {
@@ -214,7 +215,7 @@ func (l *stateLayer) restore(ctx context.Context, box, addr, id string, progress
 		}
 		req.Gets = append(req.Gets, &agentv1.PresignedGet{ChunkId: c.ID, Url: get.URL})
 	}
-	if _, err := l.agents.Restore(ctx, addr, req, plaintextProgress(total, progress)); err != nil {
+	if _, err := l.agents.Restore(ctx, ep, req, plaintextProgress(total, progress)); err != nil {
 		return nil, fmt.Errorf("restore: %w", err)
 	}
 	return rec, nil

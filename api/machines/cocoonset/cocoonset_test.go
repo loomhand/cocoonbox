@@ -259,7 +259,9 @@ func (e *testEnv) waitAddress(t *testing.T) string {
 	var addr string
 	poll(t, func() bool {
 		var err error
-		addr, err = e.backend.Address(t.Context(), boxID)
+		var ep machines.Endpoint
+		ep, err = e.backend.Address(t.Context(), boxID)
+		addr = ep.Key
 		return err == nil
 	})
 	return addr

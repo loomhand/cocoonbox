@@ -4,6 +4,7 @@ package machines
 import (
 	"context"
 	"errors"
+	"net"
 	"time"
 )
 
@@ -19,6 +20,8 @@ const (
 	ActionNone    Action = 0
 	ActionCreated Action = 1
 	ActionWoken   Action = 2
+
+	tcpDialTimeout = 5 * time.Second
 )
 
 var (
@@ -81,6 +84,19 @@ type Identity struct {
 	PublicKey string `json:"public_key"`
 }
 
+// Endpoint reaches a machine's agent; Key names it as host:port and changes when the machine moves.
+type Endpoint struct {
+	Key  string
+	Dial func(ctx context.Context) (net.Conn, error)
+}
+
+// TCPEndpoint reaches an agent listening on addr.
+func TCPEndpoint(addr string) Endpoint {
+	return Endpoint{Key: addr, Dial: func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{Timeout: tcpDialTimeout}).DialContext(ctx, "tcp", addr)
+	}}
+}
+
 // NotRunningError is returned by Address for a machine that cannot take traffic.
 type NotRunningError struct {
 	State State
@@ -99,8 +115,8 @@ type Machines interface {
 	Hibernate(ctx context.Context, id string) (Machine, error)
 	// Watch sends the machine's state, judged no older than revision, on every change until ctx ends or the machine is gone.
 	Watch(ctx context.Context, id string, revision int64) <-chan Machine
-	// Address returns host:port of the running machine's agent.
-	Address(ctx context.Context, id string) (string, error)
+	// Address returns how to reach the running machine's agent.
+	Address(ctx context.Context, id string) (Endpoint, error)
 	// Delete removes the machine and its disk.
 	Delete(ctx context.Context, id string) error
 	// SetMeta stores value under key in the machine's Meta.

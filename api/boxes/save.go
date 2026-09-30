@@ -116,12 +116,12 @@ func (s *Service) runSave(op *operation, m machines.Machine, consistency agentv1
 }
 
 func (s *Service) save(op *operation, m machines.Machine, consistency agentv1.Consistency) (*snapshotRecord, error) {
-	addr, err := s.machines.Address(op.ctx, m.ID)
+	ep, err := s.machines.Address(op.ctx, m.ID)
 	if err != nil {
 		return nil, fmt.Errorf("address of %s: %w", m.ID, err)
 	}
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING, fmt.Sprintf("planning a %s snapshot", consistencyName(consistency)))
-	return s.state.save(s.agentContext(op.ctx, m), op.boxID, addr, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
+	return s.state.save(s.agentContext(op.ctx, m), op.boxID, ep, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
 }
 
 // progressNotes turns transfer progress into operation events, at most one per progressInterval.

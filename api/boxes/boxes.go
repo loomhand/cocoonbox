@@ -171,32 +171,33 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 	}
 }
 
-// Resolve returns the agent address of boxID and its wake id after checking that user owns it and it is ready.
-func (s *Service) Resolve(ctx context.Context, user, boxID string) (string, string, error) {
+// Resolve returns the agent endpoint of boxID and its wake id after checking that user owns it and it is ready.
+func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.Endpoint, string, error) {
+	var none machines.Endpoint
 	if boxID != BoxID(user) {
-		return "", "", status.Error(codes.PermissionDenied, "box belongs to another user")
+		return none, "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
 	cur, err := s.current(ctx, user)
-	var addr string
+	var ep machines.Endpoint
 	if err == nil && !s.ready(cur) && cur.State == machines.StateRunning {
 		err = &machines.NotRunningError{State: machines.StateStarting}
 	}
 	if err == nil {
-		addr, err = s.machines.Address(ctx, cur.ID)
+		ep, err = s.machines.Address(ctx, cur.ID)
 	}
 	var notRunning *machines.NotRunningError
 	switch {
 	case err == nil:
-		return addr, wakeOf(cur), nil
+		return ep, wakeOf(cur), nil
 	case errors.Is(err, machines.ErrNotFound):
-		return "", "", status.Error(codes.NotFound, "box not found")
+		return none, "", status.Error(codes.NotFound, "box not found")
 	case errors.As(err, &notRunning):
-		return "", "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
+		return none, "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
 	case errors.Is(err, machines.ErrNoAddress):
-		return "", "", status.Error(codes.Unavailable, "box has no address yet")
+		return none, "", status.Error(codes.Unavailable, "box has no address yet")
 	default:
 		log.WithFunc("boxes.Service.Resolve").WithField("box", boxID).Error(ctx, err, "resolve box")
-		return "", "", status.Error(codes.Unavailable, "resolve box failed")
+		return none, "", status.Error(codes.Unavailable, "resolve box failed")
 	}
 }
 

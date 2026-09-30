@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/credential"
+	"github.com/CMGS/cocoonbox/api/machines"
 )
 
 const (
@@ -36,18 +38,25 @@ type jsonRPCError struct {
 	} `json:"error"`
 }
 
+type boxTransport struct {
+	key       string
+	transport *http.Transport
+}
+
 // MCP proxies MCP Streamable HTTP exchanges to the agent of the caller's box.
 type MCP struct {
 	resolver  Resolver
 	authn     *auth.Authenticator
 	edgeToken string
 	creds     Credentials
-	transport *http.Transport
+
+	mu         sync.Mutex
+	transports map[string]*boxTransport
 }
 
 // NewMCP builds the MCP proxy; creds, when set, adds box credentials, and an empty edgeToken refuses every exchange.
 func NewMCP(resolver Resolver, authn *auth.Authenticator, edgeToken string, creds Credentials) *MCP {
-	return &MCP{resolver: resolver, authn: authn, edgeToken: edgeToken, creds: creds, transport: newH2CTransport()}
+	return &MCP{resolver: resolver, authn: authn, edgeToken: edgeToken, creds: creds, transports: map[string]*boxTransport{}}
 }
 
 func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,36 +66,51 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
-	user, addr, wake, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
+	user, ep, wake, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
 	defer func() {
 		log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %q user=%s box=%q addr=%s code=%s in %s",
-			r.Method, r.URL.Path, user, boxID, addr, status.Code(err), time.Since(start).Round(time.Millisecond))
+			r.Method, r.URL.Path, user, boxID, ep.Key, status.Code(err), time.Since(start).Round(time.Millisecond))
 	}()
 	if err != nil {
 		writeJSONRPCError(w, err)
 		return
 	}
 	proxy := &httputil.ReverseProxy{
-		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, addr, boxID, wake) },
-		Transport:     m.transport,
+		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, ep.Key, boxID, wake) },
+		Transport:     m.transportFor(boxID, ep),
 		FlushInterval: -1,
 		ErrorHandler:  m.upstreamError,
 	}
 	proxy.ServeHTTP(w, r)
 }
 
-func (m *MCP) route(ctx context.Context, authorization, boxID string) (user, addr, wake string, err error) {
+func (m *MCP) route(ctx context.Context, authorization, boxID string) (user string, ep machines.Endpoint, wake string, err error) {
 	if user, err = m.authn.Authenticate(authorization); err != nil {
-		return "", "", "", err
+		return "", ep, "", err
 	}
 	if m.edgeToken == "" {
-		return user, "", "", status.Error(codes.Unavailable, "agent edge is not configured")
+		return user, ep, "", status.Error(codes.Unavailable, "agent edge is not configured")
 	}
 	if boxID == "" {
-		return user, "", "", status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
+		return user, ep, "", status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
-	addr, wake, err = m.resolver.Resolve(ctx, user, boxID)
-	return user, addr, wake, err
+	ep, wake, err = m.resolver.Resolve(ctx, user, boxID)
+	return user, ep, wake, err
+}
+
+// transportFor returns boxID's h2c transport, replacing it when the box's endpoint moved.
+func (m *MCP) transportFor(boxID string, ep machines.Endpoint) *http.Transport {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if bt := m.transports[boxID]; bt != nil {
+		if bt.key == ep.Key {
+			return bt.transport
+		}
+		bt.transport.CloseIdleConnections()
+	}
+	t := newH2CTransport(func(ctx context.Context, _, _ string) (net.Conn, error) { return ep.Dial(ctx) })
+	m.transports[boxID] = &boxTransport{key: ep.Key, transport: t}
+	return t
 }
 
 func (m *MCP) rewrite(pr *httputil.ProxyRequest, addr, box, wake string) {
@@ -115,12 +139,12 @@ func (m *MCP) upstreamError(w http.ResponseWriter, r *http.Request, err error) {
 	writeJSONRPCError(w, status.Error(codes.Unavailable, "box agent unreachable"))
 }
 
-func newH2CTransport() *http.Transport {
+func newH2CTransport(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {
 	var protocols http.Protocols
 	protocols.SetUnencryptedHTTP2(true)
 	return &http.Transport{
 		Protocols:       &protocols,
-		DialContext:     (&net.Dialer{Timeout: 5 * time.Second}).DialContext,
+		DialContext:     dial,
 		IdleConnTimeout: agentIdleTimeout,
 	}
 }

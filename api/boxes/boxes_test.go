@@ -266,12 +266,12 @@ func TestResolve(t *testing.T) {
 			fake := newFakeMachines()
 			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 			fake.addr, fake.addrErr = "10.203.0.10:7443", tt.addrErr
-			addr, _, err := New(fake, testDefaults).Resolve(t.Context(), alice, aliceBox)
+			ep, _, err := New(fake, testDefaults).Resolve(t.Context(), alice, aliceBox)
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Resolve: %v, want %s %q", err, tt.want, tt.message)
 			}
-			if err == nil && addr != "10.203.0.10:7443" {
-				t.Errorf("Resolve = %q", addr)
+			if err == nil && ep.Key != "10.203.0.10:7443" {
+				t.Errorf("Resolve = %q", ep.Key)
 			}
 		})
 	}
@@ -391,11 +391,11 @@ func (f *fakeMachines) Watch(ctx context.Context, _ string, revision int64) <-ch
 	return out
 }
 
-func (f *fakeMachines) Address(_ context.Context, id string) (string, error) {
-	if f.addr == "" && f.addrErr == nil {
-		return id + ":7443", nil
+func (f *fakeMachines) Address(_ context.Context, id string) (machines.Endpoint, error) {
+	if f.addrErr != nil {
+		return machines.Endpoint{}, f.addrErr
 	}
-	return f.addr, f.addrErr
+	return machines.TCPEndpoint(cmp.Or(f.addr, id+":7443")), nil
 }
 
 func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {

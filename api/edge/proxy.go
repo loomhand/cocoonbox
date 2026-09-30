@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/credential"
+	"github.com/CMGS/cocoonbox/api/machines"
 )
 
 const (
@@ -44,9 +46,9 @@ var (
 	}
 )
 
-// Resolver maps a caller and box id to the box agent's address and the wake id its credential names.
+// Resolver maps a caller and box id to the box agent's endpoint and the wake id its credential names.
 type Resolver interface {
-	Resolve(ctx context.Context, user, boxID string) (addr, wake string, err error)
+	Resolve(ctx context.Context, user, boxID string) (ep machines.Endpoint, wake string, err error)
 }
 
 // Credentials issues the credential an agent accepts for a box at a wake.
@@ -92,11 +94,11 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	if len(boxes) != 1 || boxes[0] == "" {
 		return status.Errorf(codes.InvalidArgument, "exactly one %s header is required", HeaderBox)
 	}
-	addr, wake, err := p.resolver.Resolve(ctx, user, boxes[0])
+	ep, wake, err := p.resolver.Resolve(ctx, user, boxes[0])
 	if err != nil {
 		return err
 	}
-	conn, err := p.conn(ctx, boxes[0], addr)
+	conn, err := p.conn(ctx, boxes[0], ep)
 	if err != nil {
 		return err
 	}
@@ -109,7 +111,7 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 		err = p.pump(ctx, ss, up, cancel)
 	}
 	log.WithFunc("edge.Proxy.Handle").Infof(ctx, "%s user=%s box=%q addr=%s code=%s in %s",
-		method, user, boxes[0], addr, status.Code(err), time.Since(start).Round(time.Millisecond))
+		method, user, boxes[0], ep.Key, status.Code(err), time.Since(start).Round(time.Millisecond))
 	return err
 }
 
@@ -153,26 +155,27 @@ func (p *Proxy) pump(ctx context.Context, down grpc.ServerStream, up grpc.Client
 	}
 }
 
-func (p *Proxy) conn(ctx context.Context, boxID, addr string) (*grpc.ClientConn, error) {
+func (p *Proxy) conn(ctx context.Context, boxID string, ep machines.Endpoint) (*grpc.ClientConn, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if bc := p.conns[boxID]; bc != nil {
-		if bc.addr == addr {
+		if bc.key == ep.Key {
 			return bc.conn, nil
 		}
 		_ = bc.conn.Close()
 		delete(p.conns, boxID)
 	}
-	conn, err := grpc.NewClient(addr,
+	conn, err := grpc.NewClient("passthrough:///"+ep.Key,
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return ep.Dial(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize)),
 		grpc.WithConnectParams(agentConnectParams),
 		grpc.WithIdleTimeout(agentIdleTimeout))
 	if err != nil {
-		log.WithFunc("edge.Proxy.conn").Errorf(ctx, err, "dial box %s at %s", boxID, addr)
+		log.WithFunc("edge.Proxy.conn").Errorf(ctx, err, "dial box %s at %s", boxID, ep.Key)
 		return nil, status.Error(codes.Internal, "dial box")
 	}
-	p.conns[boxID] = &boxConn{addr: addr, conn: conn}
+	p.conns[boxID] = &boxConn{key: ep.Key, conn: conn}
 	return conn, nil
 }
 
@@ -195,7 +198,7 @@ func (p *Proxy) outgoing(in metadata.MD, box, wake string) metadata.MD {
 }
 
 type boxConn struct {
-	addr string
+	key  string
 	conn *grpc.ClientConn
 }
 

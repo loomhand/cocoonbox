@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/CMGS/cocoonbox/api/machines"
 )
 
 const (
@@ -33,7 +35,7 @@ var connectParams = grpc.ConnectParams{
 // ProgressFunc receives each progress message of a transfer.
 type ProgressFunc func(*agentv1.TransferProgress)
 
-// Dialer keeps one connection per agent address.
+// Dialer keeps one connection per agent endpoint.
 type Dialer struct {
 	edgeToken string
 
@@ -46,9 +48,9 @@ func New(edgeToken string) *Dialer {
 	return &Dialer{edgeToken: edgeToken, conns: map[string]*grpc.ClientConn{}}
 }
 
-// Plan calls State.Plan on the agent at addr.
-func (d *Dialer) Plan(ctx context.Context, addr string, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
-	client, err := d.state(addr)
+// Plan calls State.Plan on the agent at ep.
+func (d *Dialer) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
+	client, err := d.state(ep)
 	if err != nil {
 		return nil, err
 	}
@@ -56,8 +58,8 @@ func (d *Dialer) Plan(ctx context.Context, addr string, req *agentv1.PlanRequest
 }
 
 // Upload calls State.Upload and returns the final progress message.
-func (d *Dialer) Upload(ctx context.Context, addr string, req *agentv1.UploadRequest, progress ProgressFunc) (*agentv1.TransferProgress, error) {
-	client, err := d.state(addr)
+func (d *Dialer) Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.UploadRequest, progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	client, err := d.state(ep)
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +71,8 @@ func (d *Dialer) Upload(ctx context.Context, addr string, req *agentv1.UploadReq
 }
 
 // Restore calls State.Restore and returns the final progress message.
-func (d *Dialer) Restore(ctx context.Context, addr string, req *agentv1.RestoreRequest, progress ProgressFunc) (*agentv1.TransferProgress, error) {
-	client, err := d.state(addr)
+func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, req *agentv1.RestoreRequest, progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	client, err := d.state(ep)
 	if err != nil {
 		return nil, err
 	}
@@ -85,27 +87,28 @@ func (d *Dialer) Restore(ctx context.Context, addr string, req *agentv1.RestoreR
 func (d *Dialer) Close() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for addr, conn := range d.conns {
+	for key, conn := range d.conns {
 		_ = conn.Close()
-		delete(d.conns, addr)
+		delete(d.conns, key)
 	}
 }
 
-func (d *Dialer) state(addr string) (agentv1.StateClient, error) {
+func (d *Dialer) state(ep machines.Endpoint) (agentv1.StateClient, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if conn := d.conns[addr]; conn != nil {
+	if conn := d.conns[ep.Key]; conn != nil {
 		return agentv1.NewStateClient(conn), nil
 	}
-	conn, err := grpc.NewClient(addr,
+	conn, err := grpc.NewClient("passthrough:///"+ep.Key,
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return ep.Dial(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMessageSize), grpc.MaxCallSendMsgSize(maxMessageSize)),
 		grpc.WithConnectParams(connectParams),
 		grpc.WithIdleTimeout(idleTimeout))
 	if err != nil {
-		return nil, fmt.Errorf("dial agent %s: %w", addr, err)
+		return nil, fmt.Errorf("dial agent %s: %w", ep.Key, err)
 	}
-	d.conns[addr] = conn
+	d.conns[ep.Key] = conn
 	return agentv1.NewStateClient(conn), nil
 }
 

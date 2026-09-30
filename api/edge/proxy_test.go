@@ -24,6 +24,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/config"
 	"github.com/CMGS/cocoonbox/api/credential"
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/CMGS/cocoonbox/api/machines"
 )
 
 const (
@@ -53,6 +54,14 @@ func TestUnaryRewritesHeaders(t *testing.T) {
 	}
 	if got := trailer.Get("x-agent-trailer"); len(got) != 1 || got[0] != "t" {
 		t.Errorf("trailer x-agent-trailer = %v", got)
+	}
+}
+
+func TestDialsTheEndpointNotItsKey(t *testing.T) {
+	env := newProxyEnv(t)
+	env.resolver.opaque = true
+	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{ClientVersion: "test"}); err != nil {
+		t.Fatalf("Hello through an endpoint whose key resolves nowhere: %v", err)
 	}
 }
 
@@ -316,18 +325,23 @@ func serve(t *testing.T, srv *grpc.Server) string {
 	return lis.Addr().String()
 }
 
-// fakeResolver applies the Boxes ownership rule and routes every owned box to addr.
+// fakeResolver applies the Boxes ownership rule and routes every owned box to addr; opaque hides addr behind a key nothing resolves.
 type fakeResolver struct {
-	addr string
-	wake string
-	err  error
+	addr   string
+	wake   string
+	err    error
+	opaque bool
 }
 
-func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (string, string, error) {
+func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.Endpoint, string, error) {
 	if boxID != boxes.BoxID(user) {
-		return "", "", status.Error(codes.PermissionDenied, "box belongs to another user")
+		return machines.Endpoint{}, "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
-	return r.addr, r.wake, r.err
+	ep := machines.TCPEndpoint(r.addr)
+	if r.opaque {
+		ep.Key = "box.invalid:1"
+	}
+	return ep, r.wake, r.err
 }
 
 // fakeCreds issues "cred:<box>:<wake>".

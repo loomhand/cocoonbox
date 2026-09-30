@@ -52,6 +52,16 @@ func TestMCPPostRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMCPDialsTheEndpointNotItsKey(t *testing.T) {
+	env := newMCPEnv(t)
+	env.resolver.opaque = true
+	resp := env.do(t, env.request(t, http.MethodPost, boxes.BoxID("alice"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status %d through an endpoint whose key resolves nowhere, want 200", resp.StatusCode)
+	}
+}
+
 func TestMCPStreamsEvents(t *testing.T) {
 	env := newMCPEnv(t)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -181,7 +191,7 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 		defer func() { served <- r.Method }()
 		mcp.ServeHTTP(w, r)
 	}))
-	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, client: &http.Client{Transport: newH2CTransport()}}
+	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
 }
 
 func (e *mcpEnv) request(t *testing.T, method, path, body string) *http.Request {

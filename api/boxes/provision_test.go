@@ -51,9 +51,9 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	if gw.calls() != "add "+aliceBox {
 		t.Errorf("gw calls = %q", gw.calls())
 	}
-	addr, wake, err := svc.Resolve(ctx, alice, aliceBox)
-	if err != nil || wake != file.WakeID || addr == "" {
-		t.Errorf("Resolve = %q, %q, %v, want wake %s", addr, wake, err, file.WakeID)
+	ep, wake, err := svc.Resolve(ctx, alice, aliceBox)
+	if err != nil || wake != file.WakeID || ep.Key == "" {
+		t.Errorf("Resolve = %q, %q, %v, want wake %s", ep.Key, wake, err, file.WakeID)
 	}
 }
 
@@ -102,9 +102,9 @@ func TestProvisioningLeavesOtherUsersAlone(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	svc := New(fake, testDefaults)
 	svc.EnableProvisioning(fakeSigner{}, &fakeGW{}, []string{"dev"})
-	addr, wake, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox)
-	if err != nil || addr == "" || wake != "" {
-		t.Errorf("Resolve for an unprovisioned user = %q, %q, %v", addr, wake, err)
+	ep, wake, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox)
+	if err != nil || ep.Key == "" || wake != "" {
+		t.Errorf("Resolve for an unprovisioned user = %q, %q, %v", ep.Key, wake, err)
 	}
 	svc.provisionStale(t.Context())
 	if n := len(fake.execCalls()); n != 0 {

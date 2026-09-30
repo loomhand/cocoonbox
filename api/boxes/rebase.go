@@ -75,9 +75,9 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	}
 	booted := time.Since(start)
 
-	addr, err := s.machines.Address(op.ctx, created.ID)
+	ep, err := s.machines.Address(op.ctx, created.ID)
 	if err == nil {
-		_, err = s.state.restore(s.agentContext(op.ctx, running), op.boxID, addr, rec.ID, progressNotes(op, controlv1.Phase_PHASE_RESTORING, "restoring"))
+		_, err = s.state.restore(s.agentContext(op.ctx, running), op.boxID, ep, rec.ID, progressNotes(op, controlv1.Phase_PHASE_RESTORING, "restoring"))
 	}
 	if err != nil {
 		logger.Error(op.ctx, err, "restore into rebase machine")

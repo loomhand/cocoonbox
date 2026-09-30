@@ -11,32 +11,43 @@ import (
 	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/CMGS/cocoonbox/api/machines"
 )
 
 func TestDialerSendsEdgeTokenAndDrainsStreams(t *testing.T) {
-	addr := serveState(t, &fakeState{})
+	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
 	d := New("edge-secret")
 	t.Cleanup(d.Close)
 
-	plan, err := d.Plan(t.Context(), addr, &agentv1.PlanRequest{})
+	plan, err := d.Plan(t.Context(), ep, &agentv1.PlanRequest{})
 	if err != nil || plan.GetSnapshotId() != "s1" {
 		t.Fatalf("Plan = %v, %v", plan, err)
 	}
 	var seen int
-	final, err := d.Upload(t.Context(), addr, &agentv1.UploadRequest{SnapshotId: "s1"}, func(*agentv1.TransferProgress) { seen++ })
+	final, err := d.Upload(t.Context(), ep, &agentv1.UploadRequest{SnapshotId: "s1"}, func(*agentv1.TransferProgress) { seen++ })
 	if err != nil || !final.GetFinished() || final.GetManifestId() != "s1" || seen != 3 {
 		t.Errorf("Upload = %v, %v after %d messages", final, err, seen)
 	}
-	if _, err := d.Restore(t.Context(), addr, &agentv1.RestoreRequest{}, nil); err == nil {
+	if _, err := d.Restore(t.Context(), ep, &agentv1.RestoreRequest{}, nil); err == nil {
 		t.Error("Restore without a final message succeeded")
 	}
 }
 
+func TestDialerDialsTheEndpointNotItsKey(t *testing.T) {
+	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
+	ep.Key = "box.invalid:1"
+	d := New("edge-secret")
+	t.Cleanup(d.Close)
+	if _, err := d.Plan(t.Context(), ep, &agentv1.PlanRequest{}); err != nil {
+		t.Errorf("Plan through an endpoint whose key resolves nowhere: %v", err)
+	}
+}
+
 func TestDialerWithoutTokenIsRejected(t *testing.T) {
-	addr := serveState(t, &fakeState{})
+	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
 	d := New("wrong")
 	t.Cleanup(d.Close)
-	if _, err := d.Plan(t.Context(), addr, &agentv1.PlanRequest{}); status.Code(err) != codes.Unauthenticated {
+	if _, err := d.Plan(t.Context(), ep, &agentv1.PlanRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Plan with a wrong token: %v, want Unauthenticated", err)
 	}
 }

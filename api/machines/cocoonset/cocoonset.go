@@ -222,20 +222,20 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 	return out
 }
 
-func (b *Backend) Address(_ context.Context, id string) (string, error) {
+func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, error) {
 	cs, err := b.cachedSet(id)
 	if err != nil {
-		return "", err
+		return machines.Endpoint{}, err
 	}
 	main := b.mainPod(id)
 	if m := observe(cs, main, 0); m.State != machines.StateRunning {
-		return "", &machines.NotRunningError{State: m.State}
+		return machines.Endpoint{}, &machines.NotRunningError{State: m.State}
 	}
 	ip := cmp.Or(main.Status.PodIP, meta.ParseVMRuntime(main).IP)
 	if ip == "" {
-		return "", machines.ErrNoAddress
+		return machines.Endpoint{}, machines.ErrNoAddress
 	}
-	return net.JoinHostPort(ip, strconv.Itoa(b.opts.AgentPort)), nil
+	return machines.TCPEndpoint(net.JoinHostPort(ip, strconv.Itoa(b.opts.AgentPort))), nil
 }
 
 func (b *Backend) Delete(ctx context.Context, id string) error {
