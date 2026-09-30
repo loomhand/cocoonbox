@@ -78,7 +78,10 @@ final class ScreenController {
         status = .connecting
         do {
             if bridge == nil {
-                let bridge = ScreenBridge(transport: GRPCScreenTransport(session: client))
+                let bridge = ScreenBridge(
+                    transport: GRPCScreenTransport(session: client),
+                    pumpUpdates: ProcessInfo.processInfo.environment["CB_RFB_PUMP"] != "0"
+                )
                 bridgePort = try await bridge.start()
                 Perf.mark("bridge_listen", "port=\(bridgePort ?? 0)")
                 self.bridge = bridge

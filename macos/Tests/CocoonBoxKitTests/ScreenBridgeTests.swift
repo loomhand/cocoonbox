@@ -27,17 +27,47 @@ final class EchoTransport: ScreenTransport {
 
 final class SyntheticTransport: ScreenTransport {
     let servers = Mutex<[SyntheticRFBServer]>([])
+    let oneWay: Duration
+    let animateFPS: Int
+
+    init(oneWay: Duration = .zero, animateFPS: Int = 0) {
+        self.oneWay = oneWay
+        self.animateFPS = animateFPS
+    }
+
+    // delayed replays a stream `oneWay` later, in order, like a long network path.
+    func delayed(_ source: AsyncStream<Data>) -> AsyncStream<Data> {
+        guard oneWay > .zero else { return source }
+        let (stream, continuation) = AsyncStream<Data>.makeStream()
+        let (timed, timedContinuation) = AsyncStream<(ContinuousClock.Instant, Data)>.makeStream()
+        let oneWay = oneWay
+        Task {
+            for await data in source { timedContinuation.yield((.now + oneWay, data)) }
+            timedContinuation.finish()
+        }
+        Task {
+            for await (due, data) in timed {
+                try? await Task.sleep(until: due)
+                continuation.yield(data)
+            }
+            continuation.finish()
+        }
+        return stream
+    }
 
     func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws {
         let (stream, continuation) = AsyncStream<Data>.makeStream()
         let server = SyntheticRFBServer { continuation.yield($0) }
+        if animateFPS > 0 { server.animate(fps: animateFPS) }
         servers.withLock { $0.append(server) }
+        let down = delayed(stream)
+        let up = delayed(outbound)
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                for await data in stream { try await inbound(data) }
+                for await data in down { try await inbound(data) }
             }
             group.addTask {
-                for await data in outbound { server.receive(data) }
+                for await data in up { server.receive(data) }
                 continuation.finish()
             }
             try await group.next()
@@ -109,7 +139,7 @@ func eventually(_ timeout: Duration = .seconds(5), _ condition: () -> Bool) asyn
     @Test func bytesFlowBothWaysInOrder() async throws {
         let big = Data((0..<(3 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
         let transport = EchoTransport(big: big)
-        let bridge = ScreenBridge(transport: transport)
+        let bridge = ScreenBridge(transport: transport, pumpUpdates: false)
         let port = try await bridge.start()
         #expect(port > 0)
         let client = TestClient(port: port)
@@ -124,7 +154,7 @@ func eventually(_ timeout: Duration = .seconds(5), _ condition: () -> Bool) asyn
 
     @Test func newConnectionReplacesPreviousSession() async throws {
         let transport = EchoTransport(big: Data("hi".utf8))
-        let bridge = ScreenBridge(transport: transport)
+        let bridge = ScreenBridge(transport: transport, pumpUpdates: false)
         let port = try await bridge.start()
         let first = TestClient(port: port)
         _ = await first.waitFor(count: 2)
@@ -168,6 +198,34 @@ func eventually(_ timeout: Duration = .seconds(5), _ condition: () -> Bool) asyn
         server.click(x: 1000, y: 160)
         let clickRedraw = await eventually { sink.updates.load(ordering: .relaxed) > afterType }
         #expect(clickRedraw, "updates stalled at \(afterType)")
+        session.disconnect()
+        bridge.stop()
+    }
+
+    // With 100 ms each way, one outstanding request caps updates near 5/s; the
+    // pump keeps requests in flight so a 30 fps source gets through.
+    @Test(arguments: [false, true])
+    func updateRateAcrossALongPath(pump: Bool) async throws {
+        let transport = SyntheticTransport(oneWay: .milliseconds(100), animateFPS: 30)
+        let bridge = ScreenBridge(transport: transport, pumpUpdates: pump)
+        let port = try await bridge.start()
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let session = RFBSession(port: port, device: device, probeEncodings: false) { _ in }
+        let sink = RecordingSink()
+        session.sink = sink
+        session.connect()
+        let started = await eventually { sink.updates.load(ordering: .relaxed) > 0 }
+        #expect(started)
+        try await Task.sleep(for: .seconds(1))
+        let before = sink.updates.load(ordering: .relaxed)
+        try await Task.sleep(for: .seconds(2))
+        let rate = Double(sink.updates.load(ordering: .relaxed) - before) / 2
+        print("update_rate pump=\(pump) rtt=200ms updates_per_s=\(rate)")
+        if pump {
+            #expect(rate > 20)
+        } else {
+            #expect(rate < 7)
+        }
         session.disconnect()
         bridge.stop()
     }

@@ -52,12 +52,14 @@ public final class ScreenBridge: Sendable {
     }
 
     private let transport: any ScreenTransport
+    private let pumpUpdates: Bool
     private let queue = DispatchQueue(label: "cocoonbox.screen-bridge", qos: .userInteractive)
     private let state = Mutex<(listener: NWListener?, session: Task<Void, Never>?)>((nil, nil))
     private let counters = Counters()
 
-    public init(transport: any ScreenTransport) {
+    public init(transport: any ScreenTransport, pumpUpdates: Bool = true) {
         self.transport = transport
+        self.pumpUpdates = pumpUpdates
     }
 
     public var stats: Stats {
@@ -110,10 +112,15 @@ public final class ScreenBridge: Sendable {
         let outbound = Self.receiveStream(connection) { count in
             counters.stats.withLock { $0.bytesToServer += count }
         }
+        let pump = pumpUpdates ? UpdatePump() : nil
         let task = Task { [transport] in
+            if let pump {
+                Task { await pump.forward(outbound) }
+            }
             do {
-                try await transport.run(outbound: outbound) { data in
+                try await transport.run(outbound: pump?.stream ?? outbound) { data in
                     counters.stats.withLock { $0.bytesFromServer += data.count }
+                    pump?.serverActivity()
                     try await Self.send(data, on: connection)
                 }
             } catch {
