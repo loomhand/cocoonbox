@@ -3,6 +3,7 @@ package boxes
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -41,8 +42,8 @@ func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*contro
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
 
-// RunScheduler saves every running box whose latest snapshot is older than interval, until ctx ends.
-func (s *Service) RunScheduler(ctx context.Context, interval time.Duration) {
+// RunScheduler saves every running box of users (all users when empty) whose latest snapshot is older than interval, until ctx ends.
+func (s *Service) RunScheduler(ctx context.Context, interval time.Duration, users []string) {
 	ticker := time.NewTicker(interval / 4)
 	defer ticker.Stop()
 	for {
@@ -50,12 +51,12 @@ func (s *Service) RunScheduler(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.saveStale(ctx, interval)
+			s.saveStale(ctx, interval, users)
 		}
 	}
 }
 
-func (s *Service) saveStale(ctx context.Context, interval time.Duration) {
+func (s *Service) saveStale(ctx context.Context, interval time.Duration, users []string) {
 	logger := log.WithFunc("boxes.Service.saveStale")
 	ms, err := s.machines.List(ctx, "")
 	if err != nil {
@@ -64,7 +65,8 @@ func (s *Service) saveStale(ctx context.Context, interval time.Duration) {
 	}
 	for _, m := range ms {
 		box := BoxID(m.Owner)
-		if m.Owner == "" || m.State != machines.StateRunning || s.ops.activeFor(box) != nil {
+		if m.Owner == "" || m.State != machines.StateRunning || s.ops.activeFor(box) != nil ||
+			(len(users) > 0 && !slices.Contains(users, m.Owner)) {
 			continue
 		}
 		if time.Since(time.UnixMilli(s.state.lastSaved(ctx, box))) < interval {

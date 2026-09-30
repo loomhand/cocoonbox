@@ -148,7 +148,7 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 		return err
 	}
 	svc.EnableState(agents, st, keys)
-	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
+	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval), cfg.State.ScheduledUsers)
 	log.WithFunc("main.enableState").Infof(ctx, "state layer on %s/%s, saves every %s", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval))
 	return nil
 }

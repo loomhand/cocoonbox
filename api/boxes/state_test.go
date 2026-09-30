@@ -81,7 +81,11 @@ func TestSaveStateRefusals(t *testing.T) {
 func TestSchedulerSavesStaleRunningBoxes(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{"c1"}
-	env.svc.saveStale(env.ctx, time.Hour)
+	env.svc.saveStale(env.ctx, time.Hour, []string{"bob"})
+	if active := env.svc.ops.activeFor(aliceBox); active != nil {
+		t.Fatalf("scheduler saved a box outside its users: %s", active.id)
+	}
+	env.svc.saveStale(env.ctx, time.Hour, nil)
 	op := env.svc.ops.activeFor(aliceBox)
 	if op == nil {
 		t.Fatal("scheduler started no save")
@@ -93,7 +97,7 @@ func TestSchedulerSavesStaleRunningBoxes(t *testing.T) {
 	if c := env.agent.lastPlan().GetConsistency(); c != agentv1.Consistency_CONSISTENCY_LIVE {
 		t.Errorf("scheduled save consistency = %s, want LIVE", c)
 	}
-	env.svc.saveStale(env.ctx, time.Hour)
+	env.svc.saveStale(env.ctx, time.Hour, nil)
 	if active := env.svc.ops.activeFor(aliceBox); active != nil {
 		t.Errorf("scheduler saved again within the interval: %s", active.id)
 	}

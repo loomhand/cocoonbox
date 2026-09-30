@@ -79,7 +79,9 @@ type State struct {
 	CredentialsFile string   `json:"credentials_file"`
 	KeyringDir      string   `json:"keyring_dir"`
 	Interval        Duration `json:"interval"`
-	PresignTTL      Duration `json:"presign_ttl"`
+	// ScheduledUsers limits scheduled saves to these users; empty schedules everyone.
+	ScheduledUsers []string `json:"scheduled_users"`
+	PresignTTL     Duration `json:"presign_ttl"`
 }
 
 // Config is the on-disk configuration of cocoonbox-api.
