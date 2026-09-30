@@ -143,10 +143,14 @@ func (l *stateLayer) upload(ctx context.Context, box, addr string, rec *snapshot
 			}
 			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
 		}
-		offset := sent
+		offset, size := sent, batchBytes(batch)
 		final, err := l.agents.Upload(ctx, addr, req, func(p *agentv1.TransferProgress) {
+			done := size
+			if p.GetTotalChunks() > 0 {
+				done = size * uint64(min(p.GetDoneChunks(), p.GetTotalChunks())) / uint64(p.GetTotalChunks())
+			}
 			progress(&agentv1.TransferProgress{
-				DoneBytes: offset + p.GetDoneBytes(), TotalBytes: rec.UploadedBytes,
+				DoneBytes: offset + done, TotalBytes: rec.UploadedBytes,
 				DoneChunks: p.GetDoneChunks(), TotalChunks: p.GetTotalChunks(),
 				Finished: p.GetFinished() && last, ManifestId: p.GetManifestId(),
 			})
@@ -154,7 +158,7 @@ func (l *stateLayer) upload(ctx context.Context, box, addr string, rec *snapshot
 		if err != nil {
 			return fmt.Errorf("upload: %w", err)
 		}
-		sent += batchBytes(batch)
+		sent += size
 		if last {
 			if id := final.GetManifestId(); id != rec.ID {
 				return fmt.Errorf("agent finished manifest %q, want %s", id, rec.ID)

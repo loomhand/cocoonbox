@@ -442,9 +442,12 @@ func (a *fakeAgent) Upload(_ context.Context, _ string, req *agentv1.UploadReque
 		if err := a.store.Put(context.Background(), strings.TrimPrefix(put.GetUrl(), "fake://put/"), []byte(put.GetChunkId())); err != nil {
 			return nil, err
 		}
-		progress(&agentv1.TransferProgress{DoneBytes: min(uint64(i+1)*a.chunkSize(), total), TotalBytes: total})
+		progress(&agentv1.TransferProgress{
+			DoneBytes: min(uint64(i+1)*a.chunkSize(), total) / 2, TotalBytes: total / 2,
+			DoneChunks: uint32(i + 1), TotalChunks: uint32(len(puts)),
+		})
 	}
-	final := &agentv1.TransferProgress{DoneBytes: total, TotalBytes: total, Finished: req.GetManifest() != nil}
+	final := &agentv1.TransferProgress{DoneBytes: total / 2, TotalBytes: total / 2, DoneChunks: uint32(len(puts)), TotalChunks: uint32(len(puts)), Finished: req.GetManifest() != nil}
 	if final.Finished {
 		final.ManifestId = req.GetSnapshotId()
 	}
