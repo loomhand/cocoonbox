@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -154,7 +155,7 @@ func TestAddressDialsThePassiveRelay(t *testing.T) {
 	claimRunning(t, b)
 
 	ep, err := b.Address(t.Context(), boxID)
-	if err != nil || ep.Key != "sandboxd:"+fake.only() {
+	if err != nil || ep.Key != fake.only()+".sandboxd:7443" {
 		t.Fatalf("Address = %+v, %v", ep, err)
 	}
 	conn, err := ep.Dial(t.Context())
@@ -178,6 +179,42 @@ func TestAddressDialsThePassiveRelay(t *testing.T) {
 	fake.mutate(func(sb *fakeSandbox) { sb.row.Hibernated = true })
 	if _, err := ep.Dial(t.Context()); !errors.Is(err, machines.ErrConflict) {
 		t.Errorf("Dial of a hibernated box = %v, want the relay's 409", err)
+	}
+}
+
+func TestTheEndpointKeyServesAsAnH2CAuthority(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	var protocols http.Protocols
+	protocols.SetUnencryptedHTTP2(true)
+	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	agent.Config.Protocols = &protocols
+	agent.Start()
+	t.Cleanup(agent.Close)
+	fake.agent = agent.Listener.Addr().String()
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+
+	ep, err := b.Address(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Address: %v", err)
+	}
+	transport := &http.Transport{Protocols: &protocols, DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return ep.Dial(ctx) }}
+	t.Cleanup(transport.CloseIdleConnections)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://agent/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.URL.Host, req.Host = ep.Key, ep.Key
+	resp, err := (&http.Client{Transport: transport, Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("POST through the relay: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized || resp.ProtoMajor != 2 {
+		t.Errorf("POST through the relay = %s %s, want the agent's 401 over HTTP/2", resp.Proto, resp.Status)
 	}
 }
 
@@ -304,6 +341,7 @@ type fakeSandboxd struct {
 	renews     []string
 	execExit   int32
 	execStatus int
+	agent      string
 }
 
 func (f *fakeSandboxd) handler() http.Handler {
@@ -399,9 +437,25 @@ func (f *fakeSandboxd) handler() http.Handler {
 		}
 		_, _ = rw.WriteString("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
 		_ = rw.Flush()
+		if f.agent == "" {
+			go func() {
+				defer conn.Close()
+				_, _ = io.Copy(conn, rw)
+			}()
+			return
+		}
+		up, err := net.Dial("tcp", f.agent)
+		if err != nil {
+			_ = conn.Close()
+			return
+		}
 		go func() {
-			defer conn.Close()
-			_, _ = io.Copy(conn, rw)
+			_, _ = io.Copy(up, rw)
+			_ = up.Close()
+		}()
+		go func() {
+			_, _ = io.Copy(conn, up)
+			_ = conn.Close()
 		}()
 	}))
 	return mux

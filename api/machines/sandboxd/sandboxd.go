@@ -207,7 +207,8 @@ func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, erro
 		return machines.Endpoint{}, &machines.NotRunningError{State: state}
 	}
 	sandbox := e.row.ID
-	return machines.Endpoint{Key: "sandboxd:" + sandbox, Dial: func(ctx context.Context) (net.Conn, error) {
+	key := net.JoinHostPort(sandbox+".sandboxd", strconv.Itoa(b.opts.AgentPort))
+	return machines.Endpoint{Key: key, Dial: func(ctx context.Context) (net.Conn, error) {
 		return b.api.dialPort(ctx, sandbox, b.opts.AgentPort)
 	}}, nil
 }
