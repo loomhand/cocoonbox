@@ -14,6 +14,13 @@ service Boxes {
   rpc List(ListBoxesRequest) returns (ListBoxesResponse);
   rpc Hibernate(BoxRef) returns (Operation);
   rpc WatchOperation(WatchOperationRequest) returns (stream OperationEvent);
+  // SaveState writes a quiesced snapshot of the box's user state (home,
+  // /workspace, agent.db) to object storage. The browser closes for the copy.
+  rpc SaveState(BoxRef) returns (Operation);
+  // Rebase moves the box to another image and carries its user state over:
+  // quiesced save, new machine from the image, restore, switch, delete the old
+  // machine. The box id stays the same; running programs restart.
+  rpc Rebase(RebaseRequest) returns (Operation);
 }
 
 enum BoxState {
@@ -32,6 +39,10 @@ enum Phase {
   PHASE_SNAPSHOTTING = 3;
   PHASE_DONE = 4;
   PHASE_FAILED = 5;
+  // Uploading the user state to object storage.
+  PHASE_SAVING = 6;
+  // Writing the user state into a new machine.
+  PHASE_RESTORING = 7;
 }
 
 message BoxRef {
@@ -51,6 +62,10 @@ message Box {
   Flavor flavor = 4;
   string failure_reason = 5;
   int64 created_at_ms = 6;
+  // Time of the latest user-state snapshot in object storage; 0 before the first.
+  int64 last_saved_at_ms = 7;
+  // Image a new box gets today, and the default Rebase target; differs from image when an upgrade is available.
+  string latest_image = 8;
 }
 
 message Operation {
@@ -66,6 +81,12 @@ message EnsureResponse {
   Box box = 1;
   // Empty when the box is already running.
   Operation operation = 2;
+}
+
+message RebaseRequest {
+  string box_id = 1;
+  // Target image; empty selects the current default image.
+  string image = 2;
 }
 
 message GetBoxRequest {
@@ -91,4 +112,7 @@ message OperationEvent {
   string offset_key = 4;
   int64 at_ms = 5;
   BoxState box_state = 6;
+  // Transfer progress while saving or restoring; 0 otherwise.
+  uint64 done_bytes = 7;
+  uint64 total_bytes = 8;
 }
