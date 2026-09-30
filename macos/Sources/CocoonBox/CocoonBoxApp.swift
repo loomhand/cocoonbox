@@ -19,6 +19,7 @@ struct CocoonBoxApp: App {
                 }
         }
         .defaultSize(width: 1480, height: 900)
+        .defaultLaunchBehavior(.presented)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("New Agent") { model.createAgent() }
@@ -33,6 +34,7 @@ struct CocoonBoxApp: App {
         }
         .defaultSize(width: 1280, height: 856)
         .windowResizability(.contentMinSize)
+        .restorationBehavior(.disabled)
     }
 }
 

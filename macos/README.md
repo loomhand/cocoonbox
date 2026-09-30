@@ -39,7 +39,7 @@ The app opens `Session.Screen`, bridges it to a listener on `127.0.0.1:0`, and c
 These environment variables serve test runs:
 
 - `CB_ENDPOINT`: the endpoint URL. It overrides the saved endpoint.
-- `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting.
+- `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.
 - `CB_RFB_PROBE=1`: count the RFB rectangle encodings the server uses. This turns on RoyalVNCKit's debug log, so don't use it for timing runs.
 
