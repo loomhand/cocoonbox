@@ -5,20 +5,17 @@ use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as B64;
-use bytes::Bytes;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tonic::Status;
 
-use crate::bus::Bus;
 use crate::config::ServeConfig;
-use crate::llm::{self, Delta, Message, Part, Request, ToolCall, ToolSpec, Usage};
+use crate::dispatch::{Caller, Dispatcher, ToolOutput, Tools};
+use crate::journal::Journal;
+use crate::llm::{self, Delta, Message, Model, Part, Request, ToolCall, ToolSpec, Usage};
 use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
 use crate::store::Store;
-use crate::toolhost::rpc::{self, Call};
 use crate::{computer, new_id, prompts, tools};
 
 const QUEUE_DEPTH: usize = 32;
@@ -26,32 +23,34 @@ const MAIN_MAX_STEPS: usize = 40;
 const MAIN_MAX_TOKENS: u32 = 4096;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
 
-/// Shared state of `serve`: store, event bus, model client and per-agent queues.
+/// Shared state of `serve`: journal, tool dispatcher, model and per-agent queues.
 pub struct Runtime {
     pub cfg: ServeConfig,
-    pub store: Store,
-    pub bus: Bus,
-    pub(crate) llm: llm::Client,
+    pub journal: Arc<Journal>,
+    pub dispatcher: Arc<Dispatcher>,
+    pub(crate) model: Arc<dyn Model>,
     pub(crate) computer_tools: Vec<ToolSpec>,
     pub(crate) computer_prompt: String,
     pub(crate) screen: tokio::sync::Mutex<()>,
-    toolhost: rpc::Client,
     main_tools: Vec<ToolSpec>,
     main_vision_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
 }
 
 impl Runtime {
-    /// Opens the store, closes turns left open by a previous process, and builds the runtime.
-    pub async fn open(cfg: ServeConfig) -> Result<Arc<Self>, String> {
+    /// Opens the store, closes turns left open by a previous process, and builds the runtime over `model` and `tools`.
+    pub async fn open(
+        cfg: ServeConfig,
+        model: Arc<dyn Model>,
+        tools: Arc<dyn Tools>,
+    ) -> Result<Arc<Self>, String> {
         std::fs::create_dir_all(&cfg.state_dir)
             .map_err(|e| format!("create {}: {e}", cfg.state_dir.display()))?;
-        let store = Store::open(&cfg.state_dir.join("agent.db"))?;
+        let journal = Arc::new(Journal::new(Store::open(&cfg.state_dir.join("agent.db"))?));
         let rt = Arc::new(Self {
-            llm: llm::Client::new(&cfg.gw_base_url, &cfg.gw_api_key, cfg.anthropic_messages)?,
-            toolhost: rpc::Client::new(cfg.toolhost_socket.clone()),
-            store,
-            bus: Bus::new(),
+            model,
+            dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal))),
+            journal,
             main_tools: tools::main_tools(false),
             main_vision_tools: tools::main_tools(true),
             computer_tools: tools::computer_tools(),
@@ -60,16 +59,17 @@ impl Runtime {
             slots: Mutex::new(HashMap::new()),
             cfg,
         });
-        for (agent_id, turn_id) in rt.store.unfinished_turns().await? {
+        for (agent_id, turn_id) in rt.journal.store.unfinished_turns().await? {
             let end = pb::TurnEnd {
                 ok: false,
                 error: "interrupted: the agent restarted".to_owned(),
                 usage: None,
             };
-            rt.record_raw(&agent_id, &turn_id, Role::System, Body::TurnEnd(end), false)
+            rt.journal
+                .record(&agent_id, &turn_id, Role::System, Body::TurnEnd(end), false)
                 .await?;
-            rt.store.finish_turn(turn_id).await?;
-            rt.set_status(&agent_id, AgentStatus::Failed).await;
+            rt.journal.store.finish_turn(turn_id).await?;
+            rt.journal.set_status(&agent_id, AgentStatus::Failed).await;
         }
         Ok(rt)
     }
@@ -87,17 +87,19 @@ impl Runtime {
             req.name
         };
         let agent = self
+            .journal
             .store
             .create_agent(name, model, req.client_nonce)
             .await
             .map_err(Status::internal)?;
-        self.bus.publish(event::Body::Agent(agent.clone()));
+        self.journal.bus.publish(event::Body::Agent(agent.clone()));
         Ok(agent)
     }
 
     /// Queues a user turn and returns its id; duplicate nonces return the first turn.
     pub async fn send(self: &Arc<Self>, req: pb::SendRequest) -> Result<String, Status> {
         if self
+            .journal
             .store
             .agent(req.agent_id.clone())
             .await
@@ -112,16 +114,10 @@ impl Runtime {
         let mut text = req.text;
         for a in req.attachments {
             let path = format!("uploads/{}", sanitize(&a.name));
-            let call = Call {
-                agent_id: req.agent_id.clone(),
-                tool: "upload".to_owned(),
-                args: json!({"path": path, "data_b64": B64.encode(&a.data)}),
-            };
             let out = self
-                .toolhost
-                .call(&call)
-                .await
-                .map_err(Status::unavailable)?;
+                .dispatcher
+                .put_file(&req.agent_id, &path, &a.data)
+                .await;
             if out.is_error {
                 return Err(Status::internal(out.text));
             }
@@ -134,6 +130,7 @@ impl Runtime {
             );
         }
         let queued = self
+            .journal
             .store
             .queue_turn(req.agent_id.clone(), text, req.client_nonce)
             .await
@@ -141,7 +138,7 @@ impl Runtime {
         let Some(entry) = queued.entry else {
             return Ok(queued.turn_id);
         };
-        self.bus.publish(event::Body::Transcript(entry));
+        self.journal.bus.publish(event::Body::Transcript(entry));
         let slot = self.slot(&req.agent_id);
         if slot.queue.try_send(queued.turn_id.clone()).is_err() {
             let end = pb::TurnEnd {
@@ -149,16 +146,18 @@ impl Runtime {
                 error: "turn queue is full".to_owned(),
                 usage: None,
             };
-            self.record_raw(
-                &req.agent_id,
-                &queued.turn_id,
-                Role::System,
-                Body::TurnEnd(end),
-                false,
-            )
-            .await
-            .map_err(Status::internal)?;
-            self.store
+            self.journal
+                .record(
+                    &req.agent_id,
+                    &queued.turn_id,
+                    Role::System,
+                    Body::TurnEnd(end),
+                    false,
+                )
+                .await
+                .map_err(Status::internal)?;
+            self.journal
+                .store
                 .finish_turn(queued.turn_id)
                 .await
                 .map_err(Status::internal)?;
@@ -191,31 +190,6 @@ impl Runtime {
         }
     }
 
-    /// The toolhost client, for calls that must outlive a dropped turn.
-    pub fn toolhost(&self) -> &rpc::Client {
-        &self.toolhost
-    }
-
-    /// Runs one tool in the toolhost; transport failures become tool errors.
-    pub async fn tool(&self, agent_id: &str, name: &str, args: Value) -> ToolOutput {
-        let call = Call {
-            agent_id: agent_id.to_owned(),
-            tool: name.to_owned(),
-            args,
-        };
-        match self.toolhost.call(&call).await {
-            Ok(out) => ToolOutput {
-                image: out
-                    .image_b64
-                    .and_then(|b| B64.decode(b).ok())
-                    .map(Bytes::from),
-                text: out.text,
-                is_error: out.is_error,
-            },
-            Err(e) => ToolOutput::error(e),
-        }
-    }
-
     /// Streams one model step, recording blocks and tool calls as they complete.
     pub async fn step(
         &self,
@@ -223,7 +197,7 @@ impl Runtime {
         req: &Request<'_>,
         subagent: &str,
     ) -> Result<StepOut, String> {
-        let mut stream = self.llm.stream(req).await?;
+        let mut stream = self.model.stream(req).await?;
         let mut text = String::new();
         let mut pending = Block::default();
         let mut reasoning = Block::default();
@@ -283,19 +257,14 @@ impl Runtime {
             if call.arguments.trim().is_empty() {
                 "{}".clone_into(&mut call.arguments);
             }
-            let block = pb::ToolCall {
-                call_id: call.id.clone(),
-                name: call.name.clone(),
-                arguments_json: call.arguments.clone(),
-                subagent: subagent.to_owned(),
-            };
-            self.record(
-                ctx,
-                Role::Assistant,
-                Body::ToolCall(block),
-                !subagent.is_empty(),
-            )
-            .await?;
+            self.dispatcher
+                .record_call(
+                    &ctx.caller(subagent, None),
+                    &call.id,
+                    &call.name,
+                    &call.arguments,
+                )
+                .await?;
             out.push(call);
         }
         Ok(StepOut {
@@ -313,34 +282,9 @@ impl Runtime {
         body: Body,
         subagent: bool,
     ) -> Result<(), String> {
-        self.record_raw(&ctx.agent_id, &ctx.turn_id, role, body, subagent)
+        self.journal
+            .record(&ctx.agent_id, &ctx.turn_id, role, body, subagent)
             .await
-    }
-
-    /// Publishes a ComputerAction event for an input the subagent is about to inject.
-    pub fn announce_action(&self, agent_id: &str, args: &Value) {
-        let coord = |k: &str| args[k].as_f64().map_or(0, |v| v.round() as i32);
-        let text = ["text", "key", "app"]
-            .iter()
-            .find_map(|k| args[*k].as_str().map(str::to_owned))
-            .or_else(|| {
-                args["keys"].as_array().map(|ks| {
-                    ks.iter()
-                        .filter_map(Value::as_str)
-                        .collect::<Vec<_>>()
-                        .join("+")
-                })
-            })
-            .or_else(|| args["element"].as_i64().map(|i| format!("element {i}")))
-            .unwrap_or_default();
-        self.bus
-            .publish(event::Body::ComputerAction(pb::ComputerAction {
-                agent_id: agent_id.to_owned(),
-                action: args["action"].as_str().unwrap_or_default().to_owned(),
-                x: coord("x"),
-                y: coord("y"),
-                text,
-            }));
     }
 
     fn slot(self: &Arc<Self>, agent_id: &str) -> Arc<Slot> {
@@ -369,7 +313,7 @@ impl Runtime {
     }
 
     async fn run_turn(&self, agent_id: &str, slot: Arc<Slot>, turn_id: String) {
-        let model = match self.store.agent(agent_id.to_owned()).await {
+        let model = match self.journal.store.agent(agent_id.to_owned()).await {
             Ok(Some(a)) => a.main_model,
             _ => self.cfg.model_main.clone(),
         };
@@ -382,7 +326,9 @@ impl Runtime {
             model,
             slot,
         };
-        self.set_status(agent_id, AgentStatus::Running).await;
+        self.journal
+            .set_status(agent_id, AgentStatus::Running)
+            .await;
         let mut usage = Usage::default();
         let result = tokio::select! {
             r = self.main_loop(&ctx, &mut usage) => r,
@@ -412,7 +358,7 @@ impl Runtime {
         {
             eprintln!("record turn end {}: {e}", ctx.turn_id);
         }
-        if let Err(e) = self.store.finish_turn(ctx.turn_id.clone()).await {
+        if let Err(e) = self.journal.store.finish_turn(ctx.turn_id.clone()).await {
             eprintln!("finish turn {}: {e}", ctx.turn_id);
         }
         let status = if ok {
@@ -420,11 +366,12 @@ impl Runtime {
         } else {
             AgentStatus::Failed
         };
-        self.set_status(agent_id, status).await;
+        self.journal.set_status(agent_id, status).await;
     }
 
     async fn main_loop(&self, ctx: &TurnCtx, usage: &mut Usage) -> Result<(), String> {
         let history = self
+            .journal
             .store
             .history(ctx.agent_id.clone(), ctx.turn_id.clone())
             .await?;
@@ -452,8 +399,13 @@ impl Runtime {
             }
             let mut results = Vec::with_capacity(step.calls.len());
             for call in &step.calls {
-                let out = self.main_tool(ctx, call, usage).await;
-                results.push(self.record_result(ctx, &call.id, out, false).await?);
+                let out = self.main_tool(ctx, call, usage).await?;
+                results.push(Message::Tool {
+                    call_id: call.id.clone(),
+                    text: out.text,
+                    image: out.image,
+                    is_error: out.is_error,
+                });
             }
             messages.push(Message::Assistant {
                 text: step.text,
@@ -466,53 +418,45 @@ impl Runtime {
         ))
     }
 
-    async fn main_tool(&self, ctx: &TurnCtx, call: &ToolCall, usage: &mut Usage) -> ToolOutput {
+    /// Runs one call of the main model; box tools go through the dispatcher, loop tools run here.
+    async fn main_tool(
+        &self,
+        ctx: &TurnCtx,
+        call: &ToolCall,
+        usage: &mut Usage,
+    ) -> Result<ToolOutput, String> {
+        let caller = ctx.caller("", None);
         let args: Value = match serde_json::from_str(&call.arguments) {
             Ok(v) => v,
-            Err(e) => return ToolOutput::error(format!("arguments are not valid JSON: {e}")),
-        };
-        match call.name.as_str() {
-            "delegate_computer" => {
-                let task = args["task"].as_str().unwrap_or_default();
-                if task.is_empty() {
-                    return ToolOutput::error("delegate_computer needs a task");
-                }
-                computer::run(self, ctx, task, usage)
-                    .await
-                    .unwrap_or_else(|e| ToolOutput::error(format!("computer subagent failed: {e}")))
+            Err(e) => {
+                let out = ToolOutput::error(format!("arguments are not valid JSON: {e}"));
+                self.dispatcher
+                    .record_result(&caller, &call.id, &out)
+                    .await?;
+                return Ok(out);
             }
+        };
+        let out = match call.name.as_str() {
+            "delegate_computer" => match args["task"].as_str().filter(|t| !t.is_empty()) {
+                Some(task) => computer::run(self, ctx, task, usage)
+                    .await
+                    .unwrap_or_else(|e| {
+                        ToolOutput::error(format!("computer subagent failed: {e}"))
+                    }),
+                None => ToolOutput::error("delegate_computer needs a task"),
+            },
             "request_take_over" => {
                 let reason = args["reason"].as_str().unwrap_or("The agent needs you.");
                 self.take_over(ctx, reason)
                     .await
                     .unwrap_or_else(ToolOutput::error)
             }
-            name => self.tool(&ctx.agent_id, name, args).await,
-        }
-    }
-
-    /// Records a tool result and returns the message form for the model.
-    pub async fn record_result(
-        &self,
-        ctx: &TurnCtx,
-        call_id: &str,
-        out: ToolOutput,
-        subagent: bool,
-    ) -> Result<Message, String> {
-        let block = pb::ToolResult {
-            call_id: call_id.to_owned(),
-            is_error: out.is_error,
-            text: out.text.clone(),
-            image: out.image.clone().unwrap_or_default(),
+            name => return self.dispatcher.execute(&caller, &call.id, name, args).await,
         };
-        self.record(ctx, Role::Tool, Body::ToolResult(block), subagent)
+        self.dispatcher
+            .record_result(&caller, &call.id, &out)
             .await?;
-        Ok(Message::Tool {
-            call_id: call_id.to_owned(),
-            text: out.text,
-            image: out.image,
-            is_error: out.is_error,
-        })
+        Ok(out)
     }
 
     async fn take_over(&self, ctx: &TurnCtx, reason: &str) -> Result<ToolOutput, String> {
@@ -528,12 +472,15 @@ impl Runtime {
         };
         self.record(ctx, Role::Assistant, Body::Approval(block), false)
             .await?;
-        self.set_status(&ctx.agent_id, AgentStatus::WaitingForUser)
+        self.journal
+            .set_status(&ctx.agent_id, AgentStatus::WaitingForUser)
             .await;
         let reply = rx
             .await
             .map_err(|_| "the take-over was abandoned".to_owned())?;
-        self.set_status(&ctx.agent_id, AgentStatus::Running).await;
+        self.journal
+            .set_status(&ctx.agent_id, AgentStatus::Running)
+            .await;
         let mut text = if reply.approve {
             "The user finished the take-over; continue from the current screen state.".to_owned()
         } else {
@@ -565,7 +512,7 @@ impl Runtime {
             fragment.to_owned(),
             subagent.to_owned(),
         );
-        self.bus.publish_live(match kind {
+        self.journal.bus.publish_live(match kind {
             Kind::Text => event::Body::TextDelta(pb::TextDelta {
                 agent_id,
                 turn_id,
@@ -611,54 +558,6 @@ impl Runtime {
             .await?;
         Ok(text)
     }
-
-    pub(crate) async fn record_raw(
-        &self,
-        agent_id: &str,
-        turn_id: &str,
-        role: Role,
-        body: Body,
-        subagent: bool,
-    ) -> Result<(), String> {
-        let entry = TranscriptEntry {
-            agent_id: agent_id.to_owned(),
-            turn_id: turn_id.to_owned(),
-            role: role.into(),
-            body: Some(body),
-            ..Default::default()
-        };
-        let entry = self.store.append(entry, subagent).await?;
-        self.bus.publish(event::Body::Transcript(entry));
-        Ok(())
-    }
-
-    pub(crate) async fn set_status(&self, agent_id: &str, status: AgentStatus) {
-        match self.store.set_status(agent_id.to_owned(), status).await {
-            Ok(Some(agent)) => {
-                self.bus.publish(event::Body::Agent(agent));
-            }
-            Ok(None) => {}
-            Err(e) => eprintln!("set status of {agent_id}: {e}"),
-        }
-    }
-}
-
-/// Result of a tool as recorded in the transcript.
-pub struct ToolOutput {
-    pub text: String,
-    pub image: Option<Bytes>,
-    pub is_error: bool,
-}
-
-impl ToolOutput {
-    /// A failed tool result.
-    pub fn error(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            image: None,
-            is_error: true,
-        }
-    }
 }
 
 /// Identity of the running turn.
@@ -668,6 +567,18 @@ pub struct TurnCtx {
     blocks: AtomicU32,
     model: String,
     slot: Arc<Slot>,
+}
+
+impl TurnCtx {
+    /// The dispatcher's view of this turn.
+    pub fn caller<'a>(&'a self, subagent: &'a str, driver: Option<&'a str>) -> Caller<'a> {
+        Caller {
+            agent_id: &self.agent_id,
+            turn_id: &self.turn_id,
+            subagent,
+            driver,
+        }
+    }
 }
 
 /// One model step: its text, requested tool calls and usage.

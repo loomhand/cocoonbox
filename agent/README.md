@@ -5,11 +5,31 @@ The in-box agent of a cocoonbox. One binary, two subcommands:
 - `serve` runs as `cbagent`. It serves `cocoonbox.agent.v1.Agents` and `Session` over h2c gRPC on `AGENT_LISTEN` and runs the agent loop. The same listener also answers MCP Streamable HTTP at `/mcp` (mode B). It keeps state in `/var/lib/cocoonbox/agent.db`.
 - `toolhost` runs as the desktop user `user`. It executes every tool behind `/run/cocoonbox/toolhost.sock`.
 
+## Layers
+
+The agent follows the layering in `docs/boundaries.md`:
+
+```
+transports: server.rs (gRPC Agents, Session) · mcp.rs (/mcp)
+        │ runner.rs (loop, mode A) and mcp.rs both call dispatch::Dispatcher
+        ▼
+dispatch.rs: records every call and result (journal.rs), publishes ComputerAction, injects the desktop session
+        │ Tools interface (dispatch::Tools; production impl: toolhost RPC client)
+        ▼
+toolhost: shell · files · CDP browser · cua-driver
+```
+
+- The loop reaches models only through `llm::Model`. Its production implementation is `llm::Client`, which speaks the chat wire to the gw URL.
+- `server::serve` is the composition root: it builds the Model and Tools implementations and hands them to `Runtime::open`.
+- Nothing below the dispatcher knows whether mode A or mode B issued a call. The agent knows nothing about how its machine is scheduled.
+
 ## Modules
 
 | File | Role |
 |---|---|
 | `server.rs` | gRPC services and the `x-cocoonbox-edge-token` check (`UNAUTHENTICATED` otherwise) |
+| `dispatch.rs` | The one tool path: `Tools` interface, `Dispatcher` (record call and result, ComputerAction, driver-session injection) |
+| `journal.rs` | Store plus event bus: every transcript and status write is persisted, then published |
 | `runner.rs` | Per-agent turn queue, the main agent loop, take-over approvals, cancel |
 | `computer.rs` | Computer subagent: a vision model driving the desktop through `computer_state` / `computer_act` |
 | `llm/` | Streaming gw client. `openai.rs` is chat completions (SSE) and serves every model by default. `anthropic.rs` is Messages, used for `anthropic/` models only when `GW_ANTHROPIC_WIRE=messages`. `sse.rs` is the decoder |

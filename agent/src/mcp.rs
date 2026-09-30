@@ -13,6 +13,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde_json::{Value, json};
 
+use crate::dispatch::{Caller, uses_driver};
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, transcript_entry::Body as Entry};
 use crate::runner::Runtime;
@@ -25,7 +26,6 @@ pub const PATH: &str = "/mcp";
 const SESSION_HEADER: &str = "mcp-session-id";
 const PROTOCOLS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const FALLBACK_PROTOCOL: &str = "2025-06-18";
-const DRIVER_TOOLS: [&str; 3] = ["computer_state", "computer_act", "screenshot"];
 const KEEPALIVE: Duration = Duration::from_secs(25);
 const MAX_REAP_PERIOD: Duration = Duration::from_secs(60);
 const MAX_BODY: usize = 64 << 20;
@@ -135,7 +135,7 @@ impl Mcp {
             })
             .await
             .map_err(|e| e.message().to_owned())?;
-        let turn_id = self.rt.store.open_turn(agent.id.clone()).await?;
+        let turn_id = self.rt.journal.store.open_turn(agent.id.clone()).await?;
         let session = Arc::new(Session {
             id: new_id("mcp"),
             agent_id: agent.id,
@@ -145,6 +145,7 @@ impl Mcp {
         let note = format!("MCP session opened by {client} {version}");
         self.note(&session, note.trim_end()).await;
         self.rt
+            .journal
             .set_status(&session.agent_id, AgentStatus::Running)
             .await;
         lock(&self.sessions).insert(session.id.clone(), Arc::clone(&session));
@@ -172,10 +173,13 @@ impl Mcp {
             usage: None,
         });
         self.record(s, Role::System, end).await;
-        if let Err(e) = self.rt.store.finish_turn(s.turn_id.clone()).await {
+        if let Err(e) = self.rt.journal.store.finish_turn(s.turn_id.clone()).await {
             eprintln!("mcp: finish turn {}: {e}", s.turn_id);
         }
-        self.rt.set_status(&s.agent_id, AgentStatus::Idle).await;
+        self.rt
+            .journal
+            .set_status(&s.agent_id, AgentStatus::Idle)
+            .await;
     }
 
     async fn end_driver(&self, s: &Session) {
@@ -187,10 +191,7 @@ impl Mcp {
             d.used = false;
             std::mem::replace(&mut d.label, new_id("cu"))
         };
-        let out = self
-            .rt
-            .tool(&s.agent_id, "computer_end", json!({"session": label}))
-            .await;
+        let out = self.rt.dispatcher.end_driver(&s.agent_id, &label).await;
         if out.is_error {
             eprintln!("mcp: end driver session {label}: {}", out.text);
         }
@@ -224,24 +225,23 @@ impl Mcp {
             v @ Value::Object(_) => v.clone(),
             _ => return Err((-32602, "arguments must be an object".to_owned())),
         };
-        let mut args = requested.clone();
-        if DRIVER_TOOLS.contains(&name) {
+        let label = {
             let mut d = lock(&s.driver);
-            d.used = true;
-            args["session"] = d.label.as_str().into();
-        }
-        let call_id = new_id("call");
-        let call = Entry::ToolCall(pb::ToolCall {
-            call_id: call_id.clone(),
-            name: name.to_owned(),
-            arguments_json: requested.to_string(),
-            subagent: String::new(),
-        });
-        self.record(s, Role::Assistant, call).await;
-        if name == "computer_act" {
-            self.rt.announce_action(&s.agent_id, &requested);
-        }
-        let out = self.rt.tool(&s.agent_id, name, args).await;
+            d.used |= uses_driver(name);
+            d.label.clone()
+        };
+        let caller = Caller {
+            agent_id: &s.agent_id,
+            turn_id: &s.turn_id,
+            subagent: "",
+            driver: Some(&label),
+        };
+        let out = self
+            .rt
+            .dispatcher
+            .call(&caller, &new_id("call"), name, requested)
+            .await
+            .map_err(|e| (-32603, e))?;
         lock(&s.driver).last_seen = Instant::now();
         let mut content = vec![json!({"type": "text", "text": out.text})];
         if let Some(img) = &out.image {
@@ -249,13 +249,6 @@ impl Mcp {
             part["data"] = b64(img).into();
             content.push(part);
         }
-        let result = Entry::ToolResult(pb::ToolResult {
-            call_id,
-            is_error: out.is_error,
-            text: out.text,
-            image: out.image.unwrap_or_default(),
-        });
-        self.record(s, Role::Tool, result).await;
         let mut result = json!({"isError": out.is_error});
         result["content"] = Value::Array(content);
         Ok(result)
@@ -272,7 +265,8 @@ impl Mcp {
     async fn record(&self, s: &Session, role: Role, body: Entry) {
         if let Err(e) = self
             .rt
-            .record_raw(&s.agent_id, &s.turn_id, role, body, false)
+            .journal
+            .record(&s.agent_id, &s.turn_id, role, body, false)
             .await
         {
             eprintln!("mcp: record for {}: {e}", s.agent_id);

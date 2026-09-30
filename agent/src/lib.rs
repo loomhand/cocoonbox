@@ -3,6 +3,8 @@
 pub mod bus;
 pub mod computer;
 pub mod config;
+pub mod dispatch;
+pub mod journal;
 pub mod llm;
 pub mod mcp;
 pub mod prompts;

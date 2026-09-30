@@ -73,7 +73,18 @@ impl Harness {
             anthropic_messages,
             mcp_idle,
         };
-        let rt = Runtime::open(cfg).await.unwrap();
+        let model = Arc::new(
+            cocoonbox_agent::llm::Client::new(
+                &cfg.gw_base_url,
+                &cfg.gw_api_key,
+                anthropic_messages,
+            )
+            .unwrap(),
+        );
+        let tools = Arc::new(cocoonbox_agent::toolhost::rpc::Client::new(
+            cfg.toolhost_socket.clone(),
+        ));
+        let rt = Runtime::open(cfg, model, tools).await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let endpoint = format!("http://{}", listener.local_addr().unwrap());
         tokio::spawn(server::serve_on(listener, rt, std::future::pending()));

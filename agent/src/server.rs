@@ -11,12 +11,14 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::config::ServeConfig;
+use crate::llm;
 use crate::mcp::Mcp;
 use crate::pb::agents_server::{Agents, AgentsServer};
 use crate::pb::session_server::{Session, SessionServer};
 use crate::pb::{self, Event};
 use crate::runner::Runtime;
 use crate::screen;
+use crate::toolhost::rpc;
 
 /// Header the edge adds to every forwarded call.
 pub const EDGE_TOKEN_HEADER: &str = "x-cocoonbox-edge-token";
@@ -71,6 +73,7 @@ impl Agents for AgentsSvc {
     ) -> Result<Response<pb::ListAgentsResponse>, Status> {
         let agents = self
             .rt
+            .journal
             .store
             .list_agents()
             .await
@@ -96,6 +99,7 @@ impl Agents for AgentsSvc {
             n => n.min(MAX_PAGE),
         };
         self.rt
+            .journal
             .store
             .transcript(req.agent_id, req.after_seq, limit)
             .await
@@ -154,6 +158,7 @@ impl Session for SessionSvc {
     ) -> Result<Response<Self::EventsStream>, Status> {
         let sub = self
             .rt
+            .journal
             .bus
             .subscribe(req.into_inner().from_offset)
             .map_err(Status::out_of_range)?;
@@ -206,7 +211,13 @@ pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
         .await
         .map_err(|e| format!("bind {}: {e}", cfg.listen))?;
     eprintln!("serve listening on {}", cfg.listen);
-    let rt = Runtime::open(cfg).await?;
+    let model = Arc::new(llm::Client::new(
+        &cfg.gw_base_url,
+        &cfg.gw_api_key,
+        cfg.anthropic_messages,
+    )?);
+    let tools = Arc::new(rpc::Client::new(cfg.toolhost_socket.clone()));
+    let rt = Runtime::open(cfg, model, tools).await?;
     serve_on(listener, rt, shutdown_signal()).await
 }
 

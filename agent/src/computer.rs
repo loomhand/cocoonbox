@@ -1,11 +1,13 @@
 //! The computer subagent: a vision model driving the desktop through cua-driver.
 
-use serde_json::{Value, json};
+use std::sync::Arc;
 
+use serde_json::Value;
+
+use crate::dispatch::{Dispatcher, ToolOutput};
 use crate::llm::{Message, Part, Request, Usage};
 use crate::new_id;
-use crate::runner::{Runtime, ToolOutput, TurnCtx};
-use crate::toolhost::rpc::{self, Call};
+use crate::runner::{Runtime, TurnCtx};
 
 const SUBAGENT: &str = "computer";
 const MAX_STEPS: usize = 30;
@@ -22,29 +24,27 @@ pub async fn run(
     usage: &mut Usage,
 ) -> Result<ToolOutput, String> {
     let _screen = rt.screen.lock().await;
-    let session = new_id("cu");
+    let driver = new_id("cu");
     let mut guard = EndOnDrop {
-        toolhost: rt.toolhost().clone(),
-        agent_id: ctx.agent_id.clone(),
-        session: session.clone(),
+        dispatcher: Arc::clone(&rt.dispatcher),
+        owner: ctx.agent_id.clone(),
+        driver: driver.clone(),
         armed: true,
     };
-    let result = drive(rt, ctx, task, &session, usage).await;
+    let result = drive(rt, ctx, task, &driver, usage).await;
     guard.armed = false;
-    let end = rt
-        .tool(&ctx.agent_id, "computer_end", json!({"session": session}))
-        .await;
+    let end = rt.dispatcher.end_driver(&ctx.agent_id, &driver).await;
     if end.is_error {
-        eprintln!("end cua session {session}: {}", end.text);
+        eprintln!("end cua session {driver}: {}", end.text);
     }
     result
 }
 
 /// Ends the driver session from a detached task when a cancelled turn drops the subagent.
 struct EndOnDrop {
-    toolhost: rpc::Client,
-    agent_id: String,
-    session: String,
+    dispatcher: Arc<Dispatcher>,
+    owner: String,
+    driver: String,
     armed: bool,
 }
 
@@ -53,14 +53,11 @@ impl Drop for EndOnDrop {
         if !self.armed {
             return;
         }
-        let call = Call {
-            agent_id: std::mem::take(&mut self.agent_id),
-            tool: "computer_end".to_owned(),
-            args: json!({"session": std::mem::take(&mut self.session)}),
-        };
-        let toolhost = self.toolhost.clone();
+        let dispatcher = Arc::clone(&self.dispatcher);
+        let owner = std::mem::take(&mut self.owner);
+        let driver = std::mem::take(&mut self.driver);
         tokio::spawn(async move {
-            let _ = toolhost.call(&call).await;
+            dispatcher.end_driver(&owner, &driver).await;
         });
     }
 }
@@ -69,9 +66,10 @@ async fn drive(
     rt: &Runtime,
     ctx: &TurnCtx,
     task: &str,
-    session: &str,
+    driver: &str,
     usage: &mut Usage,
 ) -> Result<ToolOutput, String> {
+    let caller = ctx.caller(SUBAGENT, Some(driver));
     let mut messages = vec![Message::User(vec![Part::Text(task.to_owned())])];
     let mut report = None;
     for _ in 0..MAX_STEPS {
@@ -96,18 +94,26 @@ async fn drive(
         let mut results = Vec::with_capacity(step.calls.len());
         for call in &step.calls {
             let out = match serde_json::from_str::<Value>(&call.arguments) {
-                Ok(Value::Object(mut args)) => {
-                    args.insert("session".to_owned(), session.into());
-                    let args = Value::Object(args);
-                    if call.name == "computer_act" {
-                        rt.announce_action(&ctx.agent_id, &args);
-                    }
-                    rt.tool(&ctx.agent_id, &call.name, args).await
+                Ok(args @ Value::Object(_)) => {
+                    rt.dispatcher
+                        .execute(&caller, &call.id, &call.name, args)
+                        .await?
                 }
-                Ok(_) => ToolOutput::error("arguments must be a JSON object"),
-                Err(e) => ToolOutput::error(format!("arguments are not valid JSON: {e}")),
+                parsed => {
+                    let out = ToolOutput::error(match parsed {
+                        Ok(_) => "arguments must be a JSON object".to_owned(),
+                        Err(e) => format!("arguments are not valid JSON: {e}"),
+                    });
+                    rt.dispatcher.record_result(&caller, &call.id, &out).await?;
+                    out
+                }
             };
-            results.push(rt.record_result(ctx, &call.id, out, true).await?);
+            results.push(Message::Tool {
+                call_id: call.id.clone(),
+                text: out.text,
+                image: out.image,
+                is_error: out.is_error,
+            });
         }
         messages.push(Message::Assistant {
             text: step.text,
@@ -115,9 +121,7 @@ async fn drive(
         });
         messages.extend(results);
     }
-    let shot = rt
-        .tool(&ctx.agent_id, "screenshot", json!({"session": session}))
-        .await;
+    let shot = rt.dispatcher.capture(&ctx.agent_id, driver).await;
     let (text, is_error) = match report {
         Some(r) if !r.trim().is_empty() => (r, false),
         Some(_) => (
