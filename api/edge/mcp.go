@@ -57,7 +57,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
 	user, addr, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
 	defer func() {
-		log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %s user=%s box=%s addr=%s code=%s in %s",
+		log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %q user=%s box=%q addr=%s code=%s in %s",
 			r.Method, r.URL.Path, user, boxID, addr, status.Code(err), time.Since(start).Round(time.Millisecond))
 	}()
 	if err != nil {

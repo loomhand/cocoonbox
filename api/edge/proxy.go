@@ -101,7 +101,7 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	if err == nil {
 		err = p.pump(ctx, ss, up, cancel)
 	}
-	log.WithFunc("edge.Proxy.Handle").Infof(ctx, "%s user=%s box=%s addr=%s code=%s in %s",
+	log.WithFunc("edge.Proxy.Handle").Infof(ctx, "%s user=%s box=%q addr=%s code=%s in %s",
 		method, user, boxes[0], addr, status.Code(err), time.Since(start).Round(time.Millisecond))
 	return err
 }

@@ -41,7 +41,7 @@ func (a *AccessLog) Stream(srv any, ss grpc.ServerStream, info *grpc.StreamServe
 }
 
 func (a *AccessLog) write(ctx context.Context, method, box string, err error, start time.Time) {
-	log.WithFunc("boxes.AccessLog").Infof(ctx, "%s user=%s box=%s code=%s in %s",
+	log.WithFunc("boxes.AccessLog").Infof(ctx, "%s user=%s box=%q code=%s in %s",
 		strings.TrimPrefix(method, boxesServicePrefix), a.identify(ctx), box, status.Code(err), time.Since(start).Round(time.Millisecond))
 }
 
