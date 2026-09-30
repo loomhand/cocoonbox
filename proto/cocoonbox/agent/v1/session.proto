@@ -38,7 +38,29 @@ message Event {
     TranscriptEntry transcript = 10;
     Agent agent = 11;
     ComputerAction computer_action = 12;
+    TextDelta text_delta = 13;
+    ReasoningDelta reasoning_delta = 14;
   }
+}
+
+// TextDelta is a live fragment of an assistant text block. Deltas are not
+// replayed on reconnect; the complete block follows as a TranscriptEntry whose
+// TextBlock carries the same (turn_id, block).
+message TextDelta {
+  string agent_id = 1;
+  string turn_id = 2;
+  uint32 block = 3;
+  string text = 4;
+  string subagent = 5;
+}
+
+// ReasoningDelta is TextDelta for reasoning blocks.
+message ReasoningDelta {
+  string agent_id = 1;
+  string turn_id = 2;
+  uint32 block = 3;
+  string text = 4;
+  string subagent = 5;
 }
 
 // ComputerAction mirrors an input the agent is about to inject, so the client

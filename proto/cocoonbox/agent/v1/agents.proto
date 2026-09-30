@@ -102,10 +102,17 @@ message TranscriptEntry {
 
 message TextBlock {
   string text = 1;
+  // Set when the text belongs to a subagent, e.g. "computer".
+  string subagent = 2;
+  // Index of the streamed block within its turn; matches TextDelta.block.
+  uint32 block = 3;
 }
 
 message ReasoningBlock {
   string text = 1;
+  // Index of the streamed block within its turn; matches ReasoningDelta.block.
+  uint32 block = 2;
+  string subagent = 3;
 }
 
 message ToolCall {
