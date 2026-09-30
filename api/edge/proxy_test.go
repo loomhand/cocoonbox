@@ -165,6 +165,24 @@ func TestRejectsCallers(t *testing.T) {
 	}
 }
 
+func TestRejectsStateMethods(t *testing.T) {
+	env := newProxyEnv(t)
+	_, err := agentv1.NewStateClient(env.conn).Plan(env.aliceCtx(t), &agentv1.PlanRequest{})
+	if status.Code(err) != codes.PermissionDenied {
+		t.Errorf("State/Plan: %v, want PermissionDenied", err)
+	}
+	stream, err := agentv1.NewStateClient(env.conn).Restore(env.aliceCtx(t), &agentv1.RestoreRequest{})
+	if err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("State/Restore: %v, want PermissionDenied", err)
+	}
+	if env.agent.calls.Load() != 0 {
+		t.Errorf("agent received %d State calls", env.agent.calls.Load())
+	}
+}
+
 func TestRejectsNonAgentMethods(t *testing.T) {
 	env := newProxyEnv(t)
 	err := env.conn.Invoke(env.aliceCtx(t), "/grpc.health.v1.Health/Check", &agentv1.HelloRequest{}, &agentv1.HelloResponse{})

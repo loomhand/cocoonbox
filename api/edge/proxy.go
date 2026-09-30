@@ -29,6 +29,7 @@ const (
 	MaxMessageSize = 64 << 20
 
 	agentServicePrefix = "/cocoonbox.agent.v1."
+	stateServicePrefix = "/cocoonbox.agent.v1.State/"
 	agentIdleTimeout   = time.Minute
 )
 
@@ -68,6 +69,9 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	method, ok := grpc.MethodFromServerStream(ss)
 	if !ok || !strings.HasPrefix(method, agentServicePrefix) {
 		return status.Errorf(codes.Unimplemented, "unknown method %s", method)
+	}
+	if strings.HasPrefix(method, stateServicePrefix) {
+		return status.Errorf(codes.PermissionDenied, "%s is internal to the control plane", method)
 	}
 	user := auth.User(ctx)
 	if user == "" {
