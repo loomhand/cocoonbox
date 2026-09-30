@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /usr/local/bin/cocoon-cb-bin --config /etc/cocoon/cocoon-cb.yaml "$@"

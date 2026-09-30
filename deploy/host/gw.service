@@ -1,0 +1,34 @@
+[Unit]
+Description=gw LLM gateway (cocoonbox)
+Documentation=https://github.com/cocoonstack/gateway
+Requires=cb-host-net.service
+After=cb-host-net.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gw
+Group=gw
+Environment=GW_CONFIG=/etc/gw/gateway.yaml
+Environment=GW_TRANSPORT=http
+Environment=RUST_LOG=info
+EnvironmentFile=/etc/gw/env
+ExecStart=/usr/local/bin/gw
+StateDirectory=gw
+StateDirectoryMode=0750
+Restart=always
+RestartSec=2s
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target

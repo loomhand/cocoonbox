@@ -1,0 +1,14 @@
+[Unit]
+Description=cocoonbox host network (cbc0 bridge, firewall guards)
+After=network-online.target
+Wants=network-online.target
+Before=k3s.service gw.service vk-cocoon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cb-host-net up
+ExecStop=/usr/local/sbin/cb-host-net down
+
+[Install]
+WantedBy=multi-user.target

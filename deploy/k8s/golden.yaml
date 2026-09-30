@@ -1,0 +1,21 @@
+apiVersion: cocoonset.cocoonstack.io/v1
+kind: CocoonSet
+metadata:
+  name: golden
+  namespace: cocoonbox
+spec:
+  nodePool: default
+  snapshotPolicy: never
+  agent:
+    image: ghcr.io/cocoonstack/cocoon/ubuntu:24.04-xface
+    mode: run
+    network: cb
+    probePort: 22
+    storage: 40Gi
+    resources:
+      requests:
+        cpu: "4"
+        memory: 8Gi
+      limits:
+        cpu: "4"
+        memory: 8Gi

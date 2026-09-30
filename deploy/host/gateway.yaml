@@ -1,0 +1,39 @@
+# gw v0.2.6 for the cocoonbox env; installed as /etc/gw/gateway.yaml (root:gw 0640).
+# __CB_ACCESS_KEY__ is replaced at install time with the key in /etc/cocoonbox/gw-client.key.
+listen:
+  host: 10.203.0.1
+  port: 18090
+
+storage:
+  sqlite_path: /var/lib/gw/store.db
+
+providers:
+  - {name: openrouter, kind: openrouter, api_key_env: OPENROUTER_API_KEY_1, timeout_seconds: 300}
+
+accounts:
+  - {name: openrouter, provider: openrouter, priority: 1, api_key_env: OPENROUTER_API_KEY_1, protocols: ["openai-chat"]}
+  - {name: openrouter-2, provider: openrouter, priority: 1, api_key_env: OPENROUTER_API_KEY_2, protocols: ["openai-chat"]}
+
+# prices = OpenRouter list prices on 2026-09-30, micros per 1k tokens
+models:
+  - {name: deepseek/deepseek-v4.1-flash, provider: openrouter, input_price_per_1k_micros: 300, output_price_per_1k_micros: 1200, token_rate: {read_cache: 0.02}}
+  - {name: anthropic/claude-sonnet-5, provider: openrouter, input_price_per_1k_micros: 2000, output_price_per_1k_micros: 10000, token_rate: {read_cache: 0.1, write_cache: 1.25, write_cache_1h: 2.0}}
+  - {name: anthropic/claude-sonnet-4.6, provider: openrouter, input_price_per_1k_micros: 3000, output_price_per_1k_micros: 15000, token_rate: {read_cache: 0.1, write_cache: 1.25, write_cache_1h: 2.0}}
+  - {name: qwen/qwen3-vl-235b-a22b-instruct, provider: openrouter, input_price_per_1k_micros: 210, output_price_per_1k_micros: 1900, token_rate: {read_cache: 0.476}}
+
+tenants:
+  - name: cocoonbox
+    qps: 4
+    daily_cost_quota_micros: 20000000
+    models:
+      - deepseek/deepseek-v4.1-flash
+      - anthropic/claude-sonnet-5
+      - anthropic/claude-sonnet-4.6
+      - qwen/qwen3-vl-235b-a22b-instruct
+
+access_keys:
+  - ak: __CB_ACCESS_KEY__
+    product: cocoonbox
+    tenant: cocoonbox
+    qps: 4
+    daily_token_quota: 50000000
