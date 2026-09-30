@@ -530,7 +530,7 @@ async fn delegate_runs_the_vision_subagent_over_cua() {
         })
         .unwrap();
     assert!(
-        state.text.contains("[0] text \"editor\" center=(160,90)"),
+        state.text.contains("[0] text \"editor\" center=(60,40)"),
         "{}",
         state.text
     );
