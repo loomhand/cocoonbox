@@ -1,5 +1,5 @@
 # gw v0.2.6 for the cocoonbox env; installed as /etc/gw/gateway.yaml (root:gw 0640).
-# __CB_ACCESS_KEY__ is replaced at install time with the key in /etc/cocoonbox/gw-client.key.
+# The access key value comes from /etc/cocoonbox/gw-client.key (install-gw-config substitutes the ak: line only).
 listen:
   host: 10.203.0.1
   port: 18090

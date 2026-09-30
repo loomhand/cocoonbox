@@ -1,0 +1,16 @@
+#!/bin/sh
+# usage: sudo install-gw-config TEMPLATE  -> writes /etc/gw/gateway.yaml (root:gw 0640) with the client key on the ak: line only
+set -eu
+tmpl=${1:?usage: install-gw-config TEMPLATE}
+key_file=/etc/cocoonbox/gw-client.key
+out=/etc/gw/gateway.yaml
+
+[ "$(grep -c '__CB_ACCESS_KEY__' "$tmpl")" = 1 ] || { echo "template must hold the placeholder exactly once" >&2; exit 1; }
+grep -q '^  - ak: __CB_ACCESS_KEY__$' "$tmpl" || { echo "placeholder must be the value of an ak: line" >&2; exit 1; }
+key=$(cat "$key_file")
+tmp=$(mktemp /etc/gw/.gateway.yaml.XXXXXX)
+sed "s|^  - ak: __CB_ACCESS_KEY__\$|  - ak: $key|" "$tmpl" > "$tmp"
+[ "$(grep -cF "$key" "$tmp")" = 1 ] || { rm -f "$tmp"; echo "key must appear exactly once" >&2; exit 1; }
+chown root:gw "$tmp"
+chmod 0640 "$tmp"
+mv -f "$tmp" "$out"
