@@ -11,12 +11,13 @@ const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
 const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
 const DEFAULT_WORKSPACE: &str = "/workspace";
+const REDACTED: &str = "<redacted>";
 const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 
 /// Settings of `serve`, read from `/etc/cocoonbox/agent.env` via systemd.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ServeConfig {
     pub gw_base_url: String,
     pub gw_api_key: String,
@@ -32,6 +33,27 @@ pub struct ServeConfig {
     pub mcp_prune_after: Duration,
     pub state_roots: Vec<Root>,
     pub desktop_unit: Option<String>,
+}
+
+impl std::fmt::Debug for ServeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServeConfig")
+            .field("gw_base_url", &self.gw_base_url)
+            .field("gw_api_key", &REDACTED)
+            .field("model_main", &self.model_main)
+            .field("model_computer", &self.model_computer)
+            .field("edge_token", &REDACTED)
+            .field("listen", &self.listen)
+            .field("state_dir", &self.state_dir)
+            .field("toolhost_socket", &self.toolhost_socket)
+            .field("vnc_addr", &self.vnc_addr)
+            .field("anthropic_messages", &self.anthropic_messages)
+            .field("mcp_idle", &self.mcp_idle)
+            .field("mcp_prune_after", &self.mcp_prune_after)
+            .field("state_roots", &self.state_roots)
+            .field("desktop_unit", &self.desktop_unit)
+            .finish()
+    }
 }
 
 impl ServeConfig {
@@ -107,3 +129,36 @@ fn optional(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_owned())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_redacts_secrets() {
+        let cfg = ServeConfig {
+            gw_base_url: "http://gw/v1".into(),
+            gw_api_key: "sk-secret-key".into(),
+            model_main: "m".into(),
+            model_computer: "c".into(),
+            edge_token: "edge-secret".into(),
+            listen: "127.0.0.1:1".parse().unwrap(),
+            state_dir: "/s".into(),
+            toolhost_socket: "/t".into(),
+            vnc_addr: "v".into(),
+            anthropic_messages: false,
+            mcp_idle: MCP_IDLE,
+            mcp_prune_after: MCP_PRUNE_AFTER,
+            state_roots: Vec::new(),
+            desktop_unit: None,
+        };
+        let shown = format!("{cfg:?}");
+        assert!(
+            !shown.contains("sk-secret-key") && !shown.contains("edge-secret"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("<redacted>") && shown.contains("http://gw/v1"),
+            "{shown}"
+        );
+    }
+}

@@ -6,6 +6,7 @@ use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
+use zeroize::Zeroizing;
 
 const NONCE_LEN: usize = 12;
 const ZSTD_LEVEL: i32 = 3;
@@ -14,9 +15,9 @@ const SEAL_LABEL: &[u8] = b"cocoonbox state seal v1";
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Keys derived from one user key: one for chunk ids, one for encryption.
+/// Keys derived from one user key: one for chunk ids, one for encryption; both are wiped on drop.
 pub struct Keys {
-    id: [u8; 32],
+    id: Zeroizing<[u8; 32]>,
     seal: Aes256Gcm,
 }
 
@@ -29,16 +30,17 @@ impl Keys {
                 key.len()
             ));
         }
-        let seal_key = mac(key, SEAL_LABEL)?;
+        let seal_key = Zeroizing::new(mac(key, SEAL_LABEL)?);
         Ok(Self {
-            id: mac(key, ID_LABEL)?,
-            seal: Aes256Gcm::new_from_slice(&seal_key).map_err(|e| format!("seal key: {e}"))?,
+            id: Zeroizing::new(mac(key, ID_LABEL)?),
+            seal: Aes256Gcm::new_from_slice(seal_key.as_slice())
+                .map_err(|e| format!("seal key: {e}"))?,
         })
     }
 
     /// Hex HMAC of `plaintext`: the chunk's name in the store.
     pub fn id(&self, plaintext: &[u8]) -> Result<String, String> {
-        Ok(hex::encode(mac(&self.id, plaintext)?))
+        Ok(hex::encode(mac(self.id.as_slice(), plaintext)?))
     }
 
     /// Compresses and encrypts `plaintext`; the id is authenticated as associated data.
