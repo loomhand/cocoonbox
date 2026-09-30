@@ -135,7 +135,7 @@ enable_units() {
 	systemctl daemon-reload
 	udevadm control --reload
 	udevadm trigger --name-match=uinput
-	systemctl enable --now nftables.service
+	systemctl enable --now nftables.service cocoonbox-machine-id.path
 	nft -f /etc/nftables.conf
 	systemctl reload ssh || systemctl restart ssh
 	systemctl reload systemd-logind

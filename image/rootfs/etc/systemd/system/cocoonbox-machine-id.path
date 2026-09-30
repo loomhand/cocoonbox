@@ -1,0 +1,8 @@
+[Unit]
+Description=Follow a new machine id (clone, wake) with journald
+
+[Path]
+PathChanged=/etc/machine-id
+
+[Install]
+WantedBy=multi-user.target

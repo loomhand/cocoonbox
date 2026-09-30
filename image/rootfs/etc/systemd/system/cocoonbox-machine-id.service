@@ -1,0 +1,6 @@
+[Unit]
+Description=Restart journald so it writes under the current machine id
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart systemd-journald.service
