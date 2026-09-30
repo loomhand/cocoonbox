@@ -8,7 +8,7 @@ BIN_SRC=${1:?usage: install <binary dir>}
 S=/srv/cb/sbx
 QUOTA_ID=44
 QUOTA=200g
-TOKEN=/etc/cocoonbox/sbx-api-token
+TOKEN=/etc/cocoonbox/sandboxd-token
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
 (cd "$BIN_SRC" && sha256sum -c --quiet SHA256SUMS)

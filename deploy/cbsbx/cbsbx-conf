@@ -7,7 +7,7 @@ import os
 import sys
 
 S = "/srv/cb/sbx"
-TOKEN = "/etc/cocoonbox/sbx-api-token"
+TOKEN = "/etc/cocoonbox/sandboxd-token"
 LISTEN = "127.0.0.1:17780"
 GATEWAY = "10.203.0.1"
 GW_PORT = 18090

@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+"""Smoke-tests a cocoonbox sandboxd template: claim, relay to the agent, egress, key isolation, fail-closed, release.
+usage: sudo deploy/cbsbx/smoke <template>   (on the node; adds and revokes a throwaway gw box key, never prints it)"""
+
+import json
+import os
+import socket
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+SBX = "http://127.0.0.1:17780"
+TOKEN = open("/etc/cocoonbox/sandboxd-token").read().strip()
+GW_KEY_TOOL = "/usr/local/sbin/cb-gw-key"
+SMOKE_ID = "cb-5a0e00000001"
+GATEWAY = "10.203.0.1"
+PROXY = "http://127.0.0.1:3128"
+GRPCURL = os.environ.get("GRPCURL", "/home/builder/go/bin/grpcurl")
+PROTO = os.environ.get("PROTO", "/home/builder/cb-build/agent/proto")
+
+failed = []
+CLAIM_TOKEN = {}
+
+
+def check(name, ok, detail=""):
+    print(f"{'ok  ' if ok else 'FAIL'} {name} {detail}".rstrip(), flush=True)
+    if not ok:
+        failed.append(name)
+
+
+def call(method, path, body=None, timeout=300, token=None):
+    data = None if body is None else json.dumps(body).encode()
+    req = urllib.request.Request(SBX + path, data=data, method=method)
+    req.add_header("Authorization", "Bearer " + (token or TOKEN))
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            raw, code = r.read(), r.status
+    except urllib.error.HTTPError as e:
+        raw, code = e.read(), e.code
+    try:
+        return code, json.loads(raw) if raw else {}
+    except ValueError:
+        return code, {"raw": raw.decode(errors="replace")[:200]}
+
+
+def guest(sid, script, timeout=60):
+    code, out = call("POST", f"/v1/sandboxes/{sid}/exec",
+                     {"argv": ["sh", "-c", script], "timeout_seconds": timeout}, timeout + 30, CLAIM_TOKEN[sid])
+    return out.get("stdout", "").strip() if code == 200 else f"exec {code} {out}"
+
+
+def http_code(sid, url, auth=None):
+    hdr = f"-H 'Authorization: {auth}' " if auth else ""
+    return guest(sid, f"curl -s -o /dev/null -m 15 -w '%{{http_code}}' -x {PROXY} {hdr}{url}")
+
+
+def relay(sid, port):
+    s = socket.create_connection(("127.0.0.1", 17780), timeout=30)
+    s.sendall(f"GET /v1/sandboxes/{sid}/ports/{port} HTTP/1.1\r\nHost: sbx\r\nAuthorization: Bearer {TOKEN}\r\n"
+              f"Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n".encode())
+    head = b""
+    while b"\r\n\r\n" not in head:
+        d = s.recv(1)
+        if not d:
+            raise ConnectionError("relay closed during upgrade")
+        head += d
+    if b" 101 " not in head.split(b"\r\n")[0]:
+        raise ConnectionError(head.split(b"\r\n")[0].decode())
+    return s
+
+
+def forward(sid, port):
+    ls = socket.socket()
+    ls.bind(("127.0.0.1", 0))
+    ls.listen(8)
+
+    def pipe(a, b):
+        try:
+            while d := a.recv(1 << 16):
+                b.sendall(d)
+        except OSError:
+            pass
+        try:
+            b.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+    def serve():
+        while True:
+            c, _ = ls.accept()
+            s = relay(sid, port)
+            threading.Thread(target=pipe, args=(c, s), daemon=True).start()
+            threading.Thread(target=pipe, args=(s, c), daemon=True).start()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return ls.getsockname()[1]
+
+
+def main():
+    template = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
+    key = subprocess.run([GW_KEY_TOOL, "add", SMOKE_ID], capture_output=True, text=True).stdout.split()[-1]
+    sid = None
+    try:
+        t0 = time.monotonic()
+        code, out = call("POST", "/v1/claim", {"template": template, "size": "xlarge", "ttl_seconds": 1800,
+                                               "metadata": {"cb_smoke": SMOKE_ID},
+                                               "env": {"GW_KEY": {"value": f"Bearer {key}", "guest": False}}})
+        check("claim", code == 200 and "id" in out, f"{code} in {(time.monotonic() - t0) * 1000:.0f} ms")
+        if code != 200:
+            return
+        sid = out["id"]
+        CLAIM_TOKEN[sid] = out["token"]
+        units = guest(sid, "systemctl is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent silkd | tr '\\n' ' '")
+        check("guest units active", units.split() == ["active"] * 5, units)
+        size = guest(sid, "df -BG --output=size / | tail -1 | tr -dc 0-9")
+        check("guest root disk from the pool storage", size.isdigit() and int(size) >= 38, f"{size} GiB")
+        check("gw via proxy with claim secret", http_code(sid, f"http://{GATEWAY}:18090/v1/models", "Bearer unprovisioned") == "200")
+        check("state store via proxy", http_code(sid, f"http://{GATEWAY}:9000/minio/health/live") == "200")
+        check("internet via proxy", http_code(sid, "https://example.com/") == "200")
+        for port in (10260, 10250, 6443, 22):
+            got = http_code(sid, f"http://{GATEWAY}:{port}/")
+            check(f"gateway :{port} refused", got in ("502", "403", "000"), got)
+        leaks = guest(sid, "cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c 'Bearer cb-'; "
+                           "grep -rlsF 'Bearer cb-' /etc /run 2>/dev/null | wc -l")
+        check("no box key in guest environ, /etc, /run", leaks.split() == ["0", "0"], leaks.replace("\n", " "))
+        code, env = call("GET", f"/v1/sandboxes/{sid}/env")
+        shown = json.dumps(env)
+        check("GET env hides the host-only value", code == 200 and key not in shown, f"{code}")
+        port = forward(sid, 7443)
+        hello = subprocess.run([GRPCURL, "-plaintext", "-import-path", PROTO, "-proto", "cocoonbox/agent/v1/session.proto",
+                                "-d", "{}", f"127.0.0.1:{port}", "cocoonbox.agent.v1.Session/Hello"],
+                               capture_output=True, text=True, timeout=30)
+        answer = (hello.stdout + hello.stderr).replace("\n", " ")
+        check("agent answers through the relay", "identity not provisioned" in answer or '"agentVersion"' in answer, answer[:120])
+        code, _ = call("PATCH", f"/v1/sandboxes/{sid}/env", {"env": {"GW_KEY": None}})
+        check("PATCH env removes GW_KEY", code in (200, 204), f"{code}")
+        check("gw fails closed without the key", http_code(sid, f"http://{GATEWAY}:18090/v1/models", "Bearer unprovisioned") == "401")
+    finally:
+        if sid:
+            code, _ = call("POST", f"/v1/sandboxes/{sid}/release")
+            check("release", code in (200, 204), f"{code}")
+        subprocess.run([GW_KEY_TOOL, "revoke", SMOKE_ID], capture_output=True)
+        listed = subprocess.run([GW_KEY_TOOL, "list"], capture_output=True, text=True).stdout
+        check("throwaway gw key revoked", SMOKE_ID not in listed)
+    print("PASS" if not failed else f"FAILED: {', '.join(failed)}")
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == "__main__":
+    main()
