@@ -6,7 +6,6 @@ set -euo pipefail
 VM=${1:?usage: push.sh <vm-name>}
 COCOON=${COCOON:-/usr/local/bin/cocoon-cb}
 HOST_PUBKEY_FILE=${HOST_PUBKEY_FILE:-/home/builder/.ssh/cocoonbox_deploy.pub}
-GW_KEY_FILE=/etc/cocoonbox/gw-client.key
 EDGE_TOKEN_FILE=/etc/cocoonbox/edge-token
 GW_BASE_URL=http://10.203.0.1:18090/v1
 
@@ -23,7 +22,7 @@ tar -C "$SRC" -cf - provision.sh rootfs | "$COCOON" vm exec -i "$VM" -- sh -c \
 
 {
 	printf 'GW_BASE_URL=%s\n' "$GW_BASE_URL"
-	printf 'GW_API_KEY=%s\n' "$(cat "$GW_KEY_FILE")"
+	printf 'GW_API_KEY=unprovisioned\n'
 	printf 'MODEL_MAIN=deepseek/deepseek-v4.1-flash\n'
 	printf 'MODEL_COMPUTER=anthropic/claude-sonnet-5\n'
 	printf 'EDGE_TOKEN=%s\n' "$(cat "$EDGE_TOKEN_FILE")"
