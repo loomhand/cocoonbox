@@ -18,6 +18,9 @@ func TestLoadDefaults(t *testing.T) {
 		cfg.Network != "cb" || cfg.ProbePort != 22 || cfg.AgentPort != 7443 {
 		t.Errorf("defaults = %+v", cfg)
 	}
+	if cfg.Backend != BackendCocoonSet {
+		t.Errorf("backend = %q", cfg.Backend)
+	}
 	if cfg.Flavor != (Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}) {
 		t.Errorf("flavor = %+v", cfg.Flavor)
 	}
@@ -31,6 +34,8 @@ func TestLoadRejects(t *testing.T) {
 		{name: "bad hash", body: "users:\n  - name: alice\n    token_sha256: abc\n", want: "64 lowercase hex"},
 		{name: "duplicate user", body: "users:\n  - name: a\n    token_sha256: " + validHash + "\n  - name: a\n    token_sha256: " + strings.Repeat("0", 64) + "\n", want: "duplicate name"},
 		{name: "bad port", body: "agent_port: 70000\n", want: "agent_port"},
+		{name: "unknown backend", body: "backend: nomad\n", want: "backend must be"},
+		{name: "sandboxd without url", body: "backend: sandboxd\nsandboxd:\n  token_file: t\n", want: "sandboxd.url"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -42,13 +47,13 @@ func TestLoadRejects(t *testing.T) {
 }
 
 func TestLoadResolvesRelativePaths(t *testing.T) {
-	path := writeConfig(t, "kubeconfig: kubeconfig\nedge_token_file: edge-token\n")
+	path := writeConfig(t, "kubeconfig: kubeconfig\nedge_token_file: edge-token\nbackend: sandboxd\nsandboxd:\n  url: http://127.0.0.1:17800\n  token_file: sandboxd-token\n")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	dir := filepath.Dir(path)
-	if cfg.Kubeconfig != filepath.Join(dir, "kubeconfig") || cfg.EdgeTokenFile != filepath.Join(dir, "edge-token") {
+	if cfg.Kubeconfig != filepath.Join(dir, "kubeconfig") || cfg.EdgeTokenFile != filepath.Join(dir, "edge-token") || cfg.Sandboxd.TokenFile != filepath.Join(dir, "sandboxd-token") {
 		t.Errorf("paths = %q, %q, want under %s", cfg.Kubeconfig, cfg.EdgeTokenFile, dir)
 	}
 }

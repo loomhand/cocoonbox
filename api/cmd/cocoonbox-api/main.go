@@ -29,6 +29,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/keyring/file"
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/machines/cocoonset"
+	"github.com/CMGS/cocoonbox/api/machines/sandboxd"
 	"github.com/CMGS/cocoonbox/api/store/s3"
 )
 
@@ -58,20 +59,13 @@ func main() {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	backend, err := cocoonset.New(ctx, cocoonset.Options{
-		Kubeconfig: cfg.Kubeconfig,
-		Namespace:  cfg.Namespace,
-		Image:      cfg.Image,
-		Network:    cfg.Network,
-		ProbePort:  cfg.ProbePort,
-		AgentPort:  cfg.AgentPort,
-	})
-	if err != nil {
-		logger.Fatalf(ctx, err, "start cocoonset backend")
-	}
 	flavors := make([]machines.Flavor, 0, len(cfg.Flavors))
 	for _, f := range cfg.Flavors {
 		flavors = append(flavors, machineFlavor(f))
+	}
+	backend, err := newBackend(ctx, cfg, flavors)
+	if err != nil {
+		logger.Fatalf(ctx, err, "start %s backend", cfg.Backend)
 	}
 	svc := boxes.New(backend, boxes.Defaults{
 		Flavor:       machineFlavor(cfg.Flavor),
@@ -159,6 +153,31 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 	go svc.RunProvisioner(ctx, provisionInterval)
 	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning boxes of %v with key %s, gw keys %t", cfg.Provision.Users, signer.KeyID(), gw != nil)
 	return signer, nil
+}
+
+func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor) (machines.Machines, error) {
+	if cfg.Backend != config.BackendSandboxd {
+		return cocoonset.New(ctx, cocoonset.Options{
+			Kubeconfig: cfg.Kubeconfig,
+			Namespace:  cfg.Namespace,
+			Image:      cfg.Image,
+			Network:    cfg.Network,
+			ProbePort:  cfg.ProbePort,
+			AgentPort:  cfg.AgentPort,
+		})
+	}
+	token, err := cfg.SandboxdToken()
+	if err != nil {
+		return nil, err
+	}
+	return sandboxd.New(ctx, sandboxd.Options{
+		URL:       cfg.Sandboxd.URL,
+		Token:     token,
+		Image:     cfg.Image,
+		Flavors:   append(flavors, machineFlavor(cfg.Flavor)),
+		DiskGiB:   cfg.Flavor.DiskGiB,
+		AgentPort: cfg.AgentPort,
+	})
 }
 
 func machineFlavor(f config.Flavor) machines.Flavor {

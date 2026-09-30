@@ -9,6 +9,10 @@ network: cb
 probe_port: 7443
 agent_port: 7443
 edge_token_file: edge-token
+backend: cocoonset             # cocoonset | sandboxd (design §14)
+sandboxd:                      # used by backend sandboxd; image then names the template
+  url: http://127.0.0.1:17800
+  token_file: sandboxd-token   # the instance's root api_token
 flavor:
   vcpus: 4
   memory_mib: 8192

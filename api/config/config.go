@@ -16,6 +16,9 @@ import (
 )
 
 const (
+	BackendCocoonSet = "cocoonset"
+	BackendSandboxd  = "sandboxd"
+
 	defaultListen        = "127.0.0.1:18200"
 	defaultMCPListen     = "127.0.0.1:18201"
 	defaultNamespace     = "cocoonbox"
@@ -91,8 +94,17 @@ type Provision struct {
 	Users          []string `json:"users"`
 }
 
+// Sandboxd names the sandboxd instance of the sandboxd backend and the file holding its root api token.
+type Sandboxd struct {
+	URL       string `json:"url"`
+	TokenFile string `json:"token_file"`
+}
+
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
+	// Backend selects the machine backend: cocoonset (default) or sandboxd.
+	Backend       string   `json:"backend"`
+	Sandboxd      Sandboxd `json:"sandboxd"`
 	Listen        string   `json:"listen"`
 	MCPListen     string   `json:"mcp_listen"`
 	Kubeconfig    string   `json:"kubeconfig"`
@@ -148,6 +160,19 @@ func (c *Config) StoreCredentials() (string, string, error) {
 	return access, secret, nil
 }
 
+// SandboxdToken reads the root api token of the sandboxd instance.
+func (c *Config) SandboxdToken() (string, error) {
+	raw, err := os.ReadFile(c.Sandboxd.TokenFile)
+	if err != nil {
+		return "", fmt.Errorf("read sandboxd token: %w", err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", fmt.Errorf("sandboxd token file %s is empty", c.Sandboxd.TokenFile)
+	}
+	return token, nil
+}
+
 // EdgeToken reads the shared secret the edge presents to box agents.
 func (c *Config) EdgeToken() (string, error) {
 	raw, err := os.ReadFile(c.EdgeTokenFile)
@@ -162,6 +187,7 @@ func (c *Config) EdgeToken() (string, error) {
 }
 
 func (c *Config) applyDefaults() {
+	c.Backend = cmp.Or(c.Backend, BackendCocoonSet)
 	c.Listen = cmp.Or(c.Listen, defaultListen)
 	c.MCPListen = cmp.Or(c.MCPListen, defaultMCPListen)
 	c.Namespace = cmp.Or(c.Namespace, defaultNamespace)
@@ -181,7 +207,7 @@ func (c *Config) applyDefaults() {
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.Kubeconfig, &c.EdgeTokenFile, &c.State.CredentialsFile, &c.Provision.SigningKeyFile} {
+	for _, p := range []*string{&c.Kubeconfig, &c.EdgeTokenFile, &c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Sandboxd.TokenFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -212,6 +238,15 @@ func (c *Config) validate() error {
 	}
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
+	}
+	switch c.Backend {
+	case BackendCocoonSet:
+	case BackendSandboxd:
+		if c.Sandboxd.URL == "" || c.Sandboxd.TokenFile == "" {
+			errs = append(errs, errors.New("sandboxd.url and sandboxd.token_file are required with backend sandboxd"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("backend must be %s or %s, got %q", BackendCocoonSet, BackendSandboxd, c.Backend))
 	}
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
