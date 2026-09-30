@@ -12,4 +12,4 @@ A persistent cloud computer per user with a resident agent that any model can dr
 | `deploy/` | bench host and cluster configuration |
 | `docs/` | design, contracts, bench runbook, cua-driver spike |
 
-See [docs/design.md](docs/design.md).
+See [docs/design.md](docs/design.md), [docs/contracts.md](docs/contracts.md) and [docs/boundaries.md](docs/boundaries.md).
