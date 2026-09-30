@@ -2,9 +2,8 @@
 # Resets per-use state in a provisioned guest before it is snapshotted as a golden; runs as root.
 set -euo pipefail
 
-systemctl disable --now cocoonbox-agent.service cocoonbox-toolhost.service >/dev/null 2>&1 || true
-rm -f /usr/local/bin/cocoonbox-agent
-rm -rf /var/lib/cocoonbox /run/cocoonbox/*
+systemctl stop cocoonbox-agent.service cocoonbox-toolhost.service
+rm -rf /var/lib/cocoonbox/* /run/cocoonbox/*
 
 pkill -u user -x chrome || true
 pkill -u user -x mousepad || true
@@ -21,4 +20,7 @@ journalctl --vacuum-time=1s >/dev/null
 
 systemctl restart cocoonbox-xorg.service cocoonbox-session.service cocoonbox-vnc.service
 systemctl --user -M user@ restart cua-driver.service
+if systemctl -q is-enabled cocoonbox-agent.service; then
+	systemctl start cocoonbox-toolhost.service cocoonbox-agent.service
+fi
 sync

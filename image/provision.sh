@@ -132,7 +132,6 @@ enable_units() {
 	nft -f /etc/nftables.conf
 	systemctl reload ssh || systemctl restart ssh
 	systemctl enable cocoonbox-xorg.service cocoonbox-session.service cocoonbox-vnc.service
-	systemctl disable cocoonbox-agent.service cocoonbox-toolhost.service >/dev/null 2>&1 || true
 	systemctl start user@1000.service
 	systemctl restart cocoonbox-xorg.service cocoonbox-session.service cocoonbox-vnc.service
 	systemctl --user -M user@ daemon-reload
