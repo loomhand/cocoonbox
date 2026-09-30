@@ -24,6 +24,8 @@ import (
 const (
 	alice    = "alice"
 	aliceBox = "cb-2bd806c97f0e"
+
+	refreshEvent = -1
 )
 
 var (
@@ -407,7 +409,7 @@ func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {
 	}
 	m.Meta[key] = value
 	f.machines[id] = m
-	f.pending = append(f.pending, m)
+	f.pending = append(f.pending, machines.Machine{ID: id, Revision: refreshEvent})
 	close(f.pushed)
 	f.pushed = make(chan struct{})
 	return nil
@@ -464,6 +466,9 @@ func (f *fakeMachines) take(ctx context.Context) (machines.Machine, bool, <-chan
 	m := f.pending[0]
 	f.pending = f.pending[1:]
 	cur := f.machines[m.ID]
+	if m.Revision == refreshEvent {
+		return cur, true, f.pushed
+	}
 	m.Owner, m.Flavor, m.Image, m.CreatedAt = cmp.Or(m.Owner, cur.Owner), cmp.Or(m.Flavor, cur.Flavor), cmp.Or(m.Image, cur.Image), cur.CreatedAt
 	m.Incarnation = cmp.Or(m.Incarnation, cur.Incarnation)
 	if m.Meta == nil {
