@@ -1,0 +1,5 @@
+/agent/target/
+/api/bin/
+/macos/.build/
+/macos/dist/
+.DS_Store

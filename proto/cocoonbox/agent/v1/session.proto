@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package cocoonbox.agent.v1;
+
+import "cocoonbox/agent/v1/agents.proto";
+
+option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1";
+
+service Session {
+  rpc Hello(HelloRequest) returns (HelloResponse);
+  // Events streams live changes; reconnect with the last seen offset.
+  rpc Events(EventsRequest) returns (stream Event);
+  // Screen carries raw RFB bytes between the client and the box's VNC server.
+  // The first client frame must be `open`; the stream ends when either side closes.
+  rpc Screen(stream ScreenClientFrame) returns (stream ScreenServerFrame);
+}
+
+message HelloRequest {
+  string client_version = 1;
+}
+
+message HelloResponse {
+  string agent_version = 1;
+  uint32 screen_width = 2;
+  uint32 screen_height = 3;
+  repeated string models = 4;
+  string default_main_model = 5;
+}
+
+message EventsRequest {
+  // Last Event.offset seen; 0 starts from now.
+  uint64 from_offset = 1;
+}
+
+message Event {
+  uint64 offset = 1;
+  oneof body {
+    TranscriptEntry transcript = 10;
+    Agent agent = 11;
+    ComputerAction computer_action = 12;
+  }
+}
+
+// ComputerAction mirrors an input the agent is about to inject, so the client
+// can highlight it on the live view.
+message ComputerAction {
+  string agent_id = 1;
+  string action = 2;
+  int32 x = 3;
+  int32 y = 4;
+  string text = 5;
+}
+
+message ScreenClientFrame {
+  oneof body {
+    ScreenOpen open = 1;
+    bytes data = 2;
+  }
+}
+
+message ScreenOpen {}
+
+message ScreenServerFrame {
+  bytes data = 1;
+}
