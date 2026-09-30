@@ -33,13 +33,6 @@ final class ScreenController {
     @ObservationIgnored private var reconnectTask: Task<Void, Never>?
     @ObservationIgnored private let probe = ProcessInfo.processInfo.environment["CB_RFB_PROBE"] == "1"
 
-    var metalActive: Bool { view != nil }
-
-    var encodingSummary: String {
-        guard let counts = session?.encodingCounts, !counts.isEmpty else { return "" }
-        return counts.sorted { $0.value > $1.value }.map { "\($0.key) \($0.value)" }.joined(separator: ", ")
-    }
-
     var bridgeStats: ScreenBridge.Stats? { bridge?.stats }
 
     func start(session client: SessionClient) {

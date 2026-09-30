@@ -25,6 +25,7 @@ struct CocoonBoxApp: App {
                 Button("New Agent") { model.createAgent() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(!model.boxRunning)
+                Button("Sign Out") { model.signOut() }
             }
         }
 
