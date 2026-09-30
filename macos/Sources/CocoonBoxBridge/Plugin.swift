@@ -72,6 +72,7 @@ public enum Plugin {
     - Call `box_save` before the user leaves for a long time. It closes the box's browser during the save.
     - `box_upgrade` restarts running programs and keeps files, logins and agent history; ask the user first, then call it with `confirm: true`.
     - Call `box_hibernate` when the user is done.
+    - If `box_hibernate` or `box_ensure` times out, the operation continues on the box; call `box_status` and wait until the state settles.
 
     """
 
