@@ -16,9 +16,11 @@ use crate::llm;
 use crate::mcp::Mcp;
 use crate::pb::agents_server::{Agents, AgentsServer};
 use crate::pb::session_server::{Session, SessionServer};
+use crate::pb::state_server::{State, StateServer};
 use crate::pb::{self, Event};
 use crate::runner::Runtime;
 use crate::screen;
+use crate::state::{StateEngine, StateError};
 use crate::toolhost::rpc;
 
 /// Header the edge adds to every forwarded call.
@@ -217,6 +219,57 @@ impl Session for SessionSvc {
     }
 }
 
+/// `cocoonbox.agent.v1.State`, called by the api to move user state to and from object storage.
+pub struct StateSvc {
+    rt: Arc<Runtime>,
+    engine: Arc<StateEngine>,
+}
+
+type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
+
+#[tonic::async_trait]
+impl State for StateSvc {
+    type UploadStream = ProgressStream;
+    type RestoreStream = ProgressStream;
+
+    async fn plan(
+        &self,
+        req: Request<pb::PlanRequest>,
+    ) -> Result<Response<pb::PlanResponse>, Status> {
+        self.engine
+            .plan(req.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(state_status)
+    }
+
+    async fn upload(
+        &self,
+        req: Request<pb::UploadRequest>,
+    ) -> Result<Response<Self::UploadStream>, Status> {
+        let engine = Arc::clone(&self.engine);
+        let req = req.into_inner();
+        Ok(Response::new(progress_stream(move |tx| async move {
+            engine.upload(req, tx).await
+        })))
+    }
+
+    async fn restore(
+        &self,
+        req: Request<pb::RestoreRequest>,
+    ) -> Result<Response<Self::RestoreStream>, Status> {
+        let engine = Arc::clone(&self.engine);
+        let rt = Arc::clone(&self.rt);
+        let req = req.into_inner();
+        Ok(Response::new(progress_stream(move |tx| async move {
+            engine.restore(req, tx).await?;
+            rt.recover("interrupted: the user state was restored")
+                .await
+                .map_err(StateError::Failed)
+        })))
+    }
+}
+
 /// Binds `AGENT_LISTEN` and serves until SIGTERM or SIGINT.
 pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
     let listener = TcpListener::bind(cfg.listen)
@@ -253,10 +306,22 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     let session = SessionServer::new(SessionSvc {
         rt: Arc::clone(&rt),
     });
+    let engine = StateEngine::new(
+        rpc::Client::new(rt.cfg.toolhost_socket.clone()),
+        rt.journal.store.clone(),
+        rt.cfg.state_roots.clone(),
+        rt.cfg.state_dir.join("state"),
+        Arc::clone(&rt.turns),
+    );
+    let state = StateServer::new(StateSvc {
+        rt: Arc::clone(&rt),
+        engine: Arc::new(engine),
+    });
     let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle);
     mcp.spawn_reaper();
     let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
-        .add_service(InterceptedService::new(session, auth))
+        .add_service(InterceptedService::new(session, auth.clone()))
+        .add_service(InterceptedService::new(state, auth))
         .into_axum_router()
         .merge(Arc::clone(&mcp).router());
     let server = Server::builder()
@@ -291,6 +356,39 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         () = term => {}
+    }
+}
+
+/// Runs a transfer and streams its progress; a failure ends the stream with a status.
+fn progress_stream<F, Fut>(op: F) -> ProgressStream
+where
+    F: FnOnce(mpsc::Sender<pb::TransferProgress>) -> Fut + Send + 'static,
+    Fut: Future<Output = Result<(), StateError>> + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel(EVENT_BUFFER);
+    // detached: the transfer runs to completion even if the caller stops reading
+    tokio::spawn(async move {
+        let (ptx, mut prx) = mpsc::channel(EVENT_BUFFER);
+        let out = tx.clone();
+        let relay = tokio::spawn(async move {
+            while let Some(p) = prx.recv().await {
+                let _ = out.send(Ok(p)).await;
+            }
+        });
+        let result = op(ptx).await;
+        let _ = relay.await;
+        if let Err(e) = result {
+            let _ = tx.send(Err(state_status(e))).await;
+        }
+    });
+    ReceiverStream::new(rx)
+}
+
+fn state_status(e: StateError) -> Status {
+    match e {
+        StateError::Busy(m) => Status::unavailable(m),
+        StateError::Invalid(m) => Status::invalid_argument(m),
+        StateError::Failed(m) => Status::internal(m),
     }
 }
 

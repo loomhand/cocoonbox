@@ -1,6 +1,6 @@
 //! SQLite state: agents, turns, transcript entries and client-nonce dedupe.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use prost::Message;
@@ -217,6 +217,24 @@ impl Store {
             }
             tx.commit()?;
             Ok(ids)
+        })
+        .await
+    }
+
+    /// Writes a consistent copy of the database to `path` through the online backup API.
+    pub async fn backup_to(&self, path: PathBuf) -> Result<(), String> {
+        self.call(move |c| c.backup(rusqlite::MAIN_DB, &path, None))
+            .await
+    }
+
+    /// Replaces the database contents with the database at `path`.
+    pub async fn restore_from(&self, path: PathBuf) -> Result<(), String> {
+        self.call(move |c| {
+            c.restore(
+                rusqlite::MAIN_DB,
+                &path,
+                None::<fn(rusqlite::backup::Progress)>,
+            )
         })
         .await
     }

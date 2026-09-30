@@ -167,6 +167,9 @@ impl Browser {
     /// Dispatches a `browser_*` tool.
     pub async fn run(&self, tool: &str, args: Value) -> Result<String, String> {
         let _serial = self.lock.lock().await;
+        if tool == "browser_close" {
+            return self.close().await;
+        }
         let mut cdp = self.connect().await?;
         match tool {
             "browser_navigate" => {
@@ -252,6 +255,7 @@ impl Browser {
                 }
                 Ok(out)
             }
+            "browser_start" => Ok("running".to_owned()),
             _ => Err(format!("unknown browser tool {tool}")),
         }
     }
@@ -287,6 +291,41 @@ impl Browser {
             .await
             .map_err(|e| format!("connect cdp {ws_url}: {e}"))?;
         Ok(Cdp { ws, next_id: 0 })
+    }
+
+    /// Closes Chrome through CDP so it flushes its profile; reports whether it was running.
+    async fn close(&self) -> Result<String, String> {
+        let url = format!("http://127.0.0.1:{}/json/version", self.port);
+        let Ok(resp) = self
+            .http
+            .get(&url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+        else {
+            return Ok("not running".to_owned());
+        };
+        let version: Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("decode {url}: {e}"))?;
+        let ws_url = version["webSocketDebuggerUrl"].as_str().unwrap_or_default();
+        let (ws, _) = tokio_tungstenite::connect_async(ws_url)
+            .await
+            .map_err(|e| format!("connect cdp {ws_url}: {e}"))?;
+        let mut cdp = Cdp { ws, next_id: 0 };
+        let _ = cdp.call("Browser.close", json!({})).await;
+        let deadline = tokio::time::Instant::now() + LAUNCH_WAIT;
+        while tokio::time::Instant::now() < deadline {
+            if self.targets().await.is_err() {
+                return Ok("closed".to_owned());
+            }
+            tokio::time::sleep(POLL).await;
+        }
+        Err(format!(
+            "chrome still answers on port {} after Browser.close",
+            self.port
+        ))
     }
 
     async fn targets(&self) -> Result<Vec<Target>, String> {

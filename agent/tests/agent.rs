@@ -10,6 +10,7 @@ use cocoonbox_agent::pb::agents_client::AgentsClient;
 use cocoonbox_agent::pb::session_client::SessionClient;
 use cocoonbox_agent::pb::{self, event, screen_client_frame, transcript_entry::Body};
 use cocoonbox_agent::runner::Runtime;
+use cocoonbox_agent::toolhost::state::Root;
 use cocoonbox_agent::{server, toolhost};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -26,6 +27,7 @@ type Log = Arc<Mutex<Vec<(String, Value)>>>;
 struct Harness {
     _dir: tempfile::TempDir,
     workspace: PathBuf,
+    home: PathBuf,
     endpoint: String,
     gw_log: Log,
     cua_log: Log,
@@ -46,6 +48,8 @@ impl Harness {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
         let gw_log = Log::default();
         let gw = mock_gw(script, Arc::clone(&gw_log)).await;
         let cua_log = Log::default();
@@ -75,6 +79,16 @@ impl Harness {
             anthropic_messages,
             mcp_idle,
             mcp_prune_after,
+            state_roots: vec![
+                Root {
+                    name: "home".into(),
+                    path: home.clone(),
+                },
+                Root {
+                    name: "workspace".into(),
+                    path: workspace.clone(),
+                },
+            ],
         };
         let model = Arc::new(
             cocoonbox_agent::llm::Client::new(
@@ -100,6 +114,7 @@ impl Harness {
         Self {
             _dir: dir,
             workspace,
+            home,
             endpoint,
             gw_log,
             cua_log,
@@ -1517,4 +1532,404 @@ async fn launch_app_reuses_a_running_apps_window() {
         .await;
     assert_eq!(fresh["isError"], false, "{fresh}");
     assert_eq!(driver_calls(&h, "launch_app")[0]["name"], "gedit");
+}
+
+type Objects = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+
+async fn fake_store() -> (String, Objects) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}/bucket", listener.local_addr().unwrap());
+    let objects = Objects::default();
+    let shared = Arc::clone(&objects);
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let objects = Arc::clone(&shared);
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stream);
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                        return;
+                    }
+                    let mut parts = line.split_whitespace();
+                    let method = parts.next().unwrap_or_default().to_owned();
+                    let name = parts
+                        .next()
+                        .unwrap_or_default()
+                        .rsplit('/')
+                        .next()
+                        .unwrap()
+                        .to_owned();
+                    let mut len = 0;
+                    loop {
+                        let mut h = String::new();
+                        reader.read_line(&mut h).await.unwrap();
+                        if h == "\r\n" {
+                            break;
+                        }
+                        if let Some(v) = h.to_ascii_lowercase().strip_prefix("content-length:") {
+                            len = v.trim().parse().unwrap();
+                        }
+                    }
+                    let mut body = vec![0u8; len];
+                    reader.read_exact(&mut body).await.unwrap();
+                    let (status, reply) = if method == "PUT" {
+                        objects.lock().unwrap().insert(name, body);
+                        ("200 OK", Vec::new())
+                    } else {
+                        match objects.lock().unwrap().get(&name) {
+                            Some(b) => ("200 OK", b.clone()),
+                            None => ("404 Not Found", Vec::new()),
+                        }
+                    };
+                    let head = format!(
+                        "HTTP/1.1 {status}\r\ncontent-length: {}\r\n\r\n",
+                        reply.len()
+                    );
+                    let stream = reader.get_mut();
+                    stream.write_all(head.as_bytes()).await.unwrap();
+                    stream.write_all(&reply).await.unwrap();
+                }
+            });
+        }
+    });
+    (base, objects)
+}
+
+fn state_key() -> pb::StateKey {
+    pb::StateKey {
+        key: vec![42u8; 32].into(),
+        key_id: "k1".into(),
+    }
+}
+
+async fn state_client(h: &Harness) -> cocoonbox_agent::pb::state_client::StateClient<Channel> {
+    cocoonbox_agent::pb::state_client::StateClient::new(h.channel().await)
+}
+
+async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::PlanResponse {
+    state_client(h)
+        .await
+        .plan(authed(pb::PlanRequest {
+            key: Some(state_key()),
+            consistency: consistency.into(),
+            parent: parent.into(),
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+}
+
+async fn upload_missing(
+    h: &Harness,
+    base: &str,
+    objects: &Objects,
+    planned: &pb::PlanResponse,
+) -> usize {
+    let missing: Vec<String> = {
+        let have = objects.lock().unwrap();
+        planned
+            .chunks
+            .iter()
+            .filter(|c| !have.contains_key(&c.id))
+            .map(|c| c.id.clone())
+            .collect()
+    };
+    let put = |id: &str| pb::PresignedPut {
+        chunk_id: id.into(),
+        url: format!("{base}/{id}"),
+        headers: HashMap::from([("x-amz-meta-test".to_owned(), "1".to_owned())]),
+    };
+    let mut stream = state_client(h)
+        .await
+        .upload(authed(pb::UploadRequest {
+            snapshot_id: planned.snapshot_id.clone(),
+            key: Some(state_key()),
+            puts: missing.iter().map(|id| put(id)).collect(),
+            manifest: Some(put(&planned.snapshot_id)),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut last = None;
+    while let Some(p) = stream.message().await.unwrap() {
+        last = Some(p);
+    }
+    let last = last.unwrap();
+    assert!(last.finished);
+    assert_eq!(last.manifest_id, planned.snapshot_id);
+    assert_eq!(last.done_chunks as usize, missing.len() + 1);
+    missing.len()
+}
+
+async fn restore(
+    h: &Harness,
+    base: &str,
+    objects: &Objects,
+    manifest_id: &str,
+) -> Result<pb::TransferProgress, tonic::Status> {
+    let gets = objects
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|k| *k != manifest_id)
+        .map(|k| pb::PresignedGet {
+            chunk_id: k.clone(),
+            url: format!("{base}/{k}"),
+        })
+        .collect();
+    let mut stream = state_client(h)
+        .await
+        .restore(authed(pb::RestoreRequest {
+            key: Some(state_key()),
+            manifest: Some(pb::PresignedGet {
+                chunk_id: manifest_id.into(),
+                url: format!("{base}/{manifest_id}"),
+            }),
+            gets,
+        }))
+        .await?
+        .into_inner();
+    let mut last = None;
+    while let Some(p) = stream.message().await? {
+        last = Some(p);
+    }
+    Ok(last.unwrap())
+}
+
+fn manifest_of(objects: &Objects, id: &str) -> Value {
+    let keys = cocoonbox_agent::state::crypto::Keys::derive(&state_key().key).unwrap();
+    let sealed = objects.lock().unwrap()[id].clone();
+    serde_json::from_slice(&keys.open(id, &sealed, 1 << 30).unwrap()).unwrap()
+}
+
+fn noise(n: usize, seed: u64) -> Vec<u8> {
+    let mut x = seed;
+    (0..n)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            x as u8
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    let big = noise(3 << 20, 7);
+    std::fs::create_dir_all(h.home.join(".config/app")).unwrap();
+    std::fs::create_dir_all(h.home.join(".config/chrome/Default/Code Cache")).unwrap();
+    std::fs::create_dir_all(h.home.join(".cache/fontconfig")).unwrap();
+    std::fs::create_dir_all(h.home.join("Documents")).unwrap();
+    std::fs::write(h.home.join(".config/app/settings.json"), b"{\"a\":1}").unwrap();
+    std::fs::write(
+        h.home.join(".config/chrome/Default/Code Cache/js"),
+        b"cache",
+    )
+    .unwrap();
+    std::fs::write(h.home.join(".config/chrome/SingletonLock"), b"lock").unwrap();
+    std::fs::write(h.home.join(".cache/fontconfig/c"), b"junk").unwrap();
+    std::fs::write(h.home.join("Documents/big.bin"), &big).unwrap();
+    std::os::unix::fs::symlink("Documents/big.bin", h.home.join("big-link")).unwrap();
+    std::fs::write(h.workspace.join("notes.txt"), b"first").unwrap();
+    let db = h.home.join(".config/app/data.db");
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    conn.execute_batch(
+        "PRAGMA journal_mode=WAL; CREATE TABLE t(v); INSERT INTO t VALUES ('kept');",
+    )
+    .unwrap();
+    assert!(h.home.join(".config/app/data.db-wal").exists());
+    let mut agents = h.agents().await;
+    let keeper = create_agent(&mut agents).await;
+
+    let first = plan(&h, pb::Consistency::Live, "").await;
+    assert!(first.files >= 4, "{first:?}");
+    assert!(first.chunks.len() >= 4, "{}", first.chunks.len());
+    let sent_first = upload_missing(&h, &base, &objects, &first).await;
+    assert_eq!(sent_first, first.chunks.len());
+    let m = manifest_of(&objects, &first.snapshot_id);
+    let paths: Vec<String> = m["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| {
+            format!(
+                "{}/{}",
+                f["root"].as_str().unwrap(),
+                f["path"].as_str().unwrap()
+            )
+        })
+        .collect();
+    assert!(
+        paths.contains(&"home/.config/app/data.db".to_owned()),
+        "{paths:?}"
+    );
+    for gone in [
+        "data.db-wal",
+        "data.db-shm",
+        "Code Cache",
+        "SingletonLock",
+        ".cache",
+    ] {
+        assert!(
+            !paths.iter().any(|p| p.contains(gone)),
+            "{gone} in {paths:?}"
+        );
+    }
+    assert_eq!(m["consistency"], "live");
+    assert!(!m["agent_db"]["chunks"].as_array().unwrap().is_empty());
+
+    std::fs::write(h.workspace.join("notes.txt"), b"second").unwrap();
+    let second = plan(&h, pb::Consistency::Quiesced, &first.snapshot_id).await;
+    let sent_second = upload_missing(&h, &base, &objects, &second).await;
+    assert!(sent_second <= 2, "incremental sent {sent_second} chunks");
+    assert_eq!(
+        manifest_of(&objects, &second.snapshot_id)["consistency"],
+        "quiesced"
+    );
+    assert_eq!(
+        manifest_of(&objects, &second.snapshot_id)["parent"],
+        first.snapshot_id.as_str()
+    );
+
+    drop(conn);
+    std::fs::remove_dir_all(h.home.join("Documents")).unwrap();
+    std::fs::write(h.home.join("stray.txt"), b"not in the snapshot").unwrap();
+    std::fs::write(h.workspace.join("notes.txt"), b"third").unwrap();
+    let intruder = agents
+        .create(authed(pb::CreateAgentRequest {
+            name: "intruder".into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .into_inner()
+        .id;
+    let done = restore(&h, &base, &objects, &second.snapshot_id)
+        .await
+        .unwrap();
+    assert!(done.finished);
+    assert_eq!(
+        std::fs::read(h.home.join("Documents/big.bin")).unwrap(),
+        big
+    );
+    assert_eq!(
+        std::fs::read_link(h.home.join("big-link")).unwrap(),
+        PathBuf::from("Documents/big.bin")
+    );
+    assert_eq!(
+        std::fs::read(h.workspace.join("notes.txt")).unwrap(),
+        b"second"
+    );
+    assert!(!h.home.join("stray.txt").exists());
+    assert!(
+        h.home.join(".cache/fontconfig/c").exists(),
+        "excluded top-level dirs are kept"
+    );
+    let restored = rusqlite::Connection::open(&db).unwrap();
+    let v: String = restored
+        .query_row("SELECT v FROM t", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(v, "kept");
+    let ids: Vec<String> = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .agents
+        .into_iter()
+        .map(|a| a.id)
+        .collect();
+    assert!(ids.contains(&keeper));
+    assert!(
+        !ids.contains(&intruder),
+        "agent.db was not restored: {ids:?}"
+    );
+}
+
+#[tokio::test]
+async fn restore_rejects_tampered_chunks_before_touching_files() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    std::fs::write(h.workspace.join("a.txt"), noise(10_000, 3)).unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    std::fs::write(h.workspace.join("a.txt"), b"current").unwrap();
+    {
+        let mut store = objects.lock().unwrap();
+        let victim = store
+            .keys()
+            .find(|k| **k != planned.snapshot_id)
+            .unwrap()
+            .clone();
+        let body = store.get_mut(&victim).unwrap();
+        let last = body.len() - 1;
+        body[last] ^= 0x01;
+    }
+    let err = restore(&h, &base, &objects, &planned.snapshot_id)
+        .await
+        .unwrap_err();
+    assert!(err.message().contains("failed authentication"), "{err:?}");
+    assert_eq!(
+        std::fs::read(h.workspace.join("a.txt")).unwrap(),
+        b"current"
+    );
+
+    let wrong_key = state_client(&h)
+        .await
+        .plan(authed(pb::PlanRequest {
+            key: Some(pb::StateKey {
+                key: vec![1u8; 8].into(),
+                key_id: "short".into(),
+            }),
+            ..Default::default()
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(wrong_key.code(), Code::InvalidArgument);
+}
+
+#[tokio::test]
+async fn live_snapshot_skips_a_file_that_keeps_changing() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    let growing = h.workspace.join("growing.bin");
+    std::fs::write(&growing, noise(16 << 20, 5)).unwrap();
+    std::fs::write(h.workspace.join("steady.txt"), b"steady").unwrap();
+    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let writer = {
+        let stop = Arc::clone(&stop);
+        let growing = growing.clone();
+        std::thread::spawn(move || {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(growing)
+                .unwrap();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                f.write_all(b"x").unwrap();
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        })
+    };
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    writer.join().unwrap();
+    upload_missing(&h, &base, &objects, &planned).await;
+    let m = manifest_of(&objects, &planned.snapshot_id);
+    assert_eq!(m["skipped"], json!(["workspace/growing.bin"]));
+    let paths: Vec<&str> = m["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["path"].as_str().unwrap())
+        .collect();
+    assert!(
+        paths.contains(&"steady.txt") && !paths.contains(&"growing.bin"),
+        "{paths:?}"
+    );
 }

@@ -3,6 +3,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &[
             "../proto/cocoonbox/agent/v1/agents.proto",
             "../proto/cocoonbox/agent/v1/session.proto",
+            "../proto/cocoonbox/agent/v1/state.proto",
         ],
         &["../proto"],
     )?;

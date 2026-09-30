@@ -11,6 +11,7 @@ pub mod prompts;
 pub mod runner;
 pub mod screen;
 pub mod server;
+pub mod state;
 pub mod store;
 pub mod sys;
 pub mod toolhost;

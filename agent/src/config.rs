@@ -5,6 +5,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::toolhost::state::Root;
+
 const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
 const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
@@ -27,6 +29,7 @@ pub struct ServeConfig {
     pub anthropic_messages: bool,
     pub mcp_idle: Duration,
     pub mcp_prune_after: Duration,
+    pub state_roots: Vec<Root>,
 }
 
 impl ServeConfig {
@@ -48,6 +51,7 @@ impl ServeConfig {
             anthropic_messages: optional("GW_ANTHROPIC_WIRE", "chat") == "messages",
             mcp_idle: MCP_IDLE,
             mcp_prune_after: MCP_PRUNE_AFTER,
+            state_roots: crate::state::default_roots(),
         })
     }
 }

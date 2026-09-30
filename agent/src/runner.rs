@@ -38,6 +38,8 @@ pub struct Runtime {
     pub stop: CancellationToken,
     /// Work that shutdown waits for: running turns and desktop-session cleanups.
     pub tasks: TaskTracker,
+    /// Held shared by every running turn; the state layer takes it exclusively to pause turns.
+    pub turns: Arc<tokio::sync::RwLock<()>>,
     main_tools: Vec<ToolSpec>,
     main_vision_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
@@ -64,22 +66,31 @@ impl Runtime {
             screen: tokio::sync::Mutex::new(()),
             stop: CancellationToken::new(),
             tasks: TaskTracker::new(),
+            turns: Arc::new(tokio::sync::RwLock::new(())),
             slots: Mutex::new(HashMap::new()),
             cfg,
         });
-        for (agent_id, turn_id) in rt.journal.store.unfinished_turns().await? {
+        rt.recover("interrupted: the agent restarted").await?;
+        Ok(rt)
+    }
+
+    /// Ends every turn left open in the store, e.g. after a restart or a restored agent.db.
+    pub async fn recover(&self, reason: &str) -> Result<(), String> {
+        for (agent_id, turn_id) in self.journal.store.unfinished_turns().await? {
             let end = pb::TurnEnd {
                 ok: false,
-                error: "interrupted: the agent restarted".to_owned(),
+                error: reason.to_owned(),
                 usage: None,
             };
-            rt.journal
+            self.journal
                 .record(&agent_id, &turn_id, Role::System, Body::TurnEnd(end), false)
                 .await?;
-            rt.journal.store.finish_turn(turn_id).await?;
-            rt.journal.set_status(&agent_id, AgentStatus::Failed).await;
+            self.journal.store.finish_turn(turn_id).await?;
+            self.journal
+                .set_status(&agent_id, AgentStatus::Failed)
+                .await;
         }
-        Ok(rt)
+        Ok(())
     }
 
     /// Creates an agent; an empty model selects the box default.
@@ -339,6 +350,7 @@ impl Runtime {
             Ok(Some(a)) => a.main_model,
             _ => self.cfg.model_main.clone(),
         };
+        let _gate = self.turns.read().await;
         let cancel = CancellationToken::new();
         lock(&slot.state).cancel = Some(cancel.clone());
         let ctx = TurnCtx {

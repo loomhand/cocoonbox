@@ -64,6 +64,21 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
 - Unknown methods get JSON-RPC `-32601` with HTTP 200. Without a session this applies to everything except `tools/*`, which needs `Mcp-Session-Id`.
 - POST answers with `application/json`. GET is an SSE stream that carries only keepalive comments, because the server sends no requests of its own.
 
+## State (object storage)
+
+`cocoonbox.agent.v1.State` is called by the api only. It is served on the same listener behind the same edge token.
+
+- **Plan.** The toolhost walks `/home/user` and `/workspace` as `user`, applying the exclude list in `state::excludes()`: caches, Chrome cache dirs and runtime files, `-shm` files and restore leftovers.
+  - It streams every file to `serve`, which splits the bytes with FastCDC (256 KiB / 1 MiB / 4 MiB).
+  - Chunk id = hex HMAC-SHA256. Each chunk is compressed with zstd, then sealed with AES-256-GCM using a random nonce and the id as associated data. Both keys are derived from the per-request user key, which is never stored.
+  - SQLite files are read through the online backup API when possible, and their `-wal` and `-journal` sidecars are then left out. `agent.db` goes through `Store::backup_to`.
+  - Under LIVE, a file that changes during two reads is recorded in `skipped`. QUIESCED pauses new turns (it waits up to 30 s for a running one and answers `UNAVAILABLE` otherwise) and closes Chrome through CDP; Chrome restarts afterwards.
+  - New chunks and the sealed manifest are spooled under `/var/lib/cocoonbox/state` until Upload. Chunks the last upload already held under the same key are not spooled.
+- **Upload.** It PUTs the requested chunks (8 concurrent, 3 attempts), then the manifest, and streams `TransferProgress`.
+- **Restore.** It downloads and verifies every chunk (authentication and id) before touching anything. Then it pauses turns, closes Chrome and writes each root into a staging dir as `user`.
+  - Each top-level entry is swapped in with one rename; entries missing from the snapshot are removed, except excluded top-level dirs such as `.cache`.
+  - `agent.db` is restored through the SQLite backup API, then open turns are marked interrupted.
+
 ## Limits
 
 - Queued turns and pending take-over approvals live in memory. After a restart, every unfinished turn gets a `TurnEnd` with the error "interrupted: the agent restarted".
@@ -72,6 +87,8 @@ External agents such as Claude Code, Codex or Cursor use the box through `POST|G
 - On XFCE, a background element click on the Applications toggle has no effect. The subagent is told to trust only screenshots and to retry once with `foreground: true`.
 - Delta events are not coalesced: one gw SSE chunk produces one event. A slow client that falls behind the live channel gets `DATA_LOSS` and reconnects with `from_offset`.
 - The main agent's history from earlier turns keeps no images.
+- Restore replaces files under a running XFCE session; apps other than Chrome keep their old open files until they restart. Directory mtimes are not restored.
+- Plan spools every new chunk to disk, so the first snapshot needs free space about the size of the compressed state.
 
 ## Environment
 

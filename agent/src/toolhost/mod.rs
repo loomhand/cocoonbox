@@ -5,6 +5,7 @@ pub mod cua;
 pub mod files;
 pub mod rpc;
 pub mod shell;
+pub mod state;
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
@@ -73,6 +74,9 @@ impl Host {
                 .await
                 .map(Output::text),
             "upload" => self.upload(call.args).await.map(Output::text),
+            "state_walk" => state::walk(call.args).await.map(Output::text),
+            "state_apply" => state::apply(call.args).await.map(Output::text),
+            "state_swap" => state::swap(call.args).await.map(Output::text),
             t if t.starts_with("browser_") => {
                 self.browser.run(t, call.args).await.map(Output::text)
             }
@@ -163,6 +167,22 @@ pub async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
             return;
         }
     };
+    match call.tool.as_str() {
+        "state_read" => {
+            if let Err(e) = state::read(call.args, &mut wr).await {
+                eprintln!("toolhost: state_read: {e}");
+            }
+            return;
+        }
+        "state_write" => {
+            let out = state::write(call.args, &mut rd).await;
+            if let Err(e) = rpc::write_frame(&mut wr, &out).await {
+                eprintln!("toolhost: reply: {e}");
+            }
+            return;
+        }
+        _ => {}
+    }
     let mut probe = [0u8; 1];
     let out = tokio::select! {
         out = host.dispatch(call) => out,
