@@ -8,6 +8,8 @@ Control plane and edge. Two listeners behind Caddy serve:
 
 MCP has its own listener so gRPC stays on grpc-go's native transport; Caddy sends `/cocoonbox.mcp/*` to 18201 and the rest of `/cocoonbox.*` to 18200.
 
+State layer (design §11): `SaveState` (quiesced), `Rebase` and a scheduled live save every `state.interval` move each box's home, `/workspace` and `agent.db` into an S3 bucket under `<box id>/`. The api owns timing, the per-box keys (`keyring`, 0600 files under `state.keyring_dir`; losing them loses the data), the chunk index and the snapshot chain; the agent chunks and encrypts through presigned URLs (`store`) over the internal `dialer`. Clients cannot call `cocoonbox.agent.v1.State`.
+
 Layers: `boxes` (the gRPC service: users, ownership, operations) and `edge` (proxies) call only the `machines.Machines` interface and a resolver; `machines/cocoonset` is the one backend and the only package that imports client-go or cocoon-common. `cmd/cocoonbox-api` wires them.
 
 Callers authenticate with `authorization: Bearer <token>`; `/etc/cocoonbox/api.yaml` holds only `sha256(token)` per user (see `deploy/api.yaml.example`).

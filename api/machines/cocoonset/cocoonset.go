@@ -165,7 +165,7 @@ func (b *Backend) List(_ context.Context, owner string) ([]machines.Machine, err
 		if err != nil {
 			return nil, err
 		}
-		if cs.Annotations[annotationOwner] == owner {
+		if cs.DeletionTimestamp == nil && (owner == "" || cs.Annotations[annotationOwner] == owner) {
 			out = append(out, b.machine(cs, 0))
 		}
 	}
@@ -233,6 +233,13 @@ func (b *Backend) Address(_ context.Context, id string) (string, error) {
 		return "", machines.ErrNoAddress
 	}
 	return net.JoinHostPort(ip, strconv.Itoa(b.opts.AgentPort)), nil
+}
+
+func (b *Backend) Delete(ctx context.Context, id string) error {
+	if err := b.sets.Delete(ctx, id, metav1.DeleteOptions{}); err != nil {
+		return kubeError(err, "delete cocoonset")
+	}
+	return nil
 }
 
 func (b *Backend) machine(cs *cocoonv1.CocoonSet, gen int64) machines.Machine {

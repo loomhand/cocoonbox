@@ -2,9 +2,11 @@
 package boxes
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 
 	"github.com/projecteru2/core/log"
@@ -17,18 +19,25 @@ import (
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
+// Defaults size new boxes and name the image they start from.
+type Defaults struct {
+	Flavor machines.Flavor
+	Image  string
+}
+
 // Service implements controlv1.BoxesServer and resolves boxes for the edge.
 type Service struct {
 	controlv1.UnimplementedBoxesServer
 
 	machines machines.Machines
-	flavor   machines.Flavor
+	defaults Defaults
 	ops      *operations
+	state    *stateLayer
 }
 
-// New serves boxes on backend, sizing new ones with defaultFlavor.
-func New(backend machines.Machines, defaultFlavor machines.Flavor) *Service {
-	return &Service{machines: backend, flavor: defaultFlavor, ops: newOperations()}
+// New serves boxes on backend with defaults.
+func New(backend machines.Machines, defaults Defaults) *Service {
+	return &Service{machines: backend, defaults: defaults, ops: newOperations()}
 }
 
 func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
@@ -36,52 +45,54 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	id := BoxID(user)
-	flavor := resolveFlavor(req.GetFlavor(), s.flavor)
-	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", id)
+	box := BoxID(user)
+	flavor := resolveFlavor(req.GetFlavor(), s.defaults.Flavor)
+	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", box)
 
-	if req.GetFlavor() != nil {
-		cur, getErr := s.machines.Get(ctx, id)
-		if getErr == nil && cur.Flavor != flavor {
+	spec := machines.Spec{ID: box, Owner: user, Flavor: flavor}
+	cur, err := s.current(ctx, user)
+	switch {
+	case err == nil:
+		if req.GetFlavor() != nil && cur.Flavor != flavor {
 			return nil, status.Errorf(codes.FailedPrecondition, "box exists with flavor vcpus:%d memory_mib:%d disk_gib:%d",
 				cur.Flavor.VCPUs, cur.Flavor.MemoryMiB, cur.Flavor.DiskGiB)
 		}
-		if getErr != nil && !errors.Is(getErr, machines.ErrNotFound) {
-			return nil, serviceError(ctx, logger, getErr, "get box")
-		}
+		spec.ID = cur.ID
+	case !errors.Is(err, machines.ErrNotFound):
+		return nil, serviceError(ctx, logger, err, "get box")
 	}
-	m, action, err := s.machines.Ensure(ctx, machines.Spec{ID: id, Owner: user, Flavor: flavor})
+	m, action, err := s.machines.Ensure(ctx, spec)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "ensure box")
 	}
 	switch action {
 	case machines.ActionCreated:
 		logger.Infof(ctx, "created box for user %s", user)
-		return s.withOperation(ctx, m, controlv1.Phase_PHASE_CREATING), nil
+		return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_CREATING), nil
 	case machines.ActionWoken:
 		logger.Info(ctx, "waking box")
-		return s.withOperation(ctx, m, controlv1.Phase_PHASE_WAKING), nil
+		return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_WAKING), nil
 	}
 	if m.State == machines.StateRunning {
-		return &controlv1.EnsureResponse{Box: toBox(m)}, nil
+		return &controlv1.EnsureResponse{Box: s.toBox(ctx, box, m)}, nil
 	}
 	phase := controlv1.Phase_PHASE_CREATING
-	if cur := s.ops.activeFor(id); cur != nil && cur.phase == controlv1.Phase_PHASE_WAKING {
-		phase = cur.phase
+	if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_WAKING {
+		phase = active.phase
 	}
-	return s.withOperation(ctx, m, phase), nil
+	return s.withOperation(ctx, box, m, phase), nil
 }
 
 func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*controlv1.Box, error) {
-	id, err := ownedBox(ctx, req.GetBoxId())
+	user, err := ownerOf(ctx, req.GetBoxId())
 	if err != nil {
 		return nil, err
 	}
-	m, err := s.machines.Get(ctx, id)
+	m, err := s.current(ctx, user)
 	if err != nil {
-		return nil, serviceError(ctx, log.WithFunc("boxes.Service.Get").WithField("box", id), err, "get box")
+		return nil, serviceError(ctx, log.WithFunc("boxes.Service.Get").WithField("box", req.GetBoxId()), err, "get box")
 	}
-	return toBox(m), nil
+	return s.toBox(ctx, req.GetBoxId(), m), nil
 }
 
 func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
@@ -89,29 +100,33 @@ func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*con
 	if err != nil {
 		return nil, err
 	}
-	ms, err := s.machines.List(ctx, user)
+	m, err := s.current(ctx, user)
+	if errors.Is(err, machines.ErrNotFound) {
+		return &controlv1.ListBoxesResponse{}, nil
+	}
 	if err != nil {
 		return nil, serviceError(ctx, log.WithFunc("boxes.Service.List").WithField("user", user), err, "list boxes")
 	}
-	resp := &controlv1.ListBoxesResponse{}
-	for _, m := range ms {
-		resp.Boxes = append(resp.Boxes, toBox(m))
-	}
-	return resp, nil
+	return &controlv1.ListBoxesResponse{Boxes: []*controlv1.Box{s.toBox(ctx, BoxID(user), m)}}, nil
 }
 
 func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
-	id, err := ownedBox(ctx, ref.GetBoxId())
+	box := ref.GetBoxId()
+	user, err := ownerOf(ctx, box)
 	if err != nil {
 		return nil, err
 	}
-	logger := log.WithFunc("boxes.Service.Hibernate").WithField("box", id)
-	m, err := s.machines.Hibernate(ctx, id)
+	logger := log.WithFunc("boxes.Service.Hibernate").WithField("box", box)
+	cur, err := s.current(ctx, user)
+	if err != nil {
+		return nil, serviceError(ctx, logger, err, "get box")
+	}
+	m, err := s.machines.Hibernate(ctx, cur.ID)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "hibernate box")
 	}
 	logger.Info(ctx, "hibernating box")
-	return s.withOperation(ctx, m, controlv1.Phase_PHASE_SNAPSHOTTING).GetOperation(), nil
+	return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_SNAPSHOTTING).GetOperation(), nil
 }
 
 func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream grpc.ServerStreamingServer[controlv1.OperationEvent]) error {
@@ -154,7 +169,11 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (string, erro
 	if boxID != BoxID(user) {
 		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
-	addr, err := s.machines.Address(ctx, boxID)
+	cur, err := s.current(ctx, user)
+	var addr string
+	if err == nil {
+		addr, err = s.machines.Address(ctx, cur.ID)
+	}
 	var notRunning *machines.NotRunningError
 	switch {
 	case err == nil:
@@ -171,20 +190,34 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (string, erro
 	}
 }
 
-func (s *Service) withOperation(ctx context.Context, m machines.Machine, phase controlv1.Phase) *controlv1.EnsureResponse {
-	op, started := s.ops.start(context.WithoutCancel(ctx), m.ID, phase, m.Revision)
+// current returns user's serving machine: the oldest, which a rebase replaces only when it deletes it.
+func (s *Service) current(ctx context.Context, user string) (machines.Machine, error) {
+	ms, err := s.machines.List(ctx, user)
+	if err != nil {
+		return machines.Machine{}, err
+	}
+	if len(ms) == 0 {
+		return machines.Machine{}, machines.ErrNotFound
+	}
+	return slices.MinFunc(ms, func(a, b machines.Machine) int {
+		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID))
+	}), nil
+}
+
+func (s *Service) withOperation(ctx context.Context, box string, m machines.Machine, phase controlv1.Phase) *controlv1.EnsureResponse {
+	op, started := s.ops.start(context.WithoutCancel(ctx), box, phase, m.Revision, operationTimeout)
 	if started {
-		go s.follow(op)
+		go s.follow(op, m.ID)
 	}
 	return &controlv1.EnsureResponse{
-		Box:       toBox(m),
+		Box:       s.toBox(ctx, box, m),
 		Operation: &controlv1.Operation{Id: op.id, BoxId: op.boxID},
 	}
 }
 
-// follow records the backend's view of op's box until op finishes or times out.
-func (s *Service) follow(op *operation) {
-	for m := range s.machines.Watch(op.ctx, op.boxID, op.gen) {
+// follow records the backend's view of machine until op finishes or times out.
+func (s *Service) follow(op *operation, machine string) {
+	for m := range s.machines.Watch(op.ctx, machine, op.gen) {
 		if m.State == machines.StateGone {
 			op.fail("box was deleted")
 			return
@@ -196,6 +229,15 @@ func (s *Service) follow(op *operation) {
 	}
 }
 
+func (s *Service) toBox(ctx context.Context, box string, m machines.Machine) *controlv1.Box {
+	b := toBox(box, m)
+	b.LatestImage = s.defaults.Image
+	if s.state != nil {
+		b.LastSavedAtMs = s.state.lastSaved(ctx, box)
+	}
+	return b
+}
+
 func callerUser(ctx context.Context) (string, error) {
 	if user := auth.User(ctx); user != "" {
 		return user, nil
@@ -203,7 +245,8 @@ func callerUser(ctx context.Context) (string, error) {
 	return "", status.Error(codes.Unauthenticated, "unauthenticated")
 }
 
-func ownedBox(ctx context.Context, boxID string) (string, error) {
+// ownerOf returns the caller when it owns boxID.
+func ownerOf(ctx context.Context, boxID string) (string, error) {
 	user, err := callerUser(ctx)
 	if err != nil {
 		return "", err
@@ -211,7 +254,7 @@ func ownedBox(ctx context.Context, boxID string) (string, error) {
 	if boxID != BoxID(user) {
 		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
-	return boxID, nil
+	return user, nil
 }
 
 func serviceError(ctx context.Context, logger *log.Fields, err error, action string) error {

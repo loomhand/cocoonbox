@@ -20,10 +20,13 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/dialer"
 	"github.com/CMGS/cocoonbox/api/edge"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/CMGS/cocoonbox/api/keyring/file"
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/machines/cocoonset"
+	"github.com/CMGS/cocoonbox/api/store/s3"
 )
 
 const (
@@ -62,7 +65,17 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "start cocoonset backend")
 	}
-	svc := boxes.New(backend, machines.Flavor{VCPUs: cfg.Flavor.VCPUs, MemoryMiB: cfg.Flavor.MemoryMiB, DiskGiB: cfg.Flavor.DiskGiB})
+	svc := boxes.New(backend, boxes.Defaults{
+		Flavor: machines.Flavor{VCPUs: cfg.Flavor.VCPUs, MemoryMiB: cfg.Flavor.MemoryMiB, DiskGiB: cfg.Flavor.DiskGiB},
+		Image:  cfg.Image,
+	})
+	if cfg.State.Bucket != "" {
+		agents := dialer.New(edgeToken)
+		defer agents.Close()
+		if err = enableState(ctx, cfg, svc, agents); err != nil {
+			logger.Fatalf(ctx, err, "enable state layer")
+		}
+	}
 	proxy := edge.NewProxy(svc, edgeToken)
 	defer proxy.Close()
 
@@ -109,4 +122,33 @@ func main() {
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
 	}
+}
+
+func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer) error {
+	access, secret, err := cfg.StoreCredentials()
+	if err != nil {
+		return err
+	}
+	st, err := s3.New(s3.Options{
+		Endpoint:       cfg.State.Endpoint,
+		PublicEndpoint: cfg.State.PublicEndpoint,
+		Secure:         cfg.State.Secure,
+		Region:         cfg.State.Region,
+		Bucket:         cfg.State.Bucket,
+		Prefix:         cfg.State.Prefix,
+		AccessKey:      access,
+		SecretKey:      secret,
+		PresignTTL:     time.Duration(cfg.State.PresignTTL),
+	})
+	if err != nil {
+		return err
+	}
+	keys, err := file.New(cfg.State.KeyringDir)
+	if err != nil {
+		return err
+	}
+	svc.EnableState(agents, st, keys)
+	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
+	log.WithFunc("main.enableState").Infof(ctx, "state layer on %s/%s, saves every %s", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval))
+	return nil
 }

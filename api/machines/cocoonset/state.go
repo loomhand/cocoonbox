@@ -119,7 +119,7 @@ func buildCocoonSet(opts Options, spec machines.Spec) *cocoonv1.CocoonSet {
 		Spec: cocoonv1.CocoonSetSpec{
 			SnapshotPolicy: cocoonv1.SnapshotPolicyNever,
 			Agent: cocoonv1.AgentSpec{
-				Image:     opts.Image,
+				Image:     cmp.Or(spec.Image, opts.Image),
 				Mode:      cocoonv1.AgentModeClone,
 				Network:   opts.Network,
 				ProbePort: opts.ProbePort,

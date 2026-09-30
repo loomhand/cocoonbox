@@ -45,6 +45,24 @@ func TestEnsure(t *testing.T) {
 	}
 }
 
+func TestImageOverrideAndDelete(t *testing.T) {
+	env := newTestEnv(t)
+	spec := machines.Spec{ID: boxID + "-r1", Owner: "alice", Flavor: machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}, Image: "cocoonbox-desktop-v7"}
+	m, _, err := env.backend.Ensure(t.Context(), spec)
+	if err != nil || m.Image != "cocoonbox-desktop-v7" {
+		t.Fatalf("Ensure with an image = %+v, %v", m, err)
+	}
+	if err := env.backend.Delete(t.Context(), spec.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := env.backend.Get(t.Context(), spec.ID); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("Get after Delete: %v, want ErrNotFound", err)
+	}
+	if err := env.backend.Delete(t.Context(), spec.ID); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("second Delete: %v, want ErrNotFound", err)
+	}
+}
+
 func TestHibernate(t *testing.T) {
 	env := newTestEnv(t)
 	if _, err := env.backend.Hibernate(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {

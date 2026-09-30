@@ -48,6 +48,8 @@ type Spec struct {
 	ID     string
 	Owner  string
 	Flavor Flavor
+	// Image overrides the backend's default image.
+	Image string
 }
 
 // Machine is a backend's view of one machine.
@@ -78,6 +80,7 @@ type Machines interface {
 	// Ensure creates the machine, or wakes it when hibernated, and returns without waiting.
 	Ensure(ctx context.Context, spec Spec) (Machine, Action, error)
 	Get(ctx context.Context, id string) (Machine, error)
+	// List returns owner's machines that are not being deleted, or every such machine when owner is empty.
 	List(ctx context.Context, owner string) ([]Machine, error)
 	// Hibernate requests hibernation and returns without waiting.
 	Hibernate(ctx context.Context, id string) (Machine, error)
@@ -85,4 +88,6 @@ type Machines interface {
 	Watch(ctx context.Context, id string, revision int64) <-chan Machine
 	// Address returns host:port of the running machine's agent.
 	Address(ctx context.Context, id string) (string, error)
+	// Delete removes the machine and its disk.
+	Delete(ctx context.Context, id string) error
 }

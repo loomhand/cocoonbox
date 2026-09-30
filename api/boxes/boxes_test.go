@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"regexp"
@@ -22,7 +23,10 @@ const (
 	aliceBox = "cb-2bd806c97f0e"
 )
 
-var defaultFlavor = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
+var (
+	defaultFlavor = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
+	testDefaults  = Defaults{Flavor: defaultFlavor, Image: "desktop-v2"}
+)
 
 func TestBoxID(t *testing.T) {
 	id := BoxID(alice)
@@ -36,7 +40,7 @@ func TestBoxID(t *testing.T) {
 
 func TestEnsureCreatesBox(t *testing.T) {
 	fake := newFakeMachines()
-	svc := New(fake, defaultFlavor)
+	svc := New(fake, testDefaults)
 	ctx := auth.WithUser(t.Context(), alice)
 
 	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
@@ -79,7 +83,7 @@ func TestEnsureCreatesBox(t *testing.T) {
 func TestHibernateAndWake(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, defaultFlavor)
+	svc := New(fake, testDefaults)
 	ctx := auth.WithUser(t.Context(), alice)
 
 	op, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
@@ -125,7 +129,7 @@ func TestOperationFails(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeMachines()
-			svc := New(fake, defaultFlavor)
+			svc := New(fake, testDefaults)
 			ctx := auth.WithUser(t.Context(), alice)
 			resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
 			if err != nil {
@@ -143,7 +147,7 @@ func TestOperationFails(t *testing.T) {
 func TestSupersededOperationFails(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, defaultFlavor)
+	svc := New(fake, testDefaults)
 	ctx := auth.WithUser(t.Context(), alice)
 	hibernate, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
 	if err != nil {
@@ -162,7 +166,7 @@ func TestSupersededOperationFails(t *testing.T) {
 func TestOwnership(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor})
-	svc := New(fake, defaultFlavor)
+	svc := New(fake, testDefaults)
 	bob := auth.WithUser(t.Context(), "bob")
 
 	if _, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
@@ -205,8 +209,8 @@ func TestEnsureErrors(t *testing.T) {
 		want    codes.Code
 		message string
 	}{
-		{name: "other flavor", stored: &machines.Machine{ID: aliceBox, Flavor: defaultFlavor}, flavor: &controlv1.Flavor{Vcpus: 2}, want: codes.FailedPrecondition, message: "box exists with flavor vcpus:4 memory_mib:8192 disk_gib:40"},
-		{name: "default flavor spelled out", stored: &machines.Machine{ID: aliceBox, Flavor: defaultFlavor, State: machines.StateRunning}, flavor: &controlv1.Flavor{Vcpus: 4}, want: codes.OK},
+		{name: "other flavor", stored: &machines.Machine{ID: aliceBox, Owner: alice, Flavor: defaultFlavor}, flavor: &controlv1.Flavor{Vcpus: 2}, want: codes.FailedPrecondition, message: "box exists with flavor vcpus:4 memory_mib:8192 disk_gib:40"},
+		{name: "default flavor spelled out", stored: &machines.Machine{ID: aliceBox, Owner: alice, Flavor: defaultFlavor, State: machines.StateRunning}, flavor: &controlv1.Flavor{Vcpus: 4}, want: codes.OK},
 		{name: "deleting", ensure: machines.ErrDeleting, want: codes.FailedPrecondition, message: "box is being deleted"},
 		{name: "conflict", ensure: machines.ErrConflict, want: codes.Aborted, message: "ensure box: concurrent change, retry"},
 		{name: "backend down", ensure: errors.New("apiserver unreachable"), want: codes.Unavailable, message: "ensure box failed"},
@@ -218,7 +222,7 @@ func TestEnsureErrors(t *testing.T) {
 				fake.put(*tt.stored)
 			}
 			fake.ensureErr = tt.ensure
-			svc := New(fake, defaultFlavor)
+			svc := New(fake, testDefaults)
 			_, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{Flavor: tt.flavor})
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Ensure: %v, want %s %q", err, tt.want, tt.message)
@@ -235,15 +239,16 @@ func TestResolve(t *testing.T) {
 		message string
 	}{
 		{name: "running", want: codes.OK},
-		{name: "absent", addrErr: machines.ErrNotFound, want: codes.NotFound, message: "box not found"},
+		{name: "machine vanished", addrErr: machines.ErrNotFound, want: codes.NotFound, message: "box not found"},
 		{name: "hibernated", addrErr: &machines.NotRunningError{State: machines.StateHibernated}, want: codes.Unavailable, message: "box is BOX_STATE_HIBERNATED"},
 		{name: "no address", addrErr: machines.ErrNoAddress, want: codes.Unavailable, message: "box has no address yet"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeMachines()
+			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 			fake.addr, fake.addrErr = "10.203.0.10:7443", tt.addrErr
-			addr, err := New(fake, defaultFlavor).Resolve(t.Context(), alice, aliceBox)
+			addr, err := New(fake, testDefaults).Resolve(t.Context(), alice, aliceBox)
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Resolve: %v, want %s %q", err, tt.want, tt.message)
 			}
@@ -258,6 +263,8 @@ func TestResolve(t *testing.T) {
 type fakeMachines struct {
 	mu        sync.Mutex
 	machines  map[string]machines.Machine
+	deleted   []string
+	clock     int64
 	specs     []machines.Spec
 	pending   []machines.Machine
 	pushed    chan struct{}
@@ -281,7 +288,11 @@ func (f *fakeMachines) Ensure(_ context.Context, spec machines.Spec) (machines.M
 	m, ok := f.machines[spec.ID]
 	switch {
 	case !ok:
-		m = machines.Machine{ID: spec.ID, Owner: spec.Owner, State: machines.StateStarting, Flavor: spec.Flavor, Revision: 1}
+		f.clock++
+		m = machines.Machine{
+			ID: spec.ID, Owner: spec.Owner, State: machines.StateStarting, Flavor: spec.Flavor,
+			Image: cmp.Or(spec.Image, "desktop-v1"), CreatedAt: time.Unix(f.clock, 0), Revision: 1,
+		}
 		f.machines[spec.ID] = m
 		return m, machines.ActionCreated, nil
 	case m.State == machines.StateHibernated || m.State == machines.StateHibernating:
@@ -308,7 +319,7 @@ func (f *fakeMachines) List(_ context.Context, owner string) ([]machines.Machine
 	defer f.mu.Unlock()
 	var out []machines.Machine
 	for _, m := range f.machines {
-		if m.Owner == owner {
+		if owner == "" || m.Owner == owner {
 			out = append(out, m)
 		}
 	}
@@ -354,13 +365,28 @@ func (f *fakeMachines) Watch(ctx context.Context, _ string, revision int64) <-ch
 	return out
 }
 
-func (f *fakeMachines) Address(context.Context, string) (string, error) {
+func (f *fakeMachines) Address(_ context.Context, id string) (string, error) {
+	if f.addr == "" && f.addrErr == nil {
+		return id + ":7443", nil
+	}
 	return f.addr, f.addrErr
+}
+
+func (f *fakeMachines) Delete(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.machines, id)
+	f.deleted = append(f.deleted, id)
+	return nil
 }
 
 func (f *fakeMachines) put(m machines.Machine) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if m.CreatedAt.IsZero() {
+		f.clock++
+		m.CreatedAt = time.Unix(f.clock, 0)
+	}
 	f.machines[m.ID] = m
 }
 
@@ -380,6 +406,8 @@ func (f *fakeMachines) take(ctx context.Context) (machines.Machine, bool, <-chan
 	}
 	m := f.pending[0]
 	f.pending = f.pending[1:]
+	cur := f.machines[m.ID]
+	m.Owner, m.Flavor, m.Image, m.CreatedAt = cmp.Or(m.Owner, cur.Owner), cmp.Or(m.Flavor, cur.Flavor), cmp.Or(m.Image, cur.Image), cur.CreatedAt
 	f.machines[m.ID] = m
 	return m, true, f.pushed
 }

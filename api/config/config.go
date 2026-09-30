@@ -3,12 +3,14 @@ package config
 
 import (
 	"cmp"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"sigs.k8s.io/yaml"
 )
@@ -22,6 +24,11 @@ const (
 	defaultProbePort     = 22
 	defaultAgentPort     = 7443
 	defaultEdgeTokenFile = "/etc/cocoonbox/edge-token" //nolint:gosec // a path, not a credential
+
+	defaultStateInterval = 15 * time.Minute
+	defaultPresignTTL    = time.Hour
+	defaultKeyringDir    = "/var/lib/cocoonbox-api/keys"
+	defaultRegion        = "us-east-1"
 
 	defaultVCPUs     = 4
 	defaultMemoryMiB = 8192
@@ -43,6 +50,38 @@ type User struct {
 	TokenSHA256 string `json:"token_sha256"`
 }
 
+// Duration is a time.Duration written as a Go duration string ("15m").
+type Duration time.Duration
+
+func (d *Duration) UnmarshalJSON(raw []byte) error {
+	var text string
+	if err := json.Unmarshal(raw, &text); err != nil {
+		return fmt.Errorf("duration must be a string like \"15m\": %w", err)
+	}
+	parsed, err := time.ParseDuration(text)
+	if err != nil {
+		return err
+	}
+	*d = Duration(parsed)
+	return nil
+}
+
+// State configures the object store for user state; an empty Bucket disables the state layer.
+type State struct {
+	Endpoint string `json:"endpoint"`
+	// PublicEndpoint is the host:port box agents use; empty uses Endpoint.
+	PublicEndpoint string `json:"public_endpoint"`
+	Secure         bool   `json:"secure"`
+	Region         string `json:"region"`
+	Bucket         string `json:"bucket"`
+	Prefix         string `json:"prefix"`
+	// CredentialsFile holds STORE_ACCESS_KEY and STORE_SECRET_KEY lines.
+	CredentialsFile string   `json:"credentials_file"`
+	KeyringDir      string   `json:"keyring_dir"`
+	Interval        Duration `json:"interval"`
+	PresignTTL      Duration `json:"presign_ttl"`
+}
+
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
 	Listen        string `json:"listen"`
@@ -55,6 +94,7 @@ type Config struct {
 	AgentPort     int    `json:"agent_port"`
 	EdgeTokenFile string `json:"edge_token_file"`
 	Flavor        Flavor `json:"flavor"`
+	State         State  `json:"state"`
 	Users         []User `json:"users"`
 }
 
@@ -74,6 +114,25 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config %s: %w", path, err)
 	}
 	return &cfg, nil
+}
+
+// StoreCredentials reads the access and secret key from State.CredentialsFile.
+func (c *Config) StoreCredentials() (string, string, error) {
+	raw, err := os.ReadFile(c.State.CredentialsFile)
+	if err != nil {
+		return "", "", fmt.Errorf("read store credentials: %w", err)
+	}
+	values := map[string]string{}
+	for line := range strings.Lines(string(raw)) {
+		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+			values[k] = v
+		}
+	}
+	access, secret := values["STORE_ACCESS_KEY"], values["STORE_SECRET_KEY"]
+	if access == "" || secret == "" {
+		return "", "", fmt.Errorf("%s must set STORE_ACCESS_KEY and STORE_SECRET_KEY", c.State.CredentialsFile)
+	}
+	return access, secret, nil
 }
 
 // EdgeToken reads the shared secret the edge presents to box agents.
@@ -101,11 +160,15 @@ func (c *Config) applyDefaults() {
 	c.Flavor.VCPUs = cmp.Or(c.Flavor.VCPUs, defaultVCPUs)
 	c.Flavor.MemoryMiB = cmp.Or(c.Flavor.MemoryMiB, defaultMemoryMiB)
 	c.Flavor.DiskGiB = cmp.Or(c.Flavor.DiskGiB, defaultDiskGiB)
+	c.State.Region = cmp.Or(c.State.Region, defaultRegion)
+	c.State.KeyringDir = cmp.Or(c.State.KeyringDir, defaultKeyringDir)
+	c.State.Interval = cmp.Or(c.State.Interval, Duration(defaultStateInterval))
+	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 }
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.Kubeconfig, &c.EdgeTokenFile} {
+	for _, p := range []*string{&c.Kubeconfig, &c.EdgeTokenFile, &c.State.CredentialsFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -133,6 +196,9 @@ func (c *Config) validate() error {
 	}
 	if c.ProbePort < 0 || c.ProbePort > 65535 {
 		errs = append(errs, fmt.Errorf("probe_port must be in 0..65535, got %d", c.ProbePort))
+	}
+	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
+		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
 	}
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))

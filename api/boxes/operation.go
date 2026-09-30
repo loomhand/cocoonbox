@@ -13,6 +13,7 @@ import (
 
 const (
 	operationTimeout   = 10 * time.Minute
+	stateTimeout       = time.Hour
 	operationRetention = time.Hour
 )
 
@@ -51,6 +52,39 @@ func (o *operation) record(obs observation) {
 		o.appendLocked(controlv1.Phase_PHASE_FAILED, cmp.Or(obs.reason, obs.detail), obs.state)
 	default:
 		o.appendLocked(o.phase, obs.detail, obs.state)
+	}
+}
+
+// note appends a progress event unless it repeats the previous one.
+func (o *operation) note(phase controlv1.Phase, state controlv1.BoxState, detail string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	obs := observation{state: state, detail: detail}
+	if !o.finishedAt.IsZero() || obs == o.last {
+		return
+	}
+	o.last = obs
+	o.appendLocked(phase, detail, state)
+}
+
+// progress appends a transfer event carrying byte counts.
+func (o *operation) progress(phase controlv1.Phase, detail string, done, total uint64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if !o.finishedAt.IsZero() {
+		return
+	}
+	o.last = observation{state: controlv1.BoxState_BOX_STATE_RUNNING, detail: detail}
+	o.appendLocked(phase, detail, o.last.state)
+	ev := o.events[len(o.events)-1]
+	ev.DoneBytes, ev.TotalBytes = done, total
+}
+
+func (o *operation) succeed(detail string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.finishedAt.IsZero() {
+		o.appendLocked(controlv1.Phase_PHASE_DONE, detail, o.last.state)
 	}
 }
 
@@ -114,7 +148,7 @@ func newOperations() *operations {
 }
 
 // start returns the running operation of the same phase on boxID, or supersedes whatever runs there with a new one whose context derives from base.
-func (r *operations) start(base context.Context, boxID string, phase controlv1.Phase, gen int64) (*operation, bool) {
+func (r *operations) start(base context.Context, boxID string, phase controlv1.Phase, gen int64, timeout time.Duration) (*operation, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sweepLocked()
@@ -124,7 +158,7 @@ func (r *operations) start(base context.Context, boxID string, phase controlv1.P
 		}
 	}
 	op := &operation{id: rand.Text(), boxID: boxID, phase: phase, gen: gen, changed: make(chan struct{})}
-	op.ctx, op.stop = context.WithTimeout(base, operationTimeout)
+	op.ctx, op.stop = context.WithTimeout(base, timeout)
 	if cur := r.active[boxID]; cur != nil {
 		cur.fail("superseded by operation " + op.id)
 	}
@@ -139,10 +173,18 @@ func (r *operations) get(id string) *operation {
 	return r.byID[id]
 }
 
+// activeFor returns the unfinished operation on boxID, nil when none runs.
 func (r *operations) activeFor(boxID string) *operation {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.active[boxID]
+	op := r.active[boxID]
+	if op == nil {
+		return nil
+	}
+	if _, done := op.finished(); done {
+		return nil
+	}
+	return op
 }
 
 func (r *operations) sweepLocked() {

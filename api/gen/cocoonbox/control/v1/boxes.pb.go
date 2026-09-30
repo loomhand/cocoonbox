@@ -88,6 +88,10 @@ const (
 	Phase_PHASE_SNAPSHOTTING Phase = 3
 	Phase_PHASE_DONE         Phase = 4
 	Phase_PHASE_FAILED       Phase = 5
+	// Uploading the user state to object storage.
+	Phase_PHASE_SAVING Phase = 6
+	// Writing the user state into a new machine.
+	Phase_PHASE_RESTORING Phase = 7
 )
 
 // Enum value maps for Phase.
@@ -99,6 +103,8 @@ var (
 		3: "PHASE_SNAPSHOTTING",
 		4: "PHASE_DONE",
 		5: "PHASE_FAILED",
+		6: "PHASE_SAVING",
+		7: "PHASE_RESTORING",
 	}
 	Phase_value = map[string]int32{
 		"PHASE_UNSPECIFIED":  0,
@@ -107,6 +113,8 @@ var (
 		"PHASE_SNAPSHOTTING": 3,
 		"PHASE_DONE":         4,
 		"PHASE_FAILED":       5,
+		"PHASE_SAVING":       6,
+		"PHASE_RESTORING":    7,
 	}
 )
 
@@ -249,6 +257,10 @@ type Box struct {
 	Flavor        *Flavor                `protobuf:"bytes,4,opt,name=flavor,proto3" json:"flavor,omitempty"`
 	FailureReason string                 `protobuf:"bytes,5,opt,name=failure_reason,json=failureReason,proto3" json:"failure_reason,omitempty"`
 	CreatedAtMs   int64                  `protobuf:"varint,6,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
+	// Time of the latest user-state snapshot in object storage; 0 before the first.
+	LastSavedAtMs int64 `protobuf:"varint,7,opt,name=last_saved_at_ms,json=lastSavedAtMs,proto3" json:"last_saved_at_ms,omitempty"`
+	// Image a new box gets today, and the default Rebase target; differs from image when an upgrade is available.
+	LatestImage   string `protobuf:"bytes,8,opt,name=latest_image,json=latestImage,proto3" json:"latest_image,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -323,6 +335,20 @@ func (x *Box) GetCreatedAtMs() int64 {
 		return x.CreatedAtMs
 	}
 	return 0
+}
+
+func (x *Box) GetLastSavedAtMs() int64 {
+	if x != nil {
+		return x.LastSavedAtMs
+	}
+	return 0
+}
+
+func (x *Box) GetLatestImage() string {
+	if x != nil {
+		return x.LatestImage
+	}
+	return ""
 }
 
 type Operation struct {
@@ -474,6 +500,59 @@ func (x *EnsureResponse) GetOperation() *Operation {
 	return nil
 }
 
+type RebaseRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	BoxId string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
+	// Target image; empty selects the current default image.
+	Image         string `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RebaseRequest) Reset() {
+	*x = RebaseRequest{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RebaseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RebaseRequest) ProtoMessage() {}
+
+func (x *RebaseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RebaseRequest.ProtoReflect.Descriptor instead.
+func (*RebaseRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *RebaseRequest) GetBoxId() string {
+	if x != nil {
+		return x.BoxId
+	}
+	return ""
+}
+
+func (x *RebaseRequest) GetImage() string {
+	if x != nil {
+		return x.Image
+	}
+	return ""
+}
+
 type GetBoxRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	BoxId         string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
@@ -483,7 +562,7 @@ type GetBoxRequest struct {
 
 func (x *GetBoxRequest) Reset() {
 	*x = GetBoxRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[6]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -495,7 +574,7 @@ func (x *GetBoxRequest) String() string {
 func (*GetBoxRequest) ProtoMessage() {}
 
 func (x *GetBoxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[6]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -508,7 +587,7 @@ func (x *GetBoxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBoxRequest.ProtoReflect.Descriptor instead.
 func (*GetBoxRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{6}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *GetBoxRequest) GetBoxId() string {
@@ -526,7 +605,7 @@ type ListBoxesRequest struct {
 
 func (x *ListBoxesRequest) Reset() {
 	*x = ListBoxesRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[7]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -538,7 +617,7 @@ func (x *ListBoxesRequest) String() string {
 func (*ListBoxesRequest) ProtoMessage() {}
 
 func (x *ListBoxesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[7]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -551,7 +630,7 @@ func (x *ListBoxesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBoxesRequest.ProtoReflect.Descriptor instead.
 func (*ListBoxesRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{7}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{8}
 }
 
 type ListBoxesResponse struct {
@@ -563,7 +642,7 @@ type ListBoxesResponse struct {
 
 func (x *ListBoxesResponse) Reset() {
 	*x = ListBoxesResponse{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[8]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -575,7 +654,7 @@ func (x *ListBoxesResponse) String() string {
 func (*ListBoxesResponse) ProtoMessage() {}
 
 func (x *ListBoxesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[8]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -588,7 +667,7 @@ func (x *ListBoxesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBoxesResponse.ProtoReflect.Descriptor instead.
 func (*ListBoxesResponse) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{8}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ListBoxesResponse) GetBoxes() []*Box {
@@ -609,7 +688,7 @@ type WatchOperationRequest struct {
 
 func (x *WatchOperationRequest) Reset() {
 	*x = WatchOperationRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[9]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -621,7 +700,7 @@ func (x *WatchOperationRequest) String() string {
 func (*WatchOperationRequest) ProtoMessage() {}
 
 func (x *WatchOperationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[9]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -634,7 +713,7 @@ func (x *WatchOperationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchOperationRequest.ProtoReflect.Descriptor instead.
 func (*WatchOperationRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{9}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *WatchOperationRequest) GetOperationId() string {
@@ -652,20 +731,23 @@ func (x *WatchOperationRequest) GetFromOffsetKey() string {
 }
 
 type OperationEvent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OperationId   string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
-	Phase         Phase                  `protobuf:"varint,2,opt,name=phase,proto3,enum=cocoonbox.control.v1.Phase" json:"phase,omitempty"`
-	Detail        string                 `protobuf:"bytes,3,opt,name=detail,proto3" json:"detail,omitempty"`
-	OffsetKey     string                 `protobuf:"bytes,4,opt,name=offset_key,json=offsetKey,proto3" json:"offset_key,omitempty"`
-	AtMs          int64                  `protobuf:"varint,5,opt,name=at_ms,json=atMs,proto3" json:"at_ms,omitempty"`
-	BoxState      BoxState               `protobuf:"varint,6,opt,name=box_state,json=boxState,proto3,enum=cocoonbox.control.v1.BoxState" json:"box_state,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	OperationId string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
+	Phase       Phase                  `protobuf:"varint,2,opt,name=phase,proto3,enum=cocoonbox.control.v1.Phase" json:"phase,omitempty"`
+	Detail      string                 `protobuf:"bytes,3,opt,name=detail,proto3" json:"detail,omitempty"`
+	OffsetKey   string                 `protobuf:"bytes,4,opt,name=offset_key,json=offsetKey,proto3" json:"offset_key,omitempty"`
+	AtMs        int64                  `protobuf:"varint,5,opt,name=at_ms,json=atMs,proto3" json:"at_ms,omitempty"`
+	BoxState    BoxState               `protobuf:"varint,6,opt,name=box_state,json=boxState,proto3,enum=cocoonbox.control.v1.BoxState" json:"box_state,omitempty"`
+	// Transfer progress while saving or restoring; 0 otherwise.
+	DoneBytes     uint64 `protobuf:"varint,7,opt,name=done_bytes,json=doneBytes,proto3" json:"done_bytes,omitempty"`
+	TotalBytes    uint64 `protobuf:"varint,8,opt,name=total_bytes,json=totalBytes,proto3" json:"total_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *OperationEvent) Reset() {
 	*x = OperationEvent{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[10]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -677,7 +759,7 @@ func (x *OperationEvent) String() string {
 func (*OperationEvent) ProtoMessage() {}
 
 func (x *OperationEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[10]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -690,7 +772,7 @@ func (x *OperationEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationEvent.ProtoReflect.Descriptor instead.
 func (*OperationEvent) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{10}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *OperationEvent) GetOperationId() string {
@@ -735,6 +817,20 @@ func (x *OperationEvent) GetBoxState() BoxState {
 	return BoxState_BOX_STATE_UNSPECIFIED
 }
 
+func (x *OperationEvent) GetDoneBytes() uint64 {
+	if x != nil {
+		return x.DoneBytes
+	}
+	return 0
+}
+
+func (x *OperationEvent) GetTotalBytes() uint64 {
+	if x != nil {
+		return x.TotalBytes
+	}
+	return 0
+}
+
 var File_cocoonbox_control_v1_boxes_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
@@ -746,14 +842,16 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x05vcpus\x18\x01 \x01(\rR\x05vcpus\x12\x1d\n" +
 	"\n" +
 	"memory_mib\x18\x02 \x01(\rR\tmemoryMib\x12\x19\n" +
-	"\bdisk_gib\x18\x03 \x01(\rR\adiskGib\"\xe2\x01\n" +
+	"\bdisk_gib\x18\x03 \x01(\rR\adiskGib\"\xae\x02\n" +
 	"\x03Box\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\x05state\x18\x02 \x01(\x0e2\x1e.cocoonbox.control.v1.BoxStateR\x05state\x12\x14\n" +
 	"\x05image\x18\x03 \x01(\tR\x05image\x124\n" +
 	"\x06flavor\x18\x04 \x01(\v2\x1c.cocoonbox.control.v1.FlavorR\x06flavor\x12%\n" +
 	"\x0efailure_reason\x18\x05 \x01(\tR\rfailureReason\x12\"\n" +
-	"\rcreated_at_ms\x18\x06 \x01(\x03R\vcreatedAtMs\"2\n" +
+	"\rcreated_at_ms\x18\x06 \x01(\x03R\vcreatedAtMs\x12'\n" +
+	"\x10last_saved_at_ms\x18\a \x01(\x03R\rlastSavedAtMs\x12!\n" +
+	"\flatest_image\x18\b \x01(\tR\vlatestImage\"2\n" +
 	"\tOperation\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06box_id\x18\x02 \x01(\tR\x05boxId\"E\n" +
@@ -761,7 +859,10 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x06flavor\x18\x01 \x01(\v2\x1c.cocoonbox.control.v1.FlavorR\x06flavor\"|\n" +
 	"\x0eEnsureResponse\x12+\n" +
 	"\x03box\x18\x01 \x01(\v2\x19.cocoonbox.control.v1.BoxR\x03box\x12=\n" +
-	"\toperation\x18\x02 \x01(\v2\x1f.cocoonbox.control.v1.OperationR\toperation\"&\n" +
+	"\toperation\x18\x02 \x01(\v2\x1f.cocoonbox.control.v1.OperationR\toperation\"<\n" +
+	"\rRebaseRequest\x12\x15\n" +
+	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x14\n" +
+	"\x05image\x18\x02 \x01(\tR\x05image\"&\n" +
 	"\rGetBoxRequest\x12\x15\n" +
 	"\x06box_id\x18\x01 \x01(\tR\x05boxId\"\x12\n" +
 	"\x10ListBoxesRequest\"D\n" +
@@ -769,7 +870,7 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x05boxes\x18\x01 \x03(\v2\x19.cocoonbox.control.v1.BoxR\x05boxes\"b\n" +
 	"\x15WatchOperationRequest\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12&\n" +
-	"\x0ffrom_offset_key\x18\x02 \x01(\tR\rfromOffsetKey\"\xef\x01\n" +
+	"\x0ffrom_offset_key\x18\x02 \x01(\tR\rfromOffsetKey\"\xaf\x02\n" +
 	"\x0eOperationEvent\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x121\n" +
 	"\x05phase\x18\x02 \x01(\x0e2\x1b.cocoonbox.control.v1.PhaseR\x05phase\x12\x16\n" +
@@ -777,14 +878,18 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\n" +
 	"offset_key\x18\x04 \x01(\tR\toffsetKey\x12\x13\n" +
 	"\x05at_ms\x18\x05 \x01(\x03R\x04atMs\x12;\n" +
-	"\tbox_state\x18\x06 \x01(\x0e2\x1e.cocoonbox.control.v1.BoxStateR\bboxState*\x9f\x01\n" +
+	"\tbox_state\x18\x06 \x01(\x0e2\x1e.cocoonbox.control.v1.BoxStateR\bboxState\x12\x1d\n" +
+	"\n" +
+	"done_bytes\x18\a \x01(\x04R\tdoneBytes\x12\x1f\n" +
+	"\vtotal_bytes\x18\b \x01(\x04R\n" +
+	"totalBytes*\x9f\x01\n" +
 	"\bBoxState\x12\x19\n" +
 	"\x15BOX_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12BOX_STATE_STARTING\x10\x01\x12\x15\n" +
 	"\x11BOX_STATE_RUNNING\x10\x02\x12\x19\n" +
 	"\x15BOX_STATE_HIBERNATING\x10\x03\x12\x18\n" +
 	"\x14BOX_STATE_HIBERNATED\x10\x04\x12\x14\n" +
-	"\x10BOX_STATE_FAILED\x10\x05*~\n" +
+	"\x10BOX_STATE_FAILED\x10\x05*\xa5\x01\n" +
 	"\x05Phase\x12\x15\n" +
 	"\x11PHASE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0ePHASE_CREATING\x10\x01\x12\x10\n" +
@@ -792,13 +897,17 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x12PHASE_SNAPSHOTTING\x10\x03\x12\x0e\n" +
 	"\n" +
 	"PHASE_DONE\x10\x04\x12\x10\n" +
-	"\fPHASE_FAILED\x10\x052\xaf\x03\n" +
+	"\fPHASE_FAILED\x10\x05\x12\x10\n" +
+	"\fPHASE_SAVING\x10\x06\x12\x13\n" +
+	"\x0fPHASE_RESTORING\x10\a2\xcb\x04\n" +
 	"\x05Boxes\x12S\n" +
 	"\x06Ensure\x12#.cocoonbox.control.v1.EnsureRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12E\n" +
 	"\x03Get\x12#.cocoonbox.control.v1.GetBoxRequest\x1a\x19.cocoonbox.control.v1.Box\x12W\n" +
 	"\x04List\x12&.cocoonbox.control.v1.ListBoxesRequest\x1a'.cocoonbox.control.v1.ListBoxesResponse\x12J\n" +
 	"\tHibernate\x12\x1c.cocoonbox.control.v1.BoxRef\x1a\x1f.cocoonbox.control.v1.Operation\x12e\n" +
-	"\x0eWatchOperation\x12+.cocoonbox.control.v1.WatchOperationRequest\x1a$.cocoonbox.control.v1.OperationEvent0\x01BBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\x0eWatchOperation\x12+.cocoonbox.control.v1.WatchOperationRequest\x1a$.cocoonbox.control.v1.OperationEvent0\x01\x12J\n" +
+	"\tSaveState\x12\x1c.cocoonbox.control.v1.BoxRef\x1a\x1f.cocoonbox.control.v1.Operation\x12N\n" +
+	"\x06Rebase\x12#.cocoonbox.control.v1.RebaseRequest\x1a\x1f.cocoonbox.control.v1.OperationBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_boxes_proto_rawDescOnce sync.Once
@@ -813,7 +922,7 @@ func file_cocoonbox_control_v1_boxes_proto_rawDescGZIP() []byte {
 }
 
 var file_cocoonbox_control_v1_boxes_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
 	(BoxState)(0),                 // 0: cocoonbox.control.v1.BoxState
 	(Phase)(0),                    // 1: cocoonbox.control.v1.Phase
@@ -823,11 +932,12 @@ var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
 	(*Operation)(nil),             // 5: cocoonbox.control.v1.Operation
 	(*EnsureRequest)(nil),         // 6: cocoonbox.control.v1.EnsureRequest
 	(*EnsureResponse)(nil),        // 7: cocoonbox.control.v1.EnsureResponse
-	(*GetBoxRequest)(nil),         // 8: cocoonbox.control.v1.GetBoxRequest
-	(*ListBoxesRequest)(nil),      // 9: cocoonbox.control.v1.ListBoxesRequest
-	(*ListBoxesResponse)(nil),     // 10: cocoonbox.control.v1.ListBoxesResponse
-	(*WatchOperationRequest)(nil), // 11: cocoonbox.control.v1.WatchOperationRequest
-	(*OperationEvent)(nil),        // 12: cocoonbox.control.v1.OperationEvent
+	(*RebaseRequest)(nil),         // 8: cocoonbox.control.v1.RebaseRequest
+	(*GetBoxRequest)(nil),         // 9: cocoonbox.control.v1.GetBoxRequest
+	(*ListBoxesRequest)(nil),      // 10: cocoonbox.control.v1.ListBoxesRequest
+	(*ListBoxesResponse)(nil),     // 11: cocoonbox.control.v1.ListBoxesResponse
+	(*WatchOperationRequest)(nil), // 12: cocoonbox.control.v1.WatchOperationRequest
+	(*OperationEvent)(nil),        // 13: cocoonbox.control.v1.OperationEvent
 }
 var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	0,  // 0: cocoonbox.control.v1.Box.state:type_name -> cocoonbox.control.v1.BoxState
@@ -839,17 +949,21 @@ var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	1,  // 6: cocoonbox.control.v1.OperationEvent.phase:type_name -> cocoonbox.control.v1.Phase
 	0,  // 7: cocoonbox.control.v1.OperationEvent.box_state:type_name -> cocoonbox.control.v1.BoxState
 	6,  // 8: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
-	8,  // 9: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
-	9,  // 10: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
+	9,  // 9: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
+	10, // 10: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
 	2,  // 11: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
-	11, // 12: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
-	7,  // 13: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
-	4,  // 14: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
-	10, // 15: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
-	5,  // 16: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
-	12, // 17: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
-	13, // [13:18] is the sub-list for method output_type
-	8,  // [8:13] is the sub-list for method input_type
+	12, // 12: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
+	2,  // 13: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
+	8,  // 14: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
+	7,  // 15: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
+	4,  // 16: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
+	11, // 17: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
+	5,  // 18: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
+	13, // 19: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
+	5,  // 20: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
+	5,  // 21: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
+	15, // [15:22] is the sub-list for method output_type
+	8,  // [8:15] is the sub-list for method input_type
 	8,  // [8:8] is the sub-list for extension type_name
 	8,  // [8:8] is the sub-list for extension extendee
 	0,  // [0:8] is the sub-list for field type_name
@@ -866,7 +980,7 @@ func file_cocoonbox_control_v1_boxes_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_boxes_proto_rawDesc), len(file_cocoonbox_control_v1_boxes_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

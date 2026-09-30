@@ -24,6 +24,8 @@ const (
 	Boxes_List_FullMethodName           = "/cocoonbox.control.v1.Boxes/List"
 	Boxes_Hibernate_FullMethodName      = "/cocoonbox.control.v1.Boxes/Hibernate"
 	Boxes_WatchOperation_FullMethodName = "/cocoonbox.control.v1.Boxes/WatchOperation"
+	Boxes_SaveState_FullMethodName      = "/cocoonbox.control.v1.Boxes/SaveState"
+	Boxes_Rebase_FullMethodName         = "/cocoonbox.control.v1.Boxes/Rebase"
 )
 
 // BoxesClient is the client API for Boxes service.
@@ -40,6 +42,13 @@ type BoxesClient interface {
 	List(ctx context.Context, in *ListBoxesRequest, opts ...grpc.CallOption) (*ListBoxesResponse, error)
 	Hibernate(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
 	WatchOperation(ctx context.Context, in *WatchOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[OperationEvent], error)
+	// SaveState writes a quiesced snapshot of the box's user state (home,
+	// /workspace, agent.db) to object storage. The browser closes for the copy.
+	SaveState(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
+	// Rebase moves the box to another image and carries its user state over:
+	// quiesced save, new machine from the image, restore, switch, delete the old
+	// machine. The box id stays the same; running programs restart.
+	Rebase(ctx context.Context, in *RebaseRequest, opts ...grpc.CallOption) (*Operation, error)
 }
 
 type boxesClient struct {
@@ -109,6 +118,26 @@ func (c *boxesClient) WatchOperation(ctx context.Context, in *WatchOperationRequ
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Boxes_WatchOperationClient = grpc.ServerStreamingClient[OperationEvent]
 
+func (c *boxesClient) SaveState(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Operation)
+	err := c.cc.Invoke(ctx, Boxes_SaveState_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) Rebase(ctx context.Context, in *RebaseRequest, opts ...grpc.CallOption) (*Operation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Operation)
+	err := c.cc.Invoke(ctx, Boxes_Rebase_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BoxesServer is the server API for Boxes service.
 // All implementations must embed UnimplementedBoxesServer
 // for forward compatibility.
@@ -123,6 +152,13 @@ type BoxesServer interface {
 	List(context.Context, *ListBoxesRequest) (*ListBoxesResponse, error)
 	Hibernate(context.Context, *BoxRef) (*Operation, error)
 	WatchOperation(*WatchOperationRequest, grpc.ServerStreamingServer[OperationEvent]) error
+	// SaveState writes a quiesced snapshot of the box's user state (home,
+	// /workspace, agent.db) to object storage. The browser closes for the copy.
+	SaveState(context.Context, *BoxRef) (*Operation, error)
+	// Rebase moves the box to another image and carries its user state over:
+	// quiesced save, new machine from the image, restore, switch, delete the old
+	// machine. The box id stays the same; running programs restart.
+	Rebase(context.Context, *RebaseRequest) (*Operation, error)
 	mustEmbedUnimplementedBoxesServer()
 }
 
@@ -147,6 +183,12 @@ func (UnimplementedBoxesServer) Hibernate(context.Context, *BoxRef) (*Operation,
 }
 func (UnimplementedBoxesServer) WatchOperation(*WatchOperationRequest, grpc.ServerStreamingServer[OperationEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchOperation not implemented")
+}
+func (UnimplementedBoxesServer) SaveState(context.Context, *BoxRef) (*Operation, error) {
+	return nil, status.Error(codes.Unimplemented, "method SaveState not implemented")
+}
+func (UnimplementedBoxesServer) Rebase(context.Context, *RebaseRequest) (*Operation, error) {
+	return nil, status.Error(codes.Unimplemented, "method Rebase not implemented")
 }
 func (UnimplementedBoxesServer) mustEmbedUnimplementedBoxesServer() {}
 func (UnimplementedBoxesServer) testEmbeddedByValue()               {}
@@ -252,6 +294,42 @@ func _Boxes_WatchOperation_Handler(srv interface{}, stream grpc.ServerStream) er
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Boxes_WatchOperationServer = grpc.ServerStreamingServer[OperationEvent]
 
+func _Boxes_SaveState_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BoxRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).SaveState(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_SaveState_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).SaveState(ctx, req.(*BoxRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_Rebase_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RebaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).Rebase(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_Rebase_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).Rebase(ctx, req.(*RebaseRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Boxes_ServiceDesc is the grpc.ServiceDesc for Boxes service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -274,6 +352,14 @@ var Boxes_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Hibernate",
 			Handler:    _Boxes_Hibernate_Handler,
+		},
+		{
+			MethodName: "SaveState",
+			Handler:    _Boxes_SaveState_Handler,
+		},
+		{
+			MethodName: "Rebase",
+			Handler:    _Boxes_Rebase_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

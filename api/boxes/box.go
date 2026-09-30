@@ -22,15 +22,15 @@ var boxStates = map[machines.State]controlv1.BoxState{
 	machines.StateFailed:      controlv1.BoxState_BOX_STATE_FAILED,
 }
 
-// BoxID returns the id of user's box, which is also its machine id.
+// BoxID returns the id of user's box; its first machine carries the same id.
 func BoxID(user string) string {
 	sum := sha256.Sum256([]byte(user))
 	return idPrefix + hex.EncodeToString(sum[:])[:idHexLen]
 }
 
-func toBox(m machines.Machine) *controlv1.Box {
+func toBox(box string, m machines.Machine) *controlv1.Box {
 	return &controlv1.Box{
-		Id:            m.ID,
+		Id:            box,
 		State:         boxStates[m.State],
 		Image:         m.Image,
 		Flavor:        toFlavor(m.Flavor),
