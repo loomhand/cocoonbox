@@ -138,6 +138,7 @@ enable_units() {
 	systemctl enable --now nftables.service
 	nft -f /etc/nftables.conf
 	systemctl reload ssh || systemctl restart ssh
+	systemctl reload systemd-logind
 	systemctl enable cocoonbox-xorg.service cocoonbox-session.service
 	systemctl start user@1000.service
 	systemctl restart cocoonbox-xorg.service cocoonbox-session.service

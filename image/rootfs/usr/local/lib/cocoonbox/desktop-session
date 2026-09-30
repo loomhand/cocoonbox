@@ -3,6 +3,4 @@ set -eu
 until xset -q >/dev/null 2>&1; do sleep 0.5; done
 dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_SESSION_TYPE XDG_CURRENT_DESKTOP GTK_MODULES QT_ACCESSIBILITY
 xset s off s noblank -dpms
-xfconf-query -c xfce4-session -p /startup/ssh-agent/enabled -n -t bool -s false 2>/dev/null ||
-	xfconf-query -c xfce4-session -p /startup/ssh-agent/enabled -s false || true
 exec startxfce4
