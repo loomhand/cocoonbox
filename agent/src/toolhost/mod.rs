@@ -64,6 +64,7 @@ impl Host {
                 .shell(&call.agent_id, call.args)
                 .await
                 .map(Output::text),
+            "shell_close" => self.close_shell(&call.agent_id).await.map(Output::text),
             "read_file" => files::read(&self.workspace, call.args)
                 .await
                 .map(Output::text),
@@ -127,11 +128,25 @@ impl Host {
             let _ =
                 tokio::fs::set_permissions(&self.scratch, std::fs::Permissions::from_mode(0o700))
                     .await;
-            let script = self.scratch.join(format!("{}.sh", safe_name(agent_id)));
-            *slot = Some(Shell::spawn(&self.workspace, script).await?);
+            *slot = Some(Shell::spawn(&self.workspace, self.script(agent_id)).await?);
         }
         let shell = slot.as_mut().ok_or("shell missing")?;
         shell.run(command, timeout).await
+    }
+
+    async fn close_shell(&self, agent_id: &str) -> Result<String, String> {
+        let slot = self.shells.lock().await.remove(agent_id);
+        if let Some(slot) = slot
+            && let Some(mut shell) = slot.lock().await.take()
+        {
+            shell.kill();
+        }
+        let _ = tokio::fs::remove_file(self.script(agent_id)).await;
+        Ok("closed".to_owned())
+    }
+
+    fn script(&self, agent_id: &str) -> PathBuf {
+        self.scratch.join(format!("{}.sh", safe_name(agent_id)))
     }
 
     async fn desktop_save(&self) -> Result<String, String> {

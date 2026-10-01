@@ -227,6 +227,10 @@ impl Runtime {
         if !existed {
             return Err(Status::not_found(format!("agent {agent_id} not found")));
         }
+        let closed = self.dispatcher.close_shell(agent_id).await;
+        if closed.is_error {
+            eprintln!("delete {agent_id}: close its shell: {}", closed.text);
+        }
         self.journal
             .bus
             .publish(event::Body::AgentDeleted(pb::AgentDeleted {

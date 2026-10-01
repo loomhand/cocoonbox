@@ -118,6 +118,10 @@ impl Mcp {
             Ok(ids) if !ids.is_empty() => {
                 eprintln!("mcp: pruned {} idle agent(s)", ids.len());
                 for agent_id in ids {
+                    let closed = self.rt.dispatcher.close_shell(&agent_id).await;
+                    if closed.is_error {
+                        eprintln!("mcp: prune {agent_id}: close its shell: {}", closed.text);
+                    }
                     self.rt
                         .journal
                         .bus

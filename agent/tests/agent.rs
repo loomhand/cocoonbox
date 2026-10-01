@@ -395,6 +395,26 @@ fn gw_bodies(log: &Log, path: &str) -> Vec<Value> {
         .collect()
 }
 
+fn alive(pid_file: &Path) -> bool {
+    let pid = std::fs::read_to_string(pid_file).unwrap();
+    let out = std::process::Command::new("ps")
+        .args(["-o", "stat=", "-p", pid.trim()])
+        .output()
+        .unwrap();
+    let stat = String::from_utf8_lossy(&out.stdout);
+    !stat.trim().is_empty() && !stat.trim_start().starts_with('Z')
+}
+
+async fn wait_gone(pid_file: &Path) -> bool {
+    for _ in 0..100 {
+        if !alive(pid_file) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
+}
+
 fn write_identity(path: &Path, key: &SigningKey, wake_id: &str) -> String {
     let public_key = key.verifying_key().to_bytes();
     let key_id = hex::encode(Sha256::digest(public_key))[..16].to_owned();
@@ -1035,7 +1055,11 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
         vec![
             (
                 "chat/completions",
-                chat_tool_call("call_s", "shell", &json!({"command": "sleep 30"})),
+                chat_tool_call(
+                    "call_s",
+                    "shell",
+                    &json!({"command": "sleep 30 & echo $! > sleep.pid; wait"}),
+                ),
             ),
             ("chat/completions", chat_text("kept")),
         ],
@@ -1053,6 +1077,7 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
         .into_inner();
     send(&mut agents, &doomed, "sleep", "n1").await;
     send(&mut agents, &doomed, "queued behind the sleep", "n2").await;
+    let sleep_pid = h.workspace.join("sleep.pid");
     loop {
         let page = agents
             .transcript(authed(pb::TranscriptRequest {
@@ -1067,6 +1092,7 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
             .entries
             .iter()
             .any(|e| matches!(&e.body, Some(Body::ToolCall(c)) if c.call_id == "call_s"))
+            && std::fs::read_to_string(&sleep_pid).is_ok_and(|p| p.ends_with('\n'))
         {
             break;
         }
@@ -1083,6 +1109,10 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
         started.elapsed() < Duration::from_secs(5),
         "{:?}",
         started.elapsed()
+    );
+    assert!(
+        wait_gone(&sleep_pid).await,
+        "the cancelled command survived the delete"
     );
 
     let listed: Vec<String> = agents
@@ -1156,6 +1186,50 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
         2,
         "the queued turn of the deleted agent never ran"
     );
+}
+
+#[tokio::test]
+async fn delete_ends_the_agents_shell_and_its_background_jobs() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call(
+                    "call_bg",
+                    "shell",
+                    &json!({"command": "echo $$ > shell.pid; sleep 300 & echo $! > job.pid"}),
+                ),
+            ),
+            ("chat/completions", chat_text("started")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let doomed = create_agent(&mut agents).await;
+    send(&mut agents, &doomed, "start a job", "").await;
+    wait_turn_end(&mut agents, &doomed).await;
+    let pids = [h.workspace.join("shell.pid"), h.workspace.join("job.pid")];
+    for pid in &pids {
+        assert!(
+            alive(pid),
+            "{} not running before the delete",
+            pid.display()
+        );
+    }
+    agents
+        .delete(authed(pb::DeleteAgentRequest {
+            agent_id: doomed.clone(),
+        }))
+        .await
+        .unwrap();
+    for pid in &pids {
+        assert!(
+            wait_gone(pid).await,
+            "{} survived the delete",
+            pid.display()
+        );
+    }
 }
 
 #[tokio::test]
@@ -1841,7 +1915,16 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
         Duration::from_millis(300),
     )
     .await;
-    let closed = McpClient::connect(&h).await;
+    let mut closed = McpClient::connect(&h).await;
+    let job = closed
+        .call(
+            "shell",
+            json!({"command": "sleep 300 & echo $! > mcp-job.pid"}),
+        )
+        .await;
+    assert_eq!(job["isError"], false, "{job}");
+    let job = h.workspace.join("mcp-job.pid");
+    assert!(alive(&job));
     let deleted = reqwest::Client::new()
         .delete(format!("{}/mcp", h.endpoint))
         .header("x-cocoonbox-edge-token", TOKEN)
@@ -1869,6 +1952,7 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
     let mcp_count = names.iter().filter(|(_, n)| n == "mcp:test-client").count();
     assert_eq!(mcp_count, 1, "{names:?}");
     assert!(names.iter().any(|(id, _)| *id == loop_agent), "{names:?}");
+    assert!(wait_gone(&job).await, "the pruned agent's job survived");
 }
 
 #[tokio::test]

@@ -115,7 +115,8 @@ impl Shell {
         result
     }
 
-    fn kill(&mut self) {
+    /// Kills bash and every process of its group; the next call starts a fresh session.
+    pub fn kill(&mut self) {
         self.dead = true;
         if let Some(pid) = self.child.id() {
             let _ = sys::kill_group(pid);

@@ -178,6 +178,11 @@ impl Dispatcher {
             .await
     }
 
+    /// Ends the shell session of `owner` and every process it started in its group.
+    pub async fn close_shell(&self, owner: &str) -> ToolOutput {
+        self.tools.run(owner, "shell_close", json!({})).await
+    }
+
     /// Writes `data` to `path` in the workspace and returns the absolute path.
     pub async fn put_file(&self, owner: &str, path: &str, data: &[u8]) -> ToolOutput {
         self.tools
