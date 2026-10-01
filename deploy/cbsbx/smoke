@@ -4,7 +4,6 @@ usage: sudo deploy/cbsbx/smoke <template>   (on the node; creates and deletes a 
 
 import json
 import os
-import secrets
 import socket
 import subprocess
 import sys
@@ -105,11 +104,13 @@ def forward(sid, port):
 
 def main():
     template = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
-    key = "cb-" + secrets.token_urlsafe(34)
-    code, _ = call("POST", "", {"ak": key, "product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": SMOKE_ID,
-                                "qps": 4, "daily_token_quota": 5000000, "tokens_per_minute": 200000},
-                   30, GW_ADMIN_TOKEN, GW_ADMIN)
-    check("throwaway gw key created", code == 201, f"{code}")
+    code, created = call("POST", "", {"product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": SMOKE_ID,
+                                      "qps": 4, "daily_token_quota": 5000000, "tokens_per_minute": 200000},
+                         30, GW_ADMIN_TOKEN, GW_ADMIN)
+    key, ak_id = created.get("ak", ""), created.get("ak_id", "")
+    check("throwaway gw key generated", code == 201 and key.startswith("gw-") and ak_id.startswith("sha256:"), f"{code}")
+    if not key:
+        sys.exit("FAILED: throwaway gw key generated")
     sid = None
     try:
         t0 = time.monotonic()
@@ -131,8 +132,8 @@ def main():
         for port in (10260, 10250, 6443, 22):
             got = http_code(sid, f"http://{GATEWAY}:{port}/")
             check(f"gateway :{port} refused", got in ("502", "403", "000"), got)
-        leaks = guest(sid, "cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c 'Bearer cb-'; "
-                           "grep -rlsF 'Bearer cb-' /etc /run 2>/dev/null | wc -l")
+        leaks = guest(sid, "cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c 'Bearer gw-'; "
+                           "grep -rlsF 'Bearer gw-' /etc /run 2>/dev/null | wc -l")
         check("no box key in guest environ, /etc, /run", leaks.split() == ["0", "0"], leaks.replace("\n", " "))
         code, env = call("GET", f"/v1/sandboxes/{sid}/env")
         shown = json.dumps(env)
@@ -150,9 +151,9 @@ def main():
         if sid:
             code, _ = call("POST", f"/v1/sandboxes/{sid}/release")
             check("release", code in (200, 204), f"{code}")
-        code, _ = call("DELETE", f"/{key}", None, 30, GW_ADMIN_TOKEN, GW_ADMIN)
-        _, listed = call("GET", "", None, 30, GW_ADMIN_TOKEN, GW_ADMIN)
-        check("throwaway gw key deleted", code == 200 and all(k.get("owner") != SMOKE_ID for k in listed.get("keys", [])), f"{code}")
+        code, _ = call("DELETE", f"/{ak_id}", None, 30, GW_ADMIN_TOKEN, GW_ADMIN)
+        _, listed = call("GET", f"?owner={SMOKE_ID}", None, 30, GW_ADMIN_TOKEN, GW_ADMIN)
+        check("throwaway gw key deleted", code == 200 and listed.get("keys") == [], f"{code}")
     print("PASS" if not failed else f"FAILED: {', '.join(failed)}")
     sys.exit(1 if failed else 0)
 
