@@ -10,7 +10,7 @@ pkill -u user -x chrome || true
 pkill -u user -x mousepad || true
 sleep 2
 rm -rf /workspace/* /workspace/.[!.]* \
-	/home/user/.config/cocoonbox-chrome /home/user/.config/google-chrome /home/user/.cache/google-chrome \
+	/home/user/.config/cocoonbox-chrome /home/user/.config/google-chrome /home/user/.cache/google-chrome /home/user/.cache/fontconfig \
 	/home/user/.config/Mousepad /home/user/.local/share/Mousepad /home/user/.cache/Mousepad /home/user/.local/share/recently-used.xbel \
 	/home/user/.bash_history /home/deploy/.bash_history /root/.bash_history
 find /tmp -mindepth 1 -maxdepth 1 ! -name '.X11-unix' ! -name '.ICE-unix' ! -name '.X*-lock' ! -name 'systemd-private-*' -exec rm -rf {} +
