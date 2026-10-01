@@ -318,8 +318,10 @@ struct StateBadge: View {
 
 struct OperationView: View {
     let progress: OperationProgress
+    @State private var expanded = false
 
     var body: some View {
+        let folded = progress.finished && !progress.failed && !expanded
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 if !progress.finished {
@@ -329,8 +331,16 @@ struct OperationView: View {
                         .foregroundStyle(progress.failed ? .red : .green)
                 }
                 Text(progress.title).font(.caption.bold())
+                if progress.finished && !progress.failed {
+                    Spacer()
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             }
-            ForEach(Array(steps.enumerated()), id: \.offset) { _, event in
+            .contentShape(Rectangle())
+            .onTapGesture { if progress.finished { expanded.toggle() } }
+            ForEach(Array((folded ? [] : steps).enumerated()), id: \.offset) { _, event in
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
                     Text(phase(event.phase))
                         .font(.caption2.monospaced())
@@ -350,10 +360,10 @@ struct OperationView: View {
         .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
     }
 
-    // steps drops repeated progress events of one step, which differ only in bytes.
+    // steps keeps the latest event of each run of one phase.
     private var steps: [OperationEvent] {
         progress.events.enumerated().filter { index, event in
-            index == 0 || progress.events[index - 1].phase != event.phase || progress.events[index - 1].detail != event.detail
+            index == progress.events.count - 1 || progress.events[index + 1].phase != event.phase
         }.map(\.element)
     }
 
