@@ -51,7 +51,6 @@ final class AppModel {
     var showConnectAgent = false
     var confirmSave = false
     var confirmUpgrade = false
-    var renamingAgent: Agent?
     var deletingAgent: Agent?
     var box: Box?
     var operation: OperationProgress?

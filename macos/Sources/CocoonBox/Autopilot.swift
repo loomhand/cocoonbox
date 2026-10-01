@@ -12,7 +12,7 @@ import Foundation
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
-// confirm:<save|upgrade|rename|delete|off>, save-now, upgrade, wait-operation[:seconds],
+// confirm:<save|upgrade|delete|off>, save-now, upgrade, wait-operation[:seconds],
 // rename:<name> and delete (both on the selected agent), end-local, quit.
 @MainActor
 enum Autopilot {
@@ -120,7 +120,6 @@ enum Autopilot {
         case "confirm":
             model.confirmSave = arg == "save"
             model.confirmUpgrade = arg == "upgrade"
-            model.renamingAgent = arg == "rename" ? model.selectedAgent : nil
             model.deletingAgent = arg == "delete" ? model.selectedAgent : nil
         case "rename":
             if let agent = model.selectedAgent { model.renameAgent(agent, to: arg) }
