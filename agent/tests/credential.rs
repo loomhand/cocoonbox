@@ -51,17 +51,23 @@ fn authed<T>(msg: T) -> Request<T> {
 }
 
 fn find_chrome() -> Option<PathBuf> {
-    let candidates = [
-        std::env::var("CHROME_BIN").unwrap_or_default(),
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_owned(),
-        "/usr/bin/google-chrome".to_owned(),
-        "/usr/bin/google-chrome-stable".to_owned(),
-    ];
-    candidates
-        .into_iter()
-        .filter(|c| !c.is_empty())
-        .map(PathBuf::from)
-        .find(|p| p.exists())
+    if let Ok(bin) = std::env::var("CHROME_BIN")
+        && !bin.is_empty()
+    {
+        return Some(bin.into());
+    }
+    // a test Chrome on macOS reaches for the login keychain, so it runs there only on request
+    if cfg!(target_os = "macos") {
+        return None;
+    }
+    [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|p| p.exists())
 }
 
 async fn free_port() -> u16 {
@@ -184,7 +190,11 @@ fn files_containing(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
 #[tokio::test]
 async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value() {
     let Some(chrome) = find_chrome() else {
-        eprintln!("SKIP: no Chrome found; set CHROME_BIN");
+        assert!(
+            cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
+            "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
+        );
+        eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
