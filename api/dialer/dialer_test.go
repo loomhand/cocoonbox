@@ -26,9 +26,12 @@ func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
 		t.Fatalf("Plan = %v, %v", plan, err)
 	}
 	var seen int
-	final, err := d.Upload(ctx, ep, &agentv1.UploadRequest{SnapshotId: "s1"}, func(*agentv1.TransferProgress) { seen++ })
+	final, err := d.Upload(ctx, ep, &agentv1.UploadRequest{SnapshotId: "s1", Manifest: &agentv1.PresignedPut{ChunkId: "s1"}}, func(*agentv1.TransferProgress) { seen++ })
 	if err != nil || !final.GetFinished() || final.GetManifestId() != "s1" || seen != 3 {
 		t.Errorf("Upload = %v, %v after %d messages", final, err, seen)
+	}
+	if batch, err := d.Upload(ctx, ep, &agentv1.UploadRequest{SnapshotId: "s1"}, nil); err != nil || batch.GetFinished() {
+		t.Errorf("Upload of a batch without the manifest = %v, %v", batch, err)
 	}
 	if _, err := d.Restore(ctx, ep, &agentv1.RestoreRequest{}, nil); err == nil {
 		t.Error("Restore without a final message succeeded")
@@ -67,7 +70,7 @@ func serveState(t *testing.T, srv agentv1.StateServer) string {
 	return lis.Addr().String()
 }
 
-// fakeState requires credential cred-1 and no edge token; Upload sends two progress messages and a final one, Restore ends without a final message.
+// fakeState requires credential cred-1 and no edge token; Upload sends two progress messages and, with the manifest, a final one, as the agent does; Restore ends without a final message.
 type fakeState struct {
 	agentv1.UnimplementedStateServer
 }
@@ -83,7 +86,11 @@ func (fakeState) Upload(req *agentv1.UploadRequest, stream grpc.ServerStreamingS
 	if err := checkCredential(stream.Context()); err != nil {
 		return err
 	}
-	for _, p := range []*agentv1.TransferProgress{{DoneChunks: 1}, {DoneChunks: 2}, {Finished: true, ManifestId: req.GetSnapshotId()}} {
+	msgs := []*agentv1.TransferProgress{{DoneChunks: 1}, {DoneChunks: 2}}
+	if req.GetManifest() != nil {
+		msgs = append(msgs, &agentv1.TransferProgress{Finished: true, ManifestId: req.GetSnapshotId()})
+	}
+	for _, p := range msgs {
 		if err := stream.Send(p); err != nil {
 			return err
 		}

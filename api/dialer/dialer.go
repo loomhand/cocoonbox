@@ -61,7 +61,7 @@ func (d *Dialer) Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.
 	if err != nil {
 		return nil, err
 	}
-	return drain(stream, progress)
+	return drain(stream, progress, req.GetManifest() != nil)
 }
 
 // Restore calls State.Restore and returns the final progress message.
@@ -74,7 +74,7 @@ func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, req *agentv1
 	if err != nil {
 		return nil, err
 	}
-	return drain(stream, progress)
+	return drain(stream, progress, true)
 }
 
 // Close closes every connection.
@@ -106,12 +106,12 @@ func (d *Dialer) state(ep machines.Endpoint) (agentv1.StateClient, error) {
 	return agentv1.NewStateClient(conn), nil
 }
 
-func drain(stream grpc.ServerStreamingClient[agentv1.TransferProgress], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+func drain(stream grpc.ServerStreamingClient[agentv1.TransferProgress], progress ProgressFunc, final bool) (*agentv1.TransferProgress, error) {
 	var last *agentv1.TransferProgress
 	for {
 		msg, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
-			if last == nil || !last.GetFinished() {
+			if final && (last == nil || !last.GetFinished()) {
 				return nil, errors.New("agent ended the transfer without a final message")
 			}
 			return last, nil
