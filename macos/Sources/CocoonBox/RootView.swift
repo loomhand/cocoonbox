@@ -468,7 +468,6 @@ extension Cocoonbox_Control_V1_Phase {
 
 struct SignInSheet: View {
     @Environment(AppModel.self) private var model
-    @State private var endpoint = ""
     @State private var token = ""
     @State private var error: String?
 
@@ -478,13 +477,14 @@ struct SignInSheet: View {
             Text("The token is stored in your login Keychain.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            LabeledContent("Endpoint") {
-                TextField(Endpoint.defaultURL, text: $endpoint)
-                    .textFieldStyle(.roundedBorder)
-            }
-            LabeledContent("User token") {
-                SecureField("token", text: $token)
-                    .textFieldStyle(.roundedBorder)
+            SecureField("Token", text: $token)
+                .textFieldStyle(.roundedBorder)
+            if let console = URL(string: "\(model.endpointURL)/cb/") {
+                HStack(spacing: 4) {
+                    Text("Get your token at")
+                    Link(console.absoluteString, destination: console)
+                }
+                .font(.callout)
             }
             if let error {
                 Text(error).foregroundStyle(.red).font(.callout)
@@ -492,7 +492,7 @@ struct SignInSheet: View {
             HStack {
                 Spacer()
                 Button("Sign In") {
-                    error = model.signIn(endpointURL: endpoint, token: token)
+                    error = model.signIn(token: token)
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(token.isEmpty)
@@ -500,6 +500,5 @@ struct SignInSheet: View {
         }
         .padding(24)
         .frame(width: 520)
-        .onAppear { endpoint = model.endpointURL }
     }
 }

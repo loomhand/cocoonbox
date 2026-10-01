@@ -48,10 +48,9 @@ struct OperationProgress: Equatable {
 
 @MainActor @Observable
 final class AppModel {
-    static let endpointKey = "endpoint"
     static let localSessionAgentsKey = "localSessionAgents"
 
-    var endpointURL: String
+    let endpointURL: String
     var showSignIn = false
     var showConnectAgent = false
     var showPasswordSignIn = false
@@ -86,9 +85,7 @@ final class AppModel {
     @ObservationIgnored private var settleTask: Task<Void, Never>?
 
     init() {
-        endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"]
-            ?? UserDefaults.standard.string(forKey: Self.endpointKey)
-            ?? Endpoint.defaultURL
+        endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"] ?? Endpoint.defaultURL
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.persistLocal()
@@ -291,7 +288,7 @@ final class AppModel {
         connect(endpoint: endpoint, token: token)
     }
 
-    func signIn(endpointURL: String, token: String) -> String? {
+    func signIn(token: String) -> String? {
         guard let endpoint = Endpoint(url: endpointURL) else { return "Endpoint must be an http(s) URL" }
         guard endpoint.usesTLS || endpoint.isLoopback else { return "Use https: over http the token would travel in plaintext" }
         let token = token.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -301,8 +298,6 @@ final class AppModel {
         } catch {
             return "Keychain: \(error.localizedDescription)"
         }
-        self.endpointURL = endpoint.url
-        UserDefaults.standard.set(endpoint.url, forKey: Self.endpointKey)
         showSignIn = false
         connect(endpoint: endpoint, token: token)
         return nil
