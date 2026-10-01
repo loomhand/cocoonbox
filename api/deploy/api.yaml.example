@@ -1,16 +1,11 @@
 listen: 127.0.0.1:18200
 mcp_listen: 127.0.0.1:18201
 # relative paths resolve next to this file (the systemd credentials directory)
-kubeconfig: kubeconfig
-namespace: cocoonbox
-image: cocoonbox-desktop-v7
-rebase_images: []            # older goldens Rebase may also target; anything else is refused
-network: cb
-probe_port: 7443
+image: cbdesk:v11            # the default sandboxd template
+rebase_images: []            # older templates Rebase may also target; anything else is refused
 agent_port: 7443
-backend: cocoonset             # cocoonset | sandboxd (design §14)
-sandboxd:                      # used by backend sandboxd; image then names the template
-  url: http://127.0.0.1:17800
+sandboxd:
+  url: http://127.0.0.1:17780
   token_file: sandboxd-token   # the instance's root api_token
 flavor:
   vcpus: 4

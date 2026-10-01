@@ -16,15 +16,8 @@ import (
 )
 
 const (
-	BackendCocoonSet = "cocoonset"
-	BackendSandboxd  = "sandboxd"
-
 	defaultListen    = "127.0.0.1:18200"
 	defaultMCPListen = "127.0.0.1:18201"
-	defaultNamespace = "cocoonbox"
-	defaultImage     = "cocoonbox-desktop-v1"
-	defaultNetwork   = "cb"
-	defaultProbePort = 22
 	defaultAgentPort = 7443
 
 	defaultStateInterval = 15 * time.Minute
@@ -98,7 +91,7 @@ type GWAdmin struct {
 	TokenFile string `json:"token_file"`
 }
 
-// Sandboxd names the sandboxd instance of the sandboxd backend and the file holding its root api token.
+// Sandboxd names the sandboxd instance that runs the boxes and the file holding its root api token.
 type Sandboxd struct {
 	URL       string `json:"url"`
 	TokenFile string `json:"token_file"`
@@ -106,17 +99,11 @@ type Sandboxd struct {
 
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
-	// Backend selects the machine backend: cocoonset (default) or sandboxd.
-	Backend      string   `json:"backend"`
 	Sandboxd     Sandboxd `json:"sandboxd"`
 	Listen       string   `json:"listen"`
 	MCPListen    string   `json:"mcp_listen"`
-	Kubeconfig   string   `json:"kubeconfig"`
-	Namespace    string   `json:"namespace"`
 	Image        string   `json:"image"`
 	RebaseImages []string `json:"rebase_images"`
-	Network      string   `json:"network"`
-	ProbePort    int32    `json:"probe_port"`
 	AgentPort    int      `json:"agent_port"`
 	// Provision configures every box's identity file and per-box gw key.
 	Provision Provision `json:"provision"`
@@ -174,13 +161,8 @@ func (c *Config) GWAdminToken() (string, error) {
 }
 
 func (c *Config) applyDefaults() {
-	c.Backend = cmp.Or(c.Backend, BackendCocoonSet)
 	c.Listen = cmp.Or(c.Listen, defaultListen)
 	c.MCPListen = cmp.Or(c.MCPListen, defaultMCPListen)
-	c.Namespace = cmp.Or(c.Namespace, defaultNamespace)
-	c.Image = cmp.Or(c.Image, defaultImage)
-	c.Network = cmp.Or(c.Network, defaultNetwork)
-	c.ProbePort = cmp.Or(c.ProbePort, defaultProbePort)
 	c.AgentPort = cmp.Or(c.AgentPort, defaultAgentPort)
 	c.Flavor.VCPUs = cmp.Or(c.Flavor.VCPUs, defaultVCPUs)
 	c.Flavor.MemoryMiB = cmp.Or(c.Flavor.MemoryMiB, defaultMemoryMiB)
@@ -193,7 +175,7 @@ func (c *Config) applyDefaults() {
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.Kubeconfig, &c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Provision.GWAdmin.TokenFile, &c.Sandboxd.TokenFile} {
+	for _, p := range []*string{&c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Provision.GWAdmin.TokenFile, &c.Sandboxd.TokenFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -219,9 +201,6 @@ func (c *Config) validate() error {
 		}
 		names[u.Name], hashes[u.TokenSHA256] = true, true
 	}
-	if c.ProbePort < 0 || c.ProbePort > 65535 {
-		errs = append(errs, fmt.Errorf("probe_port must be in 0..65535, got %d", c.ProbePort))
-	}
 	if c.Provision.SigningKeyFile == "" {
 		errs = append(errs, errors.New("provision.signing_key_file is required: agents admit only edge-signed credentials"))
 	}
@@ -231,14 +210,11 @@ func (c *Config) validate() error {
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
 	}
-	switch c.Backend {
-	case BackendCocoonSet:
-	case BackendSandboxd:
-		if c.Sandboxd.URL == "" || c.Sandboxd.TokenFile == "" {
-			errs = append(errs, errors.New("sandboxd.url and sandboxd.token_file are required with backend sandboxd"))
-		}
-	default:
-		errs = append(errs, fmt.Errorf("backend must be %s or %s, got %q", BackendCocoonSet, BackendSandboxd, c.Backend))
+	if c.Sandboxd.URL == "" || c.Sandboxd.TokenFile == "" {
+		errs = append(errs, errors.New("sandboxd.url and sandboxd.token_file are required"))
+	}
+	if c.Image == "" {
+		errs = append(errs, errors.New("image is required: it names the default sandboxd template"))
 	}
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Provisions the cocoonbox desktop guest (Ubuntu 24.04 xface base) in place; idempotent.
-# Runs as root inside the guest from an unpacked copy of image/ (see push.sh).
+# Runs as root inside the guest from an unpacked copy of image/ (see cut.sh -p).
 # Env: CB_HOST_PUBKEY = ssh public key accepted for `user` and `deploy`.
 set -euo pipefail
 

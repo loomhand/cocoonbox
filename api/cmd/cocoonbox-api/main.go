@@ -28,7 +28,6 @@ import (
 	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/keyring/file"
 	"github.com/CMGS/cocoonbox/api/machines"
-	"github.com/CMGS/cocoonbox/api/machines/cocoonset"
 	"github.com/CMGS/cocoonbox/api/machines/sandboxd"
 	"github.com/CMGS/cocoonbox/api/store/s3"
 )
@@ -61,7 +60,7 @@ func main() {
 	}
 	backend, err := newBackend(ctx, cfg, flavors)
 	if err != nil {
-		logger.Fatalf(ctx, err, "start %s backend", cfg.Backend)
+		logger.Fatalf(ctx, err, "start sandboxd backend")
 	}
 	svc := boxes.New(backend, boxes.Defaults{
 		Flavor:       machineFlavor(cfg.Flavor),
@@ -126,7 +125,7 @@ func main() {
 		server.GracefulStop()
 		timer.Stop()
 	}()
-	logger.Infof(ctx, "serving gRPC on %s and MCP on %s for %d users, namespace %s", cfg.Listen, cfg.MCPListen, len(cfg.Users), cfg.Namespace)
+	logger.Infof(ctx, "serving gRPC on %s and MCP on %s for %d users", cfg.Listen, cfg.MCPListen, len(cfg.Users))
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
 	}
@@ -154,16 +153,6 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 }
 
 func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor) (machines.Machines, error) {
-	if cfg.Backend != config.BackendSandboxd {
-		return cocoonset.New(ctx, cocoonset.Options{
-			Kubeconfig: cfg.Kubeconfig,
-			Namespace:  cfg.Namespace,
-			Image:      cfg.Image,
-			Network:    cfg.Network,
-			ProbePort:  cfg.ProbePort,
-			AgentPort:  cfg.AgentPort,
-		})
-	}
 	token, err := cfg.SandboxdToken()
 	if err != nil {
 		return nil, err

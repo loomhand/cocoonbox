@@ -2,7 +2,7 @@
 Description=cocoonbox host network (cbc0 bridge, firewall guards)
 After=network-online.target
 Wants=network-online.target
-Before=k3s.service gw.service vk-cocoon.service
+Before=gw.service
 
 [Service]
 Type=oneshot

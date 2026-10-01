@@ -1,6 +1,6 @@
 #!/bin/bash
 # Stages the cocoonbox sandboxd instance under /srv/cb/sbx; idempotent, starts nothing.
-# usage: sudo deploy/cbsbx/install <dir with sandboxd, silkd, cocoon and SHA256SUMS>
+# usage: sudo deploy/cbsbx/install <dir with sandboxd, silkd, cocoon, cloud-hypervisor, firecracker and SHA256SUMS>
 set -euo pipefail
 export LC_ALL=C
 
@@ -18,12 +18,10 @@ grep -q "^cbsbx:$QUOTA_ID\$" /etc/projid 2>/dev/null || echo "cbsbx:$QUOTA_ID" >
 xfs_quota -x -c "project -s cbsbx" /srv/cb >/dev/null
 xfs_quota -x -c "limit -p bhard=$QUOTA cbsbx" /srv/cb
 
-for b in sandboxd silkd cocoon; do
+for b in sandboxd silkd cocoon cloud-hypervisor firecracker; do
 	[ -e "$S/bin/$b" ] && cp -p "$S/bin/$b" "$S/bin/$b.prev"
 	install -m 0755 "$BIN_SRC/$b" "$S/bin/$b"
 done
-install -m 0755 /usr/local/bin/cloud-hypervisor-cb "$S/bin/cloud-hypervisor"
-install -m 0755 /usr/local/bin/firecracker-cb "$S/bin/firecracker"
 install -m 0644 "$SRC/cocoon.yaml" "$S/cocoon.yaml"
 printf '#!/bin/sh\nexec %s/bin/cocoon --config %s/cocoon.yaml "$@"\n' "$S" "$S" > "$S/bin/cocoon-cbsbx"
 chmod 0755 "$S/bin/cocoon-cbsbx"

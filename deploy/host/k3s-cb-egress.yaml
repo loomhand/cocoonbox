@@ -1,2 +1,0 @@
-# the apiserver dials kubelets directly: the agent tunnel only admits the node's own kubelet port, not vk-cocoon's
-egress-selector-mode: disabled

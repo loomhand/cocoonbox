@@ -10,19 +10,16 @@ import (
 const (
 	validHash  = "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90"
 	signingKey = "provision:\n  signing_key_file: edge-signing.key\n"
+	required   = "image: cbdesk:v1\nsandboxd:\n  url: http://127.0.0.1:17780\n  token_file: sandboxd-token\n" + signingKey
 )
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := Load(writeConfig(t, signingKey+"users:\n  - name: alice\n    token_sha256: "+validHash+"\n"))
+	cfg, err := Load(writeConfig(t, required+"users:\n  - name: alice\n    token_sha256: "+validHash+"\n"))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Listen != "127.0.0.1:18200" || cfg.MCPListen != "127.0.0.1:18201" || cfg.Namespace != "cocoonbox" || cfg.Image != "cocoonbox-desktop-v1" ||
-		cfg.Network != "cb" || cfg.ProbePort != 22 || cfg.AgentPort != 7443 {
+	if cfg.Listen != "127.0.0.1:18200" || cfg.MCPListen != "127.0.0.1:18201" || cfg.AgentPort != 7443 {
 		t.Errorf("defaults = %+v", cfg)
-	}
-	if cfg.Backend != BackendCocoonSet {
-		t.Errorf("backend = %q", cfg.Backend)
 	}
 	if cfg.Flavor != (Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}) {
 		t.Errorf("flavor = %+v", cfg.Flavor)
@@ -37,8 +34,13 @@ func TestLoadRejects(t *testing.T) {
 		{name: "bad hash", body: "users:\n  - name: alice\n    token_sha256: abc\n", want: "64 lowercase hex"},
 		{name: "duplicate user", body: "users:\n  - name: a\n    token_sha256: " + validHash + "\n  - name: a\n    token_sha256: " + strings.Repeat("0", 64) + "\n", want: "duplicate name"},
 		{name: "bad port", body: "agent_port: 70000\n", want: "agent_port"},
-		{name: "unknown backend", body: "backend: nomad\n", want: "backend must be"},
-		{name: "sandboxd without url", body: "backend: sandboxd\nsandboxd:\n  token_file: t\n", want: "sandboxd.url"},
+		{name: "sandboxd without url", body: "sandboxd:\n  token_file: t\n", want: "sandboxd.url"},
+		{name: "no image", body: signingKey, want: "image is required"},
+		{name: "retired backend", body: required + "backend: sandboxd\n", want: "unknown field"},
+		{name: "retired kubeconfig", body: required + "kubeconfig: kubeconfig\n", want: "unknown field"},
+		{name: "retired namespace", body: required + "namespace: cocoonbox\n", want: "unknown field"},
+		{name: "retired network", body: required + "network: cb\n", want: "unknown field"},
+		{name: "retired probe port", body: required + "probe_port: 7443\n", want: "unknown field"},
 		{name: "no signing key", body: "users: []\n", want: "provision.signing_key_file is required"},
 		{name: "retired edge token", body: signingKey + "edge_token_file: edge-token\n", want: "unknown field"},
 		{name: "retired gw key socket", body: signingKey + "  gw_key_socket: /run/cb-gw-key.sock\n", want: "unknown field"},
@@ -54,14 +56,14 @@ func TestLoadRejects(t *testing.T) {
 }
 
 func TestLoadResolvesRelativePaths(t *testing.T) {
-	path := writeConfig(t, signingKey+"  gw_admin:\n    url: http://10.203.0.1:18090\n    token_file: gw-admin-token\nkubeconfig: kubeconfig\nbackend: sandboxd\nsandboxd:\n  url: http://127.0.0.1:17800\n  token_file: sandboxd-token\n")
+	path := writeConfig(t, required+"  gw_admin:\n    url: http://10.203.0.1:18090\n    token_file: gw-admin-token\n")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
 	dir := filepath.Dir(path)
-	if cfg.Kubeconfig != filepath.Join(dir, "kubeconfig") || cfg.Provision.SigningKeyFile != filepath.Join(dir, "edge-signing.key") || cfg.Sandboxd.TokenFile != filepath.Join(dir, "sandboxd-token") {
-		t.Errorf("paths = %q, %q, %q, want under %s", cfg.Kubeconfig, cfg.Provision.SigningKeyFile, cfg.Sandboxd.TokenFile, dir)
+	if cfg.Provision.SigningKeyFile != filepath.Join(dir, "edge-signing.key") || cfg.Sandboxd.TokenFile != filepath.Join(dir, "sandboxd-token") {
+		t.Errorf("paths = %q, %q, want under %s", cfg.Provision.SigningKeyFile, cfg.Sandboxd.TokenFile, dir)
 	}
 	if cfg.Provision.GWAdmin.TokenFile != filepath.Join(dir, "gw-admin-token") {
 		t.Errorf("gw admin token file = %q, want under %s", cfg.Provision.GWAdmin.TokenFile, dir)
@@ -73,7 +75,7 @@ func TestLoadsTheExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load example: %v", err)
 	}
-	if cfg.State.Bucket == "" || cfg.Provision.SigningKeyFile == "" || len(cfg.Users) != 1 || cfg.Image != "cocoonbox-desktop-v7" {
+	if cfg.State.Bucket == "" || cfg.Provision.SigningKeyFile == "" || len(cfg.Users) != 1 || cfg.Image != "cbdesk:v11" {
 		t.Errorf("example config = %+v", cfg)
 	}
 }

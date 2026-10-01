@@ -283,7 +283,7 @@ type execCall struct {
 	gwKey    string
 }
 
-// fakeMachines keeps machines in memory; Ensure mirrors the cocoonset backend and each pushed event reaches exactly one live Watch.
+// fakeMachines keeps machines in memory; each pushed event reaches exactly one live Watch.
 type fakeMachines struct {
 	mu        sync.Mutex
 	machines  map[string]machines.Machine

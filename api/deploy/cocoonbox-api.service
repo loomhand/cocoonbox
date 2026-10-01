@@ -1,14 +1,14 @@
 [Unit]
 Description=cocoonbox control plane and agent edge
 Wants=network-online.target
-After=network-online.target k3s.service
+After=network-online.target
 
 [Service]
 Type=simple
 User=cocoonbox-api
 Group=cocoonbox-api
 LoadCredential=api.yaml:/etc/cocoonbox/api.yaml
-LoadCredential=kubeconfig:/etc/cocoonbox/kubeconfig
+LoadCredential=sandboxd-token:/etc/cocoonbox/sandboxd-token
 LoadCredential=store.env:/etc/cocoonbox/store.env
 LoadCredential=edge-signing.key:/etc/cocoonbox/edge-signing.key
 StateDirectory=cocoonbox-api
