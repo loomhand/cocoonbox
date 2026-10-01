@@ -13,9 +13,10 @@ export DEBIAN_FRONTEND=noninteractive
 apt_install() {
 	out=$(apt-get -o DPkg::Lock::Timeout=120 install -y -q "$@" 2>&1)
 	rc=$?
-	printf '%s\n' "$out"
-	case "$out" in *"Could not get lock"*) echo "packages: dpkg is locked; retrying later"; exit 75 ;; esac
-	return $rc
+	printf '%s\n' "$out" | grep -v '^Waiting for cache lock'
+	[ "$rc" -eq 0 ] && return 0
+	if printf '%s\n' "$out" | grep -qE '^E: (Could not get lock|Unable to acquire the dpkg)'; then echo "packages: dpkg is locked; retrying later"; exit 75; fi
+	return "$rc"
 }
 apt-get -o DPkg::Lock::Timeout=120 update -q || echo "packages: apt-get update failed"
 apt_install $missing && { echo "packages: installed$missing"; exit 0; }
