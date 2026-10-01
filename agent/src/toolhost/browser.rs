@@ -19,6 +19,7 @@ const LOAD_WAIT: Duration = Duration::from_secs(15);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
 const READ_CHARS: usize = 20_000;
+const RUNNING_MARKER: &str = "cocoonbox-was-running";
 
 const SNAPSHOT_JS: &str = r#"(() => {
   const MAX = 300;
@@ -170,6 +171,14 @@ impl Browser {
         if tool == "browser_close" {
             return self.close().await;
         }
+        if tool == "browser_start"
+            && args["if_was_running"].as_bool() == Some(true)
+            && tokio::fs::symlink_metadata(self.profile.join(RUNNING_MARKER))
+                .await
+                .is_err()
+        {
+            return Ok("not running".to_owned());
+        }
         let mut cdp = self.connect().await?;
         match tool {
             "browser_navigate" => {
@@ -293,8 +302,10 @@ impl Browser {
         Ok(Cdp { ws, next_id: 0 })
     }
 
-    /// Closes Chrome through CDP so it flushes its profile; reports whether it was running.
+    /// Closes Chrome through CDP so it flushes its profile; reports whether it was running
+    /// and records it in the profile for `browser_start` with `if_was_running`.
     async fn close(&self) -> Result<String, String> {
+        let marker = self.profile.join(RUNNING_MARKER);
         let url = format!("http://127.0.0.1:{}/json/version", self.port);
         let Ok(resp) = self
             .http
@@ -303,6 +314,7 @@ impl Browser {
             .send()
             .await
         else {
+            let _ = tokio::fs::remove_file(&marker).await;
             return Ok("not running".to_owned());
         };
         let version: Value = resp
@@ -320,6 +332,9 @@ impl Browser {
         let deadline = tokio::time::Instant::now() + LAUNCH_WAIT;
         while tokio::time::Instant::now() < deadline {
             if self.targets().await.is_err() && tokio::fs::symlink_metadata(&lock).await.is_err() {
+                tokio::fs::write(&marker, b"")
+                    .await
+                    .map_err(|e| format!("write {}: {e}", marker.display()))?;
                 return Ok("closed".to_owned());
             }
             tokio::time::sleep(POLL).await;
@@ -497,4 +512,83 @@ fn js_str(s: &str) -> String {
 
 fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
     serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::*;
+
+    /// Serves Chrome's CDP endpoints on the returned port until a `Browser.close` arrives.
+    async fn fake_chrome() -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let version = json!({
+            "webSocketDebuggerUrl": format!("ws://{}/devtools/browser/fake", ws.local_addr().unwrap()),
+        })
+        .to_string();
+        let (closed, mut stopped) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let (stream, _) = ws.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                let v: Value = serde_json::from_str(&text).unwrap();
+                if v["method"] == "Browser.close" {
+                    let reply = json!({"id": v["id"], "result": {}}).to_string();
+                    ws.send(WsMessage::text(reply)).await.unwrap();
+                    closed.send(true).unwrap();
+                    return;
+                }
+            }
+        });
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    Ok((mut s, _)) = http.accept() => {
+                        let mut buf = [0u8; 1024];
+                        let n = s.read(&mut buf).await.unwrap_or(0);
+                        let body = if buf[..n].starts_with(b"GET /json/version") { version.as_str() } else { "[]" };
+                        let head = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len());
+                        let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn close_records_whether_chrome_ran_and_start_follows_the_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(RUNNING_MARKER);
+        let running = Browser::new(
+            "/nonexistent/chrome".into(),
+            dir.path().into(),
+            fake_chrome().await,
+        );
+        assert_eq!(
+            running.run("browser_close", json!({})).await.unwrap(),
+            "closed"
+        );
+        assert!(marker.exists());
+        let start = running
+            .run("browser_start", json!({"if_was_running": true}))
+            .await;
+        assert!(start.unwrap_err().contains("launch /nonexistent/chrome"));
+
+        let idle = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        assert_eq!(
+            idle.run("browser_close", json!({})).await.unwrap(),
+            "not running"
+        );
+        assert!(!marker.exists());
+        let start = idle
+            .run("browser_start", json!({"if_was_running": true}))
+            .await;
+        assert_eq!(start.unwrap(), "not running");
+    }
 }

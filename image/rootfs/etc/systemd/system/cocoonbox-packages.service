@@ -8,3 +8,6 @@ After=network-online.target
 Type=oneshot
 ExecStart=/usr/local/lib/cocoonbox/replay-packages
 TimeoutStartSec=30min
+Restart=on-failure
+RestartSec=60s
+RestartPreventExitStatus=1

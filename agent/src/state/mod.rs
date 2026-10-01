@@ -134,7 +134,7 @@ impl StateEngine {
             .snapshot(&keys, &key.key_id, &req.parent, quiesced)
             .await;
         if let Some(q) = quiet {
-            self.resume(q).await;
+            self.resume(q, false).await;
         }
         let (snapshot, response) = result?;
         *pinned = Some(snapshot);
@@ -284,7 +284,7 @@ impl StateEngine {
         }
         let quiet = self.quiesce().await?;
         let result = self.rebuild(manifest, cache).await;
-        self.resume(quiet).await;
+        self.resume(quiet, result.is_ok()).await;
         result?;
         meter.finish(manifest_id).await;
         Ok(())
@@ -550,9 +550,9 @@ impl StateEngine {
         })
     }
 
-    async fn resume(&self, quiet: Quiet) {
-        if quiet.chrome
-            && let Err(e) = self.tool("browser_start", json!({})).await
+    async fn resume(&self, quiet: Quiet, restored: bool) {
+        if let Some(args) = chrome_start(quiet.chrome, restored)
+            && let Err(e) = self.tool("browser_start", args).await
         {
             eprintln!("state: restart chrome: {e}");
         }
@@ -873,6 +873,15 @@ pub fn excludes() -> Excludes {
     }
 }
 
+/// After a restore Chrome follows the restored profile's record of the save, otherwise the close.
+fn chrome_start(closed: bool, restored: bool) -> Option<serde_json::Value> {
+    if restored {
+        Some(json!({"if_was_running": true}))
+    } else {
+        closed.then(|| json!({}))
+    }
+}
+
 fn referenced(m: &Manifest) -> BTreeSet<String> {
     m.files
         .iter()
@@ -892,4 +901,23 @@ fn retryable(status: reqwest::StatusCode) -> bool {
     status.is_server_error()
         || status == reqwest::StatusCode::REQUEST_TIMEOUT
         || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chrome_comes_back_as_it_was_at_the_save() {
+        assert_eq!(
+            chrome_start(false, true),
+            Some(json!({"if_was_running": true}))
+        );
+        assert_eq!(
+            chrome_start(true, true),
+            Some(json!({"if_was_running": true}))
+        );
+        assert_eq!(chrome_start(true, false), Some(json!({})));
+        assert_eq!(chrome_start(false, false), None);
+    }
 }

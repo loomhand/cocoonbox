@@ -10,10 +10,17 @@ done
 [ -n "$missing" ] || { echo "packages: none missing"; exit 0; }
 echo "packages: installing$missing"
 export DEBIAN_FRONTEND=noninteractive
-apt-get -o DPkg::Lock::Timeout=300 update -q || echo "packages: apt-get update failed"
-apt-get -o DPkg::Lock::Timeout=300 install -y -q $missing && { echo "packages: installed$missing"; exit 0; }
+apt_install() {
+	out=$(apt-get -o DPkg::Lock::Timeout=120 install -y -q "$@" 2>&1)
+	rc=$?
+	printf '%s\n' "$out"
+	case "$out" in *"Could not get lock"*) echo "packages: dpkg is locked; retrying later"; exit 75 ;; esac
+	return $rc
+}
+apt-get -o DPkg::Lock::Timeout=120 update -q || echo "packages: apt-get update failed"
+apt_install $missing && { echo "packages: installed$missing"; exit 0; }
 rc=0
 for p in $missing; do
-	if apt-get -o DPkg::Lock::Timeout=300 install -y -q "$p"; then echo "packages: installed $p"; else echo "packages: failed $p"; rc=1; fi
+	if apt_install "$p"; then echo "packages: installed $p"; else echo "packages: failed $p"; rc=1; fi
 done
 exit $rc
