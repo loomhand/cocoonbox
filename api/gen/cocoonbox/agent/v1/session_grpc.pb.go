@@ -19,9 +19,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Session_Hello_FullMethodName  = "/cocoonbox.agent.v1.Session/Hello"
-	Session_Events_FullMethodName = "/cocoonbox.agent.v1.Session/Events"
-	Session_Screen_FullMethodName = "/cocoonbox.agent.v1.Session/Screen"
+	Session_Hello_FullMethodName          = "/cocoonbox.agent.v1.Session/Hello"
+	Session_Events_FullMethodName         = "/cocoonbox.agent.v1.Session/Events"
+	Session_Screen_FullMethodName         = "/cocoonbox.agent.v1.Session/Screen"
+	Session_ActiveOrigin_FullMethodName   = "/cocoonbox.agent.v1.Session/ActiveOrigin"
+	Session_FillCredential_FullMethodName = "/cocoonbox.agent.v1.Session/FillCredential"
 )
 
 // SessionClient is the client API for Session service.
@@ -34,6 +36,12 @@ type SessionClient interface {
 	// Screen carries raw RFB bytes between the client and the box's VNC server.
 	// The first client frame must be `open`; the stream ends when either side closes.
 	Screen(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ScreenClientFrame, ScreenServerFrame], error)
+	// ActiveOrigin returns the origin of the active tab of the box's Chrome.
+	ActiveOrigin(ctx context.Context, in *ActiveOriginRequest, opts ...grpc.CallOption) (*ActiveOriginResponse, error)
+	// FillCredential fills the sign-in form of the active tab when its origin
+	// equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+	// only: it is no MCP tool, and its values are never logged or recorded.
+	FillCredential(ctx context.Context, in *FillCredentialRequest, opts ...grpc.CallOption) (*FillCredentialResponse, error)
 }
 
 type sessionClient struct {
@@ -86,6 +94,26 @@ func (c *sessionClient) Screen(ctx context.Context, opts ...grpc.CallOption) (gr
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Session_ScreenClient = grpc.BidiStreamingClient[ScreenClientFrame, ScreenServerFrame]
 
+func (c *sessionClient) ActiveOrigin(ctx context.Context, in *ActiveOriginRequest, opts ...grpc.CallOption) (*ActiveOriginResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ActiveOriginResponse)
+	err := c.cc.Invoke(ctx, Session_ActiveOrigin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *sessionClient) FillCredential(ctx context.Context, in *FillCredentialRequest, opts ...grpc.CallOption) (*FillCredentialResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FillCredentialResponse)
+	err := c.cc.Invoke(ctx, Session_FillCredential_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SessionServer is the server API for Session service.
 // All implementations must embed UnimplementedSessionServer
 // for forward compatibility.
@@ -96,6 +124,12 @@ type SessionServer interface {
 	// Screen carries raw RFB bytes between the client and the box's VNC server.
 	// The first client frame must be `open`; the stream ends when either side closes.
 	Screen(grpc.BidiStreamingServer[ScreenClientFrame, ScreenServerFrame]) error
+	// ActiveOrigin returns the origin of the active tab of the box's Chrome.
+	ActiveOrigin(context.Context, *ActiveOriginRequest) (*ActiveOriginResponse, error)
+	// FillCredential fills the sign-in form of the active tab when its origin
+	// equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+	// only: it is no MCP tool, and its values are never logged or recorded.
+	FillCredential(context.Context, *FillCredentialRequest) (*FillCredentialResponse, error)
 	mustEmbedUnimplementedSessionServer()
 }
 
@@ -114,6 +148,12 @@ func (UnimplementedSessionServer) Events(*EventsRequest, grpc.ServerStreamingSer
 }
 func (UnimplementedSessionServer) Screen(grpc.BidiStreamingServer[ScreenClientFrame, ScreenServerFrame]) error {
 	return status.Error(codes.Unimplemented, "method Screen not implemented")
+}
+func (UnimplementedSessionServer) ActiveOrigin(context.Context, *ActiveOriginRequest) (*ActiveOriginResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ActiveOrigin not implemented")
+}
+func (UnimplementedSessionServer) FillCredential(context.Context, *FillCredentialRequest) (*FillCredentialResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FillCredential not implemented")
 }
 func (UnimplementedSessionServer) mustEmbedUnimplementedSessionServer() {}
 func (UnimplementedSessionServer) testEmbeddedByValue()                 {}
@@ -172,6 +212,42 @@ func _Session_Screen_Handler(srv interface{}, stream grpc.ServerStream) error {
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type Session_ScreenServer = grpc.BidiStreamingServer[ScreenClientFrame, ScreenServerFrame]
 
+func _Session_ActiveOrigin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ActiveOriginRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServer).ActiveOrigin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Session_ActiveOrigin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServer).ActiveOrigin(ctx, req.(*ActiveOriginRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Session_FillCredential_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FillCredentialRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SessionServer).FillCredential(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Session_FillCredential_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SessionServer).FillCredential(ctx, req.(*FillCredentialRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Session_ServiceDesc is the grpc.ServiceDesc for Session service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -182,6 +258,14 @@ var Session_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Hello",
 			Handler:    _Session_Hello_Handler,
+		},
+		{
+			MethodName: "ActiveOrigin",
+			Handler:    _Session_ActiveOrigin_Handler,
+		},
+		{
+			MethodName: "FillCredential",
+			Handler:    _Session_FillCredential_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

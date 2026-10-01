@@ -13,6 +13,12 @@ service Session {
   // Screen carries raw RFB bytes between the client and the box's VNC server.
   // The first client frame must be `open`; the stream ends when either side closes.
   rpc Screen(stream ScreenClientFrame) returns (stream ScreenServerFrame);
+  // ActiveOrigin returns the origin of the active tab of the box's Chrome.
+  rpc ActiveOrigin(ActiveOriginRequest) returns (ActiveOriginResponse);
+  // FillCredential fills the sign-in form of the active tab when its origin
+  // equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+  // only: it is no MCP tool, and its values are never logged or recorded.
+  rpc FillCredential(FillCredentialRequest) returns (FillCredentialResponse);
 }
 
 message HelloRequest {
@@ -25,6 +31,30 @@ message HelloResponse {
   uint32 screen_height = 3;
   repeated string models = 4;
   string default_main_model = 5;
+}
+
+message ActiveOriginRequest {}
+
+message ActiveOriginResponse {
+  // As `location.origin`, e.g. "https://example.com" or "http://127.0.0.1:8080".
+  string origin = 1;
+}
+
+message FillCredentialRequest {
+  string origin = 1;
+  string username = 2;
+  oneof secret {
+    string password = 3;
+    // A one-time code, filled into the page's code field.
+    string code = 4;
+  }
+  bool submit = 5;
+}
+
+message FillCredentialResponse {
+  // The kinds of field filled: "username", "password", "code".
+  repeated string filled = 1;
+  bool submitted = 2;
 }
 
 message EventsRequest {
