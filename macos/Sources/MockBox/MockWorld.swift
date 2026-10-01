@@ -36,12 +36,14 @@ actor MockWorld {
     private weak var screen: SyntheticRFBServer?
     private var animateFPS = 0
     private var externalDelay: Duration?
+    private let restoreOnWake: Bool
 
-    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false) {
+    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false, restoreOnWake: Bool = false) {
         self.token = token
         self.bootDelay = bootDelay
         self.animateFPS = animateFPS
         self.externalDelay = externalDelay
+        self.restoreOnWake = restoreOnWake
         var box = Box()
         box.id = "cb-mock00000000"
         box.state = .hibernated
@@ -103,6 +105,10 @@ actor MockWorld {
         response.box = box
         response.operation.id = id
         response.operation.boxID = box.id
+        if waking, restoreOnWake {
+            Task { await self.restore(id: id) }
+            return response
+        }
         let phase: Cocoonbox_Control_V1_Phase = waking ? .waking : .creating
         let steps: [(Cocoonbox_Control_V1_Phase, String, Cocoonbox_Control_V1_BoxState)] = [
             (phase, "scheduling on cocoon-cb", .starting),
@@ -144,20 +150,29 @@ actor MockWorld {
         return operation(id)
     }
 
-    // rebase plays an image upgrade: save, new machine from the latest image, restore, switch.
+    // rebase plays an image upgrade with the box states the api reports: save
+    // on the old machine, new machine from the latest image, restore, switch.
     func rebase(image: String) -> Cocoonbox_Control_V1_Operation {
         let id = newOperation()
         let target = image.isEmpty ? box.latestImage : image
         Task {
-            await self.transfer(id: id, phase: .saving, detail: "uploading changed files", state: .starting, prefix: [(.snapshotting, "closing the browser and snapshotting home, /workspace and agent.db")])
+            await self.transfer(id: id, phase: .saving, detail: "uploading changed files", state: .running, prefix: [(.snapshotting, "closing the browser and snapshotting home, /workspace and agent.db")])
             self.emitOperation(id: id, phase: .creating, detail: "new machine from \(target)", state: .starting)
             try? await Task.sleep(for: self.bootDelay)
-            await self.transfer(id: id, phase: .restoring, detail: "restoring files into the new machine", state: .starting, prefix: [])
+            await self.transfer(id: id, phase: .restoring, detail: "restoring files into the new machine", state: .running, prefix: [])
             self.box.image = target
             self.box.lastSavedAtMs = Self.now()
             self.emitOperation(id: id, phase: .done, detail: "running on \(target)", state: .running)
         }
         return operation(id)
+    }
+
+    // restore plays a wake of a box with no machine: a new one boots and the saved state is restored into it.
+    private func restore(id: String) async {
+        emitOperation(id: id, phase: .creating, detail: "machine for the saved state", state: .starting)
+        try? await Task.sleep(for: bootDelay)
+        await transfer(id: id, phase: .restoring, detail: "restoring files into the new machine", state: .running, prefix: [])
+        emitOperation(id: id, phase: .done, detail: "restored the saved state", state: .running)
     }
 
     private func newOperation() -> String {

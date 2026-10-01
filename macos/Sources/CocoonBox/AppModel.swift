@@ -39,6 +39,11 @@ struct OperationProgress: Equatable {
     var events: [OperationEvent] = []
     var finished = false
     var failed = false
+    var replacing = false
+
+    var status: String {
+        "\(title) · \(events.last?.phase.label ?? "…")"
+    }
 }
 
 @MainActor @Observable
@@ -103,6 +108,16 @@ final class AppModel {
 
     var boxRunning: Bool {
         box?.state == .running
+    }
+
+    // replacing is the unfinished upgrade or restore that moves the box to a new machine.
+    var replacing: OperationProgress? {
+        operation.flatMap { $0.replacing && !$0.finished ? $0 : nil }
+    }
+
+    // agentsReady is whether agents can start or prompt: the box runs and no operation replaces its machine.
+    var agentsReady: Bool {
+        boxRunning && replacing == nil
     }
 
     var mcpSetup: MCPSetup? {
@@ -383,7 +398,7 @@ final class AppModel {
             defer { busy = false }
             do {
                 let op = try await connection.rebase(boxID: box.id, image: target)
-                watch(operation: op.id, title: "Upgrading to \(target)")
+                watch(operation: op.id, title: "Upgrading to \(target)", replacing: true)
             } catch {
                 report("upgrade", error)
             }
@@ -405,9 +420,9 @@ final class AppModel {
         }
     }
 
-    private func watch(operation id: String, title: String) {
+    private func watch(operation id: String, title: String, replacing: Bool = false) {
         operationTask?.cancel()
-        operation = OperationProgress(id: id, title: title)
+        operation = OperationProgress(id: id, title: title, replacing: replacing)
         operationTask = Task { [weak self] in
             var attempt = 0
             let backoff = Backoff()
@@ -432,6 +447,7 @@ final class AppModel {
     private func record(operationEvent event: OperationEvent) async {
         guard var progress = operation, progress.id == event.operationID else { return }
         progress.events.append(event)
+        progress.replacing = progress.replacing || event.phase == .restoring
         Perf.mark("operation", "\(event.phase) \(event.detail) box=\(event.boxState) bytes=\(event.doneBytes)/\(event.totalBytes)")
         if event.phase == .done || event.phase == .failed {
             progress.finished = true

@@ -25,13 +25,13 @@ struct CocoonBoxApp: App {
             CommandGroup(after: .newItem) {
                 Button("New Agent") { model.createAgent() }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
-                    .disabled(!model.boxRunning)
+                    .disabled(!model.agentsReady)
                 Menu("New Local Agent") {
                     ForEach(LocalAgentKind.allCases) { kind in
                         Button(kind.title) { model.launchLocal(kind) }
                     }
                 }
-                .disabled(!model.boxRunning)
+                .disabled(!model.agentsReady)
                 Button("Connect a Local Agent…") { model.showConnectAgent = true }
                     .disabled(model.box == nil)
                 Button("Sign Out") { model.signOut() }

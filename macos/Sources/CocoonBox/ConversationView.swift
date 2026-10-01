@@ -431,11 +431,12 @@ struct ComposerView: View {
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            TextField("Ask \(agent.name)…", text: $draft, axis: .vertical)
+            TextField(model.replacing?.status ?? "Ask \(agent.name)…", text: $draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...8)
                 .focused($focused)
                 .onSubmit(submit)
+                .disabled(model.replacing != nil)
                 .padding(8)
                 .background(.background, in: RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(.separator))
@@ -448,7 +449,7 @@ struct ComposerView: View {
                 .labelStyle(.iconOnly)
                 .font(.title2)
                 .buttonStyle(.plain)
-                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.boxRunning)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.agentsReady)
                 .keyboardShortcut(.return, modifiers: .command)
         }
         .padding(10)

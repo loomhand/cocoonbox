@@ -77,6 +77,13 @@ struct SidebarView: View {
             HStack {
                 Text("Agents").font(.headline)
                 Spacer()
+                if let replacing = model.replacing {
+                    Text(replacing.status)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
                 Menu {
                     Button("Agent in the box") { model.createAgent() }
                     Menu("Local agent") {
@@ -90,7 +97,7 @@ struct SidebarView: View {
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
                 .fixedSize()
-                .disabled(!model.boxRunning)
+                .disabled(!model.agentsReady)
                 .help("New agent")
                 Button {
                     model.deletingAgent = model.selectedAgent
@@ -418,7 +425,7 @@ struct OperationView: View {
             .onTapGesture { if progress.finished { expanded.toggle() } }
             ForEach(Array((folded ? [] : steps).enumerated()), id: \.offset) { _, event in
                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                    Text(phase(event.phase))
+                    Text(event.phase.label)
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                     Text(event.detail).font(.caption2)
@@ -442,9 +449,11 @@ struct OperationView: View {
             index == progress.events.count - 1 || progress.events[index + 1].phase != event.phase
         }.map(\.element)
     }
+}
 
-    private func phase(_ phase: Cocoonbox_Control_V1_Phase) -> String {
-        switch phase {
+extension Cocoonbox_Control_V1_Phase {
+    var label: String {
+        switch self {
         case .creating: "create"
         case .waking: "wake"
         case .snapshotting: "snapshot"

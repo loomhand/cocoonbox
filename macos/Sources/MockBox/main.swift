@@ -6,9 +6,10 @@ import GRPCNIOTransportHTTP2TransportServices
 // MockBox serves Boxes, Agents and Session over plaintext HTTP/2, and MCP at
 // /cocoonbox.mcp/<box id> on the same port, with canned agent turns and a
 // synthetic RFB desktop, for running the app without a box.
-//   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS] [--external-ms MS] [--external-history 1]
+//   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS] [--external-ms MS] [--external-history 1] [--restore-on-wake 1]
 // --external-ms starts one scripted MCP session (agent mcp:claude-code) MS after the box runs.
 // --external-history 1 adds idle MCP sessions from earlier hours.
+// --restore-on-wake 1 wakes the box as the api does a box without a machine: restored into a new one.
 
 setvbuf(stdout, nil, _IOLBF, 0)
 
@@ -23,7 +24,7 @@ let boot = Int(options["--boot-ms"] ?? "") ?? 2000
 let animate = Int(options["--animate"] ?? "") ?? 0
 let external = Int(options["--external-ms"] ?? "").map { Duration.milliseconds($0) }
 
-let world = MockWorld(token: token, bootDelay: .milliseconds(boot), animateFPS: animate, externalDelay: external, externalHistory: options["--external-history"] == "1")
+let world = MockWorld(token: token, bootDelay: .milliseconds(boot), animateFPS: animate, externalDelay: external, externalHistory: options["--external-history"] == "1", restoreOnWake: options["--restore-on-wake"] == "1")
 let boxID = await world.box.id
 let transport = HTTP2ServerTransport.TransportServices(
     address: .ipv4(host: "127.0.0.1", port: 0),
