@@ -1,0 +1,1 @@
+DPkg::Post-Invoke { "[ ! -x /usr/local/lib/cocoonbox/record-packages ] || /usr/local/lib/cocoonbox/record-packages || true"; };

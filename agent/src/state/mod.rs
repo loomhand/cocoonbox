@@ -540,6 +540,9 @@ impl StateEngine {
         let gate = tokio::time::timeout(QUIESCE_WAIT, Arc::clone(&self.turns).write_owned())
             .await
             .map_err(|_| StateError::Busy("a turn is still running; retry later".to_owned()))?;
+        if let Err(e) = self.tool("desktop_save", json!({})).await {
+            eprintln!("state: save the desktop session: {e}");
+        }
         let closed = self.tool("browser_close", json!({})).await?;
         Ok(Quiet {
             _gate: gate,

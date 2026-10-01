@@ -1,0 +1,19 @@
+#!/bin/sh
+# installs the packages of the desktop user's package file that this machine lacks; one failure never blocks the rest
+set -u
+list=/home/user/.config/cocoonbox/packages
+[ -f "$list" ] || exit 0
+missing=""
+for p in $(grep -E '^[a-z0-9][a-z0-9+.-]*(:[a-z0-9]+)?$' "$list"); do
+	[ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null)" = installed ] || missing="$missing $p"
+done
+[ -n "$missing" ] || { echo "packages: none missing"; exit 0; }
+echo "packages: installing$missing"
+export DEBIAN_FRONTEND=noninteractive
+apt-get -o DPkg::Lock::Timeout=300 update -q || echo "packages: apt-get update failed"
+apt-get -o DPkg::Lock::Timeout=300 install -y -q $missing && { echo "packages: installed$missing"; exit 0; }
+rc=0
+for p in $missing; do
+	if apt-get -o DPkg::Lock::Timeout=300 install -y -q "$p"; then echo "packages: installed $p"; else echo "packages: failed $p"; rc=1; fi
+done
+exit $rc

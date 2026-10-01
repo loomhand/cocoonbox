@@ -10,6 +10,7 @@ pub mod state;
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -36,6 +37,7 @@ pub struct Host {
     shells: Mutex<HashMap<String, Arc<Mutex<Option<Shell>>>>>,
     browser: Browser,
     cua: Cua,
+    session_save: PathBuf,
 }
 
 impl Host {
@@ -51,6 +53,7 @@ impl Host {
                 cfg.cdp_port,
             ),
             cua: Cua::new(cfg.cua_socket.clone()),
+            session_save: cfg.session_save.clone(),
         }
     }
 
@@ -77,6 +80,7 @@ impl Host {
             "state_walk" => state::walk(call.args).await.map(Output::text),
             "state_apply" => state::apply(call.args).await.map(Output::text),
             "state_swap" => state::swap(call.args).await.map(Output::text),
+            "desktop_save" => self.desktop_save().await.map(Output::text),
             t if t.starts_with("browser_") => {
                 self.browser.run(t, call.args).await.map(Output::text)
             }
@@ -128,6 +132,24 @@ impl Host {
         }
         let shell = slot.as_mut().ok_or("shell missing")?;
         shell.run(command, timeout).await
+    }
+
+    async fn desktop_save(&self) -> Result<String, String> {
+        let out = tokio::process::Command::new(&self.session_save)
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .map_err(|e| format!("run {}: {e}", self.session_save.display()))?;
+        if out.status.success() {
+            Ok("saved".to_owned())
+        } else {
+            Err(format!(
+                "{}: {}: {}",
+                self.session_save.display(),
+                out.status,
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))
+        }
     }
 
     async fn upload(&self, args: Value) -> Result<String, String> {

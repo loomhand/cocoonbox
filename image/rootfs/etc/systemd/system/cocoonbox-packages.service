@@ -1,0 +1,10 @@
+[Unit]
+Description=cocoonbox replay of the desktop user's packages
+ConditionPathExists=/home/user/.config/cocoonbox/packages
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/cocoonbox/replay-packages
+TimeoutStartSec=30min

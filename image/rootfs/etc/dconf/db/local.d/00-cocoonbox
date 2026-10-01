@@ -1,2 +1,5 @@
 [org/gnome/desktop/interface]
 toolkit-accessibility=true
+
+[org/xfce/mousepad/preferences/file]
+session-restore='always'

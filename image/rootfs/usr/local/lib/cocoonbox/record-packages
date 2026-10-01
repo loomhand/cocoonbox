@@ -1,0 +1,7 @@
+#!/bin/sh
+# apt hook: lists the packages installed by hand beyond the image baseline in the desktop user's package file
+set -eu
+base=/etc/cocoonbox/packages.baseline
+[ -f "$base" ] || exit 0
+apt-mark showmanual | LC_ALL=C sort -u | LC_ALL=C comm -23 - "$base" |
+	runuser -u user -- sh -c 'd=/home/user/.config/cocoonbox; mkdir -p "$d" && cat > "$d/.packages.tmp" && mv -f "$d/.packages.tmp" "$d/packages"'

@@ -37,7 +37,8 @@ log "reflink cow"
 cp --reflink=always "$snap/cow.raw" "$B/cow.raw"
 
 add=$B/add
-install -d "$add/usr/local/bin" "$add/etc/systemd/system/sysinit.target.wants" "$add/etc/systemd/system/multi-user.target.wants" "$add/etc/cocoonbox" "$add/etc/ssh"
+install -d "$add/usr/local/bin" "$add/etc/systemd/system/sysinit.target.wants" "$add/etc/systemd/system/multi-user.target.wants" "$add/etc/cocoonbox" "$add/etc/ssh" "$add/etc/apt/apt.conf.d"
+printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$PROXY" "$PROXY" > "$add/etc/apt/apt.conf.d/90cocoonbox-proxy"
 install -m 0755 "$SILKD" "$add/usr/local/bin/silkd"
 cat > "$add/etc/systemd/system/silkd.service" <<EOF
 [Unit]

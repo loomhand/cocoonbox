@@ -1,0 +1,15 @@
+#!/bin/sh
+# saves the XFCE session and whether Mousepad is open, for the next session start; runs as user
+set -eu
+state=$HOME/.local/state/xfce4-session
+mkdir -p "$state"
+if pgrep -u "$(id -u)" -x mousepad >/dev/null; then touch "$state/mousepad"; else rm -f "$state/mousepad"; fi
+ref=$(mktemp)
+trap 'rm -f "$ref"' EXIT
+dbus-send --session --print-reply --dest=org.xfce.SessionManager /org/xfce/SessionManager org.xfce.Session.Manager.Checkpoint string: >/dev/null
+for _ in $(seq 40); do
+	[ -z "$(find "$state" -maxdepth 1 -name 'xfce4-session-*' -newer "$ref")" ] || exit 0
+	sleep 0.25
+done
+echo "session-save: no session file within 10s" >&2
+exit 1

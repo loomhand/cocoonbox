@@ -1,0 +1,6 @@
+#!/bin/sh
+# reopens Mousepad when it was open at the last session save; Mousepad restores its own tabs
+marker=$HOME/.local/state/xfce4-session/mousepad
+[ -e "$marker" ] || exit 0
+rm -f "$marker"
+exec mousepad

@@ -356,7 +356,7 @@ impl Browser {
                 "--hide-crash-restore-bubble",
                 "--password-store=basic",
                 "--start-maximized",
-                "about:blank",
+                "--restore-last-session",
             ])
             .env("LANG", "en_US.UTF-8")
             .env("LANGUAGE", "en_US")

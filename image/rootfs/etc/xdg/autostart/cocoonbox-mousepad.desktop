@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Mousepad session restore
+Exec=/usr/local/lib/cocoonbox/mousepad-restore
+OnlyShowIn=XFCE;
+NoDisplay=true

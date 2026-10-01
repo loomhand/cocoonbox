@@ -2,6 +2,7 @@
 Description=cocoonbox XFCE session of user on :0
 Requires=cocoonbox-xorg.service
 After=cocoonbox-xorg.service systemd-user-sessions.service user@1000.service
+Wants=cocoonbox-packages.service
 
 [Service]
 Type=simple
@@ -19,6 +20,7 @@ Environment=XDG_SESSION_DESKTOP=xfce
 Environment=XDG_CURRENT_DESKTOP=XFCE
 Environment=GTK_MODULES=gail:atk-bridge
 Environment=QT_ACCESSIBILITY=1
+Environment="PROMPT_COMMAND=history -a"
 ExecStart=/usr/local/lib/cocoonbox/desktop-session
 ExecStartPost=-/usr/bin/systemctl --user start cua-driver.service
 ExecStopPost=-/usr/bin/systemctl --user stop cua-driver.service

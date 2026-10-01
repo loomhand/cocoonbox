@@ -15,6 +15,7 @@ const IDENTITY_PATH: &str = "/run/cocoonbox-identity/identity";
 const ROOT_UID: u32 = 0;
 const REDACTED: &str = "<redacted>";
 const DESKTOP_UNIT: &str = "cocoonbox-session.service";
+const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 
@@ -99,6 +100,7 @@ pub struct ToolhostConfig {
     pub chrome_profile: PathBuf,
     pub cdp_port: u16,
     pub cua_socket: PathBuf,
+    pub session_save: PathBuf,
 }
 
 impl ToolhostConfig {
@@ -119,6 +121,7 @@ impl ToolhostConfig {
                 |_| format!("{home}/.cache/cua-driver/cua-driver.sock").into(),
                 Into::into,
             ),
+            session_save: SESSION_SAVE.into(),
         })
     }
 }

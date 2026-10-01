@@ -37,6 +37,7 @@ struct Harness {
     endpoint: String,
     gw_log: Log,
     cua_log: Log,
+    session_save: PathBuf,
 }
 
 impl Harness {
@@ -62,6 +63,8 @@ impl Harness {
         let cua_log = Log::default();
         let cua_socket = dir.path().join("cua.sock");
         fake_cua(&cua_socket, Arc::clone(&cua_log));
+        let session_save = dir.path().join("session-save");
+        write_script(&session_save, "echo saved >> \"$0.log\"");
         let toolhost_socket = dir.path().join("toolhost.sock");
         let th_cfg = ToolhostConfig {
             socket: toolhost_socket.clone(),
@@ -71,6 +74,7 @@ impl Harness {
             chrome_profile: dir.path().join("chrome"),
             cdp_port: 1,
             cua_socket,
+            session_save: session_save.clone(),
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -129,6 +133,7 @@ impl Harness {
             endpoint,
             gw_log,
             cua_log,
+            session_save,
         }
     }
 
@@ -1824,6 +1829,13 @@ fn manifest_of(objects: &Objects, id: &str) -> Value {
     serde_json::from_slice(&keys.open(id, &sealed, 1 << 30).unwrap()).unwrap()
 }
 
+fn write_script(path: &Path, body: &str) {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
+    std::fs::set_permissions(&tmp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::rename(&tmp, path).unwrap();
+}
+
 fn noise(n: usize, seed: u64) -> Vec<u8> {
     let mut x = seed;
     (0..n)
@@ -1969,6 +1981,23 @@ async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
         !ids.contains(&intruder),
         "agent.db was not restored: {ids:?}"
     );
+}
+
+#[tokio::test]
+async fn quiesced_plan_saves_the_desktop_session_and_survives_a_failed_save() {
+    let h = Harness::start(Vec::new(), false).await;
+    let log = h.session_save.with_extension("log");
+    std::fs::write(h.workspace.join("notes.txt"), b"x").unwrap();
+
+    plan(&h, pb::Consistency::Live, "").await;
+    assert!(!log.exists(), "a live plan saved the desktop session");
+    plan(&h, pb::Consistency::Quiesced, "").await;
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "saved\n");
+
+    write_script(&h.session_save, "echo no session manager >&2; exit 1");
+    let p = plan(&h, pb::Consistency::Quiesced, "").await;
+    assert!(p.files >= 1, "{p:?}");
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "saved\n");
 }
 
 #[tokio::test]

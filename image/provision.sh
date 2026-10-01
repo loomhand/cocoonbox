@@ -62,6 +62,9 @@ setup_users() {
 	printf 'deploy ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-cocoonbox-deploy
 	chmod 0440 /etc/sudoers.d/90-cocoonbox-deploy
 	visudo -cqf /etc/sudoers.d/90-cocoonbox-deploy
+	printf 'Defaults:user env_keep += "http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY"\nuser ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-cocoonbox-user
+	chmod 0440 /etc/sudoers.d/90-cocoonbox-user
+	visudo -cqf /etc/sudoers.d/90-cocoonbox-user
 
 	local u home
 	for u in user deploy; do
@@ -125,6 +128,7 @@ setup_cocoonbox_dirs() {
 	install -d -m 0755 -o user -g user /workspace
 	install -d -m 0755 -o root -g root /etc/cocoonbox
 	systemd-tmpfiles --create /etc/tmpfiles.d/cocoonbox.conf
+	apt-mark showmanual | LC_ALL=C sort -u > /etc/cocoonbox/packages.baseline
 	if [ ! -f /etc/cocoonbox/golden-marker ]; then
 		printf 'cocoonbox golden provisioned %s\n' "$(date -u +%FT%TZ)" > /etc/cocoonbox/golden-marker
 	fi
