@@ -10,10 +10,12 @@ import Foundation
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
+// wait-local:<count>[:seconds] (that many local agents open, as after a reopen),
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
 // confirm:<save|upgrade|delete|off>, save-now, upgrade, wait-operation[:seconds],
-// rename:<name> and delete (both on the selected agent), end-local, quit.
+// rename:<name> (on the selected agent or local agent) and delete (on the
+// selected agent), end-local, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -98,6 +100,9 @@ enum Autopilot {
                 model.launchLocal(kind)
                 await until(15) { model.localAgents.count > before }
             }
+        case "wait-local":
+            let parts = arg.split(separator: ":").compactMap { Double($0) }
+            await until(parts.count > 1 ? parts[1] : 60) { Double(model.localAgents.count) >= (parts.first ?? 1) }
         case "terminal-keys":
             for name in arg.split(separator: ",") {
                 if let key = LocalAgentSession.Key(rawValue: String(name)) { model.selectedLocal?.press(key) }
@@ -122,8 +127,12 @@ enum Autopilot {
             model.confirmUpgrade = arg == "upgrade"
             model.deletingAgent = arg == "delete" ? model.selectedAgent : nil
         case "rename":
-            if let agent = model.selectedAgent { model.renameAgent(agent, to: arg) }
-            await until(10) { model.selectedAgent?.name == arg }
+            if let session = model.selectedLocal {
+                model.renameLocal(session, to: arg)
+            } else if let agent = model.selectedAgent {
+                model.renameAgent(agent, to: arg)
+                await until(10) { model.selectedAgent?.name == arg }
+            }
         case "delete":
             if let agent = model.selectedAgent {
                 model.deleteAgent(agent)

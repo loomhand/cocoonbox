@@ -69,6 +69,8 @@ final class AppModel {
     var localSessionAgents = Set(UserDefaults.standard.stringArray(forKey: AppModel.localSessionAgentsKey) ?? [])
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
+    @ObservationIgnored private var restoredLocal = false
+    @ObservationIgnored private var otherLocalRecords: [LocalAgentRecord] = []
 
     let screen = ScreenController()
 
@@ -81,7 +83,10 @@ final class AppModel {
             ?? UserDefaults.standard.string(forKey: Self.endpointKey)
             ?? Endpoint.defaultURL
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.closeAllLocal() }
+            MainActor.assumeIsolated {
+                self?.persistLocal()
+                self?.closeAllLocal()
+            }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -112,22 +117,73 @@ final class AppModel {
         "local:\(session.id)"
     }
 
+    private var localTarget: MCPTarget? {
+        guard let setup = mcpSetup, let endpoint = Endpoint(url: endpointURL), let token = Keychain.token(for: endpoint) else { return nil }
+        return MCPTarget(url: setup.url, token: token)
+    }
+
     // launchLocal starts an agent CLI on this Mac, wired to the box's MCP endpoint.
     func launchLocal(_ kind: LocalAgentKind) {
-        guard let setup = mcpSetup, let endpoint = Endpoint(url: endpointURL), let token = Keychain.token(for: endpoint) else {
+        guard let box, let target = localTarget else {
             lastError = "local agent: sign in and start the box first"
             return
         }
         Task {
             do {
-                let session = try await LocalAgentSession.start(kind, target: MCPTarget(url: setup.url, token: token))
-                localAgents.append(session)
+                let session = try await LocalAgentSession.start(kind, target: target, boxID: box.id)
+                add([session])
                 selectedAgentID = Self.selectionID(session)
                 Perf.mark("local_agent", "started \(kind.rawValue)")
             } catch {
                 report("local agent", error)
             }
         }
+    }
+
+    // restoreLocal reopens, once per launch, the local agents the session file keeps for this box.
+    private func restoreLocal() {
+        guard !restoredLocal, let box, let target = localTarget else { return }
+        restoredLocal = true
+        let records = LocalAgentStore.load()
+        otherLocalRecords = records.filter { $0.boxID != box.id }
+        Task {
+            var sessions: [LocalAgentSession] = []
+            for record in records where record.boxID == box.id {
+                do {
+                    sessions.append(try await LocalAgentSession.start(record.kind, target: target, boxID: box.id, restoring: record))
+                    Perf.mark("local_agent", "reopened \(record.kind.rawValue)")
+                } catch {
+                    report("reopen local agent", error)
+                }
+            }
+            add(sessions)
+        }
+    }
+
+    private func add(_ sessions: [LocalAgentSession]) {
+        for session in sessions {
+            if session.record.sessionID == nil {
+                localAgents.filter { $0.kind == session.kind }.forEach { $0.until(session.startedAt) }
+            }
+            session.onTitle = { [weak self] in self?.persistLocal() }
+            localAgents.append(session)
+        }
+        persistLocal()
+    }
+
+    // persistLocal writes the open local agents to the session file, with the session ids Codex and Cursor have chosen by now.
+    private func persistLocal() {
+        localAgents.forEach { $0.settle() }
+        do {
+            try LocalAgentStore.save(localAgents.map(\.record) + otherLocalRecords)
+        } catch {
+            report("save local agents", error)
+        }
+    }
+
+    func renameLocal(_ session: LocalAgentSession, to name: String) {
+        session.rename(name)
+        persistLocal()
     }
 
     func closeAllLocal() {
@@ -138,6 +194,7 @@ final class AppModel {
     func closeLocal(_ session: LocalAgentSession) {
         session.close()
         localAgents.removeAll { $0 === session }
+        persistLocal()
         if selectedAgentID == Self.selectionID(session) {
             selectedAgentID = agents.last { $0.externalClient == nil }?.id
         }
@@ -404,6 +461,7 @@ final class AppModel {
             )
         }
         screen.start(connection)
+        restoreLocal()
     }
 
     private func stopAgentSide() {

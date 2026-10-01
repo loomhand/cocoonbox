@@ -106,12 +106,7 @@ struct SidebarView: View {
                     ForEach(model.agents.filter { $0.externalClient == nil }, id: \.id) { agent in
                         Group {
                             if editingID == agent.id {
-                                TextField("Name", text: $newName)
-                                    .textFieldStyle(.roundedBorder)
-                                    .focused($nameFocused)
-                                    .onSubmit { commitRename(agent) }
-                                    .onExitCommand { editingID = nil }
-                                    .onChange(of: nameFocused) { if !nameFocused { commitRename(agent) } }
+                                nameField { commitRename(agent) }
                             } else {
                                 AgentRow(agent: agent)
                             }
@@ -131,7 +126,15 @@ struct SidebarView: View {
                 }
                 Section {
                     ForEach(model.localAgents) { session in
-                        LocalAgentRow(session: session).tag(AppModel.selectionID(session))
+                        Group {
+                            if editingID == AppModel.selectionID(session) {
+                                nameField { commitRename(session) }
+                            } else {
+                                LocalAgentRow(session: session)
+                            }
+                        }
+                        .tag(AppModel.selectionID(session))
+                        .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(session) })
                     }
                 } header: {
                     if !model.localAgents.isEmpty {
@@ -163,6 +166,15 @@ struct SidebarView: View {
         return agent.externalClient == nil || (agent.status != .running && agent.status != .waitingForUser)
     }
 
+    private func nameField(commit: @escaping () -> Void) -> some View {
+        TextField("Name", text: $newName)
+            .textFieldStyle(.roundedBorder)
+            .focused($nameFocused)
+            .onSubmit(commit)
+            .onExitCommand { editingID = nil }
+            .onChange(of: nameFocused) { if !nameFocused { commit() } }
+    }
+
     private func startRename(_ agent: Agent) {
         newName = agent.name
         editingID = agent.id
@@ -174,6 +186,18 @@ struct SidebarView: View {
         editingID = nil
         let name = newName.trimmingCharacters(in: .whitespaces)
         if !name.isEmpty, name != agent.name { model.renameAgent(agent, to: name) }
+    }
+
+    private func startRename(_ session: LocalAgentSession) {
+        newName = session.record.displayName
+        editingID = AppModel.selectionID(session)
+        nameFocused = true
+    }
+
+    private func commitRename(_ session: LocalAgentSession) {
+        guard editingID == AppModel.selectionID(session) else { return }
+        editingID = nil
+        if newName != session.record.displayName { model.renameLocal(session, to: newName) }
     }
 }
 
@@ -224,8 +248,8 @@ struct LocalAgentRow: View {
             Image(systemName: "terminal")
                 .foregroundStyle(session.closed ? Color.secondary : Color.teal)
             VStack(alignment: .leading, spacing: 2) {
-                Text(session.kind.title).lineLimit(1)
-                Text(session.closed ? "exited" : "local · MCP")
+                Text(session.record.displayName).lineLimit(1)
+                Text("\(session.kind.title) · \(session.closed ? "exited" : "MCP")")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }

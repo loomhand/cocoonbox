@@ -112,7 +112,7 @@ struct LocalAgentPane: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "terminal")
-                Text(session.kind.title).font(.headline)
+                Text(session.record.displayName).font(.headline).lineLimit(1)
                 Text(session.closed ? "exited" : "on this Mac, driving the box over MCP")
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -18,37 +18,51 @@ public enum LocalAgentError: Error, CustomStringConvertible {
 // terminal view outlives SwiftUI remounts; close hangs up the CLI.
 @MainActor @Observable
 public final class LocalAgentSession: Identifiable {
-    public let id = UUID()
+    public let id: UUID
     public let kind: LocalAgentKind
-    public let startedAt = Date()
-    public private(set) var title: String
+    public private(set) var record: LocalAgentRecord
     public private(set) var closed = false
+    @ObservationIgnored public var onTitle: (() -> Void)?
 
     @ObservationIgnored private let terminal: AppTerminalView
     @ObservationIgnored private let process: PTYProcess
+    @ObservationIgnored private let home: URL
     @ObservationIgnored private let events = SurfaceEvents()
 
-    private init(kind: LocalAgentKind, terminal: AppTerminalView, process: PTYProcess) {
-        self.kind = kind
+    private init(record: LocalAgentRecord, home: URL, terminal: AppTerminalView, process: PTYProcess) {
+        id = record.id
+        kind = record.kind
+        self.record = record
+        self.home = home
         self.terminal = terminal
         self.process = process
-        title = kind.title
         events.session = self
         terminal.delegate = events
     }
 
+    public var startedAt: Date { record.startedAt }
     public var view: NSView { terminal }
 
     // start resolves the CLI on the login shell's PATH, writes the workspace
     // files and runs the CLI. The workspace is a private directory per CLI,
-    // outside ~/Documents, so each CLI's trust prompt is answered once.
-    public static func start(_ kind: LocalAgentKind, target: MCPTarget) async throws -> LocalAgentSession {
+    // outside ~/Documents, so each CLI's trust prompt is answered once. A
+    // saved record reopens its conversation when the CLI still has it.
+    public static func start(_ kind: LocalAgentKind, target: MCPTarget, boxID: String, restoring saved: LocalAgentRecord? = nil) async throws -> LocalAgentSession {
         let shell = await LoginShell.environment()
         guard let executable = LoginShell.find(kind.executable, in: shell["PATH"] ?? "") else {
             throw LocalAgentError.notInstalled(kind)
         }
-        let launch = kind.launch(executable: executable, target: target)
-        let workspace = try Self.workspace(kind, files: launch.files)
+        let home = URL(fileURLWithPath: shell["HOME"] ?? NSHomeDirectory())
+        let workspace = try Self.workspace(kind)
+        var record = saved ?? LocalAgentRecord(kind: kind, boxID: boxID, sessionID: kind == .claudeCode ? UUID().uuidString.lowercased() : nil, workspace: workspace.path)
+        if saved != nil, record.sessionID == nil { record.sessionID = record.claim(home: home) }
+        let resume = saved != nil && record.resumable(home: home)
+        if !resume, kind != .claudeCode { record.sessionID = nil }
+        record.workspace = workspace.path
+        record.until = nil
+        let launch = kind.launch(executable: executable, target: target, session: record.sessionID, resume: resume)
+        try Self.write(launch.files, in: workspace)
+        record.startedAt = Date()
         let process = try PTYProcess(
             arguments: launch.arguments,
             environment: shell.merging(Self.terminal(directory: workspace.path)) { $1 }.merging(launch.environment) { $1 },
@@ -67,7 +81,7 @@ public final class LocalAgentSession: Identifiable {
             $0.withFontFamily("PingFang SC")
         }
         terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(backend))
-        let session = LocalAgentSession(kind: kind, terminal: terminal, process: process)
+        let session = LocalAgentSession(record: record, home: home, terminal: terminal, process: process)
         let started = Date()
         process.start(
             output: { backend.receive($0) },
@@ -120,21 +134,41 @@ public final class LocalAgentSession: Identifiable {
         closed = true
     }
 
-    fileprivate func titleChanged(_ title: String) {
-        self.title = title.isEmpty ? kind.title : title
+    // rename sets the user's name for the session; an empty name returns to the automatic one.
+    public func rename(_ name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        record.name = name.isEmpty ? nil : name
     }
 
-    private static func workspace(_ kind: LocalAgentKind, files: [String: String]) throws -> URL {
-        let manager = FileManager.default
-        let root = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    // until bounds the sessions this one can claim: another fresh session of its kind started then.
+    public func until(_ date: Date) {
+        if record.sessionID == nil, record.until == nil { record.until = date }
+    }
+
+    // settle records the session id Codex or Cursor chose once its session is on disk.
+    public func settle() {
+        if record.sessionID == nil { record.sessionID = record.claim(home: home) }
+    }
+
+    fileprivate func titleChanged(_ title: String) {
+        guard let name = kind.autoName(fromTitle: title), name != record.title else { return }
+        record.title = name
+        onTitle?()
+    }
+
+    private static func workspace(_ kind: LocalAgentKind) throws -> URL {
+        let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("CocoonBox/local-agents/\(kind.rawValue)", isDirectory: true)
-        try manager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        return root
+    }
+
+    private static func write(_ files: [String: String], in root: URL) throws {
         for (relative, content) in files {
             let file = root.appendingPathComponent(relative)
-            try manager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             try Data(content.utf8).write(to: file, options: .atomic)
         }
-        return root
     }
 }
 
