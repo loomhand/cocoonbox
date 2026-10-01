@@ -57,6 +57,7 @@ impl Interceptor for EdgeAuth {
 /// `cocoonbox.agent.v1.Agents`.
 pub struct AgentsSvc {
     rt: Arc<Runtime>,
+    mcp: Arc<Mcp>,
 }
 
 #[tonic::async_trait]
@@ -125,6 +126,27 @@ impl Agents for AgentsSvc {
     ) -> Result<Response<pb::CancelResponse>, Status> {
         self.rt.cancel(&req.into_inner().agent_id);
         Ok(Response::new(pb::CancelResponse {}))
+    }
+
+    async fn rename(
+        &self,
+        req: Request<pb::RenameAgentRequest>,
+    ) -> Result<Response<pb::Agent>, Status> {
+        self.rt.rename(req.into_inner()).await.map(Response::new)
+    }
+
+    async fn delete(
+        &self,
+        req: Request<pb::DeleteAgentRequest>,
+    ) -> Result<Response<pb::DeleteAgentResponse>, Status> {
+        let agent_id = req.into_inner().agent_id;
+        if self.mcp.serves(&agent_id) {
+            return Err(Status::failed_precondition(format!(
+                "agent {agent_id} has an open MCP session; close the client's session first"
+            )));
+        }
+        self.rt.delete(&agent_id).await?;
+        Ok(Response::new(pb::DeleteAgentResponse {}))
     }
 }
 
@@ -303,8 +325,11 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     let auth = EdgeAuth {
         gate: Arc::clone(&gate),
     };
+    let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
+    mcp.spawn_reaper();
     let agents = AgentsServer::new(AgentsSvc {
         rt: Arc::clone(&rt),
+        mcp: Arc::clone(&mcp),
     })
     .max_decoding_message_size(MAX_REQUEST_BYTES);
     let session = SessionServer::new(SessionSvc {
@@ -322,8 +347,6 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         rt: Arc::clone(&rt),
         engine: Arc::new(engine),
     });
-    let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
-    mcp.spawn_reaper();
     let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
         .add_service(InterceptedService::new(session, auth.clone()))
         .add_service(InterceptedService::new(state, auth))

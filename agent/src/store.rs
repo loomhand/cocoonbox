@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS nonces (
 ";
 
 const PAGE_BYTES: usize = 3 << 20;
+const UNTITLED: &str = "agent";
 
 /// Handle to the agent database; every call runs on the blocking pool.
 #[derive(Clone)]
@@ -74,7 +75,7 @@ impl Store {
                 return Ok(agent);
             }
             let now = now_ms();
-            let agent = pb::Agent {
+            let mut agent = pb::Agent {
                 id: new_id("ag"),
                 name,
                 status: AgentStatus::Idle.into(),
@@ -89,6 +90,7 @@ impl Store {
             )?;
             put_nonce(&tx, "create", &nonce, &agent.id)?;
             tx.commit()?;
+            agent.name = display_name(agent.name);
             Ok(Some(agent))
         })
         .await?
@@ -125,6 +127,52 @@ impl Store {
                 params![id, i32::from(status), now_ms()],
             )?;
             agent_row(c, &id)
+        })
+        .await
+    }
+
+    /// Sets an agent's name and returns the new row.
+    pub async fn rename_agent(
+        &self,
+        id: String,
+        name: String,
+    ) -> Result<Option<pb::Agent>, String> {
+        self.call(move |c| {
+            c.execute(
+                "UPDATE agents SET name = ?2, updated_at_ms = ?3 WHERE id = ?1",
+                params![id, name, now_ms()],
+            )?;
+            agent_row(c, &id)
+        })
+        .await
+    }
+
+    /// Names an agent created without a name; returns the new row, or `None` when it already has one.
+    pub async fn title_agent(
+        &self,
+        id: String,
+        title: String,
+    ) -> Result<Option<pb::Agent>, String> {
+        self.call(move |c| {
+            let changed = c.execute(
+                "UPDATE agents SET name = ?2, updated_at_ms = ?3 WHERE id = ?1 AND name = ''",
+                params![id, title, now_ms()],
+            )?;
+            if changed == 0 {
+                return Ok(None);
+            }
+            agent_row(c, &id)
+        })
+        .await
+    }
+
+    /// Deletes an agent with its turns, entries and nonces; returns whether it existed.
+    pub async fn delete_agent(&self, id: String) -> Result<bool, String> {
+        self.call(move |c| {
+            let tx = c.transaction()?;
+            let existed = delete_rows(&tx, &id)?;
+            tx.commit()?;
+            Ok(existed)
         })
         .await
     }
@@ -210,10 +258,7 @@ impl Store {
                 rows.collect::<rusqlite::Result<_>>()?
             };
             for id in &ids {
-                tx.execute("DELETE FROM entries WHERE agent_id = ?1", [id])?;
-                tx.execute("DELETE FROM turns WHERE agent_id = ?1", [id])?;
-                tx.execute("DELETE FROM nonces WHERE scope = 'send:' || ?1", [id])?;
-                tx.execute("DELETE FROM agents WHERE id = ?1", [id])?;
+                delete_rows(&tx, id)?;
             }
             tx.commit()?;
             Ok(ids)
@@ -368,6 +413,16 @@ fn insert_entry(
     Ok(entry)
 }
 
+fn delete_rows(c: &Connection, id: &str) -> rusqlite::Result<bool> {
+    c.execute("DELETE FROM entries WHERE agent_id = ?1", [id])?;
+    c.execute("DELETE FROM turns WHERE agent_id = ?1", [id])?;
+    c.execute(
+        "DELETE FROM nonces WHERE scope = 'send:' || ?1 OR (scope = 'create' AND value = ?1)",
+        [id],
+    )?;
+    Ok(c.execute("DELETE FROM agents WHERE id = ?1", [id])? > 0)
+}
+
 fn decode_entry(seq: i64, body: &[u8]) -> rusqlite::Result<TranscriptEntry> {
     let mut entry = TranscriptEntry::decode(body)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
@@ -388,12 +443,20 @@ fn agent_row(c: &Connection, id: &str) -> rusqlite::Result<Option<pb::Agent>> {
 fn read_agent(r: &rusqlite::Row<'_>) -> rusqlite::Result<pb::Agent> {
     Ok(pb::Agent {
         id: r.get(0)?,
-        name: r.get(1)?,
+        name: display_name(r.get(1)?),
         main_model: r.get(2)?,
         status: r.get(3)?,
         created_at_ms: r.get(4)?,
         updated_at_ms: r.get(5)?,
     })
+}
+
+fn display_name(name: String) -> String {
+    if name.is_empty() {
+        UNTITLED.to_owned()
+    } else {
+        name
+    }
 }
 
 fn nonce_value(c: &Connection, scope: &str, nonce: &str) -> rusqlite::Result<Option<String>> {

@@ -20,6 +20,7 @@ use crate::store::Store;
 use crate::{computer, new_id, prompts, tools};
 
 const QUEUE_DEPTH: usize = 32;
+const TITLE_CHARS: usize = 24;
 const MAIN_MAX_STEPS: usize = 40;
 const MAIN_MAX_TOKENS: u32 = 4096;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
@@ -93,22 +94,17 @@ impl Runtime {
         Ok(())
     }
 
-    /// Creates an agent; an empty model selects the box default.
+    /// Creates an agent; an empty model selects the box default, an empty name waits for the first message.
     pub async fn create_agent(&self, req: pb::CreateAgentRequest) -> Result<pb::Agent, Status> {
         let model = if req.main_model.is_empty() {
             self.cfg.model_main.clone()
         } else {
             req.main_model
         };
-        let name = if req.name.is_empty() {
-            "agent".to_owned()
-        } else {
-            req.name
-        };
         let agent = self
             .journal
             .store
-            .create_agent(name, model, req.client_nonce)
+            .create_agent(req.name, model, req.client_nonce)
             .await
             .map_err(Status::internal)?;
         self.journal.bus.publish(event::Body::Agent(agent.clone()));
@@ -130,6 +126,7 @@ impl Runtime {
                 req.agent_id
             )));
         }
+        let title = title(&req.text);
         let mut text = req.text;
         for a in req.attachments {
             let path = format!("uploads/{}", sanitize(&a.name));
@@ -158,6 +155,9 @@ impl Runtime {
             return Ok(queued.turn_id);
         };
         self.journal.bus.publish(event::Body::Transcript(entry));
+        if let Some(title) = title {
+            self.journal.title(&req.agent_id, title).await;
+        }
         let slot = self.slot(&req.agent_id);
         if slot.queue.try_send(queued.turn_id.clone()).is_err() {
             let end = pb::TurnEnd {
@@ -183,6 +183,56 @@ impl Runtime {
             return Err(Status::resource_exhausted("turn queue is full"));
         }
         Ok(queued.turn_id)
+    }
+
+    /// Sets an agent's name.
+    pub async fn rename(&self, req: pb::RenameAgentRequest) -> Result<pb::Agent, Status> {
+        let name = req.name.trim();
+        if name.is_empty() {
+            return Err(Status::invalid_argument("name is empty"));
+        }
+        let agent = self
+            .journal
+            .store
+            .rename_agent(req.agent_id.clone(), name.to_owned())
+            .await
+            .map_err(Status::internal)?
+            .ok_or_else(|| Status::not_found(format!("agent {} not found", req.agent_id)))?;
+        self.journal.bus.publish(event::Body::Agent(agent.clone()));
+        Ok(agent)
+    }
+
+    /// Cancels the agent's running turn, waits for it to end, then removes the agent and its history.
+    pub async fn delete(&self, agent_id: &str) -> Result<(), Status> {
+        let slot = lock(&self.slots).remove(agent_id);
+        let _idle = match &slot {
+            Some(slot) => {
+                {
+                    let mut state = lock(&slot.state);
+                    state.deleted = true;
+                    if let Some(token) = &state.cancel {
+                        token.cancel();
+                    }
+                }
+                Some(slot.turn.lock().await)
+            }
+            None => None,
+        };
+        let existed = self
+            .journal
+            .store
+            .delete_agent(agent_id.to_owned())
+            .await
+            .map_err(Status::internal)?;
+        if !existed {
+            return Err(Status::not_found(format!("agent {agent_id} not found")));
+        }
+        self.journal
+            .bus
+            .publish(event::Body::AgentDeleted(pb::AgentDeleted {
+                agent_id: agent_id.to_owned(),
+            }));
+        Ok(())
     }
 
     /// Delivers the user's answer to a pending approval.
@@ -328,6 +378,7 @@ impl Runtime {
         let (tx, rx) = mpsc::channel(QUEUE_DEPTH);
         let slot = Arc::new(Slot {
             queue: tx,
+            turn: tokio::sync::Mutex::new(()),
             state: Mutex::new(SlotState::default()),
         });
         slots.insert(agent_id.to_owned(), Arc::clone(&slot));
@@ -352,7 +403,13 @@ impl Runtime {
         };
         let _gate = self.turns.read().await;
         let cancel = CancellationToken::new();
-        lock(&slot.state).cancel = Some(cancel.clone());
+        {
+            let mut state = lock(&slot.state);
+            if state.deleted {
+                return;
+            }
+            state.cancel = Some(cancel.clone());
+        }
         let ctx = TurnCtx {
             agent_id: agent_id.to_owned(),
             turn_id,
@@ -639,6 +696,8 @@ enum Kind {
 
 struct Slot {
     queue: mpsc::Sender<String>,
+    /// Held while a turn runs, so a delete can wait for it.
+    turn: tokio::sync::Mutex<()>,
     state: Mutex<SlotState>,
 }
 
@@ -646,6 +705,7 @@ struct Slot {
 struct SlotState {
     cancel: Option<CancellationToken>,
     approvals: HashMap<String, oneshot::Sender<Reply>>,
+    deleted: bool,
 }
 
 struct Reply {
@@ -727,9 +787,10 @@ async fn worker(
     mut rx: mpsc::Receiver<String>,
 ) {
     while let Some(turn_id) = rx.recv().await {
-        if rt.stop.is_cancelled() {
+        if rt.stop.is_cancelled() || lock(&slot.state).deleted {
             break;
         }
+        let _turn = slot.turn.lock().await;
         let turn = rt.run_turn(&agent_id, Arc::clone(&slot), turn_id);
         rt.tasks.track_future(turn).await;
     }
@@ -737,6 +798,14 @@ async fn worker(
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The first non-blank line of `text`, trimmed and cut to [`TITLE_CHARS`] characters.
+fn title(text: &str) -> Option<String> {
+    let line = text.trim().lines().next()?.trim();
+    let cut: String = line.chars().take(TITLE_CHARS).collect();
+    let cut = cut.trim_end();
+    (!cut.is_empty()).then(|| cut.to_owned())
 }
 
 fn sanitize(name: &str) -> String {
@@ -818,6 +887,24 @@ mod tests {
             matches!(&msgs[3], Message::Tool { call_id, is_error: true, .. } if call_id == "c2")
         );
         assert!(matches!(&msgs[4], Message::User(_)));
+    }
+
+    #[test]
+    fn title_takes_the_first_line_cut_on_a_character_boundary() {
+        assert_eq!(
+            title("  \n 帮我整理一下桌面上的下载文件夹并按照文件类型分类放好谢谢你\n第二行")
+                .as_deref(),
+            Some("帮我整理一下桌面上的下载文件夹并按照文件类型分类")
+        );
+        assert_eq!(
+            title("fix the build\nthen test").as_deref(),
+            Some("fix the build")
+        );
+        assert_eq!(
+            title("a sentence that is longer than the cut").as_deref(),
+            Some("a sentence that is longe")
+        );
+        assert_eq!(title(" \n\t "), None);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::dispatch::{Caller, uses_driver};
 use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate};
 use crate::llm::{b64, image_mime};
-use crate::pb::{self, AgentStatus, Role, transcript_entry::Body as Entry};
+use crate::pb::{self, AgentStatus, Role, event, transcript_entry::Body as Entry};
 use crate::runner::Runtime;
 use crate::{new_id, tools};
 
@@ -115,10 +115,25 @@ impl Mcp {
             .prune_agents(AGENT_PREFIX.to_owned(), before)
             .await
         {
-            Ok(ids) if !ids.is_empty() => eprintln!("mcp: pruned {} idle agent(s)", ids.len()),
+            Ok(ids) if !ids.is_empty() => {
+                eprintln!("mcp: pruned {} idle agent(s)", ids.len());
+                for agent_id in ids {
+                    self.rt
+                        .journal
+                        .bus
+                        .publish(event::Body::AgentDeleted(pb::AgentDeleted { agent_id }));
+                }
+            }
             Ok(_) => {}
             Err(e) => eprintln!("mcp: prune: {e}"),
         }
+    }
+
+    /// Whether an open session drives agent `agent_id`.
+    pub fn serves(&self, agent_id: &str) -> bool {
+        lock(&self.sessions)
+            .values()
+            .any(|s| s.agent_id == agent_id)
     }
 
     /// Closes every session; used when the agent shuts down.

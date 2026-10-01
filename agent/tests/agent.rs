@@ -1030,6 +1030,253 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
 }
 
 #[tokio::test]
+async fn delete_cancels_a_running_turn_and_removes_the_agent() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("call_s", "shell", &json!({"command": "sleep 30"})),
+            ),
+            ("chat/completions", chat_text("kept")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let mut session = h.session().await;
+    let doomed = create_agent(&mut agents).await;
+    let kept = create_agent(&mut agents).await;
+    let mut events = session
+        .events(authed(pb::EventsRequest { from_offset: 0 }))
+        .await
+        .unwrap()
+        .into_inner();
+    send(&mut agents, &doomed, "sleep", "n1").await;
+    send(&mut agents, &doomed, "queued behind the sleep", "n2").await;
+    loop {
+        let page = agents
+            .transcript(authed(pb::TranscriptRequest {
+                agent_id: doomed.clone(),
+                after_seq: 0,
+                limit: 0,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        if page
+            .entries
+            .iter()
+            .any(|e| matches!(&e.body, Some(Body::ToolCall(c)) if c.call_id == "call_s"))
+        {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let started = std::time::Instant::now();
+    agents
+        .delete(authed(pb::DeleteAgentRequest {
+            agent_id: doomed.clone(),
+        }))
+        .await
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+
+    let listed: Vec<String> = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .agents
+        .into_iter()
+        .map(|a| a.id)
+        .collect();
+    assert_eq!(listed, [kept.as_str()]);
+    let page = agents
+        .transcript(authed(pb::TranscriptRequest {
+            agent_id: doomed.clone(),
+            after_seq: 0,
+            limit: 0,
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(page.entries.is_empty(), "{:?}", page.entries);
+    let again = agents
+        .delete(authed(pb::DeleteAgentRequest {
+            agent_id: doomed.clone(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(again.code(), Code::NotFound);
+    let send_after = agents
+        .send(authed(pb::SendRequest {
+            agent_id: doomed.clone(),
+            text: "hello?".into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(send_after.code(), Code::NotFound);
+    let recreated = agents
+        .create(authed(pb::CreateAgentRequest {
+            name: "fresh".into(),
+            ..Default::default()
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_ne!(recreated.id, doomed);
+
+    let deleted = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(5), events.message())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Some(event::Body::AgentDeleted(d)) = ev.body {
+            break d.agent_id;
+        }
+    };
+    assert_eq!(deleted, doomed);
+
+    send(&mut agents, &kept, "still here", "").await;
+    let entries = wait_turn_end(&mut agents, &kept).await;
+    assert!(
+        entries
+            .iter()
+            .any(|e| matches!(&e.body, Some(Body::Text(t)) if t.text == "kept"))
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    assert_eq!(
+        chats.len(),
+        2,
+        "the queued turn of the deleted agent never ran"
+    );
+}
+
+#[tokio::test]
+async fn untitled_agents_take_their_first_line_and_a_rename_wins() {
+    let h = Harness::start(
+        vec![
+            ("chat/completions", chat_text("好的")),
+            ("chat/completions", chat_text("ok")),
+            ("chat/completions", chat_text("ok")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let mut session = h.session().await;
+    let mut events = session
+        .events(authed(pb::EventsRequest { from_offset: 0 }))
+        .await
+        .unwrap()
+        .into_inner();
+    let untitled = agents
+        .create(authed(pb::CreateAgentRequest::default()))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(untitled.name, "agent");
+    send(
+        &mut agents,
+        &untitled.id,
+        "\n  帮我整理一下桌面上的下载文件夹，并按照文件类型分类放好  \n谢谢",
+        "",
+    )
+    .await;
+    wait_turn_end(&mut agents, &untitled.id).await;
+    let name = |list: &pb::ListAgentsResponse, id: &str| {
+        list.agents
+            .iter()
+            .find(|a| a.id == id)
+            .map(|a| a.name.clone())
+            .unwrap()
+    };
+    let list = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        name(&list, &untitled.id),
+        "帮我整理一下桌面上的下载文件夹，并按照文件类型分"
+    );
+    let titled = loop {
+        let ev = tokio::time::timeout(Duration::from_secs(5), events.message())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        if let Some(event::Body::Agent(a)) = ev.body
+            && a.id == untitled.id
+            && a.name != "agent"
+        {
+            break a.name;
+        }
+    };
+    assert_eq!(titled, "帮我整理一下桌面上的下载文件夹，并按照文件类型分");
+
+    let renamed = agents
+        .rename(authed(pb::RenameAgentRequest {
+            agent_id: untitled.id.clone(),
+            name: "  下载整理  ".into(),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(renamed.name, "下载整理");
+    let named_first = agents
+        .create(authed(pb::CreateAgentRequest::default()))
+        .await
+        .unwrap()
+        .into_inner();
+    agents
+        .rename(authed(pb::RenameAgentRequest {
+            agent_id: named_first.id.clone(),
+            name: "mine".into(),
+        }))
+        .await
+        .unwrap();
+    send(
+        &mut agents,
+        &named_first.id,
+        "a message that would title it",
+        "",
+    )
+    .await;
+    wait_turn_end(&mut agents, &named_first.id).await;
+    let list = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(name(&list, &untitled.id), "下载整理");
+    assert_eq!(name(&list, &named_first.id), "mine");
+
+    let blank = agents
+        .rename(authed(pb::RenameAgentRequest {
+            agent_id: untitled.id.clone(),
+            name: " ".into(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(blank.code(), Code::InvalidArgument);
+    let unknown = agents
+        .rename(authed(pb::RenameAgentRequest {
+            agent_id: "ag-nope".into(),
+            name: "x".into(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(unknown.code(), Code::NotFound);
+}
+
+#[tokio::test]
 async fn screen_relays_raw_rfb_bytes() {
     let h = Harness::start(Vec::new(), false).await;
     let mut session = h.session().await;
@@ -1622,6 +1869,56 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
     let mcp_count = names.iter().filter(|(_, n)| n == "mcp:test-client").count();
     assert_eq!(mcp_count, 1, "{names:?}");
     assert!(names.iter().any(|(id, _)| *id == loop_agent), "{names:?}");
+}
+
+#[tokio::test]
+async fn mcp_agents_are_deleted_only_after_their_session_closes() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mcp = McpClient::connect(&h).await;
+    let mut agents = h.agents().await;
+    let agent_id = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .agents
+        .into_iter()
+        .find(|a| a.name == "mcp:test-client")
+        .unwrap()
+        .id;
+    let refused = agents
+        .delete(authed(pb::DeleteAgentRequest {
+            agent_id: agent_id.clone(),
+        }))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::FailedPrecondition);
+    assert_eq!(
+        mcp.post(json!({"jsonrpc": "2.0", "id": 9, "method": "ping"}))
+            .await
+            .status(),
+        200
+    );
+    let closed = reqwest::Client::new()
+        .delete(format!("{}/mcp", h.endpoint))
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .header("mcp-session-id", &mcp.session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(closed.status(), 204);
+    agents
+        .delete(authed(pb::DeleteAgentRequest {
+            agent_id: agent_id.clone(),
+        }))
+        .await
+        .unwrap();
+    let listed = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(listed.agents.is_empty(), "{:?}", listed.agents);
 }
 
 #[tokio::test]

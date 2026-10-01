@@ -50,4 +50,15 @@ impl Journal {
             Err(e) => eprintln!("set status of {agent_id}: {e}"),
         }
     }
+
+    /// Names an agent created without a name and publishes the new row.
+    pub async fn title(&self, agent_id: &str, title: String) {
+        match self.store.title_agent(agent_id.to_owned(), title).await {
+            Ok(Some(agent)) => {
+                self.bus.publish(event::Body::Agent(agent));
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("title {agent_id}: {e}"),
+        }
+    }
 }
