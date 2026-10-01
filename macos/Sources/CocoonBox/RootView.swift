@@ -125,6 +125,7 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            .environment(\.defaultMinListRowHeight, 38)
             .alert("Rename agent", isPresented: Binding(get: { model.renamingAgent != nil }, set: { if !$0 { model.renamingAgent = nil } }), presenting: model.renamingAgent) { agent in
                 TextField("Name", text: $newName)
                 Button("Rename") { model.renameAgent(agent, to: newName) }
