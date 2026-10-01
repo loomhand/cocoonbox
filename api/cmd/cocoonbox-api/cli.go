@@ -15,6 +15,7 @@ import (
 
 const cliUsage = `usage:
   cocoonbox-api [-config FILE] user add NAME [-id ID] [-admin]
+  cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin`
 
@@ -44,12 +45,23 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		_, err = fmt.Fprintf(stdout, "created user %s with id %s\n", u.Name, u.ID)
 		return err
 	}
-	if !*fromStdin {
-		return errors.New(cliUsage)
-	}
 	u, err := accounts.ByName(name)
 	if err != nil {
 		return err
+	}
+	if verb == "delete" {
+		// A user who never had an API token never owned a box, so there is nothing to release.
+		if u.HasToken {
+			return errors.New("the user has an API token and may own a box: delete it in the console, which releases its boxes")
+		}
+		if err = accounts.Delete(ctx, u.ID); err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "deleted user %s\n", u.Name)
+		return err
+	}
+	if !*fromStdin {
+		return errors.New(cliUsage)
 	}
 	secret, err := bufio.NewReader(stdin).ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {

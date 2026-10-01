@@ -24,6 +24,7 @@ CLI, run as root on the host (secrets only on stdin):
 
 ```
 cocoonbox-api -config /etc/cocoonbox/api.yaml user add NAME [-id ID] [-admin]
+cocoonbox-api -config /etc/cocoonbox/api.yaml user delete NAME   # only a user who never had an API token
 printf '%s\n' "$PASSWORD" | cocoonbox-api -config /etc/cocoonbox/api.yaml user passwd NAME -stdin
 printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user token-sha256 NAME -stdin
 ```
