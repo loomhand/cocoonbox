@@ -33,12 +33,6 @@ extension Agent {
     }
 }
 
-// ExternalAgents is the sidebar's mcp:* rows in agent order and the number of closed sessions.
-struct ExternalAgents {
-    var shown: [Agent] = []
-    var closed = 0
-}
-
 struct OperationProgress: Equatable {
     var id: String
     var title: String
@@ -50,11 +44,11 @@ struct OperationProgress: Equatable {
 @MainActor @Observable
 final class AppModel {
     static let endpointKey = "endpoint"
+    static let localSessionAgentsKey = "localSessionAgents"
 
     var endpointURL: String
     var showSignIn = false
     var showConnectAgent = false
-    var showClosedExternal = false
     var confirmSave = false
     var confirmUpgrade = false
     var box: Box?
@@ -69,6 +63,7 @@ final class AppModel {
     var busy = false
     var answeredApprovals: Set<String> = []
     var localAgents: [LocalAgentSession] = []
+    var localSessionAgents = Set(UserDefaults.standard.stringArray(forKey: AppModel.localSessionAgentsKey) ?? [])
     @ObservationIgnored var computerActions = 0
 
     let screen = ScreenController()
@@ -139,24 +134,31 @@ final class AppModel {
         Perf.mark("local_agent", "closed \(session.kind.rawValue)")
     }
 
-    // externalAgents lists a session as open while it runs or waits for the
-    // user; a closed session stays listed while it is selected.
-    func externalAgents() -> ExternalAgents {
-        var external = ExternalAgents()
-        for agent in agents where agent.externalClient != nil {
+    // externalAgents is the open MCP sessions of clients started outside this app, plus the selected agent.
+    func externalAgents() -> [Agent] {
+        agents.filter { agent in
+            guard agent.externalClient != nil else { return false }
+            if agent.id == selectedAgentID { return true }
             let open = agent.status == .running || agent.status == .waitingForUser
-            if !open { external.closed += 1 }
-            if open || showClosedExternal || agent.id == selectedAgentID {
-                external.shown.append(agent)
-            }
+            return open && !localSessionAgents.contains(agent.id)
         }
-        return external
     }
 
     // externalAgent is the mcp:* agent a local session opened: the newest one from the same client since it started.
     func externalAgent(for session: LocalAgentSession) -> Agent? {
         let since = Int64(session.startedAt.timeIntervalSince1970 * 1000) - 5000
         return agents.last { $0.externalClient == session.kind.title && $0.createdAtMs >= since }
+    }
+
+    // linkLocalAgents records the MCP agents opened by local sessions, kept across launches and pruned to agents the box still has.
+    private func linkLocalAgents() {
+        var linked = localSessionAgents.filter { id in agents.contains { $0.id == id } }
+        for session in localAgents {
+            if let agent = externalAgent(for: session) { linked.insert(agent.id) }
+        }
+        guard linked != localSessionAgents else { return }
+        localSessionAgents = linked
+        UserDefaults.standard.set(Array(linked), forKey: Self.localSessionAgentsKey)
     }
 
     @discardableResult
@@ -427,9 +429,10 @@ final class AppModel {
         guard let connection else { return }
         do {
             agents = try await connection.listAgents().sorted { $0.createdAtMs < $1.createdAtMs }
+            linkLocalAgents()
             live = [:]
             if selectedAgentID == nil || !agents.contains(where: { $0.id == selectedAgentID }) {
-                selectedAgentID = agents.last?.id
+                selectedAgentID = agents.last { $0.externalClient == nil }?.id ?? agents.last?.id
             }
             for agent in agents {
                 await loadTranscript(agentID: agent.id)
@@ -469,6 +472,7 @@ final class AppModel {
                 agents[index] = agent
             } else {
                 agents.append(agent)
+                linkLocalAgents()
                 if selectedAgentID == nil { selectedAgentID = agent.id }
             }
         case .textDelta(let delta):

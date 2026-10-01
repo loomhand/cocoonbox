@@ -97,21 +97,11 @@ struct SidebarView: View {
                     }
                 }
                 Section(isExpanded: $externalExpanded) {
-                    ForEach(external.shown, id: \.id) { agent in
+                    ForEach(external, id: \.id) { agent in
                         AgentRow(agent: agent).tag(agent.id)
                     }
-                    if external.closed > 0 {
-                        Button {
-                            model.showClosedExternal.toggle()
-                        } label: {
-                            Label("Closed sessions (\(external.closed))", systemImage: model.showClosedExternal ? "chevron.down" : "chevron.right")
-                                .font(.caption)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                    }
                 } header: {
-                    if !external.shown.isEmpty || external.closed > 0 {
+                    if !external.isEmpty {
                         Text("External")
                     }
                 }
