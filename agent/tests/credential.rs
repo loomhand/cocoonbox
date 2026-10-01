@@ -246,6 +246,7 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         .env("EDGE_TOKEN", TOKEN)
         .env("AGENT_LISTEN", format!("127.0.0.1:{port}"))
         .env("CB_STATE_DIR", &state)
+        .env("CB_IDENTITY_PATH", dir.path().join("no-identity"))
         .env("TOOLHOST_SOCKET", &socket)
         .stderr(Stdio::piped())
         .kill_on_drop(true)

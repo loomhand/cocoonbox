@@ -70,6 +70,7 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
         .env("EDGE_TOKEN", TOKEN)
         .env("AGENT_LISTEN", format!("127.0.0.1:{port}"))
         .env("CB_STATE_DIR", dir.path())
+        .env("CB_IDENTITY_PATH", dir.path().join("no-identity"))
         .env("TOOLHOST_SOCKET", dir.path().join("none.sock"))
         .env("VNC_ADDR", banner_vnc().await)
         .stderr(Stdio::piped())

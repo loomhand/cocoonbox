@@ -73,7 +73,7 @@ impl ServeConfig {
             model_main: required("MODEL_MAIN")?,
             model_computer: required("MODEL_COMPUTER")?,
             edge_token: env::var("EDGE_TOKEN").ok().filter(|v| !v.is_empty()),
-            identity_path: IDENTITY_PATH.into(),
+            identity_path: optional("CB_IDENTITY_PATH", IDENTITY_PATH).into(),
             identity_owner: ROOT_UID,
             listen: listen
                 .parse()
