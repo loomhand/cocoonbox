@@ -48,8 +48,10 @@ type Flavor struct {
 
 // Spec describes a machine to create; Owner is an opaque key the backend stores and filters on.
 type Spec struct {
-	ID     string
-	Owner  string
+	ID    string
+	Owner string
+	// Tenant is the owner's backend credential; empty claims with the backend's own.
+	Tenant string
 	Flavor Flavor
 	// Image overrides the backend's default image.
 	Image string

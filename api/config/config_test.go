@@ -8,13 +8,14 @@ import (
 )
 
 const (
-	validHash  = "2bd806c97f0e00af1a1fc3328fa763a9269723c8db8fac4f93af71db186d6e90"
 	signingKey = "provision:\n  signing_key_file: edge-signing.key\n"
-	required   = "image: cbdesk:v1\nsandboxd:\n  url: http://127.0.0.1:17780\n  token_file: sandboxd-token\n" + signingKey
+	gwAdmin    = "  gw_admin:\n    url: http://10.203.0.1:18090\n    token_file: gw-admin-token\n"
+	accounts   = "accounts:\n  dsn_file: pg.dsn\n  master_key_file: master.key\n"
+	required   = "image: cbdesk:v1\nsandboxd:\n  url: http://127.0.0.1:17780\n  token_file: sandboxd-token\n" + accounts + signingKey + gwAdmin
 )
 
 func TestLoadDefaults(t *testing.T) {
-	cfg, err := Load(writeConfig(t, required+"users:\n  - name: alice\n    token_sha256: "+validHash+"\n"))
+	cfg, err := Load(writeConfig(t, required))
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -31,8 +32,9 @@ func TestLoadRejects(t *testing.T) {
 		name, body, want string
 	}{
 		{name: "unknown key", body: "listn: x\n", want: "unknown field"},
-		{name: "bad hash", body: "users:\n  - name: alice\n    token_sha256: abc\n", want: "64 lowercase hex"},
-		{name: "duplicate user", body: "users:\n  - name: a\n    token_sha256: " + validHash + "\n  - name: a\n    token_sha256: " + strings.Repeat("0", 64) + "\n", want: "duplicate name"},
+		{name: "retired users", body: required + "users: []\n", want: "unknown field"},
+		{name: "retired scheduled users", body: required + "state:\n  scheduled_users: []\n", want: "unknown field"},
+		{name: "no accounts", body: signingKey, want: "accounts.dsn_file and accounts.master_key_file are required"},
 		{name: "bad port", body: "agent_port: 70000\n", want: "agent_port"},
 		{name: "sandboxd without url", body: "sandboxd:\n  token_file: t\n", want: "sandboxd.url"},
 		{name: "no image", body: signingKey, want: "image is required"},
@@ -41,10 +43,11 @@ func TestLoadRejects(t *testing.T) {
 		{name: "retired namespace", body: required + "namespace: cocoonbox\n", want: "unknown field"},
 		{name: "retired network", body: required + "network: cb\n", want: "unknown field"},
 		{name: "retired probe port", body: required + "probe_port: 7443\n", want: "unknown field"},
-		{name: "no signing key", body: "users: []\n", want: "provision.signing_key_file is required"},
+		{name: "no signing key", body: "image: x\n", want: "provision.signing_key_file is required"},
 		{name: "retired edge token", body: signingKey + "edge_token_file: edge-token\n", want: "unknown field"},
 		{name: "retired gw key socket", body: signingKey + "  gw_key_socket: /run/cb-gw-key.sock\n", want: "unknown field"},
 		{name: "gw admin without token", body: signingKey + "  gw_admin:\n    url: http://10.203.0.1:18090\n", want: "provision.gw_admin.url and provision.gw_admin.token_file"},
+		{name: "no gw admin", body: signingKey, want: "provision.gw_admin.url and provision.gw_admin.token_file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,7 +59,7 @@ func TestLoadRejects(t *testing.T) {
 }
 
 func TestLoadResolvesRelativePaths(t *testing.T) {
-	path := writeConfig(t, required+"  gw_admin:\n    url: http://10.203.0.1:18090\n    token_file: gw-admin-token\n")
+	path := writeConfig(t, required)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -68,6 +71,9 @@ func TestLoadResolvesRelativePaths(t *testing.T) {
 	if cfg.Provision.GWAdmin.TokenFile != filepath.Join(dir, "gw-admin-token") {
 		t.Errorf("gw admin token file = %q, want under %s", cfg.Provision.GWAdmin.TokenFile, dir)
 	}
+	if cfg.Accounts.DSNFile != filepath.Join(dir, "pg.dsn") || cfg.Accounts.MasterKeyFile != filepath.Join(dir, "master.key") {
+		t.Errorf("accounts = %+v, want under %s", cfg.Accounts, dir)
+	}
 }
 
 func TestLoadsTheExampleConfig(t *testing.T) {
@@ -75,7 +81,7 @@ func TestLoadsTheExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load example: %v", err)
 	}
-	if cfg.State.Bucket == "" || cfg.Provision.SigningKeyFile == "" || len(cfg.Users) != 1 || cfg.Image != "cbdesk:v11" {
+	if cfg.State.Bucket == "" || cfg.Provision.SigningKeyFile == "" || cfg.Accounts.DSNFile == "" || cfg.Image != "cbdesk:v11" {
 		t.Errorf("example config = %+v", cfg)
 	}
 }

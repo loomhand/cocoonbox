@@ -21,14 +21,18 @@ import (
 
 func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	fake := newFakeMachines()
-	gw := &fakeGW{}
+	accounts := &fakeAccounts{}
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, gw)
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
 	ctx := auth.WithUser(t.Context(), alice)
 
 	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
+	}
+	if spec := fake.lastSpec(); spec.Tenant != "tenant-"+alice {
+		t.Errorf("claimed with tenant %q, want the user's", spec.Tenant)
 	}
 	fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	events := watch(t, svc, ctx, resp.GetOperation().GetId(), "")
@@ -41,15 +45,15 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	}
 
 	execs := fake.execCalls()
-	if len(execs) != 1 || execs[0].gwKey != "gw-key-"+aliceBox {
+	if len(execs) != 1 || execs[0].gwKey != "gw-key-"+alice {
 		t.Fatalf("deliveries = %+v, want one with the gw key", execs)
 	}
 	file := execs[0].identity
 	if file.BoxID != aliceBox || file.KeyID != "k1" || file.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(file.WakeID) {
 		t.Errorf("identity = %+v", file)
 	}
-	if gw.calls() != "add "+aliceBox {
-		t.Errorf("gw calls = %q", gw.calls())
+	if accounts.calls() != "key "+alice {
+		t.Errorf("account calls = %q", accounts.calls())
 	}
 	ep, wake, err := svc.Resolve(ctx, alice, aliceBox)
 	if err != nil || wake != file.WakeID || ep.Key == "" {
@@ -60,9 +64,10 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
-	gw := &fakeGW{}
+	accounts := &fakeAccounts{}
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, gw)
+	svc.EnableAccounts(accounts)
+	svc.EnableProvisioning(fakeSigner{})
 	ctx := auth.WithUser(t.Context(), alice)
 
 	if _, wake, err := svc.Resolve(ctx, alice, aliceBox); err != nil || wake != "w-old" {
@@ -89,8 +94,8 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if gw.calls() != "" {
-		t.Errorf("wake asked for a gw key again: %q", gw.calls())
+	if accounts.calls() != "" {
+		t.Errorf("wake asked for a gw key again: %q", accounts.calls())
 	}
 	if execs := fake.execCalls(); len(execs) != 1 || execs[0].gwKey != "" || execs[0].identity.WakeID == "w-old" {
 		t.Errorf("deliveries = %+v, want one identity without a gw key", execs)
@@ -101,7 +106,8 @@ func TestProvisioningCoversEveryUser(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, &fakeGW{})
+	svc.EnableAccounts(&fakeAccounts{})
+	svc.EnableProvisioning(fakeSigner{})
 	if _, _, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve before provisioning: %v, want Unavailable", err)
 	}
@@ -118,7 +124,7 @@ func TestProvisioningFailureFailsTheOperation(t *testing.T) {
 	fake := newFakeMachines()
 	fake.execErr = errors.New("exec: 502")
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, nil)
+	svc.EnableProvisioning(fakeSigner{})
 	svc.provision.backoff = time.Millisecond
 	ctx := auth.WithUser(t.Context(), alice)
 	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
@@ -132,20 +138,25 @@ func TestProvisioningFailureFailsTheOperation(t *testing.T) {
 	}
 }
 
-func TestRebaseProvisionsTheNewMachineAndRevokesTheOld(t *testing.T) {
+func TestRebaseClaimsUnderTheTenant(t *testing.T) {
 	env := newStateEnv(t)
-	gw := &fakeGW{}
+	accounts := &fakeAccounts{}
 	env.fake.put(machines.Machine{
 		ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop-v1", Revision: 1,
 		Incarnation: "pod0/vm0", Meta: map[string]string{metaGW: "1", metaWake: "pod0/vm0|w0"},
 	})
-	env.svc.EnableProvisioning(fakeSigner{}, gw)
+	env.svc.EnableAccounts(accounts)
+	env.svc.EnableProvisioning(fakeSigner{})
 	env.agent.chunks = []string{hexID("c1")}
 	op, err := env.svc.Rebase(env.ctx, &controlv1.RebaseRequest{BoxId: aliceBox})
 	if err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
-	newID := env.fake.waitSpec(t, 1).ID
+	spec := env.fake.waitSpec(t, 1)
+	newID := spec.ID
+	if spec.Tenant != "tenant-"+alice {
+		t.Errorf("rebase machine claimed with tenant %q, want the user's", spec.Tenant)
+	}
 	env.fake.push(machines.Machine{ID: newID, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	events := watch(t, env.svc, env.ctx, op.GetId(), "")
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
@@ -158,17 +169,18 @@ func TestRebaseProvisionsTheNewMachineAndRevokesTheOld(t *testing.T) {
 	if !strings.HasPrefix(restoreCred, "cred:"+aliceBox+":") || restoreCred == "cred:"+aliceBox+":w0" {
 		t.Errorf("restore on the new machine sent credential %q", restoreCred)
 	}
-	if want := "add " + newID + ";revoke " + aliceBox; gw.calls() != want {
-		t.Errorf("gw calls = %q, want %q", gw.calls(), want)
+	if want := "key " + alice; accounts.calls() != want {
+		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
 	}
 }
 
-func TestARestoredMachineGetsItsOwnIDAndGWKey(t *testing.T) {
+func TestARestoredMachineGetsItsOwnIDAndTheUsersGWKey(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1")}
 	env.save(t)
-	gw := &fakeGW{}
-	env.svc.EnableProvisioning(fakeSigner{}, gw)
+	accounts := &fakeAccounts{}
+	env.svc.EnableAccounts(accounts)
+	env.svc.EnableProvisioning(fakeSigner{})
 	env.fake.mu.Lock()
 	delete(env.fake.machines, aliceBox)
 	env.fake.mu.Unlock()
@@ -185,8 +197,25 @@ func TestARestoredMachineGetsItsOwnIDAndGWKey(t *testing.T) {
 	if last := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("restore ended with %v", last[len(last)-1])
 	}
-	if want := "add " + newID; gw.calls() != want {
-		t.Errorf("gw calls = %q, want %q", gw.calls(), want)
+	if want := "key " + alice; accounts.calls() != want {
+		t.Errorf("account calls = %q, want %q", accounts.calls(), want)
+	}
+}
+
+func TestReleaseDeletesEveryMachineOfTheUser(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
+	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateRunning})
+	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning})
+	svc := New(fake, testDefaults)
+	if err := svc.Release(t.Context(), alice); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if ms, _ := fake.List(t.Context(), alice); len(ms) != 0 {
+		t.Errorf("alice keeps %d machines", len(ms))
+	}
+	if ms, _ := fake.List(t.Context(), "bob"); len(ms) != 1 {
+		t.Errorf("bob has %d machines, want 1", len(ms))
 	}
 }
 
@@ -224,27 +253,26 @@ func (fakeSigner) KeyID() string                      { return "k1" }
 func (fakeSigner) PublicKey() string                  { return "pub1" }
 func (fakeSigner) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
 
-type fakeGW struct {
+type fakeAccounts struct {
 	mu  sync.Mutex
 	log []string
 }
 
-func (g *fakeGW) Add(_ context.Context, machine string) (string, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.log = append(g.log, "add "+machine)
-	return "gw-key-" + machine, nil
+func (a *fakeAccounts) Tenant(user string) (string, error) { return "tenant-" + user, nil }
+
+func (a *fakeAccounts) GWKey(user string) (string, error) {
+	a.record("key " + user)
+	return "gw-key-" + user, nil
 }
 
-func (g *fakeGW) Revoke(_ context.Context, machine string) error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.log = append(g.log, "revoke "+machine)
-	return nil
+func (a *fakeAccounts) record(call string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.log = append(a.log, call)
 }
 
-func (g *fakeGW) calls() string {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return strings.Join(g.log, ";")
+func (a *fakeAccounts) calls() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return strings.Join(a.log, ";")
 }

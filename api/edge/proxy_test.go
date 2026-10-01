@@ -21,7 +21,6 @@ import (
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
-	"github.com/CMGS/cocoonbox/api/config"
 	"github.com/CMGS/cocoonbox/api/credential"
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
@@ -272,7 +271,7 @@ func newProxyEnvAt(t *testing.T, agentAddr string) *proxyEnv {
 	resolver := &fakeResolver{addr: agentAddr}
 
 	sum := sha256.Sum256([]byte(aliceToken))
-	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
+	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice"})
 	proxy := NewProxy(resolver, fakeCreds{})
 	t.Cleanup(proxy.Close)
 	edgeSrv := grpc.NewServer(
@@ -388,4 +387,11 @@ func first(values []string) string {
 		return ""
 	}
 	return values[0]
+}
+
+type staticUsers map[string]string
+
+func (u staticUsers) ByTokenSHA256(sum string) (string, bool) {
+	id, ok := u[sum]
+	return id, ok
 }

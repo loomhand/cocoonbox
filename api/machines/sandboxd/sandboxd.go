@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -70,9 +69,9 @@ type Backend struct {
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
 func New(ctx context.Context, opts Options) (*Backend, error) {
-	base, err := url.Parse(opts.URL)
-	if err != nil || base.Host == "" {
-		return nil, fmt.Errorf("sandboxd url %q must be an absolute URL", opts.URL)
+	api, err := newClient(opts.URL, opts.Token)
+	if err != nil {
+		return nil, err
 	}
 	for _, f := range opts.Flavors {
 		if _, ok := sizeOf(f); !ok {
@@ -81,7 +80,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	}
 	b := &Backend{
 		opts:    opts,
-		api:     &client{base: base, token: opts.Token, http: &http.Client{}},
+		api:     api,
 		ctx:     ctx,
 		entries: map[string]*entry{},
 	}
@@ -109,7 +108,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		template := cmp.Or(spec.Image, b.opts.Image)
 		e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: time.Now(), meta: map[string]string{}}
 		b.entries[spec.ID] = e
-		b.startLocked(e, opClaim, func(ctx context.Context) error { return b.claim(ctx, e, template, size) })
+		b.startLocked(e, opClaim, func(ctx context.Context) error { return b.claim(ctx, e, spec.Tenant, template, size) })
 		return e.machine(b.opts.DiskGiB), machines.ActionCreated, nil
 	case e.op != "":
 		return e.machine(b.opts.DiskGiB), machines.ActionNone, nil
@@ -323,8 +322,8 @@ func (b *Backend) startLocked(e *entry, op string, fn func(context.Context) erro
 	}()
 }
 
-func (b *Backend) claim(ctx context.Context, e *entry, template, size string) error {
-	sandbox, err := b.api.claim(ctx, claimRequest{
+func (b *Backend) claim(ctx context.Context, e *entry, tenant, template, size string) error {
+	sandbox, err := b.api.claim(ctx, tenant, claimRequest{
 		Template:   template,
 		Net:        netNone,
 		Size:       size,
@@ -491,6 +490,8 @@ func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
 			e = &entry{id: id, owner: r.Metadata[metaOwner]}
 			b.entries[id] = e
 		}
+		// The tenant stamp is sandboxd's own, so it outranks the owner metadata the api wrote.
+		e.owner = cmp.Or(r.Tenant, e.owner)
 		if !known {
 			e.loadEnv(env)
 		}

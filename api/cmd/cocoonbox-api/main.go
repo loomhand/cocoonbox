@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/console"
 	"github.com/CMGS/cocoonbox/api/controlmcp"
 	"github.com/CMGS/cocoonbox/api/credential"
 	"github.com/CMGS/cocoonbox/api/dialer"
@@ -30,10 +32,12 @@ import (
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/machines/sandboxd"
 	"github.com/CMGS/cocoonbox/api/store/s3"
+	"github.com/CMGS/cocoonbox/api/users"
 )
 
 const (
 	provisionInterval = 10 * time.Second
+	usersInterval     = 10 * time.Second
 	shutdownGrace     = 5 * time.Second
 	readHeaderTimeout = 10 * time.Second
 )
@@ -51,6 +55,12 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "load config")
 	}
+	if flag.NArg() > 0 {
+		if err = runCLI(ctx, cfg, flag.Args(), os.Stdin, os.Stdout); err != nil {
+			logger.Fatalf(ctx, err, "%s", strings.Join(flag.Args(), " "))
+		}
+		return
+	}
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
@@ -62,12 +72,22 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "start sandboxd backend")
 	}
+	accounts, err := openUsers(ctx, cfg)
+	if err != nil {
+		logger.Fatalf(ctx, err, "open users")
+	}
+	defer accounts.Close()
+	if err = accounts.Reconcile(ctx); err != nil {
+		logger.Error(ctx, err, "reconcile sandboxd tenants")
+	}
+	go accounts.Run(ctx, usersInterval)
 	svc := boxes.New(backend, boxes.Defaults{
 		Flavor:       machineFlavor(cfg.Flavor),
 		Flavors:      flavors,
 		Image:        cfg.Image,
 		RebaseImages: cfg.RebaseImages,
 	})
+	svc.EnableAccounts(accounts)
 	if cfg.State.Bucket != "" {
 		agents := dialer.New()
 		defer agents.Close()
@@ -75,14 +95,14 @@ func main() {
 			logger.Fatalf(ctx, err, "enable state layer")
 		}
 	}
-	signer, err := enableProvisioning(ctx, cfg, svc)
+	signer, err := enableProvisioning(ctx, cfg, svc, accounts)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
 	}
 	proxy := edge.NewProxy(svc, signer)
 	defer proxy.Close()
 
-	authn := auth.New(cfg.Users)
+	authn := auth.New(accounts)
 	access := boxes.NewAccessLog(authn.Identify)
 	server := grpc.NewServer(
 		grpc.ForceServerCodecV2(edge.NewCodec()),
@@ -93,15 +113,16 @@ func main() {
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 
-	mcpMux := http.NewServeMux()
-	mcpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
-	mcpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, signer))
+	httpMux := http.NewServeMux()
+	httpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
+	httpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, signer))
+	httpMux.Handle(console.Prefix, console.New(accounts, svc))
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
-	mcpServer := &http.Server{
+	httpServer := &http.Server{
 		Addr:              cfg.MCPListen,
-		Handler:           mcpMux,
+		Handler:           httpMux,
 		Protocols:         &protocols,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
@@ -110,50 +131,75 @@ func main() {
 		logger.Fatalf(ctx, err, "listen on %s", cfg.Listen)
 	}
 	go func() {
-		if err := mcpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Fatalf(ctx, err, "serve mcp on %s", cfg.MCPListen)
+		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Fatalf(ctx, err, "serve http on %s", cfg.MCPListen)
 		}
 	}()
 	go func() {
 		<-ctx.Done()
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
 		defer cancelShutdown()
-		if err := mcpServer.Shutdown(shutdownCtx); err != nil {
-			_ = mcpServer.Close()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			_ = httpServer.Close()
 		}
 		timer := time.AfterFunc(shutdownGrace, server.Stop)
 		server.GracefulStop()
 		timer.Stop()
 	}()
-	logger.Infof(ctx, "serving gRPC on %s and MCP on %s for %d users", cfg.Listen, cfg.MCPListen, len(cfg.Users))
+	logger.Infof(ctx, "serving gRPC on %s and MCP and the console on %s for %d users", cfg.Listen, cfg.MCPListen, len(accounts.List()))
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
 	}
 }
 
-func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Service) (*credential.Signer, error) {
+func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Service, accounts *users.Service) (*credential.Signer, error) {
 	signer, err := credential.Load(cfg.Provision.SigningKeyFile)
 	if err != nil {
 		return nil, err
 	}
-	var gw boxes.GWKeys
-	if cfg.Provision.GWAdmin.URL != "" {
-		token, err := cfg.GWAdminToken()
-		if err != nil {
-			return nil, err
-		}
-		if gw, err = gwkeys.New(cfg.Provision.GWAdmin.URL, token); err != nil {
-			return nil, err
-		}
-	}
-	svc.EnableProvisioning(signer, gw)
+	svc.EnableProvisioning(signer)
 	if upstream := cfg.Provision.ResidentialUpstream; upstream != "" {
-		svc.EnableResidential(upstream, func(context.Context, string) (bool, error) { return false, nil })
+		svc.EnableResidential(upstream, func(_ context.Context, id string) (bool, error) { return accounts.Residential(id), nil })
+		accounts.OnResidential(func(ctx context.Context, id string, _ bool) {
+			if err := svc.ApplyExit(ctx, id); err != nil {
+				log.WithFunc("main.enableProvisioning").Error(ctx, err, "apply residential exit")
+			}
+		})
 	}
 	go svc.RunProvisioner(ctx, provisionInterval)
-	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, gw keys %t, residential exit %q",
-		signer.KeyID(), gw != nil, cfg.Provision.ResidentialUpstream)
+	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, residential exit %q", signer.KeyID(), cfg.Provision.ResidentialUpstream)
 	return signer, nil
+}
+
+// openUsers opens the users table with gw and sandboxd as the holders of each user's keys.
+func openUsers(ctx context.Context, cfg *config.Config) (*users.Service, error) {
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return nil, err
+	}
+	gwToken, err := cfg.GWAdminToken()
+	if err != nil {
+		return nil, err
+	}
+	gw, err := gwkeys.New(cfg.Provision.GWAdmin.URL, gwToken)
+	if err != nil {
+		return nil, err
+	}
+	sandboxdToken, err := cfg.SandboxdToken()
+	if err != nil {
+		return nil, err
+	}
+	tenants, err := sandboxd.NewTenants(cfg.Sandboxd.URL, sandboxdToken, cfg.Sandboxd.TenantEgressClass)
+	if err != nil {
+		return nil, err
+	}
+	return users.Open(ctx, users.Options{
+		DSN:           dsn,
+		MasterKeyFile: cfg.Accounts.MasterKeyFile,
+		GW:            gw,
+		Tenants:       tenants,
+		TenantClaims:  cfg.Sandboxd.TenantEgressClass != "",
+	})
 }
 
 func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor) (machines.Machines, error) {
@@ -199,7 +245,7 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 		return err
 	}
 	svc.EnableState(agents, st, keys)
-	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval), cfg.State.ScheduledUsers)
+	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
 	log.WithFunc("main.enableState").Infof(ctx, "state layer on %s/%s, saves every %s", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval))
 	return nil
 }

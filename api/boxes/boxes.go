@@ -37,6 +37,7 @@ type Service struct {
 	state     *stateLayer
 	provision *provisioner
 	exit      *exitPolicy
+	accounts  Accounts
 }
 
 // New serves boxes on backend with defaults.
@@ -57,7 +58,11 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	}
 	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", box)
 
-	spec := machines.Spec{ID: box, Owner: user, Flavor: flavor}
+	tenant, err := s.tenantOf(user)
+	if err != nil {
+		return nil, serviceError(ctx, logger, err, "read tenant")
+	}
+	spec := machines.Spec{ID: box, Owner: user, Tenant: tenant, Flavor: flavor}
 	var saved head
 	cur, err := s.current(ctx, user)
 	switch {

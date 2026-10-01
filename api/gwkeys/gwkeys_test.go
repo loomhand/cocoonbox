@@ -18,8 +18,8 @@ import (
 
 const (
 	adminToken = "tenant-admin-token"
-	machine    = "cb-ef260e9aa3c6"
-	rebased    = "cb-ef260e9aa3c6-r1"
+	owner      = "u-3f9a2c41d07e"
+	other      = "u-77b0e1aa9c42"
 )
 
 var (
@@ -29,56 +29,56 @@ var (
 
 func TestAddCreatesAGeneratedKey(t *testing.T) {
 	gw, c := newFakeGW(t)
-	key, err := c.Add(t.Context(), machine)
-	if err != nil || !keyFormat.MatchString(key) {
-		t.Fatalf("Add = %q, %v", key, err)
+	key, id, err := c.Add(t.Context(), owner)
+	if err != nil || !keyFormat.MatchString(key) || id != akID(key) {
+		t.Fatalf("Add = %q, %q, %v", key, id, err)
 	}
 	got := gw.key(akID(key))
-	want := map[string]any{"ak_id": akID(key), "product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": machine, "qps": 4.0, "daily_token_quota": 5e6, "tokens_per_minute": 2e5}
+	want := map[string]any{"ak_id": akID(key), "product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": owner, "qps": 4.0, "daily_token_quota": 5e6, "tokens_per_minute": 2e5}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("created %v, want %v", got, want)
 	}
-	other, err := c.Add(t.Context(), rebased)
-	if err != nil || other == key || gw.key(akID(key)) == nil {
-		t.Errorf("Add for another machine = %v, want a different key and the first kept", err)
+	second, _, err := c.Add(t.Context(), other)
+	if err != nil || second == key || gw.key(akID(key)) == nil {
+		t.Errorf("Add for another owner = %v, want a different key and the first kept", err)
 	}
 }
 
-func TestAddReplacesTheMachinesKeys(t *testing.T) {
+func TestAddReplacesTheOwnersKeys(t *testing.T) {
 	gw, c := newFakeGW(t)
-	gw.put("gw-k1", machine)
-	gw.put("gw-k2", machine)
-	key, err := c.Add(t.Context(), machine)
+	gw.put("gw-k1", owner)
+	gw.put("gw-k2", owner)
+	key, _, err := c.Add(t.Context(), owner)
 	if err != nil || key == "gw-k1" || key == "gw-k2" {
 		t.Fatalf("Add = %q, %v, want a fresh key", key, err)
 	}
-	again, err := c.Add(t.Context(), machine)
+	again, _, err := c.Add(t.Context(), owner)
 	if err != nil || again == key {
 		t.Fatalf("second Add = %q, %v, want a fresh key", again, err)
 	}
-	if ids := gw.idsOf(machine); !slices.Equal(ids, []string{akID(again)}) {
-		t.Errorf("keys of %s = %v, want only the last one", machine, ids)
+	if ids := gw.idsOf(owner); !slices.Equal(ids, []string{akID(again)}) {
+		t.Errorf("keys of %s = %v, want only the last one", owner, ids)
 	}
 }
 
-func TestRevokeDeletesOnlyThatMachine(t *testing.T) {
+func TestRevokeDeletesOnlyThatOwner(t *testing.T) {
 	gw, c := newFakeGW(t)
-	gw.put("gw-old", machine)
-	gw.put("gw-new", rebased)
-	gw.put("gw-other-tenant", machine)
+	gw.put("gw-old", owner)
+	gw.put("gw-new", other)
+	gw.put("gw-other-tenant", owner)
 	gw.keys[akID("gw-other-tenant")]["tenant"] = "cocoonbox"
-	if err := c.Revoke(t.Context(), machine); err != nil {
+	if err := c.Revoke(t.Context(), owner); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
 	if gw.key(akID("gw-old")) != nil || gw.key(akID("gw-new")) == nil || gw.key(akID("gw-other-tenant")) == nil {
 		t.Errorf("keys after Revoke = %v", gw.order)
 	}
-	if err := c.Revoke(t.Context(), machine); err != nil {
+	if err := c.Revoke(t.Context(), owner); err != nil {
 		t.Errorf("Revoke of an absent key: %v", err)
 	}
-	gw.put("gw-gone", machine)
+	gw.put("gw-gone", owner)
 	gw.vanish = akID("gw-gone")
-	if err := c.Revoke(t.Context(), machine); err != nil {
+	if err := c.Revoke(t.Context(), owner); err != nil {
 		t.Errorf("Revoke when DELETE answers 404: %v", err)
 	}
 }
@@ -88,29 +88,41 @@ func TestListFiltersByOwner(t *testing.T) {
 	for i := range pageSize {
 		gw.put("gw-filler"+strconv.Itoa(i), "cb-000000000000")
 	}
-	gw.put("gw-last", machine)
-	if err := c.Revoke(t.Context(), machine); err != nil {
+	gw.put("gw-last", owner)
+	if err := c.Revoke(t.Context(), owner); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
 	if gw.key(akID("gw-last")) != nil || gw.lists != 1 {
-		t.Errorf("key of %s kept or the tenant scanned: lists %d", machine, gw.lists)
+		t.Errorf("key of %s kept or the tenant scanned: lists %d", owner, gw.lists)
 	}
 }
 
 func TestErrorsNeverCarryTheKey(t *testing.T) {
 	gw, c := newFakeGW(t)
 	gw.cut = true
-	if key, err := c.Add(t.Context(), machine); err == nil || key != "" || strings.Contains(err.Error(), gw.last) {
+	if key, _, err := c.Add(t.Context(), owner); err == nil || key != "" || strings.Contains(err.Error(), gw.last) {
 		t.Errorf("Add with the POST response cut = %q, %v", key, err)
 	}
 	gw.cut = false
-	key, err := c.Add(t.Context(), machine)
-	if err != nil || !slices.Equal(gw.idsOf(machine), []string{akID(key)}) {
-		t.Errorf("retried Add = %v, keys %v, want the orphan revoked", err, gw.idsOf(machine))
+	key, _, err := c.Add(t.Context(), owner)
+	if err != nil || !slices.Equal(gw.idsOf(owner), []string{akID(key)}) {
+		t.Errorf("retried Add = %v, keys %v, want the orphan revoked", err, gw.idsOf(owner))
 	}
 	bad, _ := New(gw.srv.URL, "wrong")
-	if _, err := bad.Add(t.Context(), machine); err == nil || !strings.Contains(err.Error(), "401") {
+	if _, _, err := bad.Add(t.Context(), owner); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Errorf("Add with a wrong token: %v", err)
+	}
+}
+
+func TestUsageReadsTheOwnersRollup(t *testing.T) {
+	gw, c := newFakeGW(t)
+	gw.usage = `{"usage":[{"user_id":"u-3f9a2c41d07e","model":"m1","requests":2,"total_tokens":30,"cost_micros":120,"vendor_cost_micros":0}]}`
+	got, err := c.Usage(t.Context(), owner)
+	if err != nil || len(got) != 1 || got[0] != (Usage{Model: "m1", Requests: 2, TotalTokens: 30, CostMicros: 120}) {
+		t.Fatalf("Usage = %+v, %v", got, err)
+	}
+	if gw.usageUser != owner {
+		t.Errorf("usage queried for %q, want %q", gw.usageUser, owner)
 	}
 }
 
@@ -132,6 +144,9 @@ type fakeGW struct {
 	vanish string
 	cut    bool
 	last   string
+
+	usage     string
+	usageUser string
 }
 
 func newFakeGW(t *testing.T) (*fakeGW, *Client) {
@@ -195,6 +210,9 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 		}
 		page = page[:min(limit, len(page))]
 		_ = json.NewEncoder(w).Encode(map[string]any{"count": len(page), "offset": 0, "keys": page})
+	case r.Method == http.MethodGet && r.URL.Path == "/admin/usage/users":
+		g.usageUser = r.URL.Query().Get("user")
+		_, _ = w.Write([]byte(g.usage))
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/keys":
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)

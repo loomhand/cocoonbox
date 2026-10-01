@@ -7,6 +7,7 @@ agent_port: 7443
 sandboxd:
   url: http://127.0.0.1:17780
   token_file: sandboxd-token   # the instance's root api_token
+  tenant_egress_class: ""      # egress class of every user's tenant; set, machines claim under the user's tenant
 flavor:
   vcpus: 4
   memory_mib: 8192
@@ -20,13 +21,11 @@ state:
   keyring_dir: /var/lib/cocoonbox-api/keys
   interval: 15m
   presign_ttl: 10m
-  scheduled_users: []          # users whose boxes get scheduled live saves
-provision:                     # every box's identity file (design §12) and per-box gw key
+provision:                     # every box's identity file (design §12) and its user's gw key
   signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519
-  gw_admin:                    # per-box gw keys through gw's admin API; omit to disable
+  gw_admin:                    # per-user gw keys through gw's admin API
     url: http://10.203.0.1:18090
     token_file: gw-admin-token # the cocoonbox-boxes tenant admin token
-users:
-  # token_sha256 = printf %s "$TOKEN" | sha256sum
-  - name: example
-    token_sha256: 50d858e0985ecc7f60418aaf0cc5ab587f42c2570a884095a9e8ccacd0f6545c
+accounts:                      # users, console sessions and each user's sealed gw key and tenant token (design §22)
+  dsn_file: pg.dsn             # postgres://cocoonbox_api:...@127.0.0.1:5432/cocoonbox
+  master_key_file: master.key  # 32 random bytes: head -c 32 /dev/urandom

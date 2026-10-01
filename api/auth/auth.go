@@ -1,4 +1,4 @@
-// Package auth resolves the bearer token on every call to a configured user.
+// Package auth resolves the bearer token on every call to a user id.
 package auth
 
 import (
@@ -11,8 +11,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
-
-	"github.com/CMGS/cocoonbox/api/config"
 )
 
 const (
@@ -24,18 +22,19 @@ const (
 
 type userKey struct{}
 
-// Authenticator maps token hashes to user names.
-type Authenticator struct {
-	users map[string]string
+// Users resolves the sha256 of an API token, in lowercase hex, to an enabled user id.
+type Users interface {
+	ByTokenSHA256(sum string) (string, bool)
 }
 
-// New indexes users by token hash.
-func New(users []config.User) *Authenticator {
-	a := &Authenticator{users: make(map[string]string, len(users))}
-	for _, u := range users {
-		a.users[u.TokenSHA256] = u.Name
-	}
-	return a
+// Authenticator maps bearer tokens to user ids.
+type Authenticator struct {
+	users Users
+}
+
+// New authenticates against users.
+func New(users Users) *Authenticator {
+	return &Authenticator{users: users}
 }
 
 // Unary authenticates unary calls.
@@ -62,7 +61,7 @@ func (a *Authenticator) Authenticate(header string) (string, error) {
 		return "", status.Error(codes.Unauthenticated, "missing bearer token")
 	}
 	sum := sha256.Sum256([]byte(header[len(bearerPrefix):]))
-	user, ok := a.users[hex.EncodeToString(sum[:])]
+	user, ok := a.users.ByTokenSHA256(hex.EncodeToString(sum[:]))
 	if !ok {
 		return "", status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
@@ -99,7 +98,7 @@ type authedStream struct {
 
 func (s *authedStream) Context() context.Context { return s.ctx }
 
-// User returns the authenticated user name, "" when ctx did not pass the interceptors.
+// User returns the authenticated user id, "" when ctx did not pass the interceptors.
 func User(ctx context.Context) string {
 	user, _ := ctx.Value(userKey{}).(string)
 	return user

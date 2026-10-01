@@ -1,4 +1,4 @@
-// Package gwkeys issues and revokes per-machine gw keys through gw's admin API.
+// Package gwkeys issues and revokes gw keys, one per owner, and reads their usage through gw's admin API.
 package gwkeys
 
 import (
@@ -21,12 +21,23 @@ const (
 	dailyTokens     = 5_000_000
 	tokensPerMinute = 200_000
 
+	keysPath  = "/admin/keys"
+	usagePath = "/admin/usage/users"
+
 	pageSize       = 10_000
 	requestTimeout = 30 * time.Second
 	maxErrorBody   = 4 << 10
 )
 
-// Client manages keys in tenant cocoonbox-boxes, one per machine, found by owner = machine id.
+// Usage is one model's share of an owner's gw usage.
+type Usage struct {
+	Model       string `json:"model"`
+	Requests    int64  `json:"requests"`
+	TotalTokens int64  `json:"total_tokens"`
+	CostMicros  int64  `json:"cost_micros"`
+}
+
+// Client manages keys in tenant cocoonbox-boxes, one per owner.
 type Client struct {
 	base  *url.URL
 	token string
@@ -42,30 +53,31 @@ func New(base, token string) (*Client, error) {
 	return &Client{base: u, token: token, http: &http.Client{Timeout: requestTimeout}}, nil
 }
 
-// Add replaces machine's gw keys with one that gw generates and returns it.
-func (c *Client) Add(ctx context.Context, machine string) (string, error) {
-	if err := c.Revoke(ctx, machine); err != nil {
-		return "", err
+// Add replaces owner's gw keys with one that gw generates and returns it with its ak_id.
+func (c *Client) Add(ctx context.Context, owner string) (string, string, error) {
+	if err := c.Revoke(ctx, owner); err != nil {
+		return "", "", err
 	}
 	body := map[string]any{
-		"product": product, "tenant": tenant, "owner": machine,
+		"product": product, "tenant": tenant, "owner": owner,
 		"qps": qps, "daily_token_quota": dailyTokens, "tokens_per_minute": tokensPerMinute,
 	}
 	var created struct {
-		AK string `json:"ak"`
+		AK   string `json:"ak"`
+		AKID string `json:"ak_id"`
 	}
-	if _, err := c.request(ctx, http.MethodPost, "", nil, body, &created); err != nil {
-		return "", err
+	if _, err := c.request(ctx, http.MethodPost, keysPath, nil, body, &created); err != nil {
+		return "", "", err
 	}
-	if created.AK == "" {
-		return "", errors.New("POST /admin/keys: no generated key in the response")
+	if created.AK == "" || created.AKID == "" {
+		return "", "", errors.New("POST /admin/keys: no generated key in the response")
 	}
-	return created.AK, nil
+	return created.AK, created.AKID, nil
 }
 
-// Revoke removes machine's gw keys; revoking an absent key succeeds.
-func (c *Client) Revoke(ctx context.Context, machine string) error {
-	ids, err := c.keysOf(ctx, machine)
+// Revoke removes owner's gw keys; revoking an absent key succeeds.
+func (c *Client) Revoke(ctx context.Context, owner string) error {
+	ids, err := c.keysOf(ctx, owner)
 	if err != nil {
 		return err
 	}
@@ -77,7 +89,18 @@ func (c *Client) Revoke(ctx context.Context, machine string) error {
 	return nil
 }
 
-func (c *Client) keysOf(ctx context.Context, machine string) ([]string, error) {
+// Usage returns owner's gw usage by model since the epoch.
+func (c *Client) Usage(ctx context.Context, owner string) ([]Usage, error) {
+	var resp struct {
+		Usage []Usage `json:"usage"`
+	}
+	if _, err := c.request(ctx, http.MethodGet, usagePath, url.Values{"user": {owner}}, nil, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Usage, nil
+}
+
+func (c *Client) keysOf(ctx context.Context, owner string) ([]string, error) {
 	var page struct {
 		Keys []struct {
 			AKID   string `json:"ak_id"`
@@ -85,13 +108,13 @@ func (c *Client) keysOf(ctx context.Context, machine string) ([]string, error) {
 			Owner  string `json:"owner"`
 		} `json:"keys"`
 	}
-	query := url.Values{"tenant": {tenant}, "owner": {machine}, "limit": {strconv.Itoa(pageSize)}}
-	if _, err := c.request(ctx, http.MethodGet, "", query, nil, &page); err != nil {
+	query := url.Values{"tenant": {tenant}, "owner": {owner}, "limit": {strconv.Itoa(pageSize)}}
+	if _, err := c.request(ctx, http.MethodGet, keysPath, query, nil, &page); err != nil {
 		return nil, err
 	}
 	var ids []string
 	for _, k := range page.Keys {
-		if k.Tenant == tenant && k.Owner == machine && k.AKID != "" {
+		if k.Tenant == tenant && k.Owner == owner && k.AKID != "" {
 			ids = append(ids, k.AKID)
 		}
 	}
@@ -99,16 +122,16 @@ func (c *Client) keysOf(ctx context.Context, machine string) ([]string, error) {
 }
 
 func (c *Client) delete(ctx context.Context, id string) error {
-	status, err := c.request(ctx, http.MethodDelete, id, nil, nil, nil)
+	status, err := c.request(ctx, http.MethodDelete, keysPath+"/"+id, nil, nil, nil)
 	if status == http.StatusNotFound {
 		return nil
 	}
 	return err
 }
 
-// request calls /admin/keys, or /admin/keys/{id} for DELETE.
-func (c *Client) request(ctx context.Context, method, id string, query url.Values, body, out any) (int, error) {
-	op := method + " /admin/keys"
+// request calls gw's admin API at path.
+func (c *Client) request(ctx context.Context, method, path string, query url.Values, body, out any) (int, error) {
+	op := method + " " + path
 	var payload io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -117,10 +140,7 @@ func (c *Client) request(ctx context.Context, method, id string, query url.Value
 		}
 		payload = bytes.NewReader(raw)
 	}
-	u := c.base.JoinPath("admin", "keys")
-	if method == http.MethodDelete {
-		u = u.JoinPath(id)
-	}
+	u := c.base.JoinPath(path)
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), payload)
 	if err != nil {

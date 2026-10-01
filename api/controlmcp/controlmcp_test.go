@@ -20,7 +20,6 @@ import (
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
-	"github.com/CMGS/cocoonbox/api/config"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
@@ -416,10 +415,10 @@ func (f *fakeBoxes) recorded() []fakeCall {
 
 func newTestServer(t *testing.T) (*Server, *fakeBoxes) {
 	t.Helper()
-	var users []config.User
+	users := staticUsers{}
 	for _, token := range []string{aliceToken, bobToken, carolToken} {
 		sum := sha256.Sum256([]byte(token))
-		users = append(users, config.User{Name: strings.TrimSuffix(token, "-token"), TokenSHA256: hex.EncodeToString(sum[:])})
+		users[hex.EncodeToString(sum[:])] = strings.TrimSuffix(token, "-token")
 	}
 	running := controlv1.BoxState_BOX_STATE_RUNNING
 	fake := &fakeBoxes{
@@ -507,4 +506,11 @@ func sseMessages(t *testing.T, body string) []map[string]any {
 		msgs = append(msgs, msg)
 	}
 	return msgs
+}
+
+type staticUsers map[string]string
+
+func (u staticUsers) ByTokenSHA256(sum string) (string, bool) {
+	id, ok := u[sum]
+	return id, ok
 }

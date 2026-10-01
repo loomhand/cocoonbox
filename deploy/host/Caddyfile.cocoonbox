@@ -1,3 +1,7 @@
+	@cocoonboxconsole path /cb /cb/*
+	handle @cocoonboxconsole {
+		reverse_proxy 127.0.0.1:18201
+	}
 	@cocoonboxmcp path /cocoonbox.mcp/*
 	handle @cocoonboxmcp {
 		reverse_proxy h2c://127.0.0.1:18201 {

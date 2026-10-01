@@ -2,19 +2,31 @@
 
 Control plane and edge. Two listeners behind Caddy serve:
 
-- `cocoonbox.control.v1.Boxes` (native gRPC, h2c on `listen`, default 127.0.0.1:18200): one sandboxd claim per box on the instance named by `sandboxd.url`, box id `cb-<12 hex of sha256(user)>`. Hibernate hibernates the claim; Ensure claims or wakes. `WatchOperation` streams the operation log (in memory, resumable by offset key within the process lifetime).
+- `cocoonbox.control.v1.Boxes` (native gRPC, h2c on `listen`, default 127.0.0.1:18200): one sandboxd claim per box on the instance named by `sandboxd.url`, made with the user's own sandboxd tenant token once `sandboxd.tenant_egress_class` is set, box id `cb-<12 hex of sha256(user id)>`. Hibernate hibernates the claim; Ensure claims or wakes. `WatchOperation` streams the operation log (in memory, resumable by offset key within the process lifetime).
 - every `cocoonbox.agent.v1.*` method: proxied frame by frame, through the sandboxd port relay, to port 7443 of the box named in `x-cocoonbox-box`, after the ownership check. The edge drops `authorization` and adds the box credential `x-cocoonbox-credential`.
 - `/cocoonbox.mcp/<box id>` (MCP Streamable HTTP on `mcp_listen`, default 127.0.0.1:18201, HTTP/1.1 and h2c): reverse-proxied unbuffered to `http://<box>:7443/mcp` over h2c through the same relay after the same token and ownership checks; the edge drops `Authorization` and adds `x-cocoonbox-credential`. Refusals are JSON-RPC error bodies with 401/403/404/400/503.
 
-MCP has its own listener so gRPC stays on grpc-go's native transport; Caddy sends `/cocoonbox.mcp/*` to 18201 and the rest of `/cocoonbox.*` to 18200.
+- `/cb/` (the web console, design §22, on `mcp_listen`): username and password sign-in with an HttpOnly, Secure, SameSite=Strict session cookie (12 h, stored hashed in PostgreSQL); failed sign-ins are limited to 5 per username and 20 per client address in 15 minutes. A user's page shows their boxes, their gw usage, the residential and max-boxes settings, and the API token (shown once on regenerate). The admin page creates, disables, re-passwords and deletes users and sets each user's box cap. Accounts exist only through the admin page or the CLI; there is no sign-up.
+
+MCP and the console share a listener so gRPC stays on grpc-go's native transport; Caddy sends `/cb` and `/cocoonbox.mcp/*` to 18201 and the rest of `/cocoonbox.*` to 18200.
 
 State layer (design §11): `SaveState` (quiesced), `Rebase` and a scheduled live save every `state.interval` move each box's home, `/workspace` and `agent.db` into an S3 bucket under `<box id>/`. The api owns timing, the per-box keys (`keyring`, 0600 files under `state.keyring_dir`; losing them loses the data), the chunk index and the snapshot chain; the agent chunks and encrypts through presigned URLs (`store`) over the internal `dialer`. Clients cannot call `cocoonbox.agent.v1.State`.
 
-Box identity (design §12): the api writes `/run/cocoonbox-identity/identity` (box id, a fresh wake id, the edge key id and public key) into every box on every boot, wake and Rebase machine through sandboxd exec, sets the box's own gw key as the claim's host-only env `GW_KEY` (created through gw's admin API in tenant `cocoonbox-boxes`, owner = machine id; the egress proxy injects it), and reports the box RUNNING only after that. The edge then signs `x-cocoonbox-credential` for (box, wake), cached until 2 minutes before expiry, and strips any client-sent copy.
+Box identity (design §12): the api writes `/run/cocoonbox-identity/identity` (box id, a fresh wake id, the edge key id and public key) into every box on every boot, wake and Rebase machine through sandboxd exec, sets the user's gw key as the claim's host-only env `GW_KEY` on the machine's first boot (the egress proxy injects it), and reports the box RUNNING only after that. The edge then signs `x-cocoonbox-credential` for (box, wake), cached until 2 minutes before expiry, and strips any client-sent copy.
 
 Layers: `boxes` (the gRPC service: users, ownership, operations) and `edge` (proxies) call only the `machines.Machines` interface and a resolver; `machines/sandboxd` is the one backend, and `cmd/cocoonbox-api` is the only package that imports it.
 
-Callers authenticate with `authorization: Bearer <token>`; `/etc/cocoonbox/api.yaml` holds only `sha256(token)` per user (see `deploy/api.yaml.example`).
+Users (design §22, package `users`): one row per user in the api's PostgreSQL database (`accounts.dsn_file`), migrated at start. Each user has one API token (only its sha256 is stored), one gw key (gw admin API, tenant `cocoonbox-boxes`, owner = user id) and one sandboxd tenant (name = user id, `max_claims` = the user's max boxes + 1 for a Rebase's overlap, `egress_class` = `sandboxd.tenant_egress_class`, through `PUT /v1/tenants/{name}`). Machines claim under the user's tenant only while `sandboxd.tenant_egress_class` is set, since a tenant without an egress class reaches nothing; empty keeps root claims stamped with `cb_owner`. The gw key and the tenant token are sealed with AES-256-GCM under `accounts.master_key_file` (32 bytes), bound to their row and column, and never leave the api: no console page, API response or VM sees them. Creating a user issues both; deleting a user releases its claims, removes the tenant, revokes the key and drops the row. The startup reconcile rewrites every tenant with its token and cap. Token checks read an in-memory index that every write updates and that reloads every 10 s, so the edge pays no database read.
+
+Callers authenticate with `authorization: Bearer <token>`, the user's API token.
+
+CLI, run as root on the host (secrets only on stdin):
+
+```
+cocoonbox-api -config /etc/cocoonbox/api.yaml user add NAME [-id ID] [-admin]
+printf '%s\n' "$PASSWORD" | cocoonbox-api -config /etc/cocoonbox/api.yaml user passwd NAME -stdin
+printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user token-sha256 NAME -stdin
+```
 
 ## Build
 
@@ -34,7 +46,7 @@ systemctl enable --now cocoonbox-api
 
 `/etc/cocoonbox/edge-signing.key` (`openssl genpkey -algorithm ed25519`) signs every credential agents admit; the api refuses to start without `provision.signing_key_file`.
 
-The service runs as `cocoonbox-api`; systemd `LoadCredential=` hands it `/etc/cocoonbox/{api.yaml,sandboxd-token,store.env,edge-signing.key}`, plus `gw-admin-token` (gw's `cocoonbox-boxes` tenant admin token) with `provision.gw_admin` (all root 0600), and relative paths in `api.yaml` resolve inside that credentials directory.
+The service runs as `cocoonbox-api`; systemd `LoadCredential=` hands it `/etc/cocoonbox/{api.yaml,sandboxd-token,store.env,edge-signing.key,gw-admin-token,pg.dsn,master.key}` (all root 0600), and relative paths in `api.yaml` resolve inside that credentials directory. The database role is `cocoonbox-api` with peer authentication over the unix socket; a `pg_ident.conf` map also lets root (the CLI) sign in as that role.
 
 ## Limits
 

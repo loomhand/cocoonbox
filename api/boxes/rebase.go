@@ -52,7 +52,13 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING,
 		fmt.Sprintf("saved snapshot %s in %s", rec.ID, saved.Round(time.Second)))
 
-	spec := machines.Spec{ID: newMachineID(op.boxID), Owner: user, Flavor: old.Flavor, Image: image}
+	tenant, err := s.tenantOf(user)
+	if err != nil {
+		logger.Error(op.ctx, err, "read tenant for rebase machine")
+		op.fail("create machine failed")
+		return
+	}
+	spec := machines.Spec{ID: newMachineID(op.boxID), Owner: user, Tenant: tenant, Flavor: old.Flavor, Image: image}
 	created, _, err := s.machines.Ensure(op.ctx, spec)
 	if err != nil {
 		logger.Error(op.ctx, err, "create rebase machine")
@@ -91,7 +97,6 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 		op.fail("state restored into the new machine, but removing the old machine failed")
 		return
 	}
-	s.revokeGW(op.ctx, old.ID)
 	logger.Infof(op.ctx, "rebased %s to %s (%s): saved %s, booted %s, restored %s", old.ID, created.ID, image,
 		saved.Round(time.Second), booted.Round(time.Second), restored.Round(time.Second))
 	op.succeed(fmt.Sprintf("now on %s (%s); snapshot %s, %.1f MiB logical; save %s, boot %s, restore %s",
@@ -120,5 +125,4 @@ func (s *Service) discard(op *operation, id string) {
 	if err := s.machines.Delete(context.WithoutCancel(op.ctx), id); err != nil {
 		log.WithFunc("boxes.Service.discard").WithField("box", op.boxID).Error(op.ctx, err, "delete "+id)
 	}
-	s.revokeGW(context.WithoutCancel(op.ctx), id)
 }

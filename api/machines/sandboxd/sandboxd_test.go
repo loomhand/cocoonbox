@@ -104,6 +104,65 @@ func TestIndexRebuildsMachinesFromClaimsAndEnv(t *testing.T) {
 	}
 }
 
+func TestATenantClaimBelongsToItsTenant(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	tenants, err := NewTenants(fake.srv.URL, rootToken, "desk")
+	if err != nil {
+		t.Fatalf("NewTenants: %v", err)
+	}
+	if err := tenants.Put(t.Context(), "u-1", "tenant-token", 1); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	fake.add(&fakeSandbox{row: row{ID: "sb_stamped", Key: poolKey{Template: template, Size: "xlarge"}, Tenant: "u-2", Metadata: map[string]string{"cb_machine": "cb-b", "cb_owner": "u-1"}}})
+	b := newTestBackend(t, fake)
+
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: "u-1", Tenant: "tenant-token", Flavor: xlarge})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	waitState(t, b, boxID, m.Revision, machines.StateRunning)
+	if sb := fake.sandboxes["sb_1"]; sb == nil || sb.row.Tenant != "u-1" {
+		t.Fatalf("claim = %+v, want it made with the tenant token", sb)
+	}
+	if ms, _ := b.List(t.Context(), "u-1"); len(ms) != 1 || ms[0].ID != boxID {
+		t.Errorf("List u-1 = %+v, want only its tenant's claim", ms)
+	}
+	if ms, _ := b.List(t.Context(), "u-2"); len(ms) != 1 || ms[0].ID != "cb-b" {
+		t.Errorf("List u-2 = %+v, want the claim its tenant stamp names over the owner metadata", ms)
+	}
+}
+
+func TestTenantsPutKeepsTheTokenAndDeleteIsIdempotent(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	tenants, err := NewTenants(fake.srv.URL, rootToken, "desk")
+	if err != nil {
+		t.Fatalf("NewTenants: %v", err)
+	}
+	if err := tenants.Put(t.Context(), "u-1", "tenant-token", 1); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	if err := tenants.Put(t.Context(), "u-1", "", 2); err != nil {
+		t.Fatalf("Put cap: %v", err)
+	}
+	if got := fake.tenants["u-1"]; got != (tenantRequest{Token: "tenant-token", MaxClaims: 2, EgressClass: "desk"}) {
+		t.Errorf("tenant = %+v, want the token kept, the cap changed and the class sent", got)
+	}
+	for range 2 {
+		if err := tenants.Delete(t.Context(), "u-1"); err != nil {
+			t.Errorf("Delete: %v", err)
+		}
+	}
+	if len(fake.tenants) != 0 {
+		t.Errorf("tenants after Delete = %+v", fake.tenants)
+	}
+	if raw, _ := json.Marshal(tenantRequest{Token: "t", MaxClaims: 2}); strings.Contains(string(raw), "egress_class") {
+		t.Errorf("a classless tenant request sends %s; sandboxd before egress classes refuses the field", raw)
+	}
+	if _, err := NewTenants("127.0.0.1:17780", rootToken, ""); err == nil {
+		t.Error("NewTenants accepted a URL without a scheme")
+	}
+}
+
 func TestHibernateAndWakeChangeTheIncarnation(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -394,21 +453,49 @@ type fakeSandboxd struct {
 	execExit   int32
 	execStatus int
 	agent      string
+	tenants    map[string]tenantRequest
 }
 
 func (f *fakeSandboxd) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /v1/claim", f.root(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /v1/claim", func(w http.ResponseWriter, r *http.Request) {
 		var req claimRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		f.mu.Lock()
+		tenant, ok := f.tokenOwner(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+		if !ok {
+			f.mu.Unlock()
+			writeError(w, http.StatusUnauthorized, "bad token")
+			return
+		}
 		f.next++
-		sb := &fakeSandbox{row: row{ID: "sb_" + strconv.Itoa(f.next), Key: req.poolKey, Metadata: req.Metadata, ClaimedAt: time.Now().UTC()}, token: "tok", env: map[string]envVar{}}
+		sb := &fakeSandbox{row: row{ID: "sb_" + strconv.Itoa(f.next), Key: req.poolKey, Tenant: tenant, Metadata: req.Metadata, ClaimedAt: time.Now().UTC()}, token: "tok", env: map[string]envVar{}}
 		f.sandboxes[sb.row.ID] = sb
 		f.claims = append(f.claims, req)
 		f.calls["claim"]++
 		f.mu.Unlock()
 		writeJSON(w, map[string]string{"id": sb.row.ID, "token": sb.token})
+	})
+	mux.HandleFunc("PUT /v1/tenants/{name}", f.root(func(w http.ResponseWriter, r *http.Request) {
+		var req tenantRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if req.Token == "" {
+			req.Token = f.tenants[r.PathValue("name")].Token
+		}
+		f.tenants[r.PathValue("name")] = req
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	mux.HandleFunc("DELETE /v1/tenants/{name}", f.root(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if _, ok := f.tenants[r.PathValue("name")]; !ok {
+			writeError(w, http.StatusNotFound, "unknown tenant")
+			return
+		}
+		delete(f.tenants, r.PathValue("name"))
+		w.WriteHeader(http.StatusNoContent)
 	}))
 	mux.HandleFunc("GET /v1/sandboxes", f.root(func(w http.ResponseWriter, r *http.Request) {
 		k, v, _ := strings.Cut(r.URL.Query().Get("metadata"), "=")
@@ -559,6 +646,19 @@ func (f *fakeSandboxd) sandbox(next func(http.ResponseWriter, *http.Request, *fa
 	}
 }
 
+// tokenOwner returns the tenant a token names, "" for root.
+func (f *fakeSandboxd) tokenOwner(token string) (string, bool) {
+	if token == rootToken {
+		return "", true
+	}
+	for name, t := range f.tenants {
+		if t.Token == token {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 func (f *fakeSandboxd) add(sb *fakeSandbox) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -640,7 +740,7 @@ func (f *fakeSandboxd) renewed() []string {
 
 func newFakeSandboxd(t *testing.T) *fakeSandboxd {
 	t.Helper()
-	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}}
+	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}}
 	f.srv = httptest.NewServer(f.handler())
 	t.Cleanup(f.srv.Close)
 	return f

@@ -1,0 +1,315 @@
+package users
+
+import (
+	"cmp"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/CMGS/cocoonbox/api/gwkeys"
+)
+
+const password = "correct horse battery"
+
+func TestCreateIssuesBothKeysAndSealsThem(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !strings.HasPrefix(u.ID, "u-") || u.MaxBoxes != 1 || u.MaxBoxesCap != 1 || u.HasToken || u.Admin {
+		t.Errorf("user = %+v", u)
+	}
+	key, err := svc.GWKey(u.ID)
+	if err != nil || key != gw.keys[u.ID] {
+		t.Errorf("GWKey = %q, %v, want the key gw issued for owner %s", key, err, u.ID)
+	}
+	token, err := svc.Tenant(u.ID)
+	if err != nil || token == "" || tenants.tenants[u.ID] != (tenant{token: token, max: 2}) {
+		t.Errorf("Tenant = %q, %v; sandboxd holds %+v", token, err, tenants.tenants)
+	}
+	var sealedKey, sealedToken []byte
+	if err := query(t, dsn, "SELECT gw_key_sealed, tenant_token_sealed FROM users WHERE id = $1", u.ID).Scan(&sealedKey, &sealedToken); err != nil {
+		t.Fatalf("read row: %v", err)
+	}
+	if strings.Contains(string(sealedKey), key) || strings.Contains(string(sealedToken), token) {
+		t.Error("the database holds a backing key in the clear")
+	}
+	if _, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password}); !errors.Is(err, ErrExists) {
+		t.Errorf("Create of a taken name: %v, want ErrExists", err)
+	}
+	reopened := openTestService(t, dsn, gw, tenants)
+	if again, err := reopened.GWKey(u.ID); err != nil || again != key {
+		t.Errorf("GWKey after reopen = %q, %v", again, err)
+	}
+	reopened.tenantClaims = false
+	if token, err := reopened.Tenant(u.ID); err != nil || token != "" {
+		t.Errorf("Tenant with root claims = %q, %v, want empty", token, err)
+	}
+}
+
+func TestCreateLeavesNothingBehindOnFailure(t *testing.T) {
+	svc, gw, tenants, _ := newTestService(t)
+	tenants.err = errors.New("sandboxd 503")
+	if _, err := svc.Create(t.Context(), NewUser{Name: "qa1"}); err == nil {
+		t.Fatal("Create succeeded with sandboxd down")
+	}
+	if len(gw.keys) != 0 || len(svc.List()) != 0 {
+		t.Errorf("after a failed Create: gw keys %v, users %v", gw.keys, svc.List())
+	}
+	for _, nu := range []NewUser{{Name: "Q"}, {Name: "qa1", Password: "short"}, {Name: "qa1", ID: "bad/id"}} {
+		if _, err := svc.Create(t.Context(), nu); !errors.Is(err, ErrInvalid) {
+			t.Errorf("Create(%+v) = %v, want ErrInvalid", nu, err)
+		}
+	}
+}
+
+func TestTokensPasswordsAndDisabling(t *testing.T) {
+	svc, _, _, _ := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	first, err := svc.RegenerateToken(t.Context(), u.ID)
+	if err != nil {
+		t.Fatalf("RegenerateToken: %v", err)
+	}
+	if id, ok := svc.ByTokenSHA256(sum(first)); !ok || id != u.ID {
+		t.Fatalf("token resolves to %q, %t", id, ok)
+	}
+	second, _ := svc.RegenerateToken(t.Context(), u.ID)
+	if _, ok := svc.ByTokenSHA256(sum(first)); ok {
+		t.Error("the old token still works after regenerate")
+	}
+	if _, err := svc.Login(t.Context(), "qa1", password); err != nil {
+		t.Errorf("Login: %v", err)
+	}
+	for name, pw := range map[string]string{"qa1": "wrong password!", "nobody": password} {
+		if _, err := svc.Login(t.Context(), name, pw); !errors.Is(err, ErrBadPassword) {
+			t.Errorf("Login(%s) = %v, want ErrBadPassword", name, err)
+		}
+	}
+	secret, err := svc.NewSession(t.Context(), u.ID)
+	if err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if got, err := svc.Session(t.Context(), secret); err != nil || got.ID != u.ID {
+		t.Errorf("Session = %+v, %v", got, err)
+	}
+	disabled := true
+	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: &disabled}); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, ok := svc.ByTokenSHA256(sum(second)); ok {
+		t.Error("a disabled user's token still works")
+	}
+	if _, err := svc.Session(t.Context(), secret); !errors.Is(err, ErrNotFound) {
+		t.Errorf("Session of a disabled user = %v", err)
+	}
+	if _, err := svc.Login(t.Context(), "qa1", password); !errors.Is(err, ErrBadPassword) {
+		t.Errorf("Login of a disabled user = %v", err)
+	}
+	other, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	if err := svc.SetTokenSHA256(t.Context(), other.ID, sum(second)); !errors.Is(err, ErrExists) {
+		t.Errorf("SetTokenSHA256 with another user's hash = %v, want ErrExists", err)
+	}
+}
+
+func TestUpdateKeepsBoxesUnderTheCapAndMovesTheTenant(t *testing.T) {
+	svc, _, tenants, _ := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	var flips []bool
+	svc.OnResidential(func(_ context.Context, id string, on bool) {
+		if id == u.ID {
+			flips = append(flips, on)
+		}
+	})
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(2)}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("max boxes over the cap = %v, want ErrInvalid", err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(3)}); err != nil {
+		t.Fatalf("raise cap: %v", err)
+	}
+	if got, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(2), Residential: new(true)}); err != nil || got.MaxBoxes != 2 || !got.Residential {
+		t.Fatalf("Update = %+v, %v", got, err)
+	}
+	if tenants.tenants[u.ID].max != 3 || !svc.Residential(u.ID) {
+		t.Errorf("tenant cap %d, residential %t", tenants.tenants[u.ID].max, svc.Residential(u.ID))
+	}
+	if got, _ := svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(1)}); got.MaxBoxes != 1 || tenants.tenants[u.ID].max != 2 {
+		t.Errorf("lowering the cap left max boxes %d, tenant cap %d", got.MaxBoxes, tenants.tenants[u.ID].max)
+	}
+	if svc.Residential("u-unknown") || len(flips) != 1 || !flips[0] {
+		t.Errorf("residential flips = %v", flips)
+	}
+}
+
+func TestDeleteRemovesTenantKeyRowAndSessions(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})
+	token, _ := svc.RegenerateToken(t.Context(), u.ID)
+	if _, err := svc.NewSession(t.Context(), u.ID); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	if err := svc.Delete(t.Context(), u.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, ok := gw.keys[u.ID]; ok {
+		t.Error("gw key kept")
+	}
+	if _, ok := tenants.tenants[u.ID]; ok {
+		t.Error("tenant kept")
+	}
+	if _, ok := svc.ByTokenSHA256(sum(token)); ok {
+		t.Error("the deleted user's token still works")
+	}
+	var sessions int
+	if err := query(t, dsn, "SELECT count(*) FROM sessions").Scan(&sessions); err != nil || sessions != 0 {
+		t.Errorf("sessions left = %d, %v", sessions, err)
+	}
+	if err := svc.Delete(t.Context(), u.ID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second Delete = %v, want ErrNotFound", err)
+	}
+}
+
+func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	a, _ := svc.Create(t.Context(), NewUser{Name: "alice"})
+	b, _ := svc.Create(t.Context(), NewUser{Name: "bob"})
+	if err := exec(t, dsn, "UPDATE users SET gw_key_sealed = (SELECT gw_key_sealed FROM users WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
+		t.Fatalf("copy sealed key: %v", err)
+	}
+	reopened := openTestService(t, dsn, gw, tenants)
+	if _, err := reopened.GWKey(b.ID); err == nil {
+		t.Error("alice's sealed gw key opened as bob's")
+	}
+	if _, err := reopened.Tenant(b.ID); err != nil {
+		t.Errorf("bob's own tenant token: %v", err)
+	}
+}
+
+type fakeGW struct {
+	mu   sync.Mutex
+	keys map[string]string
+}
+
+func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.keys[owner] = "gw-" + randomHex(8)
+	return g.keys[owner], "sha256:" + owner, nil
+}
+
+func (g *fakeGW) Revoke(_ context.Context, owner string) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.keys, owner)
+	return nil
+}
+
+func (g *fakeGW) Usage(context.Context, string) ([]gwkeys.Usage, error) { return nil, nil }
+
+type tenant struct {
+	token string
+	max   int
+}
+
+type fakeTenants struct {
+	mu      sync.Mutex
+	tenants map[string]tenant
+	err     error
+}
+
+func (f *fakeTenants) Put(_ context.Context, name, token string, maxClaims int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.tenants[name] = tenant{token: cmp.Or(token, f.tenants[name].token), max: maxClaims}
+	return nil
+}
+
+func (f *fakeTenants) Delete(_ context.Context, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.tenants, name)
+	return nil
+}
+
+// newTestService opens a Service on a fresh database of the server COCOONBOX_TEST_DSN names.
+func newTestService(t *testing.T) (*Service, *fakeGW, *fakeTenants, string) {
+	t.Helper()
+	dsn := freshDatabase(t)
+	gw := &fakeGW{keys: map[string]string{}}
+	tenants := &fakeTenants{tenants: map[string]tenant{}}
+	return openTestService(t, dsn, gw, tenants), gw, tenants, dsn
+}
+
+func openTestService(t *testing.T, dsn string, gw *fakeGW, tenants *fakeTenants) *Service {
+	t.Helper()
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", masterKeySize)), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: keyFile, GW: gw, Tenants: tenants, TenantClaims: true})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(svc.Close)
+	return svc
+}
+
+func freshDatabase(t *testing.T) string {
+	t.Helper()
+	base := os.Getenv("COCOONBOX_TEST_DSN")
+	if base == "" {
+		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
+	}
+	name := "t_" + randomHex(6)
+	if err := exec(t, base, "CREATE DATABASE "+name); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+	t.Cleanup(func() { _ = exec(t, base, "DROP DATABASE "+name+" WITH (FORCE)") })
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("parse COCOONBOX_TEST_DSN: %v", err)
+	}
+	u.Path = "/" + name
+	return u.String()
+}
+
+func query(t *testing.T, dsn, sql string, args ...any) pgx.Row {
+	t.Helper()
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	return conn.QueryRow(t.Context(), sql, args...)
+}
+
+func exec(t *testing.T, dsn, sql string, args ...any) error {
+	t.Helper()
+	conn, err := pgx.Connect(context.Background(), dsn)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	_, err = conn.Exec(context.Background(), sql, args...)
+	return err
+}
+
+func sum(token string) string {
+	s := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(s[:])
+}

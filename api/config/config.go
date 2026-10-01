@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
@@ -30,19 +29,11 @@ const (
 	defaultDiskGiB   = 40
 )
 
-var sha256Hex = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 // Flavor is the default box size.
 type Flavor struct {
 	VCPUs     uint32 `json:"vcpus"`
 	MemoryMiB uint32 `json:"memory_mib"`
 	DiskGiB   uint32 `json:"disk_gib"`
-}
-
-// User maps a user name to the sha256 of its bearer token.
-type User struct {
-	Name        string `json:"name"`
-	TokenSHA256 string `json:"token_sha256"`
 }
 
 // Duration is a time.Duration written as a Go duration string ("15m").
@@ -74,12 +65,10 @@ type State struct {
 	CredentialsFile string   `json:"credentials_file"`
 	KeyringDir      string   `json:"keyring_dir"`
 	Interval        Duration `json:"interval"`
-	// ScheduledUsers lists the users whose boxes get scheduled saves; empty schedules nobody.
-	ScheduledUsers []string `json:"scheduled_users"`
-	PresignTTL     Duration `json:"presign_ttl"`
+	PresignTTL      Duration `json:"presign_ttl"`
 }
 
-// Provision names the edge signing key, gw's admin API for per-box gw keys and the residential exit.
+// Provision names the edge signing key, gw's admin API for per-user gw keys and the residential exit.
 type Provision struct {
 	SigningKeyFile string  `json:"signing_key_file"`
 	GWAdmin        GWAdmin `json:"gw_admin"`
@@ -87,7 +76,7 @@ type Provision struct {
 	ResidentialUpstream string `json:"residential_upstream"`
 }
 
-// GWAdmin names gw's admin API and the file holding its cocoonbox-boxes tenant admin token; an empty URL disables gw keys.
+// GWAdmin names gw's admin API and the file holding its cocoonbox-boxes tenant admin token.
 type GWAdmin struct {
 	URL       string `json:"url"`
 	TokenFile string `json:"token_file"`
@@ -97,6 +86,15 @@ type GWAdmin struct {
 type Sandboxd struct {
 	URL       string `json:"url"`
 	TokenFile string `json:"token_file"`
+	// TenantEgressClass gives every user's tenant this egress class and turns on claims with the user's tenant; empty keeps root claims.
+	TenantEgressClass string `json:"tenant_egress_class"`
+}
+
+// Accounts names the users database and the master key that seals each user's gw key and tenant token.
+type Accounts struct {
+	// DSNFile holds the PostgreSQL connection string.
+	DSNFile       string `json:"dsn_file"`
+	MasterKeyFile string `json:"master_key_file"`
 }
 
 // Config is the on-disk configuration of cocoonbox-api.
@@ -107,12 +105,12 @@ type Config struct {
 	Image        string   `json:"image"`
 	RebaseImages []string `json:"rebase_images"`
 	AgentPort    int      `json:"agent_port"`
-	// Provision configures every box's identity file and per-box gw key.
+	// Provision configures every box's identity file and gw key.
 	Provision Provision `json:"provision"`
+	Accounts  Accounts  `json:"accounts"`
 	Flavor    Flavor    `json:"flavor"`
 	Flavors   []Flavor  `json:"flavors"`
 	State     State     `json:"state"`
-	Users     []User    `json:"users"`
 }
 
 // Load reads, defaults and validates the file at path.
@@ -162,6 +160,11 @@ func (c *Config) GWAdminToken() (string, error) {
 	return readToken(c.Provision.GWAdmin.TokenFile, "gw admin token")
 }
 
+// DSN reads the users database connection string.
+func (c *Config) DSN() (string, error) {
+	return readToken(c.Accounts.DSNFile, "database dsn")
+}
+
 func (c *Config) applyDefaults() {
 	c.Listen = cmp.Or(c.Listen, defaultListen)
 	c.MCPListen = cmp.Or(c.MCPListen, defaultMCPListen)
@@ -177,7 +180,7 @@ func (c *Config) applyDefaults() {
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Provision.GWAdmin.TokenFile, &c.Sandboxd.TokenFile} {
+	for _, p := range []*string{&c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Provision.GWAdmin.TokenFile, &c.Sandboxd.TokenFile, &c.Accounts.DSNFile, &c.Accounts.MasterKeyFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -186,28 +189,14 @@ func (c *Config) resolvePaths(dir string) {
 
 func (c *Config) validate() error {
 	var errs []error
-	names := map[string]bool{}
-	hashes := map[string]bool{}
-	for i, u := range c.Users {
-		if u.Name == "" {
-			errs = append(errs, fmt.Errorf("users[%d]: name must not be empty", i))
-		}
-		if !sha256Hex.MatchString(u.TokenSHA256) {
-			errs = append(errs, fmt.Errorf("users[%d]: token_sha256 must be 64 lowercase hex digits", i))
-		}
-		if names[u.Name] {
-			errs = append(errs, fmt.Errorf("users[%d]: duplicate name %q", i, u.Name))
-		}
-		if hashes[u.TokenSHA256] {
-			errs = append(errs, fmt.Errorf("users[%d]: duplicate token_sha256", i))
-		}
-		names[u.Name], hashes[u.TokenSHA256] = true, true
-	}
 	if c.Provision.SigningKeyFile == "" {
 		errs = append(errs, errors.New("provision.signing_key_file is required: agents admit only edge-signed credentials"))
 	}
-	if (c.Provision.GWAdmin.URL == "") != (c.Provision.GWAdmin.TokenFile == "") {
-		errs = append(errs, errors.New("provision.gw_admin.url and provision.gw_admin.token_file go together"))
+	if c.Provision.GWAdmin.URL == "" || c.Provision.GWAdmin.TokenFile == "" {
+		errs = append(errs, errors.New("provision.gw_admin.url and provision.gw_admin.token_file are required: every user has a gw key"))
+	}
+	if c.Accounts.DSNFile == "" || c.Accounts.MasterKeyFile == "" {
+		errs = append(errs, errors.New("accounts.dsn_file and accounts.master_key_file are required"))
 	}
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))

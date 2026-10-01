@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cocoonbox console</title>
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>cocoonbox</h1>
+  <span id="whoami"></span>
+  <button id="logout" hidden>Sign out</button>
+</header>
+<main>
+  <p id="notice" hidden></p>
+
+  <section id="login" hidden>
+    <h2>Sign in</h2>
+    <form id="login-form">
+      <label>Username <input name="name" autocomplete="username" required></label>
+      <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+      <button>Sign in</button>
+    </form>
+  </section>
+
+  <section id="me" hidden>
+    <h2>API token</h2>
+    <p>The app signs in with this token. It is shown once; regenerating it signs the app out until you paste the new one.</p>
+    <p id="token-state"></p>
+    <pre id="token" hidden></pre>
+    <button id="regenerate">Regenerate token</button>
+
+    <h2>Settings</h2>
+    <form id="settings-form">
+      <label><input type="checkbox" name="residential"> Residential exit for my boxes</label>
+      <label>Max boxes <input type="number" name="max_boxes" min="1"> <span id="cap"></span></label>
+      <button>Save</button>
+    </form>
+
+    <h2>Boxes</h2>
+    <table><thead><tr><th>Box</th><th>State</th><th>Image</th></tr></thead><tbody id="boxes"></tbody></table>
+
+    <h2>Model usage</h2>
+    <table><thead><tr><th>Model</th><th>Requests</th><th>Tokens</th><th>Cost (USD)</th></tr></thead><tbody id="usage"></tbody></table>
+
+    <h2>Password</h2>
+    <form id="password-form">
+      <label>Current <input name="current" type="password" autocomplete="current-password" required></label>
+      <label>New <input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button>Change password</button>
+    </form>
+  </section>
+
+  <section id="admin" hidden>
+    <h2>Users</h2>
+    <table>
+      <thead><tr><th>User</th><th>Id</th><th>Token</th><th>Residential</th><th>Max boxes</th><th>Cap</th><th>Status</th><th></th></tr></thead>
+      <tbody id="users"></tbody>
+    </table>
+    <h3>Create a user</h3>
+    <form id="create-form">
+      <label>Username <input name="name" required pattern="[a-z][a-z0-9_\-]{1,31}"></label>
+      <label>Initial password <input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+      <button>Create</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>

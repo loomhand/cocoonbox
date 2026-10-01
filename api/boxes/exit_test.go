@@ -20,7 +20,7 @@ func TestProvisioningRoutesOnlyResidentialOwners(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "pod2/vm1"})
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, nil)
+	svc.EnableProvisioning(fakeSigner{})
 	svc.EnableResidential(residential, func(_ context.Context, user string) (bool, error) { return user == alice, nil })
 
 	svc.provisionStale(t.Context())
@@ -38,7 +38,7 @@ func TestProvisionerFollowsTheSwitch(t *testing.T) {
 	var on atomic.Bool
 	on.Store(true)
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, nil)
+	svc.EnableProvisioning(fakeSigner{})
 	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return on.Load(), nil })
 
 	svc.provisionStale(t.Context())
@@ -77,7 +77,7 @@ func TestASwitchReadFailureHoldsProvisioning(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	svc := New(fake, testDefaults)
-	svc.EnableProvisioning(fakeSigner{}, nil)
+	svc.EnableProvisioning(fakeSigner{})
 	svc.provision.backoff = 0
 	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return false, errors.New("users table unavailable") })
 

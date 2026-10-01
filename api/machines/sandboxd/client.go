@@ -3,6 +3,7 @@ package sandboxd
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -53,6 +54,7 @@ type row struct {
 	ID         string            `json:"id"`
 	Key        poolKey           `json:"key"`
 	Token      string            `json:"token,omitempty"`
+	Tenant     string            `json:"tenant,omitempty"`
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	Hibernated bool              `json:"hibernated"`
 	Archived   bool              `json:"archived,omitzero"`
@@ -91,6 +93,13 @@ type execResponse struct {
 	Stderr   string `json:"stderr"`
 }
 
+// tenantRequest omits an empty egress class, which sandboxd before egress classes refuses as an unknown field.
+type tenantRequest struct {
+	Token       string `json:"token,omitempty"`
+	MaxClaims   int    `json:"max_claims"`
+	EgressClass string `json:"egress_class,omitempty"`
+}
+
 // client speaks the sandboxd HTTP API with the node's root token.
 type client struct {
 	base  *url.URL
@@ -98,11 +107,20 @@ type client struct {
 	http  *http.Client
 }
 
-func (c *client) claim(ctx context.Context, req claimRequest) (string, error) {
+func newClient(rawURL, token string) (*client, error) {
+	base, err := url.Parse(rawURL)
+	if err != nil || base.Host == "" {
+		return nil, fmt.Errorf("sandboxd url %q must be an absolute URL", rawURL)
+	}
+	return &client{base: base, token: token, http: &http.Client{}}, nil
+}
+
+// claim claims with token, a tenant's or the root one.
+func (c *client) claim(ctx context.Context, token string, req claimRequest) (string, error) {
 	var resp struct {
 		ID string `json:"id"`
 	}
-	err := c.do(ctx, http.MethodPost, "/v1/claim", nil, req, &resp)
+	err := c.request(ctx, cmp.Or(token, c.token), http.MethodPost, "/v1/claim", nil, req, &resp)
 	return resp.ID, err
 }
 

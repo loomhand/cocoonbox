@@ -31,15 +31,9 @@ type Signer interface {
 	Credential(box, wake string) string
 }
 
-// GWKeys issues and revokes per-machine gw keys.
-type GWKeys interface {
-	Add(ctx context.Context, machine string) (string, error)
-	Revoke(ctx context.Context, machine string) error
-}
-
-// EnableProvisioning gives every machine an identity file for signer and, when gw is set, a per-machine gw key.
-func (s *Service) EnableProvisioning(signer Signer, gw GWKeys) {
-	s.provision = &provisioner{signer: signer, gw: gw, backoff: provisionBackoff, locks: map[string]*sync.Mutex{}}
+// EnableProvisioning gives every machine an identity file for signer and, with accounts, its user's gw key.
+func (s *Service) EnableProvisioning(signer Signer) {
+	s.provision = &provisioner{signer: signer, backoff: provisionBackoff, locks: map[string]*sync.Mutex{}}
 }
 
 // RunProvisioner provisions running machines that came up without an operation, until ctx ends.
@@ -110,8 +104,8 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 		return "", fmt.Errorf("exit: %w", err)
 	}
 	var gwKey string
-	if p.gw != nil && m.Meta[metaGW] == "" {
-		key, err := p.gw.Add(ctx, m.ID)
+	if s.accounts != nil && m.Meta[metaGW] == "" {
+		key, err := s.accounts.GWKey(m.Owner)
 		if err != nil {
 			return "", fmt.Errorf("gw key: %w", err)
 		}
@@ -145,16 +139,6 @@ func (s *Service) agentContext(ctx context.Context, m machines.Machine) context.
 	return metadata.AppendToOutgoingContext(ctx, credential.Header, s.provision.signer.Credential(BoxID(m.Owner), wake))
 }
 
-// revokeGW drops a deleted machine's gw key.
-func (s *Service) revokeGW(ctx context.Context, machine string) {
-	if s.provision == nil || s.provision.gw == nil {
-		return
-	}
-	if err := s.provision.gw.Revoke(ctx, machine); err != nil {
-		log.WithFunc("boxes.Service.revokeGW").WithField("machine", machine).Error(ctx, err, "revoke gw key")
-	}
-}
-
 // ready reports whether clients may reach m: running, not being restored and, with provisioning on, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
 	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !s.restoring(BoxID(m.Owner))
@@ -163,7 +147,6 @@ func (s *Service) ready(m machines.Machine) bool {
 // provisioner writes each machine's identity file on every boot and its gw key on first boot.
 type provisioner struct {
 	signer  Signer
-	gw      GWKeys
 	backoff time.Duration
 
 	mu    sync.Mutex

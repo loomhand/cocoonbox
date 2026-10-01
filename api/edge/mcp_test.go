@@ -19,7 +19,6 @@ import (
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
-	"github.com/CMGS/cocoonbox/api/config"
 	"github.com/CMGS/cocoonbox/api/credential"
 )
 
@@ -184,7 +183,7 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 	resolver := &fakeResolver{addr: serveHTTP(t, upstream)}
 
 	sum := sha256.Sum256([]byte(aliceToken))
-	authn := auth.New([]config.User{{Name: "alice", TokenSHA256: hex.EncodeToString(sum[:])}})
+	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice"})
 	served := make(chan string, 16)
 	mcp := NewMCP(resolver, authn, fakeCreds{})
 	addr := serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
