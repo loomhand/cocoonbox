@@ -41,7 +41,7 @@ conf = {
     "max_claims": 3,
     "refill_concurrency": 1,
     "audit_log": True,
-    "egress_internal_allow": [f"{GATEWAY}/32"],
+    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{STATE_PORT}"],
     "secrets": [{"name": "GW_KEY", "header": "Authorization"}],
     "pools": pools,
 }
