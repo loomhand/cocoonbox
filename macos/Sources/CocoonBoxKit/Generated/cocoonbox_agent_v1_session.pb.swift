@@ -119,6 +119,14 @@ public nonisolated struct Cocoonbox_Agent_V1_Event: Sendable {
     set {body = .reasoningDelta(newValue)}
   }
 
+  public var agentDeleted: Cocoonbox_Agent_V1_AgentDeleted {
+    get {
+      if case .agentDeleted(let v)? = body {return v}
+      return Cocoonbox_Agent_V1_AgentDeleted()
+    }
+    set {body = .agentDeleted(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
@@ -127,8 +135,22 @@ public nonisolated struct Cocoonbox_Agent_V1_Event: Sendable {
     case computerAction(Cocoonbox_Agent_V1_ComputerAction)
     case textDelta(Cocoonbox_Agent_V1_TextDelta)
     case reasoningDelta(Cocoonbox_Agent_V1_ReasoningDelta)
+    case agentDeleted(Cocoonbox_Agent_V1_AgentDeleted)
 
   }
+
+  public init() {}
+}
+
+/// AgentDeleted says the agent and its transcript are gone.
+public nonisolated struct Cocoonbox_Agent_V1_AgentDeleted: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var agentID: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
@@ -371,7 +393,7 @@ nonisolated extension Cocoonbox_Agent_V1_EventsRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}offset\0\u{2}\u{9}transcript\0\u{1}agent\0\u{3}computer_action\0\u{3}text_delta\0\u{3}reasoning_delta\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}offset\0\u{2}\u{9}transcript\0\u{1}agent\0\u{3}computer_action\0\u{3}text_delta\0\u{3}reasoning_delta\0\u{3}agent_deleted\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -445,6 +467,19 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
           self.body = .reasoningDelta(v)
         }
       }()
+      case 15: try {
+        var v: Cocoonbox_Agent_V1_AgentDeleted?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .agentDeleted(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .agentDeleted(v)
+        }
+      }()
       default: break
       }
     }
@@ -479,6 +514,10 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
       guard case .reasoningDelta(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 14)
     }()
+    case .agentDeleted?: try {
+      guard case .agentDeleted(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -487,6 +526,36 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
   public static func ==(lhs: Cocoonbox_Agent_V1_Event, rhs: Cocoonbox_Agent_V1_Event) -> Bool {
     if lhs.offset != rhs.offset {return false}
     if lhs.body != rhs.body {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_AgentDeleted: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".AgentDeleted"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}agent_id\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.agentID) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.agentID.isEmpty {
+      try visitor.visitSingularStringField(value: self.agentID, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_AgentDeleted, rhs: Cocoonbox_Agent_V1_AgentDeleted) -> Bool {
+    if lhs.agentID != rhs.agentID {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

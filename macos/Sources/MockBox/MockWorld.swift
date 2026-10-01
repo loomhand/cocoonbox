@@ -23,6 +23,8 @@ actor MockWorld {
     private var operations: [String: [OperationEvent]] = [:]
     private var operationWaiters: [String: [UUID: AsyncStream<OperationEvent>.Continuation]] = [:]
     private var agents: [String: Agent] = [:]
+    private var untitled: Set<String> = []
+    private var openSessions: Set<String> = []
     private var nonces: [String: String] = [:]
     private var transcripts: [String: [Entry]] = [:]
     private var nextSeq: UInt64 = 1
@@ -273,12 +275,15 @@ actor MockWorld {
         }
         var agent = Agent()
         agent.id = "ag-\(UUID().uuidString.prefix(8).lowercased())"
-        agent.name = name.isEmpty ? "Agent \(agents.count + 1)" : name
+        agent.name = name.isEmpty ? "agent" : name
         agent.status = .idle
         agent.mainModel = model.isEmpty ? "deepseek/deepseek-v4.1-flash" : model
         agent.createdAtMs = Self.now()
         agent.updatedAtMs = agent.createdAtMs
         agents[agent.id] = agent
+        if name.isEmpty {
+            untitled.insert(agent.id)
+        }
         if !nonce.isEmpty {
             nonces["create:\(nonce)"] = agent.id
         }
@@ -308,9 +313,23 @@ actor MockWorld {
             nonces["send:\(id):\(nonce)"] = turn
         }
         append(agent: id, turn: turn, role: .user, body: .text(.with { $0.text = text }))
+        if untitled.contains(id), let title = Self.title(text), var agent = agents[id] {
+            untitled.remove(id)
+            agent.name = title
+            agents[id] = agent
+            publish(.agent(agent))
+        }
         setStatus(agent: id, .running)
         Task { await self.runTurn(agent: id, turn: turn, prompt: text.lowercased()) }
         return turn
+    }
+
+    // title is the first non-blank line, trimmed and cut to 24 characters, as the box names an untitled agent.
+    static func title(_ text: String) -> String? {
+        let line = text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first { !$0.isEmpty }
+        return line.map { String($0.prefix(24)).trimmingCharacters(in: .whitespaces) }
     }
 
     func respond(_ request: Cocoonbox_Agent_V1_RespondRequest) throws {
@@ -324,6 +343,36 @@ actor MockWorld {
         setStatus(agent: id, .idle)
     }
 
+    func rename(agent id: String, name: String) throws -> Agent {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            throw RPCError(code: .invalidArgument, message: "name is empty")
+        }
+        guard var agent = agents[id] else {
+            throw RPCError(code: .notFound, message: "agent \(id) not found")
+        }
+        untitled.remove(id)
+        agent.name = name
+        agent.updatedAtMs = Self.now()
+        agents[id] = agent
+        publish(.agent(agent))
+        return agent
+    }
+
+    // delete drops the agent and its transcript; a turn still playing writes nothing more.
+    func delete(agent id: String) throws {
+        guard agents[id] != nil else {
+            throw RPCError(code: .notFound, message: "agent \(id) not found")
+        }
+        guard !openSessions.contains(id) else {
+            throw RPCError(code: .failedPrecondition, message: "agent \(id) has an open MCP session; close the client's session first")
+        }
+        agents[id] = nil
+        transcripts[id] = nil
+        untitled.remove(id)
+        publish(.agentDeleted(.with { $0.agentID = id }))
+    }
+
     private func setStatus(agent id: String, _ status: Cocoonbox_Agent_V1_AgentStatus) {
         guard var agent = agents[id] else { return }
         agent.status = status
@@ -335,6 +384,7 @@ actor MockWorld {
     @discardableResult
     private func append(agent id: String, turn: String, role: Cocoonbox_Agent_V1_Role, body: Entry.OneOf_Body) -> Entry {
         var entry = Entry()
+        guard agents[id] != nil else { return entry }
         entry.seq = nextSeq
         nextSeq += 1
         entry.agentID = id
@@ -395,6 +445,7 @@ actor MockWorld {
         let reply = "Done. The box runs Linux 6.12 with 34 GB free in /workspace. Tell me what to do next."
         for word in reply.split(separator: " ", omittingEmptySubsequences: false) {
             try? await Task.sleep(for: .milliseconds(40))
+            guard agents[id] != nil else { return }
             publish(.textDelta(.with {
                 $0.agentID = id
                 $0.turnID = turn
@@ -483,12 +534,14 @@ actor MockWorld {
     // system text entries that share turn and block.
     func openExternal(client: String, version: String) -> String {
         let id = createAgent(name: "mcp:\(client)", nonce: "", model: "").id
+        openSessions.insert(id)
         setStatus(agent: id, .running)
         append(agent: id, turn: "mcp-\(id)", role: .system, body: .text(.with { $0.text = "MCP session opened by \(client) \(version)" }))
         return id
     }
 
     func closeExternal(agent id: String, reason: String) {
+        openSessions.remove(id)
         append(agent: id, turn: "mcp-\(id)", role: .system, body: .text(.with { $0.text = "MCP session closed: \(reason)" }))
         append(agent: id, turn: "mcp-\(id)", role: .assistant, body: .turnEnd(.with { $0.ok = true }))
         setStatus(agent: id, .idle)

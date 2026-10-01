@@ -98,6 +98,32 @@ public enum Cocoonbox_Agent_V1_Agents: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Rename" metadata.
+        public enum Rename: Sendable {
+            /// Request type for "Rename".
+            public typealias Input = Cocoonbox_Agent_V1_RenameAgentRequest
+            /// Response type for "Rename".
+            public typealias Output = Cocoonbox_Agent_V1_Agent
+            /// Descriptor for "Rename".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.agent.v1.Agents"),
+                method: "Rename",
+                type: .unary
+            )
+        }
+        /// Namespace for "Delete" metadata.
+        public enum Delete: Sendable {
+            /// Request type for "Delete".
+            public typealias Input = Cocoonbox_Agent_V1_DeleteAgentRequest
+            /// Response type for "Delete".
+            public typealias Output = Cocoonbox_Agent_V1_DeleteAgentResponse
+            /// Descriptor for "Delete".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.agent.v1.Agents"),
+                method: "Delete",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.agent.v1.Agents" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Create.descriptor,
@@ -105,7 +131,9 @@ public enum Cocoonbox_Agent_V1_Agents: Sendable {
             Send.descriptor,
             Transcript.descriptor,
             Respond.descriptor,
-            Cancel.descriptor
+            Cancel.descriptor,
+            Rename.descriptor,
+            Delete.descriptor
         ]
     }
 }
@@ -225,6 +253,44 @@ extension Cocoonbox_Agent_V1_Agents {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_CancelRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_CancelResponse>
+
+        /// Handle the "Rename" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rename sets the agent's name; an automatic title never replaces it.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Agent_V1_RenameAgentRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Agent_V1_Agent` messages.
+        func rename(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_RenameAgentRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_Agent>
+
+        /// Handle the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete cancels the agent's running turn and removes the agent with its
+        /// > transcript. An mcp:* agent whose MCP session is open is refused with
+        /// > FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Agent_V1_DeleteAgentRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Agent_V1_DeleteAgentResponse` messages.
+        func delete(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>
     }
 
     /// Service protocol for the "cocoonbox.agent.v1.Agents" service.
@@ -328,6 +394,44 @@ extension Cocoonbox_Agent_V1_Agents {
             request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_CancelRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_CancelResponse>
+
+        /// Handle the "Rename" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rename sets the agent's name; an automatic title never replaces it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_RenameAgentRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Agent_V1_Agent` message.
+        func rename(
+            request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_RenameAgentRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_Agent>
+
+        /// Handle the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete cancels the agent's running turn and removes the agent with its
+        /// > transcript. An mcp:* agent whose MCP session is open is refused with
+        /// > FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_DeleteAgentRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Agent_V1_DeleteAgentResponse` message.
+        func delete(
+            request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.agent.v1.Agents" service.
@@ -429,6 +533,44 @@ extension Cocoonbox_Agent_V1_Agents {
             request: Cocoonbox_Agent_V1_CancelRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Agent_V1_CancelResponse
+
+        /// Handle the "Rename" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rename sets the agent's name; an automatic title never replaces it.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Agent_V1_RenameAgentRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Agent_V1_Agent` to respond with.
+        func rename(
+            request: Cocoonbox_Agent_V1_RenameAgentRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Agent_V1_Agent
+
+        /// Handle the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete cancels the agent's running turn and removes the agent with its
+        /// > transcript. An mcp:* agent whose MCP session is open is refused with
+        /// > FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Agent_V1_DeleteAgentRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Agent_V1_DeleteAgentResponse` to respond with.
+        func delete(
+            request: Cocoonbox_Agent_V1_DeleteAgentRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Agent_V1_DeleteAgentResponse
     }
 }
 
@@ -502,6 +644,28 @@ extension Cocoonbox_Agent_V1_Agents.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Cocoonbox_Agent_V1_Agents.Method.Rename.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_RenameAgentRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_Agent>(),
+            handler: { request, context in
+                try await self.rename(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Agent_V1_Agents.Method.Delete.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_DeleteAgentRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_DeleteAgentResponse>(),
+            handler: { request, context in
+                try await self.delete(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -568,6 +732,28 @@ extension Cocoonbox_Agent_V1_Agents.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_CancelResponse> {
         let response = try await self.cancel(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func rename(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_RenameAgentRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_Agent> {
+        let response = try await self.rename(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func delete(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse> {
+        let response = try await self.delete(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -649,6 +835,32 @@ extension Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_CancelResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Agent_V1_CancelResponse>(
             message: try await self.cancel(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func rename(
+        request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_RenameAgentRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_Agent> {
+        return GRPCCore.ServerResponse<Cocoonbox_Agent_V1_Agent>(
+            message: try await self.rename(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func delete(
+        request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>(
+            message: try await self.delete(
                 request: request.message,
                 context: context
             ),
@@ -788,6 +1000,54 @@ extension Cocoonbox_Agent_V1_Agents {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_CancelResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_CancelResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Rename" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rename sets the agent's name; an automatic title never replaces it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_RenameAgentRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_RenameAgentRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_Agent` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func rename<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_RenameAgentRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_RenameAgentRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_Agent>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_Agent>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete cancels the agent's running turn and removes the agent with its
+        /// > transcript. An mcp:* agent whose MCP session is open is refused with
+        /// > FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_DeleteAgentRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_DeleteAgentRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_DeleteAgentResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func delete<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_DeleteAgentResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -996,6 +1256,76 @@ extension Cocoonbox_Agent_V1_Agents {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "Rename" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Rename sets the agent's name; an automatic title never replaces it.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_RenameAgentRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_RenameAgentRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_Agent` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func rename<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_RenameAgentRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_RenameAgentRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_Agent>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_Agent>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Agent_V1_Agents.Method.Rename.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete cancels the agent's running turn and removes the agent with its
+        /// > transcript. An mcp:* agent whose MCP session is open is refused with
+        /// > FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_DeleteAgentRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_DeleteAgentRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_DeleteAgentResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func delete<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_DeleteAgentResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Agent_V1_Agents.Method.Delete.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -1151,6 +1481,66 @@ extension Cocoonbox_Agent_V1_Agents.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_CancelRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_CancelResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rename" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Rename sets the agent's name; an automatic title never replaces it.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Agent_V1_RenameAgentRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rename<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_RenameAgentRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_Agent>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.rename(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_RenameAgentRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_Agent>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Delete" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete cancels the agent's running turn and removes the agent with its
+    /// > transcript. An mcp:* agent whose MCP session is open is refused with
+    /// > FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Agent_V1_DeleteAgentRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func delete<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.delete(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_DeleteAgentRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_DeleteAgentResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1332,6 +1722,74 @@ extension Cocoonbox_Agent_V1_Agents.ClientProtocol {
             metadata: metadata
         )
         return try await self.cancel(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rename" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Rename sets the agent's name; an automatic title never replaces it.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rename<Result>(
+        _ message: Cocoonbox_Agent_V1_RenameAgentRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_Agent>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Agent_V1_RenameAgentRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.rename(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Delete" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete cancels the agent's running turn and removes the agent with its
+    /// > transcript. An mcp:* agent whose MCP session is open is refused with
+    /// > FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func delete<Result>(
+        _ message: Cocoonbox_Agent_V1_DeleteAgentRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.delete(
             request: request,
             options: options,
             onResponse: handleResponse

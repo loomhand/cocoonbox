@@ -100,6 +100,15 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
         await world.cancel(agent: request.agentID)
         return .init()
     }
+
+    func rename(request: Cocoonbox_Agent_V1_RenameAgentRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_Agent {
+        try await world.rename(agent: request.agentID, name: request.name)
+    }
+
+    func delete(request: Cocoonbox_Agent_V1_DeleteAgentRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_DeleteAgentResponse {
+        try await world.delete(agent: request.agentID)
+        return .init()
+    }
 }
 
 struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {

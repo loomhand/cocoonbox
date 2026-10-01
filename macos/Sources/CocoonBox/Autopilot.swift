@@ -5,15 +5,15 @@ import Foundation
 
 // Autopilot replays a `;`-separated step list from CB_AUTOPILOT so acceptance
 // runs can drive the app without UI scripting permissions. Steps:
-// ensure, hibernate, wait-running, wait-live, agent[:name], send:<text>,
+// ensure, hibernate, wait-running, wait-live, agent[:name], new-agent, send:<text>,
 // wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
 // select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
-// confirm:<save|upgrade|off>, save-now, upgrade, wait-operation[:seconds],
-// end-local, quit.
+// confirm:<save|upgrade|rename|delete|off>, save-now, upgrade, wait-operation[:seconds],
+// rename:<name> and delete (both on the selected agent), end-local, quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -50,6 +50,11 @@ enum Autopilot {
                 model.createAgent(name: arg)
                 await until(30) { model.selectedAgentID != nil }
             }
+        case "new-agent":
+            await until(60) { model.eventsLive }
+            let before = model.selectedAgentID
+            model.createAgent()
+            await until(30) { model.selectedAgentID != before }
         case "send":
             model.send(arg)
             await until(10) { model.selectedAgent?.status == .running }
@@ -115,6 +120,16 @@ enum Autopilot {
         case "confirm":
             model.confirmSave = arg == "save"
             model.confirmUpgrade = arg == "upgrade"
+            model.renamingAgent = arg == "rename" ? model.selectedAgent : nil
+            model.deletingAgent = arg == "delete" ? model.selectedAgent : nil
+        case "rename":
+            if let agent = model.selectedAgent { model.renameAgent(agent, to: arg) }
+            await until(10) { model.selectedAgent?.name == arg }
+        case "delete":
+            if let agent = model.selectedAgent {
+                model.deleteAgent(agent)
+                await until(10) { !model.agents.contains { $0.id == agent.id } }
+            }
         case "save-now":
             model.saveNow()
             await until(10) { model.operation?.finished == false }

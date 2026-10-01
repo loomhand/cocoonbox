@@ -61,6 +61,7 @@ struct RootView: View {
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
     @State private var externalExpanded = true
+    @State private var newName = ""
 
     var body: some View {
         @Bindable var model = model
@@ -94,11 +95,19 @@ struct SidebarView: View {
                 Section {
                     ForEach(model.agents.filter { $0.externalClient == nil }, id: \.id) { agent in
                         AgentRow(agent: agent).tag(agent.id)
+                            .contextMenu {
+                                Button("Rename…") { model.renamingAgent = agent }
+                                Button("Delete…", role: .destructive) { model.deletingAgent = agent }
+                            }
                     }
                 }
                 Section(isExpanded: $externalExpanded) {
                     ForEach(external, id: \.id) { agent in
                         AgentRow(agent: agent).tag(agent.id)
+                            .contextMenu {
+                                Button("Delete…", role: .destructive) { model.deletingAgent = agent }
+                                    .disabled(agent.status == .running || agent.status == .waitingForUser)
+                            }
                     }
                 } header: {
                     if !external.isEmpty {
@@ -116,6 +125,18 @@ struct SidebarView: View {
                 }
             }
             .listStyle(.sidebar)
+            .alert("Rename agent", isPresented: Binding(get: { model.renamingAgent != nil }, set: { if !$0 { model.renamingAgent = nil } }), presenting: model.renamingAgent) { agent in
+                TextField("Name", text: $newName)
+                Button("Rename") { model.renameAgent(agent, to: newName) }
+                Button("Cancel", role: .cancel) {}
+            }
+            .onChange(of: model.renamingAgent?.id) { newName = model.renamingAgent?.name ?? "" }
+            .alert("Delete “\(model.deletingAgent?.name ?? "agent")”?", isPresented: Binding(get: { model.deletingAgent != nil }, set: { if !$0 { model.deletingAgent = nil } }), presenting: model.deletingAgent) { agent in
+                Button("Delete", role: .destructive) { model.deleteAgent(agent) }
+                Button("Cancel", role: .cancel) {}
+            } message: { _ in
+                Text("The agent and its conversation are removed from the box. This cannot be undone.")
+            }
             if let error = model.lastError {
                 Text(error)
                     .font(.caption)

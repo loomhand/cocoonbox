@@ -51,6 +51,8 @@ final class AppModel {
     var showConnectAgent = false
     var confirmSave = false
     var confirmUpgrade = false
+    var renamingAgent: Agent?
+    var deletingAgent: Agent?
     var box: Box?
     var operation: OperationProgress?
     var agents: [Agent] = []
@@ -499,6 +501,8 @@ final class AppModel {
                 linkLocalAgents()
                 if selectedAgentID == nil { selectedAgentID = agent.id }
             }
+        case .agentDeleted(let deleted):
+            forget(agentID: deleted.agentID)
         case .textDelta(let delta):
             appendLive(agentID: delta.agentID, turnID: delta.turnID, block: delta.block, reasoning: false, subagent: delta.subagent, text: delta.text)
         case .reasoningDelta(let delta):
@@ -510,6 +514,18 @@ final class AppModel {
         case nil:
             break
         }
+    }
+
+    // forget drops a deleted agent; a selection on it moves to the next agent in the box, else the last one.
+    private func forget(agentID: String) {
+        guard let index = agents.firstIndex(where: { $0.id == agentID }) else { return }
+        let removed = agents.remove(at: index)
+        transcripts[agentID] = nil
+        live[agentID] = nil
+        loadedTranscripts.remove(agentID)
+        guard selectedAgentID == agentID else { return }
+        let inBox = agents.filter { $0.externalClient == nil }
+        selectedAgentID = (inBox.first { $0.createdAtMs >= removed.createdAtMs } ?? inBox.last)?.id
     }
 
     private func appendLive(agentID: String, turnID: String, block: UInt32, reasoning: Bool, subagent: String, text: String) {
@@ -585,6 +601,30 @@ final class AppModel {
                 try await connection.send(agentID: agentID, text: text)
             } catch {
                 report("send", error)
+            }
+        }
+    }
+
+    func renameAgent(_ agent: Agent, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let connection, !name.isEmpty, name != agent.name else { return }
+        Task {
+            do {
+                try await connection.renameAgent(agentID: agent.id, name: name)
+            } catch {
+                report("rename agent", error)
+            }
+        }
+    }
+
+    func deleteAgent(_ agent: Agent) {
+        guard let connection else { return }
+        Task {
+            do {
+                try await connection.deleteAgent(agentID: agent.id)
+                forget(agentID: agent.id)
+            } catch {
+                report("delete agent", error)
             }
         }
     }

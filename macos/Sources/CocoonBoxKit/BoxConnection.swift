@@ -162,6 +162,17 @@ public final class BoxConnection: Sendable {
         _ = try await agents.cancel(.with { $0.agentID = agentID })
     }
 
+    public func renameAgent(agentID: String, name: String) async throws {
+        _ = try await agents.rename(.with {
+            $0.agentID = agentID
+            $0.name = name
+        })
+    }
+
+    public func deleteAgent(agentID: String) async throws {
+        _ = try await agents.delete(.with { $0.agentID = agentID })
+    }
+
     // describe renders a call error for the UI: the gRPC status code and message when there is one.
     public static func describe(_ error: any Error) -> String {
         if let rpc = error as? RPCError {
