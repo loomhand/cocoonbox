@@ -18,7 +18,6 @@ BASE=${1:?usage: cut.sh [-p] [-a agent] <base template> <vN>}
 V=${2:?usage: cut.sh [-p] [-a agent] <base template> <vN>}
 S=/srv/cb/sbx
 COCOON=$S/bin/cocoon-cbsbx
-HOST_PUBKEY_FILE=${HOST_PUBKEY_FILE:-/home/builder/.ssh/cocoonbox_deploy.pub}
 PROXY=http://127.0.0.1:3128
 NO_PROXY=localhost,127.0.0.1,::1
 EGRESS_PORT=2049
@@ -68,8 +67,7 @@ if [ "$PROVISION" = 1 ]; then
 	python3 "$SRC/cut-proxy.py" "${VSOCK}_$EGRESS_PORT" &
 	PROXY_PID=$!
 	tar -C "$SRC" -cf - provision.sh rootfs | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
-	guest -e "CB_HOST_PUBKEY=$(cat "$HOST_PUBKEY_FILE")" -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" \
-		"$VM" -- bash /tmp/cb-image/provision.sh
+	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/provision.sh
 	guest "$VM" -- rm -rf /tmp/cb-image
 	stop_proxy
 fi

@@ -1,7 +1,6 @@
 #!/bin/bash
 # Provisions the cocoonbox desktop guest (Ubuntu 24.04 xface base) in place; idempotent.
 # Runs as root inside the guest from an unpacked copy of image/ (see cut.sh -p).
-# Env: CB_HOST_PUBKEY = ssh public key accepted for `user` and `deploy`.
 set -euo pipefail
 
 CUA_VERSION=0.30.4
@@ -18,7 +17,6 @@ PACKAGES=(
 )
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
-: "${CB_HOST_PUBKEY:?CB_HOST_PUBKEY must hold the host ssh public key}"
 export DEBIAN_FRONTEND=noninteractive
 
 log() { printf '[provision] %s\n' "$*"; }
@@ -34,7 +32,8 @@ setup_packages() {
 	rm -f /etc/systemd/system/cocoonbox-vnc.service
 	systemctl daemon-reload
 	systemctl reset-failed cocoonbox-vnc.service >/dev/null 2>&1 || true
-	apt-get purge -y -qq xrdp xorgxrdp xscreensaver xscreensaver-data x11vnc >/dev/null 2>&1 || true
+	rm -f /etc/ssh/sshd_config.d/10-cocoonbox.conf /etc/systemd/system/cocoonbox-hostkeys.service /etc/systemd/system/multi-user.target.wants/cocoonbox-hostkeys.service
+	apt-get purge -y -qq xrdp xorgxrdp xscreensaver xscreensaver-data x11vnc openssh-server openssh-sftp-server >/dev/null 2>&1 || true
 	local deb
 	deb=$(mktemp --suffix=.deb)
 	curl -fsSL "$CHROME_URL" -o "$deb"
@@ -57,26 +56,15 @@ setup_users() {
 	passwd -l user >/dev/null
 
 	id cbagent >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /var/lib/cocoonbox --shell /usr/sbin/nologin cbagent
-	id deploy >/dev/null 2>&1 || useradd -m -s /bin/bash deploy
-	passwd -l deploy >/dev/null
-	printf 'deploy ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-cocoonbox-deploy
-	chmod 0440 /etc/sudoers.d/90-cocoonbox-deploy
-	visudo -cqf /etc/sudoers.d/90-cocoonbox-deploy
+	if id deploy >/dev/null 2>&1; then
+		userdel -r deploy
+	fi
+	rm -f /etc/sudoers.d/90-cocoonbox-deploy /home/user/.ssh/authorized_keys
 	printf 'Defaults:user env_keep += "http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY"\nuser ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/90-cocoonbox-user
 	chmod 0440 /etc/sudoers.d/90-cocoonbox-user
 	visudo -cqf /etc/sudoers.d/90-cocoonbox-user
 
-	local u home
-	for u in user deploy; do
-		home=$(getent passwd "$u" | cut -d: -f6)
-		install -d -m 0700 -o "$u" -g "$u" "$home/.ssh"
-		printf '%s\n' "$CB_HOST_PUBKEY" > "$home/.ssh/authorized_keys"
-		chown "$u:$u" "$home/.ssh/authorized_keys"
-		chmod 0600 "$home/.ssh/authorized_keys"
-	done
-
 	passwd -l root >/dev/null
-	sed -i 's/^#*PermitRootLogin.*/PermitRootLogin no/; s/^AcceptEnv /#AcceptEnv /' /etc/ssh/sshd_config
 	usermod -c "cocoonbox user" user
 	sed -i -E 's/^# *(en_US\.UTF-8 UTF-8|zh_CN\.UTF-8 UTF-8)$/\1/' /etc/locale.gen
 	locale-gen >/dev/null
@@ -85,6 +73,7 @@ setup_users() {
 
 install_rootfs() {
 	log "rootfs files"
+	rm -f /usr/local/lib/cocoonbox/set-agent-env
 	(cd "$SRC/rootfs" && find . -type f ! -path './etc/skel-cocoonbox/*') | while read -r f; do
 		case "$f" in
 		./usr/local/lib/cocoonbox/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
@@ -141,7 +130,6 @@ enable_units() {
 	udevadm trigger --name-match=uinput
 	systemctl enable --now nftables.service cocoonbox-machine-id.path
 	nft -f /etc/nftables.conf
-	systemctl reload ssh || systemctl restart ssh
 	systemctl reload systemd-logind
 	systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}' | xargs -r systemctl stop
 	systemctl enable cocoonbox-xorg.service cocoonbox-session.service

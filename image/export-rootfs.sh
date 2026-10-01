@@ -45,7 +45,7 @@ log "reflink cow"
 cp --reflink=always "$cow" "$B/cow.raw"
 
 add=$B/add
-install -d "$add/usr/local/bin" "$add/etc/systemd/system/sysinit.target.wants" "$add/etc/systemd/system/multi-user.target.wants" "$add/etc/cocoonbox" "$add/etc/ssh" "$add/etc/apt/apt.conf.d"
+install -d "$add/usr/local/bin" "$add/etc/systemd/system/sysinit.target.wants" "$add/etc/cocoonbox" "$add/etc/apt/apt.conf.d"
 printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$PROXY" "$PROXY" > "$add/etc/apt/apt.conf.d/90cocoonbox-proxy"
 install -m 0755 "$SILKD" "$add/usr/local/bin/silkd"
 cat > "$add/etc/systemd/system/silkd.service" <<EOF
@@ -76,20 +76,6 @@ Environment=http_proxy=$PROXY https_proxy=$PROXY HTTP_PROXY=$PROXY HTTPS_PROXY=$
 Environment=no_proxy=$NO_PROXY NO_PROXY=$NO_PROXY
 EOF
 done
-cat > "$add/etc/systemd/system/cocoonbox-hostkeys.service" <<'EOF'
-[Unit]
-Description=generate ssh host keys on first boot
-Before=ssh.service ssh.socket
-ConditionPathExists=!/etc/ssh/ssh_host_ed25519_key
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/ssh-keygen -A
-
-[Install]
-WantedBy=multi-user.target
-EOF
-ln -s ../cocoonbox-hostkeys.service "$add/etc/systemd/system/multi-user.target.wants/cocoonbox-hostkeys.service"
 
 unshare -m bash -euo pipefail -c '
 B=$1; lower=$2; out=$3
@@ -99,7 +85,6 @@ mount -o loop "$B/cow.raw" "$B/m/cow"
 mount -t overlay overlay -o ro,metacopy=on,redirect_dir=follow,lowerdir="$B/m/cow/upper:$lower" "$B/m/base"
 gid=$(awk -F: "\$1==\"cbagent\"{print \$3}" "$B/m/base/etc/group")
 [ -n "$gid" ] || { echo "no cbagent group in the image" >&2; exit 1; }
-for k in $(ls "$B/m/base/etc/ssh" | grep "^ssh_host_"); do mknod "$B/add/etc/ssh/$k" c 0 0; done
 printf "GW_BASE_URL=http://10.203.0.1:18090/v1\nGW_API_KEY=unprovisioned\nMODEL_MAIN=deepseek/deepseek-v4.1-flash\nMODEL_COMPUTER=anthropic/claude-sonnet-5\nAGENT_LISTEN=127.0.0.1:7443\n" > "$B/add/etc/cocoonbox/agent.env"
 chown 0:"$gid" "$B/add/etc/cocoonbox/agent.env"
 chmod 0640 "$B/add/etc/cocoonbox/agent.env"
