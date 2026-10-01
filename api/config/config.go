@@ -79,10 +79,12 @@ type State struct {
 	PresignTTL     Duration `json:"presign_ttl"`
 }
 
-// Provision names the edge signing key and gw's admin API for per-box gw keys.
+// Provision names the edge signing key, gw's admin API for per-box gw keys and the residential exit.
 type Provision struct {
 	SigningKeyFile string  `json:"signing_key_file"`
 	GWAdmin        GWAdmin `json:"gw_admin"`
+	// ResidentialUpstream is the residential forwarder's proxy URL; empty leaves every box's egress alone.
+	ResidentialUpstream string `json:"residential_upstream"`
 }
 
 // GWAdmin names gw's admin API and the file holding its cocoonbox-boxes tenant admin token; an empty URL disables gw keys.

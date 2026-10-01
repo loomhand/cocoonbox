@@ -298,6 +298,7 @@ type fakeMachines struct {
 	addrErr   error
 	execErr   error
 	execs     []execCall
+	egress    []string
 }
 
 func newFakeMachines() *fakeMachines {
@@ -427,6 +428,19 @@ func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.I
 	return nil
 }
 
+func (f *fakeMachines) SetEgress(_ context.Context, id, upstream string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.machines[id]
+	if !ok {
+		return machines.ErrNotFound
+	}
+	m.Routed = upstream != ""
+	f.machines[id] = m
+	f.egress = append(f.egress, id+" "+cmp.Or(upstream, "direct"))
+	return nil
+}
+
 func (f *fakeMachines) Delete(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -439,6 +453,12 @@ func (f *fakeMachines) execCalls() []execCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.execs)
+}
+
+func (f *fakeMachines) egressCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.egress)
 }
 
 func (f *fakeMachines) put(m machines.Machine) {

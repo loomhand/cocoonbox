@@ -147,8 +147,12 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 		}
 	}
 	svc.EnableProvisioning(signer, gw)
+	if upstream := cfg.Provision.ResidentialUpstream; upstream != "" {
+		svc.EnableResidential(upstream, func(context.Context, string) (bool, error) { return false, nil })
+	}
 	go svc.RunProvisioner(ctx, provisionInterval)
-	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, gw keys %t", signer.KeyID(), gw != nil)
+	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, gw keys %t, residential exit %q",
+		signer.KeyID(), gw != nil, cfg.Provision.ResidentialUpstream)
 	return signer, nil
 }
 

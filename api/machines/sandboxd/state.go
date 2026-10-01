@@ -17,6 +17,7 @@ const (
 	envMetaPrefix = "CB_META_"
 	envWakes      = "CB_WAKES"
 	envGWKey      = "GW_KEY"
+	envUpstream   = "EGRESS_UPSTREAM"
 
 	opClaim     = "claim"
 	opWake      = "wake"
@@ -47,8 +48,9 @@ type entry struct {
 	opErr    string
 	revision int64
 
-	meta  map[string]string
-	wakes int
+	meta   map[string]string
+	wakes  int
+	routed bool
 	// ready means the agent answered on its port since the claim, a wake or the last restart.
 	ready         bool
 	readyRestarts int
@@ -85,6 +87,7 @@ func (e *entry) machine(disk uint32) machines.Machine {
 		Reason:   reason,
 		Revision: e.revision,
 		Meta:     maps.Clone(e.meta),
+		Routed:   e.routed,
 	}
 	if m.Meta == nil {
 		m.Meta = map[string]string{}
@@ -105,7 +108,7 @@ func (e *entry) machine(disk uint32) machines.Machine {
 	return m
 }
 
-// loadEnv reads the service meta and the wake count from the claim's env entries.
+// loadEnv reads the service meta, the wake count and whether an upstream is set from the claim's env entries.
 func (e *entry) loadEnv(env map[string]envVar) {
 	e.meta = map[string]string{}
 	for name, v := range env {
@@ -114,6 +117,7 @@ func (e *entry) loadEnv(env map[string]envVar) {
 		}
 	}
 	e.wakes, _ = strconv.Atoi(env[envWakes].Value)
+	_, e.routed = env[envUpstream]
 }
 
 // sizeOf returns the tier of f; disk is not part of a tier.

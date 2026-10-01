@@ -76,7 +76,7 @@ func TestIndexRebuildsMachinesFromClaimsAndEnv(t *testing.T) {
 			ID: "sb_old", Key: poolKey{Template: template, Net: "none", Size: "xlarge"}, Restarts: 1, ClaimedAt: claimed,
 			Metadata: map[string]string{"cb_machine": boxID, "cb_owner": owner},
 		},
-		env: map[string]envVar{"CB_META_wake": {Value: "x|w1"}, "CB_META_gw": {Value: "1"}, "CB_WAKES": {Value: "2"}, "GW_KEY": {Guest: new(false)}},
+		env: map[string]envVar{"CB_META_wake": {Value: "x|w1"}, "CB_META_gw": {Value: "1"}, "CB_WAKES": {Value: "2"}, "GW_KEY": {Guest: new(false)}, "EGRESS_UPSTREAM": {Guest: new(false)}},
 	})
 	fake.add(&fakeSandbox{row: row{ID: "sb_foreign", Key: poolKey{Template: "base:24.04"}}})
 	b := newTestBackend(t, fake)
@@ -86,7 +86,7 @@ func TestIndexRebuildsMachinesFromClaimsAndEnv(t *testing.T) {
 		t.Fatalf("List = %+v, %v", ms, err)
 	}
 	m := ms[0]
-	if m.ID != boxID || m.Incarnation != "1790000000000.1.2" || m.Meta["wake"] != "x|w1" || m.Meta["gw"] != "1" || len(m.Meta) != 2 || m.CreatedAt != claimed {
+	if m.ID != boxID || m.Incarnation != "1790000000000.1.2" || m.Meta["wake"] != "x|w1" || m.Meta["gw"] != "1" || len(m.Meta) != 2 || m.CreatedAt != claimed || !m.Routed {
 		t.Errorf("indexed machine = %+v", m)
 	}
 	if all, _ := b.List(t.Context(), ""); len(all) != 1 {
@@ -276,6 +276,37 @@ func TestDeliverFailures(t *testing.T) {
 	}
 	if err := b.Deliver(t.Context(), "cb-missing", identity, ""); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("Deliver to an unknown machine = %v", err)
+	}
+}
+
+func TestSetEgressSetsAndRemovesTheHostOnlyUpstream(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	if m := claimRunning(t, b); m.Routed {
+		t.Fatalf("new machine is routed: %+v", m)
+	}
+
+	if err := b.SetEgress(t.Context(), boxID, "http://10.203.1.2:8823"); err != nil {
+		t.Fatalf("SetEgress: %v", err)
+	}
+	up, ok := fake.env()["EGRESS_UPSTREAM"]
+	if !ok || up.Value != "http://10.203.1.2:8823" || up.Guest == nil || *up.Guest {
+		t.Errorf("EGRESS_UPSTREAM = %+v, %t, want a host-only entry", up, ok)
+	}
+	if m, _ := b.Get(t.Context(), boxID); !m.Routed {
+		t.Errorf("machine after SetEgress = %+v, want routed", m)
+	}
+	if err := b.SetEgress(t.Context(), boxID, ""); err != nil {
+		t.Fatalf("SetEgress direct: %v", err)
+	}
+	if _, ok := fake.env()["EGRESS_UPSTREAM"]; ok {
+		t.Errorf("env after SetEgress direct = %+v", fake.env())
+	}
+	if m, _ := b.Get(t.Context(), boxID); m.Routed {
+		t.Errorf("machine after SetEgress direct = %+v, want direct", m)
+	}
+	if err := b.SetEgress(t.Context(), "cb-missing", ""); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("SetEgress of an unknown machine = %v", err)
 	}
 }
 

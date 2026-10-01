@@ -282,6 +282,27 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 	return nil
 }
 
+func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
+	sandbox, err := b.sandboxOf(ctx, id)
+	if err != nil {
+		return err
+	}
+	var v *envVar
+	if upstream != "" {
+		hostOnly := false
+		v = &envVar{Value: upstream, Guest: &hostOnly}
+	}
+	if err := b.api.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
+		return fmt.Errorf("set egress upstream: %w", err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if e := b.entries[id]; e != nil {
+		e.routed = upstream != ""
+	}
+	return nil
+}
+
 // startLocked marks e as running op and runs fn off the caller's request.
 func (b *Backend) startLocked(e *entry, op string, fn func(context.Context) error) {
 	e.op, e.opErr = op, ""

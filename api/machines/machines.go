@@ -74,6 +74,8 @@ type Machine struct {
 	Incarnation string
 	// Meta holds the service's small key/value records stored with the machine.
 	Meta map[string]string
+	// Routed reports that the machine's egress leaves through an upstream proxy.
+	Routed bool
 }
 
 // Identity tells a box agent which box and wake it serves and which edge key signs its credentials.
@@ -123,4 +125,6 @@ type Machines interface {
 	SetMeta(ctx context.Context, id, key, value string) error
 	// Deliver hands the running machine's agent its identity and, when gwKey is set, its gw key.
 	Deliver(ctx context.Context, id string, identity Identity, gwKey string) error
+	// SetEgress sends the machine's new connections through the proxy at upstream, or direct when upstream is empty.
+	SetEgress(ctx context.Context, id, upstream string) error
 }

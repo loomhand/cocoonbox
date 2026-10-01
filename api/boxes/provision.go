@@ -63,6 +63,9 @@ func (s *Service) provisionStale(ctx context.Context) {
 		return
 	}
 	for _, m := range ms {
+		if err := s.syncExit(ctx, m); err != nil {
+			log.WithFunc("boxes.Service.provisionStale").WithField("machine", m.ID).Error(ctx, err, "sync exit")
+		}
 		if m.State == machines.StateRunning && wakeOf(m) == "" {
 			_ = s.provisionMachine(ctx, m)
 		}
@@ -103,6 +106,9 @@ func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) erro
 
 func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string, error) {
 	p := s.provision
+	if err := s.syncExit(ctx, m); err != nil {
+		return "", fmt.Errorf("exit: %w", err)
+	}
 	var gwKey string
 	if p.gw != nil && m.Meta[metaGW] == "" {
 		key, err := p.gw.Add(ctx, m.ID)

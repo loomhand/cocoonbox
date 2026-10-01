@@ -36,6 +36,7 @@ type Service struct {
 	ops       *operations
 	state     *stateLayer
 	provision *provisioner
+	exit      *exitPolicy
 }
 
 // New serves boxes on backend with defaults.
