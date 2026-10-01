@@ -116,6 +116,7 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
     static let signInOrigin = "https://accounts.example.com"
 
     let world: MockWorld
+    var credentials = true
 
     func hello(request: Cocoonbox_Agent_V1_HelloRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_HelloResponse {
         .with {
@@ -128,11 +129,13 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
     }
 
     func activeOrigin(request: Cocoonbox_Agent_V1_ActiveOriginRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_ActiveOriginResponse {
-        .with { $0.origin = Self.signInOrigin }
+        guard credentials else { throw RPCError(code: .unimplemented, message: "") }
+        return .with { $0.origin = Self.signInOrigin }
     }
 
     // fillCredential logs which fields a real box would fill, never their values.
     func fillCredential(request: Cocoonbox_Agent_V1_FillCredentialRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_FillCredentialResponse {
+        guard credentials else { throw RPCError(code: .unimplemented, message: "") }
         guard request.origin == Self.signInOrigin else {
             throw RPCError(code: .failedPrecondition, message: "the active tab is on \(Self.signInOrigin), not \(request.origin)")
         }

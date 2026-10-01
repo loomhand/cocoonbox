@@ -195,7 +195,7 @@ enum Autopilot {
             let filled = try await connection.fillCredential(origin: origin, username: username, secret: .password(secret), submit: true)
             Perf.mark("fill_credential", "origin=\(origin) filled=\(filled.filled.joined(separator: ",")) submitted=\(filled.submitted)")
         } catch {
-            Perf.mark("fill_credential", "error \(BoxConnection.describe(error))")
+            Perf.mark("fill_credential", "error \(BoxConnection.describeCredential(error))")
         }
     }
 

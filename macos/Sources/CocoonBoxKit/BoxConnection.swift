@@ -198,6 +198,22 @@ public final class BoxConnection: Sendable {
         }
         return "\(error)"
     }
+
+    // describeCredential renders an ActiveOrigin or FillCredential error; agents before v12 do not serve those calls.
+    public static func describeCredential(_ error: any Error) -> String {
+        guard let rpc = error as? RPCError else { return describe(error) }
+        switch rpc.code {
+        case .unimplemented:
+            return "This box's desktop is too old for password sign-in. Upgrade the desktop first."
+        case .failedPrecondition:
+            let message = rpc.message.prefix(1).uppercased() + rpc.message.dropFirst()
+            return message.last.map { ".!?".contains($0) } == true ? message : message + "."
+        case .unavailable:
+            return "The box's browser cannot be reached right now (\(rpc.message)). Try again in a moment."
+        default:
+            return describe(error)
+        }
+    }
 }
 
 public enum ConnectionError: Error, CustomStringConvertible {

@@ -32,8 +32,16 @@ struct PasswordSignInSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Sign in with Passwords").font(.title2.bold())
-            Text(origin.map { "The box's browser is on \($0)." } ?? "Reading the box's browser…")
-                .font(.callout)
+            Group {
+                if let origin {
+                    Text("The box's browser is on \(origin).")
+                } else if let error {
+                    Text(error).foregroundStyle(.red)
+                } else {
+                    Text("Reading the box's browser…")
+                }
+            }
+            .font(.callout)
             Picker("", selection: $oneTimeCode) {
                 Text("Password").tag(false)
                 Text("One-time code").tag(true)
@@ -53,7 +61,7 @@ struct PasswordSignInSheet: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Toggle("Submit the form", isOn: $submit)
-            if let error {
+            if origin != nil, let error {
                 Text(error).foregroundStyle(.red).font(.callout)
             }
             HStack {
@@ -68,11 +76,14 @@ struct PasswordSignInSheet: View {
         .padding(24)
         .frame(width: 460)
         .task {
-            guard let connection = model.connection else { return }
+            guard let connection = model.connection else {
+                error = "Sign in and start the box first."
+                return
+            }
             do {
                 origin = try await connection.activeOrigin()
             } catch {
-                self.error = BoxConnection.describe(error)
+                self.error = BoxConnection.describeCredential(error)
             }
         }
         .onChange(of: oneTimeCode) { secret = "" }
@@ -94,7 +105,7 @@ struct PasswordSignInSheet: View {
                 _ = try await connection.fillCredential(origin: origin, username: user, secret: value, submit: submit)
                 dismiss()
             } catch {
-                self.error = BoxConnection.describe(error)
+                self.error = BoxConnection.describeCredential(error)
             }
         }
     }
