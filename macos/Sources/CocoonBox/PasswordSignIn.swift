@@ -49,7 +49,7 @@ struct PasswordSignInSheet: View {
                 CredentialField(text: $secret, kind: oneTimeCode ? .oneTimeCode : .password)
                     .id(oneTimeCode)
             }
-            Text("Paste from Passwords or your password manager, or type it. It goes to this page only and is never stored in the box.")
+            Text("Paste from Passwords or 1Password, or type it. It goes to this page only and is never stored in the box.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Toggle("Submit the form", isOn: $submit)
