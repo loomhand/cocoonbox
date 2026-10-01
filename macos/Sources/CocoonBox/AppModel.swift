@@ -45,7 +45,6 @@ struct OperationProgress: Equatable {
 final class AppModel {
     static let endpointKey = "endpoint"
     static let localSessionAgentsKey = "localSessionAgents"
-    static let transcriptLoads = 8
 
     var endpointURL: String
     var showSignIn = false
@@ -55,7 +54,9 @@ final class AppModel {
     var box: Box?
     var operation: OperationProgress?
     var agents: [Agent] = []
-    var selectedAgentID: String?
+    var selectedAgentID: String? {
+        didSet { if selectedAgentID != oldValue { loadSelectedTranscript() } }
+    }
     var transcripts: [String: [Entry]] = [:]
     var live: [String: [LiveBlock]] = [:]
     var hello: Cocoonbox_Agent_V1_HelloResponse?
@@ -66,6 +67,7 @@ final class AppModel {
     var localAgents: [LocalAgentSession] = []
     var localSessionAgents = Set(UserDefaults.standard.stringArray(forKey: AppModel.localSessionAgentsKey) ?? [])
     @ObservationIgnored var computerActions = 0
+    @ObservationIgnored private var loadedTranscripts: Set<String> = []
 
     let screen = ScreenController()
 
@@ -441,28 +443,33 @@ final class AppModel {
             if selectedAgentID == nil || !agents.contains(where: { $0.id == selectedAgentID }) {
                 selectedAgentID = agents.last { $0.externalClient == nil }?.id ?? agents.last?.id
             }
-            if let selected = selectedAgentID, agents.contains(where: { $0.id == selected }) {
-                await loadTranscript(agentID: selected)
+            loadedTranscripts = []
+            if let id = selectedTranscriptID {
+                loadedTranscripts.insert(id)
+                if !(await loadTranscript(agentID: id)) { loadedTranscripts.remove(id) }
             }
             eventsLive = true
             lastError = nil
-            var rest = agents.map(\.id).filter { $0 != selectedAgentID }.makeIterator()
-            await withTaskGroup(of: Void.self) { group in
-                for _ in 0 ..< Self.transcriptLoads {
-                    guard let id = rest.next() else { break }
-                    group.addTask { await self.loadTranscript(agentID: id) }
-                }
-                while await group.next() != nil {
-                    if let id = rest.next() { group.addTask { await self.loadTranscript(agentID: id) } }
-                }
-            }
         } catch {
             report("list agents", error)
         }
     }
 
-    private func loadTranscript(agentID: String) async {
-        guard let connection else { return }
+    // selectedTranscriptID is the agent whose transcript the selection shows: the agent, or a local session's MCP agent.
+    private var selectedTranscriptID: String? {
+        if let session = selectedLocal { return externalAgent(for: session)?.id }
+        return agents.contains { $0.id == selectedAgentID } ? selectedAgentID : nil
+    }
+
+    private func loadSelectedTranscript() {
+        guard eventsLive, let id = selectedTranscriptID, !loadedTranscripts.contains(id) else { return }
+        loadedTranscripts.insert(id)
+        Task { if !(await loadTranscript(agentID: id)) { loadedTranscripts.remove(id) } }
+    }
+
+    @discardableResult
+    private func loadTranscript(agentID: String) async -> Bool {
+        guard let connection else { return false }
         var after: UInt64 = 0
         while true {
             do {
@@ -470,11 +477,11 @@ final class AppModel {
                 for entry in page.entries {
                     upsert(entry)
                 }
-                guard page.hasMore_p, let last = page.entries.last else { return }
+                guard page.hasMore_p, let last = page.entries.last else { return true }
                 after = last.seq
             } catch {
                 report("transcript", error)
-                return
+                return false
             }
         }
     }
