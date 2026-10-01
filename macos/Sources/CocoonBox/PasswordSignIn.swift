@@ -49,7 +49,7 @@ struct PasswordSignInSheet: View {
                 CredentialField(text: $secret, kind: oneTimeCode ? .oneTimeCode : .password)
                     .id(oneTimeCode)
             }
-            Text("Choose a saved password with AutoFill, or paste it. It goes to this page only and is never stored in the box.")
+            Text("Paste from Passwords or your password manager, or type it. It goes to this page only and is never stored in the box.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Toggle("Submit the form", isOn: $submit)
@@ -100,7 +100,7 @@ struct PasswordSignInSheet: View {
     }
 }
 
-// CredentialField is an AppKit field with a content type, which is what macOS offers Passwords AutoFill on.
+// CredentialField is an AppKit field with a content type; an ad hoc signed app gets no AutoFill on it (design.md 20.4).
 struct CredentialField: NSViewRepresentable {
     @Binding var text: String
     let kind: NSTextContentType
