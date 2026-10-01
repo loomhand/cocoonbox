@@ -82,6 +82,13 @@ impl Host {
             "state_apply" => state::apply(call.args).await.map(Output::text),
             "state_swap" => state::swap(call.args).await.map(Output::text),
             "desktop_save" => self.desktop_save().await.map(Output::text),
+            "active_origin" => self.browser.origin().await.map(Output::text),
+            "credential_fill" => {
+                let mut args = call.args;
+                let out = self.browser.fill(&args).await.map(Output::text);
+                rpc::wipe(&mut args);
+                out
+            }
             t if t.starts_with("browser_") => {
                 self.browser.run(t, call.args).await.map(Output::text)
             }

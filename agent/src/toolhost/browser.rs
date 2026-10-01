@@ -13,6 +13,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use zeroize::Zeroizing;
 
 const LAUNCH_WAIT: Duration = Duration::from_secs(20);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
@@ -142,6 +143,45 @@ const READ_JS: &str = r#"((ref) => {
   return el.innerText || '';
 })"#;
 
+const FILL_JS: &str = r#"((origin, username, secret, kind, submit) => {
+  if (location.origin !== origin) return { error: `the active tab is on ${location.origin}, not ${origin}` };
+  const shown = (el) => {
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden';
+  };
+  const inputs = [...document.querySelectorAll('input')].filter((el) => !el.disabled && !el.readOnly && shown(el));
+  const textual = (el) => ['text', 'email', 'tel', 'number'].includes(el.type);
+  const set = (el, v) => {
+    el.focus();
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+  const focused = inputs.includes(document.activeElement) ? document.activeElement : null;
+  const filled = [];
+  let last = null;
+  if (kind === 'code') {
+    const field = (focused && textual(focused) ? focused : null)
+      || inputs.find((el) => el.autocomplete === 'one-time-code') || inputs.find(textual);
+    if (field) { set(field, secret); filled.push('code'); last = field; }
+  } else {
+    let pass = focused && focused.type === 'password' ? focused : null;
+    let user = focused && textual(focused) ? focused : null;
+    if (user && !pass) pass = inputs.slice(inputs.indexOf(user) + 1).find((el) => el.type === 'password') || null;
+    if (!user && !pass) pass = inputs.find((el) => el.type === 'password') || null;
+    if (pass && !user) user = inputs.slice(0, inputs.indexOf(pass)).filter(textual).pop() || null;
+    if (!user && !pass) user = inputs.find(textual) || null;
+    if (user && username) { set(user, username); filled.push('username'); last = user; }
+    if (pass && secret) { set(pass, secret); filled.push('password'); last = pass; }
+  }
+  if (!last) return { error: 'no sign-in field on this page' };
+  if (submit && last.form) {
+    last.form.requestSubmit();
+    return { filled, submitted: 'form' };
+  }
+  return { filled, submitted: submit ? 'enter' : '' };
+})"#;
+
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 /// Owns the Chrome process lifecycle and serializes CDP sessions.
@@ -231,16 +271,7 @@ impl Browser {
                 cdp.call("Input.insertText", json!({"text": a.text}))
                     .await?;
                 if a.submit {
-                    for kind in ["keyDown", "keyUp"] {
-                        cdp.call(
-                            "Input.dispatchKeyEvent",
-                            json!({"type": kind, "key": "Enter", "code": "Enter",
-                                   "windowsVirtualKeyCode": 13, "text": "\r"}),
-                        )
-                        .await?;
-                    }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
-                    cdp.wait_loaded().await;
+                    cdp.press_enter().await?;
                 }
                 Ok(format!(
                     "typed {} characters into {}{}",
@@ -269,6 +300,62 @@ impl Browser {
         }
     }
 
+    /// Origin of the active tab; Chrome is not started for it.
+    pub async fn origin(&self) -> Result<String, String> {
+        let _serial = self.lock.lock().await;
+        let mut cdp = self.attach().await?;
+        let origin = cdp.eval("location.origin").await?;
+        Ok(origin.as_str().unwrap_or_default().to_owned())
+    }
+
+    /// Fills the sign-in form of the active tab when its origin equals `origin`; errors never carry a value.
+    pub async fn fill(&self, args: &Value) -> Result<String, String> {
+        let origin = args["origin"].as_str().unwrap_or_default();
+        if origin.is_empty() || origin == "null" {
+            return Err("fill needs the origin of the tab".to_owned());
+        }
+        let (kind, secret) = match (args["password"].as_str(), args["code"].as_str()) {
+            (Some(p), None) => ("password", p),
+            (None, Some(c)) => ("code", c),
+            _ => return Err("fill needs either a password or a code".to_owned()),
+        };
+        let username = args["username"].as_str().unwrap_or_default();
+        let submit = args["submit"].as_bool().unwrap_or(false);
+        let _serial = self.lock.lock().await;
+        let mut cdp = self.attach().await?;
+        let user = js_secret(username);
+        let secret = js_secret(secret);
+        let mut expr = Zeroizing::new(String::with_capacity(
+            FILL_JS.len() + origin.len() * 6 + user.len() + secret.len() + 64,
+        ));
+        for part in [FILL_JS, "(", &js_str(origin), ",", &user, ",", &secret, ","] {
+            expr.push_str(part);
+        }
+        let _ = write!(expr, "{},{submit})", js_str(kind));
+        let r = cdp.eval(&expr).await?;
+        if let Some(e) = r["error"].as_str() {
+            return Err(e.to_owned());
+        }
+        let submitted = match r["submitted"].as_str() {
+            Some("form") => true,
+            Some("enter") => {
+                cdp.press_enter().await?;
+                true
+            }
+            _ => false,
+        };
+        Ok(json!({"filled": r["filled"], "submitted": submitted}).to_string())
+    }
+
+    async fn attach(&self) -> Result<Cdp, String> {
+        let targets = self
+            .targets()
+            .await
+            .map_err(|_| "Chrome is not running in the box".to_owned())?;
+        let page = first_page(targets).ok_or("no tab is open in the box's Chrome")?;
+        Cdp::open(&page.ws_url).await
+    }
+
     async fn connect(&self) -> Result<Cdp, String> {
         let targets = match self.targets().await {
             Ok(t) => t,
@@ -277,10 +364,7 @@ impl Browser {
                 self.targets().await?
             }
         };
-        let page = targets
-            .into_iter()
-            .find(|t| t.kind == "page" && !t.url.starts_with("devtools://"));
-        let ws_url = match page {
+        let ws_url = match first_page(targets) {
             Some(t) => t.ws_url,
             None => {
                 let url = format!("http://127.0.0.1:{}/json/new?about:blank", self.port);
@@ -296,10 +380,7 @@ impl Browser {
                 t.ws_url
             }
         };
-        let (ws, _) = tokio_tungstenite::connect_async(ws_url.as_str())
-            .await
-            .map_err(|e| format!("connect cdp {ws_url}: {e}"))?;
-        Ok(Cdp { ws, next_id: 0 })
+        Cdp::open(&ws_url).await
     }
 
     /// Closes Chrome through CDP so it flushes its profile; reports whether it was running
@@ -321,11 +402,8 @@ impl Browser {
             .json()
             .await
             .map_err(|e| format!("decode {url}: {e}"))?;
-        let ws_url = version["webSocketDebuggerUrl"].as_str().unwrap_or_default();
-        let (ws, _) = tokio_tungstenite::connect_async(ws_url)
-            .await
-            .map_err(|e| format!("connect cdp {ws_url}: {e}"))?;
-        let mut cdp = Cdp { ws, next_id: 0 };
+        let mut cdp =
+            Cdp::open(version["webSocketDebuggerUrl"].as_str().unwrap_or_default()).await?;
         let _ = cdp.call("Browser.close", json!({})).await;
         // the CDP port closes before the profile is flushed; SingletonLock goes last on a clean exit
         let lock = self.profile.join("SingletonLock");
@@ -439,6 +517,13 @@ struct Cdp {
 }
 
 impl Cdp {
+    async fn open(ws_url: &str) -> Result<Self, String> {
+        let (ws, _) = tokio_tungstenite::connect_async(ws_url)
+            .await
+            .map_err(|e| format!("connect cdp {ws_url}: {e}"))?;
+        Ok(Self { ws, next_id: 0 })
+    }
+
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
         self.next_id += 1;
         let id = self.next_id;
@@ -500,14 +585,52 @@ impl Cdp {
         }
     }
 
+    async fn press_enter(&mut self) -> Result<(), String> {
+        for kind in ["keyDown", "keyUp"] {
+            self.call(
+                "Input.dispatchKeyEvent",
+                json!({"type": kind, "key": "Enter", "code": "Enter",
+                       "windowsVirtualKeyCode": 13, "text": "\r"}),
+            )
+            .await?;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        self.wait_loaded().await;
+        Ok(())
+    }
+
     async fn snapshot(&mut self) -> Result<String, String> {
         let v = self.eval(SNAPSHOT_JS).await?;
         Ok(v.as_str().unwrap_or_default().to_owned())
     }
 }
 
+fn first_page(targets: Vec<Target>) -> Option<Target> {
+    targets
+        .into_iter()
+        .find(|t| t.kind == "page" && !t.url.starts_with("devtools://"))
+}
+
 fn js_str(s: &str) -> String {
     Value::String(s.to_owned()).to_string()
+}
+
+/// `s` as a JS string literal in a buffer sized for the worst-case escape, so it never reallocates.
+fn js_secret(s: &str) -> Zeroizing<String> {
+    let mut out = Zeroizing::new(String::with_capacity(s.len() * 6 + 2));
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if u32::from(c) < 0x20 || c == '\u{2028}' || c == '\u{2029}' => {
+                let _ = write!(out, "\\u{:04x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
@@ -559,6 +682,40 @@ mod tests {
             }
         });
         port
+    }
+
+    #[test]
+    fn js_secret_is_a_string_literal_of_its_input_without_reallocating() {
+        for s in ["plain", "quo\"te\\back", "line\nbreak\u{2028}", "密码", ""] {
+            let lit = js_secret(s);
+            assert_eq!(serde_json::from_str::<String>(&lit).unwrap(), s);
+            assert_eq!(lit.capacity(), s.len() * 6 + 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn fill_refuses_bad_arguments_and_never_starts_chrome() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        let both = json!({"origin": "https://a.test", "password": "p", "code": "1"});
+        for (args, want) in [
+            (json!({"password": "p"}), "fill needs the origin of the tab"),
+            (
+                json!({"origin": "null", "password": "p"}),
+                "fill needs the origin of the tab",
+            ),
+            (both, "fill needs either a password or a code"),
+            (
+                json!({"origin": "https://a.test", "password": "p"}),
+                "Chrome is not running in the box",
+            ),
+        ] {
+            assert_eq!(b.fill(&args).await.unwrap_err(), want);
+        }
+        assert_eq!(
+            b.origin().await.unwrap_err(),
+            "Chrome is not running in the box"
+        );
     }
 
     #[tokio::test]

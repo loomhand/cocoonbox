@@ -1,0 +1,349 @@
+#![cfg(test)]
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use cocoonbox_agent::pb::session_client::SessionClient;
+use cocoonbox_agent::pb::{self, fill_credential_request::Secret};
+use cocoonbox_agent::toolhost::rpc::{Call, Client};
+use serde_json::json;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::process::{Child, Command};
+use tonic::metadata::MetadataValue;
+use tonic::transport::Channel;
+use tonic::{Code, Request};
+
+const TOKEN: &str = "edge-token-for-credential";
+const LOGIN_PAGE: &str = r#"<!doctype html><title>login</title>
+<form action="/login" method="post">
+<input name="user" autocomplete="username" placeholder="Username">
+<input name="pass" type="password" placeholder="Password">
+<button>Sign in</button>
+</form>"#;
+const CODE_PAGE: &str = r#"<!doctype html><title>code</title>
+<form action="/code" method="post">
+<input name="otp" autocomplete="one-time-code" placeholder="Code">
+<button>Verify</button>
+</form>"#;
+
+type Posts = Arc<Mutex<Vec<(String, String)>>>;
+
+/// Kills the test's Chrome, found by its profile path, even when the test fails.
+struct ChromeGuard(PathBuf);
+
+impl Drop for ChromeGuard {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("pkill")
+            .arg("-f")
+            .arg(self.0.as_os_str())
+            .status();
+    }
+}
+
+fn authed<T>(msg: T) -> Request<T> {
+    let mut req = Request::new(msg);
+    req.metadata_mut()
+        .insert("x-cocoonbox-edge-token", MetadataValue::from_static(TOKEN));
+    req
+}
+
+fn find_chrome() -> Option<PathBuf> {
+    let candidates = [
+        std::env::var("CHROME_BIN").unwrap_or_default(),
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome".to_owned(),
+        "/usr/bin/google-chrome".to_owned(),
+        "/usr/bin/google-chrome-stable".to_owned(),
+    ];
+    candidates
+        .into_iter()
+        .filter(|c| !c.is_empty())
+        .map(PathBuf::from)
+        .find(|p| p.exists())
+}
+
+async fn free_port() -> u16 {
+    TcpListener::bind("127.0.0.1:0")
+        .await
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Serves the sign-in pages and records every POST as (path, body).
+async fn site(posts: Posts) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            let posts = Arc::clone(&posts);
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut chunk = [0u8; 4096];
+                let (head, body_at) = loop {
+                    let n = s.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        break (String::from_utf8_lossy(&buf[..i]).into_owned(), i + 4);
+                    }
+                };
+                let len: usize = head
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse().ok())?
+                    })
+                    .unwrap_or(0);
+                while buf.len() < body_at + len {
+                    let n = s.read(&mut chunk).await.unwrap_or(0);
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let mut words = head.split_whitespace();
+                let (method, path) = (words.next().unwrap_or(""), words.next().unwrap_or(""));
+                let page = match (method, path) {
+                    ("POST", _) => {
+                        let body = String::from_utf8_lossy(&buf[body_at..]).into_owned();
+                        posts.lock().unwrap().push((path.to_owned(), body));
+                        "<!doctype html><title>signed in</title>signed in"
+                    }
+                    (_, "/code") => CODE_PAGE,
+                    (_, "/") => LOGIN_PAGE,
+                    _ => "",
+                };
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{page}",
+                    page.len()
+                );
+                let _ = s.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    port
+}
+
+/// Collects a child's stderr until it exits.
+fn capture(child: &mut Child) -> tokio::task::JoinHandle<String> {
+    let mut err = child.stderr.take().unwrap();
+    tokio::spawn(async move {
+        let mut out = Vec::new();
+        let _ = err.read_to_end(&mut out).await;
+        String::from_utf8_lossy(&out).into_owned()
+    })
+}
+
+async fn tool(th: &Client, tool: &str, args: serde_json::Value) -> String {
+    let out = th
+        .call(&Call {
+            agent_id: String::new(),
+            tool: tool.to_owned(),
+            args,
+        })
+        .await
+        .unwrap();
+    assert!(!out.is_error, "{tool}: {}", out.text);
+    out.text
+}
+
+async fn wait_post(posts: &Posts, path: &str) -> String {
+    for _ in 0..100 {
+        if let Some((_, body)) = posts.lock().unwrap().iter().find(|(p, _)| p == path) {
+            return body.clone();
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("no POST {path} arrived");
+}
+
+fn files_containing(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
+    let mut hits = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            hits.extend(files_containing(&path, needle));
+        } else if std::fs::read(&path)
+            .unwrap()
+            .windows(needle.len())
+            .any(|w| w == needle)
+        {
+            hits.push(path);
+        }
+    }
+    hits
+}
+
+#[tokio::test]
+async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value() {
+    let Some(chrome) = find_chrome() else {
+        eprintln!("SKIP: no Chrome found; set CHROME_BIN");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let wrapper = dir.path().join("chrome");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexec \"{}\" --headless=new --use-mock-keychain \"$@\"\n",
+            chrome.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &wrapper,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
+    let _chrome = ChromeGuard(dir.path().join("profile"));
+    let socket = dir.path().join("toolhost.sock");
+    let state = dir.path().join("state");
+    let user = format!("user-{}", uuid::Uuid::new_v4().simple());
+    let password = format!("pw-{}", uuid::Uuid::new_v4().simple());
+    let code = format!("{}", 100_000 + uuid::Uuid::new_v4().as_u128() % 900_000);
+
+    let mut toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
+        .arg("toolhost")
+        .env("HOME", dir.path())
+        .env("TOOLHOST_SOCKET", &socket)
+        .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
+        .env("CB_WORKSPACE", dir.path().join("workspace"))
+        .env("CHROME_BIN", &wrapper)
+        .env("CHROME_PROFILE", dir.path().join("profile"))
+        .env("CDP_PORT", free_port().await.to_string())
+        .env("CUA_DRIVER_SOCKET", dir.path().join("cua.sock"))
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let toolhost_log = capture(&mut toolhost);
+    let port = free_port().await;
+    let mut serve = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
+        .arg("serve")
+        .env("GW_BASE_URL", "http://127.0.0.1:9/v1")
+        .env("GW_API_KEY", "k")
+        .env("MODEL_MAIN", "deepseek/deepseek-v4.1-flash")
+        .env("MODEL_COMPUTER", "anthropic/claude-sonnet-5")
+        .env("EDGE_TOKEN", TOKEN)
+        .env("AGENT_LISTEN", format!("127.0.0.1:{port}"))
+        .env("CB_STATE_DIR", &state)
+        .env("TOOLHOST_SOCKET", &socket)
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let serve_log = capture(&mut serve);
+    let endpoint = format!("http://127.0.0.1:{port}");
+    let channel = loop {
+        if socket.exists()
+            && let Ok(ch) = Channel::from_shared(endpoint.clone())
+                .unwrap()
+                .connect()
+                .await
+        {
+            break ch;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let mut session = SessionClient::new(channel);
+    let th = Client::new(socket.clone());
+
+    let posts = Posts::default();
+    let site_port = site(Arc::clone(&posts)).await;
+    let origin = format!("http://127.0.0.1:{site_port}");
+    tool(
+        &th,
+        "browser_navigate",
+        json!({"url": format!("{origin}/")}),
+    )
+    .await;
+    let active = session
+        .active_origin(authed(pb::ActiveOriginRequest {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .origin;
+    assert_eq!(active, origin);
+
+    let fill = |origin: &str, secret: Secret| pb::FillCredentialRequest {
+        origin: origin.to_owned(),
+        username: user.clone(),
+        secret: Some(secret),
+        submit: true,
+    };
+    let refused = session
+        .fill_credential(authed(fill(
+            "http://127.0.0.1:1",
+            Secret::Password(password.clone()),
+        )))
+        .await
+        .unwrap_err();
+    assert_eq!(refused.code(), Code::FailedPrecondition);
+    assert!(
+        refused
+            .message()
+            .contains(&format!("the active tab is on {origin}")),
+        "{}",
+        refused.message()
+    );
+    let snapshot = tool(&th, "browser_snapshot", json!({})).await;
+    assert!(
+        snapshot.contains("textbox \"Username\" [ref=e1]\n"),
+        "{snapshot}"
+    );
+    assert!(posts.lock().unwrap().is_empty());
+
+    let done = session
+        .fill_credential(authed(fill(&origin, Secret::Password(password.clone()))))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(done.filled, ["username", "password"]);
+    assert!(done.submitted);
+    assert_eq!(
+        wait_post(&posts, "/login").await,
+        format!("user={user}&pass={password}")
+    );
+
+    tool(
+        &th,
+        "browser_navigate",
+        json!({"url": format!("{origin}/code")}),
+    )
+    .await;
+    let done = session
+        .fill_credential(authed(fill(&origin, Secret::Code(code.clone()))))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(done.filled, ["code"]);
+    assert_eq!(wait_post(&posts, "/code").await, format!("otp={code}"));
+
+    tool(&th, "browser_close", json!({})).await;
+    for child in [&mut serve, &mut toolhost] {
+        child.start_kill().unwrap();
+        child.wait().await.unwrap();
+    }
+    let logs = format!(
+        "{}{}",
+        toolhost_log.await.unwrap(),
+        serve_log.await.unwrap()
+    );
+    assert!(logs.contains("toolhost listening on"), "{logs}");
+    assert!(logs.contains("serve listening on"), "{logs}");
+    for value in [&user, &password, &code] {
+        assert!(!logs.contains(value.as_str()), "a value is in the logs");
+        assert_eq!(
+            files_containing(&state, value.as_bytes()),
+            Vec::<PathBuf>::new()
+        );
+    }
+}

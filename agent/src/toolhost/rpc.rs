@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream;
+use zeroize::Zeroize;
 
 use super::state::Stamp;
 
@@ -160,15 +161,16 @@ where
     W: AsyncWrite + Unpin,
     T: Serialize,
 {
-    let body = serde_json::to_vec(msg).map_err(|e| format!("encode frame: {e}"))?;
+    let mut body = serde_json::to_vec(msg).map_err(|e| format!("encode frame: {e}"))?;
     let len = u32::try_from(body.len()).map_err(|_| "frame too large".to_owned())?;
-    w.write_all(&len.to_be_bytes())
-        .await
-        .map_err(|e| format!("write frame: {e}"))?;
-    w.write_all(&body)
-        .await
-        .map_err(|e| format!("write frame: {e}"))?;
-    w.flush().await.map_err(|e| format!("flush frame: {e}"))
+    let written = async {
+        w.write_all(&len.to_be_bytes()).await?;
+        w.write_all(&body).await?;
+        w.flush().await
+    }
+    .await;
+    body.zeroize();
+    written.map_err(|e| format!("write frame: {e}"))
 }
 
 /// Reads one frame written by [`write_frame`].
@@ -189,7 +191,20 @@ where
     r.read_exact(&mut body)
         .await
         .map_err(|e| format!("read frame body: {e}"))?;
-    serde_json::from_slice(&body).map_err(|e| format!("decode frame: {e}"))
+    let msg = serde_json::from_slice(&body);
+    body.zeroize();
+    msg.map_err(|e| format!("decode frame: {e}"))
+}
+
+/// Zeroes the string fields of `args`, which may carry a credential.
+pub fn wipe(args: &mut Value) {
+    if let Some(fields) = args.as_object_mut() {
+        for v in fields.values_mut() {
+            if let Value::String(s) = v {
+                s.zeroize();
+            }
+        }
+    }
 }
 
 /// Writes one raw data frame; an empty slice ends the data.

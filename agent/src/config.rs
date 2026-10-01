@@ -116,7 +116,9 @@ impl ToolhostConfig {
                 |_| format!("{home}/.config/cocoonbox-chrome").into(),
                 Into::into,
             ),
-            cdp_port: 9222,
+            cdp_port: optional("CDP_PORT", "9222")
+                .parse()
+                .map_err(|e| format!("parse CDP_PORT: {e}"))?,
             cua_socket: env::var("CUA_DRIVER_SOCKET").map_or_else(
                 |_| format!("{home}/.cache/cua-driver/cua-driver.sock").into(),
                 Into::into,

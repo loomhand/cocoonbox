@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
 use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
@@ -18,11 +19,11 @@ use crate::mcp::Mcp;
 use crate::pb::agents_server::{Agents, AgentsServer};
 use crate::pb::session_server::{Session, SessionServer};
 use crate::pb::state_server::{State, StateServer};
-use crate::pb::{self, Event};
+use crate::pb::{self, Event, fill_credential_request::Secret};
 use crate::runner::Runtime;
 use crate::screen;
 use crate::state::{StateEngine, StateError};
-use crate::toolhost::rpc;
+use crate::toolhost::rpc::{self, Call};
 
 const MAX_REQUEST_BYTES: usize = 64 << 20;
 const DEFAULT_PAGE: u32 = 100;
@@ -153,6 +154,25 @@ impl Agents for AgentsSvc {
 /// `cocoonbox.agent.v1.Session`.
 pub struct SessionSvc {
     rt: Arc<Runtime>,
+    tools: rpc::Client,
+}
+
+impl SessionSvc {
+    /// Runs a toolhost call outside any transcript.
+    async fn toolhost(&self, tool: &str, args: Value) -> Result<String, Status> {
+        let mut call = Call {
+            agent_id: String::new(),
+            tool: tool.to_owned(),
+            args,
+        };
+        let out = self.tools.call(&call).await;
+        rpc::wipe(&mut call.args);
+        match out {
+            Ok(out) if out.is_error => Err(Status::failed_precondition(out.text)),
+            Ok(out) => Ok(out.text),
+            Err(e) => Err(Status::unavailable(e)),
+        }
+    }
 }
 
 #[tonic::async_trait]
@@ -237,6 +257,45 @@ impl Session for SessionSvc {
         )
         .await
         .map(Response::new)
+    }
+
+    async fn active_origin(
+        &self,
+        _req: Request<pb::ActiveOriginRequest>,
+    ) -> Result<Response<pb::ActiveOriginResponse>, Status> {
+        let origin = self.toolhost("active_origin", json!({})).await?;
+        Ok(Response::new(pb::ActiveOriginResponse { origin }))
+    }
+
+    async fn fill_credential(
+        &self,
+        req: Request<pb::FillCredentialRequest>,
+    ) -> Result<Response<pb::FillCredentialResponse>, Status> {
+        let mut req = req.into_inner();
+        let mut args = json!({
+            "origin": req.origin,
+            "username": std::mem::take(&mut req.username),
+            "submit": req.submit,
+        });
+        match req.secret.take() {
+            Some(Secret::Password(p)) => args["password"] = p.into(),
+            Some(Secret::Code(c)) => args["code"] = c.into(),
+            None => return Err(Status::invalid_argument("fill needs a password or a code")),
+        }
+        let text = self.toolhost("credential_fill", args).await?;
+        let out: Value =
+            serde_json::from_str(&text).map_err(|e| Status::internal(e.to_string()))?;
+        Ok(Response::new(pb::FillCredentialResponse {
+            filled: out["filled"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            submitted: out["submitted"].as_bool().unwrap_or(false),
+        }))
     }
 }
 
@@ -334,6 +393,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     .max_decoding_message_size(MAX_REQUEST_BYTES);
     let session = SessionServer::new(SessionSvc {
         rt: Arc::clone(&rt),
+        tools: rpc::Client::new(rt.cfg.toolhost_socket.clone()),
     });
     let engine = StateEngine::new(
         rpc::Client::new(rt.cfg.toolhost_socket.clone()),
