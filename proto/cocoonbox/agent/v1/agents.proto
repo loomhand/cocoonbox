@@ -15,6 +15,12 @@ service Agents {
   rpc Transcript(TranscriptRequest) returns (TranscriptPage);
   rpc Respond(RespondRequest) returns (RespondResponse);
   rpc Cancel(CancelRequest) returns (CancelResponse);
+  // Rename sets the agent's name; an automatic title never replaces it.
+  rpc Rename(RenameAgentRequest) returns (Agent);
+  // Delete cancels the agent's running turn and removes the agent with its
+  // transcript. An mcp:* agent whose MCP session is open is refused with
+  // FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+  rpc Delete(DeleteAgentRequest) returns (DeleteAgentResponse);
 }
 
 enum AgentStatus {
@@ -43,6 +49,8 @@ message Agent {
 }
 
 message CreateAgentRequest {
+  // Empty names the agent after the first line of its first message, cut to
+  // 24 characters; until then its name is "agent".
   string name = 1;
   string client_nonce = 2;
   // Empty selects the box default.
@@ -164,3 +172,15 @@ message CancelRequest {
 }
 
 message CancelResponse {}
+
+message RenameAgentRequest {
+  string agent_id = 1;
+  // Trimmed; empty is INVALID_ARGUMENT.
+  string name = 2;
+}
+
+message DeleteAgentRequest {
+  string agent_id = 1;
+}
+
+message DeleteAgentResponse {}

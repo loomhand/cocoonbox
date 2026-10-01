@@ -40,7 +40,13 @@ message Event {
     ComputerAction computer_action = 12;
     TextDelta text_delta = 13;
     ReasoningDelta reasoning_delta = 14;
+    AgentDeleted agent_deleted = 15;
   }
+}
+
+// AgentDeleted says the agent and its transcript are gone.
+message AgentDeleted {
+  string agent_id = 1;
 }
 
 // TextDelta is a live fragment of an assistant text block. Deltas are not

@@ -25,6 +25,8 @@ const (
 	Agents_Transcript_FullMethodName = "/cocoonbox.agent.v1.Agents/Transcript"
 	Agents_Respond_FullMethodName    = "/cocoonbox.agent.v1.Agents/Respond"
 	Agents_Cancel_FullMethodName     = "/cocoonbox.agent.v1.Agents/Cancel"
+	Agents_Rename_FullMethodName     = "/cocoonbox.agent.v1.Agents/Rename"
+	Agents_Delete_FullMethodName     = "/cocoonbox.agent.v1.Agents/Delete"
 )
 
 // AgentsClient is the client API for Agents service.
@@ -42,6 +44,12 @@ type AgentsClient interface {
 	Transcript(ctx context.Context, in *TranscriptRequest, opts ...grpc.CallOption) (*TranscriptPage, error)
 	Respond(ctx context.Context, in *RespondRequest, opts ...grpc.CallOption) (*RespondResponse, error)
 	Cancel(ctx context.Context, in *CancelRequest, opts ...grpc.CallOption) (*CancelResponse, error)
+	// Rename sets the agent's name; an automatic title never replaces it.
+	Rename(ctx context.Context, in *RenameAgentRequest, opts ...grpc.CallOption) (*Agent, error)
+	// Delete cancels the agent's running turn and removes the agent with its
+	// transcript. An mcp:* agent whose MCP session is open is refused with
+	// FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+	Delete(ctx context.Context, in *DeleteAgentRequest, opts ...grpc.CallOption) (*DeleteAgentResponse, error)
 }
 
 type agentsClient struct {
@@ -112,6 +120,26 @@ func (c *agentsClient) Cancel(ctx context.Context, in *CancelRequest, opts ...gr
 	return out, nil
 }
 
+func (c *agentsClient) Rename(ctx context.Context, in *RenameAgentRequest, opts ...grpc.CallOption) (*Agent, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Agent)
+	err := c.cc.Invoke(ctx, Agents_Rename_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *agentsClient) Delete(ctx context.Context, in *DeleteAgentRequest, opts ...grpc.CallOption) (*DeleteAgentResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeleteAgentResponse)
+	err := c.cc.Invoke(ctx, Agents_Delete_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // AgentsServer is the server API for Agents service.
 // All implementations must embed UnimplementedAgentsServer
 // for forward compatibility.
@@ -127,6 +155,12 @@ type AgentsServer interface {
 	Transcript(context.Context, *TranscriptRequest) (*TranscriptPage, error)
 	Respond(context.Context, *RespondRequest) (*RespondResponse, error)
 	Cancel(context.Context, *CancelRequest) (*CancelResponse, error)
+	// Rename sets the agent's name; an automatic title never replaces it.
+	Rename(context.Context, *RenameAgentRequest) (*Agent, error)
+	// Delete cancels the agent's running turn and removes the agent with its
+	// transcript. An mcp:* agent whose MCP session is open is refused with
+	// FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
+	Delete(context.Context, *DeleteAgentRequest) (*DeleteAgentResponse, error)
 	mustEmbedUnimplementedAgentsServer()
 }
 
@@ -154,6 +188,12 @@ func (UnimplementedAgentsServer) Respond(context.Context, *RespondRequest) (*Res
 }
 func (UnimplementedAgentsServer) Cancel(context.Context, *CancelRequest) (*CancelResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Cancel not implemented")
+}
+func (UnimplementedAgentsServer) Rename(context.Context, *RenameAgentRequest) (*Agent, error) {
+	return nil, status.Error(codes.Unimplemented, "method Rename not implemented")
+}
+func (UnimplementedAgentsServer) Delete(context.Context, *DeleteAgentRequest) (*DeleteAgentResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
 }
 func (UnimplementedAgentsServer) mustEmbedUnimplementedAgentsServer() {}
 func (UnimplementedAgentsServer) testEmbeddedByValue()                {}
@@ -284,6 +324,42 @@ func _Agents_Cancel_Handler(srv interface{}, ctx context.Context, dec func(inter
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Agents_Rename_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameAgentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentsServer).Rename(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agents_Rename_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentsServer).Rename(ctx, req.(*RenameAgentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Agents_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeleteAgentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AgentsServer).Delete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Agents_Delete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AgentsServer).Delete(ctx, req.(*DeleteAgentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Agents_ServiceDesc is the grpc.ServiceDesc for Agents service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -314,6 +390,14 @@ var Agents_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Cancel",
 			Handler:    _Agents_Cancel_Handler,
+		},
+		{
+			MethodName: "Rename",
+			Handler:    _Agents_Rename_Handler,
+		},
+		{
+			MethodName: "Delete",
+			Handler:    _Agents_Delete_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
