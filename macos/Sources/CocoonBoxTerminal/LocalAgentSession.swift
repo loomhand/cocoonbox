@@ -162,7 +162,11 @@ public struct LocalAgentTerminal: NSViewRepresentable {
         return container
     }
 
-    public func updateNSView(_ container: NSView, context: Context) {}
+    public func updateNSView(_ container: NSView, context: Context) {
+        guard let container = container as? TerminalContainer, container.session !== session else { return }
+        container.session = session
+        container.claim()
+    }
 }
 
 // TerminalContainer takes the terminal when it enters a window and focuses it unless another view, not the sidebar list, holds the keyboard.

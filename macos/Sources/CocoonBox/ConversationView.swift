@@ -125,6 +125,7 @@ struct LocalAgentPane: View {
             Divider()
             VSplitView {
                 LocalAgentTerminal(session: session)
+                    .id(session.id)
                     .frame(minHeight: 220, maxHeight: .infinity)
                     .layoutPriority(1)
                 Group {
