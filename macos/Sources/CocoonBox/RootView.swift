@@ -96,28 +96,32 @@ struct SidebarView: View {
                         AgentRow(agent: agent).tag(agent.id)
                     }
                 }
-                if !external.open.isEmpty || !external.closed.isEmpty {
-                    Section(isExpanded: $externalExpanded) {
-                        ForEach(external.open, id: \.id) { agent in
-                            AgentRow(agent: agent).tag(agent.id)
+                Section(isExpanded: $externalExpanded) {
+                    ForEach(external.shown, id: \.id) { agent in
+                        AgentRow(agent: agent).tag(agent.id)
+                    }
+                    if external.closed > 0 {
+                        Button {
+                            model.showClosedExternal.toggle()
+                        } label: {
+                            Label("Closed sessions (\(external.closed))", systemImage: model.showClosedExternal ? "chevron.down" : "chevron.right")
+                                .font(.caption)
                         }
-                        if !external.closed.isEmpty {
-                            DisclosureGroup("Closed sessions (\(external.closed.count))", isExpanded: $model.showClosedExternal) {
-                                ForEach(external.closed, id: \.id) { agent in
-                                    AgentRow(agent: agent).tag(agent.id)
-                                }
-                            }
-                            .font(.caption)
-                        }
-                    } header: {
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    if !external.shown.isEmpty || external.closed > 0 {
                         Text("External")
                     }
                 }
-                if !model.localAgents.isEmpty {
-                    Section("On this Mac") {
-                        ForEach(model.localAgents) { session in
-                            LocalAgentRow(session: session).tag(AppModel.selectionID(session))
-                        }
+                Section {
+                    ForEach(model.localAgents) { session in
+                        LocalAgentRow(session: session).tag(AppModel.selectionID(session))
+                    }
+                } header: {
+                    if !model.localAgents.isEmpty {
+                        Text("On this Mac")
                     }
                 }
             }

@@ -33,11 +33,10 @@ extension Agent {
     }
 }
 
-// ExternalAgents splits the mcp:* agents into open sessions, which the
-// sidebar lists, and closed ones, which it folds away as history.
+// ExternalAgents is the sidebar's mcp:* rows in agent order and the number of closed sessions.
 struct ExternalAgents {
-    var open: [Agent] = []
-    var closed: [Agent] = []
+    var shown: [Agent] = []
+    var closed = 0
 }
 
 struct OperationProgress: Equatable {
@@ -143,15 +142,15 @@ final class AppModel {
     // externalAgents lists a session as open while it runs or waits for the
     // user; a closed session stays listed while it is selected.
     func externalAgents() -> ExternalAgents {
-        var split = ExternalAgents()
+        var external = ExternalAgents()
         for agent in agents where agent.externalClient != nil {
-            if agent.status == .running || agent.status == .waitingForUser || agent.id == selectedAgentID {
-                split.open.append(agent)
-            } else {
-                split.closed.append(agent)
+            let open = agent.status == .running || agent.status == .waitingForUser
+            if !open { external.closed += 1 }
+            if open || showClosedExternal || agent.id == selectedAgentID {
+                external.shown.append(agent)
             }
         }
-        return split
+        return external
     }
 
     // externalAgent is the mcp:* agent a local session opened: the newest one from the same client since it started.
