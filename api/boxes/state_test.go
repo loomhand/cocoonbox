@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"iter"
 	"slices"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/dialer"
@@ -23,6 +25,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/keyring"
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/store"
+	"github.com/CMGS/cocoonbox/api/store/s3"
 )
 
 func TestSaveStateIsIncremental(t *testing.T) {
@@ -150,8 +153,8 @@ func TestRebase(t *testing.T) {
 		t.Errorf("rebase save consistency = %s, want QUIESCED", c)
 	}
 	restore := env.agent.lastRestore()
-	if restore.addr != newID+":7443" || len(restore.req.GetGets()) != 2 || restore.req.GetManifest().GetChunkId() != snapshotID(1) {
-		t.Errorf("restore = %s %v", restore.addr, restore.req)
+	if restore.addr != newID+":7443" || len(restore.gets()) != 2 || restore.reqs[0].GetManifest().GetChunkId() != snapshotID(1) {
+		t.Errorf("restore = %s %v", restore.addr, restore.reqs)
 	}
 	var restored *controlv1.OperationEvent
 	for _, ev := range events {
@@ -223,6 +226,128 @@ func TestSaveUploadsInBatches(t *testing.T) {
 	env.save(t)
 	if up := env.agent.lastUpload(); len(up.GetPuts()) != 0 || up.GetManifest() == nil {
 		t.Errorf("unchanged save uploaded %d chunks, manifest %v", len(up.GetPuts()), up.GetManifest() != nil)
+	}
+}
+
+func TestSaveCapsEachUploadAtAPage(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.size = 1
+	env.agent.chunks = chunkIDs(2*pageSize + 1)
+	env.save(t)
+	uploads := env.agent.allUploads()
+	if len(uploads) != 3 {
+		t.Fatalf("%d uploads, want 3", len(uploads))
+	}
+	sent := map[string]bool{}
+	for i, up := range uploads {
+		if want := []int{pageSize, pageSize, 1}[i]; len(up.GetPuts()) != want || (up.GetManifest() != nil) != (i == 2) {
+			t.Errorf("upload %d: %d puts, manifest %v; want %d puts", i, len(up.GetPuts()), up.GetManifest() != nil, want)
+		}
+		for _, put := range up.GetPuts() {
+			sent[put.GetChunkId()] = true
+		}
+	}
+	if len(sent) != len(env.agent.chunks) {
+		t.Errorf("uploaded %d distinct chunks, want %d", len(sent), len(env.agent.chunks))
+	}
+}
+
+func TestBatchesSplitByCountAndBytes(t *testing.T) {
+	small := make([]chunk, pageSize+1)
+	big := []chunk{{Size: 300 << 20}, {Size: 300 << 20}}
+	tests := []struct {
+		name    string
+		missing []chunk
+		want    []int
+	}{
+		{name: "nothing missing", want: []int{0}},
+		{name: "one page", missing: small[:pageSize], want: []int{pageSize}},
+		{name: "a page and one", missing: small, want: []int{pageSize, 1}},
+		{name: "bytes", missing: big, want: []int{1, 1}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got []int
+			for _, b := range batches(tt.missing) {
+				got = append(got, len(b))
+			}
+			if !slices.Equal(got, tt.want) {
+				t.Errorf("batch sizes = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRestoreSendsChunkURLsInPages(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = chunkIDs(2*pageSize + 1)
+	env.save(t)
+	env.fake.mu.Lock()
+	delete(env.fake.machines, aliceBox)
+	env.fake.mu.Unlock()
+
+	resp, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	env.fake.push(machines.Machine{ID: env.fake.waitSpec(t, 1).ID, State: machines.StateRunning})
+	if last := watch(t, env.svc, env.ctx, resp.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("restore ended with %v", last[len(last)-1])
+	}
+	restore := env.agent.lastRestore()
+	first := restore.reqs[0]
+	if first.GetKey() == nil || first.GetManifest().GetChunkId() != snapshotID(1) || len(first.GetGets()) != 0 {
+		t.Errorf("first message = %v, want the key and manifest only", first)
+	}
+	var sizes []int
+	for _, req := range restore.reqs[1:] {
+		sizes = append(sizes, len(req.GetGets()))
+		if req.GetKey() != nil || req.GetManifest() != nil {
+			t.Errorf("page carries the key or manifest: %v", req)
+		}
+	}
+	if want := []int{pageSize, pageSize, 1}; !slices.Equal(sizes, want) {
+		t.Errorf("page sizes = %v, want %v", sizes, want)
+	}
+	got := map[string]bool{}
+	for _, get := range restore.gets() {
+		got[get.GetChunkId()] = true
+	}
+	if len(got) != len(env.agent.chunks) || !got[env.agent.chunks[0]] || !got[env.agent.chunks[2*pageSize]] {
+		t.Errorf("restore got URLs for %d distinct chunks, want %d", len(got), len(env.agent.chunks))
+	}
+}
+
+func TestAPageOfRealURLsFitsTheDefaultGRPCLimit(t *testing.T) {
+	const tonicDefault = 4 << 20
+	st, err := s3.New(s3.Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox-state", AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("s3: %v", err)
+	}
+	agent := &fakeAgent{store: newFakeStore()}
+	l := newStateLayer(agent, st, &fakeKeys{})
+	ids := chunkIDs(pageSize + 1)
+	missing := make([]chunk, len(ids))
+	for i, id := range ids {
+		missing[i] = chunk{ID: id, Size: 1 << 10}
+	}
+	key := &agentv1.StateKey{Key: make([]byte, keyring.KeySize), KeyId: "test:" + alice}
+	rec := &snapshotRecord{ID: snapshotID(1), UploadedBytes: uint64(len(ids)) << 10}
+	if err := l.upload(t.Context(), aliceBox, machines.Endpoint{}, rec, key, missing, func(*agentv1.TransferProgress) {}); err != nil {
+		t.Fatalf("upload: %v", err)
+	}
+	for i, up := range agent.allUploads() {
+		if n := proto.Size(up); n > tonicDefault {
+			t.Errorf("upload %d is %d bytes, over %d", i, n, tonicDefault)
+		}
+	}
+	for req, err := range l.restorePages(t.Context(), aliceBox, &agentv1.RestoreRequest{Key: key}, ids) {
+		if err != nil {
+			t.Fatalf("restore page: %v", err)
+		}
+		if n := proto.Size(req); n > tonicDefault {
+			t.Errorf("restore page of %d gets is %d bytes, over %d", len(req.GetGets()), n, tonicDefault)
+		}
 	}
 }
 
@@ -323,8 +448,8 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 		t.Errorf("no restore progress in %v", events)
 	}
 	restore := env.agent.lastRestore()
-	if restore.addr != newID+":7443" || restore.req.GetManifest().GetChunkId() != snapshotID(1) || len(restore.req.GetGets()) != 2 {
-		t.Errorf("restore = %s %v", restore.addr, restore.req)
+	if restore.addr != newID+":7443" || restore.reqs[0].GetManifest().GetChunkId() != snapshotID(1) || len(restore.gets()) != 2 {
+		t.Errorf("restore = %s %v", restore.addr, restore.reqs)
 	}
 	if ep, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || ep.Key != newID+":7443" {
 		t.Errorf("Resolve after the restore = %q, %v", ep.Key, err)
@@ -492,6 +617,14 @@ func hexID(name string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func chunkIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = hexID(fmt.Sprintf("c%d", i))
+	}
+	return ids
+}
+
 func snapshotID(n int) string {
 	return fmt.Sprintf("%064x", n)
 }
@@ -547,7 +680,15 @@ func (k *fakeKeys) Key(_ context.Context, owner string) (keyring.Key, error) {
 
 type restoreCall struct {
 	addr string
-	req  *agentv1.RestoreRequest
+	reqs []*agentv1.RestoreRequest
+}
+
+func (c restoreCall) gets() []*agentv1.PresignedGet {
+	var gets []*agentv1.PresignedGet
+	for _, req := range c.reqs {
+		gets = append(gets, req.GetGets()...)
+	}
+	return gets
 }
 
 // fakeAgent plans snapshots s1, s2, ... over chunks and moves objects in the fake store as presigned URLs name them.
@@ -607,10 +748,17 @@ func (a *fakeAgent) Upload(_ context.Context, _ machines.Endpoint, req *agentv1.
 	return final, nil
 }
 
-func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, req *agentv1.RestoreRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+	call := restoreCall{addr: ep.Key}
+	for req, err := range reqs {
+		if err != nil {
+			return nil, err
+		}
+		call.reqs = append(call.reqs, req)
+	}
 	a.mu.Lock()
 	a.restoreCred = outgoingCredential(ctx)
-	a.restores = append(a.restores, restoreCall{addr: ep.Key, req: req})
+	a.restores = append(a.restores, call)
 	a.mu.Unlock()
 	if a.restoreGate != nil {
 		<-a.restoreGate
@@ -618,14 +766,15 @@ func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, req *agen
 	if a.restoreErr != nil {
 		return nil, a.restoreErr
 	}
-	for _, get := range append(req.GetGets(), req.GetManifest()) {
+	manifest := call.reqs[0].GetManifest()
+	for _, get := range append(call.gets(), manifest) {
 		if _, err := a.store.Get(context.Background(), strings.TrimPrefix(get.GetUrl(), "fake://get/")); err != nil {
 			return nil, fmt.Errorf("get %s: %w", get.GetUrl(), err)
 		}
 	}
-	n := uint32(len(req.GetGets()))
+	n := uint32(len(call.gets()))
 	progress(&agentv1.TransferProgress{DoneBytes: 1, TotalBytes: 2, DoneChunks: n / 2, TotalChunks: n})
-	final := &agentv1.TransferProgress{DoneBytes: 2, TotalBytes: 2, DoneChunks: n, TotalChunks: n, Finished: true, ManifestId: req.GetManifest().GetChunkId()}
+	final := &agentv1.TransferProgress{DoneBytes: 2, TotalBytes: 2, DoneChunks: n, TotalChunks: n, Finished: true, ManifestId: manifest.GetChunkId()}
 	progress(final)
 	return final, nil
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"net"
 	"sync"
 	"time"
@@ -64,17 +65,26 @@ func (d *Dialer) Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.
 	return drain(stream, progress, req.GetManifest() != nil)
 }
 
-// Restore calls State.Restore and returns the final progress message.
-func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, req *agentv1.RestoreRequest, progress ProgressFunc) (*agentv1.TransferProgress, error) {
+// Restore sends reqs as the request stream of State.Restore and returns the final progress message; an error from reqs ends the call with it.
+func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
 	client, err := d.state(ep)
 	if err != nil {
 		return nil, err
 	}
-	stream, err := client.Restore(ctx, req)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := client.Restore(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return drain(stream, progress, true)
+	sent := make(chan error, 1)
+	go func() { sent <- send(stream, reqs, cancel) }()
+	final, err := drain(stream, progress, true)
+	cancel()
+	if sendErr := <-sent; sendErr != nil {
+		return nil, sendErr
+	}
+	return final, err
 }
 
 // Close closes every connection.
@@ -106,10 +116,25 @@ func (d *Dialer) state(ep machines.Endpoint) (agentv1.StateClient, error) {
 	return agentv1.NewStateClient(conn), nil
 }
 
-func drain(stream grpc.ServerStreamingClient[agentv1.TransferProgress], progress ProgressFunc, final bool) (*agentv1.TransferProgress, error) {
+// send writes reqs to stream and half-closes it; a failed Send leaves the reason to Recv.
+func send(stream grpc.BidiStreamingClient[agentv1.RestoreRequest, agentv1.TransferProgress], reqs iter.Seq2[*agentv1.RestoreRequest, error], cancel context.CancelFunc) error {
+	for req, err := range reqs {
+		if err != nil {
+			cancel()
+			return err
+		}
+		if stream.Send(req) != nil {
+			return nil
+		}
+	}
+	return stream.CloseSend()
+}
+
+func drain(stream grpc.ClientStream, progress ProgressFunc, final bool) (*agentv1.TransferProgress, error) {
 	var last *agentv1.TransferProgress
 	for {
-		msg, err := stream.Recv()
+		msg := &agentv1.TransferProgress{}
+		err := stream.RecvMsg(msg)
 		if errors.Is(err, io.EOF) {
 			if final && (last == nil || !last.GetFinished()) {
 				return nil, errors.New("agent ended the transfer without a final message")

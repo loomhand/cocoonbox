@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"iter"
 	"regexp"
 	"slices"
 	"sync"
@@ -17,7 +18,11 @@ import (
 	"github.com/CMGS/cocoonbox/api/store"
 )
 
-const maxBatchBytes = 512 << 20
+const (
+	maxBatchBytes = 512 << 20
+	// pageSize keeps a control message near 1 MB whatever the state size.
+	pageSize = 2048
+)
 
 var objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -25,7 +30,7 @@ var objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 type StateAgents interface {
 	Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error)
 	Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
-	Restore(ctx context.Context, ep machines.Endpoint, req *agentv1.RestoreRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 }
 
 type chunk struct {
@@ -194,11 +199,12 @@ func (l *stateLayer) restore(ctx context.Context, box string, ep machines.Endpoi
 	if err != nil {
 		return nil, err
 	}
-	req := &agentv1.RestoreRequest{
+	first := &agentv1.RestoreRequest{
 		Key:      &agentv1.StateKey{Key: key.Secret, KeyId: key.ID},
 		Manifest: &agentv1.PresignedGet{ChunkId: id, Url: manifest.URL},
 	}
 	seen := map[string]bool{}
+	var ids []string
 	var total uint64
 	for _, c := range rec.Chunks {
 		if !objectID.MatchString(c.ID) {
@@ -209,16 +215,35 @@ func (l *stateLayer) restore(ctx context.Context, box string, ep machines.Endpoi
 		}
 		seen[c.ID] = true
 		total += c.Size
-		get, err := l.store.PresignGet(ctx, chunkKey(box, c.ID))
-		if err != nil {
-			return nil, err
-		}
-		req.Gets = append(req.Gets, &agentv1.PresignedGet{ChunkId: c.ID, Url: get.URL})
+		ids = append(ids, c.ID)
 	}
-	if _, err := l.agents.Restore(ctx, ep, req, plaintextProgress(total, progress)); err != nil {
+	if _, err := l.agents.Restore(ctx, ep, l.restorePages(ctx, box, first, ids), plaintextProgress(total, progress)); err != nil {
 		return nil, fmt.Errorf("restore: %w", err)
 	}
 	return rec, nil
+}
+
+// restorePages yields first, then ids in pages of presigned GETs, each presigned just before it is sent.
+func (l *stateLayer) restorePages(ctx context.Context, box string, first *agentv1.RestoreRequest, ids []string) iter.Seq2[*agentv1.RestoreRequest, error] {
+	return func(yield func(*agentv1.RestoreRequest, error) bool) {
+		if !yield(first, nil) {
+			return
+		}
+		for page := range slices.Chunk(ids, pageSize) {
+			req := &agentv1.RestoreRequest{Gets: make([]*agentv1.PresignedGet, 0, len(page))}
+			for _, id := range page {
+				get, err := l.store.PresignGet(ctx, chunkKey(box, id))
+				if err != nil {
+					yield(nil, err)
+					return
+				}
+				req.Gets = append(req.Gets, &agentv1.PresignedGet{ChunkId: id, Url: get.URL})
+			}
+			if !yield(req, nil) {
+				return
+			}
+		}
+	}
 }
 
 // lastSaved returns when box's latest snapshot was saved, 0 when unknown.
@@ -319,13 +344,13 @@ func checkPlan(plan *agentv1.PlanResponse) error {
 	return nil
 }
 
-// batches splits missing into runs of at most maxBatchBytes; nothing missing gives one empty batch for the manifest.
+// batches splits missing into runs of at most pageSize chunks and maxBatchBytes; nothing missing gives one empty batch for the manifest.
 func batches(missing []chunk) [][]chunk {
 	out := [][]chunk{nil}
 	size := uint64(0)
 	for _, c := range missing {
 		cur := &out[len(out)-1]
-		if len(*cur) > 0 && size+c.Size > maxBatchBytes {
+		if len(*cur) > 0 && (len(*cur) == pageSize || size+c.Size > maxBatchBytes) {
 			out = append(out, nil)
 			cur, size = &out[len(out)-1], 0
 		}

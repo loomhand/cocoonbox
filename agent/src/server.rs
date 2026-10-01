@@ -3,6 +3,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
@@ -26,6 +27,8 @@ use crate::state::{StateEngine, StateError};
 use crate::toolhost::rpc::{self, Call};
 
 const MAX_REQUEST_BYTES: usize = 64 << 20;
+// The api pages chunk URLs at 2048 a message, about 1 MB.
+const MAX_STATE_MESSAGE_BYTES: usize = 16 << 20;
 const DEFAULT_PAGE: u32 = 100;
 const MAX_PAGE: u32 = 1000;
 const EVENT_BUFFER: usize = 256;
@@ -336,13 +339,15 @@ impl State for StateSvc {
 
     async fn restore(
         &self,
-        req: Request<pb::RestoreRequest>,
+        req: Request<Streaming<pb::RestoreRequest>>,
     ) -> Result<Response<Self::RestoreStream>, Status> {
         let engine = Arc::clone(&self.engine);
         let rt = Arc::clone(&self.rt);
-        let req = req.into_inner();
+        let reqs = req
+            .into_inner()
+            .map(|r| r.map_err(|s| format!("restore stream: {}", s.message())));
         Ok(Response::new(progress_stream(move |tx| async move {
-            engine.restore(req, tx).await?;
+            engine.restore(reqs, tx).await?;
             rt.recover("interrupted: the user state was restored")
                 .await
                 .map_err(StateError::Failed)
@@ -406,7 +411,8 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     let state = StateServer::new(StateSvc {
         rt: Arc::clone(&rt),
         engine: Arc::new(engine),
-    });
+    })
+    .max_decoding_message_size(MAX_STATE_MESSAGE_BYTES);
     let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
         .add_service(InterceptedService::new(session, auth.clone()))
         .add_service(InterceptedService::new(state, auth))

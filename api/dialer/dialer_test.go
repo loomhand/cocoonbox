@@ -1,7 +1,11 @@
 package dialer
 
 import (
+	"cmp"
 	"context"
+	"errors"
+	"io"
+	"iter"
 	"net"
 	"testing"
 
@@ -33,8 +37,28 @@ func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
 	if batch, err := d.Upload(ctx, ep, &agentv1.UploadRequest{SnapshotId: "s1"}, nil); err != nil || batch.GetFinished() {
 		t.Errorf("Upload of a batch without the manifest = %v, %v", batch, err)
 	}
-	if _, err := d.Restore(ctx, ep, &agentv1.RestoreRequest{}, nil); err == nil {
+	if _, err := d.Restore(ctx, ep, pages(nil, &agentv1.RestoreRequest{}), nil); err == nil {
 		t.Error("Restore without a final message succeeded")
+	}
+}
+
+func TestDialerStreamsRestorePagesAndEndsOnAPageError(t *testing.T) {
+	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
+	d := New()
+	t.Cleanup(d.Close)
+	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
+	reqs := []*agentv1.RestoreRequest{
+		{Manifest: &agentv1.PresignedGet{ChunkId: "m"}},
+		{Gets: []*agentv1.PresignedGet{{ChunkId: "a"}, {ChunkId: "b"}}},
+		{Gets: []*agentv1.PresignedGet{{ChunkId: "c"}}},
+	}
+	final, err := d.Restore(ctx, ep, pages(nil, reqs...), nil)
+	if err != nil || !final.GetFinished() || final.GetDoneChunks() != 3 || final.GetManifestId() != "m" {
+		t.Errorf("Restore of three pages = %v, %v", final, err)
+	}
+	presign := errors.New("presign failed")
+	if _, err := d.Restore(ctx, ep, pages(presign, reqs...), nil); !errors.Is(err, presign) {
+		t.Errorf("Restore with a failing page = %v, want %v", err, presign)
 	}
 }
 
@@ -70,7 +94,7 @@ func serveState(t *testing.T, srv agentv1.StateServer) string {
 	return lis.Addr().String()
 }
 
-// fakeState requires credential cred-1 and no edge token; Upload sends two progress messages and, with the manifest, a final one, as the agent does; Restore ends without a final message.
+// fakeState requires credential cred-1 and no edge token; Upload sends two progress messages and, with the manifest, a final one, as the agent does; Restore finishes only after it received some gets.
 type fakeState struct {
 	agentv1.UnimplementedStateServer
 }
@@ -98,8 +122,34 @@ func (fakeState) Upload(req *agentv1.UploadRequest, stream grpc.ServerStreamingS
 	return nil
 }
 
-func (fakeState) Restore(_ *agentv1.RestoreRequest, stream grpc.ServerStreamingServer[agentv1.TransferProgress]) error {
-	return stream.Send(&agentv1.TransferProgress{DoneChunks: 1})
+func (fakeState) Restore(stream grpc.BidiStreamingServer[agentv1.RestoreRequest, agentv1.TransferProgress]) error {
+	var manifest string
+	var gets uint32
+	for {
+		req, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		manifest = cmp.Or(manifest, req.GetManifest().GetChunkId())
+		gets += uint32(len(req.GetGets()))
+	}
+	return stream.Send(&agentv1.TransferProgress{DoneChunks: gets, Finished: gets > 0, ManifestId: manifest})
+}
+
+func pages(fail error, reqs ...*agentv1.RestoreRequest) iter.Seq2[*agentv1.RestoreRequest, error] {
+	return func(yield func(*agentv1.RestoreRequest, error) bool) {
+		for _, req := range reqs {
+			if !yield(req, nil) {
+				return
+			}
+		}
+		if fail != nil {
+			yield(nil, fail)
+		}
+	}
 }
 
 func checkCredential(ctx context.Context) error {

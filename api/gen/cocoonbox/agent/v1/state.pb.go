@@ -379,7 +379,7 @@ type UploadRequest struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	SnapshotId string                 `protobuf:"bytes,1,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
 	Key        *StateKey              `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
-	// Only the chunks the store does not already hold.
+	// Only the chunks the store does not already hold, at most 2048 per call.
 	Puts          []*PresignedPut `protobuf:"bytes,3,rep,name=puts,proto3" json:"puts,omitempty"`
 	Manifest      *PresignedPut   `protobuf:"bytes,4,opt,name=manifest,proto3" json:"manifest,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -497,10 +497,12 @@ func (x *PresignedGet) GetUrl() string {
 }
 
 type RestoreRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Key           *StateKey              `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
-	Manifest      *PresignedGet          `protobuf:"bytes,2,opt,name=manifest,proto3" json:"manifest,omitempty"`
-	Gets          []*PresignedGet        `protobuf:"bytes,3,rep,name=gets,proto3" json:"gets,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Key      *StateKey              `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`
+	Manifest *PresignedGet          `protobuf:"bytes,2,opt,name=manifest,proto3" json:"manifest,omitempty"`
+	// At most 2048 per message; by the end of the stream every chunk the
+	// manifest references has a URL.
+	Gets          []*PresignedGet `protobuf:"bytes,3,rep,name=gets,proto3" json:"gets,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -697,11 +699,11 @@ const file_cocoonbox_agent_v1_state_proto_rawDesc = "" +
 	"\vConsistency\x12\x1b\n" +
 	"\x17CONSISTENCY_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10CONSISTENCY_LIVE\x10\x01\x12\x18\n" +
-	"\x14CONSISTENCY_QUIESCED\x10\x022\xfe\x01\n" +
+	"\x14CONSISTENCY_QUIESCED\x10\x022\x80\x02\n" +
 	"\x05State\x12I\n" +
 	"\x04Plan\x12\x1f.cocoonbox.agent.v1.PlanRequest\x1a .cocoonbox.agent.v1.PlanResponse\x12S\n" +
-	"\x06Upload\x12!.cocoonbox.agent.v1.UploadRequest\x1a$.cocoonbox.agent.v1.TransferProgress0\x01\x12U\n" +
-	"\aRestore\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress0\x01B>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
+	"\x06Upload\x12!.cocoonbox.agent.v1.UploadRequest\x1a$.cocoonbox.agent.v1.TransferProgress0\x01\x12W\n" +
+	"\aRestore\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01B>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cocoonbox_agent_v1_state_proto_rawDescOnce sync.Once

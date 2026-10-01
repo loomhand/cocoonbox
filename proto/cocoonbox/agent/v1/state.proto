@@ -16,8 +16,9 @@ service State {
   rpc Plan(PlanRequest) returns (PlanResponse);
   // Upload writes the listed chunks and the manifest through presigned URLs.
   rpc Upload(UploadRequest) returns (stream TransferProgress);
-  // Restore replaces the user state with the given manifest.
-  rpc Restore(RestoreRequest) returns (stream TransferProgress);
+  // Restore replaces the user state with the given manifest. The first message
+  // carries the key and the manifest; later messages carry pages of chunk URLs.
+  rpc Restore(stream RestoreRequest) returns (stream TransferProgress);
 }
 
 enum Consistency {
@@ -64,7 +65,7 @@ message PresignedPut {
 message UploadRequest {
   string snapshot_id = 1;
   StateKey key = 2;
-  // Only the chunks the store does not already hold.
+  // Only the chunks the store does not already hold, at most 2048 per call.
   repeated PresignedPut puts = 3;
   PresignedPut manifest = 4;
 }
@@ -77,6 +78,8 @@ message PresignedGet {
 message RestoreRequest {
   StateKey key = 1;
   PresignedGet manifest = 2;
+  // At most 2048 per message; by the end of the stream every chunk the
+  // manifest references has a URL.
   repeated PresignedGet gets = 3;
 }
 

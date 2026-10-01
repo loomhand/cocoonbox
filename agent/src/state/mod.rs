@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use bytes::Bytes;
 use fastcdc::v2020::FastCDC;
-use futures_util::StreamExt;
 use futures_util::stream::{self, FuturesUnordered};
+use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::io::AsyncReadExt;
@@ -206,18 +206,27 @@ impl StateEngine {
         Ok(())
     }
 
-    /// Replaces the user state with the manifest's; the loop's writers pause for the swap.
-    pub async fn restore(
+    /// Replaces the user state with the manifest's; the first message names the manifest, chunk
+    /// URLs arrive in pages and are fetched as they come, and the loop's writers pause for the swap.
+    pub async fn restore<S>(
         &self,
-        req: pb::RestoreRequest,
+        mut reqs: S,
         progress: mpsc::Sender<pb::TransferProgress>,
-    ) -> Result<(), StateError> {
+    ) -> Result<(), StateError>
+    where
+        S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
+    {
         let _one = self.pinned.lock().await;
-        let key = req
+        let first = reqs
+            .next()
+            .await
+            .transpose()?
+            .ok_or_else(|| StateError::Invalid("empty restore stream".to_owned()))?;
+        let key = first
             .key
             .ok_or_else(|| StateError::Invalid("missing key".to_owned()))?;
         let keys = Arc::new(Keys::derive(&key.key).map_err(StateError::Invalid)?);
-        let get = req
+        let get = first
             .manifest
             .ok_or_else(|| StateError::Invalid("missing manifest url".to_owned()))?;
         let sealed = self.get(&get.url).await?;
@@ -230,12 +239,7 @@ impl StateEngine {
                 manifest.version
             )));
         }
-        let urls: HashMap<String, String> =
-            req.gets.into_iter().map(|g| (g.chunk_id, g.url)).collect();
         let needed = referenced(&manifest);
-        if let Some(missing) = needed.iter().find(|id| !urls.contains_key(*id)) {
-            return Err(StateError::Invalid(format!("no url for chunk {missing}")));
-        }
         let cache = self
             .work
             .join(format!("restore-{}", uuid::Uuid::new_v4().simple()));
@@ -247,7 +251,8 @@ impl StateEngine {
                 &keys,
                 &manifest,
                 &needed,
-                &urls,
+                first.gets,
+                reqs,
                 &cache,
                 progress,
                 &get.chunk_id,
@@ -258,29 +263,48 @@ impl StateEngine {
     }
 
     #[allow(clippy::too_many_arguments)]
-    async fn restore_from(
+    async fn restore_from<S>(
         &self,
         keys: &Arc<Keys>,
         manifest: &Manifest,
         needed: &BTreeSet<String>,
-        urls: &HashMap<String, String>,
+        mut queue: Vec<pb::PresignedGet>,
+        mut reqs: S,
         cache: &Path,
         progress: mpsc::Sender<pb::TransferProgress>,
         manifest_id: &str,
-    ) -> Result<(), StateError> {
+    ) -> Result<(), StateError>
+    where
+        S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
+    {
         let mut meter = Meter::new(0, needed.len(), progress);
+        let mut fetched = HashSet::with_capacity(needed.len());
         let mut fetches = FuturesUnordered::new();
-        for id in needed {
-            let url = urls.get(id).cloned().unwrap_or_default();
-            fetches.push(self.fetch_chunk(Arc::clone(keys), id.clone(), url, cache.join(id)));
-            if fetches.len() >= TRANSFERS
-                && let Some(done) = fetches.next().await
+        let mut open = true;
+        loop {
+            while fetches.len() < TRANSFERS
+                && let Some(g) = queue.pop()
             {
-                meter.add(done?).await;
+                if needed.contains(&g.chunk_id) && fetched.insert(g.chunk_id.clone()) {
+                    let dest = cache.join(&g.chunk_id);
+                    fetches.push(self.fetch_chunk(Arc::clone(keys), g.chunk_id, g.url, dest));
+                }
+            }
+            if !open && queue.is_empty() && fetches.is_empty() {
+                break;
+            }
+            tokio::select! {
+                page = reqs.next(), if open && queue.len() < TRANSFERS => {
+                    match page.transpose()? {
+                        Some(req) => queue.extend(req.gets),
+                        None => open = false,
+                    }
+                }
+                Some(done) = fetches.next(), if !fetches.is_empty() => meter.add(done?).await,
             }
         }
-        while let Some(done) = fetches.next().await {
-            meter.add(done?).await;
+        if let Some(missing) = needed.iter().find(|id| !fetched.contains(*id)) {
+            return Err(StateError::Invalid(format!("no url for chunk {missing}")));
         }
         let quiet = self.quiesce().await?;
         let result = self.rebuild(manifest, cache).await;

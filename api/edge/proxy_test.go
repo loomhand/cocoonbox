@@ -193,7 +193,7 @@ func TestRejectsStateMethods(t *testing.T) {
 	if status.Code(err) != codes.PermissionDenied {
 		t.Errorf("State/Plan: %v, want PermissionDenied", err)
 	}
-	stream, err := agentv1.NewStateClient(env.conn).Restore(env.aliceCtx(t), &agentv1.RestoreRequest{})
+	stream, err := agentv1.NewStateClient(env.conn).Restore(env.aliceCtx(t))
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}

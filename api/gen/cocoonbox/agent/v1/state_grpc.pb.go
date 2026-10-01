@@ -40,8 +40,9 @@ type StateClient interface {
 	Plan(ctx context.Context, in *PlanRequest, opts ...grpc.CallOption) (*PlanResponse, error)
 	// Upload writes the listed chunks and the manifest through presigned URLs.
 	Upload(ctx context.Context, in *UploadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TransferProgress], error)
-	// Restore replaces the user state with the given manifest.
-	Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TransferProgress], error)
+	// Restore replaces the user state with the given manifest. The first message
+	// carries the key and the manifest; later messages carry pages of chunk URLs.
+	Restore(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RestoreRequest, TransferProgress], error)
 }
 
 type stateClient struct {
@@ -81,24 +82,18 @@ func (c *stateClient) Upload(ctx context.Context, in *UploadRequest, opts ...grp
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type State_UploadClient = grpc.ServerStreamingClient[TransferProgress]
 
-func (c *stateClient) Restore(ctx context.Context, in *RestoreRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TransferProgress], error) {
+func (c *stateClient) Restore(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RestoreRequest, TransferProgress], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[1], State_Restore_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
 	x := &grpc.GenericClientStream[RestoreRequest, TransferProgress]{ClientStream: stream}
-	if err := x.ClientStream.SendMsg(in); err != nil {
-		return nil, err
-	}
-	if err := x.ClientStream.CloseSend(); err != nil {
-		return nil, err
-	}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type State_RestoreClient = grpc.ServerStreamingClient[TransferProgress]
+type State_RestoreClient = grpc.BidiStreamingClient[RestoreRequest, TransferProgress]
 
 // StateServer is the server API for State service.
 // All implementations must embed UnimplementedStateServer
@@ -116,8 +111,9 @@ type StateServer interface {
 	Plan(context.Context, *PlanRequest) (*PlanResponse, error)
 	// Upload writes the listed chunks and the manifest through presigned URLs.
 	Upload(*UploadRequest, grpc.ServerStreamingServer[TransferProgress]) error
-	// Restore replaces the user state with the given manifest.
-	Restore(*RestoreRequest, grpc.ServerStreamingServer[TransferProgress]) error
+	// Restore replaces the user state with the given manifest. The first message
+	// carries the key and the manifest; later messages carry pages of chunk URLs.
+	Restore(grpc.BidiStreamingServer[RestoreRequest, TransferProgress]) error
 	mustEmbedUnimplementedStateServer()
 }
 
@@ -134,7 +130,7 @@ func (UnimplementedStateServer) Plan(context.Context, *PlanRequest) (*PlanRespon
 func (UnimplementedStateServer) Upload(*UploadRequest, grpc.ServerStreamingServer[TransferProgress]) error {
 	return status.Error(codes.Unimplemented, "method Upload not implemented")
 }
-func (UnimplementedStateServer) Restore(*RestoreRequest, grpc.ServerStreamingServer[TransferProgress]) error {
+func (UnimplementedStateServer) Restore(grpc.BidiStreamingServer[RestoreRequest, TransferProgress]) error {
 	return status.Error(codes.Unimplemented, "method Restore not implemented")
 }
 func (UnimplementedStateServer) mustEmbedUnimplementedStateServer() {}
@@ -188,15 +184,11 @@ func _State_Upload_Handler(srv interface{}, stream grpc.ServerStream) error {
 type State_UploadServer = grpc.ServerStreamingServer[TransferProgress]
 
 func _State_Restore_Handler(srv interface{}, stream grpc.ServerStream) error {
-	m := new(RestoreRequest)
-	if err := stream.RecvMsg(m); err != nil {
-		return err
-	}
-	return srv.(StateServer).Restore(m, &grpc.GenericServerStream[RestoreRequest, TransferProgress]{ServerStream: stream})
+	return srv.(StateServer).Restore(&grpc.GenericServerStream[RestoreRequest, TransferProgress]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type State_RestoreServer = grpc.ServerStreamingServer[TransferProgress]
+type State_RestoreServer = grpc.BidiStreamingServer[RestoreRequest, TransferProgress]
 
 // State_ServiceDesc is the grpc.ServiceDesc for State service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -220,6 +212,7 @@ var State_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "Restore",
 			Handler:       _State_Restore_Handler,
 			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
 	Metadata: "cocoonbox/agent/v1/state.proto",

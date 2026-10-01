@@ -2185,16 +2185,30 @@ async fn restore(
             url: format!("{base}/{k}"),
         })
         .collect();
+    restore_pages(h, base, manifest_id, gets).await
+}
+
+async fn restore_pages(
+    h: &Harness,
+    base: &str,
+    manifest_id: &str,
+    gets: Vec<pb::PresignedGet>,
+) -> Result<pb::TransferProgress, tonic::Status> {
+    let mut reqs = vec![pb::RestoreRequest {
+        key: Some(state_key()),
+        manifest: Some(pb::PresignedGet {
+            chunk_id: manifest_id.into(),
+            url: format!("{base}/{manifest_id}"),
+        }),
+        gets: Vec::new(),
+    }];
+    reqs.extend(gets.chunks(2).map(|page| pb::RestoreRequest {
+        gets: page.to_vec(),
+        ..Default::default()
+    }));
     let mut stream = state_client(h)
         .await
-        .restore(authed(pb::RestoreRequest {
-            key: Some(state_key()),
-            manifest: Some(pb::PresignedGet {
-                chunk_id: manifest_id.into(),
-                url: format!("{base}/{manifest_id}"),
-            }),
-            gets,
-        }))
+        .restore(authed(tokio_stream::iter(reqs)))
         .await?
         .into_inner();
     let mut last = None;
@@ -2421,6 +2435,89 @@ async fn restore_rejects_tampered_chunks_before_touching_files() {
         .await
         .unwrap_err();
     assert_eq!(wrong_key.code(), Code::InvalidArgument);
+}
+
+#[tokio::test]
+async fn restore_rejects_a_manifest_whose_chunks_never_all_got_urls() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    std::fs::write(h.workspace.join("a.txt"), noise(10_000, 3)).unwrap();
+    std::fs::write(h.workspace.join("b.txt"), noise(10_000, 4)).unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    std::fs::write(h.workspace.join("a.txt"), b"current").unwrap();
+    let withheld = &planned.chunks[0].id;
+    let gets = planned
+        .chunks
+        .iter()
+        .filter(|c| c.id != *withheld)
+        .map(|c| pb::PresignedGet {
+            chunk_id: c.id.clone(),
+            url: format!("{base}/{}", c.id),
+        })
+        .collect();
+    let err = restore_pages(&h, &base, &planned.snapshot_id, gets)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::InvalidArgument, "{err:?}");
+    assert!(
+        err.message()
+            .contains(&format!("no url for chunk {withheld}")),
+        "{err:?}"
+    );
+    assert_eq!(
+        std::fs::read(h.workspace.join("a.txt")).unwrap(),
+        b"current"
+    );
+}
+
+#[tokio::test]
+async fn restore_fetches_a_page_before_the_stream_ends() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    std::fs::write(h.workspace.join("a.txt"), noise(10_000, 3)).unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    let get = |id: &str| pb::PresignedGet {
+        chunk_id: id.into(),
+        url: format!("{base}/{id}"),
+    };
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(pb::RestoreRequest {
+        key: Some(state_key()),
+        manifest: Some(get(&planned.snapshot_id)),
+        gets: vec![get(&planned.chunks[0].id)],
+    })
+    .await
+    .unwrap();
+    let mut stream = state_client(&h)
+        .await
+        .restore(authed(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        .await
+        .unwrap()
+        .into_inner();
+    let early = tokio::time::timeout(Duration::from_secs(10), stream.message())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(early.done_chunks, 1, "{early:?}");
+    assert_eq!(early.total_chunks as usize, planned.chunks.len());
+    for c in &planned.chunks[1..] {
+        tx.send(pb::RestoreRequest {
+            gets: vec![get(&c.id)],
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    }
+    drop(tx);
+    let mut last = early;
+    while let Some(p) = stream.message().await.unwrap() {
+        last = p;
+    }
+    assert!(last.finished, "{last:?}");
+    assert_eq!(last.manifest_id, planned.snapshot_id);
 }
 
 #[tokio::test]
