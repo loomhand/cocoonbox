@@ -9,14 +9,21 @@ BRIDGE_ADDR=10.203.0.1/24
 BRIDGE_IP=${BRIDGE_ADDR%/*}
 GW_PORT=18090
 STATE_PORT=9000
+RES_IF=cbres0
+RES_ADDR=10.203.1.2/32
+RES_PORT=8823
 
 up() {
 	ip link show "$BRIDGE" >/dev/null 2>&1 || ip link add "$BRIDGE" type bridge
 	ip -4 addr show dev "$BRIDGE" | grep -q "inet $BRIDGE_ADDR" || ip addr add "$BRIDGE_ADDR" dev "$BRIDGE"
 	ip link set "$BRIDGE" up
+	ip link show "$RES_IF" >/dev/null 2>&1 || ip link add "$RES_IF" type dummy
+	ip -4 addr show dev "$RES_IF" | grep -q "inet $RES_ADDR" || ip addr add "$RES_ADDR" dev "$RES_IF"
+	ip link set "$RES_IF" up
 
 	iptables -N CB-INPUT 2>/dev/null || iptables -F CB-INPUT
 	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports $STATE_PORT,9001,$GW_PORT,18200,18201 ! -s "$HOST_IP" -j DROP
+	iptables -A CB-INPUT -p tcp --dport $RES_PORT ! -i lo -j DROP
 	iptables -C INPUT -j CB-INPUT 2>/dev/null || iptables -I INPUT 1 -j CB-INPUT
 
 	# host-originated traffic to the bridge gateway (the sandboxd egress proxy) reaches gw and the state store only

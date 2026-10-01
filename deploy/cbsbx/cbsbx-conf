@@ -12,6 +12,7 @@ LISTEN = "127.0.0.1:17780"
 GATEWAY = "10.203.0.1"
 GW_PORT = 18090
 STATE_PORT = 9000
+RESIDENTIAL = "10.203.1.2"
 STORAGE = "40G"
 WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
           "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
@@ -42,6 +43,7 @@ conf = {
     "refill_concurrency": 1,
     "audit_log": True,
     "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{STATE_PORT}"],
+    "egress_upstream": {"claim_env": "EGRESS_UPSTREAM", "allow": [f"{RESIDENTIAL}/32"]},
     "secrets": [{"name": "GW_KEY", "header": "Authorization"}],
     "pools": pools,
 }

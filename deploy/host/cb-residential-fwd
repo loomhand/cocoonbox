@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Authenticating forwarder for the residential exit (design §21).
+
+sandboxd's egress proxy opens each tunnel of a residential claim here with no
+credential; the forwarder adds Proxy-Authorization and relays to the provider,
+so the credential lives only in this unit's env file.
+
+usage: cb-residential-fwd <listen-addr> <listen-port>
+env:   RESIDENTIAL_UPSTREAM=host:port  RESIDENTIAL_AUTH=user:pass
+"""
+
+from __future__ import annotations
+
+import base64
+import os
+import socket
+import socketserver
+import sys
+import threading
+
+HEAD_LIMIT = 64 * 1024
+IO_CHUNK = 64 * 1024
+CONNECT_TIMEOUT = 15
+HOP_HEADERS = (b"proxy-authorization:", b"proxy-connection:", b"connection:")
+
+
+class Forwarder(socketserver.ThreadingTCPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+    request_queue_size = 128
+
+    def __init__(self, listen: tuple[str, int], upstream: tuple[str, int], auth_line: bytes) -> None:
+        self.upstream = upstream
+        self.auth_line = auth_line
+        super().__init__(listen, Handler)
+
+
+class Handler(socketserver.BaseRequestHandler):
+    def handle(self) -> None:
+        client = self.request
+        head, rest = read_head(client)
+        if head is None:
+            return
+        try:
+            upstream = socket.create_connection(self.server.upstream, timeout=CONNECT_TIMEOUT)
+        except OSError:
+            client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n")
+            return
+        with upstream:
+            upstream.settimeout(None)
+            upstream.sendall(with_auth(head, self.server.auth_line) + rest)
+            pipe(client, upstream)
+
+
+def read_head(conn: socket.socket) -> tuple[bytes | None, bytes]:
+    """Return the request head through its blank line and whatever followed it."""
+    buf = b""
+    while b"\r\n\r\n" not in buf:
+        if len(buf) > HEAD_LIMIT:
+            return None, b""
+        chunk = conn.recv(IO_CHUNK)
+        if not chunk:
+            return None, b""
+        buf += chunk
+    end = buf.index(b"\r\n\r\n") + 4
+    return buf[:end], buf[end:]
+
+
+def with_auth(head: bytes, auth_line: bytes) -> bytes:
+    """Replace any client proxy credential with ours and end plain requests after one response."""
+    lines = head[:-4].split(b"\r\n")
+    request_line, headers = lines[0], lines[1:]
+    kept = [h for h in headers if not h.lower().startswith(HOP_HEADERS)]
+    extra = [auth_line]
+    if not request_line.upper().startswith(b"CONNECT "):
+        extra.append(b"Connection: close")
+    return b"\r\n".join([request_line, *extra, *kept]) + b"\r\n\r\n"
+
+
+def pipe(a: socket.socket, b: socket.socket) -> None:
+    def copy(src: socket.socket, dst: socket.socket) -> None:
+        try:
+            while chunk := src.recv(IO_CHUNK):
+                dst.sendall(chunk)
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    back = threading.Thread(target=copy, args=(b, a), daemon=True)
+    back.start()
+    copy(a, b)
+    back.join()
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 3:
+        print(__doc__, file=sys.stderr)
+        return 2
+    host, _, port = os.environ["RESIDENTIAL_UPSTREAM"].rpartition(":")
+    token = base64.b64encode(os.environ["RESIDENTIAL_AUTH"].encode()).decode()
+    auth_line = f"Proxy-Authorization: Basic {token}".encode()
+    server = Forwarder((argv[1], int(argv[2])), (host, int(port)), auth_line)
+    print(f"forwarding {argv[1]}:{argv[2]} -> {host}:{port}", flush=True)
+    server.serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

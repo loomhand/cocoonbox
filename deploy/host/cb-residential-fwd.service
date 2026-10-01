@@ -1,0 +1,28 @@
+[Unit]
+Description=cocoonbox residential exit forwarder (10.203.1.2:8823)
+Requires=cb-host-net.service
+After=cb-host-net.service network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/cocoonbox/residential.env
+
+[Service]
+Type=simple
+DynamicUser=yes
+EnvironmentFile=/etc/cocoonbox/residential.env
+ExecStart=/usr/bin/python3 /usr/local/sbin/cb-residential-fwd 10.203.1.2 8823
+Restart=always
+RestartSec=2s
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+
+[Install]
+WantedBy=multi-user.target
