@@ -113,6 +113,7 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
 
 struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
     static let chunk = 64 << 10
+    static let signInOrigin = "https://accounts.example.com"
 
     let world: MockWorld
 
@@ -123,6 +124,29 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
             $0.screenHeight = 800
             $0.models = ["deepseek/deepseek-v4.1-flash", "anthropic/claude-sonnet-5"]
             $0.defaultMainModel = "deepseek/deepseek-v4.1-flash"
+        }
+    }
+
+    func activeOrigin(request: Cocoonbox_Agent_V1_ActiveOriginRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_ActiveOriginResponse {
+        .with { $0.origin = Self.signInOrigin }
+    }
+
+    // fillCredential logs which fields a real box would fill, never their values.
+    func fillCredential(request: Cocoonbox_Agent_V1_FillCredentialRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_FillCredentialResponse {
+        guard request.origin == Self.signInOrigin else {
+            throw RPCError(code: .failedPrecondition, message: "the active tab is on \(Self.signInOrigin), not \(request.origin)")
+        }
+        var filled: [String] = []
+        if !request.username.isEmpty, case .password = request.secret { filled.append("username") }
+        switch request.secret {
+        case .password: filled.append("password")
+        case .code: filled.append("code")
+        case nil: throw RPCError(code: .invalidArgument, message: "fill needs a password or a code")
+        }
+        print("fill origin=\(request.origin) filled=\(filled.joined(separator: ",")) submit=\(request.submit)")
+        return .with {
+            $0.filled = filled
+            $0.submitted = request.submit
         }
     }
 

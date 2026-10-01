@@ -400,6 +400,7 @@ struct ApprovalCard: View {
                 HStack {
                     Toggle("Take over", isOn: $screen.takeOver)
                         .toggleStyle(.button)
+                    PasswordSignInButton()
                     Button("I'm done, continue") {
                         model.respond(to: approval, agentID: agentID, approve: true, text: "I'm done, continue.")
                     }

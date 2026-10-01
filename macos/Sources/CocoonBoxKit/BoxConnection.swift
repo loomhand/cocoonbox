@@ -116,6 +116,24 @@ public final class BoxConnection: Sendable {
         )
     }
 
+    public func activeOrigin() async throws -> String {
+        try await session.activeOrigin(Cocoonbox_Agent_V1_ActiveOriginRequest()).origin
+    }
+
+    public func fillCredential(
+        origin: String,
+        username: String,
+        secret: Cocoonbox_Agent_V1_FillCredentialRequest.OneOf_Secret,
+        submit: Bool
+    ) async throws -> Cocoonbox_Agent_V1_FillCredentialResponse {
+        try await session.fillCredential(.with {
+            $0.origin = origin
+            $0.username = username
+            $0.secret = secret
+            $0.submit = submit
+        })
+    }
+
     var screenTransport: any ScreenTransport {
         GRPCScreenTransport(session: session)
     }

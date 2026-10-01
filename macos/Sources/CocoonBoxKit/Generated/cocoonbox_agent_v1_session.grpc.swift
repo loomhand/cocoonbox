@@ -59,11 +59,39 @@ public enum Cocoonbox_Agent_V1_Session: Sendable {
                 type: .bidirectionalStreaming
             )
         }
+        /// Namespace for "ActiveOrigin" metadata.
+        public enum ActiveOrigin: Sendable {
+            /// Request type for "ActiveOrigin".
+            public typealias Input = Cocoonbox_Agent_V1_ActiveOriginRequest
+            /// Response type for "ActiveOrigin".
+            public typealias Output = Cocoonbox_Agent_V1_ActiveOriginResponse
+            /// Descriptor for "ActiveOrigin".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.agent.v1.Session"),
+                method: "ActiveOrigin",
+                type: .unary
+            )
+        }
+        /// Namespace for "FillCredential" metadata.
+        public enum FillCredential: Sendable {
+            /// Request type for "FillCredential".
+            public typealias Input = Cocoonbox_Agent_V1_FillCredentialRequest
+            /// Response type for "FillCredential".
+            public typealias Output = Cocoonbox_Agent_V1_FillCredentialResponse
+            /// Descriptor for "FillCredential".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.agent.v1.Session"),
+                method: "FillCredential",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.agent.v1.Session" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Hello.descriptor,
             Events.descriptor,
-            Screen.descriptor
+            Screen.descriptor,
+            ActiveOrigin.descriptor,
+            FillCredential.descriptor
         ]
     }
 }
@@ -140,6 +168,44 @@ extension Cocoonbox_Agent_V1_Session {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_ScreenClientFrame>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ScreenServerFrame>
+
+        /// Handle the "ActiveOrigin" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Agent_V1_ActiveOriginRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Agent_V1_ActiveOriginResponse` messages.
+        func activeOrigin(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ActiveOriginResponse>
+
+        /// Handle the "FillCredential" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > FillCredential fills the sign-in form of the active tab when its origin
+        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Agent_V1_FillCredentialRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Agent_V1_FillCredentialResponse` messages.
+        func fillCredential(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_FillCredentialResponse>
     }
 
     /// Service protocol for the "cocoonbox.agent.v1.Session" service.
@@ -200,6 +266,44 @@ extension Cocoonbox_Agent_V1_Session {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_ScreenClientFrame>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ScreenServerFrame>
+
+        /// Handle the "ActiveOrigin" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Agent_V1_ActiveOriginResponse` message.
+        func activeOrigin(
+            request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_ActiveOriginResponse>
+
+        /// Handle the "FillCredential" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > FillCredential fills the sign-in form of the active tab when its origin
+        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Agent_V1_FillCredentialResponse` message.
+        func fillCredential(
+            request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_FillCredentialResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.agent.v1.Session" service.
@@ -260,6 +364,44 @@ extension Cocoonbox_Agent_V1_Session {
             response: GRPCCore.RPCWriter<Cocoonbox_Agent_V1_ScreenServerFrame>,
             context: GRPCCore.ServerContext
         ) async throws
+
+        /// Handle the "ActiveOrigin" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Agent_V1_ActiveOriginResponse` to respond with.
+        func activeOrigin(
+            request: Cocoonbox_Agent_V1_ActiveOriginRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Agent_V1_ActiveOriginResponse
+
+        /// Handle the "FillCredential" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > FillCredential fills the sign-in form of the active tab when its origin
+        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Agent_V1_FillCredentialRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Agent_V1_FillCredentialResponse` to respond with.
+        func fillCredential(
+            request: Cocoonbox_Agent_V1_FillCredentialRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Agent_V1_FillCredentialResponse
     }
 }
 
@@ -300,6 +442,28 @@ extension Cocoonbox_Agent_V1_Session.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Cocoonbox_Agent_V1_Session.Method.ActiveOrigin.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_ActiveOriginRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_ActiveOriginResponse>(),
+            handler: { request, context in
+                try await self.activeOrigin(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Agent_V1_Session.Method.FillCredential.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_FillCredentialRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_FillCredentialResponse>(),
+            handler: { request, context in
+                try await self.fillCredential(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -326,6 +490,28 @@ extension Cocoonbox_Agent_V1_Session.ServiceProtocol {
             context: context
         )
         return response
+    }
+
+    public func activeOrigin(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ActiveOriginResponse> {
+        let response = try await self.activeOrigin(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func fillCredential(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_FillCredentialResponse> {
+        let response = try await self.fillCredential(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
     }
 }
 
@@ -376,6 +562,32 @@ extension Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
                 )
                 return [:]
             }
+        )
+    }
+
+    public func activeOrigin(
+        request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_ActiveOriginResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Agent_V1_ActiveOriginResponse>(
+            message: try await self.activeOrigin(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func fillCredential(
+        request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_FillCredentialResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Agent_V1_FillCredentialResponse>(
+            message: try await self.fillCredential(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
         )
     }
 }
@@ -453,6 +665,54 @@ extension Cocoonbox_Agent_V1_Session {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_ScreenServerFrame>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Agent_V1_ScreenServerFrame>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ActiveOrigin" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_ActiveOriginRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_ActiveOriginResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func activeOrigin<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_ActiveOriginResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_ActiveOriginResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "FillCredential" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > FillCredential fills the sign-in form of the active tab when its origin
+        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_FillCredentialRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_FillCredentialResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func fillCredential<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_FillCredentialRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_FillCredentialResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_FillCredentialResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -566,6 +826,76 @@ extension Cocoonbox_Agent_V1_Session {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "ActiveOrigin" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_ActiveOriginRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_ActiveOriginResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func activeOrigin<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_ActiveOriginResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_ActiveOriginResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Agent_V1_Session.Method.ActiveOrigin.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "FillCredential" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > FillCredential fills the sign-in form of the active tab when its origin
+        /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+        /// > only: it is no MCP tool, and its values are never logged or recorded.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_FillCredentialRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_FillCredentialResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func fillCredential<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_FillCredentialRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_FillCredentialResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_FillCredentialResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Agent_V1_Session.Method.FillCredential.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -647,6 +977,66 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_ScreenClientFrame>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_ScreenServerFrame>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ActiveOrigin" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Agent_V1_ActiveOriginRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func activeOrigin<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_ActiveOriginResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.activeOrigin(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_ActiveOriginRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_ActiveOriginResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "FillCredential" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > FillCredential fills the sign-in form of the active tab when its origin
+    /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+    /// > only: it is no MCP tool, and its values are never logged or recorded.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Agent_V1_FillCredentialRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func fillCredential<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_FillCredentialResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.fillCredential(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_FillCredentialRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_FillCredentialResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -743,6 +1133,74 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
             producer: producer
         )
         return try await self.screen(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ActiveOrigin" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ActiveOrigin returns the origin of the active tab of the box's Chrome.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func activeOrigin<Result>(
+        _ message: Cocoonbox_Agent_V1_ActiveOriginRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_ActiveOriginResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Agent_V1_ActiveOriginRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.activeOrigin(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "FillCredential" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > FillCredential fills the sign-in form of the active tab when its origin
+    /// > equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
+    /// > only: it is no MCP tool, and its values are never logged or recorded.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func fillCredential<Result>(
+        _ message: Cocoonbox_Agent_V1_FillCredentialRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_FillCredentialResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Agent_V1_FillCredentialRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.fillCredential(
             request: request,
             options: options,
             onResponse: handleResponse

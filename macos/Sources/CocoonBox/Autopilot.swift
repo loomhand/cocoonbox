@@ -15,7 +15,8 @@ import Foundation
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
 // confirm:<save|upgrade|delete|off>, save-now, upgrade, wait-operation[:seconds],
 // rename:<name> (on the selected agent or local agent) and delete (on the
-// selected agent), end-local, quit.
+// selected agent), end-local, password-signin[:off],
+// fill-credential:<username> (the password comes from CB_FILL_SECRET, so no step logs it), quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -94,6 +95,10 @@ enum Autopilot {
             model.selectedAgentID = model.agents.first { $0.name == arg }?.id
         case "connect-agent":
             model.showConnectAgent = arg != "off"
+        case "password-signin":
+            model.showPasswordSignIn = arg != "off"
+        case "fill-credential":
+            await fillCredential(model, username: arg)
         case "local":
             if let kind = LocalAgentKind(rawValue: arg) {
                 let before = model.localAgents.count
@@ -174,6 +179,17 @@ enum Autopilot {
                 }
             }
             try? await pause(.milliseconds(60))
+        }
+    }
+
+    private static func fillCredential(_ model: AppModel, username: String) async {
+        guard let connection = model.connection, let secret = ProcessInfo.processInfo.environment["CB_FILL_SECRET"] else { return }
+        do {
+            let origin = try await connection.activeOrigin()
+            let filled = try await connection.fillCredential(origin: origin, username: username, secret: .password(secret), submit: true)
+            Perf.mark("fill_credential", "origin=\(origin) filled=\(filled.filled.joined(separator: ",")) submitted=\(filled.submitted)")
+        } catch {
+            Perf.mark("fill_credential", "error \(BoxConnection.describe(error))")
         }
     }
 

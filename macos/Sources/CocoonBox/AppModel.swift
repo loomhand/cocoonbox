@@ -49,6 +49,7 @@ final class AppModel {
     var endpointURL: String
     var showSignIn = false
     var showConnectAgent = false
+    var showPasswordSignIn = false
     var confirmSave = false
     var confirmUpgrade = false
     var deletingAgent: Agent?

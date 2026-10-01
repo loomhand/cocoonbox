@@ -77,6 +77,9 @@ struct ScreenStatusBar: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if model.screen.takeOver {
+                PasswordSignInButton().controlSize(.small)
+            }
             Text(model.screen.takeOver ? "take-over" : "view only")
                 .font(.caption)
                 .foregroundStyle(model.screen.takeOver ? .orange : .secondary)

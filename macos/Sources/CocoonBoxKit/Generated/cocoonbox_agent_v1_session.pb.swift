@@ -57,6 +57,86 @@ public nonisolated struct Cocoonbox_Agent_V1_HelloResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Cocoonbox_Agent_V1_ActiveOriginRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Agent_V1_ActiveOriginResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// As `location.origin`, e.g. "https://example.com" or "http://127.0.0.1:8080".
+  public var origin: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Agent_V1_FillCredentialRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var origin: String = String()
+
+  public var username: String = String()
+
+  public var secret: Cocoonbox_Agent_V1_FillCredentialRequest.OneOf_Secret? = nil
+
+  public var password: String {
+    get {
+      if case .password(let v)? = secret {return v}
+      return String()
+    }
+    set {secret = .password(newValue)}
+  }
+
+  /// A one-time code, filled into the page's code field.
+  public var code: String {
+    get {
+      if case .code(let v)? = secret {return v}
+      return String()
+    }
+    set {secret = .code(newValue)}
+  }
+
+  public var submit: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public nonisolated enum OneOf_Secret: Equatable, Sendable {
+    case password(String)
+    /// A one-time code, filled into the page's code field.
+    case code(String)
+
+  }
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Agent_V1_FillCredentialResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The kinds of field filled: "username", "password", "code".
+  public var filled: [String] = []
+
+  public var submitted: Bool = false
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Cocoonbox_Agent_V1_EventsRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -356,6 +436,162 @@ nonisolated extension Cocoonbox_Agent_V1_HelloResponse: SwiftProtobuf.Message, S
     if lhs.screenHeight != rhs.screenHeight {return false}
     if lhs.models != rhs.models {return false}
     if lhs.defaultMainModel != rhs.defaultMainModel {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_ActiveOriginRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ActiveOriginRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_ActiveOriginRequest, rhs: Cocoonbox_Agent_V1_ActiveOriginRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_ActiveOriginResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ActiveOriginResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}origin\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.origin) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.origin.isEmpty {
+      try visitor.visitSingularStringField(value: self.origin, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_ActiveOriginResponse, rhs: Cocoonbox_Agent_V1_ActiveOriginResponse) -> Bool {
+    if lhs.origin != rhs.origin {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_FillCredentialRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".FillCredentialRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}origin\0\u{1}username\0\u{1}password\0\u{1}code\0\u{1}submit\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.origin) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.username) }()
+      case 3: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.secret != nil {try decoder.handleConflictingOneOf()}
+          self.secret = .password(v)
+        }
+      }()
+      case 4: try {
+        var v: String?
+        try decoder.decodeSingularStringField(value: &v)
+        if let v = v {
+          if self.secret != nil {try decoder.handleConflictingOneOf()}
+          self.secret = .code(v)
+        }
+      }()
+      case 5: try { try decoder.decodeSingularBoolField(value: &self.submit) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.origin.isEmpty {
+      try visitor.visitSingularStringField(value: self.origin, fieldNumber: 1)
+    }
+    if !self.username.isEmpty {
+      try visitor.visitSingularStringField(value: self.username, fieldNumber: 2)
+    }
+    switch self.secret {
+    case .password?: try {
+      guard case .password(let v)? = self.secret else { preconditionFailure() }
+      try visitor.visitSingularStringField(value: v, fieldNumber: 3)
+    }()
+    case .code?: try {
+      guard case .code(let v)? = self.secret else { preconditionFailure() }
+      try visitor.visitSingularStringField(value: v, fieldNumber: 4)
+    }()
+    case nil: break
+    }
+    if self.submit != false {
+      try visitor.visitSingularBoolField(value: self.submit, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_FillCredentialRequest, rhs: Cocoonbox_Agent_V1_FillCredentialRequest) -> Bool {
+    if lhs.origin != rhs.origin {return false}
+    if lhs.username != rhs.username {return false}
+    if lhs.secret != rhs.secret {return false}
+    if lhs.submit != rhs.submit {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_FillCredentialResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".FillCredentialResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}filled\0\u{1}submitted\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedStringField(value: &self.filled) }()
+      case 2: try { try decoder.decodeSingularBoolField(value: &self.submitted) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.filled.isEmpty {
+      try visitor.visitRepeatedStringField(value: self.filled, fieldNumber: 1)
+    }
+    if self.submitted != false {
+      try visitor.visitSingularBoolField(value: self.submitted, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_FillCredentialResponse, rhs: Cocoonbox_Agent_V1_FillCredentialResponse) -> Bool {
+    if lhs.filled != rhs.filled {return false}
+    if lhs.submitted != rhs.submitted {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

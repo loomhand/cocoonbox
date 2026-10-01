@@ -52,6 +52,9 @@ struct RootView: View {
         .sheet(isPresented: $model.showConnectAgent) {
             ConnectAgentSheet()
         }
+        .sheet(isPresented: $model.showPasswordSignIn) {
+            PasswordSignInSheet()
+        }
         .onChange(of: model.screen.poppedOut) { _, poppedOut in
             if poppedOut { openWindow(id: "screen") }
         }
