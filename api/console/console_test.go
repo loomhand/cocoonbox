@@ -52,6 +52,39 @@ func TestLoginSetsAStrictCookieAndLimitsFailures(t *testing.T) {
 	}
 }
 
+func TestParallelSignInsCannotPassTheLimitTogether(t *testing.T) {
+	env := newEnv(t)
+	codes := make(chan int, 30)
+	var wg sync.WaitGroup
+	for range cap(codes) {
+		wg.Go(func() {
+			codes <- env.do(t, http.MethodPost, "api/login", "", `{"name":"root","password":"wrong password!"}`).Code
+		})
+	}
+	wg.Wait()
+	close(codes)
+	checked := 0
+	for code := range codes {
+		if code == http.StatusUnauthorized {
+			checked++
+		}
+	}
+	if checked > nameLimit {
+		t.Errorf("%d parallel wrong passwords reached the check, want at most %d", checked, nameLimit)
+	}
+}
+
+func TestChangingThePasswordIsLimited(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	for range nameLimit {
+		env.do(t, http.MethodPost, "api/me/password", root, `{"current":"wrong password!","password":"another password"}`)
+	}
+	if code := env.do(t, http.MethodPost, "api/me/password", root, `{"current":"`+password+`","password":"another password"}`).Code; code != http.StatusTooManyRequests {
+		t.Errorf("password change after %d wrong ones = %d, want 429", nameLimit, code)
+	}
+}
+
 func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	env := newEnv(t)
 	root := env.login(t, "root")
@@ -113,7 +146,14 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	env := newEnv(t)
 	root := env.login(t, "root")
 	u, _ := env.users.Create(t.Context(), users.NewUser{Name: "qa1", Password: password})
+	token, _ := env.users.RegenerateToken(t.Context(), u.ID)
 	qa1 := env.login(t, "qa1")
+	env.boxes.onRelease = func() {
+		sum := sha256.Sum256([]byte(token))
+		if _, ok := env.users.ByTokenSHA256(hex.EncodeToString(sum[:])); ok {
+			t.Error("the user's token still worked while its boxes were released")
+		}
+	}
 	if code := env.do(t, http.MethodDelete, "api/users/"+u.ID, root, "{}").Code; code != http.StatusNoContent {
 		t.Fatalf("delete = %d", code)
 	}
@@ -217,6 +257,7 @@ type fakeBoxes struct {
 	list      []*controlv1.Box
 	listedFor string
 	released  string
+	onRelease func()
 }
 
 func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
@@ -225,6 +266,9 @@ func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*c
 }
 
 func (f *fakeBoxes) Release(_ context.Context, user string) error {
+	if f.onRelease != nil {
+		f.onRelease()
+	}
 	f.released = user
 	return nil
 }

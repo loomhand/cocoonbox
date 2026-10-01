@@ -33,8 +33,12 @@ const (
 	maxBodySize = 16 << 10
 )
 
-//go:embed static
-var static embed.FS
+var (
+	errTooMany = errors.New("too many failed sign-ins; try again later")
+
+	//go:embed static
+	static embed.FS
+)
 
 // Boxes lists a user's boxes and releases them when the user is deleted.
 type Boxes interface {
@@ -101,21 +105,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	nameKey, addrKey := "name:"+req.Name, "addr:"+clientAddr(r)
-	if s.limiter.blocked(nameKey, nameLimit) || s.limiter.blocked(addrKey, addrLimit) {
-		writeError(w, http.StatusTooManyRequests, "too many failed sign-ins; try again later")
-		return
-	}
-	u, err := s.users.Login(r.Context(), req.Name, req.Password)
+	u, err := s.checkPassword(r, req.Name, req.Password)
 	if err != nil {
-		if errors.Is(err, users.ErrBadPassword) {
-			s.limiter.fail(nameKey, addrKey)
-			log.WithFunc("console.Server.login").Warnf(r.Context(), "failed sign-in for %q from %s", req.Name, clientAddr(r))
-		}
 		s.fail(w, r, err)
 		return
 	}
-	s.limiter.reset(nameKey)
 	secret, err := s.users.NewSession(r.Context(), u.ID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -196,7 +190,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u := caller(r)
-	if _, err := s.users.Login(r.Context(), u.Name, req.Current); err != nil {
+	if _, err := s.checkPassword(r, u.Name, req.Current); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -270,7 +264,8 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you cannot delete yourself")
 		return
 	}
-	if _, err := s.users.Get(id); err != nil {
+	disabled := true
+	if _, err := s.users.Update(r.Context(), id, users.Settings{Disabled: &disabled}); err != nil {
 		s.fail(w, r, err)
 		return
 	}
@@ -284,6 +279,21 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	log.WithFunc("console.Server.deleteUser").Infof(r.Context(), "admin %s deleted user %s", caller(r).Name, id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// checkPassword checks name's password under the attempt limits.
+func (s *Server) checkPassword(r *http.Request, name, password string) (users.User, error) {
+	nameKey, addrKey := "name:"+name, "addr:"+clientAddr(r)
+	if !s.limiter.take(nameKey, addrKey) {
+		return users.User{}, errTooMany
+	}
+	u, err := s.users.Login(r.Context(), name, password)
+	if err == nil {
+		s.limiter.settle(nameKey, addrKey)
+	} else if errors.Is(err, users.ErrBadPassword) {
+		log.WithFunc("console.Server.checkPassword").Warnf(r.Context(), "wrong password for %q from %s", name, clientAddr(r))
+	}
+	return u, err
 }
 
 // signedIn runs next with the session's user in the request context.
@@ -319,6 +329,8 @@ func (s *Server) admin(next http.HandlerFunc) http.HandlerFunc {
 
 func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, errTooMany):
+		writeError(w, http.StatusTooManyRequests, err.Error())
 	case errors.Is(err, users.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, users.ErrExists):

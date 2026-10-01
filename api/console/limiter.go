@@ -10,7 +10,7 @@ type failures struct {
 	since time.Time
 }
 
-// limiter counts failed sign-ins per key in a fixed window.
+// limiter counts password attempts per name and per client address in a fixed window; a correct password gives its attempt back.
 type limiter struct {
 	window time.Duration
 	now    func() time.Time
@@ -23,15 +23,8 @@ func newLimiter(window time.Duration) *limiter {
 	return &limiter{window: window, now: time.Now, failures: map[string]*failures{}}
 }
 
-// blocked reports whether key reached limit failures within the window.
-func (l *limiter) blocked(key string, limit int) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	f := l.failures[key]
-	return f != nil && l.now().Sub(f.since) < l.window && f.count >= limit
-}
-
-func (l *limiter) fail(keys ...string) {
+// take reserves one attempt for the name and address keys unless either is at its limit, so parallel requests cannot pass the check together.
+func (l *limiter) take(name, addr string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
@@ -40,7 +33,10 @@ func (l *limiter) fail(keys ...string) {
 			delete(l.failures, key)
 		}
 	}
-	for _, key := range keys {
+	if l.failures[name] != nil && l.failures[name].count >= nameLimit || l.failures[addr] != nil && l.failures[addr].count >= addrLimit {
+		return false
+	}
+	for _, key := range []string{name, addr} {
 		f := l.failures[key]
 		if f == nil {
 			f = &failures{since: now}
@@ -48,10 +44,15 @@ func (l *limiter) fail(keys ...string) {
 		}
 		f.count++
 	}
+	return true
 }
 
-func (l *limiter) reset(key string) {
+// settle clears name's attempts and returns the address's reserved one after a correct password.
+func (l *limiter) settle(name, addr string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.failures, key)
+	delete(l.failures, name)
+	if f := l.failures[addr]; f != nil {
+		f.count--
+	}
 }
