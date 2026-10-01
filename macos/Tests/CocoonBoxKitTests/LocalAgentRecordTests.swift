@@ -32,9 +32,23 @@ import Testing
         first.until = start.addingTimeInterval(10)
         let second = LocalAgentRecord(kind: .codex, boxID: "cb-1", workspace: workspace, startedAt: start.addingTimeInterval(10))
         let third = LocalAgentRecord(kind: .codex, boxID: "cb-1", workspace: workspace, startedAt: start.addingTimeInterval(20))
-        #expect(first.claim(home: home) == "first")
-        #expect(second.claim(home: home) == "second")
+        #expect(first.claim(home: home)?.id == "first")
+        #expect(second.claim(home: home)?.id == "second")
         #expect(third.claim(home: home) == nil)
+    }
+
+    @Test func codexSettlesOnItsFirstPromptAndNamesTheSession() throws {
+        let home = try temporaryHome()
+        var record = LocalAgentRecord(kind: .codex, boxID: "cb-1", workspace: workspace, startedAt: start)
+        try rollout(home, id: "quiet", at: start.addingTimeInterval(1), prompt: nil)
+        record.settle(home: home)
+        #expect(record.sessionID == nil)
+        try rollout(home, id: "talked", at: start.addingTimeInterval(2), prompt: "\n  Rename every file in the release folder to kebab case\nthen zip it")
+        record.settle(home: home)
+        #expect(record.sessionID == "talked")
+        #expect(record.title == "Rename every file in the release folder")
+        record.name = "Mine"
+        #expect(record.displayName == "Mine")
     }
 
     @Test func cursorClaimsOnlyChatsWithAConversation() throws {
@@ -44,7 +58,7 @@ import Testing
         #expect(cursor.claim(home: home) == nil)
         try chat(home, id: "old", at: start.addingTimeInterval(-1), conversation: true)
         try chat(home, id: "talked", at: start.addingTimeInterval(2), conversation: true)
-        #expect(cursor.claim(home: home) == "talked")
+        #expect(cursor.claim(home: home)?.id == "talked")
     }
 
     @Test func claudeResumesOnlyAConversationOnDisk() throws {
@@ -90,13 +104,17 @@ import Testing
         return home
     }
 
-    private func rollout(_ home: URL, id: String, at date: Date, cwd: String? = nil) throws {
+    private func rollout(_ home: URL, id: String, at date: Date, cwd: String? = nil, prompt: String? = "Fix the build") throws {
         let day = Calendar.current.dateComponents([.year, .month, .day], from: date)
         let directory = home.appendingPathComponent(String(format: ".codex/sessions/%04d/%02d/%02d", day.year!, day.month!, day.day!))
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let meta: [String: Any] = ["type": "session_meta", "payload": ["id": id, "cwd": cwd ?? workspace, "timestamp": date.formatted(Date.ISO8601FormatStyle(includingFractionalSeconds: true))]]
-        let line = try JSONSerialization.data(withJSONObject: meta) + Data("\n{\"type\":\"event_msg\"}\n".utf8)
-        try line.write(to: directory.appendingPathComponent("rollout-\(id).jsonl"))
+        var lines = [meta, ["type": "event_msg", "payload": ["type": "task_started"]]]
+        if let prompt {
+            lines.append(["type": "event_msg", "payload": ["type": "item_completed", "item": ["type": "UserMessage", "content": [["type": "text", "text": prompt]]]]])
+        }
+        try Data(lines.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) + "\n" }.joined().utf8)
+            .write(to: directory.appendingPathComponent("rollout-\(id).jsonl"))
     }
 
     private func chat(_ home: URL, id: String, at date: Date, conversation: Bool) throws {

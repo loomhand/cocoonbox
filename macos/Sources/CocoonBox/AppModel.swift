@@ -83,6 +83,7 @@ final class AppModel {
     @ObservationIgnored private(set) var connection: BoxConnection?
     @ObservationIgnored private var eventsTask: Task<Void, Never>?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
+    @ObservationIgnored private var settleTask: Task<Void, Never>?
 
     init() {
         endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"]
@@ -185,6 +186,21 @@ final class AppModel {
             localAgents.append(session)
         }
         persistLocal()
+        settleLocal()
+    }
+
+    // settleLocal saves each new Codex or Cursor session's id and name once they are on disk, so a killed app still resumes it.
+    private func settleLocal() {
+        guard settleTask == nil else { return }
+        settleTask = Task { [weak self] in
+            while let self, self.localAgents.contains(where: { $0.record.sessionID == nil && !$0.closed }) {
+                try? await pause(.seconds(3))
+                let before = self.localAgents.map(\.record)
+                self.localAgents.forEach { $0.settle() }
+                if self.localAgents.map(\.record) != before { self.persistLocal() }
+            }
+            self?.settleTask = nil
+        }
     }
 
     // persistLocal writes the open local agents to the session file, with the session ids Codex and Cursor have chosen by now.

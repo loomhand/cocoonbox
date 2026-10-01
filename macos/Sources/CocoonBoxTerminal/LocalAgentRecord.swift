@@ -39,25 +39,37 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
         return FileManager.default.fileExists(atPath: home.appendingPathComponent(".claude/projects/\(project)/\(sessionID).jsonl").path)
     }
 
+    // settle records the session Codex or Cursor chose once it is on disk,
+    // and names a Codex session after its first prompt, as Codex sets no title.
+    public mutating func settle(home: URL, now: Date = Date()) {
+        guard sessionID == nil, let session = claim(home: home, now: now) else { return }
+        sessionID = session.id
+        title = title ?? session.name
+    }
+
     // claim finds the session this record's process began: the earliest one
     // in the workspace that started after it and before `until`.
-    public func claim(home: URL, now: Date = Date()) -> String? {
+    public func claim(home: URL, now: Date = Date()) -> (id: String, name: String?)? {
         let sessions = switch kind {
-        case .claudeCode: [(id: String, startedAt: Date)]()
+        case .claudeCode: [Session]()
         case .codex: codexSessions(home: home, now: now)
         case .cursor: cursorSessions(home: home)
         }
         return sessions
             .filter { $0.startedAt >= startedAt && $0.startedAt < until ?? .distantFuture }
-            .min { $0.startedAt < $1.startedAt }?.id
+            .min { $0.startedAt < $1.startedAt }
+            .map { ($0.id, $0.name) }
     }
 
-    // codexSessions reads the session_meta line of rollouts created since the
-    // record started, in the day directories Codex files them under.
-    private func codexSessions(home: URL, now: Date) -> [(id: String, startedAt: Date)] {
+    private typealias Session = (id: String, startedAt: Date, name: String?)
+
+    // codexSessions reads the session_meta line and the first prompt of
+    // rollouts created since the record started, in the day directories Codex
+    // files them under; a rollout holds a conversation once it has a prompt.
+    private func codexSessions(home: URL, now: Date) -> [Session] {
         let calendar = Calendar.current
         let root = home.appendingPathComponent(".codex/sessions")
-        var sessions: [(id: String, startedAt: Date)] = []
+        var sessions: [Session] = []
         var day = calendar.startOfDay(for: startedAt)
         while day <= min(until ?? now, now) {
             let date = calendar.dateComponents([.year, .month, .day], from: day)
@@ -65,12 +77,9 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
             let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.creationDateKey])) ?? []
             for file in files where file.lastPathComponent.hasPrefix("rollout-") && file.pathExtension == "jsonl" {
                 guard let created = try? file.resourceValues(forKeys: [.creationDateKey]).creationDate, created >= startedAt,
-                      let line = Self.firstLine(file),
-                      let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any], entry["type"] as? String == "session_meta",
-                      let payload = entry["payload"] as? [String: Any], payload["cwd"] as? String == workspace,
-                      let id = payload["id"] as? String, let stamp = (payload["timestamp"] as? String).flatMap({ try? Self.stamp.parse($0) })
+                      let rollout = Self.rollout(file, workspace: workspace)
                 else { continue }
-                sessions.append((id, stamp))
+                sessions.append(rollout)
             }
             guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
             day = next
@@ -80,7 +89,7 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
 
     // cursorSessions lists the workspace's chats that hold a conversation;
     // Cursor keeps them under the MD5 of the workspace path.
-    private func cursorSessions(home: URL) -> [(id: String, startedAt: Date)] {
+    private func cursorSessions(home: URL) -> [Session] {
         let hash = Insecure.MD5.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
         let root = home.appendingPathComponent(".cursor/chats/\(hash)")
         let chats = (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? []
@@ -89,21 +98,43 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
                   let meta = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   meta["hasConversation"] as? Bool == true, let created = meta["createdAtMs"] as? Double
             else { return nil }
-            return (chat.lastPathComponent, Date(timeIntervalSince1970: created / 1000))
+            return (chat.lastPathComponent, Date(timeIntervalSince1970: created / 1000), nil)
         }
     }
 
     static let stamp = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
-    private static func firstLine(_ file: URL) -> Data? {
+    // rollout reads a rollout of workspace up to its first user message,
+    // whose first line, cut to 40 characters, names the session.
+    private static func rollout(_ file: URL, workspace: String) -> Session? {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
         defer { try? handle.close() }
-        var line = Data()
-        while line.count < 4 << 20, let chunk = try? handle.read(upToCount: 64 << 10), !chunk.isEmpty {
-            if let newline = chunk.firstIndex(of: 0x0A) { return line + chunk[..<newline] }
-            line += chunk
+        var meta: (id: String, startedAt: Date)?
+        var buffer = Data()
+        while buffer.count < 4 << 20, let chunk = try? handle.read(upToCount: 64 << 10), !chunk.isEmpty {
+            buffer += chunk
+            while let newline = buffer.firstIndex(of: 0x0A) {
+                let line = buffer[buffer.startIndex..<newline]
+                buffer = buffer[buffer.index(after: newline)...]
+                guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+                      let payload = entry["payload"] as? [String: Any]
+                else { continue }
+                guard let session = meta else {
+                    guard entry["type"] as? String == "session_meta", payload["cwd"] as? String == workspace,
+                          let id = payload["id"] as? String, let stamp = (payload["timestamp"] as? String).flatMap({ try? Self.stamp.parse($0) })
+                    else { return nil }
+                    meta = (id, stamp)
+                    continue
+                }
+                guard payload["type"] as? String == "item_completed", let item = payload["item"] as? [String: Any],
+                      item["type"] as? String == "UserMessage"
+                else { continue }
+                let text = (item["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined() ?? ""
+                let first = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+                return (session.id, session.startedAt, first.map { String($0.prefix(40)).trimmingCharacters(in: .whitespaces) })
+            }
         }
-        return line.isEmpty ? nil : line
+        return nil
     }
 }
 

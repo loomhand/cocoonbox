@@ -55,7 +55,7 @@ public final class LocalAgentSession: Identifiable {
         let home = URL(fileURLWithPath: shell["HOME"] ?? NSHomeDirectory())
         let workspace = try Self.workspace(kind)
         var record = saved ?? LocalAgentRecord(kind: kind, boxID: boxID, sessionID: kind == .claudeCode ? UUID().uuidString.lowercased() : nil, workspace: workspace.path)
-        if saved != nil, record.sessionID == nil { record.sessionID = record.claim(home: home) }
+        if saved != nil { record.settle(home: home) }
         let resume = saved != nil && record.resumable(home: home)
         if !resume, kind != .claudeCode { record.sessionID = nil }
         record.workspace = workspace.path
@@ -147,7 +147,7 @@ public final class LocalAgentSession: Identifiable {
 
     // settle records the session id Codex or Cursor chose once its session is on disk.
     public func settle() {
-        if record.sessionID == nil { record.sessionID = record.claim(home: home) }
+        record.settle(home: home)
     }
 
     fileprivate func titleChanged(_ title: String) {
