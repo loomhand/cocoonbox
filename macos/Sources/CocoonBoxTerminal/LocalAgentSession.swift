@@ -62,7 +62,10 @@ public final class LocalAgentSession: Identifiable {
         )
         GhosttyResources.prepared
         let terminal = AppTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        terminal.controller = TerminalController()
+        terminal.controller = TerminalController(theme: Self.theme) {
+            $0.withFontFamily("Menlo")
+            $0.withFontFamily("PingFang SC")
+        }
         terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(backend))
         let session = LocalAgentSession(kind: kind, terminal: terminal, process: process)
         let started = Date()
@@ -75,6 +78,8 @@ public final class LocalAgentSession: Identifiable {
         )
         return session
     }
+
+    private static let theme = TerminalTheme(light: .afterglow.background("000000"), dark: .afterglow.background("000000"))
 
     // terminal names the workspace in PWD, which Claude Code takes as its
     // project, and a terminal type every CLI knows.
