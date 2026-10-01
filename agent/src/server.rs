@@ -193,7 +193,7 @@ impl Session for SessionSvc {
             models.push(cfg.model_computer.clone());
         }
         Ok(Response::new(pb::HelloResponse {
-            agent_version: env!("CARGO_PKG_VERSION").to_owned(),
+            agent_version: env!("CB_AGENT_VERSION").to_owned(),
             screen_width: SCREEN_WIDTH,
             screen_height: SCREEN_HEIGHT,
             models,

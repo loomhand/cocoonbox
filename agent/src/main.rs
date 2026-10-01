@@ -13,7 +13,7 @@ fn main() -> ExitCode {
         "serve" => run(async { server::serve(ServeConfig::from_env()?).await }),
         "toolhost" => run(async { toolhost::run(ToolhostConfig::from_env()?).await }),
         "version" | "--version" => {
-            println!("cocoonbox-agent {}", env!("CARGO_PKG_VERSION"));
+            println!("cocoonbox-agent {}", env!("CB_AGENT_VERSION"));
             Ok(())
         }
         _ => {

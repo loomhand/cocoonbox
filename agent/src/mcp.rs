@@ -209,7 +209,7 @@ impl Mcp {
         let result = json!({
             "protocolVersion": protocol,
             "capabilities": {"tools": {"listChanged": false}},
-            "serverInfo": {"name": "cocoonbox-agent", "version": env!("CARGO_PKG_VERSION")},
+            "serverInfo": {"name": "cocoonbox-agent", "version": env!("CB_AGENT_VERSION")},
             "instructions": INSTRUCTIONS,
         });
         Ok((session, result))
