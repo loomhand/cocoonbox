@@ -45,6 +45,7 @@ struct OperationProgress: Equatable {
 final class AppModel {
     static let endpointKey = "endpoint"
     static let localSessionAgentsKey = "localSessionAgents"
+    static let transcriptLoads = 8
 
     var endpointURL: String
     var showSignIn = false
@@ -440,11 +441,21 @@ final class AppModel {
             if selectedAgentID == nil || !agents.contains(where: { $0.id == selectedAgentID }) {
                 selectedAgentID = agents.last { $0.externalClient == nil }?.id ?? agents.last?.id
             }
-            for agent in agents {
-                await loadTranscript(agentID: agent.id)
+            if let selected = selectedAgentID, agents.contains(where: { $0.id == selected }) {
+                await loadTranscript(agentID: selected)
             }
             eventsLive = true
             lastError = nil
+            var rest = agents.map(\.id).filter { $0 != selectedAgentID }.makeIterator()
+            await withTaskGroup(of: Void.self) { group in
+                for _ in 0 ..< Self.transcriptLoads {
+                    guard let id = rest.next() else { break }
+                    group.addTask { await self.loadTranscript(agentID: id) }
+                }
+                while await group.next() != nil {
+                    if let id = rest.next() { group.addTask { await self.loadTranscript(agentID: id) } }
+                }
+            }
         } catch {
             report("list agents", error)
         }
