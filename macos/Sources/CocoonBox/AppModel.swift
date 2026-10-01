@@ -79,6 +79,12 @@ final class AppModel {
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.closeAllLocal() }
         }
+        NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.connection != nil else { return }
+                Task { await self.refreshBox() }
+            }
+        }
     }
 
     var selectedAgent: Agent? {
