@@ -1,10 +1,10 @@
-# gw v0.2.6 for the cocoonbox env; installed as /etc/gw/gateway.yaml (root:gw 0640).
+# gw v0.2.6 for the cocoonbox env; published by install-gw-config (root:gw 0640 copy in /etc/gw/gateway.yaml).
 listen:
   host: 10.203.0.1
   port: 18090
 
 storage:
-  sqlite_path: /var/lib/gw/store.db
+  postgres_url: postgres:///gw?host=/var/run/postgresql&user=gw
 
 providers:
   - {name: openrouter, kind: openrouter, api_key_env: OPENROUTER_API_KEY_1, timeout_seconds: 300}
@@ -25,11 +25,14 @@ tenants:
     qps: 16
     daily_cost_quota_micros: 20000000
     key_daily_cost_quota_micros: 10000000
+    admin_token_env: CB_BOXES_ADMIN_TOKEN
     models:
       - deepseek/deepseek-v4.1-flash
       - anthropic/claude-sonnet-5
       - anthropic/claude-sonnet-4.6
       - qwen/qwen3-vl-235b-a22b-instruct
 
-access_keys:
-  # __CB_BOX_KEYS__
+admin:
+  token_env: GW_ADMIN_TOKEN
+
+access_keys: []

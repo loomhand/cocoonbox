@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Smoke-tests a cocoonbox sandboxd template: claim, relay to the agent, egress, key isolation, fail-closed, release.
-usage: sudo deploy/cbsbx/smoke <template>   (on the node; adds and revokes a throwaway gw box key, never prints it)"""
+usage: sudo deploy/cbsbx/smoke <template>   (on the node; creates and deletes a throwaway gw key through the admin API, never prints it)"""
 
 import json
 import os
+import secrets
 import socket
 import subprocess
 import sys
@@ -14,7 +15,8 @@ import urllib.request
 
 SBX = "http://127.0.0.1:17780"
 TOKEN = open("/etc/cocoonbox/sandboxd-token").read().strip()
-GW_KEY_TOOL = "/usr/local/sbin/cb-gw-key"
+GW_ADMIN = "http://10.203.0.1:18090/admin/keys"
+GW_ADMIN_TOKEN = open("/etc/cocoonbox/gw-admin-token").read().strip()
 SMOKE_ID = "cb-5a0e00000001"
 GATEWAY = "10.203.0.1"
 PROXY = "http://127.0.0.1:3128"
@@ -31,9 +33,9 @@ def check(name, ok, detail=""):
         failed.append(name)
 
 
-def call(method, path, body=None, timeout=300, token=None):
+def call(method, path, body=None, timeout=300, token=None, base=SBX):
     data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(SBX + path, data=data, method=method)
+    req = urllib.request.Request(base + path, data=data, method=method)
     req.add_header("Authorization", "Bearer " + (token or TOKEN))
     if data is not None:
         req.add_header("Content-Type", "application/json")
@@ -103,7 +105,11 @@ def forward(sid, port):
 
 def main():
     template = sys.argv[1] if len(sys.argv) > 1 else sys.exit(__doc__)
-    key = subprocess.run([GW_KEY_TOOL, "add", SMOKE_ID], capture_output=True, text=True).stdout.split()[-1]
+    key = "cb-" + secrets.token_urlsafe(34)
+    code, _ = call("POST", "", {"ak": key, "product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": SMOKE_ID,
+                                "qps": 4, "daily_token_quota": 5000000, "tokens_per_minute": 200000},
+                   30, GW_ADMIN_TOKEN, GW_ADMIN)
+    check("throwaway gw key created", code == 201, f"{code}")
     sid = None
     try:
         t0 = time.monotonic()
@@ -144,9 +150,9 @@ def main():
         if sid:
             code, _ = call("POST", f"/v1/sandboxes/{sid}/release")
             check("release", code in (200, 204), f"{code}")
-        subprocess.run([GW_KEY_TOOL, "revoke", SMOKE_ID], capture_output=True)
-        listed = subprocess.run([GW_KEY_TOOL, "list"], capture_output=True, text=True).stdout
-        check("throwaway gw key revoked", SMOKE_ID not in listed)
+        code, _ = call("DELETE", f"/{key}", None, 30, GW_ADMIN_TOKEN, GW_ADMIN)
+        _, listed = call("GET", "", None, 30, GW_ADMIN_TOKEN, GW_ADMIN)
+        check("throwaway gw key deleted", code == 200 and all(k.get("owner") != SMOKE_ID for k in listed.get("keys", [])), f"{code}")
     print("PASS" if not failed else f"FAILED: {', '.join(failed)}")
     sys.exit(1 if failed else 0)
 

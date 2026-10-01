@@ -1,50 +1,17 @@
 #!/bin/sh
-# usage: sudo install-gw-config [TEMPLATE]
-# Renders /etc/gw/gateway.yaml (root:gw 0640): the shared key (if the template still has its placeholder)
-# on its ak: line, and one access_keys entry per file in the box-key dir at the marker line.
+# usage: sudo install-gw-config FILE
+# Installs FILE as /etc/gw/gateway.yaml (root:gw 0640; it seeds an empty gw config store) and publishes it to the running gw.
 set -eu
-tmpl=${1:-${CB_GW_TEMPLATE:-/etc/gw/gateway.yaml.tmpl}}
-key_file=${CB_GW_SHARED_KEY:-/etc/cocoonbox/gw-client.key}
-key_dir=${CB_GW_KEY_DIR:-/etc/gw/box-keys}
-out=${CB_GW_OUT:-/etc/gw/gateway.yaml}
-owner_user=${CB_GW_OWNER:-root}
-owner_group=${CB_GW_GROUP:-gw}
+src=${1:?usage: install-gw-config FILE}
+out=/etc/gw/gateway.yaml
+token_file=/etc/gw/admin-token
+url=http://10.203.0.1:18090/admin/config
 
-shared=$(grep -c '__CB_ACCESS_KEY__' "$tmpl" || true)
-[ "$shared" -le 1 ] || { echo "template holds the shared placeholder more than once" >&2; exit 1; }
-[ "$shared" = 0 ] || grep -q '^  - ak: __CB_ACCESS_KEY__$' "$tmpl" || { echo "shared placeholder must be the value of an ak: line" >&2; exit 1; }
-[ "$(grep -c '^  # __CB_BOX_KEYS__$' "$tmpl" || true)" = 1 ] || { echo "template must hold the box-key marker exactly once" >&2; exit 1; }
-
-boxes=$(mktemp)
-trap 'rm -f "$boxes"' EXIT
-if [ -d "$key_dir" ]; then
-	for f in "$key_dir"/cb-*; do
-		[ -f "$f" ] || continue
-		id=$(basename "$f")
-		printf '%s\n' "$id" | grep -Eq '^cb-[0-9a-f]{12}(-r[0-9a-z]+)?$' || continue
-		printf '  - ak: %s\n    product: cocoonbox\n    tenant: cocoonbox-boxes\n    owner: %s\n    qps: 4\n    daily_token_quota: 5000000\n    tokens_per_minute: 200000\n' \
-			"$(cat "$f")" "${id%%-r*}" >> "$boxes"
-	done
+install -o root -g gw -m 0640 "$src" "$out"
+if ! systemctl is-active -q gw; then
+	echo "gw is not running: installed $out only; a non-empty config store keeps its head" >&2
+	exit 0
 fi
-
-tmp=$(mktemp "$(dirname "$out")/.gateway.yaml.XXXXXX")
-if [ "$shared" = 1 ]; then
-	skey=$(cat "$key_file")
-	sed "s|^  - ak: __CB_ACCESS_KEY__\$|  - ak: $skey|" "$tmpl" > "$tmp.1"
-else
-	cp "$tmpl" "$tmp.1"
-fi
-awk -v f="$boxes" '$0 == "  # __CB_BOX_KEYS__" { while ((getline l < f) > 0) print l; next } { print }' "$tmp.1" > "$tmp"
-rm -f "$tmp.1"
-
-python3 - "$tmp" <<'PY'
-import collections, sys, yaml
-cfg = yaml.safe_load(open(sys.argv[1]))
-aks = [k["ak"] for k in cfg.get("access_keys", [])]
-dup = [a for a, n in collections.Counter(aks).items() if n > 1]
-if dup or any("__CB_" in a for a in aks):
-    sys.exit("duplicate or unrendered access key")
-PY
-chown "$owner_user:$owner_group" "$tmp"
-chmod 0640 "$tmp"
-mv -f "$tmp" "$out"
+printf 'url = "%s"\nrequest = "PUT"\nheader = "Authorization: Bearer %s"\ndata-binary = "@%s"\n' "$url" "$(cat "$token_file")" "$out" |
+	curl -sS --fail-with-body -K -
+echo

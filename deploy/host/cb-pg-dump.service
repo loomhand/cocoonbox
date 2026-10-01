@@ -1,0 +1,9 @@
+[Unit]
+Description=cocoonbox nightly PostgreSQL dump
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+Group=postgres
+ExecStart=/usr/local/sbin/cb-pg-dump

@@ -2,8 +2,8 @@
 Description=gw LLM gateway (cocoonbox)
 Documentation=https://github.com/cocoonstack/gateway
 Requires=cb-host-net.service
-After=cb-host-net.service network-online.target
-Wants=network-online.target
+After=cb-host-net.service postgresql.service network-online.target
+Wants=postgresql.service network-online.target
 
 [Service]
 Type=simple
