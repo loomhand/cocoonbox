@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=cua-driver in the session
+Exec=/usr/local/lib/cocoonbox/cua-driver-session
+OnlyShowIn=XFCE;
+NoDisplay=true

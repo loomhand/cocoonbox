@@ -1,0 +1,5 @@
+#!/bin/sh
+# restarts cua-driver with this session's SESSION_MANAGER, so the apps it launches register with xfce4-session and are saved
+set -eu
+systemctl --user import-environment SESSION_MANAGER
+exec systemctl --user restart cua-driver.service
