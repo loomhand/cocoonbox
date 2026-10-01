@@ -65,79 +65,84 @@ struct SidebarView: View {
 
     var body: some View {
         @Bindable var model = model
-        VStack(alignment: .leading, spacing: 0) {
-            BoxHeader()
-                .padding(12)
-            Divider()
-            HStack {
-                Text("Agents").font(.headline)
-                Spacer()
-                Menu {
-                    Button("Agent in the box") { model.createAgent() }
-                    Menu("Local agent") {
-                        ForEach(LocalAgentKind.allCases) { kind in
-                            Button(kind.title) { model.launchLocal(kind) }
+        let external = model.externalAgents()
+        List(selection: $model.selectedAgentID) {
+            Section {
+                ForEach(model.agents.filter { $0.externalClient == nil }, id: \.id) { agent in
+                    AgentRow(agent: agent).tag(agent.id)
+                        .contextMenu {
+                            Button("Rename…") { model.renamingAgent = agent }
+                            Button("Delete…", role: .destructive) { model.deletingAgent = agent }
                         }
-                    }
-                } label: {
-                    Image(systemName: "plus")
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .disabled(!model.boxRunning)
-                .help("New agent")
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            let external = model.externalAgents()
-            List(selection: $model.selectedAgentID) {
-                Section {
-                    ForEach(model.agents.filter { $0.externalClient == nil }, id: \.id) { agent in
-                        AgentRow(agent: agent).tag(agent.id)
-                            .contextMenu {
-                                Button("Rename…") { model.renamingAgent = agent }
-                                Button("Delete…", role: .destructive) { model.deletingAgent = agent }
+            Section(isExpanded: $externalExpanded) {
+                ForEach(external, id: \.id) { agent in
+                    AgentRow(agent: agent).tag(agent.id)
+                        .contextMenu {
+                            Button("Delete…", role: .destructive) { model.deletingAgent = agent }
+                                .disabled(agent.status == .running || agent.status == .waitingForUser)
+                        }
+                }
+            } header: {
+                if !external.isEmpty {
+                    Text("External")
+                }
+            }
+            Section {
+                ForEach(model.localAgents) { session in
+                    LocalAgentRow(session: session).tag(AppModel.selectionID(session))
+                }
+            } header: {
+                if !model.localAgents.isEmpty {
+                    Text("On this Mac")
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .environment(\.defaultMinListRowHeight, 38)
+        .alert("Rename agent", isPresented: Binding(get: { model.renamingAgent != nil }, set: { if !$0 { model.renamingAgent = nil } }), presenting: model.renamingAgent) { agent in
+            TextField("Name", text: $newName)
+            Button("Rename") { model.renameAgent(agent, to: newName) }
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: model.renamingAgent?.id) { newName = model.renamingAgent?.name ?? "" }
+        .alert("Delete “\(model.deletingAgent?.name ?? "agent")”?", isPresented: Binding(get: { model.deletingAgent != nil }, set: { if !$0 { model.deletingAgent = nil } }), presenting: model.deletingAgent) { agent in
+            Button("Delete", role: .destructive) { model.deleteAgent(agent) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("The agent and its conversation are removed from the box. This cannot be undone.")
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(alignment: .leading, spacing: 0) {
+                BoxHeader()
+                    .padding(12)
+                Divider()
+                HStack {
+                    Text("Agents").font(.headline)
+                    Spacer()
+                    Menu {
+                        Button("Agent in the box") { model.createAgent() }
+                        Menu("Local agent") {
+                            ForEach(LocalAgentKind.allCases) { kind in
+                                Button(kind.title) { model.launchLocal(kind) }
                             }
+                        }
+                    } label: {
+                        Image(systemName: "plus")
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .disabled(!model.boxRunning)
+                    .help("New agent")
                 }
-                Section(isExpanded: $externalExpanded) {
-                    ForEach(external, id: \.id) { agent in
-                        AgentRow(agent: agent).tag(agent.id)
-                            .contextMenu {
-                                Button("Delete…", role: .destructive) { model.deletingAgent = agent }
-                                    .disabled(agent.status == .running || agent.status == .waitingForUser)
-                            }
-                    }
-                } header: {
-                    if !external.isEmpty {
-                        Text("External")
-                    }
-                }
-                Section {
-                    ForEach(model.localAgents) { session in
-                        LocalAgentRow(session: session).tag(AppModel.selectionID(session))
-                    }
-                } header: {
-                    if !model.localAgents.isEmpty {
-                        Text("On this Mac")
-                    }
-                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
             }
-            .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 38)
-            .alert("Rename agent", isPresented: Binding(get: { model.renamingAgent != nil }, set: { if !$0 { model.renamingAgent = nil } }), presenting: model.renamingAgent) { agent in
-                TextField("Name", text: $newName)
-                Button("Rename") { model.renameAgent(agent, to: newName) }
-                Button("Cancel", role: .cancel) {}
-            }
-            .onChange(of: model.renamingAgent?.id) { newName = model.renamingAgent?.name ?? "" }
-            .alert("Delete “\(model.deletingAgent?.name ?? "agent")”?", isPresented: Binding(get: { model.deletingAgent != nil }, set: { if !$0 { model.deletingAgent = nil } }), presenting: model.deletingAgent) { agent in
-                Button("Delete", role: .destructive) { model.deleteAgent(agent) }
-                Button("Cancel", role: .cancel) {}
-            } message: { _ in
-                Text("The agent and its conversation are removed from the box. This cannot be undone.")
-            }
+            .background(.bar)
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
             if let error = model.lastError {
                 Text(error)
                     .font(.caption)
@@ -145,11 +150,12 @@ struct SidebarView: View {
                     .lineLimit(3)
                     .padding(12)
                     .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.bar)
             }
         }
     }
 }
-
 struct AgentRow: View {
     let agent: Agent
 
