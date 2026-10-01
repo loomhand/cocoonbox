@@ -176,10 +176,11 @@ fn files_containing(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
         let path = entry.unwrap().path();
         if path.is_dir() {
             hits.extend(files_containing(&path, needle));
-        } else if std::fs::read(&path)
-            .unwrap()
-            .windows(needle.len())
-            .any(|w| w == needle)
+        } else if needle.is_empty()
+            || std::fs::read(&path)
+                .unwrap()
+                .windows(needle.len())
+                .any(|w| w == needle)
         {
             hits.push(path);
         }
@@ -310,6 +311,11 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         "{snapshot}"
     );
     assert!(posts.lock().unwrap().is_empty());
+    eprintln!(
+        "refused: {:?} {}; nothing posted",
+        refused.code(),
+        refused.message()
+    );
 
     let done = session
         .fill_credential(authed(fill(&origin, Secret::Password(password.clone()))))
@@ -318,6 +324,7 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         .into_inner();
     assert_eq!(done.filled, ["username", "password"]);
     assert!(done.submitted);
+    eprintln!("filled {:?}, submitted {}", done.filled, done.submitted);
     assert_eq!(
         wait_post(&posts, "/login").await,
         format!("user={user}&pass={password}")
@@ -336,6 +343,10 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         .into_inner();
     assert_eq!(done.filled, ["code"]);
     assert_eq!(wait_post(&posts, "/code").await, format!("otp={code}"));
+    eprintln!(
+        "the site received both POSTs with the filled values; filled {:?}",
+        done.filled
+    );
 
     tool(&th, "browser_close", json!({})).await;
     for child in [&mut serve, &mut toolhost] {
@@ -349,6 +360,10 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     );
     assert!(logs.contains("toolhost listening on"), "{logs}");
     assert!(logs.contains("serve listening on"), "{logs}");
+    let control = dir.path().join("control");
+    std::fs::create_dir_all(&control).unwrap();
+    std::fs::write(control.join("planted"), &password).unwrap();
+    assert_eq!(files_containing(&control, password.as_bytes()).len(), 1);
     for value in [&user, &password, &code] {
         assert!(!logs.contains(value.as_str()), "a value is in the logs");
         assert_eq!(
@@ -356,4 +371,9 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
             Vec::<PathBuf>::new()
         );
     }
+    eprintln!(
+        "{} bytes of serve and toolhost stderr and {} files under the state dir hold none of the 3 values; the planted control file was found",
+        logs.len(),
+        files_containing(&state, b"").len()
+    );
 }
