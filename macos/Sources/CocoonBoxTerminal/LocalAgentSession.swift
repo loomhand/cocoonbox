@@ -158,30 +158,29 @@ public struct LocalAgentTerminal: NSViewRepresentable {
     public func makeNSView(context: Context) -> NSView {
         let container = TerminalContainer()
         container.session = session
-        attach(to: container)
+        if session.view.superview == nil { container.claim() }
         return container
     }
 
-    public func updateNSView(_ container: NSView, context: Context) {
-        if session.view.superview !== container { attach(to: container) }
-    }
-
-    private func attach(to container: NSView) {
-        let view = session.view
-        view.removeFromSuperview()
-        view.frame = container.bounds
-        view.autoresizingMask = [.width, .height]
-        container.addSubview(view)
-    }
+    public func updateNSView(_ container: NSView, context: Context) {}
 }
 
-// TerminalContainer focuses the terminal when it first appears, unless a view other than the window or the sidebar list holds the keyboard.
+// TerminalContainer takes the terminal when it enters a window and focuses it unless another view, not the sidebar list, holds the keyboard.
 private final class TerminalContainer: NSView {
     weak var session: LocalAgentSession?
+
+    func claim() {
+        guard let view = session?.view, view.superview !== self else { return }
+        view.removeFromSuperview()
+        view.frame = bounds
+        view.autoresizingMask = [.width, .height]
+        addSubview(view)
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard let window else { return }
+        claim()
         if let responder = window.firstResponder, responder !== window, !(responder is NSTableView) { return }
         session?.focus()
     }
