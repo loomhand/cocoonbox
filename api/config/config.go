@@ -86,10 +86,16 @@ type State struct {
 	PresignTTL     Duration `json:"presign_ttl"`
 }
 
-// Provision names the edge signing key and the gw key helper socket.
+// Provision names the edge signing key and gw's admin API for per-box gw keys.
 type Provision struct {
-	SigningKeyFile string `json:"signing_key_file"`
-	GWKeySocket    string `json:"gw_key_socket"`
+	SigningKeyFile string  `json:"signing_key_file"`
+	GWAdmin        GWAdmin `json:"gw_admin"`
+}
+
+// GWAdmin names gw's admin API and the file holding its cocoonbox-boxes tenant admin token; an empty URL disables gw keys.
+type GWAdmin struct {
+	URL       string `json:"url"`
+	TokenFile string `json:"token_file"`
 }
 
 // Sandboxd names the sandboxd instance of the sandboxd backend and the file holding its root api token.
@@ -159,15 +165,12 @@ func (c *Config) StoreCredentials() (string, string, error) {
 
 // SandboxdToken reads the root api token of the sandboxd instance.
 func (c *Config) SandboxdToken() (string, error) {
-	raw, err := os.ReadFile(c.Sandboxd.TokenFile)
-	if err != nil {
-		return "", fmt.Errorf("read sandboxd token: %w", err)
-	}
-	token := strings.TrimSpace(string(raw))
-	if token == "" {
-		return "", fmt.Errorf("sandboxd token file %s is empty", c.Sandboxd.TokenFile)
-	}
-	return token, nil
+	return readToken(c.Sandboxd.TokenFile, "sandboxd token")
+}
+
+// GWAdminToken reads the tenant admin token of gw's admin API.
+func (c *Config) GWAdminToken() (string, error) {
+	return readToken(c.Provision.GWAdmin.TokenFile, "gw admin token")
 }
 
 func (c *Config) applyDefaults() {
@@ -190,7 +193,7 @@ func (c *Config) applyDefaults() {
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.Kubeconfig, &c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Sandboxd.TokenFile} {
+	for _, p := range []*string{&c.Kubeconfig, &c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Provision.GWAdmin.TokenFile, &c.Sandboxd.TokenFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -222,6 +225,9 @@ func (c *Config) validate() error {
 	if c.Provision.SigningKeyFile == "" {
 		errs = append(errs, errors.New("provision.signing_key_file is required: agents admit only edge-signed credentials"))
 	}
+	if (c.Provision.GWAdmin.URL == "") != (c.Provision.GWAdmin.TokenFile == "") {
+		errs = append(errs, errors.New("provision.gw_admin.url and provision.gw_admin.token_file go together"))
+	}
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
 	}
@@ -238,4 +244,16 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
 	return errors.Join(errs...)
+}
+
+func readToken(path, what string) (string, error) {
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied config path
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", what, err)
+	}
+	token := strings.TrimSpace(string(raw))
+	if token == "" {
+		return "", fmt.Errorf("%s file %s is empty", what, path)
+	}
+	return token, nil
 }

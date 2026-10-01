@@ -138,8 +138,14 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 		return nil, err
 	}
 	var gw boxes.GWKeys
-	if cfg.Provision.GWKeySocket != "" {
-		gw = gwkeys.New(cfg.Provision.GWKeySocket)
+	if cfg.Provision.GWAdmin.URL != "" {
+		token, err := cfg.GWAdminToken()
+		if err != nil {
+			return nil, err
+		}
+		if gw, err = gwkeys.New(cfg.Provision.GWAdmin.URL, token); err != nil {
+			return nil, err
+		}
 	}
 	svc.EnableProvisioning(signer, gw)
 	go svc.RunProvisioner(ctx, provisionInterval)

@@ -28,7 +28,9 @@ state:
   scheduled_users: []          # users whose boxes get scheduled live saves
 provision:                     # every box's identity file (design §12) and per-box gw key
   signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519
-  gw_key_socket: /run/cb-gw-key.sock
+  gw_admin:                    # per-box gw keys through gw's admin API; omit to disable
+    url: http://10.203.0.1:18090
+    token_file: gw-admin-token # the cocoonbox-boxes tenant admin token
 users:
   # token_sha256 = printf %s "$TOKEN" | sha256sum
   - name: example

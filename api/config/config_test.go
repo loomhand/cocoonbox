@@ -41,6 +41,8 @@ func TestLoadRejects(t *testing.T) {
 		{name: "sandboxd without url", body: "backend: sandboxd\nsandboxd:\n  token_file: t\n", want: "sandboxd.url"},
 		{name: "no signing key", body: "users: []\n", want: "provision.signing_key_file is required"},
 		{name: "retired edge token", body: signingKey + "edge_token_file: edge-token\n", want: "unknown field"},
+		{name: "retired gw key socket", body: signingKey + "  gw_key_socket: /run/cb-gw-key.sock\n", want: "unknown field"},
+		{name: "gw admin without token", body: signingKey + "  gw_admin:\n    url: http://10.203.0.1:18090\n", want: "provision.gw_admin.url and provision.gw_admin.token_file"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -52,7 +54,7 @@ func TestLoadRejects(t *testing.T) {
 }
 
 func TestLoadResolvesRelativePaths(t *testing.T) {
-	path := writeConfig(t, signingKey+"kubeconfig: kubeconfig\nbackend: sandboxd\nsandboxd:\n  url: http://127.0.0.1:17800\n  token_file: sandboxd-token\n")
+	path := writeConfig(t, signingKey+"  gw_admin:\n    url: http://10.203.0.1:18090\n    token_file: gw-admin-token\nkubeconfig: kubeconfig\nbackend: sandboxd\nsandboxd:\n  url: http://127.0.0.1:17800\n  token_file: sandboxd-token\n")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
@@ -60,6 +62,9 @@ func TestLoadResolvesRelativePaths(t *testing.T) {
 	dir := filepath.Dir(path)
 	if cfg.Kubeconfig != filepath.Join(dir, "kubeconfig") || cfg.Provision.SigningKeyFile != filepath.Join(dir, "edge-signing.key") || cfg.Sandboxd.TokenFile != filepath.Join(dir, "sandboxd-token") {
 		t.Errorf("paths = %q, %q, %q, want under %s", cfg.Kubeconfig, cfg.Provision.SigningKeyFile, cfg.Sandboxd.TokenFile, dir)
+	}
+	if cfg.Provision.GWAdmin.TokenFile != filepath.Join(dir, "gw-admin-token") {
+		t.Errorf("gw admin token file = %q, want under %s", cfg.Provision.GWAdmin.TokenFile, dir)
 	}
 }
 
