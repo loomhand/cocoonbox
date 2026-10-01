@@ -4,7 +4,6 @@ package gwkeys
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -22,10 +20,6 @@ const (
 	qps             = 4
 	dailyTokens     = 5_000_000
 	tokensPerMinute = 200_000
-
-	keyPrefix = "cb-"
-	keyChars  = 45
-	alphabet  = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
 
 	pageSize       = 10_000
 	requestTimeout = 30 * time.Second
@@ -48,39 +42,35 @@ func New(base, token string) (*Client, error) {
 	return &Client{base: u, token: token, http: &http.Client{Timeout: requestTimeout}}, nil
 }
 
-// Add returns machine's gw key, creating it on first use and revoking any extra.
+// Add replaces machine's gw keys with one that gw generates and returns it.
 func (c *Client) Add(ctx context.Context, machine string) (string, error) {
-	keys, err := c.keysOf(ctx, machine)
-	if err != nil {
+	if err := c.Revoke(ctx, machine); err != nil {
 		return "", err
 	}
-	if len(keys) > 0 {
-		for _, extra := range keys[1:] {
-			if err := c.delete(ctx, extra); err != nil {
-				return "", err
-			}
-		}
-		return keys[0], nil
-	}
-	key := newKey()
 	body := map[string]any{
-		"ak": key, "product": product, "tenant": tenant, "owner": machine,
+		"product": product, "tenant": tenant, "owner": machine,
 		"qps": qps, "daily_token_quota": dailyTokens, "tokens_per_minute": tokensPerMinute,
 	}
-	if _, err := c.request(ctx, http.MethodPost, key, nil, body, nil); err != nil {
+	var created struct {
+		AK string `json:"ak"`
+	}
+	if _, err := c.request(ctx, http.MethodPost, "", nil, body, &created); err != nil {
 		return "", err
 	}
-	return key, nil
+	if created.AK == "" {
+		return "", errors.New("POST /admin/keys: no generated key in the response")
+	}
+	return created.AK, nil
 }
 
 // Revoke removes machine's gw keys; revoking an absent key succeeds.
 func (c *Client) Revoke(ctx context.Context, machine string) error {
-	keys, err := c.keysOf(ctx, machine)
+	ids, err := c.keysOf(ctx, machine)
 	if err != nil {
 		return err
 	}
-	for _, key := range keys {
-		if err := c.delete(ctx, key); err != nil {
+	for _, id := range ids {
+		if err := c.delete(ctx, id); err != nil {
 			return err
 		}
 	}
@@ -88,40 +78,36 @@ func (c *Client) Revoke(ctx context.Context, machine string) error {
 }
 
 func (c *Client) keysOf(ctx context.Context, machine string) ([]string, error) {
-	var keys []string
-	for offset := 0; ; offset += pageSize {
-		var page struct {
-			Keys []struct {
-				AK     string `json:"ak"`
-				Tenant string `json:"tenant"`
-				Owner  string `json:"owner"`
-			} `json:"keys"`
-		}
-		query := url.Values{"tenant": {tenant}, "offset": {strconv.Itoa(offset)}, "limit": {strconv.Itoa(pageSize)}}
-		if _, err := c.request(ctx, http.MethodGet, "", query, nil, &page); err != nil {
-			return nil, err
-		}
-		for _, k := range page.Keys {
-			if k.Tenant == tenant && k.Owner == machine && k.AK != "" {
-				keys = append(keys, k.AK)
-			}
-		}
-		if len(page.Keys) < pageSize {
-			return keys, nil
+	var page struct {
+		Keys []struct {
+			AKID   string `json:"ak_id"`
+			Tenant string `json:"tenant"`
+			Owner  string `json:"owner"`
+		} `json:"keys"`
+	}
+	query := url.Values{"tenant": {tenant}, "owner": {machine}, "limit": {strconv.Itoa(pageSize)}}
+	if _, err := c.request(ctx, http.MethodGet, "", query, nil, &page); err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, k := range page.Keys {
+		if k.Tenant == tenant && k.Owner == machine && k.AKID != "" {
+			ids = append(ids, k.AKID)
 		}
 	}
+	return ids, nil
 }
 
-func (c *Client) delete(ctx context.Context, key string) error {
-	status, err := c.request(ctx, http.MethodDelete, key, nil, nil, nil)
+func (c *Client) delete(ctx context.Context, id string) error {
+	status, err := c.request(ctx, http.MethodDelete, id, nil, nil, nil)
 	if status == http.StatusNotFound {
 		return nil
 	}
 	return err
 }
 
-// request calls /admin/keys, or /admin/keys/{key} for DELETE; its errors never carry key.
-func (c *Client) request(ctx context.Context, method, key string, query url.Values, body, out any) (int, error) {
+// request calls /admin/keys, or /admin/keys/{id} for DELETE.
+func (c *Client) request(ctx context.Context, method, id string, query url.Values, body, out any) (int, error) {
 	op := method + " /admin/keys"
 	var payload io.Reader
 	if body != nil {
@@ -133,12 +119,12 @@ func (c *Client) request(ctx context.Context, method, key string, query url.Valu
 	}
 	u := c.base.JoinPath("admin", "keys")
 	if method == http.MethodDelete {
-		u = u.JoinPath(key)
+		u = u.JoinPath(id)
 	}
 	u.RawQuery = query.Encode()
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), payload)
 	if err != nil {
-		return 0, fmt.Errorf("build %s: %w", op, redact(err, key))
+		return 0, fmt.Errorf("build %s: %w", op, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	if body != nil {
@@ -149,7 +135,7 @@ func (c *Client) request(ctx context.Context, method, key string, query url.Valu
 		if urlErr, ok := errors.AsType[*url.Error](err); ok {
 			err = urlErr.Err
 		}
-		return 0, fmt.Errorf("%s: %w", op, redact(err, key))
+		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
@@ -162,7 +148,7 @@ func (c *Client) request(ctx context.Context, method, key string, query url.Valu
 		if json.Unmarshal(raw, &e) != nil || e.Error.Message == "" {
 			e.Error.Message = http.StatusText(resp.StatusCode)
 		}
-		return resp.StatusCode, fmt.Errorf("%s: %d %s", op, resp.StatusCode, redact(errors.New(e.Error.Message), key))
+		return resp.StatusCode, fmt.Errorf("%s: %d %s", op, resp.StatusCode, e.Error.Message)
 	}
 	if out == nil {
 		return resp.StatusCode, nil
@@ -171,27 +157,4 @@ func (c *Client) request(ctx context.Context, method, key string, query url.Valu
 		return resp.StatusCode, fmt.Errorf("decode %s: %w", op, err)
 	}
 	return resp.StatusCode, nil
-}
-
-func redact(err error, key string) error {
-	if key == "" || !strings.Contains(err.Error(), key) {
-		return err
-	}
-	return errors.New(strings.ReplaceAll(err.Error(), key, "<key>"))
-}
-
-// newKey draws keyChars characters from alphabet without modulo bias.
-func newKey() string {
-	key := make([]byte, 0, len(keyPrefix)+keyChars)
-	key = append(key, keyPrefix...)
-	buf := make([]byte, keyChars)
-	for len(key) < cap(key) {
-		_, _ = rand.Read(buf)
-		for _, b := range buf {
-			if int(b) < 256-256%len(alphabet) && len(key) < cap(key) {
-				key = append(key, alphabet[int(b)%len(alphabet)])
-			}
-		}
-	}
-	return string(key)
 }

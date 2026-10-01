@@ -1,6 +1,9 @@
 package gwkeys
 
 import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,92 +20,93 @@ const (
 	adminToken = "tenant-admin-token"
 	machine    = "cb-ef260e9aa3c6"
 	rebased    = "cb-ef260e9aa3c6-r1"
-	abort      = -1
 )
 
-var keyFormat = regexp.MustCompile(`^cb-[A-Za-z0-9]{45}$`)
+var (
+	keyFormat = regexp.MustCompile(`^gw-[0-9a-f]{64}$`)
+	idFormat  = regexp.MustCompile(`^sha256:[0-9a-f]{32}$`)
+)
 
-func TestAddCreatesThenReuses(t *testing.T) {
+func TestAddCreatesAGeneratedKey(t *testing.T) {
 	gw, c := newFakeGW(t)
 	key, err := c.Add(t.Context(), machine)
 	if err != nil || !keyFormat.MatchString(key) {
 		t.Fatalf("Add = %q, %v", key, err)
 	}
-	got := gw.key(key)
-	want := map[string]any{"ak": key, "product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": machine, "qps": 4.0, "daily_token_quota": 5e6, "tokens_per_minute": 2e5}
+	got := gw.key(akID(key))
+	want := map[string]any{"ak_id": akID(key), "product": "cocoonbox", "tenant": "cocoonbox-boxes", "owner": machine, "qps": 4.0, "daily_token_quota": 5e6, "tokens_per_minute": 2e5}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("created %v, want %v", got, want)
 	}
-	again, err := c.Add(t.Context(), machine)
-	if err != nil || again != key {
-		t.Errorf("second Add = %v, want the same key", err)
-	}
 	other, err := c.Add(t.Context(), rebased)
-	if err != nil || other == key {
-		t.Errorf("Add for another machine = %v, want a different key", err)
-	}
-	if gw.posts != 2 {
-		t.Errorf("posts = %d, want 2", gw.posts)
+	if err != nil || other == key || gw.key(akID(key)) == nil {
+		t.Errorf("Add for another machine = %v, want a different key and the first kept", err)
 	}
 }
 
-func TestAddKeepsOneKeyPerMachine(t *testing.T) {
+func TestAddReplacesTheMachinesKeys(t *testing.T) {
 	gw, c := newFakeGW(t)
-	gw.put("cb-k1", machine)
-	gw.put("cb-k2", machine)
+	gw.put("gw-k1", machine)
+	gw.put("gw-k2", machine)
 	key, err := c.Add(t.Context(), machine)
-	if err != nil || key != "cb-k1" {
-		t.Fatalf("Add = %q, %v, want cb-k1", key, err)
+	if err != nil || key == "gw-k1" || key == "gw-k2" {
+		t.Fatalf("Add = %q, %v, want a fresh key", key, err)
 	}
-	if gw.key("cb-k2") != nil || gw.posts != 0 {
-		t.Errorf("extra key kept or a new one created: %v, posts %d", gw.key("cb-k2"), gw.posts)
+	again, err := c.Add(t.Context(), machine)
+	if err != nil || again == key {
+		t.Fatalf("second Add = %q, %v, want a fresh key", again, err)
+	}
+	if ids := gw.idsOf(machine); !slices.Equal(ids, []string{akID(again)}) {
+		t.Errorf("keys of %s = %v, want only the last one", machine, ids)
 	}
 }
 
 func TestRevokeDeletesOnlyThatMachine(t *testing.T) {
 	gw, c := newFakeGW(t)
-	gw.put("cb-old", machine)
-	gw.put("cb-new", rebased)
-	gw.put("cb-other-tenant", machine)
-	gw.keys["cb-other-tenant"]["tenant"] = "cocoonbox"
+	gw.put("gw-old", machine)
+	gw.put("gw-new", rebased)
+	gw.put("gw-other-tenant", machine)
+	gw.keys[akID("gw-other-tenant")]["tenant"] = "cocoonbox"
 	if err := c.Revoke(t.Context(), machine); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
-	if gw.key("cb-old") != nil || gw.key("cb-new") == nil || gw.key("cb-other-tenant") == nil {
+	if gw.key(akID("gw-old")) != nil || gw.key(akID("gw-new")) == nil || gw.key(akID("gw-other-tenant")) == nil {
 		t.Errorf("keys after Revoke = %v", gw.order)
 	}
 	if err := c.Revoke(t.Context(), machine); err != nil {
 		t.Errorf("Revoke of an absent key: %v", err)
 	}
-	gw.put("cb-gone", machine)
-	gw.vanish = "cb-gone"
+	gw.put("gw-gone", machine)
+	gw.vanish = akID("gw-gone")
 	if err := c.Revoke(t.Context(), machine); err != nil {
 		t.Errorf("Revoke when DELETE answers 404: %v", err)
 	}
 }
 
-func TestListPagesThroughTheTenant(t *testing.T) {
+func TestListFiltersByOwner(t *testing.T) {
 	gw, c := newFakeGW(t)
 	for i := range pageSize {
-		gw.put("cb-filler"+strconv.Itoa(i), "cb-000000000000")
+		gw.put("gw-filler"+strconv.Itoa(i), "cb-000000000000")
 	}
-	gw.put("cb-last", machine)
+	gw.put("gw-last", machine)
 	if err := c.Revoke(t.Context(), machine); err != nil {
 		t.Fatalf("Revoke: %v", err)
 	}
-	if gw.key("cb-last") != nil || gw.lists != 2 {
-		t.Errorf("key on the second page kept: lists %d", gw.lists)
+	if gw.key(akID("gw-last")) != nil || gw.lists != 1 {
+		t.Errorf("key of %s kept or the tenant scanned: lists %d", machine, gw.lists)
 	}
 }
 
 func TestErrorsNeverCarryTheKey(t *testing.T) {
 	gw, c := newFakeGW(t)
-	gw.put("cb-secret", machine)
-	for _, fail := range []int{http.StatusInternalServerError, abort} {
-		gw.fail = fail
-		if err := c.Revoke(t.Context(), machine); err == nil || strings.Contains(err.Error(), "cb-secret") {
-			t.Errorf("Revoke with DELETE failing %d: %v", fail, err)
-		}
+	gw.cut = true
+	if key, err := c.Add(t.Context(), machine); err == nil || key != "" || strings.Contains(err.Error(), gw.last) {
+		t.Errorf("Add with the POST response cut = %q, %v", key, err)
+	}
+	gw.cut = false
+	key, err := c.Add(t.Context(), machine)
+	if err != nil || !slices.Equal(gw.idsOf(machine), []string{akID(key)}) {
+		t.Errorf("retried Add = %v, keys %v, want the orphan revoked", err, gw.idsOf(machine))
 	}
 	bad, _ := New(gw.srv.URL, "wrong")
 	if _, err := bad.Add(t.Context(), machine); err == nil || !strings.Contains(err.Error(), "401") {
@@ -118,27 +122,16 @@ func TestNewRejectsBadURL(t *testing.T) {
 	}
 }
 
-func TestNewKeyFormat(t *testing.T) {
-	seen := map[string]bool{}
-	for range 100 {
-		k := newKey()
-		if !keyFormat.MatchString(k) || seen[k] {
-			t.Fatalf("newKey = %q", k)
-		}
-		seen[k] = true
-	}
-}
-
 type fakeGW struct {
 	srv *httptest.Server
 
 	mu     sync.Mutex
 	keys   map[string]map[string]any
 	order  []string
-	posts  int
 	lists  int
-	fail   int
 	vanish string
+	cut    bool
+	last   string
 }
 
 func newFakeGW(t *testing.T) (*fakeGW, *Client) {
@@ -154,14 +147,27 @@ func newFakeGW(t *testing.T) (*fakeGW, *Client) {
 }
 
 func (g *fakeGW) put(ak, owner string) {
-	g.keys[ak] = map[string]any{"ak": ak, "tenant": "cocoonbox-boxes", "owner": owner}
-	g.order = append(g.order, ak)
+	id := akID(ak)
+	g.keys[id] = map[string]any{"ak_id": id, "tenant": "cocoonbox-boxes", "owner": owner}
+	g.order = append(g.order, id)
 }
 
-func (g *fakeGW) key(ak string) map[string]any {
+func (g *fakeGW) key(id string) map[string]any {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.keys[ak]
+	return g.keys[id]
+}
+
+func (g *fakeGW) idsOf(owner string) []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var ids []string
+	for _, id := range g.order {
+		if g.keys[id]["owner"] == owner {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }
 
 func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
@@ -171,44 +177,66 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "invalid admin token")
 		return
 	}
-	ak, hasAK := strings.CutPrefix(r.URL.Path, "/admin/keys/")
+	id, hasID := strings.CutPrefix(r.URL.Path, "/admin/keys/")
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/keys":
 		g.lists++
-		offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
-		limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+		q := r.URL.Query()
+		if q.Get("owner") == "" {
+			writeError(w, http.StatusBadRequest, "owner must be non-empty")
+			return
+		}
+		limit, _ := strconv.Atoi(q.Get("limit"))
 		var page []map[string]any
 		for _, k := range g.order {
-			if g.keys[k]["tenant"] == r.URL.Query().Get("tenant") {
+			if g.keys[k]["tenant"] == q.Get("tenant") && g.keys[k]["owner"] == q.Get("owner") {
 				page = append(page, g.keys[k])
 			}
 		}
-		page = page[min(offset, len(page)):min(offset+limit, len(page))]
-		_ = json.NewEncoder(w).Encode(map[string]any{"count": len(page), "offset": offset, "keys": page})
+		page = page[:min(limit, len(page))]
+		_ = json.NewEncoder(w).Encode(map[string]any{"count": len(page), "offset": 0, "keys": page})
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/keys":
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		g.posts++
-		g.keys[body["ak"].(string)] = body
-		g.order = append(g.order, body["ak"].(string))
+		if _, ok := body["ak"]; ok {
+			writeError(w, http.StatusBadRequest, "the client chose the key")
+			return
+		}
+		raw := make([]byte, 32)
+		_, _ = rand.Read(raw)
+		ak := "gw-" + hex.EncodeToString(raw)
+		body["ak_id"] = akID(ak)
+		g.keys[akID(ak)] = body
+		g.order = append(g.order, akID(ak))
+		g.last = ak
 		w.WriteHeader(http.StatusCreated)
-	case r.Method == http.MethodDelete && hasAK:
-		if g.fail == abort {
+		resp := fmt.Sprintf(`{"ak_id":%q,"status":"created","ak":%q}`, akID(ak), ak)
+		if g.cut {
+			_, _ = w.Write([]byte(resp[:len(resp)-1]))
+			w.(http.Flusher).Flush()
 			panic(http.ErrAbortHandler)
 		}
-		if g.fail != 0 {
-			writeError(w, g.fail, "store error on key "+ak)
+		_, _ = w.Write([]byte(resp))
+	case r.Method == http.MethodDelete && hasID:
+		if !idFormat.MatchString(id) {
+			writeError(w, http.StatusBadRequest, "the client deleted by raw key")
 			return
 		}
-		if g.keys[ak] == nil || ak == g.vanish {
-			writeError(w, http.StatusNotFound, "key "+ak+" not found")
+		if g.keys[id] == nil || id == g.vanish {
+			writeError(w, http.StatusNotFound, "key "+id+" not found")
 			return
 		}
-		delete(g.keys, ak)
-		g.order = slices.DeleteFunc(g.order, func(k string) bool { return k == ak })
+		delete(g.keys, id)
+		g.order = slices.DeleteFunc(g.order, func(k string) bool { return k == id })
 	default:
 		writeError(w, http.StatusNotFound, "not found")
 	}
+}
+
+// akID is gw's access_key_id: sha256: plus the first 16 digest bytes in hex.
+func akID(ak string) string {
+	sum := sha256.Sum256([]byte(ak))
+	return "sha256:" + hex.EncodeToString(sum[:16])
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
