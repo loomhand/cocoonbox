@@ -20,6 +20,9 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Boxes_Ensure_FullMethodName         = "/cocoonbox.control.v1.Boxes/Ensure"
+	Boxes_Create_FullMethodName         = "/cocoonbox.control.v1.Boxes/Create"
+	Boxes_Rename_FullMethodName         = "/cocoonbox.control.v1.Boxes/Rename"
+	Boxes_Delete_FullMethodName         = "/cocoonbox.control.v1.Boxes/Delete"
 	Boxes_Get_FullMethodName            = "/cocoonbox.control.v1.Boxes/Get"
 	Boxes_List_FullMethodName           = "/cocoonbox.control.v1.Boxes/List"
 	Boxes_Hibernate_FullMethodName      = "/cocoonbox.control.v1.Boxes/Hibernate"
@@ -36,8 +39,15 @@ const (
 // `authorization: Bearer <user token>`.
 type BoxesClient interface {
 	// Ensure creates the caller's box, or wakes it, and returns immediately.
-	// Idempotent per (user, flavor). Progress arrives on WatchOperation.
+	// Idempotent per (box, flavor). Progress arrives on WatchOperation.
 	Ensure(ctx context.Context, in *EnsureRequest, opts ...grpc.CallOption) (*EnsureResponse, error)
+	// Create adds a box to the caller's boxes and starts it, within the user's
+	// box quota and the api's running limit.
+	Create(ctx context.Context, in *CreateBoxRequest, opts ...grpc.CallOption) (*EnsureResponse, error)
+	Rename(ctx context.Context, in *RenameBoxRequest, opts ...grpc.CallOption) (*Box, error)
+	// Delete saves the box quiesced when it runs, then removes its machine and
+	// the box. Its saved state stays in object storage.
+	Delete(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
 	Get(ctx context.Context, in *GetBoxRequest, opts ...grpc.CallOption) (*Box, error)
 	List(ctx context.Context, in *ListBoxesRequest, opts ...grpc.CallOption) (*ListBoxesResponse, error)
 	Hibernate(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
@@ -63,6 +73,36 @@ func (c *boxesClient) Ensure(ctx context.Context, in *EnsureRequest, opts ...grp
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(EnsureResponse)
 	err := c.cc.Invoke(ctx, Boxes_Ensure_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) Create(ctx context.Context, in *CreateBoxRequest, opts ...grpc.CallOption) (*EnsureResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(EnsureResponse)
+	err := c.cc.Invoke(ctx, Boxes_Create_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) Rename(ctx context.Context, in *RenameBoxRequest, opts ...grpc.CallOption) (*Box, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Box)
+	err := c.cc.Invoke(ctx, Boxes_Rename_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) Delete(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Operation)
+	err := c.cc.Invoke(ctx, Boxes_Delete_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -146,8 +186,15 @@ func (c *boxesClient) Rebase(ctx context.Context, in *RebaseRequest, opts ...grp
 // `authorization: Bearer <user token>`.
 type BoxesServer interface {
 	// Ensure creates the caller's box, or wakes it, and returns immediately.
-	// Idempotent per (user, flavor). Progress arrives on WatchOperation.
+	// Idempotent per (box, flavor). Progress arrives on WatchOperation.
 	Ensure(context.Context, *EnsureRequest) (*EnsureResponse, error)
+	// Create adds a box to the caller's boxes and starts it, within the user's
+	// box quota and the api's running limit.
+	Create(context.Context, *CreateBoxRequest) (*EnsureResponse, error)
+	Rename(context.Context, *RenameBoxRequest) (*Box, error)
+	// Delete saves the box quiesced when it runs, then removes its machine and
+	// the box. Its saved state stays in object storage.
+	Delete(context.Context, *BoxRef) (*Operation, error)
 	Get(context.Context, *GetBoxRequest) (*Box, error)
 	List(context.Context, *ListBoxesRequest) (*ListBoxesResponse, error)
 	Hibernate(context.Context, *BoxRef) (*Operation, error)
@@ -171,6 +218,15 @@ type UnimplementedBoxesServer struct{}
 
 func (UnimplementedBoxesServer) Ensure(context.Context, *EnsureRequest) (*EnsureResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Ensure not implemented")
+}
+func (UnimplementedBoxesServer) Create(context.Context, *CreateBoxRequest) (*EnsureResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Create not implemented")
+}
+func (UnimplementedBoxesServer) Rename(context.Context, *RenameBoxRequest) (*Box, error) {
+	return nil, status.Error(codes.Unimplemented, "method Rename not implemented")
+}
+func (UnimplementedBoxesServer) Delete(context.Context, *BoxRef) (*Operation, error) {
+	return nil, status.Error(codes.Unimplemented, "method Delete not implemented")
 }
 func (UnimplementedBoxesServer) Get(context.Context, *GetBoxRequest) (*Box, error) {
 	return nil, status.Error(codes.Unimplemented, "method Get not implemented")
@@ -225,6 +281,60 @@ func _Boxes_Ensure_Handler(srv interface{}, ctx context.Context, dec func(interf
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(BoxesServer).Ensure(ctx, req.(*EnsureRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_Create_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateBoxRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).Create(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_Create_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).Create(ctx, req.(*CreateBoxRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_Rename_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenameBoxRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).Rename(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_Rename_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).Rename(ctx, req.(*RenameBoxRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_Delete_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BoxRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).Delete(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_Delete_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).Delete(ctx, req.(*BoxRef))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -340,6 +450,18 @@ var Boxes_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Ensure",
 			Handler:    _Boxes_Ensure_Handler,
+		},
+		{
+			MethodName: "Create",
+			Handler:    _Boxes_Create_Handler,
+		},
+		{
+			MethodName: "Rename",
+			Handler:    _Boxes_Rename_Handler,
+		},
+		{
+			MethodName: "Delete",
+			Handler:    _Boxes_Delete_Handler,
 		},
 		{
 			MethodName: "Get",

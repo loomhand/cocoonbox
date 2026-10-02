@@ -8,8 +8,15 @@ option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;cont
 // `authorization: Bearer <user token>`.
 service Boxes {
   // Ensure creates the caller's box, or wakes it, and returns immediately.
-  // Idempotent per (user, flavor). Progress arrives on WatchOperation.
+  // Idempotent per (box, flavor). Progress arrives on WatchOperation.
   rpc Ensure(EnsureRequest) returns (EnsureResponse);
+  // Create adds a box to the caller's boxes and starts it, within the user's
+  // box quota and the api's running limit.
+  rpc Create(CreateBoxRequest) returns (EnsureResponse);
+  rpc Rename(RenameBoxRequest) returns (Box);
+  // Delete saves the box quiesced when it runs, then removes its machine and
+  // the box. Its saved state stays in object storage.
+  rpc Delete(BoxRef) returns (Operation);
   rpc Get(GetBoxRequest) returns (Box);
   rpc List(ListBoxesRequest) returns (ListBoxesResponse);
   rpc Hibernate(BoxRef) returns (Operation);
@@ -43,6 +50,8 @@ enum Phase {
   PHASE_SAVING = 6;
   // Writing the user state into a new machine.
   PHASE_RESTORING = 7;
+  // Removing the box's machine.
+  PHASE_DELETING = 8;
 }
 
 message BoxRef {
@@ -66,6 +75,8 @@ message Box {
   int64 last_saved_at_ms = 7;
   // Image a new box gets today, and the default Rebase target; differs from image when an upgrade is available.
   string latest_image = 8;
+  // Unique among the user's boxes.
+  string name = 9;
 }
 
 message Operation {
@@ -75,6 +86,20 @@ message Operation {
 
 message EnsureRequest {
   Flavor flavor = 1;
+  // Empty selects the user's first box, and creates one when the user has none.
+  string box_id = 2;
+}
+
+message CreateBoxRequest {
+  string name = 1;
+  // Empty selects the current default image.
+  string image = 2;
+  Flavor flavor = 3;
+}
+
+message RenameBoxRequest {
+  string box_id = 1;
+  string name = 2;
 }
 
 message EnsureResponse {
