@@ -15,7 +15,7 @@ import (
 const viewerReadChunk = 32 << 10
 
 // Screen bridges a share's viewer to the box's Session.Screen until either side closes or the share ends;
-// the viewer's input never reaches the box.
+// the viewer's input never reaches the box, and the box's clipboard never reaches the viewer.
 func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -44,10 +44,12 @@ func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) 
 	if err := stream.Send(&agentv1.ScreenClientFrame{Body: &agentv1.ScreenClientFrame_Open{Open: &agentv1.ScreenOpen{}}}); err != nil {
 		return err
 	}
+	session := &rfbSession{}
 	go func() {
-		forwardViewer(stream, viewer)
+		forwardViewer(stream, viewer, &viewOnly{session: session})
 		cancel()
 	}()
+	screen := &screenOnly{session: session}
 	for {
 		frame, err := stream.Recv()
 		if errors.Is(err, io.EOF) {
@@ -56,7 +58,14 @@ func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) 
 		if err != nil {
 			return err
 		}
-		if _, err := viewer.Write(frame.GetData()); err != nil {
+		out, err := screen.feed(frame.GetData())
+		if err != nil {
+			return err
+		}
+		if len(out) == 0 {
+			continue
+		}
+		if _, err := viewer.Write(out); err != nil {
 			return err
 		}
 	}
@@ -80,8 +89,7 @@ func (p *Proxy) EndShare(ctx context.Context, owner, box, id string) error {
 }
 
 // forwardViewer sends the viewer's handshake and framebuffer requests to the box until the viewer closes or sends something else.
-func forwardViewer(stream agentv1.Session_ScreenClient, viewer io.Reader) {
-	var filter viewOnly
+func forwardViewer(stream agentv1.Session_ScreenClient, viewer io.Reader, filter *viewOnly) {
 	buf := make([]byte, viewerReadChunk)
 	for {
 		n, err := viewer.Read(buf)
