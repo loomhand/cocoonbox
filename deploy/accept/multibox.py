@@ -164,7 +164,8 @@ def main():
     listed = [(b["name"], b["state"]) for b in result.get("structuredContent", {}).get("boxes", [])]
     check(listed == [("main", "running"), ("test", "hibernated")], f"2. box_list = {listed}")
 
-    # 3. the total quota.
+    # 3. the total quota, with no box running, so the running limit cannot answer first.
+    control.tool("box_hibernate", {"box": "main"})
     _, result, _ = control.tool("box_create", {"name": "third"})
     check(result.get("isError") and "quota" in text(result), "3. a third box is refused by max boxes: " + text(result)[:120])
 
