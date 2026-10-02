@@ -2887,3 +2887,27 @@ async fn restore_writes_files_under_a_read_only_directory_and_keeps_its_mode() {
         chmod(&d, 0o755);
     }
 }
+
+#[tokio::test]
+async fn a_failed_plan_removes_its_spool() {
+    let h = Harness::start(Vec::new(), false).await;
+    std::fs::write(h.workspace.join("a.txt"), noise(10_000, 41)).unwrap();
+    let dir = h.home.parent().unwrap().to_path_buf();
+    std::fs::remove_file(dir.join("toolhost.sock")).unwrap();
+    let err = state_client(&h)
+        .await
+        .plan(authed(pb::PlanRequest {
+            key: Some(state_key()),
+            consistency: pb::Consistency::Live.into(),
+            parent: String::new(),
+        }))
+        .await
+        .unwrap_err();
+    assert!(err.message().contains("toolhost"), "{err:?}");
+    let spools: Vec<_> = std::fs::read_dir(dir.join("state/state"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|n| n.to_string_lossy().starts_with("spool-"))
+        .collect();
+    assert!(spools.is_empty(), "{spools:?}");
+}

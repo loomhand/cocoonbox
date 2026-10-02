@@ -553,6 +553,23 @@ impl StateEngine {
         tokio::fs::create_dir_all(&spool)
             .await
             .map_err(|e| format!("create {}: {e}", spool.display()))?;
+        let result = self
+            .spool_snapshot(keys, key_id, parent, quiesced, spool.clone())
+            .await;
+        if result.is_err() {
+            let _ = tokio::fs::remove_dir_all(&spool).await;
+        }
+        result
+    }
+
+    async fn spool_snapshot(
+        &self,
+        keys: &Arc<Keys>,
+        key_id: &str,
+        parent: &str,
+        quiesced: bool,
+        spool: PathBuf,
+    ) -> Result<(Pinned, pb::PlanResponse), StateError> {
         let mut last = if parent.is_empty() {
             Known::default()
         } else {
