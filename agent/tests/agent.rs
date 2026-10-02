@@ -126,6 +126,7 @@ impl Harness {
             anthropic_messages,
             mcp_idle,
             mcp_prune_after,
+            quiesce_wait: Duration::from_secs(1),
             desktop_unit: None,
             state_roots: vec![
                 Root {
@@ -2320,6 +2321,67 @@ async fn non_ascii_text_is_typed_one_character_per_call() {
         .await;
     assert_eq!(ascii["isError"], false);
     assert_eq!(driver_calls(&h, "type_text").len(), 8);
+}
+
+#[tokio::test]
+async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
+    let h = Harness::start(Vec::new(), false).await;
+    let edge = Edge::provision(&h);
+    let owner = edge.owner();
+    let quiesced = |credential: &str| {
+        signed(
+            pb::PlanRequest {
+                key: Some(state_key()),
+                consistency: pb::Consistency::Quiesced.into(),
+                parent: String::new(),
+            },
+            credential,
+        )
+    };
+
+    let mut guest = McpClient::connect_as(&h, Some(edge.share("share:sh-1:write"))).await;
+    let call = tokio::spawn(async move {
+        guest
+            .call(
+                "shell",
+                json!({"command": "sleep 100 & echo $! > guest.pid; wait", "timeout_s": 600}),
+            )
+            .await
+    });
+    let pid = h.workspace.join("guest.pid");
+    for _ in 0..100 {
+        if pid.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let started = std::time::Instant::now();
+    state_client(&h).await.plan(quiesced(&owner)).await.unwrap();
+    let took = started.elapsed();
+    assert!(
+        took < Duration::from_secs(4),
+        "the plan waited {took:?} on a guest"
+    );
+    let out = call.await.unwrap();
+    assert_eq!(out["isError"], true, "{out}");
+    assert!(
+        out["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("interrupted"),
+        "{out}"
+    );
+    assert!(
+        wait_gone(&pid).await,
+        "the guest's sleep outlived the quiesce"
+    );
+
+    let mut mine = McpClient::connect_as(&h, Some(owner.clone())).await;
+    let call = tokio::spawn(async move { mine.call("shell", json!({"command": "sleep 8"})).await });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let busy = state_client(&h).await.plan(quiesced(&owner)).await;
+    assert_eq!(busy.unwrap_err().code(), Code::Unavailable);
+    assert_eq!(call.await.unwrap()["isError"], false);
 }
 
 #[tokio::test]

@@ -35,6 +35,8 @@ const KEEPALIVE: Duration = Duration::from_secs(25);
 const MAX_REAP_PERIOD: Duration = Duration::from_secs(60);
 const MAX_BODY: usize = 64 << 20;
 const DRIVER_ENDED: &str = "session has ended";
+const PREEMPTED: &str =
+    "interrupted: the owner's save or upgrade of the box needed it; the shell session was reset";
 const LIST_CHANGED: &[u8] =
     b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n";
 const INSTRUCTIONS: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
@@ -461,11 +463,25 @@ impl Mcp {
             subagent: "",
             driver: Some(label),
         };
-        self.rt
-            .dispatcher
-            .call(&caller, &new_id("call"), name, args)
-            .await
-            .map_err(|e| (-32603, e))
+        let call_id = new_id("call");
+        let preempted = self.rt.guests.token();
+        tokio::select! {
+            out = self.rt.dispatcher.call(&caller, &call_id, name, args) => out.map_err(|e| (-32603, e)),
+            () = preempted.cancelled() => {
+                eprintln!("mcp: a quiesce interrupted {name} of {}", r.agent_id);
+                let closed = self.rt.dispatcher.close_shell(s.owner()).await;
+                if closed.is_error {
+                    eprintln!("mcp: close the shell of {}: {}", r.agent_id, closed.text);
+                }
+                let out = ToolOutput::error(PREEMPTED);
+                self.rt
+                    .dispatcher
+                    .record_result(&caller, &call_id, &out)
+                    .await
+                    .map_err(|e| (-32603, e))?;
+                Ok(out)
+            }
+        }
     }
 
     async fn note(&self, s: &Session, text: &str) {

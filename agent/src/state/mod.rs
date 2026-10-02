@@ -18,6 +18,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, OnceCell, OwnedRwLockWriteGuard, RwLock, Semaphore, mpsc};
 
 use crate::pb;
+use crate::runner::Preempt;
 use crate::store::Store;
 use crate::toolhost::rpc::{self, Call, FileReader, FileWriter};
 use crate::toolhost::state::{Entry, Excludes, Kind, Root};
@@ -35,7 +36,7 @@ const RESTORE_AHEAD: usize = 2;
 const PLAN_READS: usize = 4;
 const ATTEMPTS: u32 = 3;
 const RETRY_BASE: Duration = Duration::from_millis(500);
-const QUIESCE_WAIT: Duration = Duration::from_secs(30);
+const PREEMPT_WAIT: Duration = Duration::from_secs(5);
 const REUSE_AGE_MS: i64 = 1_000;
 const STAGING_PREFIX: &str = ".cb-restore-";
 const SQLITE_SIDECARS: [&str; 2] = ["-wal", "-journal"];
@@ -74,13 +75,21 @@ pub struct StateEngine {
     roots: Vec<Root>,
     excludes: Excludes,
     work: PathBuf,
-    turns: Arc<RwLock<()>>,
+    pause: Pause,
     desktop_unit: Option<String>,
     http: reqwest::Client,
     pinned: Mutex<Option<Pinned>>,
 }
 
-/// Why a state operation failed; `Busy` means a turn kept running past the quiesce wait.
+/// What a quiesce pauses: the gate that every turn and MCP tool call holds shared, and the share calls it may interrupt.
+pub struct Pause {
+    pub turns: Arc<RwLock<()>>,
+    pub guests: Arc<Preempt>,
+    /// How long a quiesce waits before it interrupts the share calls.
+    pub wait: Duration,
+}
+
+/// Why a state operation failed; `Busy` means a turn or an owner's MCP call kept running past the quiesce wait.
 #[derive(Debug)]
 pub enum StateError {
     Busy(String),
@@ -95,14 +104,14 @@ impl From<String> for StateError {
 }
 
 impl StateEngine {
-    /// Creates an engine over `roots`, keeping its spool under `work`; `turns` pauses the loop
+    /// Creates an engine over `roots`, keeping its spool under `work`; `pause` quiesces the loop and MCP
     /// and `desktop_unit` is the session unit Restore stops around the swap.
     pub fn new(
         toolhost: rpc::Client,
         store: Store,
         roots: Vec<Root>,
         work: PathBuf,
-        turns: Arc<RwLock<()>>,
+        pause: Pause,
         desktop_unit: Option<String>,
     ) -> Self {
         Self {
@@ -111,7 +120,7 @@ impl StateEngine {
             roots,
             excludes: excludes(),
             work,
-            turns,
+            pause,
             desktop_unit,
             http: reqwest::Client::new(),
             pinned: Mutex::new(None),
@@ -729,10 +738,21 @@ impl StateEngine {
         Ok((pinned, response))
     }
 
+    /// Takes the gate; past the wait it interrupts the share calls, since a guest must never hold off the owner.
     async fn quiesce(&self) -> Result<Quiet, StateError> {
-        let gate = tokio::time::timeout(QUIESCE_WAIT, Arc::clone(&self.turns).write_owned())
-            .await
-            .map_err(|_| StateError::Busy("a turn is still running; retry later".to_owned()))?;
+        let gate = Arc::clone(&self.pause.turns).write_owned();
+        tokio::pin!(gate);
+        let gate = match tokio::time::timeout(self.pause.wait, &mut gate).await {
+            Ok(gate) => gate,
+            Err(_) => {
+                self.pause.guests.fire();
+                tokio::time::timeout(PREEMPT_WAIT, gate)
+                    .await
+                    .map_err(|_| {
+                        StateError::Busy("a turn is still running; retry later".to_owned())
+                    })?
+            }
+        };
         if let Err(e) = self.tool("desktop_save", json!({})).await {
             eprintln!("state: save the desktop session: {e}");
         }
@@ -1234,7 +1254,11 @@ mod tests {
             Store::open(&dir.path().join("agent.db")).unwrap(),
             default_roots(),
             dir.path().join("work"),
-            Arc::clone(&turns),
+            Pause {
+                turns: Arc::clone(&turns),
+                guests: Arc::default(),
+                wait: Duration::from_secs(30),
+            },
             None,
         );
         let gate = Arc::clone(&turns).write_owned().await;

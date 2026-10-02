@@ -39,8 +39,10 @@ pub struct Runtime {
     pub stop: CancellationToken,
     /// Work that shutdown waits for: running turns and desktop-session cleanups.
     pub tasks: TaskTracker,
-    /// Held shared by every running turn; the state layer takes it exclusively to pause turns.
+    /// Held shared by every running turn and MCP tool call; the state layer takes it exclusively to pause them.
     pub turns: Arc<tokio::sync::RwLock<()>>,
+    /// Interrupts the MCP calls of share sessions when a quiesce has waited long enough.
+    pub guests: Arc<Preempt>,
     main_tools: Vec<ToolSpec>,
     main_vision_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
@@ -68,6 +70,7 @@ impl Runtime {
             stop: CancellationToken::new(),
             tasks: TaskTracker::new(),
             turns: Arc::new(tokio::sync::RwLock::new(())),
+            guests: Arc::default(),
             slots: Mutex::new(HashMap::new()),
             cfg,
         });
@@ -801,6 +804,22 @@ async fn worker(
         let _turn = slot.turn.lock().await;
         let turn = rt.run_turn(&agent_id, Arc::clone(&slot), turn_id);
         rt.tasks.track_future(turn).await;
+    }
+}
+
+/// Hands out tokens that one [`Preempt::fire`] cancels together.
+#[derive(Default)]
+pub struct Preempt(Mutex<CancellationToken>);
+
+impl Preempt {
+    /// The token the next [`Preempt::fire`] cancels.
+    pub fn token(&self) -> CancellationToken {
+        lock(&self.0).clone()
+    }
+
+    /// Cancels every token handed out so far; later tokens are fresh.
+    pub fn fire(&self) {
+        std::mem::take(&mut *lock(&self.0)).cancel();
     }
 }
 

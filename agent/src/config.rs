@@ -18,6 +18,7 @@ const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
+const QUIESCE_WAIT: Duration = Duration::from_secs(30);
 
 /// Settings of `serve`, read from `/etc/cocoonbox/agent.env` via systemd.
 #[derive(Clone)]
@@ -36,6 +37,8 @@ pub struct ServeConfig {
     pub anthropic_messages: bool,
     pub mcp_idle: Duration,
     pub mcp_prune_after: Duration,
+    /// How long a quiesce waits for running turns and MCP calls before it interrupts the share calls.
+    pub quiesce_wait: Duration,
     pub state_roots: Vec<Root>,
     pub desktop_unit: Option<String>,
 }
@@ -57,6 +60,7 @@ impl std::fmt::Debug for ServeConfig {
             .field("anthropic_messages", &self.anthropic_messages)
             .field("mcp_idle", &self.mcp_idle)
             .field("mcp_prune_after", &self.mcp_prune_after)
+            .field("quiesce_wait", &self.quiesce_wait)
             .field("state_roots", &self.state_roots)
             .field("desktop_unit", &self.desktop_unit)
             .finish()
@@ -84,6 +88,7 @@ impl ServeConfig {
             anthropic_messages: optional("GW_ANTHROPIC_WIRE", "chat") == "messages",
             mcp_idle: MCP_IDLE,
             mcp_prune_after: MCP_PRUNE_AFTER,
+            quiesce_wait: QUIESCE_WAIT,
             state_roots: crate::state::default_roots(),
             desktop_unit: Some(DESKTOP_UNIT.to_owned()),
         })
@@ -163,6 +168,7 @@ mod tests {
             anthropic_messages: false,
             mcp_idle: MCP_IDLE,
             mcp_prune_after: MCP_PRUNE_AFTER,
+            quiesce_wait: QUIESCE_WAIT,
             state_roots: Vec::new(),
             desktop_unit: None,
         };

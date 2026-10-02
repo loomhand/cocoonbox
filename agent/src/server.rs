@@ -23,7 +23,7 @@ use crate::pb::state_server::{State, StateServer};
 use crate::pb::{self, Event, fill_credential_request::Secret};
 use crate::runner::Runtime;
 use crate::screen;
-use crate::state::{StateEngine, StateError};
+use crate::state::{Pause, StateEngine, StateError};
 use crate::toolhost::rpc::{self, Call};
 
 const MAX_REQUEST_BYTES: usize = 64 << 20;
@@ -433,7 +433,11 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         rt.journal.store.clone(),
         rt.cfg.state_roots.clone(),
         rt.cfg.state_dir.join("state"),
-        Arc::clone(&rt.turns),
+        Pause {
+            turns: Arc::clone(&rt.turns),
+            guests: Arc::clone(&rt.guests),
+            wait: rt.cfg.quiesce_wait,
+        },
         rt.cfg.desktop_unit.clone(),
     );
     let state = StateServer::new(StateSvc {
