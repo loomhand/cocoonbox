@@ -169,7 +169,7 @@ final class AppModel {
             session.onTitle = { [weak self] in self?.persistLocal() }
             localAgents.append(session)
         }
-        linkLocalAgents()
+        if eventsLive { linkLocalAgents() }
         persistLocal()
         settleLocal()
     }
