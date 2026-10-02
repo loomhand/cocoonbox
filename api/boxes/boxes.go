@@ -68,7 +68,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	switch {
 	case err == nil:
 		if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_RESTORING {
-			return &controlv1.EnsureResponse{Box: s.toBox(ctx, box, cur), Operation: &controlv1.Operation{Id: active.id, BoxId: box}}, nil
+			return &controlv1.EnsureResponse{Box: s.toBox(ctx, user, box, cur), Operation: &controlv1.Operation{Id: active.id, BoxId: box}}, nil
 		}
 		if req.GetFlavor() != nil && cur.Flavor != flavor {
 			return nil, status.Errorf(codes.FailedPrecondition, "box exists with flavor vcpus:%d memory_mib:%d disk_gib:%d",
@@ -76,7 +76,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		}
 		spec.ID = cur.ID
 	case errors.Is(err, machines.ErrNotFound):
-		if saved, err = s.savedHead(ctx, box); err != nil {
+		if saved, err = s.savedHead(ctx, user, box); err != nil {
 			return nil, serviceError(ctx, logger, err, "read saved state")
 		}
 		if saved.Latest != "" {
@@ -93,22 +93,22 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	case machines.ActionCreated:
 		if saved.Latest != "" {
 			logger.Infof(ctx, "box of user %s has no machine; restoring snapshot %s into %s", user, saved.Latest, m.ID)
-			return s.restoreMissing(ctx, box, m, saved), nil
+			return s.restoreMissing(ctx, user, box, m, saved), nil
 		}
 		logger.Infof(ctx, "created box for user %s", user)
-		return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_CREATING), nil
+		return s.withOperation(ctx, user, box, m, controlv1.Phase_PHASE_CREATING), nil
 	case machines.ActionWoken:
 		logger.Info(ctx, "waking box")
-		return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_WAKING), nil
+		return s.withOperation(ctx, user, box, m, controlv1.Phase_PHASE_WAKING), nil
 	}
 	if s.ready(m) {
-		return &controlv1.EnsureResponse{Box: s.toBox(ctx, box, m)}, nil
+		return &controlv1.EnsureResponse{Box: s.toBox(ctx, user, box, m)}, nil
 	}
 	phase := controlv1.Phase_PHASE_CREATING
 	if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_WAKING {
 		phase = active.phase
 	}
-	return s.withOperation(ctx, box, m, phase), nil
+	return s.withOperation(ctx, user, box, m, phase), nil
 }
 
 func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*controlv1.Box, error) {
@@ -120,7 +120,7 @@ func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*contr
 	if err != nil {
 		return nil, serviceError(ctx, log.WithFunc("boxes.Service.Get").WithField("box", req.GetBoxId()), err, "get box")
 	}
-	return s.toBox(ctx, req.GetBoxId(), m), nil
+	return s.toBox(ctx, user, req.GetBoxId(), m), nil
 }
 
 func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
@@ -135,7 +135,7 @@ func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*con
 	if err != nil {
 		return nil, serviceError(ctx, log.WithFunc("boxes.Service.List").WithField("user", user), err, "list boxes")
 	}
-	return &controlv1.ListBoxesResponse{Boxes: []*controlv1.Box{s.toBox(ctx, BoxID(user), m)}}, nil
+	return &controlv1.ListBoxesResponse{Boxes: []*controlv1.Box{s.toBox(ctx, user, BoxID(user), m)}}, nil
 }
 
 func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
@@ -157,7 +157,7 @@ func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*contro
 		return nil, serviceError(ctx, logger, err, "hibernate box")
 	}
 	logger.Info(ctx, "hibernating box")
-	return s.withOperation(ctx, box, m, controlv1.Phase_PHASE_SNAPSHOTTING).GetOperation(), nil
+	return s.withOperation(ctx, user, box, m, controlv1.Phase_PHASE_SNAPSHOTTING).GetOperation(), nil
 }
 
 func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream grpc.ServerStreamingServer[controlv1.OperationEvent]) error {
@@ -239,13 +239,13 @@ func (s *Service) current(ctx context.Context, user string) (machines.Machine, e
 	}), nil
 }
 
-func (s *Service) withOperation(ctx context.Context, box string, m machines.Machine, phase controlv1.Phase) *controlv1.EnsureResponse {
+func (s *Service) withOperation(ctx context.Context, user, box string, m machines.Machine, phase controlv1.Phase) *controlv1.EnsureResponse {
 	op, started := s.ops.start(context.WithoutCancel(ctx), box, phase, m.Revision, operationTimeout)
 	if started {
 		go s.follow(op, m.ID)
 	}
 	return &controlv1.EnsureResponse{
-		Box:       s.toBox(ctx, box, m),
+		Box:       s.toBox(ctx, user, box, m),
 		Operation: &controlv1.Operation{Id: op.id, BoxId: op.boxID},
 	}
 }
@@ -276,14 +276,14 @@ func (s *Service) follow(op *operation, machine string) {
 	}
 }
 
-func (s *Service) toBox(ctx context.Context, box string, m machines.Machine) *controlv1.Box {
+func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machine) *controlv1.Box {
 	b := toBox(box, m)
 	if m.State == machines.StateRunning && !s.ready(m) {
 		b.State = controlv1.BoxState_BOX_STATE_STARTING
 	}
 	b.LatestImage = s.defaults.Image
 	if s.state != nil {
-		b.LastSavedAtMs = s.state.lastSaved(ctx, box)
+		b.LastSavedAtMs = s.state.lastSaved(ctx, statePath{user: user, box: box})
 	}
 	return b
 }

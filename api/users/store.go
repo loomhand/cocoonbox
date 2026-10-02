@@ -22,7 +22,7 @@ const (
 	uniqueViolation = "23505"
 
 	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, created_at,
-		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed`
+		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed`
 )
 
 //go:embed migrations/*.sql
@@ -104,16 +104,16 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
 		var r record
 		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.CreatedAt,
-			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken)
+			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey)
 		r.HasToken = r.tokenSHA256 != ""
 		return r, err
 	})
 }
 
 func (s *store) insert(ctx context.Context, r record, passwordHash string) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO users (id, name, admin, max_boxes, max_boxes_cap, password_hash, gw_ak_id, gw_key_sealed, tenant_token_sealed)
-		VALUES ($1, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9)`,
-		r.ID, r.Name, r.Admin, r.MaxBoxes, r.MaxBoxesCap, passwordHash, r.gwAKID, r.gwKey, r.tenantToken)
+	_, err := s.pool.Exec(ctx, `INSERT INTO users (id, name, admin, max_boxes, max_boxes_cap, password_hash, gw_ak_id, gw_key_sealed, tenant_token_sealed,
+		state_key_id, state_key_sealed) VALUES ($1, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9, $10, $11)`,
+		r.ID, r.Name, r.Admin, r.MaxBoxes, r.MaxBoxesCap, passwordHash, r.gwAKID, r.gwKey, r.tenantToken, r.stateKeyID, r.stateKey)
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return ErrExists
 	}
@@ -142,6 +142,18 @@ func (s *store) setToken(ctx context.Context, id, sha string) error {
 func (s *store) setSettings(ctx context.Context, r record) error {
 	return s.exec(ctx, "UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5 WHERE id = $1",
 		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap)
+}
+
+func (s *store) setStateKey(ctx context.Context, r record) error {
+	tag, err := s.pool.Exec(ctx, "UPDATE users SET state_key_id = $2, state_key_sealed = $3 WHERE id = $1 AND state_key_sealed IS NULL",
+		r.ID, r.stateKeyID, r.stateKey)
+	if err != nil {
+		return fmt.Errorf("set state key: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: user %s holds a state key or is gone", ErrExists, r.ID)
+	}
+	return nil
 }
 
 // password returns the id and password hash of the enabled user name.

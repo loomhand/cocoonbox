@@ -21,7 +21,6 @@ const (
 
 	defaultStateInterval = 15 * time.Minute
 	defaultPresignTTL    = 10 * time.Minute
-	defaultKeyringDir    = "/var/lib/cocoonbox-api/keys"
 	defaultRegion        = "us-east-1"
 
 	defaultVCPUs     = 4
@@ -63,7 +62,6 @@ type State struct {
 	Prefix         string `json:"prefix"`
 	// CredentialsFile holds STORE_ACCESS_KEY and STORE_SECRET_KEY lines.
 	CredentialsFile string   `json:"credentials_file"`
-	KeyringDir      string   `json:"keyring_dir"`
 	Interval        Duration `json:"interval"`
 	PresignTTL      Duration `json:"presign_ttl"`
 }
@@ -90,7 +88,7 @@ type Sandboxd struct {
 	TenantEgressClass string `json:"tenant_egress_class"`
 }
 
-// Accounts names the users database and the master key that seals each user's gw key and tenant token.
+// Accounts names the users database and the master key that seals each user's gw key, tenant token and state key.
 type Accounts struct {
 	// DSNFile holds the PostgreSQL connection string.
 	DSNFile       string `json:"dsn_file"`
@@ -173,7 +171,6 @@ func (c *Config) applyDefaults() {
 	c.Flavor.MemoryMiB = cmp.Or(c.Flavor.MemoryMiB, defaultMemoryMiB)
 	c.Flavor.DiskGiB = cmp.Or(c.Flavor.DiskGiB, defaultDiskGiB)
 	c.State.Region = cmp.Or(c.State.Region, defaultRegion)
-	c.State.KeyringDir = cmp.Or(c.State.KeyringDir, defaultKeyringDir)
 	c.State.Interval = cmp.Or(c.State.Interval, Duration(defaultStateInterval))
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 }

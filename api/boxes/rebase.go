@@ -42,7 +42,7 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 func (s *Service) runRebase(op *operation, user string, old machines.Machine, image string) {
 	logger := log.WithFunc("boxes.Service.runRebase").WithField("box", op.boxID)
 	start := time.Now()
-	rec, err := s.save(op, old, agentv1.Consistency_CONSISTENCY_QUIESCED)
+	rec, err := s.save(op, user, old, agentv1.Consistency_CONSISTENCY_QUIESCED)
 	if err != nil {
 		logger.Error(op.ctx, err, "save before rebase")
 		op.fail("save failed")
@@ -82,7 +82,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 
 	ep, err := s.machines.Address(op.ctx, created.ID)
 	if err == nil {
-		_, err = s.state.restore(s.agentContext(op.ctx, running), op.boxID, ep, rec.ID, progressNotes(op, controlv1.Phase_PHASE_RESTORING, "restoring"))
+		_, err = s.state.restore(s.agentContext(op.ctx, running), statePath{user: user, box: op.boxID}, ep, rec.ID, progressNotes(op, controlv1.Phase_PHASE_RESTORING, "restoring"))
 	}
 	if err != nil {
 		logger.Error(op.ctx, err, "restore into rebase machine")

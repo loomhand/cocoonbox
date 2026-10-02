@@ -22,7 +22,7 @@ const (
 	progressInterval = time.Second
 )
 
-// EnableState turns on saves and restores through agents into st, with per-box keys from keys.
+// EnableState turns on saves and restores through agents into st, with per-user keys from keys.
 func (s *Service) EnableState(agents StateAgents, st store.Store, keys keyring.Keyring) {
 	s.state = newStateLayer(agents, st, keys)
 }
@@ -37,7 +37,7 @@ func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*contro
 	if err != nil {
 		return nil, err
 	}
-	op := s.startSave(ctx, box, m, agentv1.Consistency_CONSISTENCY_QUIESCED)
+	op := s.startSave(ctx, user, box, m, agentv1.Consistency_CONSISTENCY_QUIESCED)
 	return &controlv1.Operation{Id: op.id, BoxId: box}, nil
 }
 
@@ -67,10 +67,10 @@ func (s *Service) saveStale(ctx context.Context, interval time.Duration) {
 		if !s.ready(m) || s.ops.activeFor(box) != nil {
 			continue
 		}
-		if time.Since(time.UnixMilli(s.state.lastSaved(ctx, box))) < interval {
+		if time.Since(time.UnixMilli(s.state.lastSaved(ctx, statePath{user: m.Owner, box: box}))) < interval {
 			continue
 		}
-		op := s.startSave(ctx, box, m, agentv1.Consistency_CONSISTENCY_LIVE)
+		op := s.startSave(ctx, m.Owner, box, m, agentv1.Consistency_CONSISTENCY_LIVE)
 		logger.Infof(ctx, "scheduled live save of %s as operation %s", box, op.id)
 	}
 }
@@ -93,18 +93,18 @@ func (s *Service) runningMachine(ctx context.Context, box, user string) (machine
 	return m, nil
 }
 
-// startSave runs a save of box from machine m as an operation.
-func (s *Service) startSave(ctx context.Context, box string, m machines.Machine, consistency agentv1.Consistency) *operation {
+// startSave runs a save of user's box from machine m as an operation.
+func (s *Service) startSave(ctx context.Context, user, box string, m machines.Machine, consistency agentv1.Consistency) *operation {
 	op, started := s.ops.start(context.WithoutCancel(ctx), box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if started {
-		go s.runSave(op, m, consistency)
+		go s.runSave(op, user, m, consistency)
 	}
 	return op
 }
 
-func (s *Service) runSave(op *operation, m machines.Machine, consistency agentv1.Consistency) {
+func (s *Service) runSave(op *operation, user string, m machines.Machine, consistency agentv1.Consistency) {
 	running := controlv1.BoxState_BOX_STATE_RUNNING
-	rec, err := s.save(op, m, consistency)
+	rec, err := s.save(op, user, m, consistency)
 	if err != nil {
 		log.WithFunc("boxes.Service.runSave").WithField("box", op.boxID).Error(op.ctx, err, "save state")
 		op.fail("save failed")
@@ -114,13 +114,13 @@ func (s *Service) runSave(op *operation, m machines.Machine, consistency agentv1
 	op.succeed(fmt.Sprintf("snapshot %s: %d files, %.1f MiB logical, %.1f MiB uploaded", rec.ID, rec.Files, float64(rec.LogicalBytes)/mib, float64(rec.UploadedBytes)/mib))
 }
 
-func (s *Service) save(op *operation, m machines.Machine, consistency agentv1.Consistency) (*snapshotRecord, error) {
+func (s *Service) save(op *operation, user string, m machines.Machine, consistency agentv1.Consistency) (*snapshotRecord, error) {
 	ep, err := s.machines.Address(op.ctx, m.ID)
 	if err != nil {
 		return nil, fmt.Errorf("address of %s: %w", m.ID, err)
 	}
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING, fmt.Sprintf("planning a %s snapshot", consistencyName(consistency)))
-	return s.state.save(s.agentContext(op.ctx, m), op.boxID, ep, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
+	return s.state.save(s.agentContext(op.ctx, m), statePath{user: user, box: op.boxID}, ep, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
 }
 
 // progressNotes turns transfer progress into operation events, at most one per progressInterval.

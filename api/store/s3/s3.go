@@ -119,6 +119,42 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
+// List returns the keys under prefix, which ends in a slash.
+func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
+	dir, err := s.object(strings.TrimSuffix(prefix, "/"))
+	if err != nil {
+		return nil, err
+	}
+	base := s.opts.Prefix
+	if base != "" {
+		base = path.Clean(base) + "/"
+	}
+	var keys []string
+	for info := range s.client.ListObjectsIter(ctx, s.opts.Bucket, minio.ListObjectsOptions{Prefix: dir + "/", Recursive: true}) {
+		if info.Err != nil {
+			return nil, fmt.Errorf("list %s: %w", prefix, info.Err)
+		}
+		keys = append(keys, strings.TrimPrefix(info.Key, base))
+	}
+	return keys, nil
+}
+
+// Copy copies src to dst inside the service, without moving the data through the api.
+func (s *S3) Copy(ctx context.Context, src, dst string) error {
+	from, err := s.object(src)
+	if err != nil {
+		return err
+	}
+	to, err := s.object(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := s.client.CopyObject(ctx, minio.CopyDestOptions{Bucket: s.opts.Bucket, Object: to}, minio.CopySrcOptions{Bucket: s.opts.Bucket, Object: from}); err != nil {
+		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
+	}
+	return nil
+}
+
 func (s *S3) object(key string) (string, error) {
 	if key == "" || key == "." || key == ".." || strings.HasPrefix(key, "/") || strings.HasPrefix(key, "../") || path.Clean(key) != key {
 		return "", fmt.Errorf("invalid object key %q", key)

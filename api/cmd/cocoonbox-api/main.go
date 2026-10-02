@@ -28,7 +28,6 @@ import (
 	"github.com/CMGS/cocoonbox/api/edge"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/gwkeys"
-	"github.com/CMGS/cocoonbox/api/keyring/file"
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/machines/sandboxd"
 	"github.com/CMGS/cocoonbox/api/store/s3"
@@ -91,7 +90,7 @@ func main() {
 	if cfg.State.Bucket != "" {
 		agents := dialer.New()
 		defer agents.Close()
-		if err = enableState(ctx, cfg, svc, agents); err != nil {
+		if err = enableState(ctx, cfg, svc, agents, accounts); err != nil {
 			logger.Fatalf(ctx, err, "enable state layer")
 		}
 	}
@@ -221,12 +220,23 @@ func machineFlavor(f config.Flavor) machines.Flavor {
 	return machines.Flavor{VCPUs: f.VCPUs, MemoryMiB: f.MemoryMiB, DiskGiB: f.DiskGiB}
 }
 
-func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer) error {
-	access, secret, err := cfg.StoreCredentials()
+func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer, accounts *users.Service) error {
+	st, err := newStore(cfg)
 	if err != nil {
 		return err
 	}
-	st, err := s3.New(s3.Options{
+	svc.EnableState(agents, st, accounts)
+	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
+	log.WithFunc("main.enableState").Infof(ctx, "state layer on %s/%s, saves every %s", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval))
+	return nil
+}
+
+func newStore(cfg *config.Config) (*s3.S3, error) {
+	access, secret, err := cfg.StoreCredentials()
+	if err != nil {
+		return nil, err
+	}
+	return s3.New(s3.Options{
 		Endpoint:       cfg.State.Endpoint,
 		PublicEndpoint: cfg.State.PublicEndpoint,
 		Secure:         cfg.State.Secure,
@@ -237,15 +247,4 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 		SecretKey:      secret,
 		PresignTTL:     time.Duration(cfg.State.PresignTTL),
 	})
-	if err != nil {
-		return err
-	}
-	keys, err := file.New(cfg.State.KeyringDir)
-	if err != nil {
-		return err
-	}
-	svc.EnableState(agents, st, keys)
-	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
-	log.WithFunc("main.enableState").Infof(ctx, "state layer on %s/%s, saves every %s", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval))
-	return nil
 }

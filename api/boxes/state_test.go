@@ -43,7 +43,7 @@ func TestSaveStateIsIncremental(t *testing.T) {
 	if plan.GetConsistency() != agentv1.Consistency_CONSISTENCY_QUIESCED || plan.GetParent() != "" || len(plan.GetKey().GetKey()) != keyring.KeySize {
 		t.Errorf("first plan = %v", plan)
 	}
-	if got := env.agent.lastUpload(); len(got.GetPuts()) != 3 || got.GetManifest().GetUrl() != "fake://put/"+aliceBox+"/manifests/"+snapshotID(1) {
+	if got := env.agent.lastUpload(); len(got.GetPuts()) != 3 || got.GetManifest().GetUrl() != "fake://put/"+alice+"/boxes/"+aliceBox+"/manifests/"+snapshotID(1) {
 		t.Errorf("first upload = %v", got)
 	}
 
@@ -60,7 +60,7 @@ func TestSaveStateIsIncremental(t *testing.T) {
 	if err != nil || box.GetLastSavedAtMs() == 0 || box.GetLatestImage() != "desktop-v2" {
 		t.Errorf("box = %v, %v", box, err)
 	}
-	if head := string(env.store.objects[aliceBox+"/head.json"]); !strings.Contains(head, `"latest":"`+snapshotID(2)+`"`) {
+	if head := string(env.store.objects[alice+"/boxes/"+aliceBox+"/head.json"]); !strings.Contains(head, `"latest":"`+snapshotID(2)+`"`) {
 		t.Errorf("head = %s", head)
 	}
 }
@@ -325,7 +325,7 @@ func TestAPageOfRealURLsFitsTheDefaultGRPCLimit(t *testing.T) {
 	}
 	key := &agentv1.StateKey{Key: make([]byte, keyring.KeySize), KeyId: "test:" + alice}
 	rec := &snapshotRecord{ID: snapshotID(1), UploadedBytes: uint64(len(ids)) << 10}
-	if err := l.upload(t.Context(), aliceBox, machines.Endpoint{}, rec, key, missing, func(*agentv1.TransferProgress) {}); err != nil {
+	if err := l.upload(t.Context(), statePath{user: alice, box: aliceBox}, machines.Endpoint{}, rec, key, missing, func(*agentv1.TransferProgress) {}); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	for i, up := range agent.allUploads() {
@@ -333,7 +333,7 @@ func TestAPageOfRealURLsFitsTheDefaultGRPCLimit(t *testing.T) {
 			t.Errorf("upload %d is %d bytes, over %d", i, n, tonicDefault)
 		}
 	}
-	for req, err := range l.restorePages(t.Context(), aliceBox, &agentv1.RestoreRequest{Key: key}, ids) {
+	for req, err := range l.restorePages(t.Context(), statePath{user: alice, box: aliceBox}, &agentv1.RestoreRequest{Key: key}, ids) {
 		if err != nil {
 			t.Fatalf("restore page: %v", err)
 		}
@@ -545,7 +545,7 @@ func TestCommitRetriesAFailedStoreWrite(t *testing.T) {
 	env := newStateEnv(t)
 	env.svc.state.retryDelay = time.Millisecond
 	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
-	index := aliceBox + "/index.json"
+	index := alice + "/index.json"
 	env.store.failNext(index, 1)
 	env.save(t)
 	if n := env.store.putCount(index); n != 2 {
@@ -567,7 +567,7 @@ func TestSaveHealsAfterACommitThatKeptFailing(t *testing.T) {
 	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
 	env.save(t)
 	env.agent.chunks = append(env.agent.chunks, hexID("c3"))
-	env.store.failNext(aliceBox+"/index.json", commitAttempts)
+	env.store.failNext(alice+"/index.json", commitAttempts)
 	op, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox})
 	if err != nil {
 		t.Fatalf("SaveState: %v", err)
@@ -581,13 +581,51 @@ func TestSaveHealsAfterACommitThatKeptFailing(t *testing.T) {
 	if got := []string{plans[2].GetParent(), plans[3].GetParent()}; !slices.Equal(got, []string{snapshotID(1), ""}) {
 		t.Errorf("parents of the plans after the failed commit = %q, want the old head, then none", got)
 	}
-	rec, err := env.svc.state.record(env.ctx, aliceBox, snapshotID(4))
+	rec, err := env.svc.state.record(env.ctx, statePath{user: alice, box: aliceBox}, snapshotID(4))
 	if err != nil || rec.Parent != snapshotID(1) || len(rec.Chunks) != 3 {
 		t.Errorf("healed snapshot = %+v, %v", rec, err)
 	}
 	env.save(t)
 	if plan, up := env.agent.lastPlan(), env.agent.lastUpload(); plan.GetParent() != snapshotID(4) || len(up.GetPuts()) != 0 {
 		t.Errorf("save after healing planned on %q and uploaded %d chunks", plan.GetParent(), len(up.GetPuts()))
+	}
+}
+
+func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
+	st := newFakeStore()
+	agent := newFakeAgent(st)
+	agent.byBox = map[string][]string{
+		"a": {hexID("c1"), hexID("c2")},
+		"b": {hexID("c2"), hexID("c3")},
+		"c": {hexID("c1"), hexID("c3")},
+	}
+	l := newStateLayer(agent, st, &fakeKeys{})
+	boxA, boxB := statePath{user: alice, box: "cb-00000000000a"}, statePath{user: alice, box: "cb-00000000000b"}
+	noProgress := func(*agentv1.TransferProgress) {}
+	var inner error
+	agent.onUpload = func(ep machines.Endpoint) {
+		if ep.Key == "a" {
+			agent.onUpload = nil
+			_, inner = l.save(t.Context(), boxB, machines.Endpoint{Key: "b"}, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+		}
+	}
+	if _, err := l.save(t.Context(), boxA, machines.Endpoint{Key: "a"}, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
+		t.Fatalf("save a: %v; save b during a's upload: %v", err, inner)
+	}
+	var idx chunkIndex
+	if err := getJSON(t.Context(), st, alice+"/index.json", &idx); err != nil || len(idx.Chunks) != 3 {
+		t.Errorf("index after parallel saves = %v, %v, want c1, c2 and c3", idx.Chunks, err)
+	}
+	for _, key := range []string{boxA.head(), boxB.head(), boxA.chunk(hexID("c3")), boxB.manifest(snapshotID(2))} {
+		if !st.has(key) {
+			t.Errorf("store lacks %s", key)
+		}
+	}
+	if _, err := l.save(t.Context(), statePath{user: alice, box: "cb-00000000000c"}, machines.Endpoint{Key: "c"}, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("save c: %v", err)
+	}
+	if n := len(agent.lastUpload().GetPuts()); n != 0 {
+		t.Errorf("a third box with chunks the user holds uploaded %d", n)
 	}
 }
 
@@ -721,6 +759,29 @@ func (s *fakeStore) Put(_ context.Context, key string, data []byte) error {
 	return nil
 }
 
+func (s *fakeStore) List(_ context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []string
+	for key := range s.objects {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
+}
+
+func (s *fakeStore) Copy(_ context.Context, src, dst string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	data, ok := s.objects[src]
+	if !ok {
+		return store.ErrNotFound
+	}
+	s.objects[dst] = data
+	return nil
+}
+
 func (s *fakeStore) failNext(key string, n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -733,12 +794,19 @@ func (s *fakeStore) putCount(key string) int {
 	return s.puts[key]
 }
 
+func (s *fakeStore) has(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.objects[key]
+	return ok
+}
+
 type fakeKeys struct {
 	id string
 }
 
-func (k *fakeKeys) Key(_ context.Context, owner string) (keyring.Key, error) {
-	return keyring.Key{ID: cmp.Or(k.id, "test:"+owner), Secret: make([]byte, keyring.KeySize)}, nil
+func (k *fakeKeys) StateKey(_ context.Context, user string) (keyring.Key, error) {
+	return keyring.Key{ID: cmp.Or(k.id, "test:"+user), Secret: make([]byte, keyring.KeySize)}, nil
 }
 
 type restoreCall struct {
@@ -765,14 +833,16 @@ type pinnedPlan struct {
 	spooled map[string]bool
 }
 
-// fakeAgent plans snapshots s1, s2, ... over chunks and moves objects in the fake store as presigned URLs name them.
+// fakeAgent plans snapshots s1, s2, ... over chunks (or byBox[ep.Key]) and moves objects in the fake store as presigned URLs name them.
 type fakeAgent struct {
 	store       *fakeStore
 	chunks      []string
+	byBox       map[string][]string
 	size        uint64
 	snapshotID  string
 	restoreErr  error
 	restoreGate chan struct{}
+	onUpload    func(ep machines.Endpoint)
 
 	mu          sync.Mutex
 	planReqs    []*agentv1.PlanRequest
@@ -796,9 +866,13 @@ func (a *fakeAgent) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1
 	a.planReqs = append(a.planReqs, req)
 	a.snapshots++
 	resp := &agentv1.PlanResponse{SnapshotId: cmp.Or(a.snapshotID, snapshotID(a.snapshots)), Files: 7, LogicalBytes: 3 << 20, TakenAtMs: time.Now().UnixMilli()}
+	chunks := a.chunks
+	if own, ok := a.byBox[ep.Key]; ok {
+		chunks = own
+	}
 	known := a.known[ep.Key]
-	plan := pinnedPlan{keyID: req.GetKey().GetKeyId(), chunks: a.chunks, spooled: map[string]bool{}}
-	for _, id := range a.chunks {
+	plan := pinnedPlan{keyID: req.GetKey().GetKeyId(), chunks: chunks, spooled: map[string]bool{}}
+	for _, id := range chunks {
 		resp.Chunks = append(resp.Chunks, &agentv1.ChunkRef{Id: id, Size: a.chunkSize()})
 		if req.GetParent() == "" || known.keyID != plan.keyID || !slices.Contains(known.chunks, id) {
 			plan.spooled[id] = true
@@ -812,11 +886,15 @@ func (a *fakeAgent) Upload(_ context.Context, ep machines.Endpoint, req *agentv1
 	a.mu.Lock()
 	a.uploads = append(a.uploads, req)
 	plan, planned := a.pinned[ep.Key]
+	hook := a.onUpload
 	a.mu.Unlock()
 	for _, put := range req.GetPuts() {
 		if planned && !plan.spooled[put.GetChunkId()] {
 			return nil, status.Errorf(codes.InvalidArgument, "chunk %s was not spooled because the last upload held it; plan again without a parent", put.GetChunkId())
 		}
+	}
+	if hook != nil {
+		hook(ep)
 	}
 	puts := req.GetPuts()
 	if req.GetManifest() != nil {

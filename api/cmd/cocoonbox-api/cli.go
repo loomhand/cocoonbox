@@ -3,24 +3,43 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
+	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/keyring"
 	"github.com/CMGS/cocoonbox/api/users"
 )
 
-const cliUsage = `usage:
+const (
+	cliUsage = `usage:
   cocoonbox-api [-config FILE] user add NAME [-id ID] [-admin]
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
-  cocoonbox-api [-config FILE] user token-sha256 NAME -stdin`
+  cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
+  cocoonbox-api [-config FILE] state migrate [-keyring DIR]`
+
+	defaultKeyringDir = "/var/lib/cocoonbox-api/keys"
+)
+
+type stateKeys interface {
+	StateKey(ctx context.Context, user string) (keyring.Key, error)
+	SetStateKey(ctx context.Context, user string, k keyring.Key) error
+}
 
 // runCLI serves the operator commands; secrets arrive on stdin and never on the command line.
 func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Reader, stdout io.Writer) error {
+	if len(args) >= 2 && args[0] == "state" && args[1] == "migrate" {
+		return migrateState(ctx, cfg, args[2:], stdout)
+	}
 	if len(args) < 3 || args[0] != "user" {
 		return errors.New(cliUsage)
 	}
@@ -81,4 +100,58 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	}
 	_, err = fmt.Fprintf(stdout, "%s of user %s updated\n", verb, u.Name)
 	return err
+}
+
+// migrateState gives every user a state key in the users table and copies its box into the per-user store layout; a rerun is safe.
+func migrateState(ctx context.Context, cfg *config.Config, args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("migrate", flag.ContinueOnError)
+	dir := flags.String("keyring", defaultKeyringDir, "directory of the per-box key files")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	st, err := newStore(cfg)
+	if err != nil {
+		return err
+	}
+	accounts, err := openUsers(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer accounts.Close()
+	for _, u := range accounts.List() {
+		box := boxes.BoxID(u.ID)
+		if err := importStateKey(ctx, accounts, u.ID, filepath.Join(*dir, box+".json")); err != nil {
+			return fmt.Errorf("state key of %s: %w", u.Name, err)
+		}
+		copied, err := boxes.MigrateState(ctx, st, u.ID)
+		if err != nil {
+			return fmt.Errorf("migrate state of %s: %w", u.Name, err)
+		}
+		if _, err := fmt.Fprintf(stdout, "user %s (%s): state key set, %d objects copied from %s/\n", u.Name, u.ID, copied, box); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// importStateKey gives user the key in the box key file at path, or a new key when there is no file and the user has none.
+func importStateKey(ctx context.Context, keys stateKeys, user, path string) error {
+	raw, err := os.ReadFile(path) //nolint:gosec // path is built from a box id
+	if errors.Is(err, fs.ErrNotExist) {
+		if _, err = keys.StateKey(ctx, user); err == nil {
+			return nil
+		}
+		return keys.SetStateKey(ctx, user, keyring.Generate(user))
+	}
+	if err != nil {
+		return err
+	}
+	var file struct {
+		ID     string `json:"id"`
+		Secret []byte `json:"secret"`
+	}
+	if err := json.Unmarshal(raw, &file); err != nil {
+		return fmt.Errorf("decode %s: %w", path, err)
+	}
+	return keys.SetStateKey(ctx, user, keyring.Key{ID: file.ID, Secret: file.Secret})
 }

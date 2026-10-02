@@ -60,7 +60,7 @@ type snapshotRecord struct {
 	UploadedBytes uint64  `json:"uploaded_bytes"`
 }
 
-// chunkIndex lists the chunks stored under one key; ids from another key never match.
+// chunkIndex lists the chunks stored under one user's key; ids from another key never match.
 type chunkIndex struct {
 	KeyID  string   `json:"key_id"`
 	Chunks []string `json:"chunks"`
@@ -71,6 +71,19 @@ type head struct {
 	SavedAtMs int64  `json:"saved_at_ms"`
 }
 
+// statePath places a box's objects in the store: chunks and their index per user, snapshots per box.
+type statePath struct {
+	user string
+	box  string
+}
+
+func (p statePath) chunk(id string) string    { return p.user + "/chunks/" + id }
+func (p statePath) index() string             { return p.user + "/index.json" }
+func (p statePath) manifest(id string) string { return p.boxDir() + "manifests/" + id }
+func (p statePath) record(id string) string   { return p.boxDir() + "snapshots/" + id + ".json" }
+func (p statePath) head() string              { return p.boxDir() + "head.json" }
+func (p statePath) boxDir() string            { return p.user + "/boxes/" + p.box + "/" }
+
 // stateLayer moves user state between box agents and the store; one transfer per box at a time.
 type stateLayer struct {
 	agents     StateAgents
@@ -80,53 +93,53 @@ type stateLayer struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
-	heads map[string]head
+	heads map[statePath]head
 }
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
-	return &stateLayer{agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, locks: map[string]*sync.Mutex{}, heads: map[string]head{}}
+	return &stateLayer{agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, locks: map[string]*sync.Mutex{}, heads: map[statePath]head{}}
 }
 
-// save snapshots the state of box's agent at ep and uploads the chunks the store lacks.
-func (l *stateLayer) save(ctx context.Context, box string, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	unlock := l.lock(box)
+// save snapshots the state of the agent at ep and uploads the chunks the user's store lacks.
+func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	unlock := l.lock(p.box)
 	defer unlock()
-	key, err := l.keys.Key(ctx, box)
+	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return nil, fmt.Errorf("state key: %w", err)
 	}
-	h, err := l.head(ctx, box)
+	h, err := l.head(ctx, p)
 	if err != nil {
 		return nil, err
 	}
 	stateKey := &agentv1.StateKey{Key: key.Secret, KeyId: key.ID}
-	rec, stored, err := l.snapshot(ctx, box, ep, stateKey, consistency, h.Latest, progress)
+	rec, err := l.snapshot(ctx, p, ep, stateKey, consistency, h.Latest, progress)
 	if h.Latest != "" && status.Code(err) == codes.InvalidArgument {
-		log.WithFunc("boxes.stateLayer.save").WithField("box", box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
-		rec, stored, err = l.snapshot(ctx, box, ep, stateKey, consistency, "", progress)
+		log.WithFunc("boxes.stateLayer.save").WithField("box", p.box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
+		rec, err = l.snapshot(ctx, p, ep, stateKey, consistency, "", progress)
 	}
 	if err != nil {
 		return nil, err
 	}
 	rec.Parent = h.Latest
 	rec.SavedAtMs = time.Now().UnixMilli()
-	if err := l.commit(ctx, box, key.ID, rec, stored); err != nil {
+	if err := l.commit(ctx, p, key.ID, rec); err != nil {
 		return nil, err
 	}
 	return rec, nil
 }
 
-func (l *stateLayer) snapshot(ctx context.Context, box string, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, map[string]bool, error) {
+func (l *stateLayer) snapshot(ctx context.Context, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	plan, err := l.agents.Plan(ctx, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent})
 	if err != nil {
-		return nil, nil, fmt.Errorf("plan: %w", err)
+		return nil, fmt.Errorf("plan: %w", err)
 	}
 	if err = checkPlan(plan); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	stored, err := l.index(ctx, box, key.GetKeyId())
+	stored, err := l.index(ctx, p, key.GetKeyId())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	rec := &snapshotRecord{
 		ID: plan.GetSnapshotId(), Consistency: consistency.String(), TakenAtMs: plan.GetTakenAtMs(),
@@ -144,28 +157,28 @@ func (l *stateLayer) snapshot(ctx context.Context, box string, ep machines.Endpo
 		rec.NewChunks++
 		rec.UploadedBytes += c.GetSize()
 	}
-	if err = l.upload(ctx, box, ep, rec, key, missing, progress); err != nil {
-		return nil, nil, err
+	if err = l.upload(ctx, p, ep, rec, key, missing, progress); err != nil {
+		return nil, err
 	}
-	return rec, stored, nil
+	return rec, nil
 }
 
 // upload sends missing in batches presigned just before each call, and the manifest with the last batch.
-func (l *stateLayer) upload(ctx context.Context, box string, ep machines.Endpoint, rec *snapshotRecord, key *agentv1.StateKey, missing []chunk, progress dialer.ProgressFunc) error {
+func (l *stateLayer) upload(ctx context.Context, p statePath, ep machines.Endpoint, rec *snapshotRecord, key *agentv1.StateKey, missing []chunk, progress dialer.ProgressFunc) error {
 	var sent uint64
 	all := batches(missing)
 	for i, batch := range all {
 		last := i == len(all)-1
 		req := &agentv1.UploadRequest{SnapshotId: rec.ID, Key: key}
 		for _, c := range batch {
-			put, err := l.store.PresignPut(ctx, chunkKey(box, c.ID))
+			put, err := l.store.PresignPut(ctx, p.chunk(c.ID))
 			if err != nil {
 				return err
 			}
 			req.Puts = append(req.Puts, &agentv1.PresignedPut{ChunkId: c.ID, Url: put.URL, Headers: put.Headers})
 		}
 		if last {
-			manifest, err := l.store.PresignPut(ctx, manifestKey(box, rec.ID))
+			manifest, err := l.store.PresignPut(ctx, p.manifest(rec.ID))
 			if err != nil {
 				return err
 			}
@@ -192,12 +205,12 @@ func (l *stateLayer) upload(ctx context.Context, box string, ep machines.Endpoin
 	return nil
 }
 
-// restore writes snapshot id of box (the latest when empty) into the agent at ep.
-func (l *stateLayer) restore(ctx context.Context, box string, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	unlock := l.lock(box)
+// restore writes snapshot id of p's box (the latest when empty) into the agent at ep.
+func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	unlock := l.lock(p.box)
 	defer unlock()
 	if id == "" {
-		h, err := l.head(ctx, box)
+		h, err := l.head(ctx, p)
 		if err != nil {
 			return nil, err
 		}
@@ -209,15 +222,15 @@ func (l *stateLayer) restore(ctx context.Context, box string, ep machines.Endpoi
 	if !objectID.MatchString(id) {
 		return nil, fmt.Errorf("invalid snapshot id %q", id)
 	}
-	rec, err := l.record(ctx, box, id)
+	rec, err := l.record(ctx, p, id)
 	if err != nil {
 		return nil, err
 	}
-	key, err := l.keys.Key(ctx, box)
+	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return nil, fmt.Errorf("state key: %w", err)
 	}
-	manifest, err := l.store.PresignGet(ctx, manifestKey(box, id))
+	manifest, err := l.store.PresignGet(ctx, p.manifest(id))
 	if err != nil {
 		return nil, err
 	}
@@ -239,14 +252,14 @@ func (l *stateLayer) restore(ctx context.Context, box string, ep machines.Endpoi
 		total += c.Size
 		ids = append(ids, c.ID)
 	}
-	if _, err := l.agents.Restore(ctx, ep, l.restorePages(ctx, box, first, ids), plaintextProgress(total, progress)); err != nil {
+	if _, err := l.agents.Restore(ctx, ep, l.restorePages(ctx, p, first, ids), plaintextProgress(total, progress)); err != nil {
 		return nil, fmt.Errorf("restore: %w", err)
 	}
 	return rec, nil
 }
 
 // restorePages yields first, then ids in pages of presigned GETs, each presigned just before it is sent.
-func (l *stateLayer) restorePages(ctx context.Context, box string, first *agentv1.RestoreRequest, ids []string) iter.Seq2[*agentv1.RestoreRequest, error] {
+func (l *stateLayer) restorePages(ctx context.Context, p statePath, first *agentv1.RestoreRequest, ids []string) iter.Seq2[*agentv1.RestoreRequest, error] {
 	return func(yield func(*agentv1.RestoreRequest, error) bool) {
 		if !yield(first, nil) {
 			return
@@ -254,7 +267,7 @@ func (l *stateLayer) restorePages(ctx context.Context, box string, first *agentv
 		for page := range slices.Chunk(ids, pageSize) {
 			req := &agentv1.RestoreRequest{Gets: make([]*agentv1.PresignedGet, 0, len(page))}
 			for _, id := range page {
-				get, err := l.store.PresignGet(ctx, chunkKey(box, id))
+				get, err := l.store.PresignGet(ctx, p.chunk(id))
 				if err != nil {
 					yield(nil, err)
 					return
@@ -268,35 +281,45 @@ func (l *stateLayer) restorePages(ctx context.Context, box string, first *agentv
 	}
 }
 
-// lastSaved returns when box's latest snapshot was saved, 0 when unknown.
-func (l *stateLayer) lastSaved(ctx context.Context, box string) int64 {
-	h, err := l.head(ctx, box)
+// lastSaved returns when p's latest snapshot was saved, 0 when unknown.
+func (l *stateLayer) lastSaved(ctx context.Context, p statePath) int64 {
+	h, err := l.head(ctx, p)
 	if err != nil {
 		return 0
 	}
 	return h.SavedAtMs
 }
 
-// commit writes the index, then the snapshot record, then the head, so a crash leaves the previous head valid.
-func (l *stateLayer) commit(ctx context.Context, box, keyID string, rec *snapshotRecord, stored map[string]bool) error {
-	for _, c := range rec.Chunks {
-		stored[c.ID] = true
-	}
-	idx := chunkIndex{KeyID: keyID, Chunks: slices.Sorted(maps.Keys(stored))}
-	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, indexKey(box), idx) }); err != nil {
+// commit adds the uploaded chunks to the index, then writes the snapshot record, then the head, so a crash leaves the previous head valid.
+func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord) error {
+	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks) }); err != nil {
 		return err
 	}
-	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, recordKey(box, rec.ID), rec) }); err != nil {
+	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.record(rec.ID), rec) }); err != nil {
 		return err
 	}
 	h := head{Latest: rec.ID, SavedAtMs: rec.SavedAtMs}
-	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, headKey(box), h) }); err != nil {
+	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.head(), h) }); err != nil {
 		return err
 	}
 	l.mu.Lock()
-	l.heads[box] = h
+	l.heads[p] = h
 	l.mu.Unlock()
 	return nil
+}
+
+// addToIndex merges chunks into the user's index under a per-user lock, since every box of the user writes it.
+func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, chunks []chunk) error {
+	unlock := l.lock(p.index())
+	defer unlock()
+	stored, err := l.index(ctx, p, keyID)
+	if err != nil {
+		return err
+	}
+	for _, c := range chunks {
+		stored[c.ID] = true
+	}
+	return putJSON(ctx, l.store, p.index(), chunkIndex{KeyID: keyID, Chunks: slices.Sorted(maps.Keys(stored))})
 }
 
 func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
@@ -312,25 +335,25 @@ func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
 	return err
 }
 
-func (l *stateLayer) head(ctx context.Context, box string) (head, error) {
+func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 	l.mu.Lock()
-	h, ok := l.heads[box]
+	h, ok := l.heads[p]
 	l.mu.Unlock()
 	if ok {
 		return h, nil
 	}
-	if err := getJSON(ctx, l.store, headKey(box), &h); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := getJSON(ctx, l.store, p.head(), &h); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return head{}, err
 	}
 	l.mu.Lock()
-	l.heads[box] = h
+	l.heads[p] = h
 	l.mu.Unlock()
 	return h, nil
 }
 
-func (l *stateLayer) index(ctx context.Context, box, keyID string) (map[string]bool, error) {
+func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, error) {
 	var idx chunkIndex
-	if err := getJSON(ctx, l.store, indexKey(box), &idx); err != nil && !errors.Is(err, store.ErrNotFound) {
+	if err := getJSON(ctx, l.store, p.index(), &idx); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
 	stored := map[string]bool{}
@@ -343,20 +366,20 @@ func (l *stateLayer) index(ctx context.Context, box, keyID string) (map[string]b
 	return stored, nil
 }
 
-func (l *stateLayer) record(ctx context.Context, box, id string) (*snapshotRecord, error) {
+func (l *stateLayer) record(ctx context.Context, p statePath, id string) (*snapshotRecord, error) {
 	var rec snapshotRecord
-	if err := getJSON(ctx, l.store, recordKey(box, id), &rec); err != nil {
+	if err := getJSON(ctx, l.store, p.record(id), &rec); err != nil {
 		return nil, fmt.Errorf("snapshot %s: %w", id, err)
 	}
 	return &rec, nil
 }
 
-func (l *stateLayer) lock(box string) func() {
+func (l *stateLayer) lock(name string) func() {
 	l.mu.Lock()
-	m := l.locks[box]
+	m := l.locks[name]
 	if m == nil {
 		m = &sync.Mutex{}
-		l.locks[box] = m
+		l.locks[name] = m
 	}
 	l.mu.Unlock()
 	m.Lock()
@@ -430,9 +453,3 @@ func getJSON(ctx context.Context, st store.Store, key string, v any) error {
 	}
 	return nil
 }
-
-func chunkKey(box, id string) string    { return box + "/chunks/" + id }
-func manifestKey(box, id string) string { return box + "/manifests/" + id }
-func recordKey(box, id string) string   { return box + "/snapshots/" + id + ".json" }
-func indexKey(box string) string        { return box + "/index.json" }
-func headKey(box string) string         { return box + "/head.json" }

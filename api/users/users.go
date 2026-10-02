@@ -1,7 +1,8 @@
-// Package users keeps cocoonbox users in PostgreSQL, each with one gw key and one sandboxd tenant that never leave the api.
+// Package users keeps cocoonbox users in PostgreSQL, each with one gw key, one sandboxd tenant and one state key that never leave the api.
 package users
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/rand"
@@ -20,6 +21,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/CMGS/cocoonbox/api/gwkeys"
+	"github.com/CMGS/cocoonbox/api/keyring"
 )
 
 const (
@@ -33,8 +35,9 @@ const (
 	maxBoxesCap  = 16
 	defaultBoxes = 1
 
-	columnGWKey  = "gw_key"
-	columnTenant = "tenant_token"
+	columnGWKey    = "gw_key"
+	columnTenant   = "tenant_token"
+	columnStateKey = "state_key"
 )
 
 var (
@@ -252,6 +255,7 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		return User{}, ErrExists
 	}
 	tenantToken := randomHex(secretBytes)
+	stateKey := keyring.Generate(id)
 	key, akID, err := s.gw.Add(ctx, id)
 	if err != nil {
 		return User{}, fmt.Errorf("issue gw key: %w", err)
@@ -267,6 +271,8 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		gwAKID:      akID,
 		gwKey:       s.seal.seal(key, id, columnGWKey),
 		tenantToken: s.seal.seal(tenantToken, id, columnTenant),
+		stateKeyID:  stateKey.ID,
+		stateKey:    s.seal.seal(string(stateKey.Secret), id, columnStateKey),
 	}
 	if err = s.tenants.Put(ctx, id, tenantToken, r.claimCap()); err == nil {
 		if err = s.store.insert(ctx, r, string(hash)); err != nil {
@@ -461,6 +467,49 @@ func (s *Service) GWKey(id string) (string, error) {
 	return s.seal.open(r.gwKey, id, columnGWKey)
 }
 
+// StateKey returns user id's state key.
+func (s *Service) StateKey(_ context.Context, id string) (keyring.Key, error) {
+	r, err := s.record(id)
+	if err != nil {
+		return keyring.Key{}, err
+	}
+	if r.stateKeyID == "" {
+		return keyring.Key{}, fmt.Errorf("user %s has no state key", id)
+	}
+	secret, err := s.seal.open(r.stateKey, id, columnStateKey)
+	if err != nil {
+		return keyring.Key{}, err
+	}
+	return keyring.Key{ID: r.stateKeyID, Secret: []byte(secret)}, nil
+}
+
+// SetStateKey gives user id the state key k; it is a no-op when the user holds k and an error when it holds another key.
+func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) error {
+	if len(k.Secret) != keyring.KeySize || k.ID == "" {
+		return fmt.Errorf("%w: a state key has an id and %d bytes", ErrInvalid, keyring.KeySize)
+	}
+	r, err := s.record(id)
+	if err != nil {
+		return err
+	}
+	if r.stateKeyID != "" {
+		held, err := s.StateKey(ctx, id)
+		if err != nil {
+			return err
+		}
+		if held.ID != k.ID || !bytes.Equal(held.Secret, k.Secret) {
+			return fmt.Errorf("%w: user %s holds state key %s", ErrExists, id, held.ID)
+		}
+		return nil
+	}
+	r.stateKeyID, r.stateKey = k.ID, s.seal.seal(string(k.Secret), id, columnStateKey)
+	if err := s.store.setStateKey(ctx, r); err != nil {
+		return err
+	}
+	s.put(r)
+	return nil
+}
+
 // Residential reports whether user id's boxes take the residential exit.
 func (s *Service) Residential(id string) bool {
 	r, err := s.record(id)
@@ -510,6 +559,8 @@ type record struct {
 	gwAKID      string
 	gwKey       []byte
 	tenantToken []byte
+	stateKeyID  string
+	stateKey    []byte
 }
 
 func (r record) serves() bool { return r.tokenSHA256 != "" && !r.Disabled }

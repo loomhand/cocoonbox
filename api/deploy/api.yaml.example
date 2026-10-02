@@ -18,7 +18,6 @@ state:
   bucket: cocoonbox-state
   region: us-east-1
   credentials_file: store.env    # STORE_ACCESS_KEY=... / STORE_SECRET_KEY=...
-  keyring_dir: /var/lib/cocoonbox-api/keys
   interval: 15m
   presign_ttl: 10m
 provision:                     # every box's identity file (design §12) and its user's gw key
@@ -26,6 +25,6 @@ provision:                     # every box's identity file (design §12) and its
   gw_admin:                    # per-user gw keys through gw's admin API
     url: http://10.203.0.1:18090
     token_file: gw-admin-token # the cocoonbox-boxes tenant admin token
-accounts:                      # users, console sessions and each user's sealed gw key and tenant token (design §22)
+accounts:                      # users, console sessions and each user's sealed gw key, tenant token and state key (design §22)
   dsn_file: pg.dsn             # postgres://cocoonbox_api:...@127.0.0.1:5432/cocoonbox
   master_key_file: master.key  # 32 random bytes: head -c 32 /dev/urandom

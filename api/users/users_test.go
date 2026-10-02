@@ -1,6 +1,7 @@
 package users
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"crypto/sha256"
@@ -16,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/CMGS/cocoonbox/api/gwkeys"
+	"github.com/CMGS/cocoonbox/api/keyring"
 )
 
 const password = "correct horse battery"
@@ -194,6 +196,51 @@ func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
 	}
 	if _, err := reopened.Tenant(b.ID); err != nil {
 		t.Errorf("bob's own tenant token: %v", err)
+	}
+}
+
+func TestStateKeyIsSealedAndSetOnlyOnce(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	created, err := svc.StateKey(t.Context(), u.ID)
+	if err != nil || len(created.Secret) != keyring.KeySize || created.ID == "" {
+		t.Fatalf("StateKey of a new user = %d bytes, id %q, %v", len(created.Secret), created.ID, err)
+	}
+	var sealed []byte
+	if err := query(t, dsn, "SELECT state_key_sealed FROM users WHERE id = $1", u.ID).Scan(&sealed); err != nil || bytes.Contains(sealed, created.Secret) {
+		t.Errorf("state key column holds the key in the clear or is unreadable: %v", err)
+	}
+
+	if err := exec(t, dsn, "UPDATE users SET state_key_id = NULL, state_key_sealed = NULL WHERE id = $1", u.ID); err != nil {
+		t.Fatalf("clear state key: %v", err)
+	}
+	migrated := openTestService(t, dsn, gw, tenants)
+	if _, err := migrated.StateKey(t.Context(), u.ID); err == nil {
+		t.Error("StateKey of a user without one succeeded")
+	}
+	boxKey := keyring.Key{ID: "file:cb-000000000000:1", Secret: bytes.Repeat([]byte{7}, keyring.KeySize)}
+	for range 2 {
+		if err := migrated.SetStateKey(t.Context(), u.ID, boxKey); err != nil {
+			t.Fatalf("SetStateKey: %v", err)
+		}
+	}
+	if err := migrated.SetStateKey(t.Context(), u.ID, keyring.Generate(u.ID)); !errors.Is(err, ErrExists) {
+		t.Errorf("SetStateKey over another key = %v, want ErrExists", err)
+	}
+	if err := migrated.SetStateKey(t.Context(), u.ID, keyring.Key{ID: "short", Secret: []byte{1}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SetStateKey of a short key = %v, want ErrInvalid", err)
+	}
+	reopened := openTestService(t, dsn, gw, tenants)
+	if got, err := reopened.StateKey(t.Context(), u.ID); err != nil || got.ID != boxKey.ID || !bytes.Equal(got.Secret, boxKey.Secret) {
+		t.Errorf("StateKey after reopen = %q, %v; want the box key", got.ID, err)
+	}
+
+	other, _ := reopened.Create(t.Context(), NewUser{Name: "qa2"})
+	if err := exec(t, dsn, "UPDATE users SET state_key_sealed = (SELECT state_key_sealed FROM users WHERE id = $1) WHERE id = $2", u.ID, other.ID); err != nil {
+		t.Fatalf("copy sealed state key: %v", err)
+	}
+	if _, err := openTestService(t, dsn, gw, tenants).StateKey(t.Context(), other.ID); err == nil {
+		t.Error("qa1's sealed state key opened as qa2's")
 	}
 }
 
