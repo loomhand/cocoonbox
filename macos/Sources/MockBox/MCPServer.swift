@@ -137,7 +137,7 @@ struct HTTPResponse {
 }
 
 // MCPServer answers MCP Streamable HTTP with JSON responses (no server
-// stream). Each session is an mcp:<clientInfo.name> agent in MockWorld.
+// stream). Every session is the owner's, which the box does not track as an agent.
 // It logs one line per request with the auth verdict, never the token.
 final class MCPServer: Sendable {
     nonisolated(unsafe) static let tools: [[String: Any]] = [
@@ -159,7 +159,7 @@ final class MCPServer: Sendable {
     private let world: MockWorld
     private let token: String
     private let boxID: String
-    private let sessions = Mutex<[String: String]>([:])
+    private let sessions = Mutex<Set<String>>([])
     private let control: ControlMCP
 
     init(world: MockWorld, token: String, boxID: String) {
@@ -204,9 +204,7 @@ final class MCPServer: Sendable {
         case "POST":
             break
         case "DELETE":
-            if let agent = sessions.withLock({ $0.removeValue(forKey: sessionID) }) {
-                await world.closeExternal(agent: agent, reason: "deleted by the client")
-            }
+            sessions.withLock { _ = $0.remove(sessionID) }
             return HTTPResponse(status: 200, reason: "OK")
         default:
             return HTTPResponse(status: 405, reason: "Method Not Allowed", headers: ["Allow": "POST, DELETE"])
@@ -227,8 +225,7 @@ final class MCPServer: Sendable {
             let info = params["clientInfo"] as? [String: Any]
             let client = info?["name"] as? String ?? "unknown"
             let newSession = UUID().uuidString.lowercased()
-            let agent = await world.openExternal(client: client, version: info?["version"] as? String ?? "")
-            sessions.withLock { $0[newSession] = agent }
+            sessions.withLock { _ = $0.insert(newSession) }
             headersOut["Mcp-Session-Id"] = newSession
             line += " client=\(client) protocol=\(params["protocolVersion"] as? String ?? "-")"
             result = [
@@ -239,13 +236,13 @@ final class MCPServer: Sendable {
         case "tools/list":
             result = ["tools": Self.tools]
         case "tools/call":
-            guard let agent = sessions.withLock({ $0[sessionID] }) else {
+            guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")
             }
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
             line += " tool=\(name)"
-            let outcome = await world.externalCall(agent: agent, tool: name, arguments: arguments)
+            let outcome = await world.externalCall(agent: "", tool: name, arguments: arguments)
             var content: [[String: Any]] = [["type": "text", "text": outcome.text]]
             if let image = outcome.image {
                 content.append(["type": "image", "data": image.base64EncodedString(), "mimeType": "image/png"])

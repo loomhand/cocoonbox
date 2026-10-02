@@ -34,6 +34,13 @@ struct RootView: View {
                 }
                 .help("Drive the box from Claude Code, Codex or Cursor over MCP")
                 .disabled(model.box == nil)
+                Button {
+                    model.showShare = true
+                } label: {
+                    Label("Share", systemImage: "person.2.badge.plus")
+                }
+                .help("Share the box's live view and tools by a link")
+                .disabled(model.box == nil)
                 Toggle(isOn: $screen.takeOver) {
                     Label("Take over", systemImage: model.screen.takeOver ? "hand.raised.fill" : "hand.raised")
                 }
@@ -51,6 +58,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $model.showConnectAgent) {
             ConnectAgentSheet()
+        }
+        .sheet(isPresented: $model.showShare) {
+            ShareSheet()
         }
         .sheet(isPresented: $model.showPasswordSignIn) {
             PasswordSignInSheet()
@@ -127,7 +137,7 @@ struct SidebarView: View {
                 }
                 Section(isExpanded: $externalExpanded) {
                     ForEach(external, id: \.id) { agent in
-                        AgentRow(agent: agent).tag(agent.id)
+                        ShareSessionRow(agent: agent).tag(agent.id)
                     }
                 } header: {
                     if !external.isEmpty {
@@ -247,6 +257,42 @@ struct AgentRow: View {
         case .failed: .red
         default: .secondary
         }
+    }
+}
+
+// ShareSessionRow is a guest's MCP session through the share: who, which client, since when, and End.
+struct ShareSessionRow: View {
+    @Environment(AppModel.self) private var model
+    let agent: Agent
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(open ? Color.green : Color.secondary)
+                .frame(width: 8, height: 8)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.shareSession.map(model.guest(of:)) ?? agent.name).lineLimit(1)
+                Text("\(agent.externalClient ?? "MCP") · \(since.formatted(date: .omitted, time: .shortened))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .help("Connected since \(since.formatted(date: .abbreviated, time: .shortened))")
+            }
+            Spacer()
+            if open {
+                Button("End") { model.endSession(agent) }
+                    .controlSize(.small)
+                    .help("End this guest session")
+            }
+        }
+    }
+
+    private var open: Bool {
+        agent.status == .running || agent.status == .waitingForUser
+    }
+
+    private var since: Date {
+        Date(timeIntervalSince1970: Double(agent.createdAtMs) / 1000)
     }
 }
 

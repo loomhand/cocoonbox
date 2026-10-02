@@ -13,14 +13,17 @@ import Foundation
 // connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // wait-local:<count>[:seconds] (that many local agents open, as after a reopen),
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
-// wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
+// wait-external[:seconds] (a guest's share session is listed), wait-pointer[:seconds],
 // confirm:<save|upgrade|delete|off>, save-now, upgrade, wait-operation[:seconds],
 // wait-phase:<phase>[:seconds], lock:<label> (logs whether agents may start or prompt, and take_over),
 // rename:<name> (on the selected agent or local agent) and delete (on the
 // selected agent), end-local, password-signin[:off],
 // fill-credential:<username> (the password comes from CB_FILL_SECRET, so no step logs it),
 // clip-paste[:<bytes>] (puts CB_CLIP_TEXT, or that many bytes, on the CB_PASTEBOARD pasteboard,
-// then sends the Command+V menu action), clip-copy and clip-cut (Command+C or X, then wait for the pasteboard), quit.
+// then sends the Command+V menu action), clip-copy and clip-cut (Command+C or X, then wait for the pasteboard),
+// share-sheet[:off], share-create[:write,<user name>,...] (24 h), share-write:on|off, share-regenerate,
+// share-revoke, share-copy:<link|claudeCode|codexConfig|cursor> (logs bytes, never the text),
+// end-external (ends the first listed share session), quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -100,8 +103,8 @@ enum Autopilot {
         case "select-local":
             model.selectedAgentID = model.localAgents.first { $0.kind.rawValue == arg }.map(AppModel.selectionID)
         case "sidebar":
-            let linked = model.selectedLocal.flatMap { model.externalAgent(for: $0) }?.id ?? "-"
-            Perf.mark("sidebar", "label=\(arg) selected=\(model.selectedAgentID ?? "-") local=\(model.selectedLocal?.kind.rawValue ?? "-") linked=\(linked) external=\(model.externalAgents().map(\.id).joined(separator: ",")) agents=\(model.agents.map { "\($0.id)/\($0.name)/\($0.status)" }.joined(separator: ","))")
+            let external = model.externalAgents().map { "\($0.id)/\($0.shareSession.map(model.guest(of:)) ?? "-")/\($0.externalClient ?? "-")/\($0.status)" }
+            Perf.mark("sidebar", "label=\(arg) selected=\(model.selectedAgentID ?? "-") local=\(model.selectedLocal?.kind.rawValue ?? "-") external=\(external.joined(separator: ",")) agents=\(model.agents.map { "\($0.id)/\($0.name)/\($0.status)" }.joined(separator: ","))")
         case "connect-agent":
             model.showConnectAgent = arg != "off"
         case "password-signin":
@@ -139,13 +142,33 @@ enum Autopilot {
         case "terminal-paste":
             model.selectedLocal?.paste(arg.replacingOccurrences(of: "\\n", with: "\n"))
         case "wait-external":
-            await until(Double(arg) ?? 60) { model.selectedLocal.flatMap { model.externalAgent(for: $0) } != nil }
-        case "wait-tools":
-            let parts = arg.split(separator: ":").compactMap { Double($0) }
-            await until(parts.count > 1 ? parts[1] : 180) {
-                guard let agent = model.selectedLocal.flatMap({ model.externalAgent(for: $0) }) else { return false }
-                let results = (model.transcripts[agent.id] ?? []).filter { if case .toolResult = $0.body { true } else { false } }
-                return Double(results.count) >= (parts.first ?? 1)
+            await until(Double(arg) ?? 60) { !model.externalAgents().isEmpty }
+        case "share-sheet":
+            model.showShare = arg != "off"
+        case "share-create":
+            await until(30) { model.box != nil && model.connection != nil }
+            let parts = arg.split(separator: ",").map(String.init)
+            await model.createShare(ttlSeconds: 24 * 3600, userNames: parts.filter { $0 != "write" }, write: parts.contains("write"))
+        case "share-write":
+            await model.setShareWrite(arg == "on")
+        case "share-regenerate":
+            let before = model.shareSecret
+            await model.regenerateShare()
+            Perf.mark("share_secret", "changed=\(model.shareSecret != nil && model.shareSecret != before)")
+        case "share-revoke":
+            await model.revokeShare()
+            await model.loadShare()
+            Perf.mark("share_list", "live=\(model.share != nil)")
+        case "share-copy":
+            if let snippet = ShareSetup.Snippet(rawValue: arg) {
+                let copied = model.copyShare(snippet)
+                let text = model.screen.pasteboard.string(forType: .string) ?? ""
+                Perf.mark("share_copied", "\(arg) ok=\(copied) bytes=\(text.utf8.count) guest_header=\(text.contains(ShareSetup.guestHeader)) secret_matches=\(model.shareSecret.map { text.contains($0) } ?? false)")
+            }
+        case "end-external":
+            if let agent = model.externalAgents().first(where: { $0.status == .running || $0.status == .waitingForUser }) {
+                model.endSession(agent)
+                await until(10) { model.agents.first { $0.id == agent.id }?.status == .idle }
             }
         case "wait-pointer":
             let seen = model.computerActions

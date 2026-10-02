@@ -11,11 +11,14 @@ typealias OperationEvent = Cocoonbox_Control_V1_OperationEvent
 typealias Event = Cocoonbox_Agent_V1_Event
 typealias Entry = Cocoonbox_Agent_V1_TranscriptEntry
 typealias Agent = Cocoonbox_Agent_V1_Agent
+typealias Share = Cocoonbox_Control_V1_Share
 
 // MockWorld holds the state of one fake box: lifecycle, agents, transcript,
 // the event bus and the synthetic desktop the Screen stream shows.
 actor MockWorld {
     static let ringSize = 512
+    static let users = ["qa2": "u-qa2000000002", "qa3": "u-qa3000000003"]
+    static let shareID = "sh-mock000000"
 
     let token: String
     let bootDelay: Duration
@@ -25,6 +28,8 @@ actor MockWorld {
     private var agents: [String: Agent] = [:]
     private var untitled: Set<String> = []
     private var openSessions: Set<String> = []
+    private var share: Share?
+    private var sharesCreated = 0
     private var nonces: [String: String] = [:]
     private var transcripts: [String: [Entry]] = [:]
     private var nextSeq: UInt64 = 1
@@ -73,7 +78,7 @@ actor MockWorld {
         for (client, age) in sessions {
             var agent = Agent()
             agent.id = "ag-\(UUID().uuidString.prefix(8).lowercased())"
-            agent.name = "mcp:\(client)"
+            agent.name = "mcp:\(client)@\(Self.shareID)"
             agent.status = .idle
             agent.createdAtMs = now - age
             agent.updatedAtMs = now - age + 60_000
@@ -525,9 +530,10 @@ actor MockWorld {
         }))
     }
 
-    // runExternal plays one scripted MCP session from a local Claude Code.
+    // runExternal plays one scripted MCP session of a guest's Claude Code through the share, which stays open for a minute or until ended.
     private func runExternal() async {
-        let id = openExternal(client: "claude-code", version: "2.1.285")
+        let guest = share.map { $0.id + ($0.users.first.map { ":" + $0.id } ?? "") } ?? Self.shareID
+        let id = openExternal(client: "claude-code@\(guest)", version: "2.1.285")
         let calls: [(String, String)] = [
             ("shell", #"{"command":"uname -sr && ls /workspace"}"#),
             ("screenshot", "{}"),
@@ -535,11 +541,86 @@ actor MockWorld {
             ("computer_act", #"{"action":"type_text","text":"Typed by Claude Code over MCP\n"}"#),
             ("read_file", #"{"path":"/workspace/notes.md"}"#),
         ]
-        for (tool, arguments) in calls {
+        for (tool, arguments) in calls where openSessions.contains(id) {
             _ = await externalCall(agent: id, tool: tool, arguments: arguments)
             try? await Task.sleep(for: .milliseconds(900))
         }
-        closeExternal(agent: id, reason: "deleted by the client")
+        for _ in 0..<600 where openSessions.contains(id) {
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        if openSessions.contains(id) { closeExternal(agent: id, reason: "deleted by the client") }
+    }
+
+    // MARK: shares
+
+    func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Cocoonbox_Control_V1_ShareSecret {
+        guard request.boxID == box.id else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        if let share, share.expiresAtMs > Self.now() { throw RPCError(code: .alreadyExists, message: "the box already has a live share") }
+        guard (0...30 * 86400).contains(request.ttlSeconds) else { throw RPCError(code: .invalidArgument, message: "ttl must be at most 30 days") }
+        var created = Share()
+        created.id = sharesCreated == 0 ? Self.shareID : "sh-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased())"
+        created.boxID = box.id
+        created.write = request.write
+        created.createdAtMs = Self.now()
+        created.expiresAtMs = created.createdAtMs + (request.ttlSeconds == 0 ? 86400 : request.ttlSeconds) * 1000
+        for name in request.userNames {
+            guard let id = Self.users[name] else { throw RPCError(code: .invalidArgument, message: "unknown user \(name)") }
+            created.users.append(.with {
+                $0.id = id
+                $0.name = name
+            })
+        }
+        share = created
+        sharesCreated += 1
+        return secret(for: created)
+    }
+
+    func listShares() -> [Share] {
+        share.map { $0.expiresAtMs > Self.now() ? [$0] : [] } ?? []
+    }
+
+    func setShareWrite(id: String, write: Bool) throws -> Share {
+        guard var live = share, live.id == id else { throw RPCError(code: .notFound, message: "share not found") }
+        live.write = write
+        share = live
+        return live
+    }
+
+    func regenerateShare(id: String) throws -> Cocoonbox_Control_V1_ShareSecret {
+        guard let live = share, live.id == id else { throw RPCError(code: .notFound, message: "share not found") }
+        endSessions(share: id, reason: "the share link was regenerated")
+        return secret(for: live)
+    }
+
+    func revokeShare(id: String) throws {
+        guard share?.id == id else { throw RPCError(code: .notFound, message: "share not found") }
+        share = nil
+        endSessions(share: id, reason: "the share was revoked")
+    }
+
+    func end(_ request: Cocoonbox_Agent_V1_EndRequest) throws {
+        switch request.target {
+        case .agentID(let id):
+            guard openSessions.contains(id) else { throw RPCError(code: .notFound, message: "no open MCP session drives agent \(id)") }
+            closeExternal(agent: id, reason: "ended by the owner")
+        case .shareID(let id):
+            endSessions(share: id, reason: "the share ended")
+        case nil:
+            throw RPCError(code: .invalidArgument, message: "end needs an agent_id or a share_id")
+        }
+    }
+
+    private func endSessions(share id: String, reason: String) {
+        for agent in openSessions where agents[agent]?.shareSession?.shareID == id {
+            closeExternal(agent: agent, reason: reason)
+        }
+    }
+
+    private func secret(for share: Share) -> Cocoonbox_Control_V1_ShareSecret {
+        .with {
+            $0.share = share
+            $0.secret = "cbs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        }
     }
 
     // MARK: external agents (MCP)
@@ -562,7 +643,7 @@ actor MockWorld {
         setStatus(agent: id, .idle)
     }
 
-    // externalCall runs one MCP tool call against the mock desktop and records it in the agent's transcript.
+    // externalCall runs one MCP tool call against the mock desktop and records it in the agent's transcript; an owner session has no agent and records nothing.
     func externalCall(agent id: String, tool: String, arguments: String) async -> (text: String, image: Data?, isError: Bool) {
         let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
         let turn = "mcp-\(id)"

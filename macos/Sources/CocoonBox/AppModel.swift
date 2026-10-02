@@ -10,6 +10,7 @@ typealias OperationEvent = Cocoonbox_Control_V1_OperationEvent
 typealias Agent = Cocoonbox_Agent_V1_Agent
 typealias Entry = Cocoonbox_Agent_V1_TranscriptEntry
 typealias ComputerAction = Cocoonbox_Agent_V1_ComputerAction
+typealias Share = Cocoonbox_Control_V1_Share
 
 // LiveBlock is an assistant text or reasoning block still streaming as deltas.
 struct LiveBlock: Equatable {
@@ -35,11 +36,10 @@ struct OperationProgress: Equatable {
 
 @MainActor @Observable
 final class AppModel {
-    static let localSessionAgentsKey = "localSessionAgents"
-
     let endpointURL: String
     var showSignIn = false
     var showConnectAgent = false
+    var showShare = false
     var showPasswordSignIn = false
     var confirmSave = false
     var confirmUpgrade = false
@@ -58,7 +58,9 @@ final class AppModel {
     var busy = false
     var answeredApprovals: Set<String> = []
     var localAgents: [LocalAgentSession] = []
-    var localSessionAgents = Set(UserDefaults.standard.stringArray(forKey: AppModel.localSessionAgentsKey) ?? [])
+    var share: Share?
+    // shareSecret is the secret of the last Create or Regenerate, kept only in memory and only for that share.
+    var shareSecret: String?
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
     @ObservationIgnored private var restoredLocal = false
@@ -169,7 +171,6 @@ final class AppModel {
             session.onTitle = { [weak self] in self?.persistLocal() }
             localAgents.append(session)
         }
-        if eventsLive { linkLocalAgents() }
         persistLocal()
         settleLocal()
     }
@@ -218,38 +219,121 @@ final class AppModel {
         Perf.mark("local_agent", "closed \(session.kind.rawValue)")
     }
 
-    // externalAgents is the open MCP sessions of clients started outside this app, plus the selected agent.
+    // externalAgents is the open sessions of guests through a share, plus the selected one.
     func externalAgents() -> [Agent] {
         agents.filter { agent in
-            guard agent.externalClient != nil else { return false }
-            if agent.id == selectedAgentID { return true }
-            let open = agent.status == .running || agent.status == .waitingForUser
-            return open && !localSessionAgents.contains(agent.id)
+            guard agent.shareSession != nil else { return false }
+            return agent.id == selectedAgentID || agent.status == .running || agent.status == .waitingForUser
         }
     }
 
-    func externalAgent(for session: LocalAgentSession) -> Agent? {
-        Agent.opened(by: session.kind.title, since: session.startedAt, in: agents)
-    }
-
-    // linkLocalAgents records the MCP agents opened by local sessions, kept across launches and pruned to agents the box still has.
-    private func linkLocalAgents() {
-        var linked = localSessionAgents.filter { id in agents.contains { $0.id == id } }
-        for session in localAgents {
-            if let agent = externalAgent(for: session) { linked.insert(agent.id) }
-        }
-        guard linked != localSessionAgents else { return }
-        localSessionAgents = linked
-        UserDefaults.standard.set(Array(linked), forKey: Self.localSessionAgentsKey)
+    // guest names who uses a share session: "link" for an open share, else the user's name, or its id once the share is gone.
+    func guest(of session: ShareSession) -> String {
+        guard let user = session.userID else { return "link" }
+        return share?.users.first { $0.id == user }?.name ?? user
     }
 
     @discardableResult
     func copyMCP(_ snippet: MCPSetup.Snippet) -> Bool {
         guard let setup = mcpSetup else { return false }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(setup.text(snippet), forType: .string)
+        copy(setup.text(snippet))
         Perf.mark("mcp_copy", snippet.rawValue)
         return true
+    }
+
+    var shareSetup: ShareSetup? {
+        guard let box, let share, let shareSecret, let endpoint = Endpoint(url: endpointURL) else { return nil }
+        return ShareSetup(endpoint: endpoint, boxID: box.id, secret: shareSecret, named: !share.users.isEmpty)
+    }
+
+    @discardableResult
+    func copyShare(_ snippet: ShareSetup.Snippet) -> Bool {
+        guard let setup = shareSetup else { return false }
+        copy(setup.text(snippet))
+        Perf.mark("share_copy", snippet.rawValue)
+        return true
+    }
+
+    private func copy(_ text: String) {
+        screen.pasteboard.clearContents()
+        screen.pasteboard.setString(text, forType: .string)
+    }
+
+    // MARK: sharing
+
+    func loadShare() async {
+        guard let connection, let box else { return }
+        do {
+            let live = try await connection.listShares().first { $0.boxID == box.id }
+            if live?.id != share?.id { shareSecret = nil }
+            share = live
+        } catch {
+            report("list shares", error)
+        }
+    }
+
+    func createShare(ttlSeconds: Int64, userNames: [String], write: Bool) async {
+        guard let connection, let box else { return }
+        do {
+            let created = try await connection.createShare(boxID: box.id, ttlSeconds: ttlSeconds, userNames: userNames, write: write)
+            share = created.share
+            shareSecret = created.secret
+            markShare("created")
+        } catch {
+            report("share", error)
+            await loadShare()
+        }
+    }
+
+    func setShareWrite(_ write: Bool) async {
+        guard let connection, let current = share else { return }
+        do {
+            share = try await connection.setShareWrite(shareID: current.id, write: write)
+            markShare("write")
+        } catch {
+            report("share write", error)
+        }
+    }
+
+    func regenerateShare() async {
+        guard let connection, let current = share else { return }
+        do {
+            let fresh = try await connection.regenerateShare(shareID: current.id)
+            share = fresh.share
+            shareSecret = fresh.secret
+            markShare("regenerated")
+        } catch {
+            report("regenerate share", error)
+        }
+    }
+
+    func revokeShare() async {
+        guard let connection, let current = share else { return }
+        do {
+            try await connection.revokeShare(shareID: current.id)
+            share = nil
+            shareSecret = nil
+            markShare("revoked")
+        } catch {
+            report("revoke share", error)
+        }
+    }
+
+    func endSession(_ agent: Agent) {
+        guard let connection else { return }
+        Task {
+            do {
+                try await connection.endSession(agentID: agent.id)
+                Perf.mark("session_end", "agent=\(agent.id)")
+            } catch {
+                report("end session", error)
+            }
+        }
+    }
+
+    // markShare logs the share's state; the secret appears only as its length.
+    private func markShare(_ what: String) {
+        Perf.mark("share", "\(what) id=\(share?.id ?? "-") write=\(share?.write ?? false) users=\(share?.users.map(\.name).joined(separator: ",") ?? "-") expires_in_s=\(share.map { ($0.expiresAtMs - Int64(Date().timeIntervalSince1970 * 1000)) / 1000 } ?? 0) secret_len=\(shareSecret?.count ?? 0)")
     }
 
     // MARK: session
@@ -295,6 +379,8 @@ final class AppModel {
         }
         disconnect()
         box = nil
+        share = nil
+        shareSecret = nil
         showSignIn = true
     }
 
@@ -478,6 +564,7 @@ final class AppModel {
         }
         screen.start(connection)
         restoreLocal()
+        Task { await loadShare() }
     }
 
     private func stopAgentSide() {
@@ -513,7 +600,6 @@ final class AppModel {
         guard let connection else { return }
         do {
             agents = try await connection.listAgents().sorted { $0.createdAtMs < $1.createdAtMs }
-            linkLocalAgents()
             live = [:]
             selectedAgentID = Agent.resynced(selectedAgentID, local: selectedLocal != nil, in: agents)
             loadedTranscripts = []
@@ -528,10 +614,8 @@ final class AppModel {
         }
     }
 
-    // selectedTranscriptID is the agent whose transcript the selection shows: the agent, or a local session's MCP agent.
     private var selectedTranscriptID: String? {
-        if let session = selectedLocal { return externalAgent(for: session)?.id }
-        return agents.contains { $0.id == selectedAgentID } ? selectedAgentID : nil
+        agents.contains { $0.id == selectedAgentID } ? selectedAgentID : nil
     }
 
     private func loadSelectedTranscript() {
@@ -569,7 +653,6 @@ final class AppModel {
                 agents[index] = agent
             } else {
                 agents.append(agent)
-                linkLocalAgents()
                 if selectedAgentID == nil, agent.externalClient == nil { selectedAgentID = agent.id }
             }
         case .agentDeleted(let deleted):

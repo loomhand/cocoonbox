@@ -30,11 +30,11 @@ swift build --product MockBox && .build/debug/MockBox --port 50051 [--animate 30
 open --env CB_ENDPOINT=http://127.0.0.1:50051 dist/CocoonBox.app   # sign in with token mock-token
 ```
 
-MockBox also serves MCP at `/cocoonbox.mcp/<box id>` on the same port: tools/list with the contract's tool names, and tools/call against the mock desktop, as an `mcp:<clientInfo.name>` agent. `--external-ms 3000` makes the mock play one scripted MCP session 3 s after the box runs: an agent named `mcp:claude-code` that calls `shell`, `screenshot`, `computer_act` and `read_file`.
+MockBox also serves MCP at `/cocoonbox.mcp/<box id>` on the same port: tools/list with the contract's tool names, and tools/call against the mock desktop; like the box, it records no agent for the owner's sessions. It also serves `Shares` in memory (users `qa2` and `qa3`) and `Agents.End`. `--external-ms 3000` makes the mock play one scripted guest session through the share 3 s after the box runs: an agent named `mcp:claude-code@<share id>[:<user id>]` that calls `shell`, `screenshot`, `computer_act` and `read_file`, then stays open for a minute or until ended.
 
 ## Local agents over MCP
 
-**+ → Local agent → Claude Code / Codex / Cursor** runs that CLI on this Mac in a terminal pane (`CocoonBoxTerminal`: Ghostty's libghostty through [libghostty-spm](https://github.com/Lakr233/libghostty-spm)), already pointed at the box's MCP endpoint. The CLI uses your own login on this Mac. The pane shows the terminal above the transcript of the `mcp:*` agent the CLI opens on the box, and the live screen shows its actions.
+**+ → Local agent → Claude Code / Codex / Cursor** runs that CLI on this Mac in a terminal pane (`CocoonBoxTerminal`: Ghostty's libghostty through [libghostty-spm](https://github.com/Lakr233/libghostty-spm)), already pointed at the box's MCP endpoint. The CLI uses your own login on this Mac. The pane shows the terminal, and the live screen shows its actions. The box keeps no agent or transcript for your own MCP sessions; the CLI keeps its own history.
 
 | CLI | How it reaches the box |
 |---|---|
@@ -53,7 +53,11 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 
 **Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for Claude Code (`claude mcp add --scope user --transport http … --header 'Authorization: Bearer ${COCOONBOX_TOKEN}'`), Codex (`~/.codex/config.toml` with `bearer_token_env_var = "COCOONBOX_TOKEN"`) and Cursor (`~/.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}`). No snippet contains the token, so none of it lands in a config file or shell history: every client expands `COCOONBOX_TOKEN` at runtime, and one more snippet sets it from the Keychain (`export COCOONBOX_TOKEN="$(security find-generic-password -s me.cmgs.cocoonbox -a <endpoint> -w)"`; macOS asks once whether `security` may read the CocoonBox item).
 
-Each MCP session of a client started outside the app (your own terminal, Cursor) appears in the sidebar's collapsible **External** section as `mcp:<client>`, with an External badge, while it is open (running or waiting for the user). Closed sessions are not listed. A session opened by a local agent from **+** shows only under **On this Mac**, also after the app restarts. A session that closes while selected stays listed until you select something else. Session notes from the agent (opened, closed) render as separate system lines. Its tool calls and ComputerAction markers render like the box agent's. The composer is replaced by a note, because the agent is prompted from the local client.
+## Sharing
+
+**Share** (toolbar and File menu) creates the box's share link (design.md §23): an expiry of 24 hours, 7 days or 30 days, optionally only for named cocoonbox users, and read-only unless **Allow write** is on. Right after Create or Regenerate the sheet shows the link (`<endpoint>/cb/s/#<secret>`, the secret in the fragment) and the guest's MCP setup for Claude Code, Codex and Cursor (`Authorization: Bearer <secret>`, plus `X-Cocoonbox-Guest-Token: ${COCOONBOX_TOKEN}` for a named share). The secret lives only in the app's memory; after a restart the sheet offers Regenerate instead. Write can be switched at any time and applies to each guest's next call; Regenerate and Revoke end every session of the old link.
+
+Each guest's MCP session through the share (`mcp:<client>@<share id>[:<user id>]` in the box) appears in the sidebar's collapsible **External** section while it is open, with who (the user's name, or "link"), the client and since when, and an **End** button (`Agents.End`). A session that closes while selected stays listed until you select something else. Selecting it shows its full tool-call log; its ComputerAction markers render on the live view. Your own MCP sessions are not listed: the box does not track them.
 
 ## The `cocoonbox` CLI and the stdio MCP bridge
 

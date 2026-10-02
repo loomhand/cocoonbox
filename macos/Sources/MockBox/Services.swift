@@ -109,6 +109,37 @@ struct AgentsService: Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
         try await world.delete(agent: request.agentID)
         return .init()
     }
+
+    func end(request: Cocoonbox_Agent_V1_EndRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_EndResponse {
+        try await world.end(request)
+        return .init()
+    }
+}
+
+struct SharesService: Cocoonbox_Control_V1_Shares.SimpleServiceProtocol {
+    let world: MockWorld
+
+    func create(request: Cocoonbox_Control_V1_CreateShareRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ShareSecret {
+        try await world.createShare(request)
+    }
+
+    func list(request: Cocoonbox_Control_V1_ListSharesRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ListSharesResponse {
+        let shares = await world.listShares()
+        return .with { $0.shares = shares }
+    }
+
+    func setWrite(request: Cocoonbox_Control_V1_SetShareWriteRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Share {
+        try await world.setShareWrite(id: request.shareID, write: request.write)
+    }
+
+    func regenerate(request: Cocoonbox_Control_V1_ShareRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_ShareSecret {
+        try await world.regenerateShare(id: request.shareID)
+    }
+
+    func revoke(request: Cocoonbox_Control_V1_ShareRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_RevokeShareResponse {
+        try await world.revokeShare(id: request.shareID)
+        return .init()
+    }
 }
 
 struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {

@@ -81,7 +81,7 @@ struct ConversationView: View {
                 Divider()
                 if let client = agent.externalClient {
                     Label(agent.status == .running || agent.status == .waitingForUser
-                              ? "\(client) drives this agent over MCP. Prompt it in \(client); its tool calls show here."
+                              ? "A guest's \(client) drives the box through your share. Its tool calls show here."
                               : "This session has ended.",
                           systemImage: "point.3.connected.trianglepath.dotted")
                         .font(.callout)
@@ -102,8 +102,7 @@ struct ConversationView: View {
     }
 }
 
-// LocalAgentPane shows a local agent's terminal above the transcript of the
-// mcp:* agent it opened on the box.
+// LocalAgentPane shows a local agent's terminal.
 struct LocalAgentPane: View {
     @Environment(AppModel.self) private var model
     let session: LocalAgentSession
@@ -123,25 +122,9 @@ struct LocalAgentPane: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
-            VSplitView {
-                LocalAgentTerminal(session: session)
-                    .id(session.id)
-                    .frame(minHeight: 220, maxHeight: .infinity)
-                    .layoutPriority(1)
-                Group {
-                    if let agent = model.externalAgent(for: session), let entries = model.transcripts[agent.id], !entries.isEmpty {
-                        TranscriptView(agent: agent, rows: TranscriptRow.rows(entries, answered: model.answeredApprovals))
-                    } else {
-                        Text(model.externalAgent(for: session) == nil
-                            ? "\(session.kind.title)'s tool calls on the box appear here once it connects."
-                            : "\(session.kind.title) is connected to the box. Its tool calls appear here.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
-                .frame(minHeight: 240, idealHeight: 320, maxHeight: .infinity)
-            }
+            LocalAgentTerminal(session: session)
+                .id(session.id)
+                .frame(minHeight: 220, maxHeight: .infinity)
         }
     }
 }

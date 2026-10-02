@@ -11,7 +11,7 @@ struct ConnectAgentSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Connect a local agent").font(.title2.bold())
-            Text("Claude Code, Codex or Cursor on this Mac can use the box's shell, files, browser and screen over MCP. The box's own agent keeps running, and each connected client shows up under Agents as External.")
+            Text("Claude Code, Codex or Cursor on this Mac can use the box's shell, files, browser and screen over MCP. The box's own agent keeps running, and the live screen shows what each client does.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

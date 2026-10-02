@@ -5,6 +5,7 @@ import Synchronization
 
 typealias BoxTransport = HTTP2ClientTransport.TransportServices
 typealias BoxesClient = Cocoonbox_Control_V1_Boxes.Client<BoxTransport>
+typealias SharesClient = Cocoonbox_Control_V1_Shares.Client<BoxTransport>
 typealias AgentsClient = Cocoonbox_Agent_V1_Agents.Client<BoxTransport>
 typealias SessionClient = Cocoonbox_Agent_V1_Session.Client<BoxTransport>
 
@@ -14,6 +15,7 @@ typealias SessionClient = Cocoonbox_Agent_V1_Session.Client<BoxTransport>
 public final class BoxConnection: Sendable {
     public let endpoint: Endpoint
     let boxes: BoxesClient
+    let shares: SharesClient
     let agents: AgentsClient
     let session: SessionClient
 
@@ -40,6 +42,7 @@ public final class BoxConnection: Sendable {
         self.auth = auth
         self.client = client
         self.boxes = BoxesClient(wrapping: client)
+        self.shares = SharesClient(wrapping: client)
         self.agents = AgentsClient(wrapping: client)
         self.session = SessionClient(wrapping: client)
         self.runner = Task { try? await client.runConnections() }
@@ -92,6 +95,36 @@ public final class BoxConnection: Sendable {
                 await deliver(event)
             }
         }
+    }
+
+    // MARK: Shares
+
+    public func createShare(boxID: String, ttlSeconds: Int64, userNames: [String], write: Bool) async throws -> Cocoonbox_Control_V1_ShareSecret {
+        try await shares.create(.with {
+            $0.boxID = boxID
+            $0.ttlSeconds = ttlSeconds
+            $0.userNames = userNames
+            $0.write = write
+        })
+    }
+
+    public func listShares() async throws -> [Cocoonbox_Control_V1_Share] {
+        try await shares.list(Cocoonbox_Control_V1_ListSharesRequest()).shares
+    }
+
+    public func setShareWrite(shareID: String, write: Bool) async throws -> Cocoonbox_Control_V1_Share {
+        try await shares.setWrite(.with {
+            $0.shareID = shareID
+            $0.write = write
+        })
+    }
+
+    public func regenerateShare(shareID: String) async throws -> Cocoonbox_Control_V1_ShareSecret {
+        try await shares.regenerate(.with { $0.shareID = shareID })
+    }
+
+    public func revokeShare(shareID: String) async throws {
+        _ = try await shares.revoke(.with { $0.shareID = shareID })
     }
 
     // MARK: Session
@@ -189,6 +222,10 @@ public final class BoxConnection: Sendable {
 
     public func deleteAgent(agentID: String) async throws {
         _ = try await agents.delete(.with { $0.agentID = agentID })
+    }
+
+    public func endSession(agentID: String) async throws {
+        _ = try await agents.end(.with { $0.agentID = agentID })
     }
 
     // describe renders a call error for the UI: the gRPC status code and message when there is one.

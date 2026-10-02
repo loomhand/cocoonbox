@@ -1,10 +1,23 @@
 import Foundation
 
+// ShareSession is a guest's MCP session through a share: `mcp:<client>@<share id>[:<user id>]`.
+public struct ShareSession: Sendable, Equatable {
+    public let client: String
+    public let shareID: String
+    public let userID: String?
+
+    public init(client: String, shareID: String, userID: String?) {
+        self.client = client
+        self.shareID = shareID
+        self.userID = userID
+    }
+}
+
 extension Cocoonbox_Agent_V1_Agent {
-    // externalClient names the local client behind an MCP session agent, `mcp:<clientInfo.name>`.
+    // externalClient names the client behind an MCP session agent, `mcp:<clientInfo.name>[@<share>]`.
     public var externalClient: String? {
         guard name.hasPrefix("mcp:") else { return nil }
-        let client = String(name.dropFirst(4))
+        let client = shareSession?.client ?? String(name.dropFirst(4))
         let lower = client.lowercased()
         if lower.hasPrefix("claude") { return "Claude Code" }
         if lower.hasPrefix("codex") { return "Codex" }
@@ -12,10 +25,12 @@ extension Cocoonbox_Agent_V1_Agent {
         return client
     }
 
-    // opened is the mcp:* agent a local session of client opened: the newest one from that client since the session started.
-    public static func opened(by client: String, since startedAt: Date, in agents: [Self]) -> Self? {
-        let since = Int64(startedAt.timeIntervalSince1970 * 1000) - 5000
-        return agents.last { $0.externalClient == client && $0.createdAtMs >= since }
+    public var shareSession: ShareSession? {
+        guard name.hasPrefix("mcp:"), let at = name.range(of: "@sh-", options: .backwards) else { return nil }
+        let client = String(name[name.index(name.startIndex, offsetBy: 4)..<at.lowerBound])
+        let parts = name[name.index(after: at.lowerBound)...].split(separator: ":", maxSplits: 1)
+        guard let share = parts.first, share.count > 3 else { return nil }
+        return ShareSession(client: client, shareID: String(share), userID: parts.count > 1 ? String(parts[1]) : nil)
     }
 
     // resynced is the selection after the agent list reloads: a local session or an agent the box still has stays, else the newest agent in the box.

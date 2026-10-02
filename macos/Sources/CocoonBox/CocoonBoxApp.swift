@@ -34,6 +34,8 @@ struct CocoonBoxApp: App {
                 .disabled(!model.agentsReady)
                 Button("Connect a Local Agent…") { model.showConnectAgent = true }
                     .disabled(model.box == nil)
+                Button("Share Box…") { model.showShare = true }
+                    .disabled(model.box == nil)
                 Button("Sign Out") { model.signOut() }
             }
         }
