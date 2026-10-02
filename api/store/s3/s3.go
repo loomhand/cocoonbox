@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"slices"
 	"strings"
 	"time"
 
@@ -119,24 +120,42 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 	return nil
 }
 
-// List returns the keys under prefix, which ends in a slash.
-func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
+func (s *S3) List(ctx context.Context, prefix string) ([]store.Object, error) {
 	dir, err := s.object(strings.TrimSuffix(prefix, "/"))
 	if err != nil {
 		return nil, err
 	}
-	base := s.opts.Prefix
-	if base != "" {
-		base = path.Clean(base) + "/"
-	}
-	var keys []string
+	base := s.base()
+	var objects []store.Object
 	for info := range s.client.ListObjectsIter(ctx, s.opts.Bucket, minio.ListObjectsOptions{Prefix: dir + "/", Recursive: true}) {
 		if info.Err != nil {
 			return nil, fmt.Errorf("list %s: %w", prefix, info.Err)
 		}
-		keys = append(keys, strings.TrimPrefix(info.Key, base))
+		objects = append(objects, store.Object{Key: strings.TrimPrefix(info.Key, base), Size: info.Size})
 	}
-	return keys, nil
+	return objects, nil
+}
+
+func (s *S3) Delete(ctx context.Context, keys []string) error {
+	objects := make([]minio.ObjectInfo, 0, len(keys))
+	for _, key := range keys {
+		object, err := s.object(key)
+		if err != nil {
+			return err
+		}
+		objects = append(objects, minio.ObjectInfo{Key: object})
+	}
+	results, err := s.client.RemoveObjectsWithIter(ctx, s.opts.Bucket, slices.Values(objects), minio.RemoveObjectsOptions{})
+	if err != nil {
+		return fmt.Errorf("delete %d objects: %w", len(keys), err)
+	}
+	var errs []error
+	for res := range results {
+		if res.Err != nil {
+			errs = append(errs, fmt.Errorf("delete %s: %w", strings.TrimPrefix(res.ObjectName, s.base()), res.Err))
+		}
+	}
+	return errors.Join(append(errs, ctx.Err())...)
 }
 
 // Copy copies src to dst inside the service, without moving the data through the api.
@@ -153,6 +172,13 @@ func (s *S3) Copy(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
 	}
 	return nil
+}
+
+func (s *S3) base() string {
+	if s.opts.Prefix == "" {
+		return ""
+	}
+	return path.Clean(s.opts.Prefix) + "/"
 }
 
 func (s *S3) object(key string) (string, error) {

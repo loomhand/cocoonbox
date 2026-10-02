@@ -15,10 +15,9 @@ import (
 
 const migrateCopies = 16
 
-// LayoutStore is a store that lists and copies objects inside itself.
+// LayoutStore is a store that copies objects inside itself.
 type LayoutStore interface {
 	store.Store
-	List(ctx context.Context, prefix string) ([]string, error)
 	Copy(ctx context.Context, src, dst string) error
 }
 
@@ -42,13 +41,14 @@ func MigrateState(ctx context.Context, st LayoutStore, user string) (int, error)
 		return 0, err
 	}
 	have := make(map[string]bool, len(present))
-	for _, key := range present {
-		have[key] = true
+	for _, obj := range present {
+		have[obj.Key] = true
 	}
 	var copied atomic.Int64
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(migrateCopies)
-	for _, src := range objects {
+	for _, obj := range objects {
+		src := obj.Key
 		dst, err := migratedKey(p, strings.TrimPrefix(src, old))
 		if err != nil {
 			return 0, errors.Join(err, g.Wait())

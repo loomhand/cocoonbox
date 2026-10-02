@@ -718,11 +718,15 @@ func hasProgress(events []*controlv1.OperationEvent) bool {
 	return false
 }
 
+// fakeStore calls before, when set, with the operation and key ahead of each Get, Put, List and Delete.
 type fakeStore struct {
+	before func(op, key string)
+
 	mu       sync.Mutex
 	objects  map[string][]byte
 	failures map[string]int
 	puts     map[string]int
+	deleted  []string
 }
 
 func newFakeStore() *fakeStore {
@@ -738,6 +742,7 @@ func (s *fakeStore) PresignGet(_ context.Context, key string) (store.Presigned, 
 }
 
 func (s *fakeStore) Get(_ context.Context, key string) ([]byte, error) {
+	s.hook("get", key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	data, ok := s.objects[key]
@@ -748,6 +753,7 @@ func (s *fakeStore) Get(_ context.Context, key string) ([]byte, error) {
 }
 
 func (s *fakeStore) Put(_ context.Context, key string, data []byte) error {
+	s.hook("put", key)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.puts[key]++
@@ -759,16 +765,30 @@ func (s *fakeStore) Put(_ context.Context, key string, data []byte) error {
 	return nil
 }
 
-func (s *fakeStore) List(_ context.Context, prefix string) ([]string, error) {
+func (s *fakeStore) List(_ context.Context, prefix string) ([]store.Object, error) {
+	s.hook("list", prefix)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var keys []string
-	for key := range s.objects {
+	var objects []store.Object
+	for key, data := range s.objects {
 		if strings.HasPrefix(key, prefix) {
-			keys = append(keys, key)
+			objects = append(objects, store.Object{Key: key, Size: int64(len(data))})
 		}
 	}
-	return keys, nil
+	return objects, nil
+}
+
+func (s *fakeStore) Delete(_ context.Context, keys []string) error {
+	for _, key := range keys {
+		s.hook("delete", key)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, key := range keys {
+		delete(s.objects, key)
+	}
+	s.deleted = append(s.deleted, keys...)
+	return nil
 }
 
 func (s *fakeStore) Copy(_ context.Context, src, dst string) error {
@@ -780,6 +800,12 @@ func (s *fakeStore) Copy(_ context.Context, src, dst string) error {
 	}
 	s.objects[dst] = data
 	return nil
+}
+
+func (s *fakeStore) hook(op, key string) {
+	if s.before != nil {
+		s.before(op, key)
+	}
 }
 
 func (s *fakeStore) failNext(key string, n int) {
