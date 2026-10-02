@@ -1,0 +1,69 @@
+syntax = "proto3";
+
+package cocoonbox.control.v1;
+
+option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
+
+// Shares is served by cocoonbox-api for a box's owner, who authenticates with
+// `authorization: Bearer <user token>`. A box has at most one live share. The
+// share secret is returned only by Create and Regenerate; the api keeps its
+// SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+service Shares {
+  // Create shares a box of the caller; ALREADY_EXISTS while the box has a live share.
+  rpc Create(CreateShareRequest) returns (ShareSecret);
+  // List returns the live shares of the caller's boxes.
+  rpc List(ListSharesRequest) returns (ListSharesResponse);
+  // SetWrite turns write on or off; it applies to the next call of every guest.
+  rpc SetWrite(SetShareWriteRequest) returns (Share);
+  // Regenerate gives the share a new secret and ends every session of the old one.
+  rpc Regenerate(ShareRef) returns (ShareSecret);
+  // Revoke ends the share and every session of it.
+  rpc Revoke(ShareRef) returns (RevokeShareResponse);
+}
+
+message Share {
+  string id = 1;
+  string box_id = 2;
+  // Empty: anyone with the link.
+  repeated ShareUser users = 3;
+  bool write = 4;
+  int64 expires_at_ms = 5;
+  int64 created_at_ms = 6;
+}
+
+message ShareUser {
+  string id = 1;
+  string name = 2;
+}
+
+message ShareRef {
+  string share_id = 1;
+}
+
+message ShareSecret {
+  Share share = 1;
+  // `cbs_` and 32 hex digits; shown once.
+  string secret = 2;
+}
+
+message CreateShareRequest {
+  string box_id = 1;
+  // 0 selects 24 hours; at most 30 days.
+  int64 ttl_seconds = 2;
+  // Names of the cocoonbox users who may use the share; empty for anyone with the link.
+  repeated string user_names = 3;
+  bool write = 4;
+}
+
+message ListSharesRequest {}
+
+message ListSharesResponse {
+  repeated Share shares = 1;
+}
+
+message SetShareWriteRequest {
+  string share_id = 1;
+  bool write = 2;
+}
+
+message RevokeShareResponse {}

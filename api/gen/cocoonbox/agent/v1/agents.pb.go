@@ -1588,6 +1588,124 @@ func (*DeleteAgentResponse) Descriptor() ([]byte, []int) {
 	return file_cocoonbox_agent_v1_agents_proto_rawDescGZIP(), []int{23}
 }
 
+type EndRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to Target:
+	//
+	//	*EndRequest_AgentId
+	//	*EndRequest_ShareId
+	Target        isEndRequest_Target `protobuf_oneof:"target"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EndRequest) Reset() {
+	*x = EndRequest{}
+	mi := &file_cocoonbox_agent_v1_agents_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EndRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EndRequest) ProtoMessage() {}
+
+func (x *EndRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_agent_v1_agents_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EndRequest.ProtoReflect.Descriptor instead.
+func (*EndRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_agent_v1_agents_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *EndRequest) GetTarget() isEndRequest_Target {
+	if x != nil {
+		return x.Target
+	}
+	return nil
+}
+
+func (x *EndRequest) GetAgentId() string {
+	if x != nil {
+		if x, ok := x.Target.(*EndRequest_AgentId); ok {
+			return x.AgentId
+		}
+	}
+	return ""
+}
+
+func (x *EndRequest) GetShareId() string {
+	if x != nil {
+		if x, ok := x.Target.(*EndRequest_ShareId); ok {
+			return x.ShareId
+		}
+	}
+	return ""
+}
+
+type isEndRequest_Target interface {
+	isEndRequest_Target()
+}
+
+type EndRequest_AgentId struct {
+	AgentId string `protobuf:"bytes,1,opt,name=agent_id,json=agentId,proto3,oneof"`
+}
+
+type EndRequest_ShareId struct {
+	ShareId string `protobuf:"bytes,2,opt,name=share_id,json=shareId,proto3,oneof"`
+}
+
+func (*EndRequest_AgentId) isEndRequest_Target() {}
+
+func (*EndRequest_ShareId) isEndRequest_Target() {}
+
+type EndResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EndResponse) Reset() {
+	*x = EndResponse{}
+	mi := &file_cocoonbox_agent_v1_agents_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EndResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EndResponse) ProtoMessage() {}
+
+func (x *EndResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_agent_v1_agents_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EndResponse.ProtoReflect.Descriptor instead.
+func (*EndResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_agent_v1_agents_proto_rawDescGZIP(), []int{25}
+}
+
 var File_cocoonbox_agent_v1_agents_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
@@ -1690,7 +1808,13 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"/\n" +
 	"\x12DeleteAgentRequest\x12\x19\n" +
 	"\bagent_id\x18\x01 \x01(\tR\aagentId\"\x15\n" +
-	"\x13DeleteAgentResponse*\x98\x01\n" +
+	"\x13DeleteAgentResponse\"P\n" +
+	"\n" +
+	"EndRequest\x12\x1b\n" +
+	"\bagent_id\x18\x01 \x01(\tH\x00R\aagentId\x12\x1b\n" +
+	"\bshare_id\x18\x02 \x01(\tH\x00R\ashareIdB\b\n" +
+	"\x06target\"\r\n" +
+	"\vEndResponse*\x98\x01\n" +
 	"\vAgentStatus\x12\x1c\n" +
 	"\x18AGENT_STATUS_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11AGENT_STATUS_IDLE\x10\x01\x12\x18\n" +
@@ -1702,7 +1826,7 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\tROLE_USER\x10\x01\x12\x12\n" +
 	"\x0eROLE_ASSISTANT\x10\x02\x12\r\n" +
 	"\tROLE_TOOL\x10\x03\x12\x0f\n" +
-	"\vROLE_SYSTEM\x10\x042\x9d\x05\n" +
+	"\vROLE_SYSTEM\x10\x042\xe5\x05\n" +
 	"\x06Agents\x12K\n" +
 	"\x06Create\x12&.cocoonbox.agent.v1.CreateAgentRequest\x1a\x19.cocoonbox.agent.v1.Agent\x12U\n" +
 	"\x04List\x12%.cocoonbox.agent.v1.ListAgentsRequest\x1a&.cocoonbox.agent.v1.ListAgentsResponse\x12I\n" +
@@ -1712,7 +1836,8 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\aRespond\x12\".cocoonbox.agent.v1.RespondRequest\x1a#.cocoonbox.agent.v1.RespondResponse\x12O\n" +
 	"\x06Cancel\x12!.cocoonbox.agent.v1.CancelRequest\x1a\".cocoonbox.agent.v1.CancelResponse\x12K\n" +
 	"\x06Rename\x12&.cocoonbox.agent.v1.RenameAgentRequest\x1a\x19.cocoonbox.agent.v1.Agent\x12Y\n" +
-	"\x06Delete\x12&.cocoonbox.agent.v1.DeleteAgentRequest\x1a'.cocoonbox.agent.v1.DeleteAgentResponseB>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
+	"\x06Delete\x12&.cocoonbox.agent.v1.DeleteAgentRequest\x1a'.cocoonbox.agent.v1.DeleteAgentResponse\x12F\n" +
+	"\x03End\x12\x1e.cocoonbox.agent.v1.EndRequest\x1a\x1f.cocoonbox.agent.v1.EndResponseB>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cocoonbox_agent_v1_agents_proto_rawDescOnce sync.Once
@@ -1727,7 +1852,7 @@ func file_cocoonbox_agent_v1_agents_proto_rawDescGZIP() []byte {
 }
 
 var file_cocoonbox_agent_v1_agents_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cocoonbox_agent_v1_agents_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_cocoonbox_agent_v1_agents_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_cocoonbox_agent_v1_agents_proto_goTypes = []any{
 	(AgentStatus)(0),            // 0: cocoonbox.agent.v1.AgentStatus
 	(Role)(0),                   // 1: cocoonbox.agent.v1.Role
@@ -1755,6 +1880,8 @@ var file_cocoonbox_agent_v1_agents_proto_goTypes = []any{
 	(*RenameAgentRequest)(nil),  // 23: cocoonbox.agent.v1.RenameAgentRequest
 	(*DeleteAgentRequest)(nil),  // 24: cocoonbox.agent.v1.DeleteAgentRequest
 	(*DeleteAgentResponse)(nil), // 25: cocoonbox.agent.v1.DeleteAgentResponse
+	(*EndRequest)(nil),          // 26: cocoonbox.agent.v1.EndRequest
+	(*EndResponse)(nil),         // 27: cocoonbox.agent.v1.EndResponse
 }
 var file_cocoonbox_agent_v1_agents_proto_depIdxs = []int32{
 	0,  // 0: cocoonbox.agent.v1.Agent.status:type_name -> cocoonbox.agent.v1.AgentStatus
@@ -1777,16 +1904,18 @@ var file_cocoonbox_agent_v1_agents_proto_depIdxs = []int32{
 	21, // 17: cocoonbox.agent.v1.Agents.Cancel:input_type -> cocoonbox.agent.v1.CancelRequest
 	23, // 18: cocoonbox.agent.v1.Agents.Rename:input_type -> cocoonbox.agent.v1.RenameAgentRequest
 	24, // 19: cocoonbox.agent.v1.Agents.Delete:input_type -> cocoonbox.agent.v1.DeleteAgentRequest
-	2,  // 20: cocoonbox.agent.v1.Agents.Create:output_type -> cocoonbox.agent.v1.Agent
-	5,  // 21: cocoonbox.agent.v1.Agents.List:output_type -> cocoonbox.agent.v1.ListAgentsResponse
-	8,  // 22: cocoonbox.agent.v1.Agents.Send:output_type -> cocoonbox.agent.v1.SendResponse
-	10, // 23: cocoonbox.agent.v1.Agents.Transcript:output_type -> cocoonbox.agent.v1.TranscriptPage
-	20, // 24: cocoonbox.agent.v1.Agents.Respond:output_type -> cocoonbox.agent.v1.RespondResponse
-	22, // 25: cocoonbox.agent.v1.Agents.Cancel:output_type -> cocoonbox.agent.v1.CancelResponse
-	2,  // 26: cocoonbox.agent.v1.Agents.Rename:output_type -> cocoonbox.agent.v1.Agent
-	25, // 27: cocoonbox.agent.v1.Agents.Delete:output_type -> cocoonbox.agent.v1.DeleteAgentResponse
-	20, // [20:28] is the sub-list for method output_type
-	12, // [12:20] is the sub-list for method input_type
+	26, // 20: cocoonbox.agent.v1.Agents.End:input_type -> cocoonbox.agent.v1.EndRequest
+	2,  // 21: cocoonbox.agent.v1.Agents.Create:output_type -> cocoonbox.agent.v1.Agent
+	5,  // 22: cocoonbox.agent.v1.Agents.List:output_type -> cocoonbox.agent.v1.ListAgentsResponse
+	8,  // 23: cocoonbox.agent.v1.Agents.Send:output_type -> cocoonbox.agent.v1.SendResponse
+	10, // 24: cocoonbox.agent.v1.Agents.Transcript:output_type -> cocoonbox.agent.v1.TranscriptPage
+	20, // 25: cocoonbox.agent.v1.Agents.Respond:output_type -> cocoonbox.agent.v1.RespondResponse
+	22, // 26: cocoonbox.agent.v1.Agents.Cancel:output_type -> cocoonbox.agent.v1.CancelResponse
+	2,  // 27: cocoonbox.agent.v1.Agents.Rename:output_type -> cocoonbox.agent.v1.Agent
+	25, // 28: cocoonbox.agent.v1.Agents.Delete:output_type -> cocoonbox.agent.v1.DeleteAgentResponse
+	27, // 29: cocoonbox.agent.v1.Agents.End:output_type -> cocoonbox.agent.v1.EndResponse
+	21, // [21:30] is the sub-list for method output_type
+	12, // [12:21] is the sub-list for method input_type
 	12, // [12:12] is the sub-list for extension type_name
 	12, // [12:12] is the sub-list for extension extendee
 	0,  // [0:12] is the sub-list for field type_name
@@ -1805,13 +1934,17 @@ func file_cocoonbox_agent_v1_agents_proto_init() {
 		(*TranscriptEntry_Approval)(nil),
 		(*TranscriptEntry_TurnEnd)(nil),
 	}
+	file_cocoonbox_agent_v1_agents_proto_msgTypes[24].OneofWrappers = []any{
+		(*EndRequest_AgentId)(nil),
+		(*EndRequest_ShareId)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_agent_v1_agents_proto_rawDesc), len(file_cocoonbox_agent_v1_agents_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

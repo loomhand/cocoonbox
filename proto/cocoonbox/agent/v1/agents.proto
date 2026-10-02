@@ -21,6 +21,10 @@ service Agents {
   // transcript. An mcp:* agent whose MCP session is open is refused with
   // FAILED_PRECONDITION; an unknown agent gets NOT_FOUND.
   rpc Delete(DeleteAgentRequest) returns (DeleteAgentResponse);
+  // End closes the MCP session that drives agent_id, or every MCP session of
+  // share_id; the agents and their transcripts stay. An agent_id without an
+  // open session gets NOT_FOUND.
+  rpc End(EndRequest) returns (EndResponse);
 }
 
 enum AgentStatus {
@@ -184,3 +188,12 @@ message DeleteAgentRequest {
 }
 
 message DeleteAgentResponse {}
+
+message EndRequest {
+  oneof target {
+    string agent_id = 1;
+    string share_id = 2;
+  }
+}
+
+message EndResponse {}

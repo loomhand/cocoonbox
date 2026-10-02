@@ -124,6 +124,19 @@ public enum Cocoonbox_Agent_V1_Agents: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "End" metadata.
+        public enum End: Sendable {
+            /// Request type for "End".
+            public typealias Input = Cocoonbox_Agent_V1_EndRequest
+            /// Response type for "End".
+            public typealias Output = Cocoonbox_Agent_V1_EndResponse
+            /// Descriptor for "End".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.agent.v1.Agents"),
+                method: "End",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.agent.v1.Agents" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Create.descriptor,
@@ -133,7 +146,8 @@ public enum Cocoonbox_Agent_V1_Agents: Sendable {
             Respond.descriptor,
             Cancel.descriptor,
             Rename.descriptor,
-            Delete.descriptor
+            Delete.descriptor,
+            End.descriptor
         ]
     }
 }
@@ -291,6 +305,26 @@ extension Cocoonbox_Agent_V1_Agents {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>
+
+        /// Handle the "End" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > End closes the MCP session that drives agent_id, or every MCP session of
+        /// > share_id; the agents and their transcripts stay. An agent_id without an
+        /// > open session gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Agent_V1_EndRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Agent_V1_EndResponse` messages.
+        func end(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_EndRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_EndResponse>
     }
 
     /// Service protocol for the "cocoonbox.agent.v1.Agents" service.
@@ -432,6 +466,26 @@ extension Cocoonbox_Agent_V1_Agents {
             request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_DeleteAgentRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>
+
+        /// Handle the "End" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > End closes the MCP session that drives agent_id, or every MCP session of
+        /// > share_id; the agents and their transcripts stay. An agent_id without an
+        /// > open session gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_EndRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Agent_V1_EndResponse` message.
+        func end(
+            request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_EndRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_EndResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.agent.v1.Agents" service.
@@ -571,6 +625,26 @@ extension Cocoonbox_Agent_V1_Agents {
             request: Cocoonbox_Agent_V1_DeleteAgentRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Agent_V1_DeleteAgentResponse
+
+        /// Handle the "End" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > End closes the MCP session that drives agent_id, or every MCP session of
+        /// > share_id; the agents and their transcripts stay. An agent_id without an
+        /// > open session gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Agent_V1_EndRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Agent_V1_EndResponse` to respond with.
+        func end(
+            request: Cocoonbox_Agent_V1_EndRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Agent_V1_EndResponse
     }
 }
 
@@ -666,6 +740,17 @@ extension Cocoonbox_Agent_V1_Agents.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Cocoonbox_Agent_V1_Agents.Method.End.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_EndRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_EndResponse>(),
+            handler: { request, context in
+                try await self.end(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -754,6 +839,17 @@ extension Cocoonbox_Agent_V1_Agents.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse> {
         let response = try await self.delete(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func end(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_EndRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_EndResponse> {
+        let response = try await self.end(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -861,6 +957,19 @@ extension Cocoonbox_Agent_V1_Agents.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>(
             message: try await self.delete(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func end(
+        request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_EndRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_EndResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Agent_V1_EndResponse>(
+            message: try await self.end(
                 request: request.message,
                 context: context
             ),
@@ -1048,6 +1157,31 @@ extension Cocoonbox_Agent_V1_Agents {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_DeleteAgentResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_DeleteAgentResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "End" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > End closes the MCP session that drives agent_id, or every MCP session of
+        /// > share_id; the agents and their transcripts stay. An agent_id without an
+        /// > open session gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_EndRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_EndRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_EndResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func end<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_EndRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_EndRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_EndResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_EndResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -1326,6 +1460,42 @@ extension Cocoonbox_Agent_V1_Agents {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "End" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > End closes the MCP session that drives agent_id, or every MCP session of
+        /// > share_id; the agents and their transcripts stay. An agent_id without an
+        /// > open session gets NOT_FOUND.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Agent_V1_EndRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_EndRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_EndResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func end<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_EndRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_EndRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_EndResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_EndResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Agent_V1_Agents.Method.End.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -1541,6 +1711,37 @@ extension Cocoonbox_Agent_V1_Agents.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_DeleteAgentRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_DeleteAgentResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "End" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > End closes the MCP session that drives agent_id, or every MCP session of
+    /// > share_id; the agents and their transcripts stay. An agent_id without an
+    /// > open session gets NOT_FOUND.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Agent_V1_EndRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func end<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Agent_V1_EndRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_EndResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.end(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_EndRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_EndResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1790,6 +1991,41 @@ extension Cocoonbox_Agent_V1_Agents.ClientProtocol {
             metadata: metadata
         )
         return try await self.delete(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "End" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > End closes the MCP session that drives agent_id, or every MCP session of
+    /// > share_id; the agents and their transcripts stay. An agent_id without an
+    /// > open session gets NOT_FOUND.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func end<Result>(
+        _ message: Cocoonbox_Agent_V1_EndRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_EndResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Agent_V1_EndRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.end(
             request: request,
             options: options,
             onResponse: handleResponse
