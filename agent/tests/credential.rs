@@ -29,6 +29,18 @@ const CODE_PAGE: &str = r#"<!doctype html><title>code</title>
 <button>Verify</button>
 </form>"#;
 
+const SEARCH_PAGE: &str = r#"<!doctype html><title>search</title>
+<form action="/search" method="post"><input name="q" placeholder="Search"><button>Search</button></form>"#;
+const DIALOG_PAGE: &str = r#"<!doctype html><title>dialog</title>
+<form><input placeholder="Account"><input type="password" placeholder="Password"></form>
+<div id="go" style="cursor:pointer">Log in</div>
+<script>
+go.onclick = () => {
+  const [user, pass] = document.querySelectorAll('input');
+  fetch('/dialog', { method: 'POST', body: `user=${user.value}&pass=${pass.value}` });
+};
+</script>"#;
+
 type Posts = Arc<Mutex<Vec<(String, String)>>>;
 
 /// Kills the test's Chrome, found by its profile path, even when the test fails.
@@ -123,6 +135,8 @@ async fn site(posts: Posts) -> u16 {
                         "<!doctype html><title>signed in</title>signed in"
                     }
                     (_, "/code") => CODE_PAGE,
+                    (_, "/dialog") => DIALOG_PAGE,
+                    (_, "/search") => SEARCH_PAGE,
                     (_, "/") => LOGIN_PAGE,
                     _ => "",
                 };
@@ -334,6 +348,39 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     tool(
         &th,
         "browser_navigate",
+        json!({"url": format!("{origin}/search")}),
+    )
+    .await;
+    let refused = session
+        .fill_credential(authed(fill(&origin, Secret::Password(password.clone()))))
+        .await
+        .unwrap_err();
+    assert!(
+        refused.message().contains("no sign-in field on this page"),
+        "{}",
+        refused.message()
+    );
+
+    tool(
+        &th,
+        "browser_navigate",
+        json!({"url": format!("{origin}/dialog")}),
+    )
+    .await;
+    let done = session
+        .fill_credential(authed(fill(&origin, Secret::Password(password.clone()))))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(done.filled, ["username", "password"]);
+    assert_eq!(
+        wait_post(&posts, "/dialog").await,
+        format!("user={user}&pass={password}")
+    );
+
+    tool(
+        &th,
+        "browser_navigate",
         json!({"url": format!("{origin}/code")}),
     )
     .await;
@@ -345,7 +392,7 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     assert_eq!(done.filled, ["code"]);
     assert_eq!(wait_post(&posts, "/code").await, format!("otp={code}"));
     eprintln!(
-        "the site received both POSTs with the filled values; filled {:?}",
+        "the site received all three POSTs with the filled values; filled {:?}",
         done.filled
     );
 

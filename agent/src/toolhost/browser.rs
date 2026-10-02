@@ -143,7 +143,7 @@ const READ_JS: &str = r#"((ref) => {
   return el.innerText || '';
 })"#;
 
-const FILL_JS: &str = r#"((origin, username, secret, kind, submit) => {
+const FILL_JS: &str = r#"(async (origin, username, secret, kind, submit) => {
   if (location.origin !== origin) return { error: `the active tab is on ${location.origin}, not ${origin}` };
   const shown = (el) => {
     const r = el.getBoundingClientRect();
@@ -151,6 +151,8 @@ const FILL_JS: &str = r#"((origin, username, secret, kind, submit) => {
   };
   const inputs = [...document.querySelectorAll('input')].filter((el) => !el.disabled && !el.readOnly && shown(el));
   const textual = (el) => ['text', 'email', 'tel', 'number'].includes(el.type);
+  const userish = (el) => /user|mail|login|account|phone|mobile|账号|帐号|邮箱|手机/i
+    .test([el.autocomplete, el.type, el.name, el.id, el.placeholder, el.getAttribute('aria-label')].join(' '));
   const set = (el, v) => {
     el.focus();
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
@@ -170,16 +172,31 @@ const FILL_JS: &str = r#"((origin, username, secret, kind, submit) => {
     if (user && !pass) pass = inputs.slice(inputs.indexOf(user) + 1).find((el) => el.type === 'password') || null;
     if (!user && !pass) pass = inputs.find((el) => el.type === 'password') || null;
     if (pass && !user) user = inputs.slice(0, inputs.indexOf(pass)).filter(textual).pop() || null;
-    if (!user && !pass) user = inputs.find(textual) || null;
+    if (!user && !pass) user = inputs.find((el) => textual(el) && userish(el)) || null;
     if (user && username) { set(user, username); filled.push('username'); last = user; }
     if (pass && secret) { set(pass, secret); filled.push('password'); last = pass; }
   }
   if (!last) return { error: 'no sign-in field on this page' };
-  if (submit && last.form) {
-    last.form.requestSubmit();
-    return { filled, submitted: 'form' };
+  if (!submit) return { filled, submitted: '' };
+  await new Promise((r) => setTimeout(r, 100));
+  const named = (el) => el.textContent.length < 40
+    && /^(登\s*录|登入|log\s*in|sign\s*in|continue|next|submit|verify|下一步|继续|提交|验证|确[定认])$/i
+      .test((el.innerText || el.value || el.getAttribute('aria-label') || '').trim());
+  const clickable = (el) => !el.disabled && shown(el)
+    && (el.matches('button,input,[role=button],a') || getComputedStyle(el).cursor === 'pointer');
+  let btn = last.form && [...last.form.elements].find((el) => ['submit', 'image'].includes(el.type) && clickable(el));
+  for (let a = last.parentElement; a && !btn; a = a.parentElement) {
+    btn = [...a.querySelectorAll('button,input,[role=button],a,div,span')].find((el) =>
+      last.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && named(el) && clickable(el));
   }
-  return { filled, submitted: submit ? 'enter' : '' };
+  if (btn) {
+    btn.scrollIntoView({ block: 'center', inline: 'center' });
+    const r = btn.getBoundingClientRect();
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    if (btn.contains(document.elementFromPoint(x, y))) return { filled, submitted: 'click', x, y };
+  }
+  last.focus();
+  return { filled, submitted: 'enter' };
 })"#;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
@@ -245,13 +262,7 @@ impl Browser {
                     p["x"].as_f64().unwrap_or(0.0),
                     p["y"].as_f64().unwrap_or(0.0),
                 );
-                for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
-                    cdp.call(
-                        "Input.dispatchMouseEvent",
-                        json!({"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}),
-                    )
-                    .await?;
-                }
+                cdp.click(x, y).await?;
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 cdp.wait_loaded().await;
                 let here = cdp
@@ -337,7 +348,14 @@ impl Browser {
             return Err(e.to_owned());
         }
         let submitted = match r["submitted"].as_str() {
-            Some("form") => true,
+            Some("click") => {
+                cdp.click(
+                    r["x"].as_f64().unwrap_or(0.0),
+                    r["y"].as_f64().unwrap_or(0.0),
+                )
+                .await?;
+                true
+            }
             Some("enter") => {
                 cdp.press_enter().await?;
                 true
@@ -583,6 +601,17 @@ impl Cdp {
             }
             tokio::time::sleep(POLL).await;
         }
+    }
+
+    async fn click(&mut self, x: f64, y: f64) -> Result<(), String> {
+        for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
+            self.call(
+                "Input.dispatchMouseEvent",
+                json!({"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}),
+            )
+            .await?;
+        }
+        Ok(())
     }
 
     async fn press_enter(&mut self) -> Result<(), String> {
