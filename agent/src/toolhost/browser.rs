@@ -684,6 +684,76 @@ mod tests {
         port
     }
 
+    /// Serves CDP on the returned port only after `delay`, with one page whose script evaluations return "Page: slow".
+    async fn slow_chrome(delay: Duration) -> u16 {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let list = json!([{
+            "type": "page",
+            "url": "about:blank",
+            "webSocketDebuggerUrl": format!("ws://{}/devtools/page/1", ws.local_addr().unwrap()),
+        }])
+        .to_string();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        let reply =
+                            json!({"id": v["id"], "result": {"result": {"value": "Page: slow"}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let http = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    list.len()
+                );
+                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn a_browser_tool_waits_for_a_start_in_flight() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(RUNNING_MARKER), b"").unwrap();
+        let port = slow_chrome(Duration::from_millis(800)).await;
+        let b = std::sync::Arc::new(Browser::new("true".into(), dir.path().into(), port));
+        let start = {
+            let b = std::sync::Arc::clone(&b);
+            tokio::spawn(async move {
+                b.run("browser_start", json!({"if_was_running": true}))
+                    .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let asked = tokio::time::Instant::now();
+        assert_eq!(
+            b.run("browser_snapshot", json!({})).await.unwrap(),
+            "Page: slow"
+        );
+        assert!(
+            asked.elapsed() >= Duration::from_millis(500),
+            "{:?}",
+            asked.elapsed()
+        );
+        assert_eq!(start.await.unwrap().unwrap(), "running");
+    }
+
     #[test]
     fn js_secret_is_a_string_literal_of_its_input_without_reallocating() {
         for s in ["plain", "quo\"te\\back", "line\nbreak\u{2028}", "密码", ""] {

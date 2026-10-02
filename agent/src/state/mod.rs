@@ -137,7 +137,7 @@ impl StateEngine {
             .snapshot(&keys, &key.key_id, &req.parent, quiesced)
             .await;
         if let Some(q) = quiet {
-            self.resume(q, false).await;
+            self.resume(q, false);
         }
         let (snapshot, response) = result?;
         *pinned = Some(snapshot);
@@ -337,7 +337,7 @@ impl StateEngine {
         }
         let quiet = self.quiesce().await?;
         let result = self.swap_in(manifest, cache, swaps).await;
-        self.resume(quiet, result.is_ok()).await;
+        self.resume(quiet, result.is_ok());
         result?;
         meter.finish(manifest_id).await;
         Ok(())
@@ -722,12 +722,25 @@ impl StateEngine {
         })
     }
 
-    async fn resume(&self, quiet: Quiet, restored: bool) {
-        if let Some(args) = chrome_start(quiet.chrome, restored)
-            && let Err(e) = self.tool("browser_start", args).await
-        {
-            eprintln!("state: restart chrome: {e}");
-        }
+    /// Ends the pause; Chrome starts in the background, and a browser tool waits on its lock meanwhile.
+    fn resume(&self, quiet: Quiet, restored: bool) {
+        let Some(args) = chrome_start(quiet.chrome, restored) else {
+            return;
+        };
+        let toolhost = self.toolhost.clone();
+        // detached: the start reports only to the log
+        tokio::spawn(async move {
+            let call = Call {
+                agent_id: "state".to_owned(),
+                tool: "browser_start".to_owned(),
+                args,
+            };
+            match toolhost.call(&call).await {
+                Ok(out) if out.is_error => eprintln!("state: restart chrome: {}", out.text),
+                Ok(_) => {}
+                Err(e) => eprintln!("state: restart chrome: {e}"),
+            }
+        });
     }
 
     async fn tool(&self, name: &str, args: serde_json::Value) -> Result<String, String> {
@@ -1181,6 +1194,48 @@ fn retryable(status: reqwest::StatusCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn resume_returns_before_chrome_is_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("toolhost.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let (seen, mut calls) = mpsc::channel(4);
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = listener.accept().await {
+                let call: Call = rpc::read_frame(&mut s).await.unwrap();
+                seen.send(call.args).await.unwrap();
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let out = rpc::Output::error("chrome did not expose CDP");
+                rpc::write_frame(&mut s, &out).await.unwrap();
+            }
+        });
+        let turns = Arc::new(RwLock::new(()));
+        let engine = StateEngine::new(
+            rpc::Client::new(socket),
+            Store::open(&dir.path().join("agent.db")).unwrap(),
+            default_roots(),
+            dir.path().join("work"),
+            Arc::clone(&turns),
+            None,
+        );
+        let gate = Arc::clone(&turns).write_owned().await;
+        let started = tokio::time::Instant::now();
+        engine.resume(
+            Quiet {
+                _gate: gate,
+                chrome: true,
+            },
+            true,
+        );
+        assert!(started.elapsed() < Duration::from_millis(200));
+        assert!(turns.try_write().is_ok(), "turns run again at once");
+        let args = tokio::time::timeout(Duration::from_secs(5), calls.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(args, json!({"if_was_running": true}));
+    }
 
     #[test]
     fn chrome_comes_back_as_it_was_at_the_save() {
