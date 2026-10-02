@@ -26,6 +26,7 @@ func (s *Service) restoreMissing(ctx context.Context, user, box string, m machin
 // runRestore boots m and restores saved into it; clients reach m only after, and a failure deletes m so the next Ensure restores again.
 func (s *Service) runRestore(op *operation, user string, m machines.Machine, saved head) {
 	logger := log.WithFunc("boxes.Service.runRestore").WithField("box", op.boxID)
+	defer s.state.pin(statePath{user: user, box: op.boxID}, saved.Latest)()
 	start := time.Now()
 	savedAt := time.UnixMilli(saved.SavedAtMs).UTC().Format(time.RFC3339)
 	op.note(controlv1.Phase_PHASE_CREATING, controlv1.BoxState_BOX_STATE_STARTING,

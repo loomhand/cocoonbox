@@ -22,6 +22,7 @@ const (
 	defaultStateInterval = 15 * time.Minute
 	defaultPresignTTL    = 10 * time.Minute
 	defaultRegion        = "us-east-1"
+	maxDeleteBatch       = 1000
 
 	defaultVCPUs     = 4
 	defaultMemoryMiB = 8192
@@ -64,6 +65,17 @@ type State struct {
 	CredentialsFile string   `json:"credentials_file"`
 	Interval        Duration `json:"interval"`
 	PresignTTL      Duration `json:"presign_ttl"`
+	GC              GC       `json:"gc"`
+}
+
+// GC configures snapshot retention and chunk garbage collection; a zero Interval turns it off.
+type GC struct {
+	Interval Duration `json:"interval"`
+	DryRun   bool     `json:"dry_run"`
+	// Users limits the passes to these user ids; empty means every user.
+	Users []string `json:"users"`
+	// DeleteBatch is the number of keys per DeleteObjects request.
+	DeleteBatch int `json:"delete_batch"`
 }
 
 // Provision names the edge signing key, gw's admin API for per-user gw keys and the residential exit.
@@ -175,6 +187,7 @@ func (c *Config) applyDefaults() {
 	c.State.Region = cmp.Or(c.State.Region, defaultRegion)
 	c.State.Interval = cmp.Or(c.State.Interval, Duration(defaultStateInterval))
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
+	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
 }
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
@@ -199,6 +212,12 @@ func (c *Config) validate() error {
 	}
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
+	}
+	if c.State.GC.Interval < 0 || (c.State.GC.Interval > 0 && c.State.Bucket == "") {
+		errs = append(errs, errors.New("state.gc.interval must not be negative and needs state.bucket"))
+	}
+	if c.State.GC.DeleteBatch < 1 || c.State.GC.DeleteBatch > maxDeleteBatch {
+		errs = append(errs, fmt.Errorf("state.gc.delete_batch must be in 1..%d, got %d", maxDeleteBatch, c.State.GC.DeleteBatch))
 	}
 	if c.Sandboxd.URL == "" || c.Sandboxd.TokenFile == "" {
 		errs = append(errs, errors.New("sandboxd.url and sandboxd.token_file are required"))

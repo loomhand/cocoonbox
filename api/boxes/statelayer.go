@@ -46,18 +46,29 @@ type chunk struct {
 	Size uint64 `json:"size"`
 }
 
+// timelineEntry describes one kept snapshot without its chunk list.
+type timelineEntry struct {
+	ID            string `json:"id"`
+	Consistency   string `json:"consistency"`
+	TakenAtMs     int64  `json:"taken_at_ms"`
+	SavedAtMs     int64  `json:"saved_at_ms"`
+	Files         uint64 `json:"files"`
+	LogicalBytes  uint64 `json:"logical_bytes"`
+	NewChunks     int    `json:"new_chunks"`
+	UploadedBytes uint64 `json:"uploaded_bytes"`
+}
+
 // snapshotRecord is the plaintext index entry of one snapshot; chunk ids are keyed hashes.
 type snapshotRecord struct {
-	ID            string  `json:"id"`
-	Parent        string  `json:"parent,omitempty"`
-	Consistency   string  `json:"consistency"`
-	TakenAtMs     int64   `json:"taken_at_ms"`
-	SavedAtMs     int64   `json:"saved_at_ms"`
-	Files         uint64  `json:"files"`
-	LogicalBytes  uint64  `json:"logical_bytes"`
-	Chunks        []chunk `json:"chunks"`
-	NewChunks     int     `json:"new_chunks"`
-	UploadedBytes uint64  `json:"uploaded_bytes"`
+	timelineEntry
+	// Parent is the head the save planned on; pruning may remove it, and nothing follows it.
+	Parent string  `json:"parent,omitempty"`
+	Chunks []chunk `json:"chunks"`
+}
+
+// timeline lists a box's kept snapshots; the GC prunes it and every reader takes the kept set from it.
+type timeline struct {
+	Snapshots []timelineEntry `json:"snapshots"`
 }
 
 // chunkIndex lists the chunks stored under one user's key; ids from another key never match.
@@ -77,12 +88,17 @@ type statePath struct {
 	box  string
 }
 
-func (p statePath) chunk(id string) string    { return p.user + "/chunks/" + id }
+func (p statePath) chunk(id string) string    { return p.chunks() + id }
+func (p statePath) chunks() string            { return p.user + "/chunks/" }
 func (p statePath) index() string             { return p.user + "/index.json" }
-func (p statePath) manifest(id string) string { return p.boxDir() + "manifests/" + id }
-func (p statePath) record(id string) string   { return p.boxDir() + "snapshots/" + id + ".json" }
+func (p statePath) manifest(id string) string { return p.manifests() + id }
+func (p statePath) manifests() string         { return p.boxDir() + "manifests/" }
+func (p statePath) record(id string) string   { return p.records() + id + ".json" }
+func (p statePath) records() string           { return p.boxDir() + "snapshots/" }
+func (p statePath) timeline() string          { return p.boxDir() + "timeline.json" }
 func (p statePath) head() string              { return p.boxDir() + "head.json" }
-func (p statePath) boxDir() string            { return p.user + "/boxes/" + p.box + "/" }
+func (p statePath) boxDir() string            { return p.boxes() + p.box + "/" }
+func (p statePath) boxes() string             { return p.user + "/boxes/" }
 
 // stateLayer moves user state between box agents and the store; one transfer per box at a time.
 type stateLayer struct {
@@ -93,17 +109,26 @@ type stateLayer struct {
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
+	users map[string]*sync.RWMutex
 	heads map[statePath]head
+	pins  map[statePath]map[string]int
 }
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
-	return &stateLayer{agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, locks: map[string]*sync.Mutex{}, heads: map[statePath]head{}}
+	return &stateLayer{
+		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay,
+		locks: map[string]*sync.Mutex{}, users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
+	}
 }
 
 // save snapshots the state of the agent at ep and uploads the chunks the user's store lacks.
 func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	unlock := l.lock(p.box)
 	defer unlock()
+	// The GC sweep takes this lock exclusively, so no save is between its index read and its commit.
+	user := l.userLock(p.user)
+	user.RLock()
+	defer user.RUnlock()
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return nil, fmt.Errorf("state key: %w", err)
@@ -290,12 +315,15 @@ func (l *stateLayer) lastSaved(ctx context.Context, p statePath) int64 {
 	return h.SavedAtMs
 }
 
-// commit adds the uploaded chunks to the index, then writes the snapshot record, then the head, so a crash leaves the previous head valid.
+// commit adds the uploaded chunks to the index, then writes the snapshot record, the timeline and the head, so a crash leaves the previous head valid.
 func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord) error {
 	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks) }); err != nil {
 		return err
 	}
 	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.record(rec.ID), rec) }); err != nil {
+		return err
+	}
+	if err := l.retry(ctx, func() error { return l.addToTimeline(ctx, p, rec.timelineEntry) }); err != nil {
 		return err
 	}
 	h := head{Latest: rec.ID, SavedAtMs: rec.SavedAtMs}
@@ -320,6 +348,47 @@ func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, 
 		stored[c.ID] = true
 	}
 	return putJSON(ctx, l.store, p.index(), chunkIndex{KeyID: keyID, Chunks: slices.Sorted(maps.Keys(stored))})
+}
+
+// addToTimeline appends e to p's timeline; a box without one gets it from the GC, which builds it from the records.
+func (l *stateLayer) addToTimeline(ctx context.Context, p statePath, e timelineEntry) error {
+	var tl timeline
+	err := getJSON(ctx, l.store, p.timeline(), &tl)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil || slices.ContainsFunc(tl.Snapshots, func(x timelineEntry) bool { return x.ID == e.ID }) {
+		return err
+	}
+	tl.Snapshots = append(tl.Snapshots, e)
+	return putJSON(ctx, l.store, p.timeline(), tl)
+}
+
+// pin keeps snapshot id of p's box from pruning until the returned func runs.
+func (l *stateLayer) pin(p statePath, id string) func() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.pins[p] == nil {
+		l.pins[p] = map[string]int{}
+	}
+	l.pins[p][id]++
+	return func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if l.pins[p][id]--; l.pins[p][id] == 0 {
+			delete(l.pins[p], id)
+		}
+	}
+}
+
+func (l *stateLayer) pinned(p statePath) map[string]bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := map[string]bool{}
+	for id := range l.pins[p] {
+		out[id] = true
+	}
+	return out
 }
 
 func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
@@ -384,6 +453,18 @@ func (l *stateLayer) lock(name string) func() {
 	l.mu.Unlock()
 	m.Lock()
 	return m.Unlock
+}
+
+// userLock returns the lock that saves of user's boxes hold shared and the GC sweep holds exclusively.
+func (l *stateLayer) userLock(user string) *sync.RWMutex {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	m := l.users[user]
+	if m == nil {
+		m = &sync.RWMutex{}
+		l.users[user] = m
+	}
+	return m
 }
 
 func checkPlan(plan *agentv1.PlanResponse) error {
