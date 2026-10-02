@@ -89,9 +89,11 @@ impl Host {
                 rpc::wipe(&mut args);
                 out
             }
-            t if t.starts_with("browser_") => {
-                self.browser.run(t, call.args).await.map(Output::text)
-            }
+            t if t.starts_with("browser_") => self
+                .browser
+                .run(&call.agent_id, t, call.args)
+                .await
+                .map(Output::text),
             "computer_state" => self.cua.state(call.args).await,
             "computer_act" => self.cua.act(call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),

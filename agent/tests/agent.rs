@@ -16,10 +16,12 @@ use cocoonbox_agent::runner::Runtime;
 use cocoonbox_agent::toolhost::state::Root;
 use cocoonbox_agent::{server, toolhost};
 use ed25519_dalek::{Signer, SigningKey};
+use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, UnixListener};
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 use tonic::{Code, Request};
@@ -30,6 +32,7 @@ const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
 struct Harness {
+    _chrome: Option<ChromeGuard>,
     _dir: tempfile::TempDir,
     identity: PathBuf,
     workspace: PathBuf,
@@ -38,6 +41,7 @@ struct Harness {
     gw_log: Log,
     cua_log: Log,
     session_save: PathBuf,
+    cdp_port: u16,
 }
 
 impl Harness {
@@ -51,6 +55,22 @@ impl Harness {
         anthropic_messages: bool,
         mcp_idle: Duration,
         mcp_prune_after: Duration,
+    ) -> Self {
+        Self::boot(script, anthropic_messages, mcp_idle, mcp_prune_after, None).await
+    }
+
+    /// A harness whose toolhost drives a headless `chrome`.
+    async fn with_chrome(script: Vec<(&'static str, String)>, chrome: &Path) -> Self {
+        let day = Duration::from_secs(24 * 3600);
+        Self::boot(script, false, Duration::from_secs(600), day, Some(chrome)).await
+    }
+
+    async fn boot(
+        script: Vec<(&'static str, String)>,
+        anthropic_messages: bool,
+        mcp_idle: Duration,
+        mcp_prune_after: Duration,
+        chrome: Option<&Path>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -66,13 +86,27 @@ impl Harness {
         let session_save = dir.path().join("session-save");
         write_script(&session_save, "echo saved >> \"$0.log\"");
         let toolhost_socket = dir.path().join("toolhost.sock");
+        let (chrome_bin, cdp_port) = match chrome {
+            Some(bin) => {
+                let wrapper = dir.path().join("chrome-headless");
+                write_script(
+                    &wrapper,
+                    &format!(
+                        "exec \"{}\" --headless=new --use-mock-keychain \"$@\"",
+                        bin.display()
+                    ),
+                );
+                (wrapper.display().to_string(), free_port())
+            }
+            None => ("false".to_owned(), 1),
+        };
         let th_cfg = ToolhostConfig {
             socket: toolhost_socket.clone(),
             socket_group: "no-such-group".into(),
             workspace: workspace.clone(),
-            chrome_bin: "false".into(),
+            chrome_bin,
             chrome_profile: dir.path().join("chrome"),
-            cdp_port: 1,
+            cdp_port,
             cua_socket,
             session_save: session_save.clone(),
         };
@@ -126,6 +160,7 @@ impl Harness {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         Self {
+            _chrome: chrome.map(|_| ChromeGuard(dir.path().join("chrome"))),
             _dir: dir,
             identity,
             workspace,
@@ -134,6 +169,7 @@ impl Harness {
             gw_log,
             cua_log,
             session_save,
+            cdp_port,
         }
     }
 
@@ -400,6 +436,127 @@ async fn fake_vnc() -> String {
         }
     });
     addr
+}
+
+/// Kills the test's Chrome, found by its profile path, even when the test fails.
+struct ChromeGuard(PathBuf);
+
+impl Drop for ChromeGuard {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("pkill")
+            .arg("-f")
+            .arg(self.0.as_os_str())
+            .status();
+    }
+}
+
+/// The Chrome to test with; `None` skips the test, which only macOS or `CB_NO_BROWSER` allow.
+fn test_chrome() -> Option<PathBuf> {
+    let chrome = find_chrome();
+    if chrome.is_none() {
+        assert!(
+            cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
+            "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
+        );
+        eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
+    }
+    chrome
+}
+
+fn find_chrome() -> Option<PathBuf> {
+    if let Ok(bin) = std::env::var("CHROME_BIN")
+        && !bin.is_empty()
+    {
+        return Some(bin.into());
+    }
+    // a test Chrome on macOS reaches for the login keychain, so it runs there only on request
+    if cfg!(target_os = "macos") {
+        return None;
+    }
+    [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+    ]
+    .into_iter()
+    .map(PathBuf::from)
+    .find(|p| p.exists())
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Serves at every path a page titled with the path and holding one text field.
+async fn field_pages() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let head = String::from_utf8_lossy(&buf[..n]);
+                let path = head.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                let page = format!(
+                    "<!doctype html><title>{path}</title><input placeholder=\"field {path}\">"
+                );
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{page}",
+                    page.len()
+                );
+                let _ = s.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    addr
+}
+
+/// Chrome's open tabs as (target id, url, websocket url).
+async fn tabs(port: u16) -> Vec<(String, String, String)> {
+    let list: Vec<Value> = reqwest::get(format!("http://127.0.0.1:{port}/json/list"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    list.into_iter()
+        .filter(|t| t["type"] == "page")
+        .map(|t| {
+            let field = |k: &str| t[k].as_str().unwrap_or_default().to_owned();
+            (field("id"), field("url"), field("webSocketDebuggerUrl"))
+        })
+        .collect()
+}
+
+/// Evaluates `expr` in a tab over its own CDP connection.
+async fn tab_eval(ws_url: &str, expr: &str) -> Value {
+    let (mut ws, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
+    let msg = json!({"id": 1, "method": "Runtime.evaluate", "params": {"expression": expr, "returnByValue": true}});
+    ws.send(WsMessage::text(msg.to_string())).await.unwrap();
+    while let Some(Ok(frame)) = ws.next().await {
+        if let WsMessage::Text(text) = frame {
+            let v: Value = serde_json::from_str(&text).unwrap();
+            if v["id"] == 1 {
+                return v["result"]["result"]["value"].clone();
+            }
+        }
+    }
+    panic!("no reply from {ws_url}");
+}
+
+async fn tab_gone(port: u16, url: &str) -> bool {
+    for _ in 0..100 {
+        if !tabs(port).await.iter().any(|t| t.1 == url) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
 }
 
 fn gw_bodies(log: &Log, path: &str) -> Vec<Value> {
@@ -2019,6 +2176,110 @@ async fn mcp_agents_are_deleted_only_after_their_session_closes() {
         .unwrap()
         .into_inner();
     assert!(listed.agents.is_empty(), "{:?}", listed.agents);
+}
+
+#[tokio::test]
+async fn each_mcp_session_types_into_its_own_chrome_window() {
+    let Some(chrome) = test_chrome() else {
+        return;
+    };
+    let site = field_pages().await;
+    let url = |path: &str| format!("http://{site}{path}");
+    let h = Harness::with_chrome(Vec::new(), &chrome).await;
+    let mut a = McpClient::connect(&h).await;
+    let mut b = McpClient::connect(&h).await;
+    let (na, nb) = tokio::join!(
+        a.call("browser_navigate", json!({"url": url("/a")})),
+        b.call("browser_navigate", json!({"url": url("/b")}))
+    );
+    for (nav, field) in [(&na, "field /a"), (&nb, "field /b")] {
+        let text = nav["content"][0]["text"].as_str().unwrap();
+        assert!(
+            text.contains(&format!("textbox \"{field}\" [ref=e1]")),
+            "{text}"
+        );
+    }
+
+    let (text_a, text_b) = ("typed by a; ".repeat(50), "typed by b; ".repeat(50));
+    let (ta, tb) = tokio::join!(
+        a.call("browser_type", json!({"ref": "e1", "text": text_a})),
+        b.call("browser_type", json!({"ref": "e1", "text": text_b}))
+    );
+    assert_eq!(
+        (&ta["isError"], &tb["isError"]),
+        (&json!(false), &json!(false))
+    );
+    let open = tabs(h.cdp_port).await;
+    let tab = |u: String| open.iter().find(|t| t.1 == u).cloned().unwrap();
+    let (tab_a, tab_b) = (tab(url("/a")), tab(url("/b")));
+    assert_ne!(tab_a.0, tab_b.0);
+    let value = "document.querySelector('input').value";
+    assert_eq!(tab_eval(&tab_a.2, value).await, text_a.as_str());
+    assert_eq!(tab_eval(&tab_b.2, value).await, text_b.as_str());
+
+    reqwest::get(format!(
+        "http://127.0.0.1:{}/json/close/{}",
+        h.cdp_port, tab_a.0
+    ))
+    .await
+    .unwrap();
+    assert!(tab_gone(h.cdp_port, &url("/a")).await);
+    let reopened = a.call("browser_navigate", json!({"url": url("/a2")})).await;
+    assert_eq!(reopened["isError"], false, "{reopened}");
+    let tab_a2 = tabs(h.cdp_port)
+        .await
+        .into_iter()
+        .find(|t| t.1 == url("/a2"))
+        .unwrap();
+    assert!(tab_a2.0 != tab_a.0 && tab_a2.0 != tab_b.0, "{tab_a2:?}");
+    assert_eq!(tab_eval(&tab_b.2, value).await, text_b.as_str());
+
+    let closed = reqwest::Client::new()
+        .delete(format!("{}/mcp", h.endpoint))
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .header("mcp-session-id", &b.session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(closed.status(), 204);
+    assert!(
+        tab_gone(h.cdp_port, &url("/b")).await,
+        "the closed session's window stayed open"
+    );
+    assert!(tabs(h.cdp_port).await.iter().any(|t| t.0 == tab_a2.0));
+}
+
+#[tokio::test]
+async fn delete_closes_the_agents_chrome_window() {
+    let Some(chrome) = test_chrome() else {
+        return;
+    };
+    let site = field_pages().await;
+    let page = format!("http://{site}/doomed");
+    let h = Harness::with_chrome(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("call_nav", "browser_navigate", &json!({"url": page})),
+            ),
+            ("chat/completions", chat_text("opened")),
+        ],
+        &chrome,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let doomed = create_agent(&mut agents).await;
+    send(&mut agents, &doomed, "open the page", "").await;
+    wait_turn_end(&mut agents, &doomed).await;
+    assert!(tabs(h.cdp_port).await.iter().any(|t| t.1 == page));
+    agents
+        .delete(authed(pb::DeleteAgentRequest { agent_id: doomed }))
+        .await
+        .unwrap();
+    assert!(
+        tab_gone(h.cdp_port, &page).await,
+        "the deleted agent's window stayed open"
+    );
 }
 
 #[tokio::test]

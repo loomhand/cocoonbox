@@ -123,6 +123,10 @@ impl Mcp {
                     if closed.is_error {
                         eprintln!("mcp: prune {agent_id}: close its shell: {}", closed.text);
                     }
+                    let closed = self.rt.dispatcher.close_window(&agent_id).await;
+                    if closed.is_error {
+                        eprintln!("mcp: prune {agent_id}: close its window: {}", closed.text);
+                    }
                     self.rt
                         .journal
                         .bus
@@ -218,6 +222,10 @@ impl Mcp {
 
     async fn close(&self, s: &Session, reason: &str) {
         self.end_driver(s, reason).await;
+        let closed = self.rt.dispatcher.close_window(&s.agent_id).await;
+        if closed.is_error {
+            eprintln!("mcp: close the window of {}: {}", s.agent_id, closed.text);
+        }
         self.note(s, &format!("MCP session closed: {reason}")).await;
         let end = Entry::TurnEnd(pb::TurnEnd {
             ok: true,

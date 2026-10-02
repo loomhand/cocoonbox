@@ -183,6 +183,11 @@ impl Dispatcher {
         self.tools.run(owner, "shell_close", json!({})).await
     }
 
+    /// Closes the browser window of `owner`.
+    pub async fn close_window(&self, owner: &str) -> ToolOutput {
+        self.tools.run(owner, "browser_end", json!({})).await
+    }
+
     /// Writes `data` to `path` in the workspace and returns the absolute path.
     pub async fn put_file(&self, owner: &str, path: &str, data: &[u8]) -> ToolOutput {
         self.tools

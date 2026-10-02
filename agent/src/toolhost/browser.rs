@@ -1,8 +1,10 @@
 //! Chrome over CDP: page snapshots as ref-tagged element lists, actions by ref.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -10,7 +12,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpStream;
 use tokio::process::Command;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use zeroize::Zeroizing;
@@ -201,13 +203,15 @@ const FILL_JS: &str = r#"(async (origin, username, secret, kind, submit) => {
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
-/// Owns the Chrome process lifecycle and serializes CDP sessions.
+/// Owns the Chrome process lifecycle and one window per agent; an agent's calls run in order.
 pub struct Browser {
     bin: String,
     profile: PathBuf,
     port: u16,
     http: reqwest::Client,
-    lock: Mutex<()>,
+    life: RwLock<()>,
+    starting: Mutex<()>,
+    windows: Mutex<HashMap<String, Arc<Mutex<Option<Target>>>>>,
 }
 
 impl Browser {
@@ -218,25 +222,43 @@ impl Browser {
             profile,
             port,
             http: reqwest::Client::new(),
-            lock: Mutex::new(()),
+            life: RwLock::new(()),
+            starting: Mutex::new(()),
+            windows: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Dispatches a `browser_*` tool.
-    pub async fn run(&self, tool: &str, args: Value) -> Result<String, String> {
-        let _serial = self.lock.lock().await;
+    /// Dispatches a `browser_*` tool in the window of `agent_id`.
+    pub async fn run(&self, agent_id: &str, tool: &str, args: Value) -> Result<String, String> {
         if tool == "browser_close" {
+            let _life = self.life.write().await;
             return self.close().await;
         }
-        if tool == "browser_start"
-            && args["if_was_running"].as_bool() == Some(true)
-            && tokio::fs::symlink_metadata(self.profile.join(RUNNING_MARKER))
-                .await
-                .is_err()
-        {
-            return Ok("not running".to_owned());
+        let _life = self.life.read().await;
+        match tool {
+            "browser_start" => {
+                if args["if_was_running"].as_bool() == Some(true)
+                    && tokio::fs::symlink_metadata(self.profile.join(RUNNING_MARKER))
+                        .await
+                        .is_err()
+                {
+                    return Ok("not running".to_owned());
+                }
+                self.running().await?;
+                return Ok("running".to_owned());
+            }
+            "browser_end" => return Ok(self.end(agent_id).await),
+            _ => {}
         }
-        let mut cdp = self.connect().await?;
+        let slot = Arc::clone(
+            self.windows
+                .lock()
+                .await
+                .entry(agent_id.to_owned())
+                .or_default(),
+        );
+        let mut window = slot.lock().await;
+        let mut cdp = self.connect(&mut window).await?;
         match tool {
             "browser_navigate" => {
                 let a: NavigateArgs = parse(args)?;
@@ -306,14 +328,13 @@ impl Browser {
                 }
                 Ok(out)
             }
-            "browser_start" => Ok("running".to_owned()),
             _ => Err(format!("unknown browser tool {tool}")),
         }
     }
 
     /// Origin of the active tab; Chrome is not started for it.
     pub async fn origin(&self) -> Result<String, String> {
-        let _serial = self.lock.lock().await;
+        let _life = self.life.read().await;
         let mut cdp = self.attach().await?;
         let origin = cdp.eval("location.origin").await?;
         Ok(origin.as_str().unwrap_or_default().to_owned())
@@ -332,7 +353,7 @@ impl Browser {
         };
         let username = args["username"].as_str().unwrap_or_default();
         let submit = args["submit"].as_bool().unwrap_or(false);
-        let _serial = self.lock.lock().await;
+        let _life = self.life.read().await;
         let mut cdp = self.attach().await?;
         let user = js_secret(username);
         let secret = js_secret(secret);
@@ -365,63 +386,110 @@ impl Browser {
         Ok(json!({"filled": r["filled"], "submitted": submitted}).to_string())
     }
 
+    /// The tab the user is looking at: the focused one, else the most recently active.
     async fn attach(&self) -> Result<Cdp, String> {
         let targets = self
             .targets()
             .await
             .map_err(|_| "Chrome is not running in the box".to_owned())?;
-        let page = first_page(targets).ok_or("no tab is open in the box's Chrome")?;
-        Cdp::open(&page.ws_url).await
+        let mut first = None;
+        for page in targets.into_iter().filter(Target::is_tab) {
+            let Ok(mut cdp) = Cdp::open(&page.ws_url).await else {
+                continue;
+            };
+            if cdp.eval("document.hasFocus()").await == Ok(Value::Bool(true)) {
+                return Ok(cdp);
+            }
+            first.get_or_insert(cdp);
+        }
+        first.ok_or_else(|| "no tab is open in the box's Chrome".to_owned())
     }
 
-    async fn connect(&self) -> Result<Cdp, String> {
-        let targets = match self.targets().await {
-            Ok(t) => t,
-            Err(_) => {
-                self.launch().await?;
-                self.targets().await?
-            }
-        };
-        let ws_url = match first_page(targets) {
-            Some(t) => t.ws_url,
-            None => {
-                let url = format!("http://127.0.0.1:{}/json/new?about:blank", self.port);
-                let t: Target = self
-                    .http
-                    .put(&url)
-                    .send()
-                    .await
-                    .map_err(|e| format!("open tab: {e}"))?
-                    .json()
-                    .await
-                    .map_err(|e| format!("decode new tab: {e}"))?;
-                t.ws_url
-            }
-        };
-        Cdp::open(&ws_url).await
+    /// Attaches to the window in `window`, opening a new one when it is missing or was closed.
+    async fn connect(&self, window: &mut Option<Target>) -> Result<Cdp, String> {
+        if let Some(t) = window.as_ref()
+            && let Ok(cdp) = Cdp::open(&t.ws_url).await
+        {
+            return Ok(cdp);
+        }
+        self.running().await?;
+        let created = self
+            .browser()
+            .await?
+            .call(
+                "Target.createTarget",
+                json!({"url": "about:blank", "newWindow": true}),
+            )
+            .await?;
+        let id = created["targetId"].as_str().unwrap_or_default();
+        let t = self
+            .targets()
+            .await?
+            .into_iter()
+            .find(|t| t.id == id)
+            .ok_or_else(|| format!("new window {id} is not listed"))?;
+        let cdp = Cdp::open(&t.ws_url).await?;
+        *window = Some(t);
+        Ok(cdp)
     }
 
-    /// Closes Chrome through CDP so it flushes its profile; reports whether it was running
-    /// and records it in the profile for `browser_start` with `if_was_running`.
-    async fn close(&self) -> Result<String, String> {
-        let marker = self.profile.join(RUNNING_MARKER);
+    /// Closes the window of `agent_id`; Chrome is not started for it.
+    async fn end(&self, agent_id: &str) -> String {
+        let Some(slot) = self.windows.lock().await.remove(agent_id) else {
+            return "no window".to_owned();
+        };
+        let Some(t) = slot.lock().await.take() else {
+            return "no window".to_owned();
+        };
+        if let Ok(mut cdp) = self.browser().await {
+            let _ = cdp
+                .call("Target.closeTarget", json!({"targetId": t.id}))
+                .await;
+        }
+        "closed".to_owned()
+    }
+
+    async fn running(&self) -> Result<(), String> {
+        let _starting = self.starting.lock().await;
+        if self.targets().await.is_err() {
+            self.launch().await?;
+        }
+        Ok(())
+    }
+
+    async fn browser(&self) -> Result<Cdp, String> {
         let url = format!("http://127.0.0.1:{}/json/version", self.port);
-        let Ok(resp) = self
+        let version: Value = self
             .http
             .get(&url)
             .timeout(Duration::from_secs(2))
             .send()
             .await
-        else {
-            let _ = tokio::fs::remove_file(&marker).await;
-            return Ok("not running".to_owned());
-        };
-        let version: Value = resp
+            .map_err(|e| format!("get {url}: {e}"))?
             .json()
             .await
             .map_err(|e| format!("decode {url}: {e}"))?;
-        let mut cdp =
-            Cdp::open(version["webSocketDebuggerUrl"].as_str().unwrap_or_default()).await?;
+        Cdp::open(version["webSocketDebuggerUrl"].as_str().unwrap_or_default()).await
+    }
+
+    /// Closes Chrome through CDP so it flushes its profile; reports whether it was running
+    /// and records it in the profile for `browser_start` with `if_was_running`.
+    /// Agent windows close first, so the restored session holds only the user's.
+    async fn close(&self) -> Result<String, String> {
+        let marker = self.profile.join(RUNNING_MARKER);
+        let windows: Vec<_> = self.windows.lock().await.drain().map(|(_, w)| w).collect();
+        if self.targets().await.is_err() {
+            let _ = tokio::fs::remove_file(&marker).await;
+            return Ok("not running".to_owned());
+        }
+        let mut cdp = self.browser().await?;
+        for w in windows {
+            if let Some(t) = w.lock().await.take() {
+                let _ = cdp
+                    .call("Target.closeTarget", json!({"targetId": t.id}))
+                    .await;
+            }
+        }
         let _ = cdp.call("Browser.close", json!({})).await;
         // the CDP port closes before the profile is flushed; SingletonLock goes last on a clean exit
         let lock = self.profile.join("SingletonLock");
@@ -494,11 +562,19 @@ impl Browser {
 
 #[derive(Deserialize)]
 struct Target {
+    #[serde(default)]
+    id: String,
     #[serde(rename = "type")]
     kind: String,
     url: String,
     #[serde(rename = "webSocketDebuggerUrl", default)]
     ws_url: String,
+}
+
+impl Target {
+    fn is_tab(&self) -> bool {
+        self.kind == "page" && !self.url.starts_with("devtools://")
+    }
 }
 
 #[derive(Deserialize)]
@@ -634,12 +710,6 @@ impl Cdp {
     }
 }
 
-fn first_page(targets: Vec<Target>) -> Option<Target> {
-    targets
-        .into_iter()
-        .find(|t| t.kind == "page" && !t.url.starts_with("devtools://"))
-}
-
 fn js_str(s: &str) -> String {
     Value::String(s.to_owned()).to_string()
 }
@@ -713,7 +783,7 @@ mod tests {
         port
     }
 
-    /// Serves CDP on the returned port only after `delay`, with one page whose script evaluations return "Page: slow".
+    /// Serves CDP on the returned port only after `delay`; every new window is page 1, whose script evaluations return "Page: slow".
     async fn slow_chrome(delay: Duration) -> u16 {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
@@ -721,20 +791,23 @@ mod tests {
             .unwrap()
             .port();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = ws.local_addr().unwrap();
         let list = json!([{
+            "id": "1",
             "type": "page",
             "url": "about:blank",
-            "webSocketDebuggerUrl": format!("ws://{}/devtools/page/1", ws.local_addr().unwrap()),
+            "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/1"),
         }])
         .to_string();
+        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
+            .to_string();
         tokio::spawn(async move {
             while let Ok((stream, _)) = ws.accept().await {
                 tokio::spawn(async move {
                     let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
                     while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
                         let v: Value = serde_json::from_str(&text).unwrap();
-                        let reply =
-                            json!({"id": v["id"], "result": {"result": {"value": "Page: slow"}}});
+                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "Page: slow"}}});
                         ws.send(WsMessage::text(reply.to_string())).await.unwrap();
                     }
                 });
@@ -745,12 +818,17 @@ mod tests {
             let http = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
             while let Ok((mut s, _)) = http.accept().await {
                 let mut buf = [0u8; 1024];
-                let _ = s.read(&mut buf).await;
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    &version
+                } else {
+                    &list
+                };
                 let head = format!(
                     "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    list.len()
+                    body.len()
                 );
-                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
             }
         });
         port
@@ -765,14 +843,14 @@ mod tests {
         let start = {
             let b = std::sync::Arc::clone(&b);
             tokio::spawn(async move {
-                b.run("browser_start", json!({"if_was_running": true}))
+                b.run("state", "browser_start", json!({"if_was_running": true}))
                     .await
             })
         };
         tokio::time::sleep(Duration::from_millis(50)).await;
         let asked = tokio::time::Instant::now();
         assert_eq!(
-            b.run("browser_snapshot", json!({})).await.unwrap(),
+            b.run("a", "browser_snapshot", json!({})).await.unwrap(),
             "Page: slow"
         );
         assert!(
@@ -827,23 +905,26 @@ mod tests {
             fake_chrome().await,
         );
         assert_eq!(
-            running.run("browser_close", json!({})).await.unwrap(),
+            running
+                .run("state", "browser_close", json!({}))
+                .await
+                .unwrap(),
             "closed"
         );
         assert!(marker.exists());
         let start = running
-            .run("browser_start", json!({"if_was_running": true}))
+            .run("state", "browser_start", json!({"if_was_running": true}))
             .await;
         assert!(start.unwrap_err().contains("launch /nonexistent/chrome"));
 
         let idle = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
         assert_eq!(
-            idle.run("browser_close", json!({})).await.unwrap(),
+            idle.run("state", "browser_close", json!({})).await.unwrap(),
             "not running"
         );
         assert!(!marker.exists());
         let start = idle
-            .run("browser_start", json!({"if_was_running": true}))
+            .run("state", "browser_start", json!({"if_was_running": true}))
             .await;
         assert_eq!(start.unwrap(), "not running");
     }
