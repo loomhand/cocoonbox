@@ -2836,6 +2836,11 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
     assert_eq!(lists[1]["session"], first);
     let second = lists[2]["session"].clone();
     assert_ne!(second, first);
+    let ends: Vec<Value> = driver_calls(&h, "end_session")
+        .into_iter()
+        .filter(|a| a["session"] == first)
+        .collect();
+    assert_eq!(ends.len(), 2, "{ends:?}");
 
     let act = mcp
         .call("computer_act", json!({"action": "key", "key": "Return"}))

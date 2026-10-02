@@ -247,7 +247,11 @@ impl Mcp {
             "mcp: end driver session {label} of {}: {reason}",
             s.agent_id
         );
-        let out = self.rt.dispatcher.end_driver(&s.agent_id, &label).await;
+        self.release(s, &label).await;
+    }
+
+    async fn release(&self, s: &Session, label: &str) {
+        let out = self.rt.dispatcher.end_driver(&s.agent_id, label).await;
         if out.is_error {
             eprintln!("mcp: end driver session {label}: {}", out.text);
         }
@@ -271,18 +275,25 @@ impl Mcp {
         })
     }
 
-    /// Replaces `stale` after the driver ended it; a concurrent call may have replaced it already.
-    fn rotate_ended(&self, s: &Session, stale: &str) -> String {
-        let mut d = lock(&s.driver);
-        if d.label == stale {
-            d.label = new_id("cu");
-            eprintln!(
-                "mcp: driver session {stale} of {} ended in the driver; now {}",
-                s.agent_id, d.label
-            );
+    /// Replaces and releases `stale` after the driver ended it; a concurrent call may have replaced it already.
+    async fn rotate_ended(&self, s: &Session, stale: &str) -> String {
+        let (label, rotated) = {
+            let mut d = lock(&s.driver);
+            let rotated = d.label == stale;
+            if rotated {
+                d.label = new_id("cu");
+                eprintln!(
+                    "mcp: driver session {stale} of {} ended in the driver; now {}",
+                    s.agent_id, d.label
+                );
+            }
+            d.used = true;
+            (d.label.clone(), rotated)
+        };
+        if rotated {
+            self.release(s, stale).await;
         }
-        d.used = true;
-        d.label.clone()
+        label
     }
 
     async fn call_tool(&self, s: &Session, params: &Value) -> Result<Value, (i64, String)> {
@@ -303,7 +314,7 @@ impl Mcp {
         let retry = uses_driver(name).then(|| requested.clone());
         let mut out = self.run(s, &label, name, requested).await?;
         if let Some(args) = retry.filter(|_| out.is_error && out.text.contains(DRIVER_ENDED)) {
-            let label = self.rotate_ended(s, &label);
+            let label = self.rotate_ended(s, &label).await;
             out = self.run(s, &label, name, args).await?;
         }
         lock(&s.driver).last_seen = Instant::now();
