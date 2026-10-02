@@ -41,6 +41,21 @@
     <h2>Boxes</h2>
     <table><thead><tr><th>Box</th><th>State</th><th>Image</th></tr></thead><tbody id="boxes"></tbody></table>
 
+    <h2>Sharing</h2>
+    <p>A share link shows the box's whole desktop, including the browser's signed-in sites and /workspace, to anyone who holds it, or only to the users you name. Their own agents can connect over MCP: read-only, or acting on the box when you allow write. Box egress uses your model key; a guest's own agent spends the guest's quota.</p>
+    <table><thead><tr><th>Box</th><th>Who</th><th>Write</th><th>Expires</th><th></th></tr></thead><tbody id="shares"></tbody></table>
+    <form id="share-form">
+      <label>Expires in <select name="ttl"><option value="86400">24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select></label>
+      <label>Only for users <input name="users" placeholder="anyone with the link"></label>
+      <label><input type="checkbox" name="write"> Allow write</label>
+      <button>Share my box</button>
+    </form>
+    <div id="share-link" hidden>
+      <p>Copy the link now; it is not shown again. Guests' agents use the MCP endpoint with the header below.</p>
+      <pre id="share-url"></pre>
+      <pre id="share-mcp"></pre>
+    </div>
+
     <h2>Model usage</h2>
     <p id="budget"></p>
     <table><thead><tr><th>Model</th><th>Requests</th><th>Tokens</th><th>Cost (USD)</th></tr></thead><tbody id="usage"></tbody></table>

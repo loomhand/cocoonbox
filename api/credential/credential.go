@@ -22,6 +22,7 @@ const (
 	Header = "x-cocoonbox-credential"
 
 	version       = "v1"
+	shareVersion  = "v2"
 	lifetime      = 10 * time.Minute
 	refreshBefore = 2 * time.Minute
 )
@@ -33,7 +34,8 @@ type issued struct {
 	exp   time.Time
 }
 
-// Signer issues v1.<b64url(key_id|box_id|wake_id|exp)>.<b64url(ed25519 over "v1.<fields>")>, cached per box and wake.
+// Signer issues v1.<b64url(key_id|box_id|wake_id|exp)>.<b64url(ed25519 over "v1.<fields>")> for the owner,
+// and v2 with a fifth field, the share principal, cached per box, wake and principal.
 type Signer struct {
 	key   ed25519.PrivateKey
 	keyID string
@@ -80,10 +82,19 @@ func (s *Signer) PublicKey() string {
 	return encoding.EncodeToString(pub)
 }
 
-// Credential returns a credential for box at wake, reusing one with more than refreshBefore left.
+// Credential returns the owner's credential for box at wake, reusing one with more than refreshBefore left.
 func (s *Signer) Credential(box, wake string) string {
+	return s.sign(version, box, wake, "")
+}
+
+// ShareCredential returns the credential for box at wake that names principal, a share's caller.
+func (s *Signer) ShareCredential(box, wake, principal string) string {
+	return s.sign(shareVersion, box, wake, principal)
+}
+
+func (s *Signer) sign(v, box, wake, principal string) string {
 	now := s.now()
-	cacheKey := box + "|" + wake
+	cacheKey := box + "|" + wake + "|" + principal
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if c, ok := s.cache[cacheKey]; ok && c.exp.Sub(now) > refreshBefore {
@@ -95,8 +106,11 @@ func (s *Signer) Credential(box, wake string) string {
 		}
 	}
 	exp := now.Add(lifetime).Truncate(time.Second)
-	fields := strings.Join([]string{s.keyID, box, wake, strconv.FormatInt(exp.Unix(), 10)}, "|")
-	signed := version + "." + encoding.EncodeToString([]byte(fields))
+	fields := []string{s.keyID, box, wake, strconv.FormatInt(exp.Unix(), 10)}
+	if principal != "" {
+		fields = append(fields, principal)
+	}
+	signed := v + "." + encoding.EncodeToString([]byte(strings.Join(fields, "|")))
 	value := signed + "." + encoding.EncodeToString(ed25519.Sign(s.key, []byte(signed)))
 	s.cache[cacheKey] = issued{value: value, exp: exp}
 	return value

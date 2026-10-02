@@ -58,7 +58,7 @@ form { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
 
 label { display: inline-flex; gap: 6px; align-items: center; }
 
-input, button {
+input, select, button {
   font: inherit;
   color: inherit;
   background: var(--bg);

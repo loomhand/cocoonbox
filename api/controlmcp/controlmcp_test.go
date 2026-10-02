@@ -427,7 +427,7 @@ func newTestServer(t *testing.T) (*Server, *fakeBoxes) {
 		saved:  map[string]int64{},
 		ops:    map[string]string{},
 	}
-	return New(fake, auth.New(users)), fake
+	return New(fake, auth.New(users, nil)), fake
 }
 
 func serve(srv *Server, method, token, body string) *httptest.ResponseRecorder {

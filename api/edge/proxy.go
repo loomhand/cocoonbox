@@ -51,9 +51,10 @@ type Resolver interface {
 	Resolve(ctx context.Context, user, boxID string) (ep machines.Endpoint, wake string, err error)
 }
 
-// Credentials issues the credential an agent accepts for a box at a wake.
+// Credentials issues the credentials an agent accepts for a box at a wake: the owner's, or one naming a share's principal.
 type Credentials interface {
 	Credential(box, wake string) string
+	ShareCredential(box, wake, principal string) string
 }
 
 // Proxy is the unknown-service handler that forwards agent calls frame by frame.

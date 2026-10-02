@@ -1,4 +1,4 @@
-// Package users keeps cocoonbox users in PostgreSQL, each with one gw key, one sandboxd tenant and one state key that never leave the api.
+// Package users keeps cocoonbox users in PostgreSQL, each with one gw key, one sandboxd tenant and one state key that never leave the api, and the shares of their boxes.
 package users
 
 import (
@@ -108,7 +108,7 @@ type Options struct {
 	TenantClaims bool
 }
 
-// Service owns the users table and an in-memory index that serves every token check.
+// Service owns the users and shares tables and an in-memory index that serves every token and share check.
 type Service struct {
 	store        *store
 	seal         *sealer
@@ -121,7 +121,10 @@ type Service struct {
 	mu            sync.RWMutex
 	byID          map[string]record
 	byToken       map[string]string
+	shares        map[string]*shareRecord
+	shareSecrets  map[string]string
 	onResidential []func(context.Context, string, bool)
+	onShareEnd    []func(context.Context, Share)
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -139,16 +142,30 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		st.close()
 		return nil, err
 	}
-	s := &Service{store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, dummyHash: dummy}
+	s := &Service{
+		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, dummyHash: dummy,
+		shares: map[string]*shareRecord{}, shareSecrets: map[string]string{},
+	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
+		return nil, err
+	}
+	if err := s.loadShares(ctx); err != nil {
+		s.Close()
 		return nil, err
 	}
 	return s, nil
 }
 
-// Close releases the database pool.
-func (s *Service) Close() { s.store.close() }
+// Close stops the share expiry timers and releases the database pool.
+func (s *Service) Close() {
+	s.mu.Lock()
+	for _, rec := range s.shares {
+		rec.timer.Stop()
+	}
+	s.mu.Unlock()
+	s.store.close()
+}
 
 // Load replaces the in-memory index with the table.
 func (s *Service) Load(ctx context.Context) error {
@@ -327,6 +344,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		delete(s.byToken, r.tokenSHA256)
 		delete(s.byID, id)
 	}
+	s.cutOwner(id, true)
 	return nil
 }
 
@@ -366,6 +384,11 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 		}
 	}
 	s.put(r)
+	if r.Disabled && !old.Disabled {
+		s.mu.Lock()
+		s.cutOwner(id, false)
+		s.mu.Unlock()
+	}
 	if r.Residential != old.Residential {
 		s.mu.RLock()
 		hooks := slices.Clone(s.onResidential)

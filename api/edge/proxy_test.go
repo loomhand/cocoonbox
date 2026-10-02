@@ -271,7 +271,7 @@ func newProxyEnvAt(t *testing.T, agentAddr string) *proxyEnv {
 	resolver := &fakeResolver{addr: agentAddr}
 
 	sum := sha256.Sum256([]byte(aliceToken))
-	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice"})
+	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice"}, &fakeShares{})
 	proxy := NewProxy(resolver, fakeCreds{})
 	t.Cleanup(proxy.Close)
 	edgeSrv := grpc.NewServer(
@@ -325,10 +325,14 @@ func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.
 	return ep, r.wake, r.err
 }
 
-// fakeCreds issues "cred:<box>:<wake>".
+// fakeCreds issues "cred:<box>:<wake>" and "cred:<box>:<wake>:<principal>".
 type fakeCreds struct{}
 
 func (fakeCreds) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
+
+func (fakeCreds) ShareCredential(box, wake, principal string) string {
+	return "cred:" + box + ":" + wake + ":" + principal
+}
 
 // fakeAgent echoes what the edge delivered: Hello returns any edge token header as agent_version, authorization values as models and the box header as default_main_model.
 type fakeAgent struct {

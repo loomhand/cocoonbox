@@ -38,6 +38,14 @@ type jsonRPCError struct {
 	} `json:"error"`
 }
 
+// route is where one MCP exchange goes and as whom: the caller for the log, and the grant of a share call.
+type route struct {
+	caller string
+	ep     machines.Endpoint
+	wake   string
+	grant  *auth.Grant
+}
+
 type boxTransport struct {
 	key       string
 	transport *http.Transport
@@ -65,33 +73,58 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	start := time.Now()
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
-	user, ep, wake, err := m.route(r.Context(), r.Header.Get("Authorization"), boxID)
+	rt, err := m.route(r, boxID)
 	defer func() {
 		log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %q user=%s box=%q addr=%s code=%s in %s",
-			r.Method, r.URL.Path, user, boxID, ep.Key, status.Code(err), time.Since(start).Round(time.Millisecond))
+			r.Method, r.URL.Path, rt.caller, boxID, rt.ep.Key, status.Code(err), time.Since(start).Round(time.Millisecond))
 	}()
 	if err != nil {
 		writeJSONRPCError(w, err)
 		return
 	}
+	if rt.grant != nil {
+		ctx, cancel := context.WithCancel(r.Context())
+		defer cancel()
+		go cutOnEnd(ctx, cancel, rt.grant, r.Method == http.MethodGet)
+		r = r.WithContext(ctx)
+	}
 	proxy := &httputil.ReverseProxy{
-		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, ep.Key, boxID, wake) },
-		Transport:     m.transportFor(boxID, ep),
+		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, rt, boxID) },
+		Transport:     m.transportFor(boxID, rt.ep),
 		FlushInterval: -1,
 		ErrorHandler:  m.upstreamError,
 	}
 	proxy.ServeHTTP(w, r)
 }
 
-func (m *MCP) route(ctx context.Context, authorization, boxID string) (user string, ep machines.Endpoint, wake string, err error) {
-	if user, err = m.authn.Authenticate(authorization); err != nil {
-		return "", ep, "", err
-	}
+// route authorizes one exchange for the box's owner, or for a share when the bearer is a share secret.
+func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
+	authorization := r.Header.Get("Authorization")
 	if boxID == "" {
-		return user, ep, "", status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
+		if _, err = m.authn.Authenticate(authorization); err != nil {
+			return rt, err
+		}
+		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
-	ep, wake, err = m.resolver.Resolve(ctx, user, boxID)
-	return user, ep, wake, err
+	owner := ""
+	if secret, ok := auth.ShareSecret(authorization); ok {
+		var guest string
+		if guest, err = m.authn.Guest(r.Header.Get(auth.HeaderGuestToken)); err != nil {
+			return rt, err
+		}
+		var grant auth.Grant
+		if grant, err = m.authn.Admit(secret, boxID, guest); err != nil {
+			return rt, err
+		}
+		rt.grant, rt.caller, owner = &grant, grant.Principal(), grant.Owner
+	} else {
+		if owner, err = m.authn.Authenticate(authorization); err != nil {
+			return rt, err
+		}
+		rt.caller = owner
+	}
+	rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), owner, boxID)
+	return rt, err
 }
 
 // transportFor returns boxID's h2c transport, replacing it when the box's endpoint moved.
@@ -109,10 +142,10 @@ func (m *MCP) transportFor(boxID string, ep machines.Endpoint) *http.Transport {
 	return t
 }
 
-func (m *MCP) rewrite(pr *httputil.ProxyRequest, addr, box, wake string) {
+func (m *MCP) rewrite(pr *httputil.ProxyRequest, rt route, box string) {
 	_, rest, _ := strings.Cut(strings.TrimPrefix(pr.In.URL.Path, MCPPrefix), "/")
 	pr.Out.URL.Scheme = "http"
-	pr.Out.URL.Host = addr
+	pr.Out.URL.Host = rt.ep.Key
 	pr.Out.URL.Path = agentMCPPath
 	if rest != "" {
 		pr.Out.URL.Path += "/" + rest
@@ -120,10 +153,15 @@ func (m *MCP) rewrite(pr *httputil.ProxyRequest, addr, box, wake string) {
 	pr.Out.URL.RawPath = ""
 	pr.Out.Host = pr.Out.URL.Host
 	pr.Out.Header.Del("Authorization")
+	pr.Out.Header.Del(auth.HeaderGuestToken)
 	pr.Out.Header.Del(credential.Header)
 	pr.Out.Header.Del(HeaderEdgeToken)
-	if wake != "" {
-		pr.Out.Header.Set(credential.Header, m.creds.Credential(box, wake))
+	switch {
+	case rt.wake == "":
+	case rt.grant != nil:
+		pr.Out.Header.Set(credential.Header, m.creds.ShareCredential(box, rt.wake, rt.grant.Principal()))
+	default:
+		pr.Out.Header.Set(credential.Header, m.creds.Credential(box, rt.wake))
 	}
 }
 
@@ -133,6 +171,20 @@ func (m *MCP) upstreamError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	log.WithFunc("edge.MCP.upstreamError").Warnf(r.Context(), "proxy %s to box agent: %v", r.URL.Path, err)
 	writeJSONRPCError(w, status.Error(codes.Unavailable, "box agent unreachable"))
+}
+
+// cutOnEnd cancels a share's exchange when the share ends, and a server stream (GET) also when write switches, so the client reconnects with the new mode.
+func cutOnEnd(ctx context.Context, cancel context.CancelFunc, g *auth.Grant, stream bool) {
+	var moded <-chan struct{}
+	if stream {
+		moded = g.Moded
+	}
+	select {
+	case <-g.Cut:
+	case <-moded:
+	case <-ctx.Done():
+	}
+	cancel()
 }
 
 func newH2CTransport(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {

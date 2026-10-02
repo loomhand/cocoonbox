@@ -75,6 +75,8 @@ async function load() {
   }
   if (!me.boxes.length) cell(boxes.insertRow(), "No box yet: the app creates one on first connect.");
 
+  await loadShares(me.boxes);
+
   const usage = $("usage");
   usage.replaceChildren();
   for (const r of me.usage || []) {
@@ -137,6 +139,58 @@ async function loadUsers(self) {
       await load();
     }, true));
   }
+}
+
+async function loadShares(boxes) {
+  const list = await api("GET", "shares");
+  const body = $("shares");
+  body.replaceChildren();
+  for (const sh of list) {
+    const row = body.insertRow();
+    cell(row, sh.box_id);
+    cell(row, sh.users.length ? sh.users.join(", ") : "anyone with the link");
+    const write = document.createElement("input");
+    write.type = "checkbox";
+    write.checked = sh.write;
+    write.addEventListener("change", () => shareCall("PATCH", sh.id, "", { write: write.checked }));
+    cell(row, "").appendChild(write);
+    cell(row, new Date(sh.expires_at_ms).toLocaleString());
+    const actions = cell(row, "");
+    actions.className = "actions";
+    actions.appendChild(button("Regenerate link", async () => {
+      if (!confirm("Regenerate the link? The old link and every session on it stop at once.")) return;
+      showLink(await api("POST", "shares/" + encodeURIComponent(sh.id) + "/regenerate"));
+      await load();
+    }));
+    actions.appendChild(button("Revoke", async () => {
+      if (!confirm("Revoke the share? Every viewer and guest agent is cut off at once.")) return;
+      $("share-link").hidden = true;
+      await shareCall("DELETE", sh.id, "");
+    }, true));
+  }
+  if (!list.length) cell(body.insertRow(), "Not shared.");
+  const form = $("share-form");
+  form.hidden = !boxes.length || list.some((sh) => boxes.some((b) => b.id === sh.box_id));
+  form.dataset.box = boxes.length ? boxes[0].id : "";
+}
+
+async function shareCall(method, id, suffix, body) {
+  try {
+    await api(method, "shares/" + encodeURIComponent(id) + suffix, body);
+    notice("Saved.");
+  } catch (e) {
+    notice(e.message, true);
+  }
+  await load();
+}
+
+function showLink(created) {
+  const base = location.origin;
+  $("share-url").textContent = base + "/cb/s/#" + created.secret;
+  let mcp = "URL: " + base + "/cocoonbox.mcp/" + created.share.box_id + "\nAuthorization: Bearer " + created.secret;
+  if (created.share.users.length) mcp += "\nX-Cocoonbox-Guest-Token: <the guest's own cocoonbox token>";
+  $("share-mcp").textContent = mcp;
+  $("share-link").hidden = false;
 }
 
 function capText(micros, fallback) {
@@ -205,6 +259,17 @@ submit("settings-form", async (f) => {
   await load();
 });
 
+submit("share-form", async (f) => {
+  const names = f.users.value.split(/[\s,]+/).filter(Boolean);
+  const created = await api("POST", "shares", {
+    box_id: f.dataset.box, ttl_seconds: Number(f.ttl.value), user_names: names, write: f.write.checked,
+  });
+  f.reset();
+  showLink(created);
+  notice("Shared.");
+  await load();
+});
+
 submit("password-form", async (f) => {
   await api("POST", "me/password", { current: f.current.value, password: f.password.value });
   f.reset();
@@ -235,6 +300,9 @@ $("regenerate").addEventListener("click", async () => {
 
 $("logout").addEventListener("click", async () => {
   await api("POST", "logout").catch(() => {});
+  $("share-link").hidden = true;
+  $("share-url").textContent = "";
+  $("share-mcp").textContent = "";
   $("token").hidden = true;
   $("token").textContent = "";
   await load();

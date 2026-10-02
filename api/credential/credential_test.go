@@ -53,6 +53,31 @@ func TestCredentialVerifiesAndIsCached(t *testing.T) {
 	}
 }
 
+func TestShareCredentialNamesThePrincipal(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("key: %v", err)
+	}
+	s := New(priv)
+	owner := s.Credential("cb-ef260e9aa3c6", "w1")
+	read := s.ShareCredential("cb-ef260e9aa3c6", "w1", "share:sh-1:read")
+	parts := strings.Split(read, ".")
+	if len(parts) != 3 || parts[0] != "v2" {
+		t.Fatalf("credential %q has no v2.<fields>.<sig> shape", read)
+	}
+	sig, _ := encoding.DecodeString(parts[2])
+	fields, _ := encoding.DecodeString(parts[1])
+	if !ed25519.Verify(pub, []byte(parts[0]+"."+parts[1]), sig) || !strings.HasSuffix(string(fields), "|share:sh-1:read") || strings.Count(string(fields), "|") != 4 {
+		t.Errorf("fields %q do not verify or end with the principal", fields)
+	}
+	if write := s.ShareCredential("cb-ef260e9aa3c6", "w1", "share:sh-1:write"); write == read || owner == read {
+		t.Error("credentials of different principals are shared")
+	}
+	if again := s.Credential("cb-ef260e9aa3c6", "w1"); again != owner || !strings.HasPrefix(owner, "v1.") {
+		t.Error("the owner's credential changed after share credentials were issued")
+	}
+}
+
 func TestLoadReadsPKCS8(t *testing.T) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {

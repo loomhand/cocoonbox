@@ -1,11 +1,13 @@
-// Package auth resolves the bearer token on every call to a user id.
+// Package auth resolves the bearer token on every call to a user id, or to a share of a box.
 package auth
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"slices"
 	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -14,8 +16,12 @@ import (
 )
 
 const (
-	// HeaderAuthorization carries `Bearer <user token>`.
+	// HeaderAuthorization carries `Bearer <user token>`, or `Bearer <share secret>` on MCP.
 	HeaderAuthorization = "authorization"
+	// HeaderGuestToken carries the caller's own user token next to the secret of a share that names its users.
+	HeaderGuestToken = "x-cocoonbox-guest-token" //nolint:gosec // a header name, not a credential
+	// SecretPrefix starts every share secret; no user token starts with it.
+	SecretPrefix = "cbs_"
 
 	bearerPrefix = "bearer "
 )
@@ -27,14 +33,94 @@ type Users interface {
 	ByTokenSHA256(sum string) (string, bool)
 }
 
-// Authenticator maps bearer tokens to user ids.
-type Authenticator struct {
-	users Users
+// Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.
+type Shares interface {
+	ShareBySecretSHA256(sum string) (Share, bool)
 }
 
-// New authenticates against users.
-func New(users Users) *Authenticator {
-	return &Authenticator{users: users}
+// Share is a live share as the edge admits it.
+type Share struct {
+	ID    string
+	Owner string
+	Box   string
+	// Users are the user ids the share admits; empty admits anyone with the link.
+	Users     []string
+	Write     bool
+	ExpiresAt time.Time
+	// Cut closes when the streams admitted so far must end: revoke, regenerate, expiry, or the owner disabled or deleted.
+	Cut <-chan struct{}
+	// Moded closes when the owner switches write.
+	Moded <-chan struct{}
+}
+
+// Grant is one admitted share call: the share and the guest's user id, empty for an open share.
+type Grant struct {
+	Share
+	Guest string
+}
+
+// Principal names the caller in the box credential: share:<id>:<read|write>[:<guest>].
+func (g Grant) Principal() string {
+	mode := "read"
+	if g.Write {
+		mode = "write"
+	}
+	p := "share:" + g.ID + ":" + mode
+	if g.Guest != "" {
+		p += ":" + g.Guest
+	}
+	return p
+}
+
+// Authenticator maps bearer tokens to user ids and share secrets to shares.
+type Authenticator struct {
+	users  Users
+	shares Shares
+}
+
+// New authenticates against users and shares.
+func New(users Users, shares Shares) *Authenticator {
+	return &Authenticator{users: users, shares: shares}
+}
+
+// ShareSecret returns the share secret an Authorization header carries.
+func ShareSecret(header string) (string, bool) {
+	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
+		return "", false
+	}
+	secret := header[len(bearerPrefix):]
+	return secret, strings.HasPrefix(secret, SecretPrefix)
+}
+
+// Admit admits a share secret for box, or for the share's own box when box is empty; guest is the caller's user id or empty.
+func (a *Authenticator) Admit(secret, box, guest string) (Grant, error) {
+	sum := sha256.Sum256([]byte(secret))
+	sh, ok := a.shares.ShareBySecretSHA256(hex.EncodeToString(sum[:]))
+	switch {
+	case !ok || !time.Now().Before(sh.ExpiresAt):
+		return Grant{}, status.Error(codes.PermissionDenied, "the share link is revoked, regenerated or expired")
+	case box != "" && box != sh.Box:
+		return Grant{}, status.Error(codes.PermissionDenied, "the share link is for another box")
+	case len(sh.Users) == 0:
+		return Grant{Share: sh}, nil
+	case guest == "":
+		return Grant{}, status.Error(codes.Unauthenticated, "this share names its users: send your own cocoonbox token too")
+	case !slices.Contains(sh.Users, guest):
+		return Grant{}, status.Error(codes.PermissionDenied, "this share does not name you")
+	}
+	return Grant{Share: sh, Guest: guest}, nil
+}
+
+// Guest maps a guest token header value to its user; the error is a gRPC status.
+func (a *Authenticator) Guest(token string) (string, error) {
+	if token == "" {
+		return "", nil
+	}
+	user, ok := a.byToken(token)
+	if !ok {
+		return "", status.Error(codes.Unauthenticated, "invalid guest token")
+	}
+	return user, nil
 }
 
 // Unary authenticates unary calls.
@@ -60,8 +146,7 @@ func (a *Authenticator) Authenticate(header string) (string, error) {
 	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
 		return "", status.Error(codes.Unauthenticated, "missing bearer token")
 	}
-	sum := sha256.Sum256([]byte(header[len(bearerPrefix):]))
-	user, ok := a.users.ByTokenSHA256(hex.EncodeToString(sum[:]))
+	user, ok := a.byToken(header[len(bearerPrefix):])
 	if !ok {
 		return "", status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
@@ -76,6 +161,11 @@ func (a *Authenticator) Identify(ctx context.Context) string {
 	}
 	user, _ := a.Authenticate(values[0])
 	return user
+}
+
+func (a *Authenticator) byToken(token string) (string, bool) {
+	sum := sha256.Sum256([]byte(token))
+	return a.users.ByTokenSHA256(hex.EncodeToString(sum[:]))
 }
 
 func (a *Authenticator) authenticate(ctx context.Context) (context.Context, error) {

@@ -173,6 +173,7 @@ type mcpEnv struct {
 	addr     string
 	resolver *fakeResolver
 	upstream *fakeMCP
+	shares   *fakeShares
 	client   *http.Client
 }
 
@@ -183,14 +184,16 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 	resolver := &fakeResolver{addr: serveHTTP(t, upstream)}
 
 	sum := sha256.Sum256([]byte(aliceToken))
-	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice"})
+	bobSum, carolSum := sha256.Sum256([]byte(bobToken)), sha256.Sum256([]byte(carolToken))
+	shares := &fakeShares{bySum: map[string]auth.Share{}}
+	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice", hex.EncodeToString(bobSum[:]): "bob", hex.EncodeToString(carolSum[:]): "carol"}, shares)
 	served := make(chan string, 16)
 	mcp := NewMCP(resolver, authn, fakeCreds{})
 	addr := serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { served <- r.Method }()
 		mcp.ServeHTTP(w, r)
 	}))
-	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
+	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, shares: shares, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
 }
 
 func (e *mcpEnv) request(t *testing.T, method, path, body string) *http.Request {
@@ -247,7 +250,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"path": r.URL.Path, "query": r.URL.RawQuery, "session": r.Header.Get("Mcp-Session-Id"),
 		"edge_token": r.Header.Get(HeaderEdgeToken), "authorization": r.Header.Get("Authorization"), "body": string(body),
-		"credential": r.Header.Get(credential.Header),
+		"credential": r.Header.Get(credential.Header), "guest": r.Header.Get(auth.HeaderGuestToken),
 	})
 }
 

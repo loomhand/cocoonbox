@@ -1,4 +1,5 @@
-// Package console serves the cocoonbox web console under /cb/: password sign-in, the user's own page and the admin page.
+// Package console serves the cocoonbox web console under /cb/: password sign-in, the user's own page, the admin page
+// and the view-only page of a share at /cb/s/.
 package console
 
 import (
@@ -6,6 +7,8 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"mime"
 	"net"
@@ -15,6 +18,9 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"golang.org/x/net/websocket"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
@@ -32,6 +38,11 @@ const (
 	nameLimit   = 5
 	addrLimit   = 20
 	maxBodySize = 16 << 10
+
+	sharePrefix  = Prefix + "s/"
+	shareHello   = 10 * time.Second
+	shareCSP     = "default-src 'self'; img-src 'self' data:; connect-src 'self' wss://%s; frame-ancestors 'none'"
+	maxSecretLen = 256
 )
 
 var (
@@ -47,6 +58,11 @@ type Boxes interface {
 	Release(ctx context.Context, user string) error
 }
 
+// Screens bridges a share's viewer to its box's screen, view-only.
+type Screens interface {
+	Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) error
+}
+
 type userKey struct{}
 
 type box struct {
@@ -55,12 +71,23 @@ type box struct {
 	Image string `json:"image"`
 }
 
+type share struct {
+	ID        string   `json:"id"`
+	Box       string   `json:"box_id"`
+	Users     []string `json:"users"`
+	Write     bool     `json:"write"`
+	ExpiresAt int64    `json:"expires_at_ms"`
+}
+
 // Server is the console's HTTP handler.
 type Server struct {
 	users   *users.Service
 	boxes   Boxes
 	limiter *limiter
 	mux     *http.ServeMux
+	shares  controlv1.SharesServer
+	authn   *auth.Authenticator
+	screens Screens
 
 	defaultDailyCap int64
 }
@@ -85,11 +112,26 @@ func New(us *users.Service, boxes Boxes, defaultDailyCap int64) *Server {
 	return s
 }
 
+// EnableSharing serves the owner's share calls over shares and the share page, which authn admits and screens bridges.
+func (s *Server) EnableSharing(shares controlv1.SharesServer, authn *auth.Authenticator, screens Screens) {
+	s.shares, s.authn, s.screens = shares, authn, screens
+	s.mux.HandleFunc("GET "+Prefix+"api/shares", s.signedIn(s.listShares))
+	s.mux.HandleFunc("POST "+Prefix+"api/shares", s.signedIn(s.createShare))
+	s.mux.HandleFunc("PATCH "+Prefix+"api/shares/{id}", s.signedIn(s.setShareWrite))
+	s.mux.HandleFunc("POST "+Prefix+"api/shares/{id}/regenerate", s.signedIn(s.regenerateShare))
+	s.mux.HandleFunc("DELETE "+Prefix+"api/shares/{id}", s.signedIn(s.revokeShare))
+	s.mux.Handle("GET "+sharePrefix+"ws", websocket.Server{Handshake: sameOrigin, Handler: s.viewShare})
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("X-Frame-Options", "DENY")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; frame-ancestors 'none'")
+	csp := "default-src 'self'; frame-ancestors 'none'"
+	if strings.HasPrefix(r.URL.Path, sharePrefix) {
+		csp = fmt.Sprintf(shareCSP, r.Host)
+	}
+	w.Header().Set("Content-Security-Policy", csp)
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		// A JSON body is not a simple request, so a cross-site form or fetch cannot send one without a preflight.
 		if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
@@ -335,6 +377,107 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *Server) listShares(w http.ResponseWriter, r *http.Request) {
+	list, err := s.shares.List(s.ownerCtx(r), &controlv1.ListSharesRequest{})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := make([]share, 0, len(list.GetShares()))
+	for _, sh := range list.GetShares() {
+		out = append(out, toShare(sh))
+	}
+	writeJSON(w, out)
+}
+
+func (s *Server) createShare(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Box       string   `json:"box_id"`
+		TTL       int64    `json:"ttl_seconds"`
+		UserNames []string `json:"user_names"`
+		Write     bool     `json:"write"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	created, err := s.shares.Create(s.ownerCtx(r), &controlv1.CreateShareRequest{BoxId: req.Box, TtlSeconds: req.TTL, UserNames: req.UserNames, Write: req.Write})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"share": toShare(created.GetShare()), "secret": created.GetSecret()})
+}
+
+func (s *Server) setShareWrite(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Write bool `json:"write"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	sh, err := s.shares.SetWrite(s.ownerCtx(r), &controlv1.SetShareWriteRequest{ShareId: r.PathValue("id"), Write: req.Write})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, toShare(sh))
+}
+
+func (s *Server) regenerateShare(w http.ResponseWriter, r *http.Request) {
+	regenerated, err := s.shares.Regenerate(s.ownerCtx(r), &controlv1.ShareRef{ShareId: r.PathValue("id")})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]any{"share": toShare(regenerated.GetShare()), "secret": regenerated.GetSecret()})
+}
+
+func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.shares.Revoke(s.ownerCtx(r), &controlv1.ShareRef{ShareId: r.PathValue("id")}); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// viewShare admits the secret in the first message, then bridges the screen of the share's box as binary messages.
+// A named share takes the viewer from the console session cookie, so no token travels in the page.
+func (s *Server) viewShare(ws *websocket.Conn) {
+	r := ws.Request()
+	ws.MaxPayloadBytes = maxSecretLen
+	_ = ws.SetReadDeadline(time.Now().Add(shareHello))
+	var secret string
+	if websocket.Message.Receive(ws, &secret) != nil {
+		return
+	}
+	_ = ws.SetReadDeadline(time.Time{})
+	guest := ""
+	if c, err := r.Cookie(cookieName); err == nil {
+		if u, err := s.users.Session(r.Context(), c.Value); err == nil {
+			guest = u.ID
+		}
+	}
+	logger := log.WithFunc("console.Server.viewShare")
+	grant, err := s.authn.Admit(secret, "", guest)
+	if err != nil {
+		logger.Infof(r.Context(), "share page refused from %s: %s", clientAddr(r), status.Code(err))
+		_ = websocket.JSON.Send(ws, map[string]string{"error": status.Convert(err).Message(), "code": strings.ToLower(status.Code(err).String())})
+		return
+	}
+	if websocket.JSON.Send(ws, map[string]bool{"ok": true}) != nil {
+		return
+	}
+	ws.PayloadType = websocket.BinaryFrame
+	start := time.Now()
+	err = s.screens.Screen(r.Context(), grant, ws)
+	logger.Infof(r.Context(), "share page of box %s as %s from %s: code=%s in %s",
+		grant.Box, grant.Principal(), clientAddr(r), status.Code(err), time.Since(start).Round(time.Millisecond))
+}
+
+func (s *Server) ownerCtx(r *http.Request) context.Context {
+	return auth.WithUser(r.Context(), caller(r).ID)
+}
+
 // checkPassword checks name's password under the attempt limits.
 func (s *Server) checkPassword(r *http.Request, name, password string) (users.User, error) {
 	nameKey, addrKey := "name:"+name, "addr:"+clientAddr(r)
@@ -393,6 +536,14 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, users.ErrBadPassword):
 		writeError(w, http.StatusUnauthorized, err.Error())
+	case status.Code(err) == codes.InvalidArgument:
+		writeError(w, http.StatusBadRequest, status.Convert(err).Message())
+	case status.Code(err) == codes.AlreadyExists:
+		writeError(w, http.StatusConflict, status.Convert(err).Message())
+	case status.Code(err) == codes.NotFound:
+		writeError(w, http.StatusNotFound, status.Convert(err).Message())
+	case status.Code(err) == codes.PermissionDenied:
+		writeError(w, http.StatusForbidden, status.Convert(err).Message())
 	default:
 		log.WithFunc("console.Server.fail").Errorf(r.Context(), err, "%s %s", r.Method, r.URL.Path)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -411,6 +562,23 @@ func clientAddr(r *http.Request) string {
 	}
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return host
+}
+
+// sameOrigin refuses a WebSocket that another site's page opens.
+func sameOrigin(cfg *websocket.Config, r *http.Request) error {
+	origin, err := websocket.Origin(cfg, r)
+	if err != nil || origin == nil || origin.Host != r.Host {
+		return errors.New("cross-origin share page")
+	}
+	return nil
+}
+
+func toShare(sh *controlv1.Share) share {
+	out := share{ID: sh.GetId(), Box: sh.GetBoxId(), Users: []string{}, Write: sh.GetWrite(), ExpiresAt: sh.GetExpiresAtMs()}
+	for _, u := range sh.GetUsers() {
+		out.Users = append(out.Users, u.GetName())
+	}
+	return out
 }
 
 func capText(micros *int64) string {

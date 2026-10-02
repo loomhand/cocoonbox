@@ -1,0 +1,7 @@
+body { display: flex; flex-direction: column; height: 100vh; }
+
+#state { color: var(--muted); }
+
+#notice { margin: 16px; }
+
+#screen { flex: 1; min-height: 0; background: #000; }

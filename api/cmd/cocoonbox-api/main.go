@@ -17,6 +17,7 @@ import (
 	"github.com/projecteru2/core/log"
 	"github.com/projecteru2/core/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
@@ -30,6 +31,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/machines/sandboxd"
+	"github.com/CMGS/cocoonbox/api/shares"
 	"github.com/CMGS/cocoonbox/api/store/s3"
 	"github.com/CMGS/cocoonbox/api/users"
 )
@@ -39,6 +41,7 @@ const (
 	usersInterval     = 10 * time.Second
 	shutdownGrace     = 5 * time.Second
 	readHeaderTimeout = 10 * time.Second
+	endShareTimeout   = 10 * time.Second
 )
 
 func main() {
@@ -100,8 +103,10 @@ func main() {
 	}
 	proxy := edge.NewProxy(svc, signer)
 	defer proxy.Close()
+	accounts.OnShareEnd(func(ctx context.Context, sh users.Share) { go endShare(ctx, proxy, sh) })
 
-	authn := auth.New(accounts)
+	authn := auth.New(accounts, accounts)
+	shareSvc := shares.New(accounts)
 	access := boxes.NewAccessLog(authn.Identify)
 	server := grpc.NewServer(
 		grpc.ForceServerCodecV2(edge.NewCodec()),
@@ -111,11 +116,14 @@ func main() {
 		grpc.MaxRecvMsgSize(edge.MaxMessageSize),
 	)
 	controlv1.RegisterBoxesServer(server, svc)
+	controlv1.RegisterSharesServer(server, shareSvc)
 
 	httpMux := http.NewServeMux()
 	httpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
 	httpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, signer))
-	httpMux.Handle(console.Prefix, console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros))
+	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros)
+	web.EnableSharing(shareSvc, authn, proxy)
+	httpMux.Handle(console.Prefix, web)
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
@@ -168,6 +176,15 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 	go svc.RunProvisioner(ctx, provisionInterval)
 	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, residential exit %q", signer.KeyID(), cfg.Provision.ResidentialUpstream)
 	return signer, nil
+}
+
+// endShare closes the box's MCP sessions of a share that ended; a box that is not running has none to close.
+func endShare(ctx context.Context, proxy *edge.Proxy, sh users.Share) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endShareTimeout)
+	defer cancel()
+	if err := proxy.EndShare(ctx, sh.Owner, sh.Box, sh.ID); err != nil {
+		log.WithFunc("main.endShare").Infof(ctx, "end the sessions of share %s in box %s: %s", sh.ID, sh.Box, status.Convert(err).Message())
+	}
 }
 
 // openUsers opens the users table with gw and sandboxd as the holders of each user's keys.
