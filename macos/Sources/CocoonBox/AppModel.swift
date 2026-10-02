@@ -20,19 +20,6 @@ struct LiveBlock: Equatable {
     var text: String
 }
 
-extension Agent {
-    // externalClient names the local client behind an MCP session agent, `mcp:<clientInfo.name>`.
-    var externalClient: String? {
-        guard name.hasPrefix("mcp:") else { return nil }
-        let client = String(name.dropFirst(4))
-        let lower = client.lowercased()
-        if lower.hasPrefix("claude") { return "Claude Code" }
-        if lower.hasPrefix("codex") { return "Codex" }
-        if lower.hasPrefix("cursor") { return "Cursor" }
-        return client
-    }
-}
-
 struct OperationProgress: Equatable {
     var id: String
     var title: String
@@ -182,6 +169,7 @@ final class AppModel {
             session.onTitle = { [weak self] in self?.persistLocal() }
             localAgents.append(session)
         }
+        linkLocalAgents()
         persistLocal()
         settleLocal()
     }
@@ -240,10 +228,8 @@ final class AppModel {
         }
     }
 
-    // externalAgent is the mcp:* agent a local session opened: the newest one from the same client since it started.
     func externalAgent(for session: LocalAgentSession) -> Agent? {
-        let since = Int64(session.startedAt.timeIntervalSince1970 * 1000) - 5000
-        return agents.last { $0.externalClient == session.kind.title && $0.createdAtMs >= since }
+        Agent.opened(by: session.kind.title, since: session.startedAt, in: agents)
     }
 
     // linkLocalAgents records the MCP agents opened by local sessions, kept across launches and pruned to agents the box still has.
@@ -529,9 +515,7 @@ final class AppModel {
             agents = try await connection.listAgents().sorted { $0.createdAtMs < $1.createdAtMs }
             linkLocalAgents()
             live = [:]
-            if selectedAgentID == nil || !agents.contains(where: { $0.id == selectedAgentID }) {
-                selectedAgentID = agents.last { $0.externalClient == nil }?.id ?? agents.last?.id
-            }
+            selectedAgentID = Agent.resynced(selectedAgentID, local: selectedLocal != nil, in: agents)
             loadedTranscripts = []
             if let id = selectedTranscriptID {
                 loadedTranscripts.insert(id)
@@ -586,7 +570,7 @@ final class AppModel {
             } else {
                 agents.append(agent)
                 linkLocalAgents()
-                if selectedAgentID == nil { selectedAgentID = agent.id }
+                if selectedAgentID == nil, agent.externalClient == nil { selectedAgentID = agent.id }
             }
         case .agentDeleted(let deleted):
             forget(agentID: deleted.agentID)

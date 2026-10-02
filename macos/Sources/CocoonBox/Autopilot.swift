@@ -9,7 +9,8 @@ import Foundation
 // wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
-// select:<agent name>, connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
+// select:<agent name>, select-local:<kind>, sidebar:<label> (logs the selection and the External rows),
+// connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // wait-local:<count>[:seconds] (that many local agents open, as after a reopen),
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
@@ -96,6 +97,11 @@ enum Autopilot {
         case "select":
             await until(60) { model.agents.contains { $0.name == arg } }
             model.selectedAgentID = model.agents.first { $0.name == arg }?.id
+        case "select-local":
+            model.selectedAgentID = model.localAgents.first { $0.kind.rawValue == arg }.map(AppModel.selectionID)
+        case "sidebar":
+            let linked = model.selectedLocal.flatMap { model.externalAgent(for: $0) }?.id ?? "-"
+            Perf.mark("sidebar", "label=\(arg) selected=\(model.selectedAgentID ?? "-") local=\(model.selectedLocal?.kind.rawValue ?? "-") linked=\(linked) external=\(model.externalAgents().map(\.id).joined(separator: ",")) agents=\(model.agents.map { "\($0.id)/\($0.name)/\($0.status)" }.joined(separator: ","))")
         case "connect-agent":
             model.showConnectAgent = arg != "off"
         case "password-signin":
