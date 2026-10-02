@@ -23,6 +23,9 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
 const READ_CHARS: usize = 20_000;
 const RUNNING_MARKER: &str = "cocoonbox-was-running";
+const XPROP: &str = "xprop";
+const XPROP_WAIT: Duration = Duration::from_secs(2);
+const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
 
 const SNAPSHOT_JS: &str = r#"(() => {
   const MAX = 300;
@@ -391,23 +394,57 @@ impl Browser {
         Ok(json!({"filled": r["filled"], "submitted": submitted}).to_string())
     }
 
-    /// The window the browser tools last acted on, else the first tab Chrome lists.
+    /// The tab the user sees in the X active window, else the window the browser tools
+    /// last acted on, else the first tab Chrome lists.
     async fn attach(&self) -> Result<Cdp, String> {
+        let targets = self
+            .targets()
+            .await
+            .map_err(|_| "Chrome is not running in the box".to_owned())?;
+        if let Some(cdp) = self.shown(&targets).await {
+            return Ok(cdp);
+        }
         let last = self.last.lock().await.clone();
         if !last.is_empty()
             && let Ok(cdp) = Cdp::open(&last).await
         {
             return Ok(cdp);
         }
-        let targets = self
-            .targets()
-            .await
-            .map_err(|_| "Chrome is not running in the box".to_owned())?;
         let page = targets
             .into_iter()
             .find(Target::is_tab)
             .ok_or("no tab is open in the box's Chrome")?;
         Cdp::open(&page.ws_url).await
+    }
+
+    /// The visible tab titled as the X active window, when exactly one matches.
+    async fn shown(&self, targets: &[Target]) -> Option<Cdp> {
+        let title = active_title().await?;
+        let infos = self
+            .browser()
+            .await
+            .ok()?
+            .call("Target.getTargets", json!({}))
+            .await
+            .ok()?;
+        let ids: Vec<&str> = infos["targetInfos"]
+            .as_array()?
+            .iter()
+            .filter(|i| i["type"] == "page" && i["title"] == title.as_str())
+            .filter_map(|i| i["targetId"].as_str())
+            .collect();
+        let mut found = None;
+        for t in targets.iter().filter(|t| ids.contains(&t.id.as_str())) {
+            let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
+                continue;
+            };
+            if cdp.eval("document.visibilityState").await == Ok(json!("visible"))
+                && found.replace(cdp).is_some()
+            {
+                return None;
+            }
+        }
+        found
     }
 
     /// Attaches to the window in `window`, opening a new one when it is missing or was closed.
@@ -715,6 +752,61 @@ impl Cdp {
     }
 }
 
+/// Page title of the X active window when it is a Chrome window.
+async fn active_title() -> Option<String> {
+    let root = xprop(&["-root", "_NET_ACTIVE_WINDOW"]).await?;
+    let name = xprop(&["-id", active_window(&root)?, "_NET_WM_NAME"]).await?;
+    chrome_page_title(&name)
+}
+
+async fn xprop(args: &[&str]) -> Option<String> {
+    let run = Command::new(XPROP)
+        .args(args)
+        .stdin(Stdio::null())
+        .kill_on_drop(true)
+        .output();
+    let out = tokio::time::timeout(XPROP_WAIT, run).await.ok()?.ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// The window id in `_NET_ACTIVE_WINDOW(WINDOW): window id # 0x600003, 0x0`; none for `0x0`.
+fn active_window(xprop: &str) -> Option<&str> {
+    let id = xprop.split_once('#')?.1.split(',').next()?.trim();
+    (id.starts_with("0x") && id != "0x0").then_some(id)
+}
+
+/// The page title in `_NET_WM_NAME(UTF8_STRING) = "<title> - Google Chrome"`.
+fn chrome_page_title(xprop: &str) -> Option<String> {
+    let name = xprop_string(xprop)?;
+    let (title, app) = name.rsplit_once(" - ")?;
+    CHROME_APPS.contains(&app).then(|| title.to_owned())
+}
+
+/// The quoted value xprop prints, undoing its `\"`, `\\` and octal `\ooo` escapes.
+fn xprop_string(xprop: &str) -> Option<String> {
+    let quoted = xprop.split_once(" = \"")?.1.trim_end().strip_suffix('"')?;
+    let mut out = Vec::with_capacity(quoted.len());
+    let mut rest = quoted.as_bytes();
+    while let Some((&b, tail)) = rest.split_first() {
+        rest = tail;
+        if b != b'\\' {
+            out.push(b);
+        } else if let Some(octal) = rest
+            .get(..3)
+            .filter(|d| d.iter().all(|c| (b'0'..=b'7').contains(c)))
+        {
+            out.push(u8::from_str_radix(std::str::from_utf8(octal).ok()?, 8).ok()?);
+            rest = &rest[3..];
+        } else if let Some((&c, tail)) = rest.split_first() {
+            out.push(c);
+            rest = tail;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 fn js_str(s: &str) -> String {
     Value::String(s.to_owned()).to_string()
 }
@@ -864,6 +956,32 @@ mod tests {
             asked.elapsed()
         );
         assert_eq!(start.await.unwrap().unwrap(), "running");
+    }
+
+    #[test]
+    fn the_active_window_title_names_a_chrome_page_in_either_locale() {
+        assert_eq!(
+            active_window("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x600003, 0x0\n"),
+            Some("0x600003")
+        );
+        assert_eq!(
+            active_window("_NET_ACTIVE_WINDOW(WINDOW): window id # 0x0\n"),
+            None
+        );
+        let title = Some("登录 – \"q\" \\ back slash".to_owned());
+        let utf8 =
+            "_NET_WM_NAME(UTF8_STRING) = \"登录 – \\\"q\\\" \\\\ back slash - Google Chrome\"\n";
+        let c = r#"_NET_WM_NAME(UTF8_STRING) = "\347\231\273\345\275\225 \342\200\223 \"q\" \\ back slash - Google Chrome""#;
+        assert_eq!(chrome_page_title(utf8), title);
+        assert_eq!(chrome_page_title(c), title);
+        assert_eq!(
+            chrome_page_title("_NET_WM_NAME(UTF8_STRING) = \"a - b - Chromium\""),
+            Some("a - b".to_owned())
+        );
+        assert_eq!(
+            chrome_page_title("_NET_WM_NAME(UTF8_STRING) = \"*notes.txt - Mousepad\""),
+            None
+        );
     }
 
     #[test]
