@@ -47,7 +47,7 @@ conf = {
     "sync_claims": True,
     "vmm_restart": "cold",
     "api_token": open(TOKEN).read().strip(),
-    "max_claims": 3,
+    "max_claims": 6,
     "refill_concurrency": 1,
     "audit_log": True,
     "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{STATE_PORT}"],
