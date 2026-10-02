@@ -30,6 +30,7 @@ const CHUNK_MAX: u32 = 4 << 20;
 const MANIFEST_LIMIT: u64 = 256 << 20;
 const TRANSFERS: usize = 8;
 const RESTORE_WRITES: usize = 4;
+const PLAN_READS: usize = 4;
 const ATTEMPTS: u32 = 3;
 const RETRY_BASE: Duration = Duration::from_millis(500);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
@@ -455,11 +456,11 @@ impl StateEngine {
         } else {
             self.load_known(key_id).await
         };
-        let mut chunker = Chunker {
+        let chunker = Chunker {
             keys: Arc::clone(keys),
             spool: spool.clone(),
             known: &last.chunks,
-            sizes: HashMap::new(),
+            sizes: std::sync::Mutex::new(HashMap::new()),
         };
         let settled_ns = (crate::now_ms() - REUSE_AGE_MS) * 1_000_000;
         let walked = self
@@ -479,59 +480,78 @@ impl StateEngine {
         let mut skipped = Vec::new();
         let mut backed_up: HashSet<String> = HashSet::new();
         let mut reuse = HashMap::new();
-        for mut entry in entries {
+        let (sidecars, rest): (Vec<Entry>, Vec<Entry>) = entries.into_iter().partition(|e| {
+            e.kind == Kind::File && SQLITE_SIDECARS.iter().any(|s| e.path.ends_with(s))
+        });
+        let mut prepare = |mut entry: Entry| {
             let key = format!("{}/{}", entry.root, entry.path);
             let ctime_ns = entry.ctime_ns.take();
-            if SQLITE_SIDECARS.iter().any(|s| {
-                key.strip_suffix(s)
-                    .is_some_and(|base| backed_up.contains(base))
-            }) {
-                continue;
-            }
-            if entry.kind != Kind::File {
-                files.push(FileRecord {
-                    entry,
-                    chunks: Vec::new(),
-                });
-                continue;
-            }
-            let Some(root) = roots.get(entry.root.as_str()) else {
-                continue;
+            let step = if entry.kind != Kind::File {
+                Step::Keep
+            } else if let Some(root) = roots.get(entry.root.as_str()) {
+                last.files
+                    .remove(&key)
+                    .filter(|r| r.matches(&entry, ctime_ns))
+                    .map_or_else(|| Step::Read(root.join(&entry.path)), Step::Reuse)
+            } else {
+                Step::Drop
             };
-            if let Some(r) = last
-                .files
-                .remove(&key)
-                .filter(|r| r.matches(&entry, ctime_ns))
-            {
-                chunker.sizes.extend(r.chunks.iter().cloned());
-                let chunks = r.chunks.iter().map(|(id, _)| id.clone()).collect();
-                reuse.insert(key, r);
-                files.push(FileRecord { entry, chunks });
-                continue;
-            }
-            let path = root.join(&entry.path);
-            match chunker.remote(&self.toolhost, &path).await? {
-                Some((chunks, backup)) => {
-                    if backup {
-                        backed_up.insert(key);
-                    } else if let Some(ctime_ns) = ctime_ns.filter(|c| *c < settled_ns) {
-                        let sized = chunks
-                            .iter()
-                            .map(|id| (id.clone(), chunker.sizes.get(id).copied().unwrap_or(0)))
-                            .collect();
-                        reuse.insert(
-                            key,
-                            Reuse {
+            (entry, key, ctime_ns, step)
+        };
+        let chunker = &chunker;
+        for pass in [rest, sidecars] {
+            let pass: Vec<Entry> = pass
+                .into_iter()
+                .filter(|e| {
+                    !SQLITE_SIDECARS.iter().any(|s| {
+                        e.path
+                            .strip_suffix(s)
+                            .is_some_and(|base| backed_up.contains(&format!("{}/{base}", e.root)))
+                    })
+                })
+                .collect();
+            let mut steps = stream::iter(pass)
+                .map(&mut prepare)
+                .map(|(entry, key, ctime_ns, step)| async move {
+                    let step = match step {
+                        Step::Read(path) => {
+                            Step::Chunked(chunker.remote(&self.toolhost, &path).await?)
+                        }
+                        other => other,
+                    };
+                    Ok::<_, String>((entry, key, ctime_ns, step))
+                })
+                .buffered(PLAN_READS);
+            while let Some(done) = steps.next().await {
+                let (entry, key, ctime_ns, step) = done?;
+                match step {
+                    Step::Keep => files.push(FileRecord {
+                        entry,
+                        chunks: Vec::new(),
+                    }),
+                    Step::Reuse(r) => {
+                        chunker.record(&r.chunks)?;
+                        let chunks = r.chunks.iter().map(|(id, _)| id.clone()).collect();
+                        reuse.insert(key, r);
+                        files.push(FileRecord { entry, chunks });
+                    }
+                    Step::Chunked(Some((chunks, backup))) => {
+                        if backup {
+                            backed_up.insert(key);
+                        } else if let Some(ctime_ns) = ctime_ns.filter(|c| *c < settled_ns) {
+                            let r = Reuse {
                                 size: entry.size,
                                 mtime_ms: entry.mtime_ms,
                                 ctime_ns,
-                                chunks: sized,
-                            },
-                        );
+                                chunks: chunker.sized(&chunks)?,
+                            };
+                            reuse.insert(key, r);
+                        }
+                        files.push(FileRecord { entry, chunks });
                     }
-                    files.push(FileRecord { entry, chunks });
+                    Step::Chunked(None) => skipped.push(key),
+                    Step::Read(_) | Step::Drop => {}
                 }
-                None => skipped.push(key),
             }
         }
         let db_copy = self
@@ -562,12 +582,10 @@ impl StateEngine {
             .await
             .map_err(|e| format!("write manifest: {e}"))?;
         let ids = referenced(&manifest);
-        let chunks = ids
-            .iter()
-            .map(|id| pb::ChunkRef {
-                id: id.clone(),
-                size: chunker.sizes.get(id).copied().unwrap_or(0),
-            })
+        let sizes = chunker.sized(&ids)?;
+        let chunks = sizes
+            .into_iter()
+            .map(|(id, size)| pb::ChunkRef { id, size })
             .collect();
         let response = pb::PlanResponse {
             snapshot_id: snapshot_id.clone(),
@@ -760,18 +778,27 @@ struct Quiet {
     chrome: bool,
 }
 
+/// What the plan does with one walked entry.
+enum Step {
+    Keep,
+    Drop,
+    Reuse(Reuse),
+    Read(PathBuf),
+    Chunked(Option<(Vec<String>, bool)>),
+}
+
 /// Splits byte streams into content-defined chunks and spools the ones the store lacks.
 struct Chunker<'a> {
     keys: Arc<Keys>,
     spool: PathBuf,
     known: &'a HashSet<String>,
-    sizes: HashMap<String, u64>,
+    sizes: std::sync::Mutex<HashMap<String, u64>>,
 }
 
 impl Chunker<'_> {
     /// Chunks a file read by the toolhost; `None` when it changed during two reads.
     async fn remote(
-        &mut self,
+        &self,
         toolhost: &rpc::Client,
         path: &Path,
     ) -> Result<Option<(Vec<String>, bool)>, String> {
@@ -793,7 +820,7 @@ impl Chunker<'_> {
     }
 
     /// Chunks a local file; returns its size and chunks.
-    async fn local(&mut self, path: &Path) -> Result<(u64, Vec<String>), String> {
+    async fn local(&self, path: &Path) -> Result<(u64, Vec<String>), String> {
         let mut file = tokio::fs::File::open(path)
             .await
             .map_err(|e| format!("open {}: {e}", path.display()))?;
@@ -805,7 +832,7 @@ impl Chunker<'_> {
         Ok((size, self.feed(Source::Local(&mut file)).await?))
     }
 
-    async fn feed(&mut self, mut source: Source<'_>) -> Result<Vec<String>, String> {
+    async fn feed(&self, mut source: Source<'_>) -> Result<Vec<String>, String> {
         let window = 2 * CHUNK_MAX as usize;
         let mut buf: Vec<u8> = Vec::new();
         let mut ids = Vec::new();
@@ -835,17 +862,40 @@ impl Chunker<'_> {
         }
     }
 
-    async fn emit(&mut self, chunk: Vec<u8>) -> Result<String, String> {
+    /// Records the sizes of chunks a reused file brings.
+    fn record(&self, chunks: &[(String, u64)]) -> Result<(), String> {
+        self.lock()?.extend(chunks.iter().cloned());
+        Ok(())
+    }
+
+    /// Pairs each chunk id with its size.
+    fn sized<'s>(
+        &self,
+        ids: impl IntoIterator<Item = &'s String>,
+    ) -> Result<Vec<(String, u64)>, String> {
+        let sizes = self.lock()?;
+        Ok(ids
+            .into_iter()
+            .map(|id| (id.clone(), sizes.get(id).copied().unwrap_or(0)))
+            .collect())
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, u64>>, String> {
+        self.sizes
+            .lock()
+            .map_err(|_| "chunk sizes lock poisoned".to_owned())
+    }
+
+    async fn emit(&self, chunk: Vec<u8>) -> Result<String, String> {
         let keys = Arc::clone(&self.keys);
         let len = chunk.len() as u64;
         let (id, chunk) =
             tokio::task::spawn_blocking(move || keys.id(&chunk).map(|id| (id, chunk)))
                 .await
                 .map_err(|e| format!("id task: {e}"))??;
-        if self.sizes.contains_key(&id) {
+        if self.lock()?.insert(id.clone(), len).is_some() {
             return Ok(id);
         }
-        self.sizes.insert(id.clone(), len);
         if self.known.contains(&id) {
             return Ok(id);
         }
