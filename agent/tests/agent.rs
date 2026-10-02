@@ -96,7 +96,7 @@ impl Harness {
                         bin.display()
                     ),
                 );
-                (wrapper.display().to_string(), free_port())
+                (wrapper.display().to_string(), cdp_port())
             }
             None => ("false".to_owned(), 1),
         };
@@ -483,12 +483,14 @@ fn find_chrome() -> Option<PathBuf> {
     .find(|p| p.exists())
 }
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
+/// A free port below Linux's ephemeral range, so no `bind(0)` or outgoing connection of a parallel
+/// test takes it before Chrome binds it.
+fn cdp_port() -> u16 {
+    let start = 20_000 + (uuid::Uuid::new_v4().as_u128() % 12_000) as u16;
+    (start..32_000)
+        .chain(20_000..start)
+        .find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
         .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
 }
 
 /// Serves at every path a page titled with the path and holding one text field.
