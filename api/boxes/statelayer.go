@@ -6,10 +6,15 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"maps"
 	"regexp"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/projecteru2/core/log"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/dialer"
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
@@ -22,6 +27,9 @@ const (
 	maxBatchBytes = 512 << 20
 	// pageSize keeps a control message near 1 MB whatever the state size.
 	pageSize = 2048
+
+	commitAttempts   = 3
+	commitRetryDelay = time.Second
 )
 
 var objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
@@ -65,9 +73,10 @@ type head struct {
 
 // stateLayer moves user state between box agents and the store; one transfer per box at a time.
 type stateLayer struct {
-	agents StateAgents
-	store  store.Store
-	keys   keyring.Keyring
+	agents     StateAgents
+	store      store.Store
+	keys       keyring.Keyring
+	retryDelay time.Duration
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -75,7 +84,7 @@ type stateLayer struct {
 }
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
-	return &stateLayer{agents: agents, store: st, keys: keys, locks: map[string]*sync.Mutex{}, heads: map[string]head{}}
+	return &stateLayer{agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, locks: map[string]*sync.Mutex{}, heads: map[string]head{}}
 }
 
 // save snapshots the state of box's agent at ep and uploads the chunks the store lacks.
@@ -91,19 +100,36 @@ func (l *stateLayer) save(ctx context.Context, box string, ep machines.Endpoint,
 		return nil, err
 	}
 	stateKey := &agentv1.StateKey{Key: key.Secret, KeyId: key.ID}
-	plan, err := l.agents.Plan(ctx, ep, &agentv1.PlanRequest{Key: stateKey, Consistency: consistency, Parent: h.Latest})
+	rec, stored, err := l.snapshot(ctx, box, ep, stateKey, consistency, h.Latest, progress)
+	if h.Latest != "" && status.Code(err) == codes.InvalidArgument {
+		log.WithFunc("boxes.stateLayer.save").WithField("box", box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
+		rec, stored, err = l.snapshot(ctx, box, ep, stateKey, consistency, "", progress)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("plan: %w", err)
+		return nil, err
+	}
+	rec.Parent = h.Latest
+	rec.SavedAtMs = time.Now().UnixMilli()
+	if err := l.commit(ctx, box, key.ID, rec, stored); err != nil {
+		return nil, err
+	}
+	return rec, nil
+}
+
+func (l *stateLayer) snapshot(ctx context.Context, box string, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, map[string]bool, error) {
+	plan, err := l.agents.Plan(ctx, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent})
+	if err != nil {
+		return nil, nil, fmt.Errorf("plan: %w", err)
 	}
 	if err = checkPlan(plan); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	stored, err := l.index(ctx, box, key.ID)
+	stored, err := l.index(ctx, box, key.GetKeyId())
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rec := &snapshotRecord{
-		ID: plan.GetSnapshotId(), Parent: h.Latest, Consistency: consistency.String(), TakenAtMs: plan.GetTakenAtMs(),
+		ID: plan.GetSnapshotId(), Consistency: consistency.String(), TakenAtMs: plan.GetTakenAtMs(),
 		Files: plan.GetFiles(), LogicalBytes: plan.GetLogicalBytes(),
 	}
 	var missing []chunk
@@ -118,14 +144,10 @@ func (l *stateLayer) save(ctx context.Context, box string, ep machines.Endpoint,
 		rec.NewChunks++
 		rec.UploadedBytes += c.GetSize()
 	}
-	if err = l.upload(ctx, box, ep, rec, stateKey, missing, progress); err != nil {
-		return nil, err
+	if err = l.upload(ctx, box, ep, rec, key, missing, progress); err != nil {
+		return nil, nil, err
 	}
-	rec.SavedAtMs = time.Now().UnixMilli()
-	if err := l.commit(ctx, box, key.ID, rec, stored); err != nil {
-		return nil, err
-	}
-	return rec, nil
+	return rec, stored, nil
 }
 
 // upload sends missing in batches presigned just before each call, and the manifest with the last batch.
@@ -255,30 +277,39 @@ func (l *stateLayer) lastSaved(ctx context.Context, box string) int64 {
 	return h.SavedAtMs
 }
 
-// commit writes the snapshot record, then the index, then the head, so a crash leaves the previous head valid.
+// commit writes the index, then the snapshot record, then the head, so a crash leaves the previous head valid.
 func (l *stateLayer) commit(ctx context.Context, box, keyID string, rec *snapshotRecord, stored map[string]bool) error {
-	if err := putJSON(ctx, l.store, recordKey(box, rec.ID), rec); err != nil {
-		return err
-	}
 	for _, c := range rec.Chunks {
 		stored[c.ID] = true
 	}
-	ids := make([]string, 0, len(stored))
-	for id := range stored {
-		ids = append(ids, id)
+	idx := chunkIndex{KeyID: keyID, Chunks: slices.Sorted(maps.Keys(stored))}
+	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, indexKey(box), idx) }); err != nil {
+		return err
 	}
-	slices.Sort(ids)
-	if err := putJSON(ctx, l.store, indexKey(box), chunkIndex{KeyID: keyID, Chunks: ids}); err != nil {
+	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, recordKey(box, rec.ID), rec) }); err != nil {
 		return err
 	}
 	h := head{Latest: rec.ID, SavedAtMs: rec.SavedAtMs}
-	if err := putJSON(ctx, l.store, headKey(box), h); err != nil {
+	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, headKey(box), h) }); err != nil {
 		return err
 	}
 	l.mu.Lock()
 	l.heads[box] = h
 	l.mu.Unlock()
 	return nil
+}
+
+func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
+	err := fn()
+	for attempt := 1; err != nil && attempt < commitAttempts; attempt++ {
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(l.retryDelay * time.Duration(attempt)):
+		}
+		err = fn()
+	}
+	return err
 }
 
 func (l *stateLayer) head(ctx context.Context, box string) (head, error) {
