@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -324,10 +324,12 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
 
 fn fake_cua(path: &Path, log: Log) {
     let listener = UnixListener::bind(path).unwrap();
+    let ended: Arc<Mutex<HashSet<String>>> = Arc::default();
     tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             let log = Arc::clone(&log);
+            let ended = Arc::clone(&ended);
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
                 let mut line = String::new();
@@ -337,6 +339,21 @@ fn fake_cua(path: &Path, log: Log) {
                 log.lock()
                     .unwrap()
                     .push((name.clone(), req["args"].clone()));
+                let session = req["args"]["session"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned();
+                let mut stream = reader.into_inner();
+                if name == "end_session" {
+                    ended.lock().unwrap().insert(session);
+                } else if ended.lock().unwrap().contains(&session) {
+                    let error = format!(
+                        "session has ended; Call start_session with session '{session}' to start it again, or use a new session label"
+                    );
+                    let reply = json!({"ok": false, "error": error}).to_string() + "\n";
+                    stream.write_all(reply.as_bytes()).await.unwrap();
+                    return;
+                }
                 let result = match name.as_str() {
                     "get_window_state" => json!({
                         "content": [{"type": "text", "text": "tree"}],
@@ -350,7 +367,6 @@ fn fake_cua(path: &Path, log: Log) {
                     _ => json!({"content": [{"type": "text", "text": format!("✅ {name} done")}]}),
                 };
                 let reply = json!({"ok": true, "result": result}).to_string() + "\n";
-                let mut stream = reader.into_inner();
                 stream.write_all(reply.as_bytes()).await.unwrap();
             });
         }
@@ -2794,4 +2810,37 @@ async fn restore_fetches_a_chunk_shared_by_several_files_once() {
         .filter(|n| n.to_string_lossy().starts_with("restore-"))
         .collect();
     assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+#[tokio::test]
+async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let ok = mcp.call("computer_state", json!({})).await;
+    assert_eq!(ok["isError"], false, "{ok}");
+    let first = driver_calls(&h, "list_windows")[0]["session"].clone();
+
+    let toolhost =
+        cocoonbox_agent::toolhost::rpc::Client::new(h.home.parent().unwrap().join("toolhost.sock"));
+    let end = cocoonbox_agent::toolhost::rpc::Call {
+        agent_id: String::new(),
+        tool: "computer_end".into(),
+        args: json!({"session": first}),
+    };
+    assert!(!toolhost.call(&end).await.unwrap().is_error);
+
+    let again = mcp.call("computer_state", json!({})).await;
+    assert_eq!(again["isError"], false, "{again}");
+    let lists = driver_calls(&h, "list_windows");
+    assert_eq!(lists.len(), 3, "{lists:?}");
+    assert_eq!(lists[1]["session"], first);
+    let second = lists[2]["session"].clone();
+    assert_ne!(second, first);
+
+    let act = mcp
+        .call("computer_act", json!({"action": "key", "key": "Return"}))
+        .await;
+    assert_eq!(act["isError"], false, "{act}");
+    let shots = driver_calls(&h, "get_desktop_state");
+    assert_eq!(shots.last().unwrap()["session"], second);
 }

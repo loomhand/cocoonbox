@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde_json::{Value, json};
 
-use crate::dispatch::{Caller, uses_driver};
+use crate::dispatch::{Caller, ToolOutput, uses_driver};
 use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate};
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, event, transcript_entry::Body as Entry};
@@ -31,6 +31,7 @@ const FALLBACK_PROTOCOL: &str = "2025-06-18";
 const KEEPALIVE: Duration = Duration::from_secs(25);
 const MAX_REAP_PERIOD: Duration = Duration::from_secs(60);
 const MAX_BODY: usize = 64 << 20;
+const DRIVER_ENDED: &str = "session has ended";
 const INSTRUCTIONS: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
@@ -216,7 +217,7 @@ impl Mcp {
     }
 
     async fn close(&self, s: &Session, reason: &str) {
-        self.end_driver(s).await;
+        self.end_driver(s, reason).await;
         self.note(s, &format!("MCP session closed: {reason}")).await;
         let end = Entry::TurnEnd(pb::TurnEnd {
             ok: true,
@@ -233,7 +234,7 @@ impl Mcp {
             .await;
     }
 
-    async fn end_driver(&self, s: &Session) {
+    async fn end_driver(&self, s: &Session, reason: &str) {
         let label = {
             let mut d = lock(&s.driver);
             if !d.used {
@@ -242,6 +243,10 @@ impl Mcp {
             d.used = false;
             std::mem::replace(&mut d.label, new_id("cu"))
         };
+        eprintln!(
+            "mcp: end driver session {label} of {}: {reason}",
+            s.agent_id
+        );
         let out = self.rt.dispatcher.end_driver(&s.agent_id, &label).await;
         if out.is_error {
             eprintln!("mcp: end driver session {label}: {}", out.text);
@@ -266,6 +271,20 @@ impl Mcp {
         })
     }
 
+    /// Replaces `stale` after the driver ended it; a concurrent call may have replaced it already.
+    fn rotate_ended(&self, s: &Session, stale: &str) -> String {
+        let mut d = lock(&s.driver);
+        if d.label == stale {
+            d.label = new_id("cu");
+            eprintln!(
+                "mcp: driver session {stale} of {} ended in the driver; now {}",
+                s.agent_id, d.label
+            );
+        }
+        d.used = true;
+        d.label.clone()
+    }
+
     async fn call_tool(&self, s: &Session, params: &Value) -> Result<Value, (i64, String)> {
         let name = params["name"].as_str().unwrap_or_default();
         let Some(&name) = self.names.iter().find(|n| **n == name) else {
@@ -281,18 +300,12 @@ impl Mcp {
             d.used |= uses_driver(name);
             d.label.clone()
         };
-        let caller = Caller {
-            agent_id: &s.agent_id,
-            turn_id: &s.turn_id,
-            subagent: "",
-            driver: Some(&label),
-        };
-        let out = self
-            .rt
-            .dispatcher
-            .call(&caller, &new_id("call"), name, requested)
-            .await
-            .map_err(|e| (-32603, e))?;
+        let retry = uses_driver(name).then(|| requested.clone());
+        let mut out = self.run(s, &label, name, requested).await?;
+        if let Some(args) = retry.filter(|_| out.is_error && out.text.contains(DRIVER_ENDED)) {
+            let label = self.rotate_ended(s, &label);
+            out = self.run(s, &label, name, args).await?;
+        }
         lock(&s.driver).last_seen = Instant::now();
         let mut content = vec![json!({"type": "text", "text": out.text})];
         if let Some(img) = &out.image {
@@ -303,6 +316,26 @@ impl Mcp {
         let mut result = json!({"isError": out.is_error});
         result["content"] = Value::Array(content);
         Ok(result)
+    }
+
+    async fn run(
+        &self,
+        s: &Session,
+        label: &str,
+        name: &str,
+        args: Value,
+    ) -> Result<ToolOutput, (i64, String)> {
+        let caller = Caller {
+            agent_id: &s.agent_id,
+            turn_id: &s.turn_id,
+            subagent: "",
+            driver: Some(label),
+        };
+        self.rt
+            .dispatcher
+            .call(&caller, &new_id("call"), name, args)
+            .await
+            .map_err(|e| (-32603, e))
     }
 
     async fn note(&self, s: &Session, text: &str) {
@@ -361,7 +394,7 @@ impl Drop for StreamGuard {
     fn drop(&mut self) {
         let mcp = Arc::clone(&self.mcp);
         let session = Arc::clone(&self.session);
-        tokio::spawn(async move { mcp.end_driver(&session).await });
+        tokio::spawn(async move { mcp.end_driver(&session, "stream closed").await });
     }
 }
 
