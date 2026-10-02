@@ -4,6 +4,7 @@ usage: cbsbx-conf <template>=<warm> [<template>=<warm> ...]   the first is the d
 
 import json
 import os
+import re
 import sys
 
 S = "/srv/cb/sbx"
@@ -17,6 +18,11 @@ STORAGE = "40G"
 WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
           "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
           "sleep 0.2; done; exit 1")
+# a headless run in a throwaway profile puts Chrome's pages in the golden's page cache without opening a window
+CHROME_WARMUP = ("(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user timeout 30 google-chrome --headless=new "
+                 "--no-first-run --user-data-dir=/tmp/cb-warmup-chrome --dump-dom about:blank > /dev/null 2>&1; "
+                 "rm -rf /tmp/cb-warmup-chrome; true; }")
+CHROME_WARMUP_FROM = 15
 
 if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
     sys.exit(__doc__)
@@ -26,8 +32,10 @@ egress = {"allow": [{"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"},
 pools = []
 for arg in sys.argv[1:]:
     template, warm = arg.rsplit("=", 1)
+    version = re.fullmatch(r"cbdesk:v(\d+)", template)
+    warmup = CHROME_WARMUP if version and int(version[1]) >= CHROME_WARMUP_FROM else WARMUP
     pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
-                  "warmup": ["bash", "-c", WARMUP], "egress": egress})
+                  "warmup": ["bash", "-c", warmup], "egress": egress})
 conf = {
     "listen": LISTEN,
     "advertise_addr": LISTEN,
