@@ -130,12 +130,13 @@ final class ScreenController {
         screen?.paste(text)
     }
 
-    // copy sends Control+C or Control+X and accepts the box's next clipboard
-    // for copyWindow; any other clipboard from the box is ignored.
+    // copy sends the box's copy or cut shortcut and accepts the box's next
+    // clipboard for copyWindow; any other clipboard from the box is ignored.
     func copy(cut: Bool) {
         guard takeOver else { return }
         copiedAt = Date()
-        screen?.control(cut ? "x" : "c")
+        Perf.mark("clipboard_copy", "cut=\(cut)")
+        screen?.copy(cut: cut)
     }
 
     private func received(_ text: String) {

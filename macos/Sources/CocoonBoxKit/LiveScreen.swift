@@ -26,6 +26,13 @@ public final class LiveScreen {
         public init() {}
     }
 
+    private enum Keysym {
+        static let shift: UInt32 = 0xFFE1
+        static let control: UInt32 = 0xFFE3
+        static let insert: UInt32 = 0xFF63
+        static let delete: UInt32 = 0xFFFF
+    }
+
     public var onStatus: ((Status) -> Void)?
     public var onClipboard: ((String) -> Void)?
 
@@ -109,27 +116,56 @@ public final class LiveScreen {
         client.pointer(x: x, y: y, buttons: [])
     }
 
-    // control sends Control+<character>. It lifts both Super keys first: a
-    // Command shortcut that lands here has already pressed Super in the box.
+    // control sends Control+<character>.
     public func control(_ character: String) {
         guard let client = session?.client else { return }
         latency.input()
-        let controlKey: UInt32 = 0xFFE3
-        client.key(controlKey, down: true)
+        client.key(Keysym.control, down: true)
+        client.type(character)
+        client.key(Keysym.control, down: false)
+    }
+
+    public func copy(cut: Bool) {
+        guard let client = session?.client else { return }
+        latency.input()
+        Self.copy(cut: cut, on: client)
+    }
+
+    public func paste(_ text: String) {
+        guard let client = session?.client else { return }
+        latency.input()
+        Self.paste(text, on: client)
+    }
+
+    // copy sends Control+Insert, or Shift+Delete to cut. Terminals, GTK and
+    // Chrome all honour these, while a terminal reads Control+C as an interrupt.
+    public nonisolated static func copy(cut: Bool, on client: RFBClient) {
+        if cut {
+            chord(Keysym.shift, Keysym.delete, on: client)
+        } else {
+            chord(Keysym.control, Keysym.insert, on: client)
+        }
+    }
+
+    // paste offers text as the box's clipboard, then sends Shift+Insert; a
+    // terminal reads Control+V as a literal next character.
+    public nonisolated static func paste(_ text: String, on client: RFBClient) {
+        client.setClipboard(text)
+        chord(Keysym.shift, Keysym.insert, on: client)
+    }
+
+    // chord lifts both Super keys first: a Command shortcut that lands here
+    // has already pressed Super in the box.
+    private nonisolated static func chord(_ modifier: UInt32, _ key: UInt32, on client: RFBClient) {
+        client.key(modifier, down: true)
         for command: UInt16 in [0x37, 0x36] {
             if let keysym = RFBKeyMap.keysym(keyCode: command, characters: nil) {
                 client.key(keysym, down: false, scancode: RFBKeyMap.scancode(keyCode: command))
             }
         }
-        client.type(character)
-        client.key(controlKey, down: false)
-    }
-
-    // paste offers text as the box's clipboard, then sends Control+V.
-    public func paste(_ text: String) {
-        guard let client = session?.client else { return }
-        client.setClipboard(text)
-        control("v")
+        client.key(key, down: true)
+        client.key(key, down: false)
+        client.key(modifier, down: false)
     }
 
     private var configuration: RFBClient.Configuration {

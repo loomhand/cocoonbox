@@ -8,8 +8,9 @@ import zlib
 // SyntheticRFBServer is an in-memory RFB 3.8 server (security None, Raw
 // encoding) that draws a small desktop with a text editor. Typed keys land in
 // the editor, so input round trips are observable in the frames it sends.
-// With ExtendedClipboard, Control+C and Control+X copy the editor's text and
-// Control+V pastes the clipboard into it, as the TigerVNC module does.
+// With ExtendedClipboard it acts as a terminal under the TigerVNC module:
+// Control+Insert and Shift+Delete copy and cut the editor's text, Shift+Insert
+// pastes, and Control+C and Control+V do neither.
 public final class SyntheticRFBServer: @unchecked Sendable {
     public let width: Int
     public let height: Int
@@ -19,6 +20,7 @@ public final class SyntheticRFBServer: @unchecked Sendable {
         static let text: UInt32 = 1 << 0
         static let caps: UInt32 = 1 << 24
         static let request: UInt32 = 1 << 25
+        static let peek: UInt32 = 1 << 26
         static let notify: UInt32 = 1 << 27
         static let provide: UInt32 = 1 << 28
         static let maxText = 16 << 20
@@ -43,8 +45,10 @@ public final class SyntheticRFBServer: @unchecked Sendable {
     private var animationFrame = 0
     private var animation: DispatchSourceTimer?
     private var control = false
+    private var shift = false
     private var clipboard = ""
-    private var requested = false
+    private var clientTextSize = 0
+    private var announced = false
     private var pasteWaiting = false
 
     public private(set) var encodings: [Int32] = []
@@ -178,7 +182,7 @@ public final class SyntheticRFBServer: @unchecked Sendable {
                 return Int32(bitPattern: UInt32(bytes[o]) << 24 | UInt32(bytes[o + 1]) << 16 | UInt32(bytes[o + 2]) << 8 | UInt32(bytes[o + 3]))
             }
             if encodings.contains(Clip.encoding) {
-                output(cutText(Clip.caps | Clip.request | Clip.notify | Clip.provide | Clip.text, be32(Clip.maxText)))
+                output(cutText(Clip.caps | Clip.request | Clip.peek | Clip.notify | Clip.provide | Clip.text, be32(0)))
             }
             return true
         case 3:
@@ -195,6 +199,8 @@ public final class SyntheticRFBServer: @unchecked Sendable {
             let key = UInt32(bytes[4]) << 24 | UInt32(bytes[5]) << 16 | UInt32(bytes[6]) << 8 | UInt32(bytes[7])
             if key == 0xffe3 || key == 0xffe4 {
                 control = bytes[1] == 1
+            } else if key == 0xffe1 || key == 0xffe2 {
+                shift = bytes[1] == 1
             } else if bytes[1] == 1 {
                 handleKey(key)
             }
@@ -238,7 +244,7 @@ public final class SyntheticRFBServer: @unchecked Sendable {
     }
 
     private func handleKey(_ key: UInt32) {
-        if control {
+        if control || (shift && (key == 0xff63 || key == 0xffff)) {
             shortcut(key)
             return
         }
@@ -258,18 +264,25 @@ public final class SyntheticRFBServer: @unchecked Sendable {
 
     // MARK: clipboard
 
+    // shortcut fetches an announced client clipboard on paste and offers a
+    // copy unsolicited to a client that takes text, as TigerVNC does.
     private func shortcut(_ key: UInt32) {
-        switch key {
-        case 0x76:
-            guard !requested else {
+        switch (key, shift) {
+        case (0xff63, true):
+            guard !announced else {
                 pasteWaiting = true
+                output(cutText(Clip.request | Clip.text, Data()))
                 return
             }
             text += clipboard
-        case 0x63, 0x78:
+        case (0xff63, false), (0xffff, true):
             clipboard = text
-            output(cutText(Clip.notify | Clip.text, Data()))
-            guard key == 0x78 else { return }
+            if clipboardCaps & Clip.provide != 0, clientTextSize > 0 {
+                output(cutText(Clip.provide | Clip.text, pack(clipboard)))
+            } else {
+                output(cutText(Clip.notify | Clip.text, Data()))
+            }
+            guard key == 0xffff else { return }
             text = ""
         default:
             return
@@ -282,17 +295,19 @@ public final class SyntheticRFBServer: @unchecked Sendable {
         guard flags & Clip.text != 0 else { return }
         if flags & Clip.caps != 0 {
             clipboardCaps = flags
+            clientTextSize = payload.count >= 4 ? Int(payload[0]) << 24 | Int(payload[1]) << 16 | Int(payload[2]) << 8 | Int(payload[3]) : 0
         } else if flags & Clip.notify != 0 {
-            requested = true
-            output(cutText(Clip.request | Clip.text, Data()))
+            announced = true
         } else if flags & Clip.request != 0 {
             output(cutText(Clip.provide | Clip.text, pack(clipboard)))
         } else if flags & Clip.provide != 0, let text = unpack(payload) {
             clipboard = text
-            requested = false
+            announced = false
             if pasteWaiting {
                 pasteWaiting = false
-                shortcut(0x76)
+                self.text += text
+                drawEditor()
+                flush()
             }
         }
     }
