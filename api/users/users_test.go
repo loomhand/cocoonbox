@@ -7,12 +7,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -244,9 +247,58 @@ func TestStateKeyIsSealedAndSetOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestAdminsHaveNoGWCapAndDeleteDropsTheCap(t *testing.T) {
+	svc, gw, _, _ := newTestService(t)
+	admin, err := svc.Create(t.Context(), NewUser{Name: "root", Admin: true})
+	if err != nil {
+		t.Fatalf("Create admin: %v", err)
+	}
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if caps, _ := svc.DailyCaps(t.Context()); fmt.Sprint(caps) != fmt.Sprint(map[string]int64{admin.ID: gwkeys.Unlimited}) {
+		t.Errorf("gw caps after create = %v, want only the admin unlimited", caps)
+	}
+	for _, bad := range []int64{-2, -100} {
+		if err := svc.SetDailyCap(t.Context(), u.ID, &bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SetDailyCap(%d) = %v, want ErrInvalid", bad, err)
+		}
+	}
+	if err := svc.SetDailyCap(t.Context(), "u-unknown", nil); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetDailyCap of an unknown user = %v, want ErrNotFound", err)
+	}
+	if err := svc.SetDailyCap(t.Context(), u.ID, new(int64(100))); err != nil {
+		t.Fatalf("SetDailyCap: %v", err)
+	}
+	if got, err := svc.DailyCap(t.Context(), u.ID); err != nil || got == nil || *got != 100 {
+		t.Errorf("DailyCap = %v, %v, want 100", got, err)
+	}
+	if err := svc.Delete(t.Context(), u.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, ok := gw.caps[u.ID]; ok {
+		t.Error("the deleted user's gw cap stayed")
+	}
+}
+
+func TestReconcileLiftsTheCapOfAdminsOnTheDefaultOnly(t *testing.T) {
+	svc, gw, _, _ := newTestService(t)
+	onDefault, _ := svc.Create(t.Context(), NewUser{Name: "root", Admin: true})
+	capped, _ := svc.Create(t.Context(), NewUser{Name: "ops", Admin: true})
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	_ = svc.SetDailyCap(t.Context(), onDefault.ID, nil)
+	_ = svc.SetDailyCap(t.Context(), capped.ID, new(int64(7)))
+	if err := svc.Reconcile(t.Context()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	want := map[string]int64{onDefault.ID: gwkeys.Unlimited, capped.ID: 7}
+	if fmt.Sprint(gw.caps) != fmt.Sprint(want) {
+		t.Errorf("gw caps after Reconcile = %v, want %v and none for %s", gw.caps, want, u.ID)
+	}
+}
+
 type fakeGW struct {
 	mu   sync.Mutex
 	keys map[string]string
+	caps map[string]int64
 }
 
 func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
@@ -263,7 +315,35 @@ func (g *fakeGW) Revoke(_ context.Context, owner string) error {
 	return nil
 }
 
-func (g *fakeGW) Usage(context.Context, string) ([]gwkeys.Usage, error) { return nil, nil }
+func (g *fakeGW) Usage(context.Context, string, time.Time) ([]gwkeys.Usage, error) {
+	return nil, nil
+}
+
+func (g *fakeGW) DailyCap(_ context.Context, owner string) (*int64, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if micros, ok := g.caps[owner]; ok {
+		return &micros, nil
+	}
+	return nil, nil
+}
+
+func (g *fakeGW) DailyCaps(context.Context) (map[string]int64, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return maps.Clone(g.caps), nil
+}
+
+func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if micros == nil {
+		delete(g.caps, owner)
+	} else {
+		g.caps[owner] = *micros
+	}
+	return nil
+}
 
 type tenant struct {
 	token string
@@ -297,7 +377,7 @@ func (f *fakeTenants) Delete(_ context.Context, name string) error {
 func newTestService(t *testing.T) (*Service, *fakeGW, *fakeTenants, string) {
 	t.Helper()
 	dsn := freshDatabase(t)
-	gw := &fakeGW{keys: map[string]string{}}
+	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}}
 	tenants := &fakeTenants{tenants: map[string]tenant{}}
 	return openTestService(t, dsn, gw, tenants), gw, tenants, dsn
 }

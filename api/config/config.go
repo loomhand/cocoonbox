@@ -93,6 +93,8 @@ type Accounts struct {
 	// DSNFile holds the PostgreSQL connection string.
 	DSNFile       string `json:"dsn_file"`
 	MasterKeyFile string `json:"master_key_file"`
+	// DefaultDailyCapMicros mirrors gw's user_daily_cost_quota_micros for the console; gw enforces it.
+	DefaultDailyCapMicros int64 `json:"default_daily_cap_micros"`
 }
 
 // Config is the on-disk configuration of cocoonbox-api.

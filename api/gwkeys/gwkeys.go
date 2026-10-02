@@ -1,4 +1,4 @@
-// Package gwkeys issues and revokes gw keys, one per owner, and reads their usage through gw's admin API.
+// Package gwkeys issues and revokes gw keys, one per owner, and reads their usage and sets their owners' budgets through gw's admin API.
 package gwkeys
 
 import (
@@ -21,8 +21,13 @@ const (
 	dailyTokens     = 5_000_000
 	tokensPerMinute = 200_000
 
-	keysPath  = "/admin/keys"
-	usagePath = "/admin/usage/users"
+	keysPath   = "/admin/keys"
+	usagePath  = "/admin/usage/users"
+	budgetPath = "/admin/tenants/" + tenant + "/users"
+
+	// Unlimited as a daily cap lifts the owner's own cap; the tenant pool still applies.
+	Unlimited     = -1
+	unlimitedWire = "unlimited"
 
 	pageSize       = 10_000
 	requestTimeout = 30 * time.Second
@@ -89,15 +94,67 @@ func (c *Client) Revoke(ctx context.Context, owner string) error {
 	return nil
 }
 
-// Usage returns owner's gw usage by model since the epoch.
-func (c *Client) Usage(ctx context.Context, owner string) ([]Usage, error) {
+// Usage returns owner's gw usage by model since since.
+func (c *Client) Usage(ctx context.Context, owner string, since time.Time) ([]Usage, error) {
 	var resp struct {
 		Usage []Usage `json:"usage"`
 	}
-	if _, err := c.request(ctx, http.MethodGet, usagePath, url.Values{"user": {owner}}, nil, &resp); err != nil {
+	query := url.Values{"user": {owner}, "since": {strconv.FormatInt(since.Unix(), 10)}}
+	if _, err := c.request(ctx, http.MethodGet, usagePath, query, nil, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Usage, nil
+}
+
+// DailyCap returns owner's own daily cost cap in micros or Unlimited; nil means the tenant default.
+func (c *Client) DailyCap(ctx context.Context, owner string) (*int64, error) {
+	var b budget
+	if _, err := c.request(ctx, http.MethodGet, budgetPath+"/"+url.PathEscape(owner)+"/budget", nil, nil, &b); err != nil {
+		return nil, err
+	}
+	return b.dailyCap()
+}
+
+// DailyCaps returns the daily cost cap of every owner that has its own.
+func (c *Client) DailyCaps(ctx context.Context) (map[string]int64, error) {
+	caps := map[string]int64{}
+	query := url.Values{"limit": {strconv.Itoa(pageSize)}}
+	for {
+		var page struct {
+			Users []budget `json:"users"`
+			Next  string   `json:"next"`
+		}
+		if _, err := c.request(ctx, http.MethodGet, budgetPath, query, nil, &page); err != nil {
+			return nil, err
+		}
+		for _, b := range page.Users {
+			daily, err := b.dailyCap()
+			if err != nil {
+				return nil, err
+			}
+			if daily != nil {
+				caps[b.User] = *daily
+			}
+		}
+		if page.Next == "" {
+			return caps, nil
+		}
+		query.Set("after", page.Next)
+	}
+}
+
+// SetDailyCap gives owner its own daily cost cap in micros or Unlimited; nil puts owner back on the tenant default.
+func (c *Client) SetDailyCap(ctx context.Context, owner string, micros *int64) error {
+	var daily any
+	switch {
+	case micros == nil:
+	case *micros == Unlimited:
+		daily = unlimitedWire
+	default:
+		daily = *micros
+	}
+	_, err := c.request(ctx, http.MethodPut, budgetPath+"/"+url.PathEscape(owner)+"/budget", nil, map[string]any{"daily_cost_quota_micros": daily}, nil)
+	return err
 }
 
 func (c *Client) keysOf(ctx context.Context, owner string) ([]string, error) {
@@ -177,4 +234,24 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 		return resp.StatusCode, fmt.Errorf("decode %s: %w", op, err)
 	}
 	return resp.StatusCode, nil
+}
+
+type budget struct {
+	User  string          `json:"user"`
+	Daily json.RawMessage `json:"daily_cost_quota_micros"`
+}
+
+func (b budget) dailyCap() (*int64, error) {
+	if len(b.Daily) == 0 || string(b.Daily) == "null" {
+		return nil, nil
+	}
+	var micros int64
+	if json.Unmarshal(b.Daily, &micros) == nil {
+		return &micros, nil
+	}
+	var word string
+	if json.Unmarshal(b.Daily, &word) == nil && word == unlimitedWire {
+		return new(int64(Unlimited)), nil
+	}
+	return nil, fmt.Errorf("daily cap of %s: unexpected %s", b.User, b.Daily)
 }

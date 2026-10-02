@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,11 +61,13 @@ type Server struct {
 	boxes   Boxes
 	limiter *limiter
 	mux     *http.ServeMux
+
+	defaultDailyCap int64
 }
 
-// New serves the console for users and their boxes.
-func New(us *users.Service, boxes Boxes) *Server {
-	s := &Server{users: us, boxes: boxes, limiter: newLimiter(failWindow), mux: http.NewServeMux()}
+// New serves the console for users and their boxes; defaultDailyCap is gw's per-user default daily cap in micros.
+func New(us *users.Service, boxes Boxes, defaultDailyCap int64) *Server {
+	s := &Server{users: us, boxes: boxes, limiter: newLimiter(failWindow), mux: http.NewServeMux(), defaultDailyCap: defaultDailyCap}
 	files, _ := fs.Sub(static, "static")
 	s.mux.Handle("GET "+Prefix, http.StripPrefix(Prefix, http.FileServerFS(files)))
 	s.mux.HandleFunc("POST "+Prefix+"api/login", s.login)
@@ -77,6 +80,7 @@ func New(us *users.Service, boxes Boxes) *Server {
 	s.mux.HandleFunc("POST "+Prefix+"api/users", s.admin(s.createUser))
 	s.mux.HandleFunc("PATCH "+Prefix+"api/users/{id}", s.admin(s.updateUser))
 	s.mux.HandleFunc("POST "+Prefix+"api/users/{id}/password", s.admin(s.resetPassword))
+	s.mux.HandleFunc("PUT "+Prefix+"api/users/{id}/daily-cap", s.admin(s.setDailyCap))
 	s.mux.HandleFunc("DELETE "+Prefix+"api/users/{id}", s.admin(s.deleteUser))
 	return s
 }
@@ -136,11 +140,14 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	u := caller(r)
 	resp := struct {
-		User       users.User     `json:"user"`
-		Boxes      []box          `json:"boxes"`
-		Usage      []gwkeys.Usage `json:"usage"`
-		UsageError string         `json:"usage_error,omitempty"`
-	}{User: u, Boxes: []box{}}
+		User            users.User     `json:"user"`
+		Boxes           []box          `json:"boxes"`
+		Usage           []gwkeys.Usage `json:"usage"`
+		UsageError      string         `json:"usage_error,omitempty"`
+		DailyCap        *int64         `json:"daily_cap_micros"`
+		DefaultDailyCap int64          `json:"default_daily_cap_micros,omitempty"`
+		SpentToday      int64          `json:"spent_today_micros"`
+	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap}
 	list, err := s.boxes.List(auth.WithUser(r.Context(), u.ID), &controlv1.ListBoxesRequest{})
 	if err != nil {
 		s.fail(w, r, err)
@@ -149,9 +156,18 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	for _, b := range list.GetBoxes() {
 		resp.Boxes = append(resp.Boxes, box{ID: b.GetId(), State: strings.ToLower(strings.TrimPrefix(b.GetState().String(), "BOX_STATE_")), Image: b.GetImage()})
 	}
-	if resp.Usage, err = s.users.Usage(r.Context(), u.ID); err != nil {
-		log.WithFunc("console.Server.me").WithField("user", u.ID).Error(r.Context(), err, "read gw usage")
+	var today []gwkeys.Usage
+	if resp.Usage, err = s.users.Usage(r.Context(), u.ID, time.Unix(0, 0)); err == nil {
+		if today, err = s.users.Usage(r.Context(), u.ID, time.Now().UTC().Truncate(24*time.Hour)); err == nil {
+			resp.DailyCap, err = s.users.DailyCap(r.Context(), u.ID)
+		}
+	}
+	if err != nil {
+		log.WithFunc("console.Server.me").WithField("user", u.ID).Error(r.Context(), err, "read gw usage and cap")
 		resp.UsageError = "usage is unavailable right now"
+	}
+	for _, m := range today {
+		resp.SpentToday += m.CostMicros
 	}
 	writeJSON(w, resp)
 }
@@ -205,8 +221,26 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) listUsers(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, s.users.List())
+func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
+	caps, err := s.users.DailyCaps(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	type row struct {
+		users.User
+		DailyCap *int64 `json:"daily_cap_micros"`
+	}
+	list := s.users.List()
+	rows := make([]row, 0, len(list))
+	for _, u := range list {
+		rw := row{User: u}
+		if micros, ok := caps[u.ID]; ok {
+			rw.DailyCap = &micros
+		}
+		rows = append(rows, rw)
+	}
+	writeJSON(w, rows)
 }
 
 func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +280,22 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, u)
+}
+
+func (s *Server) setDailyCap(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Micros *int64 `json:"micros"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	id := r.PathValue("id")
+	if err := s.users.SetDailyCap(r.Context(), id, req.Micros); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	log.WithFunc("console.Server.setDailyCap").Infof(r.Context(), "admin %s set the gw daily cap of %s to %s", caller(r).Name, id, capText(req.Micros))
+	writeJSON(w, map[string]*int64{"daily_cap_micros": req.Micros})
 }
 
 func (s *Server) resetPassword(w http.ResponseWriter, r *http.Request) {
@@ -361,6 +411,17 @@ func clientAddr(r *http.Request) string {
 	}
 	host, _, _ := net.SplitHostPort(r.RemoteAddr)
 	return host
+}
+
+func capText(micros *int64) string {
+	switch {
+	case micros == nil:
+		return "the default"
+	case *micros == gwkeys.Unlimited:
+		return "unlimited"
+	default:
+		return strconv.FormatInt(*micros, 10) + " micros"
+	}
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

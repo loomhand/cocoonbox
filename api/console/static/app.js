@@ -84,6 +84,9 @@ async function load() {
     cell(row, r.total_tokens);
     cell(row, (r.cost_micros / 1e6).toFixed(4));
   }
+  $("budget").textContent = me.usage_error ? "" :
+    "Daily model budget: " + capText(me.daily_cap_micros, me.default_daily_cap_micros) +
+    ". Spent today (UTC): $" + (me.spent_today_micros / 1e6).toFixed(4) + ".";
   if (me.usage_error) cell(usage.insertRow(), me.usage_error);
   else if (!(me.usage || []).length) cell(usage.insertRow(), "No model calls yet.");
 
@@ -109,6 +112,13 @@ async function loadUsers(self) {
     cell(row, "").appendChild(max);
     const cap = number(u.max_boxes_cap, (v) => update(u.id, { max_boxes_cap: v }));
     cell(row, "").appendChild(cap);
+    const daily = document.createElement("input");
+    daily.size = 9;
+    daily.placeholder = "default";
+    daily.title = "A dollar amount, unlimited, or empty for the default";
+    daily.value = u.daily_cap_micros == null ? "" : u.daily_cap_micros === -1 ? "unlimited" : String(u.daily_cap_micros / 1e6);
+    daily.addEventListener("change", () => setDailyCap(u.id, daily.value.trim()));
+    cell(row, "").appendChild(daily);
     cell(row, u.disabled ? "disabled" : "enabled");
     const actions = cell(row, "");
     actions.className = "actions";
@@ -127,6 +137,33 @@ async function loadUsers(self) {
       await load();
     }, true));
   }
+}
+
+function capText(micros, fallback) {
+  if (micros === -1) return "unlimited";
+  if (micros != null) return "$" + (micros / 1e6).toFixed(2);
+  return fallback ? "$" + (fallback / 1e6).toFixed(2) + " (default)" : "the default";
+}
+
+async function setDailyCap(id, text) {
+  let micros = null;
+  if (text === "unlimited") {
+    micros = -1;
+  } else if (text !== "") {
+    const usd = Number(text);
+    if (!Number.isFinite(usd) || usd < 0) {
+      notice("A daily cap is a dollar amount, unlimited, or empty for the default.", true);
+      return;
+    }
+    micros = Math.round(usd * 1e6);
+  }
+  try {
+    await api("PUT", "users/" + encodeURIComponent(id) + "/daily-cap", { micros });
+    notice("Saved.");
+  } catch (e) {
+    notice(e.message, true);
+  }
+  await load();
 }
 
 function number(value, onChange) {

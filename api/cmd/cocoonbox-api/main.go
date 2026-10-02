@@ -77,7 +77,7 @@ func main() {
 	}
 	defer accounts.Close()
 	if err = accounts.Reconcile(ctx); err != nil {
-		logger.Error(ctx, err, "reconcile sandboxd tenants")
+		logger.Error(ctx, err, "reconcile sandboxd tenants and gw caps")
 	}
 	go accounts.Run(ctx, usersInterval)
 	svc := boxes.New(backend, boxes.Defaults{
@@ -115,7 +115,7 @@ func main() {
 	httpMux := http.NewServeMux()
 	httpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
 	httpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, signer))
-	httpMux.Handle(console.Prefix, console.New(accounts, svc))
+	httpMux.Handle(console.Prefix, console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros))
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)

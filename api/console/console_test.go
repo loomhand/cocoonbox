@@ -7,14 +7,17 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -151,6 +154,66 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	}
 }
 
+func TestAdminSetsADailyCapThatTheUserSees(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	u, _ := env.users.Create(t.Context(), users.NewUser{Name: "qa1", Password: password})
+	qa1 := env.login(t, "qa1")
+
+	var me struct {
+		DailyCap        *int64 `json:"daily_cap_micros"`
+		DefaultDailyCap int64  `json:"default_daily_cap_micros"`
+		SpentToday      int64  `json:"spent_today_micros"`
+	}
+	resp := env.do(t, http.MethodGet, "api/me", qa1, "")
+	if err := json.Unmarshal(resp.Body.Bytes(), &me); err != nil || me.DailyCap != nil || me.DefaultDailyCap != 5_000_000 || me.SpentToday != 5 {
+		t.Errorf("me before a cap = %d %s", resp.Code, resp.Body)
+	}
+	if want := "0|" + strconv.FormatInt(time.Now().UTC().Truncate(24*time.Hour).Unix(), 10) + "|"; env.gw.since != want {
+		t.Errorf("usage windows read = %q, want all time and today, %q", env.gw.since, want)
+	}
+	if code := env.do(t, http.MethodPut, "api/users/"+u.ID+"/daily-cap", qa1, `{"micros":1}`).Code; code != http.StatusForbidden {
+		t.Errorf("non-admin cap change = %d, want 403", code)
+	}
+	if code := env.do(t, http.MethodPut, "api/users/"+u.ID+"/daily-cap", root, `{"micros":-5}`).Code; code != http.StatusBadRequest {
+		t.Errorf("negative cap = %d, want 400", code)
+	}
+	for _, tt := range []struct {
+		body string
+		want string
+	}{
+		{`{"micros":2500000}`, "2500000"},
+		{`{"micros":-1}`, "-1"},
+		{`{"micros":null}`, "inherit"},
+	} {
+		if code := env.do(t, http.MethodPut, "api/users/"+u.ID+"/daily-cap", root, tt.body).Code; code != http.StatusOK {
+			t.Fatalf("cap %s = %d", tt.body, code)
+		}
+		if got := env.gw.capOf(u.ID); got != tt.want {
+			t.Errorf("gw cap after %s = %s, want %s", tt.body, got, tt.want)
+		}
+	}
+	_ = env.do(t, http.MethodPut, "api/users/"+u.ID+"/daily-cap", root, `{"micros":2500000}`)
+	resp = env.do(t, http.MethodGet, "api/me", qa1, "")
+	if err := json.Unmarshal(resp.Body.Bytes(), &me); err != nil || me.DailyCap == nil || *me.DailyCap != 2_500_000 {
+		t.Errorf("me after a cap = %s", resp.Body)
+	}
+	var list []struct {
+		Name     string `json:"name"`
+		DailyCap *int64 `json:"daily_cap_micros"`
+	}
+	resp = env.do(t, http.MethodGet, "api/users", root, "")
+	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil || len(list) != 2 {
+		t.Fatalf("users = %d %s", resp.Code, resp.Body)
+	}
+	for _, row := range list {
+		want := map[string]int64{"root": -1, "qa1": 2_500_000}[row.Name]
+		if row.DailyCap == nil || *row.DailyCap != want {
+			t.Errorf("listed cap of %s = %v, want %d", row.Name, row.DailyCap, want)
+		}
+	}
+}
+
 func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	env := newEnv(t)
 	root := env.login(t, "root")
@@ -225,7 +288,7 @@ func newEnv(t *testing.T) *env {
 	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	e := &env{boxes: &fakeBoxes{}, gw: &fakeGW{keys: map[string]string{}}, tenants: &fakeTenants{tenants: map[string]tenant{}}}
+	e := &env{boxes: &fakeBoxes{}, gw: &fakeGW{keys: map[string]string{}, caps: map[string]int64{}}, tenants: &fakeTenants{tenants: map[string]tenant{}}}
 	us, err := users.Open(t.Context(), users.Options{DSN: u.String(), MasterKeyFile: keyFile, GW: e.gw, Tenants: e.tenants})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -234,7 +297,7 @@ func newEnv(t *testing.T) *env {
 	if _, err := us.Create(t.Context(), users.NewUser{Name: "root", Password: password, Admin: true}); err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
-	e.users, e.srv = us, New(us, e.boxes)
+	e.users, e.srv = us, New(us, e.boxes, 5_000_000)
 	return e
 }
 
@@ -283,8 +346,10 @@ func (f *fakeBoxes) Release(_ context.Context, user string) error {
 }
 
 type fakeGW struct {
-	mu   sync.Mutex
-	keys map[string]string
+	mu    sync.Mutex
+	keys  map[string]string
+	caps  map[string]int64
+	since string
 }
 
 func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
@@ -301,8 +366,46 @@ func (g *fakeGW) Revoke(_ context.Context, owner string) error {
 	return nil
 }
 
-func (g *fakeGW) Usage(context.Context, string) ([]gwkeys.Usage, error) {
+func (g *fakeGW) Usage(_ context.Context, _ string, since time.Time) ([]gwkeys.Usage, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.since += strconv.FormatInt(since.Unix(), 10) + "|"
 	return []gwkeys.Usage{{Model: "m1", Requests: 1, TotalTokens: 10, CostMicros: 5}}, nil
+}
+
+func (g *fakeGW) DailyCap(_ context.Context, owner string) (*int64, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if micros, ok := g.caps[owner]; ok {
+		return &micros, nil
+	}
+	return nil, nil
+}
+
+func (g *fakeGW) DailyCaps(context.Context) (map[string]int64, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return maps.Clone(g.caps), nil
+}
+
+func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if micros == nil {
+		delete(g.caps, owner)
+	} else {
+		g.caps[owner] = *micros
+	}
+	return nil
+}
+
+func (g *fakeGW) capOf(owner string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if micros, ok := g.caps[owner]; ok {
+		return strconv.FormatInt(micros, 10)
+	}
+	return "inherit"
 }
 
 type tenant struct {

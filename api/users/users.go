@@ -82,11 +82,14 @@ type Settings struct {
 	MaxBoxesCap *int  `json:"max_boxes_cap,omitempty"`
 }
 
-// GWKeys issues, revokes and meters each user's gw key, found by owner = user id.
+// GWKeys issues, revokes and meters each user's gw key and keeps the user's own daily cap, found by owner = user id.
 type GWKeys interface {
 	Add(ctx context.Context, owner string) (string, string, error)
 	Revoke(ctx context.Context, owner string) error
-	Usage(ctx context.Context, owner string) ([]gwkeys.Usage, error)
+	Usage(ctx context.Context, owner string, since time.Time) ([]gwkeys.Usage, error)
+	DailyCap(ctx context.Context, owner string) (*int64, error)
+	DailyCaps(ctx context.Context) (map[string]int64, error)
+	SetDailyCap(ctx context.Context, owner string, micros *int64) error
 }
 
 // Tenants manages each user's sandboxd tenant, named by the user id.
@@ -183,7 +186,7 @@ func (s *Service) Run(ctx context.Context, interval time.Duration) {
 	}
 }
 
-// Reconcile writes every user's tenant with its token and cap, so sandboxd matches the table.
+// Reconcile writes every user's tenant with its token and cap, so sandboxd matches the table, and lifts the gw cap of admins on the default.
 func (s *Service) Reconcile(ctx context.Context) error {
 	var errs []error
 	for _, r := range s.records() {
@@ -193,6 +196,16 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("tenant of %s: %w", r.Name, err))
+		}
+		if !r.Admin {
+			continue
+		}
+		daily, err := s.gw.DailyCap(ctx, r.ID)
+		if err == nil && daily == nil {
+			err = s.gw.SetDailyCap(ctx, r.ID, new(int64(gwkeys.Unlimited)))
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("gw cap of %s: %w", r.Name, err))
 		}
 	}
 	return errors.Join(errs...)
@@ -232,7 +245,7 @@ func (s *Service) List() []User {
 	return out
 }
 
-// Create adds a user with its gw key and tenant; a failure leaves neither behind.
+// Create adds a user with its gw key and tenant and lifts an admin's gw cap; a failure leaves none of them behind.
 func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 	id := cmp.Or(nu.ID, idPrefix+randomHex(idBytes))
 	switch {
@@ -274,19 +287,24 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		stateKeyID:  stateKey.ID,
 		stateKey:    s.seal.seal(string(stateKey.Secret), id, columnStateKey),
 	}
-	if err = s.tenants.Put(ctx, id, tenantToken, r.claimCap()); err == nil {
-		if err = s.store.insert(ctx, r, string(hash)); err != nil {
-			err = errors.Join(err, s.tenants.Delete(context.WithoutCancel(ctx), id))
+	if nu.Admin {
+		err = s.gw.SetDailyCap(ctx, id, new(int64(gwkeys.Unlimited)))
+	}
+	if err == nil {
+		if err = s.tenants.Put(ctx, id, tenantToken, r.claimCap()); err == nil {
+			if err = s.store.insert(ctx, r, string(hash)); err != nil {
+				err = errors.Join(err, s.tenants.Delete(context.WithoutCancel(ctx), id))
+			}
 		}
 	}
 	if err != nil {
-		return User{}, errors.Join(err, s.gw.Revoke(context.WithoutCancel(ctx), id))
+		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil), s.gw.Revoke(context.WithoutCancel(ctx), id))
 	}
 	s.put(r)
 	return r.User, nil
 }
 
-// Delete removes user id's tenant, gw key, sessions and row; the caller releases the user's boxes first.
+// Delete removes user id's tenant, gw key and cap, sessions and row; the caller releases the user's boxes first.
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if _, err := s.record(id); err != nil {
 		return err
@@ -296,6 +314,9 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	}
 	if err := s.gw.Revoke(ctx, id); err != nil {
 		return fmt.Errorf("revoke gw key: %w", err)
+	}
+	if err := s.gw.SetDailyCap(ctx, id, nil); err != nil {
+		return fmt.Errorf("drop gw cap: %w", err)
 	}
 	if err := s.store.remove(ctx, id); err != nil {
 		return err
@@ -441,12 +462,36 @@ func (s *Service) EndSession(ctx context.Context, secret string) error {
 	return s.store.removeSession(ctx, hashHex(secret))
 }
 
-// Usage returns user id's gw usage by model.
-func (s *Service) Usage(ctx context.Context, id string) ([]gwkeys.Usage, error) {
+// Usage returns user id's gw usage by model since since.
+func (s *Service) Usage(ctx context.Context, id string, since time.Time) ([]gwkeys.Usage, error) {
 	if _, err := s.record(id); err != nil {
 		return nil, err
 	}
-	return s.gw.Usage(ctx, id)
+	return s.gw.Usage(ctx, id, since)
+}
+
+// DailyCap returns user id's own gw daily cost cap in micros or gwkeys.Unlimited; nil means the tenant default.
+func (s *Service) DailyCap(ctx context.Context, id string) (*int64, error) {
+	if _, err := s.record(id); err != nil {
+		return nil, err
+	}
+	return s.gw.DailyCap(ctx, id)
+}
+
+// DailyCaps returns the gw daily cost cap of every user that has its own.
+func (s *Service) DailyCaps(ctx context.Context) (map[string]int64, error) {
+	return s.gw.DailyCaps(ctx)
+}
+
+// SetDailyCap gives user id its own gw daily cost cap in micros or gwkeys.Unlimited; nil puts it back on the tenant default.
+func (s *Service) SetDailyCap(ctx context.Context, id string, micros *int64) error {
+	if micros != nil && *micros < 0 && *micros != gwkeys.Unlimited {
+		return fmt.Errorf("%w: a daily cap is at least 0 micros, or unlimited", ErrInvalid)
+	}
+	if _, err := s.record(id); err != nil {
+		return err
+	}
+	return s.gw.SetDailyCap(ctx, id, micros)
 }
 
 // Tenant returns user id's sandboxd tenant token, empty while machines stay root claims.

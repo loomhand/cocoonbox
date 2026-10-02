@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -117,12 +119,58 @@ func TestErrorsNeverCarryTheKey(t *testing.T) {
 func TestUsageReadsTheOwnersRollup(t *testing.T) {
 	gw, c := newFakeGW(t)
 	gw.usage = `{"usage":[{"user_id":"u-3f9a2c41d07e","model":"m1","requests":2,"total_tokens":30,"cost_micros":120,"vendor_cost_micros":0}]}`
-	got, err := c.Usage(t.Context(), owner)
+	since := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	got, err := c.Usage(t.Context(), owner, since)
 	if err != nil || len(got) != 1 || got[0] != (Usage{Model: "m1", Requests: 2, TotalTokens: 30, CostMicros: 120}) {
 		t.Fatalf("Usage = %+v, %v", got, err)
 	}
-	if gw.usageUser != owner {
-		t.Errorf("usage queried for %q, want %q", gw.usageUser, owner)
+	if gw.usageUser != owner || gw.usageSince != strconv.FormatInt(since.Unix(), 10) {
+		t.Errorf("usage queried for %q since %q, want %q since %d", gw.usageUser, gw.usageSince, owner, since.Unix())
+	}
+}
+
+func TestDailyCapRoundTripsEachForm(t *testing.T) {
+	gw, c := newFakeGW(t)
+	for _, tt := range []struct {
+		name string
+		set  *int64
+		wire string
+	}{
+		{"cap", new(int64(5_000_000)), "5000000"},
+		{"unlimited", new(int64(Unlimited)), `"unlimited"`},
+		{"inherit", nil, "null"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := c.SetDailyCap(t.Context(), owner, tt.set); err != nil {
+				t.Fatalf("SetDailyCap: %v", err)
+			}
+			if got := gw.budgetWire(owner); got != tt.wire {
+				t.Errorf("gw holds %s, want %s", got, tt.wire)
+			}
+			got, err := c.DailyCap(t.Context(), owner)
+			if err != nil || (got == nil) != (tt.set == nil) || (got != nil && *got != *tt.set) {
+				t.Errorf("DailyCap = %v, %v, want %v", got, err, tt.set)
+			}
+		})
+	}
+	gw.budgets[other] = json.RawMessage(`"lots"`)
+	if _, err := c.DailyCap(t.Context(), other); err == nil {
+		t.Error("DailyCap of an unknown word succeeded")
+	}
+}
+
+func TestDailyCapsWalksEveryPage(t *testing.T) {
+	gw, c := newFakeGW(t)
+	gw.budgetPage = 2
+	want := map[string]int64{"a": 1, "admin": Unlimited, "b": 0, "c": 5_000_000}
+	for user, micros := range want {
+		if err := c.SetDailyCap(t.Context(), user, &micros); err != nil {
+			t.Fatalf("SetDailyCap: %v", err)
+		}
+	}
+	got, err := c.DailyCaps(t.Context())
+	if err != nil || fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("DailyCaps = %v, %v, want %v", got, err, want)
 	}
 }
 
@@ -145,13 +193,17 @@ type fakeGW struct {
 	cut    bool
 	last   string
 
-	usage     string
-	usageUser string
+	usage      string
+	usageUser  string
+	usageSince string
+
+	budgets    map[string]json.RawMessage
+	budgetPage int
 }
 
 func newFakeGW(t *testing.T) (*fakeGW, *Client) {
 	t.Helper()
-	gw := &fakeGW{keys: map[string]map[string]any{}}
+	gw := &fakeGW{keys: map[string]map[string]any{}, budgets: map[string]json.RawMessage{}, budgetPage: 200}
 	gw.srv = httptest.NewServer(http.HandlerFunc(gw.serve))
 	t.Cleanup(gw.srv.Close)
 	c, err := New(gw.srv.URL, adminToken)
@@ -185,6 +237,12 @@ func (g *fakeGW) idsOf(owner string) []string {
 	return ids
 }
 
+func (g *fakeGW) budgetWire(user string) string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return string(orNull(g.budgets[user]))
+}
+
 func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -193,7 +251,36 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, hasID := strings.CutPrefix(r.URL.Path, "/admin/keys/")
+	budgetUser, hasBudget := strings.CutPrefix(r.URL.Path, "/admin/tenants/cocoonbox-boxes/users/")
+	budgetUser, hasBudget = strings.CutSuffix(budgetUser, "/budget")
 	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/admin/tenants/cocoonbox-boxes/users":
+		users := slices.Sorted(maps.Keys(g.budgets))
+		users = slices.DeleteFunc(users, func(u string) bool { return u <= r.URL.Query().Get("after") })
+		page := map[string]any{"next": nil}
+		if len(users) > g.budgetPage {
+			users = users[:g.budgetPage]
+		}
+		if len(users) == g.budgetPage {
+			page["next"] = users[len(users)-1]
+		}
+		var rows []map[string]any
+		for _, u := range users {
+			rows = append(rows, map[string]any{"user": u, "daily_cost_quota_micros": g.budgets[u], "monthly_cost_quota_micros": nil})
+		}
+		page["users"] = rows
+		_ = json.NewEncoder(w).Encode(page)
+	case r.Method == http.MethodGet && hasBudget:
+		_ = json.NewEncoder(w).Encode(map[string]any{"user": budgetUser, "daily_cost_quota_micros": orNull(g.budgets[budgetUser])})
+	case r.Method == http.MethodPut && hasBudget:
+		var body map[string]json.RawMessage
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if daily := body["daily_cost_quota_micros"]; string(daily) == "null" {
+			delete(g.budgets, budgetUser)
+		} else {
+			g.budgets[budgetUser] = daily
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"user": budgetUser, "daily_cost_quota_micros": body["daily_cost_quota_micros"]})
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/keys":
 		g.lists++
 		q := r.URL.Query()
@@ -211,7 +298,7 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 		page = page[:min(limit, len(page))]
 		_ = json.NewEncoder(w).Encode(map[string]any{"count": len(page), "offset": 0, "keys": page})
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/usage/users":
-		g.usageUser = r.URL.Query().Get("user")
+		g.usageUser, g.usageSince = r.URL.Query().Get("user"), r.URL.Query().Get("since")
 		_, _ = w.Write([]byte(g.usage))
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/keys":
 		var body map[string]any
@@ -255,6 +342,13 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 func akID(ak string) string {
 	sum := sha256.Sum256([]byte(ak))
 	return "sha256:" + hex.EncodeToString(sum[:16])
+}
+
+func orNull(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 {
+		return json.RawMessage("null")
+	}
+	return raw
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
