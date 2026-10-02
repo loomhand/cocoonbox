@@ -29,7 +29,7 @@ func (s *Service) EnableState(agents StateAgents, st store.Store, keys keyring.K
 
 func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
 	box := ref.GetBoxId()
-	user, err := ownerOf(ctx, box)
+	user, err := s.ownerOf(ctx, box)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (s *Service) saveStale(ctx context.Context, interval time.Duration) {
 		return
 	}
 	for _, m := range ms {
-		box := BoxID(m.Owner)
+		box := boxOfMachine(m.ID)
 		if !s.ready(m) || s.ops.activeFor(box) != nil {
 			continue
 		}
@@ -80,7 +80,7 @@ func (s *Service) runningMachine(ctx context.Context, box, user string) (machine
 	if s.state == nil {
 		return machines.Machine{}, status.Error(codes.FailedPrecondition, "state store is not configured")
 	}
-	m, err := s.current(ctx, user)
+	m, err := s.current(ctx, user, box)
 	if err != nil {
 		return machines.Machine{}, serviceError(ctx, log.WithFunc("boxes.Service.runningMachine").WithField("box", box), err, "get box")
 	}
@@ -95,7 +95,7 @@ func (s *Service) runningMachine(ctx context.Context, box, user string) (machine
 
 // startSave runs a save of user's box from machine m as an operation.
 func (s *Service) startSave(ctx context.Context, user, box string, m machines.Machine, consistency agentv1.Consistency) *operation {
-	op, started := s.ops.start(context.WithoutCancel(ctx), box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
+	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if started {
 		go s.runSave(op, user, m, consistency)
 	}

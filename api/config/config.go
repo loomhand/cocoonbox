@@ -23,6 +23,7 @@ const (
 	defaultPresignTTL    = 10 * time.Minute
 	defaultRegion        = "us-east-1"
 	maxDeleteBatch       = 1000
+	defaultMaxRunning    = 1
 
 	defaultVCPUs     = 4
 	defaultMemoryMiB = 8192
@@ -122,7 +123,9 @@ type Config struct {
 	Accounts  Accounts  `json:"accounts"`
 	Flavor    Flavor    `json:"flavor"`
 	Flavors   []Flavor  `json:"flavors"`
-	State     State     `json:"state"`
+	// MaxRunningBoxes bounds how many boxes of one user run at once; Ensure and Create past it fail and name the running box.
+	MaxRunningBoxes int   `json:"max_running_boxes"`
+	State           State `json:"state"`
 }
 
 // Load reads, defaults and validates the file at path.
@@ -188,6 +191,7 @@ func (c *Config) applyDefaults() {
 	c.State.Interval = cmp.Or(c.State.Interval, Duration(defaultStateInterval))
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
+	c.MaxRunningBoxes = cmp.Or(c.MaxRunningBoxes, defaultMaxRunning)
 }
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
@@ -224,6 +228,9 @@ func (c *Config) validate() error {
 	}
 	if c.Image == "" {
 		errs = append(errs, errors.New("image is required: it names the default sandboxd template"))
+	}
+	if c.MaxRunningBoxes < 1 {
+		errs = append(errs, fmt.Errorf("max_running_boxes must be at least 1, got %d", c.MaxRunningBoxes))
 	}
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))

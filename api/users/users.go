@@ -1,4 +1,4 @@
-// Package users keeps cocoonbox users in PostgreSQL, each with one gw key, one sandboxd tenant and one state key that never leave the api, and the shares of their boxes.
+// Package users keeps cocoonbox users in PostgreSQL, each with one gw key, one sandboxd tenant and one state key that never leave the api, their boxes and the boxes' shares.
 package users
 
 import (
@@ -45,6 +45,7 @@ var (
 	ErrExists      = errors.New("user already exists")
 	ErrInvalid     = errors.New("invalid request")
 	ErrBadPassword = errors.New("wrong username or password")
+	ErrQuota       = errors.New("quota reached")
 
 	namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{1,31}$`)
 	// idPattern is sandboxd's tenant name grammar, since the id names the tenant.
@@ -106,21 +107,26 @@ type Options struct {
 	Tenants       Tenants
 	// TenantClaims makes Tenant hand out each user's tenant token, so machines claim under it.
 	TenantClaims bool
+	// FirstBoxID names the box Create gives each new user.
+	FirstBoxID func(user string) string
 }
 
-// Service owns the users and shares tables and an in-memory index that serves every token and share check.
+// Service owns the users, boxes and shares tables and an in-memory index that serves every token, box and share check.
 type Service struct {
 	store        *store
 	seal         *sealer
 	gw           GWKeys
 	tenants      Tenants
 	tenantClaims bool
+	firstBoxID   func(string) string
 	// dummyHash keeps a sign-in for an unknown name as slow as one for a known name.
 	dummyHash []byte
 
 	mu            sync.RWMutex
 	byID          map[string]record
 	byToken       map[string]string
+	boxes         map[string][]Box
+	boxGen        int
 	shares        map[string]*shareRecord
 	shareSecrets  map[string]string
 	onResidential []func(context.Context, string, bool)
@@ -143,8 +149,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		return nil, err
 	}
 	s := &Service{
-		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, dummyHash: dummy,
-		shares: map[string]*shareRecord{}, shareSecrets: map[string]string{},
+		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
+		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{},
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
@@ -167,11 +173,22 @@ func (s *Service) Close() {
 	s.store.close()
 }
 
-// Load replaces the in-memory index with the table.
+// Load replaces the in-memory index with the tables; the boxes stay when a box changed meanwhile.
 func (s *Service) Load(ctx context.Context) error {
+	s.mu.RLock()
+	gen := s.boxGen
+	s.mu.RUnlock()
 	records, err := s.store.all(ctx)
 	if err != nil {
 		return err
+	}
+	boxes, err := s.store.allBoxes(ctx)
+	if err != nil {
+		return err
+	}
+	byOwner := map[string][]Box{}
+	for _, b := range boxes {
+		byOwner[b.Owner] = append(byOwner[b.Owner], b)
 	}
 	byID := make(map[string]record, len(records))
 	byToken := make(map[string]string, len(records))
@@ -184,6 +201,9 @@ func (s *Service) Load(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.byID, s.byToken = byID, byToken
+	if s.boxGen == gen {
+		s.boxes = byOwner
+	}
 	return nil
 }
 
@@ -262,7 +282,7 @@ func (s *Service) List() []User {
 	return out
 }
 
-// Create adds a user with its gw key and tenant and lifts an admin's gw cap; a failure leaves none of them behind.
+// Create adds a user with its first box, gw key and tenant and lifts an admin's gw cap; a failure leaves none of them behind.
 func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 	id := cmp.Or(nu.ID, idPrefix+randomHex(idBytes))
 	switch {
@@ -304,12 +324,13 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		stateKeyID:  stateKey.ID,
 		stateKey:    s.seal.seal(string(stateKey.Secret), id, columnStateKey),
 	}
+	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond)}
 	if nu.Admin {
 		err = s.gw.SetDailyCap(ctx, id, new(int64(gwkeys.Unlimited)))
 	}
 	if err == nil {
 		if err = s.tenants.Put(ctx, id, tenantToken, r.claimCap()); err == nil {
-			if err = s.store.insert(ctx, r, string(hash)); err != nil {
+			if err = s.store.insert(ctx, r, string(hash), first); err != nil {
 				err = errors.Join(err, s.tenants.Delete(context.WithoutCancel(ctx), id))
 			}
 		}
@@ -318,10 +339,13 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil), s.gw.Revoke(context.WithoutCancel(ctx), id))
 	}
 	s.put(r)
+	s.mu.Lock()
+	s.putBox(first)
+	s.mu.Unlock()
 	return r.User, nil
 }
 
-// Delete removes user id's tenant, gw key and cap, sessions and row; the caller releases the user's boxes first.
+// Delete removes user id's tenant, gw key and cap, sessions, boxes and row; the caller releases the boxes' machines first.
 func (s *Service) Delete(ctx context.Context, id string) error {
 	if _, err := s.record(id); err != nil {
 		return err
@@ -344,6 +368,8 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 		delete(s.byToken, r.tokenSHA256)
 		delete(s.byID, id)
 	}
+	s.boxGen++
+	delete(s.boxes, id)
 	s.cutOwner(id, true)
 	return nil
 }
@@ -369,6 +395,8 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d", ErrInvalid, maxBoxesCap)
 	case r.MaxBoxes < 1 || r.MaxBoxes > r.MaxBoxesCap:
 		return User{}, fmt.Errorf("%w: max boxes must be in 1..%d", ErrInvalid, r.MaxBoxesCap)
+	case r.MaxBoxes < old.MaxBoxes && r.MaxBoxes < len(s.Boxes(id)):
+		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, len(s.Boxes(id)))
 	}
 	if r.MaxBoxes != old.MaxBoxes {
 		if err := s.tenants.Put(ctx, id, "", r.claimCap()); err != nil {

@@ -69,11 +69,28 @@ async function load() {
   boxes.replaceChildren();
   for (const b of me.boxes) {
     const row = boxes.insertRow();
+    cell(row, b.name);
     cell(row, b.id);
-    cell(row, b.state);
+    cell(row, b.state === "unspecified" ? "absent" : b.state);
     cell(row, b.image);
+    const actions = cell(row, "");
+    actions.className = "actions";
+    actions.appendChild(button("Rename", async () => {
+      const name = prompt("New name for " + b.name);
+      if (!name) return;
+      await api("PATCH", "boxes/" + encodeURIComponent(b.id), { name });
+      notice("Renamed " + b.name + " to " + name + ".");
+      await load();
+    }));
+    actions.appendChild(button("Delete", async () => {
+      if (!confirm("Delete " + b.name + "? A running box is saved first; its running programs stop, and its saved state stays in storage.")) return;
+      await api("DELETE", "boxes/" + encodeURIComponent(b.id));
+      notice("Deleting " + b.name + ". It leaves this list once it is saved and removed.");
+      await load();
+    }, true));
   }
-  if (!me.boxes.length) cell(boxes.insertRow(), "No box yet: the app creates one on first connect.");
+  if (!me.boxes.length) cell(boxes.insertRow(), "No box yet: create one here, or the app creates one on first connect.");
+  $("box-form").hidden = me.boxes.length >= u.max_boxes;
 
   await loadShares(me.boxes);
 
@@ -147,7 +164,7 @@ async function loadShares(boxes) {
   body.replaceChildren();
   for (const sh of list) {
     const row = body.insertRow();
-    cell(row, sh.box_id);
+    cell(row, (boxes.find((b) => b.id === sh.box_id) || { name: sh.box_id }).name);
     cell(row, sh.users.length ? sh.users.join(", ") : "anyone with the link");
     const write = document.createElement("input");
     write.type = "checkbox";
@@ -170,8 +187,9 @@ async function loadShares(boxes) {
   }
   if (!list.length) cell(body.insertRow(), "Not shared.");
   const form = $("share-form");
-  form.hidden = !boxes.length || list.some((sh) => boxes.some((b) => b.id === sh.box_id));
-  form.dataset.box = boxes.length ? boxes[0].id : "";
+  const unshared = boxes.filter((b) => !list.some((sh) => sh.box_id === b.id));
+  form.box.replaceChildren(...unshared.map((b) => new Option(b.name, b.id)));
+  form.hidden = !unshared.length;
 }
 
 async function shareCall(method, id, suffix, body) {
@@ -259,10 +277,17 @@ submit("settings-form", async (f) => {
   await load();
 });
 
+submit("box-form", async (f) => {
+  const b = await api("POST", "boxes", { name: f.name.value });
+  f.reset();
+  notice("Created " + b.name + "; it is starting.");
+  await load();
+});
+
 submit("share-form", async (f) => {
   const names = f.users.value.split(/[\s,]+/).filter(Boolean);
   const created = await api("POST", "shares", {
-    box_id: f.dataset.box, ttl_seconds: Number(f.ttl.value), user_names: names, write: f.write.checked,
+    box_id: f.box.value, ttl_seconds: Number(f.ttl.value), user_names: names, write: f.write.checked,
   });
   f.reset();
   showLink(created);

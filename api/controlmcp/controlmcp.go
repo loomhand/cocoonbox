@@ -1,4 +1,4 @@
-// Package controlmcp serves the control MCP: lifecycle tools on the caller's own box over the Boxes service.
+// Package controlmcp serves the control MCP: lifecycle tools on the caller's own boxes over the Boxes service.
 package controlmcp
 
 import (
@@ -40,7 +40,7 @@ const (
 
 var protocolVersions = []string{"2025-11-25", "2025-06-18"}
 
-// Server answers MCP Streamable HTTP on Path for the box of the bearer token's user.
+// Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user.
 type Server struct {
 	boxes controlv1.BoxesServer
 	authn *auth.Authenticator

@@ -11,13 +11,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
-	"github.com/CMGS/cocoonbox/api/boxes"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/users"
 )
 
-// Store keeps the shares; users.Service is the production one.
+// Store keeps the boxes and their shares; users.Service is the production one.
 type Store interface {
+	HasBox(owner, id string) bool
 	CreateShare(ctx context.Context, ns users.NewShare) (users.Share, string, error)
 	Shares(owner string) []users.Share
 	SetShareWrite(ctx context.Context, owner, id string, write bool) (users.Share, error)
@@ -42,7 +42,7 @@ func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) 
 	if err != nil {
 		return nil, err
 	}
-	if req.GetBoxId() != boxes.BoxID(user) {
+	if !s.store.HasBox(user, req.GetBoxId()) {
 		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
 	sh, secret, err := s.store.CreateShare(ctx, users.NewShare{

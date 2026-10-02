@@ -88,7 +88,8 @@ func main() {
 		Flavors:      flavors,
 		Image:        cfg.Image,
 		RebaseImages: cfg.RebaseImages,
-	})
+		MaxRunning:   cfg.MaxRunningBoxes,
+	}, accounts)
 	svc.EnableAccounts(accounts)
 	if cfg.State.Bucket != "" {
 		agents := dialer.New()
@@ -215,6 +216,7 @@ func openUsers(ctx context.Context, cfg *config.Config) (*users.Service, error) 
 		GW:            gw,
 		Tenants:       tenants,
 		TenantClaims:  cfg.Sandboxd.TenantEgressClass != "",
+		FirstBoxID:    boxes.BoxID,
 	})
 }
 

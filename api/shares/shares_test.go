@@ -53,6 +53,8 @@ func (f *fakeStore) CreateShare(_ context.Context, ns users.NewShare) (users.Sha
 	return users.Share{ID: "sh-1", Owner: ns.Owner, Box: ns.Box, Users: []users.ShareUser{{ID: "u-bob", Name: "bob"}}, Write: ns.Write}, "cbs_x", f.err
 }
 
+func (f *fakeStore) HasBox(owner, id string) bool { return id == boxes.BoxID(owner) }
+
 func (f *fakeStore) Shares(string) []users.Share { return nil }
 
 func (f *fakeStore) SetShareWrite(_ context.Context, _, id string, write bool) (users.Share, error) {

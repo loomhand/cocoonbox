@@ -115,7 +115,7 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	if _, err := rand.Read(raw); err != nil {
 		return "", fmt.Errorf("wake id: %w", err)
 	}
-	identity := machines.Identity{BoxID: BoxID(m.Owner), WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey()}
+	identity := machines.Identity{BoxID: boxOfMachine(m.ID), WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey()}
 	if err := s.machines.Deliver(ctx, m.ID, identity, gwKey); err != nil {
 		return "", err
 	}
@@ -136,12 +136,12 @@ func (s *Service) agentContext(ctx context.Context, m machines.Machine) context.
 	if s.provision == nil || wake == "" {
 		return ctx
 	}
-	return metadata.AppendToOutgoingContext(ctx, credential.Header, s.provision.signer.Credential(BoxID(m.Owner), wake))
+	return metadata.AppendToOutgoingContext(ctx, credential.Header, s.provision.signer.Credential(boxOfMachine(m.ID), wake))
 }
 
 // ready reports whether clients may reach m: running, not being restored and, with provisioning on, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
-	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !s.restoring(BoxID(m.Owner))
+	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !s.restoring(boxOfMachine(m.ID))
 }
 
 // provisioner writes each machine's identity file on every boot and its gw key on first boot.

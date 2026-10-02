@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,8 +21,11 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/boxes"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/users"
@@ -151,6 +155,35 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	}
 	if env.tenants.tenants[created.ID].max != 3 {
 		t.Errorf("tenant cap = %d, want 3", env.tenants.tenants[created.ID].max)
+	}
+}
+
+func TestTheUserPageManagesBoxes(t *testing.T) {
+	env := newEnv(t)
+	u, _ := env.users.Create(t.Context(), users.NewUser{Name: "qa1", Password: password})
+	qa1 := env.login(t, "qa1")
+	env.boxes.list = []*controlv1.Box{{Id: "cb-1", Name: "main"}}
+	if body := env.do(t, http.MethodGet, "api/me", qa1, "").Body.String(); !strings.Contains(body, `{"id":"cb-1","name":"main","state":"unspecified","image":""}`) {
+		t.Errorf("me = %s", body)
+	}
+	if resp := env.do(t, http.MethodPost, "api/boxes", qa1, `{"name":"test"}`); resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"name":"test"`) {
+		t.Errorf("create = %d %s", resp.Code, resp.Body)
+	}
+	if resp := env.do(t, http.MethodPost, "api/boxes", qa1, `{"name":"full"}`); resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "is running") {
+		t.Errorf("create past the running limit = %d %s", resp.Code, resp.Body)
+	}
+	if code := env.do(t, http.MethodPatch, "api/boxes/cb-2", qa1, `{"name":"work"}`).Code; code != http.StatusOK {
+		t.Errorf("rename = %d", code)
+	}
+	if resp := env.do(t, http.MethodDelete, "api/boxes/cb-2", qa1, ""); resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"operation_id":"op-1"`) {
+		t.Errorf("delete = %d %s", resp.Code, resp.Body)
+	}
+	if code := env.do(t, http.MethodDelete, "api/boxes/cb-2", "", "").Code; code != http.StatusUnauthorized {
+		t.Errorf("delete signed out = %d", code)
+	}
+	want := []string{"Create " + u.ID + " test", "Create " + u.ID + " full", "Rename " + u.ID + " cb-2 work", "Delete " + u.ID + " cb-2"}
+	if !slices.Equal(env.boxes.calls, want) {
+		t.Errorf("calls = %v, want %v", env.boxes.calls, want)
 	}
 }
 
@@ -289,7 +322,7 @@ func newEnv(t *testing.T) *env {
 		t.Fatalf("setup: %v", err)
 	}
 	e := &env{boxes: &fakeBoxes{}, gw: &fakeGW{keys: map[string]string{}, caps: map[string]int64{}}, tenants: &fakeTenants{tenants: map[string]tenant{}}}
-	us, err := users.Open(t.Context(), users.Options{DSN: u.String(), MasterKeyFile: keyFile, GW: e.gw, Tenants: e.tenants})
+	us, err := users.Open(t.Context(), users.Options{DSN: u.String(), MasterKeyFile: keyFile, GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -330,11 +363,30 @@ type fakeBoxes struct {
 	listedFor string
 	released  string
 	onRelease func()
+	calls     []string
 }
 
 func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
 	f.listedFor = auth.User(ctx)
 	return &controlv1.ListBoxesResponse{Boxes: f.list}, nil
+}
+
+func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
+	f.calls = append(f.calls, "Create "+auth.User(ctx)+" "+req.GetName())
+	if req.GetName() == "full" {
+		return nil, status.Error(codes.FailedPrecondition, "box main (cb-1) is running")
+	}
+	return &controlv1.EnsureResponse{Box: &controlv1.Box{Id: "cb-2", Name: req.GetName(), State: controlv1.BoxState_BOX_STATE_STARTING}}, nil
+}
+
+func (f *fakeBoxes) Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (*controlv1.Box, error) {
+	f.calls = append(f.calls, "Rename "+auth.User(ctx)+" "+req.GetBoxId()+" "+req.GetName())
+	return &controlv1.Box{Id: req.GetBoxId(), Name: req.GetName()}, nil
+}
+
+func (f *fakeBoxes) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
+	f.calls = append(f.calls, "Delete "+auth.User(ctx)+" "+ref.GetBoxId())
+	return &controlv1.Operation{Id: "op-1", BoxId: ref.GetBoxId()}, nil
 }
 
 func (f *fakeBoxes) Release(_ context.Context, user string) error {

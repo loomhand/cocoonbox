@@ -28,7 +28,7 @@ const (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// store keeps users and console sessions in PostgreSQL.
+// store keeps users, their boxes and console sessions in PostgreSQL.
 type store struct {
 	pool *pgxpool.Pool
 }
@@ -110,10 +110,16 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	})
 }
 
-func (s *store) insert(ctx context.Context, r record, passwordHash string) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO users (id, name, admin, max_boxes, max_boxes_cap, password_hash, gw_ak_id, gw_key_sealed, tenant_token_sealed,
-		state_key_id, state_key_sealed) VALUES ($1, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9, $10, $11)`,
-		r.ID, r.Name, r.Admin, r.MaxBoxes, r.MaxBoxesCap, passwordHash, r.gwAKID, r.gwKey, r.tenantToken, r.stateKeyID, r.stateKey)
+func (s *store) insert(ctx context.Context, r record, passwordHash string, first Box) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO users (id, name, admin, max_boxes, max_boxes_cap, password_hash, gw_ak_id, gw_key_sealed, tenant_token_sealed,
+			state_key_id, state_key_sealed) VALUES ($1, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9, $10, $11)`,
+			r.ID, r.Name, r.Admin, r.MaxBoxes, r.MaxBoxesCap, passwordHash, r.gwAKID, r.gwKey, r.tenantToken, r.stateKeyID, r.stateKey); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", first.ID, first.Owner, first.Name, first.CreatedAt)
+		return err
+	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return ErrExists
 	}
@@ -121,6 +127,76 @@ func (s *store) insert(ctx context.Context, r record, passwordHash string) error
 		return fmt.Errorf("insert user: %w", err)
 	}
 	return nil
+}
+
+func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
+	rows, err := s.pool.Query(ctx, "SELECT id, owner, name, created_at FROM boxes ORDER BY created_at, id")
+	if err != nil {
+		return nil, fmt.Errorf("list boxes: %w", err)
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Box, error) {
+		var b Box
+		err := row.Scan(&b.ID, &b.Owner, &b.Name, &b.CreatedAt)
+		return b, err
+	})
+}
+
+// insertBox adds b while its owner has fewer boxes than max_boxes; the owner's row lock orders concurrent adds.
+func (s *store) insertBox(ctx context.Context, b Box) error {
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var maxBoxes, boxes int
+		if err := tx.QueryRow(ctx, "SELECT max_boxes FROM users WHERE id = $1 FOR UPDATE", b.Owner).Scan(&maxBoxes); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM boxes WHERE owner = $1", b.Owner).Scan(&boxes); err != nil {
+			return err
+		}
+		if boxes >= maxBoxes {
+			return fmt.Errorf("%w: %d boxes is the most this user may have", ErrQuota, maxBoxes)
+		}
+		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", b.ID, b.Owner, b.Name, b.CreatedAt)
+		return err
+	})
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
+		return fmt.Errorf("%w: a box is already named %q", ErrExists, b.Name)
+	}
+	if err != nil && !errors.Is(err, ErrQuota) && !errors.Is(err, ErrNotFound) {
+		return fmt.Errorf("insert box: %w", err)
+	}
+	return err
+}
+
+func (s *store) renameBox(ctx context.Context, owner, id, name string) error {
+	tag, err := s.pool.Exec(ctx, "UPDATE boxes SET name = $3 WHERE id = $1 AND owner = $2", id, owner, name)
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
+		return fmt.Errorf("%w: a box is already named %q", ErrExists, name)
+	}
+	if err != nil {
+		return fmt.Errorf("rename box: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// removeBox deletes owner's box id and revokes its live share in one transaction.
+func (s *store) removeBox(ctx context.Context, owner, id string) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, "DELETE FROM boxes WHERE id = $1 AND owner = $2", id, owner)
+		if err != nil {
+			return fmt.Errorf("delete box: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now() WHERE box = $1 AND revoked_at IS NULL", id); err != nil {
+			return fmt.Errorf("revoke the box's share: %w", err)
+		}
+		return nil
+	})
 }
 
 func (s *store) remove(ctx context.Context, id string) error {

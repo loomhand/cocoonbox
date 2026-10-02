@@ -19,6 +19,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/users"
 )
 
 const (
@@ -32,7 +33,7 @@ var (
 	defaultFlavor = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
 	testDefaults  = Defaults{
 		Flavor: defaultFlavor, Flavors: []machines.Flavor{{VCPUs: 2, MemoryMiB: 4096, DiskGiB: 40}},
-		Image: "desktop-v2", RebaseImages: []string{"desktop-v3"},
+		Image: "desktop-v2", RebaseImages: []string{"desktop-v3"}, MaxRunning: 1,
 	}
 )
 
@@ -48,7 +49,7 @@ func TestBoxID(t *testing.T) {
 
 func TestEnsureCreatesBox(t *testing.T) {
 	fake := newFakeMachines()
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 
 	resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
@@ -91,7 +92,7 @@ func TestEnsureCreatesBox(t *testing.T) {
 func TestHibernateAndWake(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 
 	op, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
@@ -137,7 +138,7 @@ func TestOperationFails(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			fake := newFakeMachines()
-			svc := New(fake, testDefaults)
+			svc := New(fake, testDefaults, newFakeRegistry())
 			ctx := auth.WithUser(t.Context(), alice)
 			resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
 			if err != nil {
@@ -163,7 +164,7 @@ func TestOperationFails(t *testing.T) {
 func TestSupersededOperationFails(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	hibernate, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
 	if err != nil {
@@ -182,7 +183,7 @@ func TestSupersededOperationFails(t *testing.T) {
 func TestOwnership(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	bob := auth.WithUser(t.Context(), "bob")
 
 	if _, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
@@ -194,11 +195,11 @@ func TestOwnership(t *testing.T) {
 	if _, _, err := svc.Resolve(bob, "bob", aliceBox); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("Resolve other's box: %v, want PermissionDenied", err)
 	}
-	if list, err := svc.List(bob, &controlv1.ListBoxesRequest{}); err != nil || len(list.GetBoxes()) != 0 {
-		t.Errorf("List for bob = %v, %v, want empty", list, err)
+	if list, err := svc.List(bob, &controlv1.ListBoxesRequest{}); err != nil || len(list.GetBoxes()) != 1 || list.GetBoxes()[0].GetId() != BoxID("bob") {
+		t.Errorf("List for bob = %v, %v, want only bob's box", list, err)
 	}
-	if _, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: BoxID("bob")}); status.Code(err) != codes.NotFound {
-		t.Errorf("Get own absent box: %v, want NotFound", err)
+	if box, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: BoxID("bob")}); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_UNSPECIFIED || box.GetName() != users.FirstBoxName || box.GetCreatedAtMs() != 0 {
+		t.Errorf("Get own box without a machine = %v, %v, want it absent", box, err)
 	}
 	if _, err := svc.Get(t.Context(), &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Get without user: %v, want Unauthenticated", err)
@@ -240,7 +241,7 @@ func TestEnsureErrors(t *testing.T) {
 				fake.put(*tt.stored)
 			}
 			fake.ensureErr = tt.ensure
-			svc := New(fake, testDefaults)
+			svc := New(fake, testDefaults, newFakeRegistry())
 			_, err := svc.Ensure(auth.WithUser(t.Context(), alice), &controlv1.EnsureRequest{Flavor: tt.flavor})
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Ensure: %v, want %s %q", err, tt.want, tt.message)
@@ -266,7 +267,7 @@ func TestResolve(t *testing.T) {
 			fake := newFakeMachines()
 			fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 			fake.addr, fake.addrErr = "10.203.0.10:7443", tt.addrErr
-			ep, _, err := New(fake, testDefaults).Resolve(t.Context(), alice, aliceBox)
+			ep, _, err := New(fake, testDefaults, newFakeRegistry()).Resolve(t.Context(), alice, aliceBox)
 			if status.Code(err) != tt.want || (err != nil && status.Convert(err).Message() != tt.message) {
 				t.Errorf("Resolve: %v, want %s %q", err, tt.want, tt.message)
 			}
@@ -275,6 +276,67 @@ func TestResolve(t *testing.T) {
 			}
 		})
 	}
+}
+
+// fakeRegistry gives every user the first box BoxID(user), as users.Service does at sign-up.
+type fakeRegistry struct {
+	mu    sync.Mutex
+	boxes map[string][]users.Box
+	max   int
+}
+
+func newFakeRegistry() *fakeRegistry {
+	return &fakeRegistry{boxes: map[string][]users.Box{}, max: 3}
+}
+
+func (r *fakeRegistry) Boxes(owner string) []users.Box {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.boxes[owner]; !ok {
+		r.boxes[owner] = []users.Box{{ID: BoxID(owner), Owner: owner, Name: users.FirstBoxName}}
+	}
+	return slices.Clone(r.boxes[owner])
+}
+
+func (r *fakeRegistry) HasBox(owner, id string) bool {
+	return slices.ContainsFunc(r.Boxes(owner), func(b users.Box) bool { return b.ID == id })
+}
+
+func (r *fakeRegistry) AddBox(_ context.Context, b users.Box) (users.Box, error) {
+	list := r.Boxes(b.Owner)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	switch {
+	case len(list) >= r.max:
+		return users.Box{}, users.ErrQuota
+	case slices.ContainsFunc(list, func(x users.Box) bool { return x.Name == b.Name }):
+		return users.Box{}, users.ErrExists
+	}
+	b.CreatedAt = time.Unix(int64(len(list)+1), 0)
+	r.boxes[b.Owner] = append(list, b)
+	return b, nil
+}
+
+func (r *fakeRegistry) RenameBox(_ context.Context, owner, id, name string) (users.Box, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if slices.ContainsFunc(r.boxes[owner], func(x users.Box) bool { return x.Name == name }) {
+		return users.Box{}, users.ErrExists
+	}
+	for i, b := range r.boxes[owner] {
+		if b.ID == id {
+			r.boxes[owner][i].Name = name
+			return r.boxes[owner][i], nil
+		}
+	}
+	return users.Box{}, users.ErrNotFound
+}
+
+func (r *fakeRegistry) RemoveBox(_ context.Context, owner, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.boxes[owner] = slices.DeleteFunc(r.boxes[owner], func(b users.Box) bool { return b.ID == id })
+	return nil
 }
 
 type execCall struct {

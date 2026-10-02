@@ -2,9 +2,11 @@ package boxes
 
 import (
 	"cmp"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"strconv"
+	"strings"
 	"time"
 
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
@@ -12,8 +14,9 @@ import (
 )
 
 const (
-	idPrefix = "cb-"
-	idHexLen = 12
+	idPrefix      = "cb-"
+	idHexLen      = 12
+	machineSuffix = "-r"
 )
 
 var (
@@ -40,17 +43,42 @@ var (
 	}
 )
 
-// BoxID returns the id of user's box; its first machine carries the same id.
+// BoxID returns the id of the first box user had before several boxes per user; its first machine carries the same id.
 func BoxID(user string) string {
 	sum := sha256.Sum256([]byte(user))
 	return idPrefix + hex.EncodeToString(sum[:])[:idHexLen]
 }
 
+// newBoxID draws the id of a new box; it never carries machineSuffix.
+func newBoxID() string {
+	raw := make([]byte, idHexLen/2)
+	_, _ = rand.Read(raw)
+	return idPrefix + hex.EncodeToString(raw)
+}
+
 func newMachineID(box string) string {
-	return box + "-r" + strconv.FormatInt(time.Now().Unix(), 36)
+	return box + machineSuffix + strconv.FormatInt(time.Now().Unix(), 36)
+}
+
+// boxOfMachine returns the box a machine serves: its id up to the suffix of a replacement machine.
+func boxOfMachine(machine string) string {
+	box, _, _ := strings.Cut(machine, machineSuffix)
+	return box
+}
+
+func older(a, b machines.Machine) bool {
+	return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID)) < 0
+}
+
+// holdsMemory reports whether m counts against the running limit.
+func holdsMemory(m machines.Machine) bool {
+	return m.State == machines.StateStarting || m.State == machines.StateRunning || m.State == machines.StateHibernating
 }
 
 func toBox(box string, m machines.Machine) *controlv1.Box {
+	if m.ID == "" {
+		return &controlv1.Box{Id: box}
+	}
 	return &controlv1.Box{
 		Id:            box,
 		State:         boxStates[m.State],

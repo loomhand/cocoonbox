@@ -52,7 +52,7 @@ func TestInitializeAndToolsList(t *testing.T) {
 		}
 		names = append(names, spec["name"].(string))
 	}
-	if want := []string{"box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"}; !slices.Equal(names, want) {
+	if want := []string{"box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete"}; !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
 	if ping := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"ping"}`); ping.Error != nil || ping.Result == nil {
@@ -180,11 +180,19 @@ func TestToolsActOnlyOnCallersBox(t *testing.T) {
 		`{"name":"box_save","arguments":{"box_id":"` + alice + `"}}`,
 		`{"name":"box_upgrade","arguments":{"confirm":true,"box_id":"` + alice + `"}}`,
 		`{"name":"box_upgrade","arguments":{"confirm":true,"image":"img:1"}}`,
-		`{"name":"box_ensure","arguments":{"wait":true,"box":"` + alice + `"}}`,
 	} {
 		resp := post(t, srv, bobToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":`+call+`}`)
 		if resp.Error == nil || resp.Error.Code != codeInvalidParams {
 			t.Fatalf("bob %s = %+v, want invalid params", call, resp)
+		}
+	}
+	for _, tool := range []string{"box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade", "box_delete"} {
+		call := `{"name":"` + tool + `","arguments":{"confirm":true,"box":"` + alice + `"}}`
+		if tool == "box_status" || tool == "box_ensure" || tool == "box_hibernate" || tool == "box_save" {
+			call = `{"name":"` + tool + `","arguments":{"box":"` + alice + `"}}`
+		}
+		if got := refusal(t, post(t, srv, bobToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":`+call+`}`)); !strings.Contains(got, "You have no box") {
+			t.Fatalf("bob %s on alice's box = %q", tool, got)
 		}
 	}
 	for _, c := range fake.recorded() {
@@ -194,11 +202,49 @@ func TestToolsActOnlyOnCallersBox(t *testing.T) {
 	}
 }
 
+func TestBoxArgumentPicksTheBox(t *testing.T) {
+	srv, fake := newTestServer(t)
+	created := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_create","arguments":{"name":"test"}}}`))
+	if created["box_id"] != "cb-test" || created["name"] != "test" || created["operation_id"] == "" {
+		t.Fatalf("box_create = %v", created)
+	}
+	fake.mu.Lock()
+	fake.extra["alice"][0].State = controlv1.BoxState_BOX_STATE_RUNNING
+	fake.mu.Unlock()
+	list := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_list"}}`))
+	boxesList, _ := list["boxes"].([]any)
+	if len(boxesList) != 2 || boxesList[1].(map[string]any)["name"] != "test" || boxesList[1].(map[string]any)["state"] != "running" {
+		t.Fatalf("box_list = %v", list)
+	}
+	for _, ref := range []string{"test", "cb-test"} {
+		got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"box_status","arguments":{"box":"`+ref+`"}}}`))
+		if got["box_id"] != "cb-test" {
+			t.Fatalf("box_status of %s = %v", ref, got)
+		}
+	}
+	structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_save","arguments":{"box":"test"}}}`))
+	structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"box_ensure","arguments":{"box":"test"}}}`))
+	if got := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"box_delete","arguments":{"box":"test"}}}`)); got != string(errDeleteUnconfirmed) {
+		t.Fatalf("unconfirmed delete = %q", got)
+	}
+	if got := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"box_delete","arguments":{"confirm":true}}}`)); got != string(errDeleteUnnamed) {
+		t.Fatalf("delete without a box = %q", got)
+	}
+	deleted := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"box_delete","arguments":{"box":"test","confirm":true}}}`))
+	if deleted["box_id"] != "cb-test" || deleted["operation_id"] == "" {
+		t.Fatalf("box_delete = %v", deleted)
+	}
+	want := []fakeCall{{"Create", "alice", "test"}, {"SaveState", "alice", "cb-test"}, {"Ensure", "alice", "cb-test"}, {"Delete", "alice", "cb-test"}}
+	if got := fake.recorded(); !slices.Equal(got, want) {
+		t.Fatalf("calls = %v, want %v", got, want)
+	}
+}
+
 func TestEnsureStreamsProgress(t *testing.T) {
 	srv, fake := newTestServer(t)
 	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
 	got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_status"}}`))
-	want := map[string]any{"box_id": boxes.BoxID("alice"), "state": "hibernated", "image": "img:1", "latest_image": latestImage, "upgrade_available": true, "last_saved_at_ms": float64(0)}
+	want := map[string]any{"box_id": boxes.BoxID("alice"), "name": "main", "state": "hibernated", "image": "img:1", "latest_image": latestImage, "upgrade_available": true, "last_saved_at_ms": float64(0)}
 	if !mapsEqual(got, want) {
 		t.Fatalf("status = %v, want %v", got, want)
 	}
@@ -264,7 +310,7 @@ func TestSaveReportsBytesAndRefusals(t *testing.T) {
 		t.Fatalf("hibernate without a box = %q", got)
 	}
 	got = structured(t, post(t, srv, carolToken, `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"box_status"}}`))
-	if want := map[string]any{"box_id": "", "state": "absent", "image": "", "latest_image": "", "upgrade_available": false, "last_saved_at_ms": float64(0)}; !mapsEqual(got, want) {
+	if want := map[string]any{"box_id": "", "name": "", "state": "absent", "image": "", "latest_image": "", "upgrade_available": false, "last_saved_at_ms": float64(0)}; !mapsEqual(got, want) {
 		t.Fatalf("status without a box = %v", got)
 	}
 
@@ -294,13 +340,14 @@ type fakeBoxes struct {
 	images    map[string]string
 	saved     map[string]int64
 	ops       map[string]string
+	extra     map[string][]*controlv1.Box
 	failNext  bool
 	ensureErr error
 }
 
-func (f *fakeBoxes) Ensure(ctx context.Context, _ *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
+func (f *fakeBoxes) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
 	user := auth.User(ctx)
-	f.record("Ensure", user, "")
+	f.record("Ensure", user, req.GetBoxId())
 	if f.ensureErr != nil {
 		return nil, f.ensureErr
 	}
@@ -321,7 +368,21 @@ func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*c
 	if _, ok := f.states[user]; !ok {
 		return &controlv1.ListBoxesResponse{}, nil
 	}
-	return &controlv1.ListBoxesResponse{Boxes: []*controlv1.Box{f.boxLocked(user)}}, nil
+	return &controlv1.ListBoxesResponse{Boxes: append([]*controlv1.Box{f.boxLocked(user)}, f.extra[user]...)}, nil
+}
+
+func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
+	user := auth.User(ctx)
+	f.record("Create", user, req.GetName())
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	box := &controlv1.Box{Id: "cb-" + req.GetName(), Name: req.GetName(), State: controlv1.BoxState_BOX_STATE_STARTING}
+	f.extra[user] = append(f.extra[user], box)
+	return &controlv1.EnsureResponse{Box: box, Operation: f.startLocked(user, "create")}, nil
+}
+
+func (f *fakeBoxes) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
+	return f.operate(ctx, "Delete", ref.GetBoxId())
 }
 
 func (f *fakeBoxes) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
@@ -367,7 +428,7 @@ func (f *fakeBoxes) WatchOperation(req *controlv1.WatchOperationRequest, stream 
 func (f *fakeBoxes) operate(ctx context.Context, method, box string) (*controlv1.Operation, error) {
 	user := auth.User(ctx)
 	f.record(method, user, box)
-	if box != boxes.BoxID(user) {
+	if box != boxes.BoxID(user) && !slices.ContainsFunc(f.extra[user], func(b *controlv1.Box) bool { return b.GetId() == box }) {
 		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
 	f.mu.Lock()
@@ -382,11 +443,13 @@ func (f *fakeBoxes) operate(ctx context.Context, method, box string) (*controlv1
 	case "Rebase":
 		f.images[user] = latestImage
 	}
-	return f.startLocked(user, kind), nil
+	op := f.startLocked(user, kind)
+	op.BoxId = box
+	return op, nil
 }
 
 func (f *fakeBoxes) boxLocked(user string) *controlv1.Box {
-	return &controlv1.Box{Id: boxes.BoxID(user), State: f.states[user], Image: f.images[user], LatestImage: latestImage, LastSavedAtMs: f.saved[user]}
+	return &controlv1.Box{Id: boxes.BoxID(user), Name: "main", State: f.states[user], Image: f.images[user], LatestImage: latestImage, LastSavedAtMs: f.saved[user]}
 }
 
 func (f *fakeBoxes) startLocked(user, kind string) *controlv1.Operation {
@@ -426,6 +489,7 @@ func newTestServer(t *testing.T) (*Server, *fakeBoxes) {
 		images: map[string]string{"alice": "img:1", "bob": "img:1"},
 		saved:  map[string]int64{},
 		ops:    map[string]string{},
+		extra:  map[string][]*controlv1.Box{},
 	}
 	return New(fake, auth.New(users, nil)), fake
 }

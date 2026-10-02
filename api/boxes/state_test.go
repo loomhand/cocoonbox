@@ -68,7 +68,7 @@ func TestSaveStateIsIncremental(t *testing.T) {
 func TestSaveStateRefusals(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	ctx := auth.WithUser(t.Context(), alice)
 	if _, err := svc.SaveState(ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("SaveState without a store: %v, want FailedPrecondition", err)
@@ -648,7 +648,7 @@ func newStateEnv(t *testing.T) *stateEnv {
 	st := newFakeStore()
 	agent := newFakeAgent(st)
 	keys := &fakeKeys{}
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableState(agent, st, keys)
 	return &stateEnv{ctx: auth.WithUser(t.Context(), alice), svc: svc, fake: fake, agent: agent, store: st, keys: keys}
 }

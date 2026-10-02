@@ -52,9 +52,12 @@ var (
 	static embed.FS
 )
 
-// Boxes lists a user's boxes and releases them when the user is deleted.
+// Boxes lists, creates, renames and deletes a user's boxes, and releases them when the user is deleted.
 type Boxes interface {
 	List(ctx context.Context, req *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error)
+	Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error)
+	Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (*controlv1.Box, error)
+	Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error)
 	Release(ctx context.Context, user string) error
 }
 
@@ -67,6 +70,7 @@ type userKey struct{}
 
 type box struct {
 	ID    string `json:"id"`
+	Name  string `json:"name"`
 	State string `json:"state"`
 	Image string `json:"image"`
 }
@@ -103,6 +107,9 @@ func New(us *users.Service, boxes Boxes, defaultDailyCap int64) *Server {
 	s.mux.HandleFunc("PATCH "+Prefix+"api/me", s.signedIn(s.updateMe))
 	s.mux.HandleFunc("POST "+Prefix+"api/me/token", s.signedIn(s.regenerateToken))
 	s.mux.HandleFunc("POST "+Prefix+"api/me/password", s.signedIn(s.changePassword))
+	s.mux.HandleFunc("POST "+Prefix+"api/boxes", s.signedIn(s.createBox))
+	s.mux.HandleFunc("PATCH "+Prefix+"api/boxes/{id}", s.signedIn(s.renameBox))
+	s.mux.HandleFunc("DELETE "+Prefix+"api/boxes/{id}", s.signedIn(s.deleteBox))
 	s.mux.HandleFunc("GET "+Prefix+"api/users", s.admin(s.listUsers))
 	s.mux.HandleFunc("POST "+Prefix+"api/users", s.admin(s.createUser))
 	s.mux.HandleFunc("PATCH "+Prefix+"api/users/{id}", s.admin(s.updateUser))
@@ -190,13 +197,13 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		DefaultDailyCap int64          `json:"default_daily_cap_micros,omitempty"`
 		SpentToday      int64          `json:"spent_today_micros"`
 	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap}
-	list, err := s.boxes.List(auth.WithUser(r.Context(), u.ID), &controlv1.ListBoxesRequest{})
+	list, err := s.boxes.List(s.ownerCtx(r), &controlv1.ListBoxesRequest{})
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	for _, b := range list.GetBoxes() {
-		resp.Boxes = append(resp.Boxes, box{ID: b.GetId(), State: strings.ToLower(strings.TrimPrefix(b.GetState().String(), "BOX_STATE_")), Image: b.GetImage()})
+		resp.Boxes = append(resp.Boxes, toBox(b))
 	}
 	var today []gwkeys.Usage
 	if resp.Usage, err = s.users.Usage(r.Context(), u.ID, time.Unix(0, 0)); err == nil {
@@ -232,6 +239,45 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, u)
+}
+
+func (s *Server) createBox(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	created, err := s.boxes.Create(s.ownerCtx(r), &controlv1.CreateBoxRequest{Name: req.Name})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, toBox(created.GetBox()))
+}
+
+func (s *Server) renameBox(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"name"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	renamed, err := s.boxes.Rename(s.ownerCtx(r), &controlv1.RenameBoxRequest{BoxId: r.PathValue("id"), Name: req.Name})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, toBox(renamed))
+}
+
+func (s *Server) deleteBox(w http.ResponseWriter, r *http.Request) {
+	op, err := s.boxes.Delete(s.ownerCtx(r), &controlv1.BoxRef{BoxId: r.PathValue("id")})
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]string{"operation_id": op.GetId()})
 }
 
 func (s *Server) regenerateToken(w http.ResponseWriter, r *http.Request) {
@@ -544,6 +590,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusNotFound, status.Convert(err).Message())
 	case status.Code(err) == codes.PermissionDenied:
 		writeError(w, http.StatusForbidden, status.Convert(err).Message())
+	case status.Code(err) == codes.FailedPrecondition:
+		writeError(w, http.StatusConflict, status.Convert(err).Message())
 	default:
 		log.WithFunc("console.Server.fail").Errorf(r.Context(), err, "%s %s", r.Method, r.URL.Path)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -571,6 +619,10 @@ func sameOrigin(cfg *websocket.Config, r *http.Request) error {
 		return errors.New("cross-origin share page")
 	}
 	return nil
+}
+
+func toBox(b *controlv1.Box) box {
+	return box{ID: b.GetId(), Name: b.GetName(), State: strings.ToLower(strings.TrimPrefix(b.GetState().String(), "BOX_STATE_")), Image: b.GetImage()}
 }
 
 func toShare(sh *controlv1.Share) share {

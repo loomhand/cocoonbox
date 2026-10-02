@@ -22,7 +22,7 @@ import (
 func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	fake := newFakeMachines()
 	accounts := &fakeAccounts{}
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableAccounts(accounts)
 	svc.EnableProvisioning(fakeSigner{})
 	ctx := auth.WithUser(t.Context(), alice)
@@ -65,7 +65,7 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
 	accounts := &fakeAccounts{}
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableAccounts(accounts)
 	svc.EnableProvisioning(fakeSigner{})
 	ctx := auth.WithUser(t.Context(), alice)
@@ -105,7 +105,7 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 func TestProvisioningCoversEveryUser(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableAccounts(&fakeAccounts{})
 	svc.EnableProvisioning(fakeSigner{})
 	if _, _, err := svc.Resolve(auth.WithUser(t.Context(), alice), alice, aliceBox); status.Code(err) != codes.Unavailable {
@@ -123,7 +123,7 @@ func TestProvisioningCoversEveryUser(t *testing.T) {
 func TestProvisioningFailureFailsTheOperation(t *testing.T) {
 	fake := newFakeMachines()
 	fake.execErr = errors.New("exec: 502")
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
 	svc.provision.backoff = time.Millisecond
 	ctx := auth.WithUser(t.Context(), alice)
@@ -207,7 +207,7 @@ func TestReleaseDeletesEveryMachineOfTheUser(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	if err := svc.Release(t.Context(), alice); err != nil {
 		t.Fatalf("Release: %v", err)
 	}

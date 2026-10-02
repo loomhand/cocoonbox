@@ -388,7 +388,7 @@ func openTestService(t *testing.T, dsn string, gw *fakeGW, tenants *fakeTenants)
 	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", masterKeySize)), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
-	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: keyFile, GW: gw, Tenants: tenants, TenantClaims: true})
+	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: keyFile, GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}

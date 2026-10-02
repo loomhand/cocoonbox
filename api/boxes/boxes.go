@@ -1,4 +1,4 @@
-// Package boxes serves cocoonbox.control.v1.Boxes, one box per user, on any machines.Machines backend.
+// Package boxes serves cocoonbox.control.v1.Boxes, the boxes of each user, on any machines.Machines backend.
 package boxes
 
 import (
@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
+	"sync"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
@@ -17,14 +19,26 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/users"
 )
 
-// Defaults size new boxes, name the image they start from, and list the other flavors Ensure and images Rebase accept.
+// Defaults size new boxes, name the image they start from, list the other flavors Ensure and images Rebase accept,
+// and bound how many boxes of one user run at once.
 type Defaults struct {
 	Flavor       machines.Flavor
 	Flavors      []machines.Flavor
 	Image        string
 	RebaseImages []string
+	MaxRunning   int
+}
+
+// Registry keeps each user's boxes and their names; users.Service is the production one.
+type Registry interface {
+	Boxes(owner string) []users.Box
+	HasBox(owner, id string) bool
+	AddBox(ctx context.Context, b users.Box) (users.Box, error)
+	RenameBox(ctx context.Context, owner, id, name string) (users.Box, error)
+	RemoveBox(ctx context.Context, owner, id string) error
 }
 
 // Service implements controlv1.BoxesServer and resolves boxes for the edge.
@@ -33,16 +47,20 @@ type Service struct {
 
 	machines  machines.Machines
 	defaults  Defaults
+	registry  Registry
 	ops       *operations
 	state     *stateLayer
 	provision *provisioner
 	exit      *exitPolicy
 	accounts  Accounts
+
+	mu     sync.Mutex
+	starts map[string]*sync.Mutex
 }
 
-// New serves boxes on backend with defaults.
-func New(backend machines.Machines, defaults Defaults) *Service {
-	return &Service{machines: backend, defaults: defaults, ops: newOperations()}
+// New serves the boxes registry keeps on backend with defaults.
+func New(backend machines.Machines, defaults Defaults, registry Registry) *Service {
+	return &Service{machines: backend, defaults: defaults, registry: registry, ops: newOperations(), starts: map[string]*sync.Mutex{}}
 }
 
 func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
@@ -50,12 +68,23 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	box := BoxID(user)
-	flavor := resolveFlavor(req.GetFlavor(), s.defaults.Flavor)
-	if flavor != s.defaults.Flavor && !slices.Contains(s.defaults.Flavors, flavor) {
-		return nil, status.Errorf(codes.InvalidArgument, "flavor vcpus:%d memory_mib:%d disk_gib:%d is not offered",
-			flavor.VCPUs, flavor.MemoryMiB, flavor.DiskGiB)
+	flavor, err := s.flavor(req.GetFlavor())
+	if err != nil {
+		return nil, err
 	}
+	box := req.GetBoxId()
+	if box == "" {
+		if box, err = s.firstBox(ctx, user); err != nil {
+			return nil, err
+		}
+	} else if !s.registry.HasBox(user, box) {
+		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
+	}
+	if s.deleting(box) {
+		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")
+	}
+	unlock := s.lockStarts(user)
+	defer unlock()
 	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", box)
 
 	tenant, err := s.tenantOf(user)
@@ -63,10 +92,19 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}
 	spec := machines.Spec{ID: box, Owner: user, Tenant: tenant, Flavor: flavor}
+	current, err := s.currentMachines(ctx, user)
+	if err != nil {
+		return nil, serviceError(ctx, logger, err, "get box")
+	}
 	var saved head
-	cur, err := s.current(ctx, user)
+	cur, ok := current[box]
+	if !ok || !holdsMemory(cur) {
+		if err = s.checkRunning(user, box, current); err != nil {
+			return nil, err
+		}
+	}
 	switch {
-	case err == nil:
+	case ok:
 		if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_RESTORING {
 			return &controlv1.EnsureResponse{Box: s.toBox(ctx, user, box, cur), Operation: &controlv1.Operation{Id: active.id, BoxId: box}}, nil
 		}
@@ -75,15 +113,13 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 				cur.Flavor.VCPUs, cur.Flavor.MemoryMiB, cur.Flavor.DiskGiB)
 		}
 		spec.ID = cur.ID
-	case errors.Is(err, machines.ErrNotFound):
+	default:
 		if saved, err = s.savedHead(ctx, user, box); err != nil {
 			return nil, serviceError(ctx, logger, err, "read saved state")
 		}
 		if saved.Latest != "" {
 			spec.ID = newMachineID(box)
 		}
-	default:
-		return nil, serviceError(ctx, logger, err, "get box")
 	}
 	m, action, err := s.machines.Ensure(ctx, spec)
 	if err != nil {
@@ -95,7 +131,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 			logger.Infof(ctx, "box of user %s has no machine; restoring snapshot %s into %s", user, saved.Latest, m.ID)
 			return s.restoreMissing(ctx, user, box, m, saved), nil
 		}
-		logger.Infof(ctx, "created box for user %s", user)
+		logger.Infof(ctx, "created machine %s for user %s", m.ID, user)
 		return s.withOperation(ctx, user, box, m, controlv1.Phase_PHASE_CREATING), nil
 	case machines.ActionWoken:
 		logger.Info(ctx, "waking box")
@@ -111,46 +147,52 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	return s.withOperation(ctx, user, box, m, phase), nil
 }
 
+// Get returns one of the caller's boxes; a box without a machine is BOX_STATE_UNSPECIFIED.
 func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*controlv1.Box, error) {
-	user, err := ownerOf(ctx, req.GetBoxId())
+	user, err := s.ownerOf(ctx, req.GetBoxId())
 	if err != nil {
 		return nil, err
 	}
-	m, err := s.current(ctx, user)
+	current, err := s.currentMachines(ctx, user)
 	if err != nil {
 		return nil, serviceError(ctx, log.WithFunc("boxes.Service.Get").WithField("box", req.GetBoxId()), err, "get box")
 	}
-	return s.toBox(ctx, user, req.GetBoxId(), m), nil
+	return s.toBox(ctx, user, req.GetBoxId(), current[req.GetBoxId()]), nil
 }
 
+// List returns the caller's boxes, oldest first; a box without a machine is BOX_STATE_UNSPECIFIED.
 func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
 	user, err := callerUser(ctx)
 	if err != nil {
 		return nil, err
 	}
-	m, err := s.current(ctx, user)
-	if errors.Is(err, machines.ErrNotFound) {
-		return &controlv1.ListBoxesResponse{}, nil
-	}
+	current, err := s.currentMachines(ctx, user)
 	if err != nil {
 		return nil, serviceError(ctx, log.WithFunc("boxes.Service.List").WithField("user", user), err, "list boxes")
 	}
-	return &controlv1.ListBoxesResponse{Boxes: []*controlv1.Box{s.toBox(ctx, user, BoxID(user), m)}}, nil
+	resp := &controlv1.ListBoxesResponse{}
+	for _, b := range s.registry.Boxes(user) {
+		resp.Boxes = append(resp.Boxes, s.toBox(ctx, user, b.ID, current[b.ID]))
+	}
+	return resp, nil
 }
 
 func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
 	box := ref.GetBoxId()
-	user, err := ownerOf(ctx, box)
+	user, err := s.ownerOf(ctx, box)
 	if err != nil {
 		return nil, err
 	}
 	logger := log.WithFunc("boxes.Service.Hibernate").WithField("box", box)
-	cur, err := s.current(ctx, user)
+	cur, err := s.current(ctx, user, box)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "get box")
 	}
-	if s.restoring(box) {
+	switch {
+	case s.restoring(box):
 		return nil, status.Error(codes.FailedPrecondition, "box is being restored from its saved state")
+	case s.deleting(box):
+		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")
 	}
 	m, err := s.machines.Hibernate(ctx, cur.ID)
 	if err != nil {
@@ -167,7 +209,7 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 		return err
 	}
 	op := s.ops.get(req.GetOperationId())
-	if op == nil || op.boxID != BoxID(user) {
+	if op == nil || op.user != user {
 		return status.Error(codes.NotFound, "operation not found")
 	}
 	offset := 0
@@ -198,10 +240,10 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 // Resolve returns the agent endpoint of boxID and its wake id after checking that user owns it and it is ready.
 func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.Endpoint, string, error) {
 	var none machines.Endpoint
-	if boxID != BoxID(user) {
+	if !s.registry.HasBox(user, boxID) {
 		return none, "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
-	cur, err := s.current(ctx, user)
+	cur, err := s.current(ctx, user, boxID)
 	var ep machines.Endpoint
 	if err == nil && !s.ready(cur) && cur.State == machines.StateRunning {
 		err = &machines.NotRunningError{State: machines.StateStarting}
@@ -225,22 +267,98 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 	}
 }
 
-// current returns user's serving machine: the oldest, which a rebase replaces only when it deletes it.
-func (s *Service) current(ctx context.Context, user string) (machines.Machine, error) {
+// current returns the serving machine of user's box: the oldest, which a rebase replaces only when it deletes it.
+func (s *Service) current(ctx context.Context, user, box string) (machines.Machine, error) {
 	ms, err := s.machines.List(ctx, user)
 	if err != nil {
 		return machines.Machine{}, err
 	}
-	if len(ms) == 0 {
+	var cur machines.Machine
+	for _, m := range ms {
+		if boxOfMachine(m.ID) == box && (cur.ID == "" || older(m, cur)) {
+			cur = m
+		}
+	}
+	if cur.ID == "" {
 		return machines.Machine{}, machines.ErrNotFound
 	}
-	return slices.MinFunc(ms, func(a, b machines.Machine) int {
-		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID))
-	}), nil
+	return cur, nil
+}
+
+// currentMachines maps each of user's boxes that has a machine to its serving one.
+func (s *Service) currentMachines(ctx context.Context, user string) (map[string]machines.Machine, error) {
+	ms, err := s.machines.List(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	current := map[string]machines.Machine{}
+	for _, m := range ms {
+		box := boxOfMachine(m.ID)
+		if cur, ok := current[box]; !ok || older(m, cur) {
+			current[box] = m
+		}
+	}
+	return current, nil
+}
+
+// firstBox returns user's oldest box, adding one when the user has none.
+func (s *Service) firstBox(ctx context.Context, user string) (string, error) {
+	if list := s.registry.Boxes(user); len(list) > 0 {
+		return list[0].ID, nil
+	}
+	b, err := s.registry.AddBox(ctx, users.Box{ID: newBoxID(), Owner: user, Name: users.FirstBoxName})
+	if err != nil {
+		return "", registryError(ctx, err, "add box")
+	}
+	return b.ID, nil
+}
+
+// checkRunning refuses to start box while another box of user holds the running limit.
+func (s *Service) checkRunning(user, box string, current map[string]machines.Machine) error {
+	var running []string
+	for id, m := range current {
+		if id != box && holdsMemory(m) {
+			running = append(running, id)
+		}
+	}
+	if len(running) < s.defaults.MaxRunning {
+		return nil
+	}
+	slices.Sort(running)
+	names := make([]string, 0, len(running))
+	for _, b := range s.registry.Boxes(user) {
+		if slices.Contains(running, b.ID) {
+			names = append(names, fmt.Sprintf("%s (%s)", b.Name, b.ID))
+		}
+	}
+	return status.Errorf(codes.FailedPrecondition, "box %s is running, and %d may run at a time; hibernate it first",
+		strings.Join(names, ", "), s.defaults.MaxRunning)
+}
+
+func (s *Service) flavor(req *controlv1.Flavor) (machines.Flavor, error) {
+	flavor := resolveFlavor(req, s.defaults.Flavor)
+	if flavor != s.defaults.Flavor && !slices.Contains(s.defaults.Flavors, flavor) {
+		return flavor, status.Errorf(codes.InvalidArgument, "flavor vcpus:%d memory_mib:%d disk_gib:%d is not offered",
+			flavor.VCPUs, flavor.MemoryMiB, flavor.DiskGiB)
+	}
+	return flavor, nil
+}
+
+// lockStarts serializes the requests that may start a machine of user, so two cannot both pass the running limit.
+func (s *Service) lockStarts(user string) func() {
+	s.mu.Lock()
+	l := s.starts[user]
+	if l == nil {
+		l = &sync.Mutex{}
+		s.starts[user] = l
+	}
+	s.mu.Unlock()
+	l.Lock()
+	return l.Unlock
 }
 
 func (s *Service) withOperation(ctx context.Context, user, box string, m machines.Machine, phase controlv1.Phase) *controlv1.EnsureResponse {
-	op, started := s.ops.start(context.WithoutCancel(ctx), box, phase, m.Revision, operationTimeout)
+	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, phase, m.Revision, operationTimeout)
 	if started {
 		go s.follow(op, m.ID)
 	}
@@ -278,6 +396,11 @@ func (s *Service) follow(op *operation, machine string) {
 
 func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machine) *controlv1.Box {
 	b := toBox(box, m)
+	for _, rec := range s.registry.Boxes(user) {
+		if rec.ID == box {
+			b.Name = rec.Name
+		}
+	}
 	if m.State == machines.StateRunning && !s.ready(m) {
 		b.State = controlv1.BoxState_BOX_STATE_STARTING
 	}
@@ -296,12 +419,12 @@ func callerUser(ctx context.Context) (string, error) {
 }
 
 // ownerOf returns the caller when it owns boxID.
-func ownerOf(ctx context.Context, boxID string) (string, error) {
+func (s *Service) ownerOf(ctx context.Context, boxID string) (string, error) {
 	user, err := callerUser(ctx)
 	if err != nil {
 		return "", err
 	}
-	if boxID != BoxID(user) {
+	if !s.registry.HasBox(user, boxID) {
 		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
 	return user, nil

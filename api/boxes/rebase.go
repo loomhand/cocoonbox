@@ -18,7 +18,7 @@ import (
 
 func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*controlv1.Operation, error) {
 	box := req.GetBoxId()
-	user, err := ownerOf(ctx, box)
+	user, err := s.ownerOf(ctx, box)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +30,7 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	op, started := s.ops.start(context.WithoutCancel(ctx), box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
+	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if started {
 		go s.runRebase(op, user, m, image)
 	}

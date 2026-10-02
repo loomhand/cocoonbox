@@ -19,7 +19,7 @@ func TestProvisioningRoutesOnlyResidentialOwners(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "pod2/vm1"})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
 	svc.EnableResidential(residential, func(_ context.Context, user string) (bool, error) { return user == alice, nil })
 
@@ -37,7 +37,7 @@ func TestProvisionerFollowsTheSwitch(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateHibernated, Incarnation: "pod1/vm1", Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
 	var on atomic.Bool
 	on.Store(true)
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
 	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return on.Load(), nil })
 
@@ -60,7 +60,7 @@ func TestApplyExitRoutesEveryMachineOfTheUserOnly(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
 	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateStarting})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return true, nil })
 
 	if err := svc.ApplyExit(t.Context(), alice); err != nil {
@@ -76,7 +76,7 @@ func TestApplyExitRoutesEveryMachineOfTheUserOnly(t *testing.T) {
 func TestASwitchReadFailureHoldsProvisioning(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
-	svc := New(fake, testDefaults)
+	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
 	svc.provision.backoff = 0
 	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return false, errors.New("users table unavailable") })

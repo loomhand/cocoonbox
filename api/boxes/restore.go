@@ -13,7 +13,7 @@ import (
 
 // restoreMissing fills m, created because user's box had no machine, from the box's latest saved state.
 func (s *Service) restoreMissing(ctx context.Context, user, box string, m machines.Machine, saved head) *controlv1.EnsureResponse {
-	op, started := s.ops.start(context.WithoutCancel(ctx), box, controlv1.Phase_PHASE_RESTORING, m.Revision, stateTimeout)
+	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_RESTORING, m.Revision, stateTimeout)
 	if started {
 		go s.runRestore(op, user, m, saved)
 	}
