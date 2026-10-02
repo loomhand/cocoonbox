@@ -29,6 +29,7 @@ const CHUNK_AVG: u32 = 1 << 20;
 const CHUNK_MAX: u32 = 4 << 20;
 const MANIFEST_LIMIT: u64 = 256 << 20;
 const TRANSFERS: usize = 8;
+// a restore holds at most RESTORE_WRITES × (RESTORE_AHEAD + 1) chunks plus one sealed body per transfer
 const RESTORE_WRITES: usize = 32;
 const RESTORE_AHEAD: usize = 2;
 const PLAN_READS: usize = 4;
@@ -881,7 +882,7 @@ struct Reuse {
 }
 
 impl Reuse {
-    /// Size, mtime and the kernel-set ctime all match, so no write happened since the last read.
+    /// Size, mtime and the kernel-set ctime all match, so no write happened since the last walk.
     fn matches(&self, entry: &Entry, ctime_ns: Option<i64>) -> bool {
         self.size == entry.size
             && self.mtime_ms == entry.mtime_ms
