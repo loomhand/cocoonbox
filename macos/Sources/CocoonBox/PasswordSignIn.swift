@@ -54,10 +54,10 @@ struct PasswordSignInSheet: View {
                 }
             }
             LabeledContent(oneTimeCode ? "Code" : "Password") {
-                CredentialField(text: $secret, kind: oneTimeCode ? .oneTimeCode : .password)
+                CredentialField(text: $secret, kind: oneTimeCode ? .oneTimeCode : .password, focused: true)
                     .id(oneTimeCode)
             }
-            Text("Paste from Passwords or 1Password, or type it. It goes to this page only and is never stored in the box.")
+            Text("Pick a saved password in the Password field (search for the site), paste one, or type it. It goes to this page only and is never stored in the box.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Toggle("Submit the form", isOn: $submit)
@@ -111,10 +111,11 @@ struct PasswordSignInSheet: View {
     }
 }
 
-// CredentialField is an AppKit field with a content type; an ad hoc signed app gets no AutoFill on it (design.md 20.4).
+// CredentialField is an AppKit field with a content type, so AutoFill offers the Mac's Passwords on it (design.md 20.4).
 struct CredentialField: NSViewRepresentable {
     @Binding var text: String
     let kind: NSTextContentType
+    var focused = false
 
     func makeNSView(context: Context) -> NSTextField {
         let field = kind == .password ? NSSecureTextField() : NSTextField()
@@ -126,6 +127,9 @@ struct CredentialField: NSViewRepresentable {
 
     func updateNSView(_ field: NSTextField, context: Context) {
         if field.stringValue != text { field.stringValue = text }
+        guard focused, !context.coordinator.focused else { return }
+        context.coordinator.focused = true
+        DispatchQueue.main.async { field.window?.makeFirstResponder(field) }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -134,6 +138,7 @@ struct CredentialField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextFieldDelegate {
         let text: Binding<String>
+        var focused = false
 
         init(text: Binding<String>) {
             self.text = text
