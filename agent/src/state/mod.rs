@@ -33,6 +33,7 @@ const RESTORE_WRITES: usize = 4;
 const ATTEMPTS: u32 = 3;
 const RETRY_BASE: Duration = Duration::from_millis(500);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
+const REUSE_AGE_MS: i64 = 1_000;
 const STAGING_PREFIX: &str = ".cb-restore-";
 const SQLITE_SIDECARS: [&str; 2] = ["-wal", "-journal"];
 
@@ -160,7 +161,7 @@ impl StateEngine {
             })?;
         let mut jobs = Vec::with_capacity(req.puts.len() + 1);
         for put in req.puts {
-            if !snap.chunks.contains(&put.chunk_id) {
+            if !snap.known.chunks.contains(&put.chunk_id) {
                 return Err(StateError::Invalid(format!(
                     "chunk {} is not part of snapshot {}",
                     put.chunk_id, snap.snapshot_id
@@ -198,7 +199,7 @@ impl StateEngine {
             return Ok(());
         };
         meter.add(self.put(put, path).await?).await;
-        self.save_known(&snap.key_id, &snap.chunks).await?;
+        self.save_known(&snap.known).await?;
         let _ = tokio::fs::remove_dir_all(&snap.spool).await;
         let id = snap.snapshot_id.clone();
         *pinned = None;
@@ -449,17 +450,18 @@ impl StateEngine {
         tokio::fs::create_dir_all(&spool)
             .await
             .map_err(|e| format!("create {}: {e}", spool.display()))?;
-        let known = if parent.is_empty() {
-            HashSet::new()
+        let mut last = if parent.is_empty() {
+            Known::default()
         } else {
             self.load_known(key_id).await
         };
         let mut chunker = Chunker {
             keys: Arc::clone(keys),
             spool: spool.clone(),
-            known: &known,
+            known: &last.chunks,
             sizes: HashMap::new(),
         };
+        let settled_ns = (crate::now_ms() - REUSE_AGE_MS) * 1_000_000;
         let walked = self
             .tool(
                 "state_walk",
@@ -476,8 +478,10 @@ impl StateEngine {
         let mut files = Vec::with_capacity(entries.len());
         let mut skipped = Vec::new();
         let mut backed_up: HashSet<String> = HashSet::new();
-        for entry in entries {
+        let mut reuse = HashMap::new();
+        for mut entry in entries {
             let key = format!("{}/{}", entry.root, entry.path);
+            let ctime_ns = entry.ctime_ns.take();
             if SQLITE_SIDECARS.iter().any(|s| {
                 key.strip_suffix(s)
                     .is_some_and(|base| backed_up.contains(base))
@@ -494,11 +498,36 @@ impl StateEngine {
             let Some(root) = roots.get(entry.root.as_str()) else {
                 continue;
             };
+            if let Some(r) = last
+                .files
+                .remove(&key)
+                .filter(|r| r.matches(&entry, ctime_ns))
+            {
+                chunker.sizes.extend(r.chunks.iter().cloned());
+                let chunks = r.chunks.iter().map(|(id, _)| id.clone()).collect();
+                reuse.insert(key, r);
+                files.push(FileRecord { entry, chunks });
+                continue;
+            }
             let path = root.join(&entry.path);
             match chunker.remote(&self.toolhost, &path).await? {
                 Some((chunks, backup)) => {
                     if backup {
                         backed_up.insert(key);
+                    } else if let Some(ctime_ns) = ctime_ns.filter(|c| *c < settled_ns) {
+                        let sized = chunks
+                            .iter()
+                            .map(|id| (id.clone(), chunker.sizes.get(id).copied().unwrap_or(0)))
+                            .collect();
+                        reuse.insert(
+                            key,
+                            Reuse {
+                                size: entry.size,
+                                mtime_ms: entry.mtime_ms,
+                                ctime_ns,
+                                chunks: sized,
+                            },
+                        );
                     }
                     files.push(FileRecord { entry, chunks });
                 }
@@ -553,9 +582,12 @@ impl StateEngine {
         };
         let pinned = Pinned {
             snapshot_id,
-            key_id: key_id.to_owned(),
             spool,
-            chunks: ids.into_iter().collect(),
+            known: Known {
+                key_id: key_id.to_owned(),
+                chunks: ids.into_iter().collect(),
+                files: reuse,
+            },
         };
         Ok((pinned, response))
     }
@@ -670,22 +702,18 @@ impl StateEngine {
         Ok(size)
     }
 
-    async fn load_known(&self, key_id: &str) -> HashSet<String> {
+    async fn load_known(&self, key_id: &str) -> Known {
         let Ok(raw) = tokio::fs::read(self.work.join(KNOWN_FILE)).await else {
-            return HashSet::new();
+            return Known::default();
         };
         match serde_json::from_slice::<Known>(&raw) {
-            Ok(k) if k.key_id == key_id => k.chunks,
-            _ => HashSet::new(),
+            Ok(k) if k.key_id == key_id => k,
+            _ => Known::default(),
         }
     }
 
-    async fn save_known(&self, key_id: &str, chunks: &HashSet<String>) -> Result<(), String> {
-        let known = Known {
-            key_id: key_id.to_owned(),
-            chunks: chunks.clone(),
-        };
-        let raw = serde_json::to_vec(&known).map_err(|e| format!("encode known chunks: {e}"))?;
+    async fn save_known(&self, known: &Known) -> Result<(), String> {
+        let raw = serde_json::to_vec(known).map_err(|e| format!("encode known chunks: {e}"))?;
         tokio::fs::write(self.work.join(KNOWN_FILE), raw)
             .await
             .map_err(|e| format!("write known chunks: {e}"))
@@ -695,16 +723,35 @@ impl StateEngine {
 /// The snapshot waiting for Upload.
 struct Pinned {
     snapshot_id: String,
-    key_id: String,
     spool: PathBuf,
-    chunks: HashSet<String>,
+    known: Known,
 }
 
-/// Chunk ids the store held after the last upload under one key.
-#[derive(Deserialize, Serialize)]
+/// Chunk ids the store held after the last upload under one key, and the files that can reuse theirs.
+#[derive(Default, Deserialize, Serialize)]
 struct Known {
     key_id: String,
     chunks: HashSet<String>,
+    #[serde(default)]
+    files: HashMap<String, Reuse>,
+}
+
+/// A file's stamp at the last upload and its chunks with their sizes.
+#[derive(Deserialize, Serialize)]
+struct Reuse {
+    size: u64,
+    mtime_ms: i64,
+    ctime_ns: i64,
+    chunks: Vec<(String, u64)>,
+}
+
+impl Reuse {
+    /// Size, mtime and the kernel-set ctime all match, so no write happened since the last read.
+    fn matches(&self, entry: &Entry, ctime_ns: Option<i64>) -> bool {
+        self.size == entry.size
+            && self.mtime_ms == entry.mtime_ms
+            && ctime_ns == Some(self.ctime_ns)
+    }
 }
 
 /// Turns are paused and Chrome is closed while this lives.

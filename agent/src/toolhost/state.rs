@@ -63,6 +63,9 @@ pub struct Entry {
     pub size: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    /// Change time of a file; the plan's reuse key, kept out of the manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ctime_ns: Option<i64>,
 }
 
 /// Kinds of entries a snapshot keeps; sockets, fifos and devices are skipped.
@@ -402,6 +405,8 @@ fn walk_root(root: &Root, excludes: &Excludes, out: &mut Vec<Entry>) {
                 mtime_ms: mtime_ms(meta.modified().ok()),
                 size: if kind == Kind::File { meta.len() } else { 0 },
                 target,
+                ctime_ns: (kind == Kind::File)
+                    .then(|| meta.ctime().saturating_mul(1_000_000_000) + meta.ctime_nsec()),
             });
         }
     }
@@ -483,6 +488,8 @@ mod tests {
         );
         assert_eq!(entries[1].size, 5);
         assert_eq!(entries[2].target.as_deref(), Some("a.txt"));
+        assert!(entries[1].ctime_ns.is_some());
+        assert!(entries[0].ctime_ns.is_none() && entries[2].ctime_ns.is_none());
     }
 
     #[tokio::test]

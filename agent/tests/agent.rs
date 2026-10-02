@@ -2224,6 +2224,25 @@ fn manifest_of(objects: &Objects, id: &str) -> Value {
     serde_json::from_slice(&keys.open(id, &sealed, 1 << 30).unwrap()).unwrap()
 }
 
+fn known_files(h: &Harness) -> Value {
+    let path = h
+        .home
+        .parent()
+        .unwrap()
+        .join("state/state/known-chunks.json");
+    serde_json::from_slice::<Value>(&std::fs::read(path).unwrap()).unwrap()["files"].take()
+}
+
+fn chunks_of(m: &Value, path: &str) -> Value {
+    m["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"] == path)
+        .unwrap()["chunks"]
+        .clone()
+}
+
 fn write_script(path: &Path, body: &str) {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, format!("#!/bin/sh\n{body}\n")).unwrap();
@@ -2627,4 +2646,85 @@ async fn upload_can_span_several_calls_with_the_manifest_last() {
         Code::InvalidArgument,
         "the snapshot is unpinned after the manifest"
     );
+}
+
+#[tokio::test]
+async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_mtime() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    let a = h.workspace.join("a.txt");
+    std::fs::write(&a, noise(10_000, 1)).unwrap();
+    std::fs::write(h.workspace.join("b.txt"), noise(10_000, 2)).unwrap();
+    std::fs::write(h.workspace.join("c.txt"), noise(10_000, 3)).unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let first = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &first).await;
+    let index = known_files(&h);
+    for f in ["workspace/a.txt", "workspace/b.txt", "workspace/c.txt"] {
+        assert!(index.get(f).is_some(), "{f} not indexed: {index}");
+    }
+    let m1 = manifest_of(&objects, &first.snapshot_id);
+    assert!(
+        m1["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f.get("ctime_ns").is_none())
+    );
+
+    let mtime = std::fs::metadata(&a).unwrap().modified().unwrap();
+    std::fs::write(&a, noise(10_000, 4)).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&a)
+        .unwrap()
+        .set_modified(mtime)
+        .unwrap();
+    assert_eq!(std::fs::metadata(&a).unwrap().modified().unwrap(), mtime);
+    let known = h
+        .home
+        .parent()
+        .unwrap()
+        .join("state/state/known-chunks.json");
+    let mut forged: Value = serde_json::from_slice(&std::fs::read(&known).unwrap()).unwrap();
+    forged["files"]["workspace/c.txt"]["chunks"] =
+        forged["files"]["workspace/b.txt"]["chunks"].clone();
+    std::fs::write(&known, serde_json::to_vec(&forged).unwrap()).unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    std::fs::write(h.workspace.join("fresh.txt"), b"fresh").unwrap();
+
+    let second = plan(&h, pb::Consistency::Quiesced, &first.snapshot_id).await;
+    let sent = upload_missing(&h, &base, &objects, &second).await;
+    let m2 = manifest_of(&objects, &second.snapshot_id);
+    assert_ne!(
+        chunks_of(&m2, "a.txt"),
+        chunks_of(&m1, "a.txt"),
+        "a rewrite with the same size and mtime changes ctime and is reread"
+    );
+    assert_eq!(chunks_of(&m2, "b.txt"), chunks_of(&m1, "b.txt"));
+    assert_eq!(
+        chunks_of(&m2, "c.txt"),
+        chunks_of(&m1, "b.txt"),
+        "missed by design: an unchanged size, mtime and ctime reuses the recorded chunks unread"
+    );
+    assert!(sent <= 3, "sent {sent} chunks");
+    let index = known_files(&h);
+    assert!(index.get("workspace/a.txt").is_some(), "{index}");
+    assert!(
+        index.get("workspace/fresh.txt").is_none(),
+        "a file changed within a second of the walk is never reused: {index}"
+    );
+
+    let fresh_root = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &fresh_root).await;
+    let m3 = manifest_of(&objects, &fresh_root.snapshot_id);
+    assert_eq!(
+        chunks_of(&m3, "c.txt"),
+        chunks_of(&m1, "c.txt"),
+        "a plan without a parent reads every file"
+    );
+    restore(&h, &base, &objects, &second.snapshot_id)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&a).unwrap(), noise(10_000, 4));
 }
