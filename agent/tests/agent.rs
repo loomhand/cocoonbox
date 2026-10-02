@@ -28,6 +28,15 @@ use tonic::{Code, Request};
 
 const TOKEN: &str = "edge-token-for-tests";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+const TARGET_TOOLS: [&str; 7] = [
+    "move_cursor",
+    "click",
+    "drag",
+    "scroll",
+    "type_text",
+    "press_key",
+    "hotkey",
+];
 
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
@@ -392,6 +401,10 @@ fn fake_cua(path: &Path, log: Log) {
                     return;
                 }
                 let result = match name.as_str() {
+                    n if req["args"]["target"].is_object() && !TARGET_TOOLS.contains(&n) => json!({
+                        "isError": true,
+                        "content": [{"type": "text", "text": format!("{n} does not accept a per-call target")}]
+                    }),
                     "get_window_state" => json!({
                         "content": [{"type": "text", "text": "tree"}],
                         "structuredContent": {"window_id": 7, "window_bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "elements": [{"element_index": 0, "element_token": "tok-0", "role": "text", "label": "editor", "depth": 0, "frame": {"x": 10, "y": 20, "w": 100, "h": 40}}]}
@@ -2287,6 +2300,42 @@ async fn concurrent_computer_acts_do_not_interleave() {
         .await;
     let init: Value = raw.json().await.unwrap();
     assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
+}
+
+#[tokio::test]
+async fn pixel_double_and_right_clicks_are_desktop_clicks() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+    for action in ["double_click", "right_click"] {
+        let act = mcp
+            .call("computer_act", json!({"action": action, "x": 30, "y": 40}))
+            .await;
+        assert_eq!(act["isError"], false, "{act}");
+    }
+    let clicks = driver_calls(&h, "click");
+    let desktop = json!({"kind": "desktop", "display_id": "primary"});
+    assert_eq!(
+        (&clicks[0]["count"], &clicks[0]["target"]),
+        (&json!(2), &desktop)
+    );
+    assert_eq!(
+        (&clicks[1]["button"], &clicks[1]["target"]),
+        (&json!("right"), &desktop)
+    );
+
+    mcp.call("computer_state", json!({})).await;
+    let act = mcp
+        .call(
+            "computer_act",
+            json!({"action": "double_click", "element": 0}),
+        )
+        .await;
+    assert_eq!(act["isError"], false, "{act}");
+    let double = &driver_calls(&h, "double_click")[0];
+    assert_eq!(
+        (&double["element_token"], &double["pid"]),
+        (&json!("tok-0"), &json!(42))
+    );
 }
 
 #[tokio::test]
