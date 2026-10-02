@@ -895,7 +895,6 @@ struct Quiet {
     chrome: bool,
 }
 
-/// A file Restore writes and the chunks it is made of.
 struct Target<'a> {
     dest: Dest<'a>,
     chunks: &'a [String],
@@ -920,7 +919,6 @@ enum Part {
     },
 }
 
-/// The open file a target is written into.
 enum Sink {
     Remote(FileWriter),
     Local(tokio::fs::File),
@@ -1032,7 +1030,6 @@ impl Chunker<'_> {
         Ok(())
     }
 
-    /// Pairs each chunk id with its size.
     fn sized<'s>(
         &self,
         ids: impl IntoIterator<Item = &'s String>,
