@@ -116,6 +116,9 @@ struct ApplyArgs {
     dirs: Vec<DirSpec>,
     #[serde(default)]
     symlinks: Vec<LinkSpec>,
+    /// Final directory modes, set last and deepest first so a read-only directory never blocks its contents.
+    #[serde(default)]
+    modes: Vec<DirSpec>,
 }
 
 #[derive(Deserialize)]
@@ -257,9 +260,9 @@ pub async fn write<R: AsyncRead + Unpin>(args: Value, r: &mut R) -> Output {
     }
 }
 
-/// `state_apply`: creates directories and symlinks.
+/// `state_apply`: creates directories and symlinks, then sets directory modes.
 pub async fn apply(args: Value) -> Result<String, String> {
-    let a: ApplyArgs = parse(args)?;
+    let mut a: ApplyArgs = parse(args)?;
     tokio::task::spawn_blocking(move || {
         for d in &a.dirs {
             fs::create_dir_all(&d.path).map_err(|e| format!("mkdir {}: {e}", d.path.display()))?;
@@ -275,10 +278,17 @@ pub async fn apply(args: Value) -> Result<String, String> {
             symlink(&l.target, &l.path)
                 .map_err(|e| format!("symlink {}: {e}", l.path.display()))?;
         }
+        a.modes
+            .sort_by_key(|m| std::cmp::Reverse(m.path.components().count()));
+        for m in &a.modes {
+            fs::set_permissions(&m.path, fs::Permissions::from_mode(m.mode & 0o7777))
+                .map_err(|e| format!("chmod {}: {e}", m.path.display()))?;
+        }
         Ok(format!(
-            "{} dirs, {} symlinks",
+            "{} dirs, {} symlinks, {} modes",
             a.dirs.len(),
-            a.symlinks.len()
+            a.symlinks.len(),
+            a.modes.len()
         ))
     })
     .await

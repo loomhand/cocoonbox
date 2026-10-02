@@ -2844,3 +2844,46 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
     let shots = driver_calls(&h, "get_desktop_state");
     assert_eq!(shots.last().unwrap()["session"], second);
 }
+
+#[tokio::test]
+async fn restore_writes_files_under_a_read_only_directory_and_keeps_its_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    let ro = h.home.join("go/pkg/mod/example.com/m@v1.0.0");
+    std::fs::create_dir_all(ro.join("sub")).unwrap();
+    std::fs::write(ro.join("go.mod"), b"module example.com/m").unwrap();
+    std::fs::write(ro.join("sub/a.go"), noise(5_000, 31)).unwrap();
+    let chmod = |p: &Path, mode| {
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(mode)).unwrap()
+    };
+    for d in [ro.join("sub"), ro.clone()] {
+        chmod(&d, 0o555);
+    }
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    for d in [ro.clone(), ro.join("sub")] {
+        chmod(&d, 0o755);
+    }
+    std::fs::remove_dir_all(h.home.join("go")).unwrap();
+
+    let done = restore(&h, &base, &objects, &planned.snapshot_id)
+        .await
+        .unwrap();
+    assert!(done.finished);
+    assert_eq!(
+        std::fs::read(ro.join("go.mod")).unwrap(),
+        b"module example.com/m"
+    );
+    assert_eq!(
+        std::fs::read(ro.join("sub/a.go")).unwrap(),
+        noise(5_000, 31)
+    );
+    for d in [ro.clone(), ro.join("sub")] {
+        let mode = std::fs::metadata(&d).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(mode, 0o555, "{}", d.display());
+    }
+    for d in [ro.clone(), ro.join("sub")] {
+        chmod(&d, 0o755);
+    }
+}

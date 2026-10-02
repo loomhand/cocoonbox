@@ -279,7 +279,7 @@ impl StateEngine {
         S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
     {
         let mut targets = Vec::new();
-        let mut links = Vec::with_capacity(self.roots.len());
+        let mut finals = Vec::with_capacity(self.roots.len());
         let mut swaps = Vec::with_capacity(self.roots.len());
         for root in &self.roots {
             let records: Vec<&FileRecord> = manifest
@@ -292,10 +292,14 @@ impl StateEngine {
                 .join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4().simple()));
             let mut dirs = vec![json!({"path": staging, "mode": 0o700})];
             let mut root_links = Vec::new();
+            let mut modes = Vec::new();
             for r in &records {
                 let path = staging.join(&r.entry.path);
                 match r.entry.kind {
-                    Kind::Dir => dirs.push(json!({"path": path, "mode": r.entry.mode})),
+                    Kind::Dir => {
+                        dirs.push(json!({"path": path, "mode": r.entry.mode | 0o700}));
+                        modes.push(json!({"path": path, "mode": r.entry.mode}));
+                    }
                     Kind::Symlink => root_links.push(json!({
                         "path": path,
                         "target": r.entry.target.clone().unwrap_or_default(),
@@ -308,7 +312,7 @@ impl StateEngine {
             }
             self.tool("state_apply", json!({"dirs": dirs, "symlinks": []}))
                 .await?;
-            links.push(root_links);
+            finals.push(json!({"dirs": [], "symlinks": root_links, "modes": modes}));
             let names: BTreeSet<&str> = records
                 .iter()
                 .filter_map(|r| r.entry.path.split('/').next())
@@ -332,9 +336,8 @@ impl StateEngine {
         let mut meter = self
             .fill(keys, targets, queue, reqs, cache, progress)
             .await?;
-        for symlinks in links {
-            self.tool("state_apply", json!({"dirs": [], "symlinks": symlinks}))
-                .await?;
+        for last in finals {
+            self.tool("state_apply", last).await?;
         }
         let quiet = self.quiesce().await?;
         let result = self.swap_in(manifest, cache, swaps).await;
