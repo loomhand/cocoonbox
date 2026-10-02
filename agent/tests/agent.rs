@@ -2581,6 +2581,31 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
 }
 
 #[tokio::test]
+async fn a_share_session_closes_its_chrome_window() {
+    let Some(chrome) = test_chrome() else {
+        return;
+    };
+    let site = field_pages().await;
+    let page = format!("http://{site}/guest");
+    let h = Harness::with_chrome(Vec::new(), &chrome).await;
+    let edge = Edge::provision(&h);
+    let mut guest = McpClient::connect_as(&h, Some(edge.share("share:sh-1:write"))).await;
+    let nav = guest.call("browser_navigate", json!({"url": page})).await;
+    assert_eq!(nav["isError"], false, "{nav}");
+    assert!(tabs(h.cdp_port).await.iter().any(|t| t.1 == page));
+    let closed = guest
+        .authorize(reqwest::Client::new().delete(format!("{}/mcp", h.endpoint)))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(closed.status(), 204);
+    assert!(
+        tab_gone(h.cdp_port, &page).await,
+        "the closed share session's window stayed open"
+    );
+}
+
+#[tokio::test]
 async fn delete_closes_the_agents_chrome_window() {
     let Some(chrome) = test_chrome() else {
         return;
