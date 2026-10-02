@@ -48,14 +48,19 @@ struct PasswordSignInSheet: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            if !oneTimeCode {
-                LabeledContent("User name") {
-                    CredentialField(text: $username, kind: .username)
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 10) {
+                if !oneTimeCode {
+                    GridRow {
+                        Text("User name")
+                        CredentialField(text: $username, kind: .username, focused: true)
+                    }
                 }
-            }
-            LabeledContent(oneTimeCode ? "Code" : "Password") {
-                CredentialField(text: $secret, kind: oneTimeCode ? .oneTimeCode : .password, focused: true)
-                    .id(oneTimeCode)
+                GridRow {
+                    Text(oneTimeCode ? "Code" : "Password")
+                        .gridColumnAlignment(.trailing)
+                    CredentialField(text: $secret, kind: oneTimeCode ? .oneTimeCode : .password, focused: oneTimeCode)
+                        .id(oneTimeCode)
+                }
             }
             Text("Pick a saved password in the Password field (search for the site), paste one, or type it. It goes to this page only and is never stored in the box.")
                 .font(.callout)

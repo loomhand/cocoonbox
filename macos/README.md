@@ -82,6 +82,8 @@ The box header shows when the box's user data (home, `/workspace`, agent history
 
 The app opens `Session.Screen` and runs a [swift-rfb](https://github.com/CMGS/swift-rfb) client directly on it: server bytes feed an `RFBPipe`, and the client's bytes go back as `ScreenClientFrame`s. There is no loopback socket. The client decodes into page-aligned memory that `RFBView` shows as a Metal texture without a copy. It draws on the display link only after a change, and asks for the next update once the GPU has read the frame, so an idle screen costs no CPU and no wakeups. It uses ContinuousUpdates when the server offers them. Otherwise it paces incremental requests every 33 ms while updates arrive, so a high-latency path is not held to one update per round trip.
 
+While you have taken over, the Edit menu's Paste, Copy and Cut (⌘V, ⌘C, ⌘X) act on the box when the screen has focus. ⌘V hands the Mac's plain text to the box's clipboard (ExtendedClipboard, UTF-8) and presses Ctrl+V there. ⌘C and ⌘X press Ctrl+C or Ctrl+X, and the box's next clipboard within 2 s goes to the Mac's. Nothing crosses otherwise: the box's own clipboard changes are ignored, so an agent in the box cannot rewrite the Mac's clipboard. Text over 1 MiB is dropped either way. The log records lengths only, never the text.
+
 swift-rfb is a local path package (`../../swift-rfb`), so it must be checked out next to this repository.
 
 ## Automation and measurements
@@ -93,6 +95,7 @@ These environment variables serve test runs:
 - `CB_KEYCHAIN_FILE`: a keychain file to use instead of the login keychain, so tests never touch the user's own. Create it with `security create-keychain` and unlock it with `security unlock-keychain`; `scripts/test-cli.sh` does this, and also runs with `HOME` set to a test directory.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.
+- `CB_PASTEBOARD=<name>`: use that private pasteboard instead of the general one, so a test run leaves the user's clipboard alone. Autopilot's `clip-paste` needs it.
 - `CB_RFB_RAW=1`: offer only Raw, for throughput baselines.
 - `CB_RFB_PACE=0`: turn off request pacing, for A/B runs.
 - `CB_RFB_EAGER=1`: send the whole client side of the RFB handshake before the server's banner. This saves a round trip, but works only with a server that speaks RFB 3.8 without a password. It overrides the `rfbEagerHandshake` default (`defaults write me.cmgs.cocoonbox rfbEagerHandshake -bool true`), which is off.

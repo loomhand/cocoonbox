@@ -18,6 +18,8 @@ final class ScreenController {
     // server's banner); only for a box whose RFB server speaks 3.8 without a
     // password. CB_RFB_EAGER=1 overrides it.
     static let eagerHandshakeKey = "rfbEagerHandshake"
+    static let clipboardLimit = 1 << 20
+    static let copyWindow: TimeInterval = 2
 
     var status = Status.idle
     var framebufferSize = CGSize.zero
@@ -30,6 +32,9 @@ final class ScreenController {
     @ObservationIgnored let container = LiveScreenContainer()
     @ObservationIgnored private var screen: LiveScreen?
     @ObservationIgnored private var connection: BoxConnection?
+    @ObservationIgnored private var copiedAt: Date?
+    // CB_PASTEBOARD names a private pasteboard, so test runs leave the user's clipboard alone.
+    @ObservationIgnored let pasteboard = ProcessInfo.processInfo.environment["CB_PASTEBOARD"].map { NSPasteboard(name: .init($0)) } ?? .general
 
     var screenStats: ScreenSession.Stats? { screen?.stats }
 
@@ -43,6 +48,8 @@ final class ScreenController {
         self.connection = connection
         if screen == nil, let live = LiveScreen(options: Self.options) {
             live.onStatus = { [weak self] in self?.apply($0) }
+            live.onClipboard = { [weak self] in self?.received($0) }
+            container.controller = self
             container.install(live)
             screen = live
         }
@@ -110,11 +117,49 @@ final class ScreenController {
         guard takeOver else { return }
         screen?.control(character)
     }
+
+    // paste sends the Mac's plain text to the box's clipboard and pastes it there.
+    func paste() {
+        guard takeOver, let text = pasteboard.string(forType: .string) else { return }
+        let bytes = text.utf8.count
+        guard bytes <= Self.clipboardLimit else {
+            Perf.mark("clipboard_out", "dropped bytes=\(bytes)")
+            return
+        }
+        Perf.mark("clipboard_out", "bytes=\(bytes)")
+        screen?.paste(text)
+    }
+
+    // copy sends Control+C or Control+X and accepts the box's next clipboard
+    // for copyWindow; any other clipboard from the box is ignored.
+    func copy(cut: Bool) {
+        guard takeOver else { return }
+        copiedAt = Date()
+        screen?.control(cut ? "x" : "c")
+    }
+
+    private func received(_ text: String) {
+        let bytes = text.utf8.count
+        guard takeOver, let copiedAt, Date().timeIntervalSince(copiedAt) < Self.copyWindow else {
+            Perf.mark("clipboard_in", "ignored bytes=\(bytes)")
+            return
+        }
+        self.copiedAt = nil
+        guard bytes <= Self.clipboardLimit else {
+            Perf.mark("clipboard_in", "dropped bytes=\(bytes)")
+            return
+        }
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        Perf.mark("clipboard_in", "bytes=\(bytes)")
+    }
 }
 
 // LiveScreenContainer stacks the Metal view and a non-interactive overlay
-// that draws ComputerAction markers.
-final class LiveScreenContainer: NSView {
+// that draws ComputerAction markers. As the Metal view's next responder it
+// takes the Edit menu's Paste, Copy and Cut while that view has focus.
+final class LiveScreenContainer: NSView, NSMenuItemValidation {
+    weak var controller: ScreenController?
     private var screen: LiveScreen?
     private let overlay = MarkerOverlay()
 
@@ -150,6 +195,22 @@ final class LiveScreenContainer: NSView {
     func showMarker(x: Int, y: Int, label: String) {
         guard let screen, let point = screen.viewPoint(framebufferX: x, y: y) else { return }
         overlay.pulse(at: convert(point, from: screen.view), label: label)
+    }
+
+    @objc func paste(_ sender: Any?) {
+        controller?.paste()
+    }
+
+    @objc func copy(_ sender: Any?) {
+        controller?.copy(cut: false)
+    }
+
+    @objc func cut(_ sender: Any?) {
+        controller?.copy(cut: true)
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        controller?.takeOver == true
     }
 }
 

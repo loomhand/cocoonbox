@@ -17,7 +17,9 @@ import Foundation
 // wait-phase:<phase>[:seconds], lock:<label> (logs whether agents may start or prompt, and take_over),
 // rename:<name> (on the selected agent or local agent) and delete (on the
 // selected agent), end-local, password-signin[:off],
-// fill-credential:<username> (the password comes from CB_FILL_SECRET, so no step logs it), quit.
+// fill-credential:<username> (the password comes from CB_FILL_SECRET, so no step logs it),
+// clip-paste[:<bytes>] (puts CB_CLIP_TEXT, or that many bytes, on the CB_PASTEBOARD pasteboard,
+// then sends the Command+V menu action), clip-copy and clip-cut (Command+C or X, then wait for the pasteboard), quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -100,6 +102,20 @@ enum Autopilot {
             model.showPasswordSignIn = arg != "off"
         case "fill-credential":
             await fillCredential(model, username: arg)
+        case "clip-paste":
+            guard ProcessInfo.processInfo.environment["CB_PASTEBOARD"] != nil else {
+                Perf.mark("autopilot_unknown", "clip-paste needs CB_PASTEBOARD")
+                return
+            }
+            let text = Int(arg).map { String(repeating: "a", count: $0) } ?? ProcessInfo.processInfo.environment["CB_CLIP_TEXT"] ?? ""
+            model.screen.pasteboard.clearContents()
+            model.screen.pasteboard.setString(text, forType: .string)
+            command("v", model: model)
+        case "clip-copy", "clip-cut":
+            let before = model.screen.pasteboard.changeCount
+            command(verb == "clip-cut" ? "x" : "c", model: model)
+            await until(3) { model.screen.pasteboard.changeCount != before }
+            Perf.mark("clip_copy", "changed=\(model.screen.pasteboard.changeCount != before) bytes=\(model.screen.pasteboard.string(forType: .string)?.utf8.count ?? 0)")
         case "local":
             if let kind = LocalAgentKind(rawValue: arg) {
                 let before = model.localAgents.count
@@ -186,6 +202,14 @@ enum Autopilot {
             }
             try? await pause(.milliseconds(60))
         }
+    }
+
+    // command performs the main menu's Command+<key> item from the screen window's
+    // first responder, as the key equivalent does when the window is key.
+    private static func command(_ key: String, model: AppModel) {
+        let item = NSApp.mainMenu?.items.lazy.compactMap { $0.submenu?.items.first { $0.keyEquivalent == key && $0.keyEquivalentModifierMask == .command } }.first
+        guard let action = item?.action, let responder = model.screen.container.window?.firstResponder else { return }
+        Perf.mark("autopilot_command", "key=\(key) action=\(action) handled=\(responder.tryToPerform(action, with: item))")
     }
 
     private static func fillCredential(_ model: AppModel, username: String) async {

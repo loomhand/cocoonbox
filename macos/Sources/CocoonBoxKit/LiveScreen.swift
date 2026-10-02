@@ -27,6 +27,7 @@ public final class LiveScreen {
     }
 
     public var onStatus: ((Status) -> Void)?
+    public var onClipboard: ((String) -> Void)?
 
     private let rfbView: RFBView
     private let options: Options
@@ -108,14 +109,27 @@ public final class LiveScreen {
         client.pointer(x: x, y: y, buttons: [])
     }
 
-    // control sends Control+<character>.
+    // control sends Control+<character>. It lifts both Super keys first: a
+    // Command shortcut that lands here has already pressed Super in the box.
     public func control(_ character: String) {
         guard let client = session?.client else { return }
         latency.input()
         let controlKey: UInt32 = 0xFFE3
         client.key(controlKey, down: true)
+        for command: UInt16 in [0x37, 0x36] {
+            if let keysym = RFBKeyMap.keysym(keyCode: command, characters: nil) {
+                client.key(keysym, down: false, scancode: RFBKeyMap.scancode(keyCode: command))
+            }
+        }
         client.type(character)
         client.key(controlKey, down: false)
+    }
+
+    // paste offers text as the box's clipboard, then sends Control+V.
+    public func paste(_ text: String) {
+        guard let client = session?.client else { return }
+        client.setClipboard(text)
+        control("v")
     }
 
     private var configuration: RFBClient.Configuration {
@@ -160,6 +174,8 @@ public final class LiveScreen {
                             Perf.mark("rfb_first_update", String(format: "since_connect_ms=%.1f", Perf.sinceStartMs - connectAt))
                         }
                         latency.updated(dirty)
+                    case .clipboard(let text):
+                        Task { @MainActor in self?.onClipboard?(text) }
                     default:
                         break
                     }
