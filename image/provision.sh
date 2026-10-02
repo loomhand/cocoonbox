@@ -10,7 +10,7 @@ CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VE
 CHROME_URL=https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
-	tigervnc-xorg-extension xauth x11-xserver-utils xinput
+	tigervnc-xorg-extension xauth x11-xserver-utils x11-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
 	mousepad nftables sudo libnss-myhostname
 	locales fonts-noto-cjk fonts-noto-color-emoji
