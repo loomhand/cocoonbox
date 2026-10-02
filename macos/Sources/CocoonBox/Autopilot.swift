@@ -14,7 +14,7 @@ import Foundation
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
 // wait-external[:seconds], wait-tools:<count>[:seconds], wait-pointer[:seconds],
 // confirm:<save|upgrade|delete|off>, save-now, upgrade, wait-operation[:seconds],
-// wait-phase:<phase>[:seconds], lock:<label> (logs whether agents may start or prompt),
+// wait-phase:<phase>[:seconds], lock:<label> (logs whether agents may start or prompt, and take_over),
 // rename:<name> (on the selected agent or local agent) and delete (on the
 // selected agent), end-local, password-signin[:off],
 // fill-credential:<username> (the password comes from CB_FILL_SECRET, so no step logs it), quit.
@@ -156,7 +156,7 @@ enum Autopilot {
             let parts = arg.split(separator: ":").map(String.init)
             await until(parts.count > 1 ? Double(parts[1]) ?? 60 : 60) { model.operation?.events.last?.phase.label == parts.first }
         case "lock":
-            Perf.mark("lock", "label=\(arg) agents_ready=\(model.agentsReady) box_running=\(model.boxRunning) replacing=\(model.replacing?.status ?? "-")")
+            Perf.mark("lock", "label=\(arg) agents_ready=\(model.agentsReady) take_over=\(model.screen.takeOver) box_running=\(model.boxRunning) replacing=\(model.replacing?.status ?? "-")")
         case "end-local":
             if let session = model.selectedLocal { model.closeLocal(session) }
         case "copy-mcp":

@@ -38,7 +38,7 @@ struct RootView: View {
                     Label("Take over", systemImage: model.screen.takeOver ? "hand.raised.fill" : "hand.raised")
                 }
                 .help("When on, your mouse and keyboard drive the box screen")
-                .disabled(!model.boxRunning)
+                .disabled(!model.agentsReady)
                 Button {
                     model.screen.poppedOut.toggle()
                 } label: {

@@ -434,6 +434,7 @@ final class AppModel {
     private func watch(operation id: String, title: String, replacing: Bool = false) {
         operationTask?.cancel()
         operation = OperationProgress(id: id, title: title, replacing: replacing)
+        if replacing { screen.takeOver = false }
         operationTask = Task { [weak self] in
             var attempt = 0
             let backoff = Backoff()
@@ -465,6 +466,7 @@ final class AppModel {
             progress.failed = event.phase == .failed
         }
         operation = progress
+        if replacing != nil { screen.takeOver = false }
         if var current = box, event.boxState != .unspecified {
             current.state = event.boxState
             apply(box: current)
