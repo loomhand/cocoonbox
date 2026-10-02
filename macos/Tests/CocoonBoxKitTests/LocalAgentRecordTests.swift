@@ -51,6 +51,15 @@ import Testing
         #expect(record.displayName == "Mine")
     }
 
+    @Test func codexNamesASessionClaimedBeforeItHadAName() throws {
+        let home = try temporaryHome()
+        try rollout(home, id: "resumed", at: start.addingTimeInterval(-3600), prompt: "Open Chrome on the box")
+        var record = LocalAgentRecord(kind: .codex, boxID: "cb-1", sessionID: "resumed", workspace: workspace, startedAt: start)
+        record.settle(home: home)
+        #expect(record.sessionID == "resumed")
+        #expect(record.title == "Open Chrome on the box")
+    }
+
     @Test func cursorClaimsOnlyChatsWithAConversation() throws {
         let home = try temporaryHome()
         let cursor = LocalAgentRecord(kind: .cursor, boxID: "cb-1", workspace: workspace, startedAt: start)

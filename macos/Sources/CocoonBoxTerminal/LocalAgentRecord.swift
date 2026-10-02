@@ -42,7 +42,11 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
     // settle records the session Codex or Cursor chose once it is on disk,
     // and names a Codex session after its first prompt, as Codex sets no title.
     public mutating func settle(home: URL, now: Date = Date()) {
-        guard sessionID == nil, let session = claim(home: home, now: now) else { return }
+        if let sessionID {
+            if kind == .codex, title == nil { title = codexName(home: home, id: sessionID) }
+            return
+        }
+        guard let session = claim(home: home, now: now) else { return }
         sessionID = session.id
         title = title ?? session.name
     }
@@ -85,6 +89,16 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
             day = next
         }
         return sessions
+    }
+
+    // codexName reads the first prompt of the rollout of a session claimed before it had a name.
+    private func codexName(home: URL, id: String) -> String? {
+        let root = home.appendingPathComponent(".codex/sessions")
+        guard let files = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil) else { return nil }
+        for case let file as URL in files where file.lastPathComponent.hasSuffix("-\(id).jsonl") {
+            if let rollout = Self.rollout(file, workspace: workspace), rollout.id == id { return rollout.name }
+        }
+        return nil
     }
 
     // cursorSessions lists the workspace's chats that hold a conversation;
