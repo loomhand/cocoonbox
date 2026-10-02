@@ -610,12 +610,44 @@ fn write_identity(path: &Path, key: &SigningKey, wake_id: &str) -> String {
 
 fn credential(key: &SigningKey, key_id: &str, box_id: &str, wake_id: &str) -> String {
     let exp = cocoonbox_agent::now_ms() / 1000 + 600;
-    let signed = format!(
-        "v1.{}",
-        URL_SAFE_NO_PAD.encode(format!("{key_id}|{box_id}|{wake_id}|{exp}"))
-    );
+    sign_credential(key, "v1", &format!("{key_id}|{box_id}|{wake_id}|{exp}"))
+}
+
+fn sign_credential(key: &SigningKey, version: &str, fields: &str) -> String {
+    let signed = format!("{version}.{}", URL_SAFE_NO_PAD.encode(fields));
     let sig = URL_SAFE_NO_PAD.encode(key.sign(signed.as_bytes()).to_bytes());
     format!("{signed}.{sig}")
+}
+
+/// The box identity of a harness and the credentials the edge would sign for it.
+struct Edge {
+    key: SigningKey,
+    key_id: String,
+}
+
+impl Edge {
+    fn provision(h: &Harness) -> Self {
+        let key = SigningKey::from_bytes(&[5; 32]);
+        let key_id = write_identity(&h.identity, &key, "w1");
+        Self { key, key_id }
+    }
+
+    fn owner(&self) -> String {
+        credential(&self.key, &self.key_id, "cb-box", "w1")
+    }
+
+    fn share(&self, principal: &str) -> String {
+        let exp = cocoonbox_agent::now_ms() / 1000 + 600;
+        let fields = format!("{}|cb-box|w1|{exp}|{principal}", self.key_id);
+        sign_credential(&self.key, "v2", &fields)
+    }
+}
+
+fn signed<T>(msg: T, credential: &str) -> Request<T> {
+    let mut req = Request::new(msg);
+    req.metadata_mut()
+        .insert("x-cocoonbox-credential", credential.parse().unwrap());
+    req
 }
 
 async fn surface_codes(h: &Harness, credential: Option<&str>, token: Option<&str>) -> Vec<String> {
@@ -1689,15 +1721,22 @@ struct McpClient {
     url: String,
     session: String,
     next_id: u64,
+    /// The edge credential each request carries; `None` sends the edge token, as the owner.
+    credential: Option<String>,
 }
 
 impl McpClient {
     async fn connect(h: &Harness) -> Self {
+        Self::connect_as(h, None).await
+    }
+
+    async fn connect_as(h: &Harness, credential: Option<String>) -> Self {
         let mut c = Self {
             http: reqwest::Client::new(),
             url: format!("{}/mcp", h.endpoint),
             session: String::new(),
             next_id: 0,
+            credential,
         };
         let resp = c
             .post(
@@ -1725,16 +1764,34 @@ impl McpClient {
     }
 
     async fn post(&self, body: Value) -> reqwest::Response {
-        let mut req = self
+        let req = self
             .http
             .post(&self.url)
-            .header("x-cocoonbox-edge-token", TOKEN)
             .header("accept", "application/json, text/event-stream")
             .json(&body);
+        self.authorize(req).send().await.unwrap()
+    }
+
+    fn authorize(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        req = match &self.credential {
+            Some(c) => req.header("x-cocoonbox-credential", c),
+            None => req.header("x-cocoonbox-edge-token", TOKEN),
+        };
         if !self.session.is_empty() {
             req = req.header("mcp-session-id", &self.session);
         }
-        req.send().await.unwrap()
+        req
+    }
+
+    fn tool_names(listed: &Value) -> Vec<String> {
+        let mut names: Vec<String> = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_owned())
+            .collect();
+        names.sort_unstable();
+        names
     }
 
     async fn rpc(&mut self, method: &str, params: Value) -> Value {
@@ -1767,7 +1824,7 @@ fn driver_calls(h: &Harness, name: &str) -> Vec<Value> {
 }
 
 #[tokio::test]
-async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
+async fn mcp_owner_sessions_drive_every_tool_untracked() {
     let h = Harness::start(Vec::new(), false).await;
     let http = reqwest::Client::new();
     let denied = http
@@ -1787,15 +1844,8 @@ async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
     let mut mcp = McpClient::connect(&h).await;
 
     let listed = mcp.rpc("tools/list", json!({})).await;
-    let mut names: Vec<&str> = listed["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
-    names.sort_unstable();
     assert_eq!(
-        names,
+        McpClient::tool_names(&listed),
         [
             "browser_click",
             "browser_navigate",
@@ -1817,7 +1867,7 @@ async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
     let shell = mcp
         .call(
             "shell",
-            json!({"command": "echo from-mcp > m.txt; cat m.txt"}),
+            json!({"command": "echo from-mcp > m.txt; cat m.txt; sleep 300 & echo $! > owner-job.pid"}),
         )
         .await;
     assert_eq!(shell["isError"], false);
@@ -1859,48 +1909,21 @@ async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
         .await
         .unwrap()
         .into_inner();
-    let agent = listed
-        .agents
-        .iter()
-        .find(|a| a.name == "mcp:test-client")
-        .unwrap();
-    assert_eq!(agent.status, i32::from(pb::AgentStatus::Running));
-    let page = agents
-        .transcript(authed(pb::TranscriptRequest {
-            agent_id: agent.id.clone(),
-            after_seq: 0,
-            limit: 0,
-        }))
-        .await
-        .unwrap()
-        .into_inner();
-    let calls: Vec<&str> = page
-        .entries
-        .iter()
-        .filter_map(|e| match &e.body {
-            Some(Body::ToolCall(c)) => Some(c.name.as_str()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(calls, ["shell", "screenshot", "computer_act"]);
-    let results = page
-        .entries
-        .iter()
-        .filter(|e| matches!(e.body, Some(Body::ToolResult(_))))
-        .count();
-    assert_eq!(results, 3);
+    assert!(listed.agents.is_empty(), "{:?}", listed.agents);
 
     let mut saw_action = false;
     while let Ok(Some(Ok(ev))) = tokio::time::timeout(Duration::from_millis(300), events.message())
         .await
         .map(Result::transpose)
     {
-        if let Some(event::Body::ComputerAction(a)) = ev.body {
-            assert_eq!(
-                (a.agent_id.as_str(), a.action.as_str(), a.x, a.y),
-                (agent.id.as_str(), "click", 10, 20)
-            );
-            saw_action = true;
+        match ev.body {
+            Some(event::Body::ComputerAction(a)) => {
+                assert_eq!((a.action.as_str(), a.x, a.y), ("click", 10, 20));
+                saw_action = true;
+            }
+            Some(event::Body::Transcript(e)) => panic!("an owner session recorded {e:?}"),
+            Some(event::Body::Agent(a)) => panic!("an owner session made agent {a:?}"),
+            _ => {}
         }
     }
     assert!(saw_action);
@@ -1928,6 +1951,8 @@ async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
         .unwrap();
     assert_eq!(no_session.status(), 400);
 
+    let job = h.workspace.join("owner-job.pid");
+    assert!(alive(&job));
     let deleted = http
         .delete(format!("{}/mcp", h.endpoint))
         .header("x-cocoonbox-edge-token", TOKEN)
@@ -1939,21 +1964,237 @@ async fn mcp_round_trip_drives_tools_and_shows_in_the_transcript() {
     let ended = driver_calls(&h, "end_session");
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0]["session"], label.as_str());
+    assert!(
+        wait_gone(&job).await,
+        "the closed session's shell job survived"
+    );
     let gone = mcp
         .post(json!({"jsonrpc": "2.0", "id": 10, "method": "tools/list"}))
         .await;
     assert_eq!(gone.status(), 404);
+}
+
+#[tokio::test]
+async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
+    let h = Harness::start(Vec::new(), false).await;
+    let edge = Edge::provision(&h);
+    let reader = edge.share("share:sh-1:read");
+    let mut mcp = McpClient::connect_as(&h, Some(reader.clone())).await;
+
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let mut read_only: Vec<&str> = cocoonbox_agent::tools::READ_ONLY.to_vec();
+    read_only.sort_unstable();
+    assert_eq!(McpClient::tool_names(&listed), read_only);
+    let refused = mcp
+        .rpc(
+            "tools/call",
+            json!({"name": "shell", "arguments": {"command": "touch nope"}}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+    assert!(!h.workspace.join("nope").exists());
+    let dir = mcp.call("list_dir", json!({})).await;
+    assert_eq!(dir["isError"], false, "{dir}");
+
+    let mut agents = h.agents().await;
+    let owner = edge.owner();
     let listed = agents
-        .list(authed(pb::ListAgentsRequest {}))
+        .list(signed(pb::ListAgentsRequest {}, &owner))
         .await
         .unwrap()
         .into_inner();
-    let agent = listed
-        .agents
+    let names: Vec<&str> = listed.agents.iter().map(|a| a.name.as_str()).collect();
+    assert_eq!(names, ["mcp:test-client@sh-1"]);
+    let agent_id = listed.agents[0].id.clone();
+    let page = agents
+        .transcript(signed(
+            pb::TranscriptRequest {
+                agent_id: agent_id.clone(),
+                after_seq: 0,
+                limit: 0,
+            },
+            &owner,
+        ))
+        .await
+        .unwrap()
+        .into_inner();
+    let calls: Vec<&str> = page
+        .entries
         .iter()
-        .find(|a| a.name == "mcp:test-client")
+        .filter_map(|e| match &e.body {
+            Some(Body::ToolCall(c)) => Some(c.name.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(calls, ["list_dir"]);
+
+    let mut stream = mcp
+        .authorize(mcp.http.get(&mcp.url).header("accept", "text/event-stream"))
+        .send()
+        .await
         .unwrap();
-    assert_eq!(agent.status, i32::from(pb::AgentStatus::Idle));
+    assert!(stream.chunk().await.unwrap().is_some());
+    mcp.credential = Some(edge.share("share:sh-1:write"));
+    mcp.rpc("ping", json!({})).await;
+    let changed = tokio::time::timeout(Duration::from_secs(5), stream.chunk())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&changed).contains("notifications/tools/list_changed"),
+        "{changed:?}"
+    );
+    drop(stream);
+    assert_eq!(
+        McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await).len(),
+        13
+    );
+    let shell = mcp
+        .call("shell", json!({"command": "echo guest > g.txt"}))
+        .await;
+    assert_eq!(shell["isError"], false, "{shell}");
+    assert!(h.workspace.join("g.txt").exists());
+    mcp.credential = Some(reader.clone());
+    let refused = mcp
+        .rpc(
+            "tools/call",
+            json!({"name": "write_file", "arguments": {"path": "x", "content": ""}}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+
+    for other in [
+        edge.owner(),
+        edge.share("share:sh-2:write"),
+        edge.share("share:sh-1:read:u-1"),
+    ] {
+        let stranger = McpClient {
+            http: reqwest::Client::new(),
+            url: mcp.url.clone(),
+            session: mcp.session.clone(),
+            next_id: 0,
+            credential: Some(other),
+        };
+        let resp = stranger
+            .post(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+            .await;
+        assert_eq!(resp.status(), 404, "another principal used the session");
+    }
+
+    let shared = signed(pb::ListAgentsRequest {}, &reader);
+    assert_eq!(
+        agents.list(shared).await.unwrap_err().code(),
+        Code::PermissionDenied
+    );
+    let mut screen = h.session().await;
+    assert_eq!(
+        screen
+            .hello(signed(pb::HelloRequest::default(), &reader))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let plan = state_client(&h)
+        .await
+        .plan(signed(pb::PlanRequest::default(), &reader))
+        .await;
+    assert_eq!(plan.unwrap_err().code(), Code::PermissionDenied);
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(pb::ScreenClientFrame {
+        body: Some(screen_client_frame::Body::Open(pb::ScreenOpen {})),
+    })
+    .await
+    .unwrap();
+    let mut frames = screen
+        .screen(signed(tokio_stream_from(rx), &reader))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        &frames.message().await.unwrap().unwrap().data[..],
+        b"RFB 003.008\n"
+    );
+
+    let end = |target| {
+        signed(
+            pb::EndRequest {
+                target: Some(target),
+            },
+            &owner,
+        )
+    };
+    agents
+        .end(end(pb::end_request::Target::AgentId(agent_id.clone())))
+        .await
+        .unwrap();
+    let gone = mcp
+        .post(json!({"jsonrpc": "2.0", "id": 99, "method": "tools/list"}))
+        .await;
+    assert_eq!(gone.status(), 404);
+    assert_eq!(
+        agents
+            .end(end(pb::end_request::Target::AgentId(agent_id.clone())))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::NotFound
+    );
+    let second = McpClient::connect_as(&h, Some(reader.clone())).await;
+    let other = McpClient::connect_as(&h, Some(edge.share("share:sh-2:read"))).await;
+    agents
+        .end(end(pb::end_request::Target::ShareId("sh-1".into())))
+        .await
+        .unwrap();
+    let ping = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"});
+    assert_eq!(second.post(ping.clone()).await.status(), 404);
+    assert_eq!(
+        other.post(ping).await.status(),
+        200,
+        "ending sh-1 ended a session of sh-2"
+    );
+    let statuses: Vec<(String, i32)> = agents
+        .list(signed(pb::ListAgentsRequest {}, &owner))
+        .await
+        .unwrap()
+        .into_inner()
+        .agents
+        .into_iter()
+        .map(|a| (a.name, a.status))
+        .collect();
+    let idle = i32::from(pb::AgentStatus::Idle);
+    assert_eq!(
+        statuses,
+        [
+            ("mcp:test-client@sh-1".to_owned(), idle),
+            ("mcp:test-client@sh-1".to_owned(), idle),
+            (
+                "mcp:test-client@sh-2".to_owned(),
+                i32::from(pb::AgentStatus::Running)
+            ),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let call = tokio::spawn(async move {
+        mcp.call("shell", json!({"command": "sleep 2; echo slept"}))
+            .await
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let started = std::time::Instant::now();
+    plan(&h, pb::Consistency::Quiesced, "").await;
+    let waited = started.elapsed();
+    let out = call.await.unwrap();
+    assert_eq!(out["isError"], false, "{out}");
+    assert!(
+        waited >= Duration::from_millis(1500),
+        "the quiesced plan took {waited:?}, so it did not wait for the running MCP call"
+    );
 }
 
 #[tokio::test]
@@ -2090,7 +2331,11 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
         Duration::from_millis(300),
     )
     .await;
-    let mut closed = McpClient::connect(&h).await;
+    let mut agents = h.agents().await;
+    let loop_agent = create_agent(&mut agents).await;
+    let edge = Edge::provision(&h);
+    let guest = edge.share("share:sh-1:write");
+    let mut closed = McpClient::connect_as(&h, Some(guest.clone())).await;
     let job = closed
         .call(
             "shell",
@@ -2100,23 +2345,19 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
     assert_eq!(job["isError"], false, "{job}");
     let job = h.workspace.join("mcp-job.pid");
     assert!(alive(&job));
-    let deleted = reqwest::Client::new()
-        .delete(format!("{}/mcp", h.endpoint))
-        .header("x-cocoonbox-edge-token", TOKEN)
-        .header("mcp-session-id", &closed.session)
+    let deleted = closed
+        .authorize(reqwest::Client::new().delete(format!("{}/mcp", h.endpoint)))
         .send()
         .await
         .unwrap();
     assert_eq!(deleted.status(), 204);
-    let mut open = McpClient::connect(&h).await;
-    let mut agents = h.agents().await;
-    let loop_agent = create_agent(&mut agents).await;
+    let mut open = McpClient::connect_as(&h, Some(guest)).await;
     for _ in 0..8 {
         tokio::time::sleep(Duration::from_millis(100)).await;
         open.rpc("ping", json!({})).await;
     }
     let names: Vec<(String, String)> = agents
-        .list(authed(pb::ListAgentsRequest {}))
+        .list(signed(pb::ListAgentsRequest {}, &edge.owner()))
         .await
         .unwrap()
         .into_inner()
@@ -2124,7 +2365,10 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
         .into_iter()
         .map(|a| (a.id, a.name))
         .collect();
-    let mcp_count = names.iter().filter(|(_, n)| n == "mcp:test-client").count();
+    let mcp_count = names
+        .iter()
+        .filter(|(_, n)| n == "mcp:test-client@sh-1")
+        .count();
     assert_eq!(mcp_count, 1, "{names:?}");
     assert!(names.iter().any(|(id, _)| *id == loop_agent), "{names:?}");
     assert!(wait_gone(&job).await, "the pruned agent's job survived");
@@ -2133,22 +2377,27 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
 #[tokio::test]
 async fn mcp_agents_are_deleted_only_after_their_session_closes() {
     let h = Harness::start(Vec::new(), false).await;
-    let mcp = McpClient::connect(&h).await;
+    let edge = Edge::provision(&h);
+    let owner = edge.owner();
+    let mcp = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read:u-2"))).await;
     let mut agents = h.agents().await;
     let agent_id = agents
-        .list(authed(pb::ListAgentsRequest {}))
+        .list(signed(pb::ListAgentsRequest {}, &owner))
         .await
         .unwrap()
         .into_inner()
         .agents
         .into_iter()
-        .find(|a| a.name == "mcp:test-client")
+        .find(|a| a.name == "mcp:test-client@sh-1:u-2")
         .unwrap()
         .id;
     let refused = agents
-        .delete(authed(pb::DeleteAgentRequest {
-            agent_id: agent_id.clone(),
-        }))
+        .delete(signed(
+            pb::DeleteAgentRequest {
+                agent_id: agent_id.clone(),
+            },
+            &owner,
+        ))
         .await
         .unwrap_err();
     assert_eq!(refused.code(), Code::FailedPrecondition);
@@ -2158,22 +2407,23 @@ async fn mcp_agents_are_deleted_only_after_their_session_closes() {
             .status(),
         200
     );
-    let closed = reqwest::Client::new()
-        .delete(format!("{}/mcp", h.endpoint))
-        .header("x-cocoonbox-edge-token", TOKEN)
-        .header("mcp-session-id", &mcp.session)
+    let closed = mcp
+        .authorize(reqwest::Client::new().delete(format!("{}/mcp", h.endpoint)))
         .send()
         .await
         .unwrap();
     assert_eq!(closed.status(), 204);
     agents
-        .delete(authed(pb::DeleteAgentRequest {
-            agent_id: agent_id.clone(),
-        }))
+        .delete(signed(
+            pb::DeleteAgentRequest {
+                agent_id: agent_id.clone(),
+            },
+            &owner,
+        ))
         .await
         .unwrap();
     let listed = agents
-        .list(authed(pb::ListAgentsRequest {}))
+        .list(signed(pb::ListAgentsRequest {}, &owner))
         .await
         .unwrap()
         .into_inner();

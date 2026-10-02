@@ -1,4 +1,5 @@
 //! MCP Streamable HTTP server at `/mcp`: external agents drive the box through the toolhost (mode B).
+//! The owner's sessions run untracked; a share's sessions are agents `mcp:<client>@<share>` with a transcript.
 
 use std::collections::HashMap;
 use std::convert::Infallible;
@@ -13,9 +14,11 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde_json::{Value, json};
+use tokio::sync::Notify;
+use tonic::Status;
 
 use crate::dispatch::{Caller, ToolOutput, uses_driver};
-use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate};
+use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, event, transcript_entry::Body as Entry};
 use crate::runner::Runtime;
@@ -32,18 +35,19 @@ const KEEPALIVE: Duration = Duration::from_secs(25);
 const MAX_REAP_PERIOD: Duration = Duration::from_secs(60);
 const MAX_BODY: usize = 64 << 20;
 const DRIVER_ENDED: &str = "session has ended";
+const LIST_CHANGED: &[u8] =
+    b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n";
 const INSTRUCTIONS: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
 
-/// MCP sessions of external agents, each shown as an agent `mcp:<client>`.
+/// MCP sessions of external agents.
 pub struct Mcp {
     rt: Arc<Runtime>,
     gate: Arc<Gate>,
-    tools: Value,
-    names: Vec<&'static str>,
+    tools: Vec<(&'static str, Value)>,
     idle: Duration,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -51,21 +55,18 @@ pub struct Mcp {
 impl Mcp {
     /// Creates the server behind `gate`; sessions idle for `idle` are closed.
     pub fn new(rt: Arc<Runtime>, idle: Duration, gate: Arc<Gate>) -> Arc<Self> {
-        let specs = tools::remote_tools();
-        let names = specs.iter().map(|t| t.name).collect();
-        let tools = specs
+        let tools = tools::remote_tools()
             .into_iter()
             .map(|t| {
                 let mut tool = json!({"name": t.name, "description": t.description});
                 tool["inputSchema"] = t.parameters;
-                tool
+                (t.name, tool)
             })
             .collect();
         Arc::new(Self {
             rt,
             gate,
             tools,
-            names,
             idle,
             sessions: Mutex::new(HashMap::new()),
         })
@@ -142,7 +143,40 @@ impl Mcp {
     pub fn serves(&self, agent_id: &str) -> bool {
         lock(&self.sessions)
             .values()
-            .any(|s| s.agent_id == agent_id)
+            .any(|s| s.agent_id() == Some(agent_id))
+    }
+
+    /// Closes the session that drives agent `agent_id`.
+    pub async fn end_agent(&self, agent_id: &str) -> Result<(), Status> {
+        let session = {
+            let mut sessions = lock(&self.sessions);
+            let id = sessions
+                .iter()
+                .find(|(_, s)| s.agent_id() == Some(agent_id))
+                .map(|(id, _)| id.clone());
+            id.and_then(|id| sessions.remove(&id))
+        };
+        let session = session.ok_or_else(|| {
+            Status::not_found(format!("no open MCP session drives agent {agent_id}"))
+        })?;
+        self.close(&session, "ended by the owner").await;
+        Ok(())
+    }
+
+    /// Closes every session opened through share `share_id`.
+    pub async fn end_share(&self, share_id: &str) {
+        let ended: Vec<Arc<Session>> = {
+            let mut sessions = lock(&self.sessions);
+            let ids: Vec<String> = sessions
+                .iter()
+                .filter(|(_, s)| s.guest.as_ref().is_some_and(|g| g.share == share_id))
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.iter().filter_map(|id| sessions.remove(id)).collect()
+        };
+        for s in ended {
+            self.close(&s, "the share ended").await;
+        }
     }
 
     /// Closes every session; used when the agent shuts down.
@@ -153,7 +187,7 @@ impl Mcp {
         }
     }
 
-    fn admit(&self, headers: &HeaderMap) -> Result<(), StatusCode> {
+    fn admit(&self, headers: &HeaderMap) -> Result<Principal, StatusCode> {
         let verdict = self.gate.check(
             headers.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()),
             headers.get(EDGE_TOKEN_HEADER).map(|v| v.as_bytes()),
@@ -164,46 +198,80 @@ impl Mcp {
         })
     }
 
+    /// Finds the session a request names; a session opened by another principal is as unknown as a missing one.
     fn session(
         &self,
         headers: &HeaderMap,
+        principal: &Principal,
     ) -> Result<Arc<Session>, (StatusCode, i64, &'static str)> {
         let Some(id) = headers.get(SESSION_HEADER).and_then(|v| v.to_str().ok()) else {
             return Err((StatusCode::BAD_REQUEST, -32000, "missing Mcp-Session-Id"));
         };
         let session = lock(&self.sessions).get(id).cloned();
-        let session =
-            session.ok_or((StatusCode::NOT_FOUND, -32001, "unknown or expired session"))?;
+        let session = session.filter(|s| s.opened_by(principal)).ok_or((
+            StatusCode::NOT_FOUND,
+            -32001,
+            "unknown or expired session",
+        ))?;
         lock(&session.driver).last_seen = Instant::now();
+        session.observe(principal);
         Ok(session)
     }
 
-    async fn open(&self, params: &Value) -> Result<(Arc<Session>, Value), String> {
+    async fn open(
+        &self,
+        params: &Value,
+        principal: &Principal,
+    ) -> Result<(Arc<Session>, Value), String> {
         let client = params["clientInfo"]["name"].as_str().unwrap_or("client");
         let version = params["clientInfo"]["version"].as_str().unwrap_or_default();
-        let agent = self
-            .rt
-            .create_agent(pb::CreateAgentRequest {
-                name: format!("{AGENT_PREFIX}{client}"),
-                main_model: "external".to_owned(),
-                client_nonce: String::new(),
-            })
-            .await
-            .map_err(|e| e.message().to_owned())?;
-        let turn_id = self.rt.journal.store.open_turn(agent.id.clone()).await?;
+        let guest = match principal {
+            Principal::Owner => None,
+            Principal::Share { id, user, .. } => Some(Guest {
+                share: id.clone(),
+                user: user.clone(),
+            }),
+        };
+        let record = match &guest {
+            None => None,
+            Some(g) => {
+                let mut name = format!("{AGENT_PREFIX}{client}@{}", g.share);
+                if let Some(user) = &g.user {
+                    name = format!("{name}:{user}");
+                }
+                let agent = self
+                    .rt
+                    .create_agent(pb::CreateAgentRequest {
+                        name,
+                        main_model: "external".to_owned(),
+                        client_nonce: String::new(),
+                    })
+                    .await
+                    .map_err(|e| e.message().to_owned())?;
+                let turn_id = self.rt.journal.store.open_turn(agent.id.clone()).await?;
+                Some(Record {
+                    agent_id: agent.id,
+                    turn_id,
+                    blocks: AtomicU32::new(0),
+                })
+            }
+        };
         let session = Arc::new(Session {
             id: new_id("mcp"),
-            agent_id: agent.id,
-            turn_id,
-            blocks: AtomicU32::new(0),
+            guest,
+            record,
             driver: Mutex::new(Driver::default()),
+            listed: Mutex::new(None),
+            changed: Notify::new(),
         });
-        let note = format!("MCP session opened by {client} {version}");
-        self.note(&session, note.trim_end()).await;
-        self.rt
-            .journal
-            .set_status(&session.agent_id, AgentStatus::Running)
-            .await;
+        if let Some(r) = &session.record {
+            let note = format!("MCP session opened by {client} {version}");
+            self.note(&session, note.trim_end()).await;
+            self.rt
+                .journal
+                .set_status(&r.agent_id, AgentStatus::Running)
+                .await;
+        }
         lock(&self.sessions).insert(session.id.clone(), Arc::clone(&session));
         let requested = params["protocolVersion"].as_str().unwrap_or_default();
         let protocol = PROTOCOLS
@@ -213,7 +281,7 @@ impl Mcp {
             .unwrap_or(FALLBACK_PROTOCOL);
         let result = json!({
             "protocolVersion": protocol,
-            "capabilities": {"tools": {"listChanged": false}},
+            "capabilities": {"tools": {"listChanged": session.guest.is_some()}},
             "serverInfo": {"name": "cocoonbox-agent", "version": env!("CB_AGENT_VERSION")},
             "instructions": INSTRUCTIONS,
         });
@@ -222,10 +290,17 @@ impl Mcp {
 
     async fn close(&self, s: &Session, reason: &str) {
         self.end_driver(s, reason).await;
-        let closed = self.rt.dispatcher.close_window(&s.agent_id).await;
+        let closed = self.rt.dispatcher.close_window(s.owner()).await;
         if closed.is_error {
-            eprintln!("mcp: close the window of {}: {}", s.agent_id, closed.text);
+            eprintln!("mcp: close the window of {}: {}", s.owner(), closed.text);
         }
+        let Some(r) = &s.record else {
+            let closed = self.rt.dispatcher.close_shell(s.owner()).await;
+            if closed.is_error {
+                eprintln!("mcp: close the shell of {}: {}", s.id, closed.text);
+            }
+            return;
+        };
         self.note(s, &format!("MCP session closed: {reason}")).await;
         let end = Entry::TurnEnd(pb::TurnEnd {
             ok: true,
@@ -233,12 +308,12 @@ impl Mcp {
             usage: None,
         });
         self.record(s, Role::System, end).await;
-        if let Err(e) = self.rt.journal.store.finish_turn(s.turn_id.clone()).await {
-            eprintln!("mcp: finish turn {}: {e}", s.turn_id);
+        if let Err(e) = self.rt.journal.store.finish_turn(r.turn_id.clone()).await {
+            eprintln!("mcp: finish turn {}: {e}", r.turn_id);
         }
         self.rt
             .journal
-            .set_status(&s.agent_id, AgentStatus::Idle)
+            .set_status(&r.agent_id, AgentStatus::Idle)
             .await;
     }
 
@@ -251,27 +326,29 @@ impl Mcp {
             d.used = false;
             std::mem::replace(&mut d.label, new_id("cu"))
         };
-        eprintln!(
-            "mcp: end driver session {label} of {}: {reason}",
-            s.agent_id
-        );
+        eprintln!("mcp: end driver session {label} of {}: {reason}", s.owner());
         self.release(s, &label).await;
     }
 
     async fn release(&self, s: &Session, label: &str) {
-        let out = self.rt.dispatcher.end_driver(&s.agent_id, label).await;
+        let out = self.rt.dispatcher.end_driver(s.owner(), label).await;
         if out.is_error {
             eprintln!("mcp: end driver session {label}: {}", out.text);
         }
     }
 
-    async fn dispatch(&self, s: Option<&Session>, msg: &Value) -> Option<Value> {
+    async fn dispatch(
+        &self,
+        s: Option<&Session>,
+        principal: &Principal,
+        msg: &Value,
+    ) -> Option<Value> {
         let id = msg.get("id")?.clone();
         let method = msg["method"].as_str()?;
         let result = match (method, s) {
             ("ping", _) => Ok(json!({})),
-            ("tools/list", Some(_)) => Ok(json!({"tools": self.tools})),
-            ("tools/call", Some(s)) => self.call_tool(s, &msg["params"]).await,
+            ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
+            ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
             ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
         };
@@ -292,7 +369,8 @@ impl Mcp {
                 d.label = new_id("cu");
                 eprintln!(
                     "mcp: driver session {stale} of {} ended in the driver; now {}",
-                    s.agent_id, d.label
+                    s.owner(),
+                    d.label
                 );
             }
             d.used = true;
@@ -304,11 +382,36 @@ impl Mcp {
         label
     }
 
-    async fn call_tool(&self, s: &Session, params: &Value) -> Result<Value, (i64, String)> {
+    /// The tools `principal` may call; a share session remembers the mode it listed, to announce a switch.
+    fn list_tools(&self, s: &Session, principal: &Principal) -> Value {
+        if let Principal::Share { write, .. } = principal {
+            *lock(&s.listed) = Some(*write);
+        }
+        let tools: Vec<&Value> = self
+            .tools
+            .iter()
+            .filter(|(name, _)| allows(principal, name))
+            .map(|(_, tool)| tool)
+            .collect();
+        json!({"tools": tools})
+    }
+
+    async fn call_tool(
+        &self,
+        s: &Session,
+        principal: &Principal,
+        params: &Value,
+    ) -> Result<Value, (i64, String)> {
         let name = params["name"].as_str().unwrap_or_default();
-        let Some(&name) = self.names.iter().find(|n| **n == name) else {
+        let Some(&(name, _)) = self.tools.iter().find(|(n, _)| *n == name) else {
             return Err((-32602, format!("unknown tool: {name}")));
         };
+        if !allows(principal, name) {
+            return Err((
+                -32602,
+                format!("{name} is not allowed: the owner shares this box read-only"),
+            ));
+        }
         let requested = match &params["arguments"] {
             Value::Null => json!({}),
             v @ Value::Object(_) => v.clone(),
@@ -320,6 +423,7 @@ impl Mcp {
             d.label.clone()
         };
         let retry = uses_driver(name).then(|| requested.clone());
+        let _in_flight = self.rt.turns.read().await;
         let mut out = self.run(s, &label, name, requested).await?;
         if let Some(args) = retry.filter(|_| out.is_error && out.text.contains(DRIVER_ENDED)) {
             let label = self.rotate_ended(s, &label).await;
@@ -344,9 +448,16 @@ impl Mcp {
         name: &str,
         args: Value,
     ) -> Result<ToolOutput, (i64, String)> {
+        let Some(r) = &s.record else {
+            return Ok(self
+                .rt
+                .dispatcher
+                .run(s.owner(), Some(label), name, args)
+                .await);
+        };
         let caller = Caller {
-            agent_id: &s.agent_id,
-            turn_id: &s.turn_id,
+            agent_id: &r.agent_id,
+            turn_id: &r.turn_id,
             subagent: "",
             driver: Some(label),
         };
@@ -358,32 +469,82 @@ impl Mcp {
     }
 
     async fn note(&self, s: &Session, text: &str) {
+        let Some(r) = &s.record else {
+            return;
+        };
         let body = Entry::Text(pb::TextBlock {
             text: text.to_owned(),
-            block: s.blocks.fetch_add(1, Ordering::Relaxed),
+            block: r.blocks.fetch_add(1, Ordering::Relaxed),
             ..Default::default()
         });
         self.record(s, Role::System, body).await;
     }
 
     async fn record(&self, s: &Session, role: Role, body: Entry) {
+        let Some(r) = &s.record else {
+            return;
+        };
         if let Err(e) = self
             .rt
             .journal
-            .record(&s.agent_id, &s.turn_id, role, body, false)
+            .record(&r.agent_id, &r.turn_id, role, body, false)
             .await
         {
-            eprintln!("mcp: record for {}: {e}", s.agent_id);
+            eprintln!("mcp: record for {}: {e}", r.agent_id);
         }
     }
 }
 
 struct Session {
     id: String,
+    /// The share the session came through; `None` for the owner.
+    guest: Option<Guest>,
+    /// The agent that records a share session; the owner's sessions have none.
+    record: Option<Record>,
+    driver: Mutex<Driver>,
+    /// The write mode a share session last listed tools in.
+    listed: Mutex<Option<bool>>,
+    /// Wakes the session's server stream to send `notifications/tools/list_changed`.
+    changed: Notify,
+}
+
+impl Session {
+    fn agent_id(&self) -> Option<&str> {
+        self.record.as_ref().map(|r| r.agent_id.as_str())
+    }
+
+    /// Keys the session's shell and desktop state in the toolhost: its agent, or the session itself.
+    fn owner(&self) -> &str {
+        self.agent_id().unwrap_or(&self.id)
+    }
+
+    fn opened_by(&self, principal: &Principal) -> bool {
+        match (principal, &self.guest) {
+            (Principal::Owner, None) => true,
+            (Principal::Share { id, user, .. }, Some(g)) => *id == g.share && *user == g.user,
+            _ => false,
+        }
+    }
+
+    /// Announces a tool list change when a share's write mode differs from the one the client listed in.
+    fn observe(&self, principal: &Principal) {
+        if let Principal::Share { write, .. } = principal
+            && lock(&self.listed).is_some_and(|listed| listed != *write)
+        {
+            self.changed.notify_one();
+        }
+    }
+}
+
+struct Guest {
+    share: String,
+    user: Option<String>,
+}
+
+struct Record {
     agent_id: String,
     turn_id: String,
     blocks: AtomicU32,
-    driver: Mutex<Driver>,
 }
 
 /// The cua-driver session behind an MCP session; the label rotates each time it is ended.
@@ -418,15 +579,16 @@ impl Drop for StreamGuard {
 }
 
 async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) -> Response {
-    if let Err(code) = mcp.admit(&headers) {
-        return code.into_response();
-    }
+    let principal = match mcp.admit(&headers) {
+        Ok(p) => p,
+        Err(code) => return code.into_response(),
+    };
     let Ok(msg) = serde_json::from_slice::<Value>(&body) else {
         return rpc_failure(StatusCode::BAD_REQUEST, -32700, "parse error");
     };
     if msg["method"] == "initialize" {
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
-        return match mcp.open(&msg["params"]).await {
+        return match mcp.open(&msg["params"], &principal).await {
             Ok((session, result)) => {
                 let reply = json!({"jsonrpc": "2.0", "id": id, "result": result});
                 let mut resp = json_response(StatusCode::OK, &reply);
@@ -451,14 +613,14 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
     let session = if sessionless {
         None
     } else {
-        match mcp.session(&headers) {
+        match mcp.session(&headers, &principal) {
             Ok(s) => Some(s),
             Err((status, code, message)) => return rpc_failure(status, code, message),
         }
     };
     let mut replies = Vec::new();
     for m in &messages {
-        if let Some(reply) = mcp.dispatch(session.as_deref(), m).await {
+        if let Some(reply) = mcp.dispatch(session.as_deref(), &principal, m).await {
             replies.push(reply);
         }
     }
@@ -470,23 +632,26 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
 }
 
 async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
-    if let Err(code) = mcp.admit(&headers) {
-        return code.into_response();
-    }
-    let session = match mcp.session(&headers) {
+    let principal = match mcp.admit(&headers) {
+        Ok(p) => p,
+        Err(code) => return code.into_response(),
+    };
+    let session = match mcp.session(&headers, &principal) {
         Ok(s) => s,
         Err((status, code, message)) => return rpc_failure(status, code, message),
     };
     let guard = StreamGuard { mcp, session };
     let stream = futures_util::stream::unfold((guard, true), |(guard, first)| async move {
+        let mut chunk = &b": keepalive\n\n"[..];
         if !first {
             tokio::select! {
                 () = tokio::time::sleep(KEEPALIVE) => {}
+                () = guard.session.changed.notified() => chunk = LIST_CHANGED,
                 () = guard.mcp.rt.stop.cancelled() => return None,
             }
             lock(&guard.session.driver).last_seen = Instant::now();
         }
-        let chunk: Result<Bytes, Infallible> = Ok(Bytes::from_static(b": keepalive\n\n"));
+        let chunk: Result<Bytes, Infallible> = Ok(Bytes::from_static(chunk));
         Some((chunk, (guard, false)))
     });
     let mut resp = Response::new(Body::from_stream(stream));
@@ -503,19 +668,35 @@ async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
 }
 
 async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
-    if let Err(code) = mcp.admit(&headers) {
-        return code.into_response();
-    }
+    let principal = match mcp.admit(&headers) {
+        Ok(p) => p,
+        Err(code) => return code.into_response(),
+    };
     let removed = headers
         .get(SESSION_HEADER)
         .and_then(|v| v.to_str().ok())
-        .and_then(|id| lock(&mcp.sessions).remove(id));
+        .and_then(|id| {
+            let mut sessions = lock(&mcp.sessions);
+            sessions
+                .get(id)
+                .is_some_and(|s| s.opened_by(&principal))
+                .then(|| sessions.remove(id))
+                .flatten()
+        });
     match removed {
         Some(s) => {
             mcp.close(&s, "deleted by the client").await;
             StatusCode::NO_CONTENT.into_response()
         }
         None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// Whether `principal` may call tool `name`: a read-only share gets only the tools that read.
+fn allows(principal: &Principal, name: &str) -> bool {
+    match principal {
+        Principal::Owner | Principal::Share { write: true, .. } => true,
+        Principal::Share { write: false, .. } => tools::READ_ONLY.contains(&name),
     }
 }
 

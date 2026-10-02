@@ -6,6 +6,16 @@ use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 
+/// Remote tools that only read the box: all a read-only share offers.
+pub const READ_ONLY: [&str; 6] = [
+    "screenshot",
+    "computer_state",
+    "read_file",
+    "list_dir",
+    "browser_snapshot",
+    "browser_read",
+];
+
 /// Tools of the main agent; a vision model also gets a read-only screenshot.
 pub fn main_tools(vision: bool) -> Vec<ToolSpec> {
     let mut tools = vec![

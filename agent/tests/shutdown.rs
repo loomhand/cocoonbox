@@ -187,7 +187,9 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
     assert!(!end.ok);
     assert_eq!(end.error, "interrupted: the agent is shutting down");
     let agents = store.list_agents().await.unwrap();
-    let mcp_agent = agents.iter().find(|a| a.name == "mcp:t").unwrap();
-    assert_eq!(mcp_agent.status, i32::from(pb::AgentStatus::Idle));
+    assert!(
+        agents.iter().all(|a| !a.name.starts_with("mcp:")),
+        "the owner's MCP session made an agent: {agents:?}"
+    );
     eprintln!("agent exited {took:?} after SIGTERM");
 }

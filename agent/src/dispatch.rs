@@ -124,20 +124,31 @@ impl Dispatcher {
         c: &Caller<'_>,
         call_id: &str,
         name: &str,
-        mut args: Value,
+        args: Value,
     ) -> Result<ToolOutput, String> {
+        let out = self.run(c.agent_id, c.driver, name, args).await;
+        self.record_result(c, call_id, &out).await?;
+        Ok(out)
+    }
+
+    /// Runs a call outside any transcript in desktop session `driver`; `owner` keys its shell session.
+    pub async fn run(
+        &self,
+        owner: &str,
+        driver: Option<&str>,
+        name: &str,
+        mut args: Value,
+    ) -> ToolOutput {
         if name == "computer_act" {
-            self.announce(c.agent_id, &args);
+            self.announce(owner, &args);
         }
-        if let Some(label) = c.driver
+        if let Some(label) = driver
             && uses_driver(name)
             && let Some(obj) = args.as_object_mut()
         {
             obj.insert("session".to_owned(), label.into());
         }
-        let out = self.tools.run(c.agent_id, name, args).await;
-        self.record_result(c, call_id, &out).await?;
-        Ok(out)
+        self.tools.run(owner, name, args).await
     }
 
     /// Records the result of a call.

@@ -14,7 +14,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::config::ServeConfig;
-use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate};
+use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
 use crate::llm;
 use crate::mcp::Mcp;
 use crate::pb::agents_server::{Agents, AgentsServer};
@@ -37,21 +37,27 @@ const SCREEN_HEIGHT: u32 = 800;
 const CONNECTION_GRACE: Duration = Duration::from_millis(1000);
 const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 
-/// Rejects calls the gate does not admit.
+/// Rejects calls the gate does not admit and puts the call's [`Principal`] in its extensions;
+/// with `owner_only`, a share's call is refused too.
 #[derive(Clone)]
 pub struct EdgeAuth {
     gate: Arc<Gate>,
+    owner_only: bool,
 }
 
 impl Interceptor for EdgeAuth {
-    fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
+    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
         let md = req.metadata();
         let verdict = self.gate.check(
             md.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()),
             md.get(EDGE_TOKEN_HEADER).map(|v| v.as_bytes()),
         );
         match verdict {
-            Ok(()) => Ok(req),
+            Ok(Principal::Share { .. }) if self.owner_only => Err(share_refused()),
+            Ok(principal) => {
+                req.extensions_mut().insert(principal);
+                Ok(req)
+            }
             Err(Denied::Unprovisioned(m)) => Err(Status::unavailable(m)),
             Err(Denied::Unauthenticated(m)) => Err(Status::unauthenticated(m)),
         }
@@ -152,6 +158,19 @@ impl Agents for AgentsSvc {
         self.rt.delete(&agent_id).await?;
         Ok(Response::new(pb::DeleteAgentResponse {}))
     }
+
+    async fn end(&self, req: Request<pb::EndRequest>) -> Result<Response<pb::EndResponse>, Status> {
+        match req.into_inner().target {
+            Some(pb::end_request::Target::AgentId(id)) => self.mcp.end_agent(&id).await?,
+            Some(pb::end_request::Target::ShareId(id)) => self.mcp.end_share(&id).await,
+            None => {
+                return Err(Status::invalid_argument(
+                    "end needs an agent_id or a share_id",
+                ));
+            }
+        }
+        Ok(Response::new(pb::EndResponse {}))
+    }
 }
 
 /// `cocoonbox.agent.v1.Session`.
@@ -185,8 +204,9 @@ impl Session for SessionSvc {
 
     async fn hello(
         &self,
-        _req: Request<pb::HelloRequest>,
+        req: Request<pb::HelloRequest>,
     ) -> Result<Response<pb::HelloResponse>, Status> {
+        owner(&req)?;
         let cfg = &self.rt.cfg;
         let mut models = vec![cfg.model_main.clone()];
         if cfg.model_computer != cfg.model_main {
@@ -205,6 +225,7 @@ impl Session for SessionSvc {
         &self,
         req: Request<pb::EventsRequest>,
     ) -> Result<Response<Self::EventsStream>, Status> {
+        owner(&req)?;
         let sub = self
             .rt
             .journal
@@ -264,8 +285,9 @@ impl Session for SessionSvc {
 
     async fn active_origin(
         &self,
-        _req: Request<pb::ActiveOriginRequest>,
+        req: Request<pb::ActiveOriginRequest>,
     ) -> Result<Response<pb::ActiveOriginResponse>, Status> {
+        owner(&req)?;
         let origin = self.toolhost("active_origin", json!({})).await?;
         Ok(Response::new(pb::ActiveOriginResponse { origin }))
     }
@@ -274,6 +296,7 @@ impl Session for SessionSvc {
         &self,
         req: Request<pb::FillCredentialRequest>,
     ) -> Result<Response<pb::FillCredentialResponse>, Status> {
+        owner(&req)?;
         let mut req = req.into_inner();
         let mut args = json!({
             "origin": req.origin,
@@ -388,6 +411,11 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     ));
     let auth = EdgeAuth {
         gate: Arc::clone(&gate),
+        owner_only: true,
+    };
+    let screen_auth = EdgeAuth {
+        gate: Arc::clone(&gate),
+        owner_only: false,
     };
     let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
     mcp.spawn_reaper();
@@ -414,7 +442,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     })
     .max_decoding_message_size(MAX_STATE_MESSAGE_BYTES);
     let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
-        .add_service(InterceptedService::new(session, auth.clone()))
+        .add_service(InterceptedService::new(session, screen_auth))
         .add_service(InterceptedService::new(state, auth))
         .into_axum_router()
         .merge(Arc::clone(&mcp).router());
@@ -436,6 +464,18 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     mcp.close_all().await;
     rt.drain(DRAIN_LIMIT).await;
     Ok(())
+}
+
+/// Refuses `req` unless the owner sent it: a share reaches only `Session.Screen` and MCP.
+fn owner<T>(req: &Request<T>) -> Result<(), Status> {
+    match req.extensions().get::<Principal>() {
+        Some(Principal::Owner) => Ok(()),
+        _ => Err(share_refused()),
+    }
+}
+
+fn share_refused() -> Status {
+    Status::permission_denied("a share reaches only the screen and MCP")
 }
 
 async fn shutdown_signal() {

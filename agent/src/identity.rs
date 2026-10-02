@@ -19,6 +19,8 @@ pub const CREDENTIAL_HEADER: &str = "x-cocoonbox-credential";
 pub const EDGE_TOKEN_HEADER: &str = "x-cocoonbox-edge-token";
 
 const VERSION_PREFIX: &str = "v1.";
+const SHARE_VERSION_PREFIX: &str = "v2.";
+const SHARE_PREFIX: &str = "share:";
 const EXP_SKEW_SECS: i64 = 120;
 const MAX_IDENTITY_BYTES: u64 = 4096;
 const KEY_ID_HEX: usize = 16;
@@ -31,6 +33,37 @@ pub enum Denied {
     Unprovisioned(&'static str),
     /// The credential or token is wrong; maps to `UNAUTHENTICATED`.
     Unauthenticated(&'static str),
+}
+
+/// Who a call comes from, as the edge signed it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Principal {
+    /// The box's owner: a v1 credential, or the edge token.
+    Owner,
+    /// A guest through share `id` (v2): `write` allows every in-box tool, `user` names the guest of a named share.
+    Share {
+        id: String,
+        write: bool,
+        user: Option<String>,
+    },
+}
+
+impl Principal {
+    /// Parses `share:<id>:<read|write>[:<user>]`.
+    fn parse(text: &str) -> Option<Self> {
+        let mut parts = text.strip_prefix(SHARE_PREFIX)?.splitn(3, ':');
+        let id = parts.next().filter(|id| !id.is_empty())?.to_owned();
+        let write = match parts.next()? {
+            "read" => false,
+            "write" => true,
+            _ => return None,
+        };
+        let user = match parts.next() {
+            Some("") => return None,
+            user => user.map(str::to_owned),
+        };
+        Some(Self::Share { id, write, user })
+    }
 }
 
 /// Admits calls from the edge: a credential once the identity file exists, the edge token before.
@@ -52,8 +85,12 @@ impl Gate {
         }
     }
 
-    /// Checks the `x-cocoonbox-credential` and `x-cocoonbox-edge-token` values of one call.
-    pub fn check(&self, credential: Option<&str>, edge_token: Option<&[u8]>) -> Result<(), Denied> {
+    /// Checks the `x-cocoonbox-credential` and `x-cocoonbox-edge-token` values of one call and returns its principal.
+    pub fn check(
+        &self,
+        credential: Option<&str>,
+        edge_token: Option<&[u8]>,
+    ) -> Result<Principal, Denied> {
         let now = crate::now_ms() / 1000;
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         if inner.identity.is_none() {
@@ -63,8 +100,8 @@ impl Gate {
             }
         }
         let credential = credential.ok_or(Denied::Unauthenticated("missing credential"))?;
-        if let Some(&exp) = inner.verified.get(credential) {
-            return fresh(exp, now);
+        if let Some((exp, principal)) = inner.verified.get(credential) {
+            return fresh(*exp, now).map(|()| principal.clone());
         }
         let cred = Credential::parse(credential)?;
         if inner.identity.as_ref().is_some_and(|id| !id.matches(&cred)) {
@@ -77,18 +114,24 @@ impl Gate {
         fresh(cred.exp, now)?;
         inner
             .verified
-            .retain(|_, exp| now <= exp.saturating_add(EXP_SKEW_SECS));
-        inner.verified.insert(credential.into(), cred.exp);
-        Ok(())
+            .retain(|_, (exp, _)| now <= exp.saturating_add(EXP_SKEW_SECS));
+        inner
+            .verified
+            .insert(credential.into(), (cred.exp, cred.principal.clone()));
+        Ok(cred.principal)
     }
 
-    fn before_identity(&self, inner: &Inner, edge_token: Option<&[u8]>) -> Result<(), Denied> {
+    fn before_identity(
+        &self,
+        inner: &Inner,
+        edge_token: Option<&[u8]>,
+    ) -> Result<Principal, Denied> {
         if inner.problem.is_some() {
             return Err(Denied::Unprovisioned("identity invalid"));
         }
         match &self.edge_token {
             Some(want) if edge_token.is_some_and(|got| constant_time_eq(got, want.as_bytes())) => {
-                Ok(())
+                Ok(Principal::Owner)
             }
             Some(_) => Err(Denied::Unauthenticated("missing or invalid edge token")),
             None => Err(Denied::Unprovisioned("identity not provisioned")),
@@ -116,7 +159,7 @@ impl Gate {
 #[derive(Default)]
 struct Inner {
     identity: Option<Identity>,
-    verified: HashMap<Box<str>, i64>,
+    verified: HashMap<Box<str>, (i64, Principal)>,
     problem: Option<String>,
 }
 
@@ -178,34 +221,43 @@ impl Identity {
     }
 }
 
-/// `v1.<b64url(key_id|box_id|wake_id|exp)>.<b64url(signature over "v1.<payload>")>`.
+/// `v1.<b64url(key_id|box_id|wake_id|exp)>.<b64url(signature over "v1.<payload>")>` from the owner,
+/// or `v2.` with a fifth field, the share principal.
 struct Credential<'a> {
     signed: &'a str,
     key_id: String,
     box_id: String,
     wake_id: String,
     exp: i64,
+    principal: Principal,
     signature: Signature,
 }
 
 impl<'a> Credential<'a> {
     fn parse(text: &'a str) -> Result<Self, Denied> {
         let (signed, signature) = text.rsplit_once('.').ok_or(MALFORMED)?;
-        let payload = signed.strip_prefix(VERSION_PREFIX).ok_or(MALFORMED)?;
+        let (payload, share) = match signed.strip_prefix(VERSION_PREFIX) {
+            Some(p) => (p, false),
+            None => (
+                signed.strip_prefix(SHARE_VERSION_PREFIX).ok_or(MALFORMED)?,
+                true,
+            ),
+        };
         let payload = URL_SAFE_NO_PAD
             .decode(payload)
             .ok()
             .and_then(|b| String::from_utf8(b).ok())
             .ok_or(MALFORMED)?;
         let mut fields = payload.split('|');
-        let (Some(key_id), Some(box_id), Some(wake_id), Some(exp), None) = (
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-            fields.next(),
-        ) else {
+        let (Some(key_id), Some(box_id), Some(wake_id), Some(exp)) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
             return Err(MALFORMED);
+        };
+        let principal = match (share, fields.next(), fields.next()) {
+            (false, None, _) => Principal::Owner,
+            (true, Some(p), None) => Principal::parse(p).ok_or(MALFORMED)?,
+            _ => return Err(MALFORMED),
         };
         let signature: [u8; 64] = URL_SAFE_NO_PAD
             .decode(signature)
@@ -218,6 +270,7 @@ impl<'a> Credential<'a> {
             box_id: box_id.to_owned(),
             wake_id: wake_id.to_owned(),
             exp: exp.parse().map_err(|_| MALFORMED)?,
+            principal,
             signature: Signature::from_bytes(&signature),
         })
     }
@@ -345,15 +398,16 @@ mod tests {
 
     fn sign(key: &SigningKey, key_id: &str, box_id: &str, wake_id: &str, exp_in: i64) -> String {
         let exp = crate::now_ms() / 1000 + exp_in;
-        let signed = format!(
-            "v1.{}",
-            URL_SAFE_NO_PAD.encode(format!("{key_id}|{box_id}|{wake_id}|{exp}"))
-        );
+        sign_fields(key, "v1", &format!("{key_id}|{box_id}|{wake_id}|{exp}"))
+    }
+
+    fn sign_fields(key: &SigningKey, version: &str, fields: &str) -> String {
+        let signed = format!("{version}.{}", URL_SAFE_NO_PAD.encode(fields));
         let sig = URL_SAFE_NO_PAD.encode(key.sign(signed.as_bytes()).to_bytes());
         format!("{signed}.{sig}")
     }
 
-    fn unauthenticated(reason: &'static str) -> Result<(), Denied> {
+    fn unauthenticated(reason: &'static str) -> Result<Principal, Denied> {
         Err(Denied::Unauthenticated(reason))
     }
 
@@ -363,9 +417,52 @@ mod tests {
         f.write("w1");
         let gate = f.gate(None);
         let cred = f.credential("cb-box", "w1", 600);
-        assert_eq!(gate.check(Some(&cred), None), Ok(()));
-        assert_eq!(gate.check(Some(&cred), None), Ok(()));
+        assert_eq!(gate.check(Some(&cred), None), Ok(Principal::Owner));
+        assert_eq!(gate.check(Some(&cred), None), Ok(Principal::Owner));
         assert_eq!(gate.inner.lock().unwrap().verified.len(), 1);
+    }
+
+    #[test]
+    fn share_credentials_carry_the_signed_principal() {
+        let f = Fixture::new();
+        f.write("w1");
+        let gate = f.gate(None);
+        let exp = crate::now_ms() / 1000 + 600;
+        let fields = |p: &str| format!("{}|cb-box|w1|{exp}|{p}", f.key_id());
+        let read = sign_fields(&f.key, "v2", &fields("share:sh-1:read"));
+        let reader = Ok(Principal::Share {
+            id: "sh-1".into(),
+            write: false,
+            user: None,
+        });
+        assert_eq!(gate.check(Some(&read), None), reader);
+        assert_eq!(gate.check(Some(&read), None), reader, "from the cache");
+        let named = sign_fields(&f.key, "v2", &fields("share:sh-1:write:u-a:b"));
+        assert_eq!(
+            gate.check(Some(&named), None),
+            Ok(Principal::Share {
+                id: "sh-1".into(),
+                write: true,
+                user: Some("u-a:b".into())
+            })
+        );
+        for bad in [
+            sign_fields(&f.key, "v2", &format!("{}|cb-box|w1|{exp}", f.key_id())),
+            sign_fields(&f.key, "v1", &fields("share:sh-1:write")),
+            sign_fields(&f.key, "v2", &fields("owner")),
+            sign_fields(&f.key, "v2", &fields("share:sh-1:admin")),
+            sign_fields(&f.key, "v2", &fields("share::read")),
+            sign_fields(&f.key, "v2", &fields("share:sh-1:read:")),
+        ] {
+            assert_eq!(gate.check(Some(&bad), None), Err(MALFORMED), "{bad}");
+        }
+        let (signed, _) = read.rsplit_once('.').unwrap();
+        let write = sign_fields(&f.key, "v2", &fields("share:sh-1:write"));
+        let (_, write_sig) = write.rsplit_once('.').unwrap();
+        assert_eq!(
+            gate.check(Some(&format!("{signed}.{write_sig}")), None),
+            unauthenticated("bad credential signature")
+        );
     }
 
     #[test]
@@ -385,10 +482,10 @@ mod tests {
         f.write("w1");
         let gate = f.gate(None);
         let old = f.credential("cb-box", "w1", 600);
-        assert_eq!(gate.check(Some(&old), None), Ok(()));
+        assert_eq!(gate.check(Some(&old), None), Ok(Principal::Owner));
         f.write("w2");
         let new = f.credential("cb-box", "w2", 600);
-        assert_eq!(gate.check(Some(&new), None), Ok(()));
+        assert_eq!(gate.check(Some(&new), None), Ok(Principal::Owner));
         assert_eq!(
             gate.check(Some(&old), None),
             unauthenticated("credential from another wake")
@@ -407,7 +504,7 @@ mod tests {
         let gate = f.gate(None);
         assert_eq!(
             gate.check(Some(&f.credential("cb-box", "w1", -60)), None),
-            Ok(())
+            Ok(Principal::Owner)
         );
         assert_eq!(
             gate.check(Some(&f.credential("cb-box", "w1", -130)), None),
@@ -460,7 +557,10 @@ mod tests {
     fn edge_token_works_only_while_the_file_is_absent() {
         let f = Fixture::new();
         let gate = f.gate(Some(TOKEN));
-        assert_eq!(gate.check(None, Some(TOKEN.as_bytes())), Ok(()));
+        assert_eq!(
+            gate.check(None, Some(TOKEN.as_bytes())),
+            Ok(Principal::Owner)
+        );
         assert_eq!(
             gate.check(None, Some(b"edge-tokeX")),
             unauthenticated("missing or invalid edge token")
@@ -494,7 +594,7 @@ mod tests {
         fs::set_permissions(dir, fs::Permissions::from_mode(0o770)).unwrap();
         assert_eq!(gate.check(Some(&cred), None), invalid);
         fs::set_permissions(dir, fs::Permissions::from_mode(0o755)).unwrap();
-        assert_eq!(gate.check(Some(&cred), None), Ok(()));
+        assert_eq!(gate.check(Some(&cred), None), Ok(Principal::Owner));
 
         let real = f.path.with_extension("real");
         fs::rename(&f.path, &real).unwrap();
