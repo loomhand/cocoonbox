@@ -78,6 +78,8 @@ func (s *Service) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1
 	if err != nil {
 		return nil, err
 	}
+	unlock := s.lockStarts(user)
+	defer unlock()
 	if active := s.ops.activeFor(box); active != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "operation %s is still running", active.id)
 	}

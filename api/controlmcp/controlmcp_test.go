@@ -240,6 +240,20 @@ func TestBoxArgumentPicksTheBox(t *testing.T) {
 	}
 }
 
+func TestABoxWithoutAMachineIsAbsent(t *testing.T) {
+	srv, fake := newTestServer(t)
+	fake.mu.Lock()
+	fake.states["alice"], fake.images["alice"] = controlv1.BoxState_BOX_STATE_UNSPECIFIED, ""
+	fake.mu.Unlock()
+	got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_status"}}`))
+	if got["state"] != "absent" || got["upgrade_available"] != false || got["name"] != "main" {
+		t.Fatalf("status of a box without a machine = %v", got)
+	}
+	if text := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_save"}}`)); text != "The box is absent." {
+		t.Fatalf("save of a box without a machine = %q", text)
+	}
+}
+
 func TestEnsureStreamsProgress(t *testing.T) {
 	srv, fake := newTestServer(t)
 	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)

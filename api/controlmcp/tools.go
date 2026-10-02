@@ -241,7 +241,7 @@ func (s *Server) status(ctx context.Context, ref string) (*statusResult, error) 
 		State:            stateName(box.GetState()),
 		Image:            box.GetImage(),
 		LatestImage:      box.GetLatestImage(),
-		UpgradeAvailable: box.GetLatestImage() != "" && box.GetImage() != box.GetLatestImage(),
+		UpgradeAvailable: box.GetImage() != "" && box.GetLatestImage() != "" && box.GetImage() != box.GetLatestImage(),
 		LastSavedAtMs:    box.GetLastSavedAtMs(),
 	}, nil
 }
@@ -470,5 +470,8 @@ func internal(err error) bool {
 }
 
 func stateName(state controlv1.BoxState) string {
+	if state == controlv1.BoxState_BOX_STATE_UNSPECIFIED {
+		return stateAbsent
+	}
 	return strings.ToLower(strings.TrimPrefix(state.String(), "BOX_STATE_"))
 }

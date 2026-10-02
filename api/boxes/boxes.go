@@ -72,6 +72,8 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, err
 	}
+	unlock := s.lockStarts(user)
+	defer unlock()
 	box := req.GetBoxId()
 	if box == "" {
 		if box, err = s.firstBox(ctx, user); err != nil {
@@ -83,8 +85,6 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if s.deleting(box) {
 		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")
 	}
-	unlock := s.lockStarts(user)
-	defer unlock()
 	logger := log.WithFunc("boxes.Service.Ensure").WithField("box", box)
 
 	tenant, err := s.tenantOf(user)
@@ -344,7 +344,7 @@ func (s *Service) flavor(req *controlv1.Flavor) (machines.Flavor, error) {
 	return flavor, nil
 }
 
-// lockStarts serializes the requests that may start a machine of user, so two cannot both pass the running limit.
+// lockStarts serializes the requests that may start or delete a machine of user, so two cannot both pass the running limit or race a delete.
 func (s *Service) lockStarts(user string) func() {
 	s.mu.Lock()
 	l := s.starts[user]
