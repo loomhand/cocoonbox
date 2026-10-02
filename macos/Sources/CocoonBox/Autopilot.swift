@@ -23,7 +23,8 @@ import Foundation
 // then sends the Command+V menu action), clip-copy and clip-cut (Command+C or X, then wait for the pasteboard),
 // share-sheet[:off], share-create[:write,<user name>,...] (24 h), share-write:on|off, share-regenerate,
 // share-revoke, share-copy:<link|claudeCode|codexConfig|cursor> (logs bytes, never the text),
-// end-external (ends the first listed share session), quit.
+// end-external (ends the first listed share session), box:<name> (selects that box),
+// box-create:<name>, box-delete:<name>, boxes:<label> (logs every box and the selection), quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -206,6 +207,20 @@ enum Autopilot {
             if let session = model.selectedLocal { model.closeLocal(session) }
         case "copy-mcp":
             if let snippet = MCPSetup.Snippet(rawValue: arg) { model.copyMCP(snippet) }
+        case "box":
+            await until(30) { model.boxes.contains { $0.name == arg } }
+            if let box = model.boxes.first(where: { $0.name == arg }) { model.selectBox(box.id) }
+        case "box-create":
+            await until(30) { model.connection != nil && !model.boxes.isEmpty }
+            model.createBox(name: arg)
+            await until(15) { model.box?.name == arg || model.lastError?.hasPrefix("create box") == true }
+        case "box-delete":
+            if let box = model.boxes.first(where: { $0.name == arg }) {
+                model.deleteBox(box)
+                await until(60) { !model.boxes.contains { $0.id == box.id } }
+            }
+        case "boxes":
+            Perf.mark("boxes", "label=\(arg) boxes=\(model.boxes.map { "\($0.name)/\($0.state)" }.joined(separator: ",")) selected=\(model.box?.name ?? "-") running=\(model.boxRunning) live=\(model.eventsLive) agents=\(model.agents.count) local=\(model.boxLocalAgents.count) operation=\(model.boxOperation?.status ?? "-") error=\(model.lastError ?? "-")")
         case "quit":
             NSApp.terminate(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }

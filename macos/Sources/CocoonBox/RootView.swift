@@ -81,6 +81,8 @@ struct SidebarView: View {
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 0) {
+            BoxSwitcher()
+                .padding([.horizontal, .top], 12)
             BoxHeader()
                 .padding(12)
             Divider()
@@ -145,7 +147,7 @@ struct SidebarView: View {
                     }
                 }
                 Section {
-                    ForEach(model.localAgents) { session in
+                    ForEach(model.boxLocalAgents) { session in
                         Group {
                             if editingID == AppModel.selectionID(session) {
                                 nameField { commitRename(session) }
@@ -157,7 +159,7 @@ struct SidebarView: View {
                         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(session) })
                     }
                 } header: {
-                    if !model.localAgents.isEmpty {
+                    if !model.boxLocalAgents.isEmpty {
                         Text("On this Mac")
                     }
                 }
@@ -313,18 +315,75 @@ struct LocalAgentRow: View {
     }
 }
 
+// BoxSwitcher picks the box the screen, agents and lifecycle buttons follow, and creates, renames and deletes boxes.
+struct BoxSwitcher: View {
+    @Environment(AppModel.self) private var model
+    @State private var name = ""
+
+    var body: some View {
+        @Bindable var model = model
+        Menu {
+            ForEach(model.boxes, id: \.id) { box in
+                Button {
+                    model.selectBox(box.id)
+                } label: {
+                    Label("\(box.name) · \(StateBadge.label(box.state).lowercased())", systemImage: box.id == model.selectedBoxID ? "checkmark" : "shippingbox")
+                }
+            }
+            Divider()
+            Button("New Box…") { model.showNewBox = true }
+            Button("Rename Box…") {
+                name = model.box?.name ?? ""
+                model.renamingBox = model.box
+            }
+            .disabled(model.box == nil)
+            Button("Delete Box…", role: .destructive) { model.deletingBox = model.box }
+                .disabled(model.box == nil)
+        } label: {
+            HStack {
+                Image(systemName: "shippingbox")
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(model.box?.name ?? "No box").lineLimit(1)
+                    if let box = model.box {
+                        Text(box.id)
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .disabled(model.connection == nil)
+        .help("Switch, create, rename or delete boxes")
+        .alert("New box", isPresented: $model.showNewBox) {
+            TextField("Name", text: $name)
+            Button("Create") {
+                model.createBox(name: name)
+                name = ""
+            }
+            Button("Cancel", role: .cancel) { name = "" }
+        } message: {
+            Text("A name of lowercase letters, digits, - or _. If another box runs, hibernate it first.")
+        }
+        .alert("Rename “\(model.renamingBox?.name ?? "box")”", isPresented: Binding(get: { model.renamingBox != nil }, set: { if !$0 { model.renamingBox = nil } }), presenting: model.renamingBox) { box in
+            TextField("Name", text: $name)
+            Button("Rename") { model.renameBox(box, to: name) }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Delete “\(model.deletingBox?.name ?? "box")”?", isPresented: Binding(get: { model.deletingBox != nil }, set: { if !$0 { model.deletingBox = nil } }), presenting: model.deletingBox) { box in
+            Button("Delete", role: .destructive) { model.deleteBox(box) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("A running box is saved first. Its running programs stop, and its saved state stays in storage.")
+        }
+    }
+}
+
 struct BoxHeader: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Image(systemName: "shippingbox")
-                Text(model.box?.id ?? "No box")
-                    .font(.system(.body, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            }
             HStack(spacing: 6) {
                 StateBadge(state: model.box?.state)
                 if model.eventsLive {
@@ -342,7 +401,7 @@ struct BoxHeader: View {
             if let box = model.box {
                 StateLayerControls(box: box)
             }
-            if let operation = model.operation {
+            if let operation = model.boxOperation {
                 OperationView(progress: operation)
             }
             if let hello = model.hello, model.boxRunning {
@@ -362,7 +421,7 @@ struct StateLayerControls: View {
 
     var body: some View {
         @Bindable var model = model
-        let idle = !model.busy && model.operation.map(\.finished) ?? true
+        let idle = !model.busy && model.boxOperation.map(\.finished) ?? true
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 TimelineView(.periodic(from: .now, by: 30)) { context in
@@ -425,6 +484,10 @@ struct StateBadge: View {
     }
 
     private var label: String {
+        Self.label(state)
+    }
+
+    static func label(_ state: BoxState?) -> String {
         switch state {
         case .starting: "STARTING"
         case .running: "RUNNING"
@@ -505,6 +568,7 @@ extension Cocoonbox_Control_V1_Phase {
         case .snapshotting: "snapshot"
         case .saving: "save"
         case .restoring: "restore"
+        case .deleting: "delete"
         case .done: "done"
         case .failed: "failed"
         default: "…"

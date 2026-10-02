@@ -82,7 +82,7 @@ import Testing
     }
 
     @Test func resumeArguments() {
-        let target = MCPTarget(url: "https://example.test/cocoonbox.mcp/cb-1", token: "tok")
+        let target = MCPTarget(bridge: "/usr/local/bin/cocoonbox", box: "cb-1", endpoint: "https://example.test", token: "tok")
         let claude = LocalAgentKind.claudeCode.launch(executable: "claude", target: target, session: "s-1").arguments
         #expect(Array(claude.suffix(2)) == ["--session-id", "s-1"])
         #expect(Array(LocalAgentKind.claudeCode.launch(executable: "claude", target: target, session: "s-1", resume: true).arguments.suffix(2)) == ["--resume", "s-1"])

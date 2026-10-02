@@ -23,6 +23,7 @@ struct LiveBlock: Equatable {
 
 struct OperationProgress: Equatable {
     var id: String
+    var boxID: String
     var title: String
     var events: [OperationEvent] = []
     var finished = false
@@ -44,7 +45,12 @@ final class AppModel {
     var confirmSave = false
     var confirmUpgrade = false
     var deletingAgent: Agent?
-    var box: Box?
+    var showNewBox = false
+    var renamingBox: Box?
+    var deletingBox: Box?
+    // boxes is oldest first, as the api lists them; the screen, agents and lifecycle follow the selected one.
+    var boxes: [Box] = []
+    var selectedBoxID: String?
     var operation: OperationProgress?
     var agents: [Agent] = []
     var selectedAgentID: String? {
@@ -63,8 +69,9 @@ final class AppModel {
     var shareSecret: String?
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
-    @ObservationIgnored private var restoredLocal = false
-    @ObservationIgnored private var otherLocalRecords: [LocalAgentRecord] = []
+    @ObservationIgnored private var restoredLocal: Set<String> = []
+    // pendingLocal is the session file's records of boxes whose local agents are not reopened yet.
+    @ObservationIgnored private lazy var pendingLocal: [LocalAgentRecord] = LocalAgentStore.load()
 
     let screen = ScreenController()
 
@@ -84,7 +91,7 @@ final class AppModel {
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.connection != nil else { return }
-                Task { await self.refreshBox() }
+                Task { await self.refreshBoxes() }
             }
         }
     }
@@ -93,13 +100,27 @@ final class AppModel {
         agents.first { $0.id == selectedAgentID }
     }
 
+    var box: Box? {
+        boxes.first { $0.id == selectedBoxID }
+    }
+
+    // boxLocalAgents is the local agents that drive the selected box.
+    var boxLocalAgents: [LocalAgentSession] {
+        localAgents.filter { $0.record.boxID == selectedBoxID }
+    }
+
+    // boxOperation is the operation on the selected box, the one the sidebar shows.
+    var boxOperation: OperationProgress? {
+        operation.flatMap { $0.boxID == selectedBoxID ? $0 : nil }
+    }
+
     var boxRunning: Bool {
         box?.state == .running
     }
 
-    // replacing is the unfinished upgrade or restore that moves the box to a new machine.
+    // replacing is the unfinished upgrade or restore that moves the selected box to a new machine.
     var replacing: OperationProgress? {
-        operation.flatMap { $0.replacing && !$0.finished ? $0 : nil }
+        boxOperation.flatMap { $0.replacing && !$0.finished ? $0 : nil }
     }
 
     // agentsReady is whether agents can start or prompt: the box runs and no operation replaces its machine.
@@ -120,15 +141,22 @@ final class AppModel {
         "local:\(session.id)"
     }
 
-    private var localTarget: MCPTarget? {
-        guard let setup = mcpSetup, let endpoint = Endpoint(url: endpointURL), let token = Keychain.token(for: endpoint) else { return nil }
-        return MCPTarget(url: setup.url, token: token)
+    // bridge is the cocoonbox CLI that serves a local agent its box: in the app bundle, or next to a development build.
+    static let bridge: String? = {
+        let bundled = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/cocoonbox")
+        let built = Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("cocoonbox-cli")
+        return [bundled, built].compactMap { $0 }.first { FileManager.default.isExecutableFile(atPath: $0.path) }?.path
+    }()
+
+    private func localTarget(_ boxID: String) -> MCPTarget? {
+        guard let bridge = Self.bridge, let endpoint = Endpoint(url: endpointURL), let token = Keychain.token(for: endpoint) else { return nil }
+        return MCPTarget(bridge: bridge, box: boxID, endpoint: endpoint.url, token: token)
     }
 
-    // launchLocal starts an agent CLI on this Mac, wired to the box's MCP endpoint.
+    // launchLocal starts an agent CLI on this Mac whose MCP server is the bridge, with --box set to the selected box.
     func launchLocal(_ kind: LocalAgentKind) {
-        guard let box, let target = localTarget else {
-            lastError = "local agent: sign in and start the box first"
+        guard let box, let target = localTarget(box.id) else {
+            lastError = "local agent: sign in and start the box first; the cocoonbox CLI must sit next to the app"
             return
         }
         Task {
@@ -143,15 +171,15 @@ final class AppModel {
         }
     }
 
-    // restoreLocal reopens, once per launch, the local agents the session file keeps for this box.
+    // restoreLocal reopens, once per launch and box, the local agents the session file keeps for the selected box.
     private func restoreLocal() {
-        guard !restoredLocal, let box, let target = localTarget else { return }
-        restoredLocal = true
-        let records = LocalAgentStore.load()
-        otherLocalRecords = records.filter { $0.boxID != box.id }
+        guard let box, !restoredLocal.contains(box.id), let target = localTarget(box.id) else { return }
+        restoredLocal.insert(box.id)
+        let records = pendingLocal.filter { $0.boxID == box.id }
+        pendingLocal.removeAll { $0.boxID == box.id }
         Task {
             var sessions: [LocalAgentSession] = []
-            for record in records where record.boxID == box.id {
+            for record in records {
                 do {
                     sessions.append(try await LocalAgentSession.start(record.kind, target: target, boxID: box.id, restoring: record))
                     Perf.mark("local_agent", "reopened \(record.kind.rawValue)")
@@ -193,7 +221,7 @@ final class AppModel {
     private func persistLocal() {
         localAgents.forEach { $0.settle() }
         do {
-            try LocalAgentStore.save(localAgents.map(\.record) + otherLocalRecords)
+            try LocalAgentStore.save(localAgents.map(\.record) + pendingLocal)
         } catch {
             report("save local agents", error)
         }
@@ -378,7 +406,8 @@ final class AppModel {
             Keychain.deleteToken(for: endpoint)
         }
         disconnect()
-        box = nil
+        boxes = []
+        selectedBoxID = nil
         share = nil
         shareSecret = nil
         showSignIn = true
@@ -396,7 +425,7 @@ final class AppModel {
         let mine = connection
         Task {
             var attempt = 0
-            while connection === mine, !(await refreshBox()) {
+            while connection === mine, !(await refreshBoxes()) {
                 try? await pause(Backoff().delay(attempt: attempt))
                 attempt += 1
             }
@@ -411,10 +440,10 @@ final class AppModel {
     }
 
     @discardableResult
-    func refreshBox() async -> Bool {
+    func refreshBoxes() async -> Bool {
         guard let connection else { return false }
         do {
-            apply(box: try await connection.firstBox())
+            apply(boxes: try await connection.listBoxes())
             lastError = nil
             return true
         } catch {
@@ -423,14 +452,100 @@ final class AppModel {
         }
     }
 
-    private func apply(box newBox: Box?) {
+    // apply takes the box list; without a selection, or when the selected box is gone, it selects the newest running box, else the first.
+    private func apply(boxes list: [Box]) {
         let wasRunning = boxRunning
-        box = newBox
-        Perf.mark("box_state", "\(newBox?.state ?? .unspecified)")
+        boxes = list
+        guard box == nil else { return followSelected(wasRunning: wasRunning) }
+        if let pick = list.last(where: { $0.state == .running }) ?? list.first {
+            selectBox(pick.id)
+        } else {
+            stopAgentSide()
+            selectedBoxID = nil
+        }
+    }
+
+    private func apply(box newBox: Box) {
+        let wasRunning = boxRunning
+        if let index = boxes.firstIndex(where: { $0.id == newBox.id }) {
+            boxes[index] = newBox
+        } else {
+            boxes.append(newBox)
+        }
+        if newBox.id == selectedBoxID { followSelected(wasRunning: wasRunning) }
+    }
+
+    private func followSelected(wasRunning: Bool) {
+        Perf.mark("box_state", "\(box?.id ?? "-") \(box?.state ?? .unspecified)")
         if boxRunning, !wasRunning || eventsTask == nil {
             startAgentSide()
         } else if !boxRunning, wasRunning {
             stopAgentSide()
+        }
+    }
+
+    // selectBox moves the screen, the agents and the lifecycle buttons to box id.
+    func selectBox(_ id: String) {
+        guard id != selectedBoxID else { return }
+        stopAgentSide()
+        agents = []
+        transcripts = [:]
+        live = [:]
+        loadedTranscripts = []
+        hello = nil
+        share = nil
+        shareSecret = nil
+        selectedBoxID = id
+        selectedAgentID = boxLocalAgents.first.map(Self.selectionID)
+        Perf.mark("box_select", "\(id) \(box?.name ?? "-") \(box?.state ?? .unspecified)")
+        if boxRunning { startAgentSide() }
+    }
+
+    // MARK: boxes
+
+    func createBox(name: String) {
+        guard let connection else { return }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let response = try await connection.createBox(name: name)
+                apply(box: response.box)
+                selectBox(response.box.id)
+                if response.hasOperation, !response.operation.id.isEmpty {
+                    watch(operation: response.operation.id, box: response.box.id, title: "Creating \(name)")
+                }
+            } catch {
+                report("create box", error)
+            }
+        }
+    }
+
+    func renameBox(_ target: Box, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let connection, !name.isEmpty, name != target.name else { return }
+        Task {
+            do {
+                apply(box: try await connection.renameBox(boxID: target.id, name: name))
+            } catch {
+                report("rename box", error)
+            }
+        }
+    }
+
+    func deleteBox(_ target: Box) {
+        guard let connection else { return }
+        busy = true
+        if target.id == selectedBoxID { stopAgentSide() }
+        Task {
+            defer { busy = false }
+            do {
+                let op = try await connection.deleteBox(boxID: target.id)
+                watch(operation: op.id, box: target.id, title: "Deleting \(target.name)")
+            } catch {
+                report("delete box", error)
+            }
         }
     }
 
@@ -443,10 +558,11 @@ final class AppModel {
             defer { busy = false }
             do {
                 Perf.mark("ensure_start")
-                let response = try await connection.ensure()
+                let response = try await connection.ensure(boxID: box?.id ?? "")
                 apply(box: response.box)
+                if selectedBoxID == nil { selectBox(response.box.id) }
                 if response.hasOperation, !response.operation.id.isEmpty {
-                    watch(operation: response.operation.id, title: response.box.state == .starting ? "Starting box" : "Ensure")
+                    watch(operation: response.operation.id, box: response.box.id, title: response.box.state == .starting ? "Starting box" : "Ensure")
                 }
             } catch {
                 report("ensure", error)
@@ -466,7 +582,7 @@ final class AppModel {
             defer { busy = false }
             do {
                 let op = try await connection.saveState(boxID: box.id)
-                watch(operation: op.id, title: "Saving")
+                watch(operation: op.id, box: box.id, title: "Saving")
             } catch {
                 report("save", error)
             }
@@ -481,7 +597,7 @@ final class AppModel {
             defer { busy = false }
             do {
                 let op = try await connection.rebase(boxID: box.id, image: target)
-                watch(operation: op.id, title: "Upgrading to \(target)", replacing: true)
+                watch(operation: op.id, box: box.id, title: "Upgrading to \(target)", replacing: true)
             } catch {
                 report("upgrade", error)
             }
@@ -496,16 +612,16 @@ final class AppModel {
             defer { busy = false }
             do {
                 let op = try await connection.hibernate(boxID: box.id)
-                watch(operation: op.id, title: "Hibernating")
+                watch(operation: op.id, box: box.id, title: "Hibernating")
             } catch {
                 report("hibernate", error)
             }
         }
     }
 
-    private func watch(operation id: String, title: String, replacing: Bool = false) {
+    private func watch(operation id: String, box boxID: String, title: String, replacing: Bool = false) {
         operationTask?.cancel()
-        operation = OperationProgress(id: id, title: title, replacing: replacing)
+        operation = OperationProgress(id: id, boxID: boxID, title: title, replacing: replacing)
         if replacing { screen.takeOver = false }
         operationTask = Task { [weak self] in
             var attempt = 0
@@ -539,12 +655,12 @@ final class AppModel {
         }
         operation = progress
         if replacing != nil { screen.takeOver = false }
-        if var current = box, event.boxState != .unspecified {
+        if var current = boxes.first(where: { $0.id == progress.boxID }), event.boxState != .unspecified {
             current.state = event.boxState
             apply(box: current)
         }
         if progress.finished {
-            await refreshBox()
+            await refreshBoxes()
         }
     }
 

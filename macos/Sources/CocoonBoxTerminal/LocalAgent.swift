@@ -1,14 +1,23 @@
 import Foundation
 
-// MCPTarget is all this module knows about the box: the MCP endpoint and the
-// bearer token. The token only ever reaches a child through its environment.
+// MCPTarget is all this module knows about the box: the cocoonbox CLI whose
+// stdio bridge serves it, its id, the endpoint and the bearer token. The
+// token only ever reaches a child through its environment, which the bridge reads.
 public struct MCPTarget: Sendable {
-    public let url: String
+    public let bridge: String
+    public let box: String
+    public let endpoint: String
     public let token: String
 
-    public init(url: String, token: String) {
-        self.url = url
+    public init(bridge: String, box: String, endpoint: String, token: String) {
+        self.bridge = bridge
+        self.box = box
+        self.endpoint = endpoint
         self.token = token
+    }
+
+    public var arguments: [String] {
+        ["mcp", "--box", box, "--endpoint", endpoint]
     }
 }
 
@@ -39,8 +48,9 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
         }
     }
 
-    // launch builds the child's argv, environment and workspace files. Only
-    // the environment carries the token; argv and files name the variable.
+    // launch builds the child's argv, environment and workspace files: the CLI
+    // runs the bridge as its stdio MCP server and hands it the token variable.
+    // Only the environment carries the token; argv and files name the variable.
     // With resume the CLI reopens `session`; Claude Code also starts a new
     // conversation under `session`.
     public func launch(executable path: String, target: MCPTarget, session: String? = nil, resume: Bool = false) -> LocalAgentLaunch {
@@ -50,18 +60,19 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
         var files: [String: String] = [:]
         switch self {
         case .claudeCode:
-            let config = #"{"mcpServers":{"\#(server)":{"type":"http","url":"\#(target.url)","headers":{"Authorization":"Bearer ${\#(variable)}"}}}}"#
+            let config = Self.json(["mcpServers": [server: ["type": "stdio", "command": target.bridge, "args": target.arguments, "env": [variable: "${\(variable)}"]]]])
             arguments = [path, "--mcp-config", config, "--append-system-prompt", Self.instructions, "--allowedTools", "mcp__\(server)"]
                 + (session.map { resume ? ["--resume", $0] : ["--session-id", $0] } ?? [])
         case .codex:
             arguments = [path] + (resume ? session.map { ["resume", $0] } ?? [] : []) + [
-                "-c", "mcp_servers.\(server).url=\(toml(target.url))",
-                "-c", "mcp_servers.\(server).bearer_token_env_var=\(toml(variable))",
+                "-c", "mcp_servers.\(server).command=\(toml(target.bridge))",
+                "-c", "mcp_servers.\(server).args=[\(target.arguments.map(toml).joined(separator: ", "))]",
+                "-c", "mcp_servers.\(server).env_vars=[\(toml(variable))]",
                 "-c", "developer_instructions=\(toml(Self.instructions))",
             ]
         case .cursor:
             arguments = [path, "--approve-mcps", "--trust"] + (resume ? session.map { ["--resume", $0] } ?? [] : [])
-            files[".cursor/mcp.json"] = #"{"mcpServers":{"\#(server)":{"url":"\#(target.url)","headers":{"Authorization":"Bearer ${env:\#(variable)}"}}}}"#
+            files[".cursor/mcp.json"] = Self.json(["mcpServers": [server: ["command": target.bridge, "args": target.arguments, "env": [variable: "${env:\(variable)}"]]]])
             files[".cursor/cli.json"] = #"{"permissions":{"allow":["Mcp(*\#(server):*)"],"deny":[]}}"#
             files[".cursor/rules/cocoonbox.mdc"] = "---\ndescription: cocoonbox\nalwaysApply: true\n---\n\(Self.instructions)\n"
         }
@@ -78,6 +89,11 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
             if !name.isEmpty, !generic.contains(name.lowercased()), !name.hasPrefix("Action Required") { return name }
         }
         return nil
+    }
+
+    private static func json(_ object: [String: Any]) -> String {
+        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func toml(_ value: String) -> String {
