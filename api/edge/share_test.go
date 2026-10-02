@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
@@ -30,6 +31,8 @@ const (
 	namedSecret  = auth.SecretPrefix + "fedcba9876543210fedcba9876543210"
 	staleSecret  = auth.SecretPrefix + "00000000000000000000000000000000"
 	toolsListRPC = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+	// shareLikeToken is a user token that happens to carry the share prefix.
+	shareLikeToken = auth.SecretPrefix + "user-token-of-dave"
 )
 
 func TestMCPAuthorizesOwnerOrShare(t *testing.T) {
@@ -80,6 +83,32 @@ func TestMCPAuthorizesOwnerOrShare(t *testing.T) {
 				t.Errorf("upstream saw credential %q, authorization %q, guest %q; want %q and neither header", got["credential"], got["authorization"], got["guest"], tt.credential)
 			}
 		})
+	}
+}
+
+func TestUserTokenWinsOverTheSharePrefix(t *testing.T) {
+	env := newMCPEnv(t)
+	env.resolver.wake = "w1"
+	sum := sha256.Sum256([]byte(shareLikeToken))
+	env.users[hex.EncodeToString(sum[:])] = "dave"
+	env.shares.put(shareLikeToken, auth.Share{ID: "sh-twin", Owner: "alice", Box: boxes.BoxID("alice")})
+	req := env.request(t, http.MethodPost, boxes.BoxID("dave"), toolsListRPC)
+	req.Header.Set("Authorization", "Bearer "+shareLikeToken)
+	resp := env.do(t, req)
+	defer resp.Body.Close()
+	var got map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d, %v", resp.StatusCode, err)
+	}
+	if want := "cred:" + boxes.BoxID("dave") + ":w1"; got["credential"] != want {
+		t.Errorf("a user token starting with %s went to %q, want dave's owner credential %q", auth.SecretPrefix, got["credential"], want)
+	}
+	req = env.request(t, http.MethodPost, boxes.BoxID("alice"), toolsListRPC)
+	req.Header.Set("Authorization", "Bearer "+shareLikeToken)
+	resp = env.do(t, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("dave's token on alice's box = %d, want 403 as dave, not admitted as the share", resp.StatusCode)
 	}
 }
 
@@ -141,9 +170,13 @@ func TestShareSecretIsNoGRPCToken(t *testing.T) {
 	}
 }
 
-func TestScreenDropsViewerInput(t *testing.T) {
-	env := newProxyEnv(t)
-	proxy := NewProxy(env.resolver, fakeCreds{})
+func TestScreenFiltersBothDirections(t *testing.T) {
+	stream, want := serverStream()
+	box := &scriptedScreen{stream: stream, got: make(chan []byte, 64)}
+	agentSrv := grpc.NewServer()
+	agentv1.RegisterSessionServer(agentSrv, box)
+	resolver := &fakeResolver{addr: serve(t, agentSrv)}
+	proxy := NewProxy(resolver, fakeCreds{})
 	t.Cleanup(proxy.Close)
 	cut := make(chan struct{})
 	grant := auth.Grant{Share: auth.Share{ID: "sh-open", Owner: "alice", Box: boxes.BoxID("alice"), Cut: cut}}
@@ -151,16 +184,18 @@ func TestScreenDropsViewerInput(t *testing.T) {
 	served := make(chan error, 1)
 	go func() { served <- proxy.Screen(t.Context(), grant, viewer) }()
 
-	keep := func(b ...byte) []byte { return b }
 	sent := [][]byte{
-		[]byte("RFB 003.008\n"), keep(1), keep(0),
-		keep(2, 0, 0, 1, 0, 0, 0, 7),
-		keep(4, 1, 0, 0, 0, 0, 0, 0x61),
-		keep(5, 1, 0, 10, 0, 20),
-		append(keep(6, 0, 0, 0, 0, 0, 0, 5), "hello"...),
-		keep(3, 1, 0, 0, 0, 0, 5, 0, 3, 32),
+		[]byte("RFB 003.008\n"),
+		{1},
+		{0},
+		append([]byte{0, 0, 0, 0, 32}, make([]byte, 15)...),
+		{2, 0, 0, 3, 0, 0, 0, 16, 0xc0, 0xa1, 0xe5, 0xce, 0, 0, 0, 7},
+		{4, 1, 0, 0, 0, 0, 0, 0x61},
+		{5, 1, 0, 10, 0, 20},
+		append([]byte{6, 0, 0, 0, 0, 0, 0, 5}, "hello"...),
+		{3, 1, 0, 0, 0, 0, 5, 0, 3, 32},
 	}
-	want := bytes.Join([][]byte{sent[0], keep(1), keep(1), sent[3], sent[7]}, nil)
+	toBox := bytes.Join([][]byte{sent[0], {1}, {1}, sent[3], {2, 0, 0, 1, 0, 0, 0, 16}, sent[8]}, nil)
 	var got []byte
 	read := make(chan error, 1)
 	go func() {
@@ -183,10 +218,22 @@ func TestScreenDropsViewerInput(t *testing.T) {
 	select {
 	case err := <-read:
 		if err != nil || !bytes.Equal(got, want) {
-			t.Fatalf("the box saw %v (%v), want %v", got, err, want)
+			t.Fatalf("the viewer saw %v (%v), want %v", got, err, want)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatalf("the box saw %v, want %v", got, want)
+		t.Fatalf("the viewer saw %d of %d bytes", len(got), len(want))
+	}
+	var atBox []byte
+	for len(atBox) < len(toBox) {
+		select {
+		case b := <-box.got:
+			atBox = append(atBox, b...)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the box saw %v, want %v", atBox, toBox)
+		}
+	}
+	if !bytes.Equal(atBox, toBox) {
+		t.Errorf("the box saw %v, want %v", atBox, toBox)
 	}
 	start := time.Now()
 	close(cut)
@@ -197,6 +244,46 @@ func TestScreenDropsViewerInput(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("the bridge outlived its share by 1 s")
+	}
+}
+
+// scriptedScreen plays stream as the box's RFB server, 7 bytes a frame, sending the security part only once the
+// viewer's version has arrived, and reports every byte the bridge forwards.
+type scriptedScreen struct {
+	agentv1.UnimplementedSessionServer
+	stream []byte
+	got    chan []byte
+}
+
+func (s *scriptedScreen) Screen(stream grpc.BidiStreamingServer[agentv1.ScreenClientFrame, agentv1.ScreenServerFrame]) error {
+	send := func(b []byte) error {
+		for len(b) > 0 {
+			n := min(7, len(b))
+			if err := stream.Send(&agentv1.ScreenServerFrame{Data: b[:n]}); err != nil {
+				return err
+			}
+			b = b[n:]
+		}
+		return nil
+	}
+	if err := send(s.stream[:12]); err != nil {
+		return err
+	}
+	rest := s.stream[12:]
+	for {
+		in, err := stream.Recv()
+		if err != nil {
+			return nil
+		}
+		if data := in.GetData(); len(data) > 0 {
+			s.got <- data
+			if rest != nil {
+				if err := send(rest); err != nil {
+					return err
+				}
+				rest = nil
+			}
+		}
 	}
 }
 

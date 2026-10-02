@@ -97,17 +97,11 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-// route authorizes one exchange for the box's owner, or for a share when the bearer is a share secret.
+// route authorizes one exchange for the bearer's user, or, when no user holds it and it is a share secret, for that share.
 func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	authorization := r.Header.Get("Authorization")
-	if boxID == "" {
-		if _, err = m.authn.Authenticate(authorization); err != nil {
-			return rt, err
-		}
-		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
-	}
-	owner := ""
-	if secret, ok := auth.ShareSecret(authorization); ok {
+	owner, err := m.authn.Authenticate(authorization)
+	if secret, ok := auth.ShareSecret(authorization); err != nil && ok && boxID != "" {
 		var guest string
 		if guest, err = m.authn.Guest(r.Header.Get(auth.HeaderGuestToken)); err != nil {
 			return rt, err
@@ -116,12 +110,16 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 		if grant, err = m.authn.Admit(secret, boxID, guest); err != nil {
 			return rt, err
 		}
-		rt.grant, rt.caller, owner = &grant, grant.Principal(), grant.Owner
+		rt.grant, owner = &grant, grant.Owner
+		rt.caller = grant.Principal()
 	} else {
-		if owner, err = m.authn.Authenticate(authorization); err != nil {
+		if err != nil {
 			return rt, err
 		}
 		rt.caller = owner
+	}
+	if boxID == "" {
+		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
 	rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), owner, boxID)
 	return rt, err

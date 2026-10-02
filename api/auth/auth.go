@@ -20,7 +20,7 @@ const (
 	HeaderAuthorization = "authorization"
 	// HeaderGuestToken carries the caller's own user token next to the secret of a share that names its users.
 	HeaderGuestToken = "x-cocoonbox-guest-token" //nolint:gosec // a header name, not a credential
-	// SecretPrefix starts every share secret; no user token starts with it.
+	// SecretPrefix starts every share secret; a bearer is tried as a share secret only when no user token matches it.
 	SecretPrefix = "cbs_"
 
 	bearerPrefix = "bearer "
