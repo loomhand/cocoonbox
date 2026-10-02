@@ -3,7 +3,7 @@
 pub mod crypto;
 pub mod manifest;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,12 +14,12 @@ use futures_util::stream::{self, FuturesUnordered};
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::io::AsyncReadExt;
-use tokio::sync::{Mutex, OwnedRwLockWriteGuard, RwLock, mpsc};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::{Mutex, OnceCell, OwnedRwLockWriteGuard, RwLock, Semaphore, mpsc};
 
 use crate::pb;
 use crate::store::Store;
-use crate::toolhost::rpc::{self, Call, FileReader};
+use crate::toolhost::rpc::{self, Call, FileReader, FileWriter};
 use crate::toolhost::state::{Entry, Excludes, Kind, Root};
 use crypto::Keys;
 use manifest::{Blob, FileRecord, Manifest};
@@ -29,7 +29,8 @@ const CHUNK_AVG: u32 = 1 << 20;
 const CHUNK_MAX: u32 = 4 << 20;
 const MANIFEST_LIMIT: u64 = 256 << 20;
 const TRANSFERS: usize = 8;
-const RESTORE_WRITES: usize = 4;
+const RESTORE_WRITES: usize = 8;
+const RESTORE_AHEAD: usize = 4;
 const PLAN_READS: usize = 4;
 const ATTEMPTS: u32 = 3;
 const RETRY_BASE: Duration = Duration::from_millis(500);
@@ -241,7 +242,6 @@ impl StateEngine {
                 manifest.version
             )));
         }
-        let needed = referenced(&manifest);
         let cache = self
             .work
             .join(format!("restore-{}", uuid::Uuid::new_v4().simple()));
@@ -252,7 +252,6 @@ impl StateEngine {
             .restore_from(
                 &keys,
                 &manifest,
-                &needed,
                 first.gets,
                 reqs,
                 &cache,
@@ -269,9 +268,8 @@ impl StateEngine {
         &self,
         keys: &Arc<Keys>,
         manifest: &Manifest,
-        needed: &BTreeSet<String>,
-        mut queue: Vec<pb::PresignedGet>,
-        mut reqs: S,
+        queue: Vec<pb::PresignedGet>,
+        reqs: S,
         cache: &Path,
         progress: mpsc::Sender<pb::TransferProgress>,
         manifest_id: &str,
@@ -279,44 +277,8 @@ impl StateEngine {
     where
         S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
     {
-        let mut meter = Meter::new(0, needed.len(), progress);
-        let mut fetched = HashSet::with_capacity(needed.len());
-        let mut fetches = FuturesUnordered::new();
-        let mut open = true;
-        loop {
-            while fetches.len() < TRANSFERS
-                && let Some(g) = queue.pop()
-            {
-                if needed.contains(&g.chunk_id) && fetched.insert(g.chunk_id.clone()) {
-                    let dest = cache.join(&g.chunk_id);
-                    fetches.push(self.fetch_chunk(Arc::clone(keys), g.chunk_id, g.url, dest));
-                }
-            }
-            if !open && queue.is_empty() && fetches.is_empty() {
-                break;
-            }
-            tokio::select! {
-                page = reqs.next(), if open && queue.len() < TRANSFERS => {
-                    match page.transpose()? {
-                        Some(req) => queue.extend(req.gets),
-                        None => open = false,
-                    }
-                }
-                Some(done) = fetches.next(), if !fetches.is_empty() => meter.add(done?).await,
-            }
-        }
-        if let Some(missing) = needed.iter().find(|id| !fetched.contains(*id)) {
-            return Err(StateError::Invalid(format!("no url for chunk {missing}")));
-        }
-        let quiet = self.quiesce().await?;
-        let result = self.rebuild(manifest, cache).await;
-        self.resume(quiet, result.is_ok()).await;
-        result?;
-        meter.finish(manifest_id).await;
-        Ok(())
-    }
-
-    async fn rebuild(&self, manifest: &Manifest, cache: &Path) -> Result<(), StateError> {
+        let mut targets = Vec::new();
+        let mut links = Vec::with_capacity(self.roots.len());
         let mut swaps = Vec::with_capacity(self.roots.len());
         for root in &self.roots {
             let records: Vec<&FileRecord> = manifest
@@ -328,37 +290,24 @@ impl StateEngine {
                 .path
                 .join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4().simple()));
             let mut dirs = vec![json!({"path": staging, "mode": 0o700})];
-            let mut links = Vec::new();
+            let mut root_links = Vec::new();
             for r in &records {
                 let path = staging.join(&r.entry.path);
                 match r.entry.kind {
                     Kind::Dir => dirs.push(json!({"path": path, "mode": r.entry.mode})),
-                    Kind::Symlink => links.push(json!({
+                    Kind::Symlink => root_links.push(json!({
                         "path": path,
                         "target": r.entry.target.clone().unwrap_or_default(),
                     })),
-                    Kind::File => {}
+                    Kind::File => targets.push(Target {
+                        dest: Dest::Staged(path, &r.entry),
+                        chunks: &r.chunks,
+                    }),
                 }
             }
             self.tool("state_apply", json!({"dirs": dirs, "symlinks": []}))
                 .await?;
-            let mut writes = FuturesUnordered::new();
-            for r in &records {
-                if r.entry.kind != Kind::File {
-                    continue;
-                }
-                writes.push(self.write_record(&staging, r, cache));
-                if writes.len() >= RESTORE_WRITES
-                    && let Some(done) = writes.next().await
-                {
-                    done?;
-                }
-            }
-            while let Some(done) = writes.next().await {
-                done?;
-            }
-            self.tool("state_apply", json!({"dirs": [], "symlinks": links}))
-                .await?;
+            links.push(root_links);
             let names: BTreeSet<&str> = records
                 .iter()
                 .filter_map(|r| r.entry.path.split('/').next())
@@ -373,15 +322,189 @@ impl StateEngine {
             swaps
                 .push(json!({"root": root.path, "staging": staging, "names": names, "keep": keep}));
         }
+        if let Some(db) = &manifest.agent_db {
+            targets.push(Target {
+                dest: Dest::Local(cache.join("agent.db")),
+                chunks: &db.chunks,
+            });
+        }
+        let mut meter = self
+            .fill(keys, targets, queue, reqs, cache, progress)
+            .await?;
+        for symlinks in links {
+            self.tool("state_apply", json!({"dirs": [], "symlinks": symlinks}))
+                .await?;
+        }
+        let quiet = self.quiesce().await?;
+        let result = self.swap_in(manifest, cache, swaps).await;
+        self.resume(quiet, result.is_ok()).await;
+        result?;
+        meter.finish(manifest_id).await;
+        Ok(())
+    }
+
+    /// Writes every target as its chunk urls arrive, fetching each chunk once; a chunk used more
+    /// than once goes through `cache`. Fails if a chunk never got a url.
+    async fn fill<S>(
+        &self,
+        keys: &Arc<Keys>,
+        targets: Vec<Target<'_>>,
+        mut queue: Vec<pb::PresignedGet>,
+        mut reqs: S,
+        cache: &Path,
+        progress: mpsc::Sender<pb::TransferProgress>,
+    ) -> Result<Meter, StateError>
+    where
+        S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
+    {
+        let mut uses: HashMap<&str, usize> = HashMap::new();
+        let mut waiting: HashMap<&str, Vec<usize>> = HashMap::new();
+        let mut lacking = Vec::with_capacity(targets.len());
+        let mut ready = VecDeque::new();
+        for (i, t) in targets.iter().enumerate() {
+            let distinct: HashSet<&str> = t.chunks.iter().map(String::as_str).collect();
+            for id in t.chunks {
+                *uses.entry(id).or_default() += 1;
+            }
+            for id in &distinct {
+                waiting.entry(*id).or_default().push(i);
+            }
+            if distinct.is_empty() {
+                ready.push_back(i);
+            }
+            lacking.push(distinct.len());
+        }
+        let shared: HashMap<&str, Arc<OnceCell<()>>> = uses
+            .iter()
+            .filter(|(_, n)| **n > 1)
+            .map(|(id, _)| (*id, Arc::default()))
+            .collect();
+        let meter = Mutex::new(Meter::new(0, uses.len(), progress));
+        let mut targets: Vec<Option<Target>> = targets.into_iter().map(Some).collect();
+        let mut urls: HashMap<String, String> = HashMap::new();
+        let gets = Semaphore::new(TRANSFERS);
+        let mut jobs = FuturesUnordered::new();
+        let mut open = true;
+        loop {
+            for g in queue.drain(..) {
+                let Some(ts) = waiting.remove(g.chunk_id.as_str()) else {
+                    continue;
+                };
+                for t in ts {
+                    lacking[t] -= 1;
+                    if lacking[t] == 0 {
+                        ready.push_back(t);
+                    }
+                }
+                urls.insert(g.chunk_id, g.url);
+            }
+            while jobs.len() < RESTORE_WRITES
+                && let Some(t) = ready.pop_front().and_then(|i| targets[i].take())
+            {
+                let parts: Vec<Part> = t
+                    .chunks
+                    .iter()
+                    .map(|id| match shared.get(id.as_str()) {
+                        Some(cell) => Part::Shared {
+                            id: id.clone(),
+                            url: urls.get(id).cloned().unwrap_or_default(),
+                            cell: Arc::clone(cell),
+                        },
+                        None => Part::Once {
+                            id: id.clone(),
+                            url: urls.remove(id).unwrap_or_default(),
+                        },
+                    })
+                    .collect();
+                jobs.push(self.write_target(keys, t.dest, parts, cache, &gets, &meter));
+            }
+            if !open && ready.is_empty() && jobs.is_empty() {
+                break;
+            }
+            tokio::select! {
+                page = reqs.next(), if open && ready.is_empty() => {
+                    match page.transpose()? {
+                        Some(req) => queue = req.gets,
+                        None => open = false,
+                    }
+                }
+                Some(done) = jobs.next(), if !jobs.is_empty() => done?,
+            }
+        }
+        if let Some(missing) = waiting.keys().min() {
+            return Err(StateError::Invalid(format!("no url for chunk {missing}")));
+        }
+        drop(jobs);
+        Ok(meter.into_inner())
+    }
+
+    async fn write_target(
+        &self,
+        keys: &Arc<Keys>,
+        dest: Dest<'_>,
+        parts: Vec<Part>,
+        cache: &Path,
+        gets: &Semaphore,
+        meter: &Mutex<Meter>,
+    ) -> Result<(), String> {
+        let mut sink = match dest {
+            Dest::Staged(path, e) => {
+                Sink::Remote(self.toolhost.write_file(&path, e.mode, e.mtime_ms).await?)
+            }
+            Dest::Local(path) => Sink::Local(
+                tokio::fs::File::create(&path)
+                    .await
+                    .map_err(|e| format!("create {}: {e}", path.display()))?,
+            ),
+        };
+        let mut data = stream::iter(parts)
+            .map(|p| self.part(keys, p, cache, gets, meter))
+            .buffered(RESTORE_AHEAD);
+        while let Some(d) = data.next().await {
+            sink.send(&d?).await?;
+        }
+        sink.finish().await
+    }
+
+    async fn part(
+        &self,
+        keys: &Arc<Keys>,
+        part: Part,
+        cache: &Path,
+        gets: &Semaphore,
+        meter: &Mutex<Meter>,
+    ) -> Result<Vec<u8>, String> {
+        match part {
+            Part::Once { id, url } => self.fetch_chunk(keys, &id, &url, gets, meter).await,
+            Part::Shared { id, url, cell } => {
+                cell.get_or_try_init(|| async {
+                    let plain = self.fetch_chunk(keys, &id, &url, gets, meter).await?;
+                    let path = cache.join(&id);
+                    tokio::fs::write(&path, plain)
+                        .await
+                        .map_err(|e| format!("write {}: {e}", path.display()))
+                })
+                .await?;
+                read_cached(cache, &id).await
+            }
+        }
+    }
+
+    /// Stops the desktop session, swaps the staged roots in and restores agent.db, then starts it.
+    async fn swap_in(
+        &self,
+        manifest: &Manifest,
+        cache: &Path,
+        swaps: Vec<serde_json::Value>,
+    ) -> Result<(), StateError> {
         self.desktop("stop").await?;
-        let swapped = self.swap_in(manifest, cache, swaps).await;
+        let swapped = self.swap_staged(manifest, cache, swaps).await;
         let started = self.desktop("start").await;
         swapped?;
         started.map_err(StateError::Failed)
     }
 
-    /// Swaps the staged roots in and restores agent.db while the desktop session is stopped.
-    async fn swap_in(
+    async fn swap_staged(
         &self,
         manifest: &Manifest,
         cache: &Path,
@@ -390,16 +513,8 @@ impl StateEngine {
         for swap in swaps {
             self.tool("state_swap", swap).await?;
         }
-        if let Some(db) = &manifest.agent_db {
-            let path = cache.join("agent.db");
-            let mut out = Vec::with_capacity(usize::try_from(db.size).unwrap_or(0));
-            for id in &db.chunks {
-                out.extend(read_cached(cache, id).await?);
-            }
-            tokio::fs::write(&path, &out)
-                .await
-                .map_err(|e| format!("write {}: {e}", path.display()))?;
-            self.store.restore_from(path).await?;
+        if manifest.agent_db.is_some() {
+            self.store.restore_from(cache.join("agent.db")).await?;
         }
         Ok(())
     }
@@ -419,23 +534,6 @@ impl StateEngine {
         } else {
             Err(format!("systemctl {verb} {unit}: {status}"))
         }
-    }
-
-    async fn write_record(
-        &self,
-        staging: &Path,
-        r: &FileRecord,
-        cache: &Path,
-    ) -> Result<(), String> {
-        let path = staging.join(&r.entry.path);
-        let mut w = self
-            .toolhost
-            .write_file(&path, r.entry.mode, r.entry.mtime_ms)
-            .await?;
-        for id in &r.chunks {
-            w.send(&read_cached(cache, id).await?).await?;
-        }
-        w.finish().await
     }
 
     async fn snapshot(
@@ -700,24 +798,30 @@ impl StateEngine {
 
     async fn fetch_chunk(
         &self,
-        keys: Arc<Keys>,
-        id: String,
-        url: String,
-        dest: PathBuf,
-    ) -> Result<u64, String> {
-        let sealed = self
-            .get(&url)
-            .await
-            .map_err(|e| format!("chunk {id}: {e}"))?;
+        keys: &Arc<Keys>,
+        id: &str,
+        url: &str,
+        gets: &Semaphore,
+        meter: &Mutex<Meter>,
+    ) -> Result<Vec<u8>, String> {
+        let sealed = {
+            let _slot = gets
+                .acquire()
+                .await
+                .map_err(|e| format!("transfer slot: {e}"))?;
+            self.get(url)
+                .await
+                .map_err(|e| format!("chunk {id}: {e}"))?
+        };
         let size = sealed.len() as u64;
+        let keys = Arc::clone(keys);
+        let owned = id.to_owned();
         let plain =
-            tokio::task::spawn_blocking(move || keys.open(&id, &sealed, u64::from(CHUNK_MAX)))
+            tokio::task::spawn_blocking(move || keys.open(&owned, &sealed, u64::from(CHUNK_MAX)))
                 .await
                 .map_err(|e| format!("open task: {e}"))??;
-        tokio::fs::write(&dest, plain)
-            .await
-            .map_err(|e| format!("write {}: {e}", dest.display()))?;
-        Ok(size)
+        meter.lock().await.add(size).await;
+        Ok(plain)
     }
 
     async fn load_known(&self, key_id: &str) -> Known {
@@ -776,6 +880,53 @@ impl Reuse {
 struct Quiet {
     _gate: OwnedRwLockWriteGuard<()>,
     chrome: bool,
+}
+
+/// A file Restore writes and the chunks it is made of.
+struct Target<'a> {
+    dest: Dest<'a>,
+    chunks: &'a [String],
+}
+
+/// Where a restored file goes: a staged path written as `user`, or a local file.
+enum Dest<'a> {
+    Staged(PathBuf, &'a Entry),
+    Local(PathBuf),
+}
+
+/// One chunk of a target and the url it comes from; a shared chunk is fetched once.
+enum Part {
+    Once {
+        id: String,
+        url: String,
+    },
+    Shared {
+        id: String,
+        url: String,
+        cell: Arc<OnceCell<()>>,
+    },
+}
+
+/// The open file a target is written into.
+enum Sink {
+    Remote(FileWriter),
+    Local(tokio::fs::File),
+}
+
+impl Sink {
+    async fn send(&mut self, data: &[u8]) -> Result<(), String> {
+        match self {
+            Self::Remote(w) => w.send(data).await,
+            Self::Local(f) => f.write_all(data).await.map_err(|e| format!("write: {e}")),
+        }
+    }
+
+    async fn finish(self) -> Result<(), String> {
+        match self {
+            Self::Remote(w) => w.finish().await,
+            Self::Local(mut f) => f.flush().await.map_err(|e| format!("flush: {e}")),
+        }
+    }
 }
 
 /// What the plan does with one walked entry.
@@ -1003,11 +1154,14 @@ fn chrome_start(closed: bool, restored: bool) -> Option<serde_json::Value> {
     }
 }
 
-fn referenced(m: &Manifest) -> BTreeSet<String> {
+/// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.
+fn referenced(m: &Manifest) -> Vec<String> {
+    let mut seen = HashSet::new();
     m.files
         .iter()
         .flat_map(|f| f.chunks.iter())
         .chain(m.agent_db.iter().flat_map(|b| b.chunks.iter()))
+        .filter(|id| seen.insert(id.as_str()))
         .cloned()
         .collect()
 }

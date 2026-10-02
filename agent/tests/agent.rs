@@ -2728,3 +2728,70 @@ async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_m
         .unwrap();
     assert_eq!(std::fs::read(&a).unwrap(), noise(10_000, 4));
 }
+
+#[tokio::test]
+async fn restore_fetches_a_chunk_shared_by_several_files_once() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    let big = noise(6 << 20, 21);
+    let small = noise(5_000, 22);
+    std::fs::create_dir_all(h.workspace.join("many")).unwrap();
+    for name in ["big1.bin", "big2.bin"] {
+        std::fs::write(h.workspace.join(name), &big).unwrap();
+    }
+    for i in 0..30 {
+        std::fs::write(h.workspace.join(format!("many/s{i:02}")), &small).unwrap();
+    }
+    std::fs::write(h.workspace.join("own.txt"), noise(7_000, 23)).unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    let m = manifest_of(&objects, &planned.snapshot_id);
+    let mut order: Vec<String> = Vec::new();
+    for id in m["files"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain([&m["agent_db"]])
+        .flat_map(|f| f["chunks"].as_array().cloned().unwrap_or_default())
+    {
+        let id = id.as_str().unwrap().to_owned();
+        if !order.contains(&id) {
+            order.push(id);
+        }
+    }
+    let planned_order: Vec<String> = planned.chunks.iter().map(|c| c.id.clone()).collect();
+    assert_eq!(planned_order, order, "plan lists chunks in manifest order");
+    assert!(chunks_of(&m, "big1.bin").as_array().unwrap().len() >= 3);
+
+    std::fs::remove_dir_all(h.workspace.join("many")).unwrap();
+    std::fs::write(h.workspace.join("big2.bin"), b"changed").unwrap();
+    let done = restore(&h, &base, &objects, &planned.snapshot_id)
+        .await
+        .unwrap();
+    assert!(done.finished);
+    assert_eq!(done.total_chunks as usize, planned.chunks.len());
+    assert_eq!(
+        done.done_chunks, done.total_chunks,
+        "every chunk is fetched exactly once"
+    );
+    for name in ["big1.bin", "big2.bin"] {
+        assert_eq!(std::fs::read(h.workspace.join(name)).unwrap(), big);
+    }
+    for i in 0..30 {
+        assert_eq!(
+            std::fs::read(h.workspace.join(format!("many/s{i:02}"))).unwrap(),
+            small
+        );
+    }
+    assert_eq!(
+        std::fs::read(h.workspace.join("own.txt")).unwrap(),
+        noise(7_000, 23)
+    );
+    let work = h.home.parent().unwrap().join("state/state");
+    let leftovers: Vec<_> = std::fs::read_dir(&work)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .filter(|n| n.to_string_lossy().starts_with("restore-"))
+        .collect();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
