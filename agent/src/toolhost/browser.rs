@@ -423,7 +423,7 @@ impl Browser {
             .await?
             .call(
                 "Target.createTarget",
-                json!({"url": "about:blank", "newWindow": true}),
+                json!({"url": "about:blank", "newWindow": true, "background": true}),
             )
             .await?;
         let id = created["targetId"].as_str().unwrap_or_default();
