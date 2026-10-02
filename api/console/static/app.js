@@ -61,7 +61,6 @@ async function load() {
   $("logout").hidden = false;
   $("token-state").textContent = u.has_token ? "A token is set." : "No token yet: generate one for the app.";
   const form = $("settings-form");
-  form.residential.checked = u.residential;
   form.max_boxes.value = u.max_boxes;
   form.max_boxes.max = u.max_boxes_cap;
   $("cap").textContent = "of at most " + u.max_boxes_cap;
@@ -164,7 +163,7 @@ submit("login-form", async (f) => {
 });
 
 submit("settings-form", async (f) => {
-  await api("PATCH", "me", { residential: f.residential.checked, max_boxes: Number(f.max_boxes.value) });
+  await api("PATCH", "me", { max_boxes: Number(f.max_boxes.value) });
   notice("Saved.");
   await load();
 });

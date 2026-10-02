@@ -164,7 +164,11 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
-	u, err := s.users.Update(r.Context(), caller(r).ID, users.Settings{Residential: req.Residential, MaxBoxes: req.MaxBoxes})
+	if req.Residential != nil {
+		writeError(w, http.StatusForbidden, "only an admin can change the residential exit")
+		return
+	}
+	u, err := s.users.Update(r.Context(), caller(r).ID, users.Settings{MaxBoxes: req.MaxBoxes})
 	if err != nil {
 		s.fail(w, r, err)
 		return

@@ -128,11 +128,20 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	if code := env.do(t, http.MethodPatch, "api/me", qa1, `{"max_boxes":2}`).Code; code != http.StatusBadRequest {
 		t.Errorf("max boxes over the cap = %d, want 400", code)
 	}
-	if code := env.do(t, http.MethodPatch, "api/me", qa1, `{"max_boxes_cap":5,"residential":true}`).Code; code != http.StatusOK {
-		t.Errorf("residential flip = %d", code)
+	if code := env.do(t, http.MethodPatch, "api/me", qa1, `{"residential":true}`).Code; code != http.StatusForbidden {
+		t.Errorf("self residential flip = %d, want 403", code)
 	}
-	if u, _ := env.users.Get(created.ID); u.MaxBoxesCap != 1 || !u.Residential {
-		t.Errorf("user after self update = %+v, want the cap untouched and residential on", u)
+	if code := env.do(t, http.MethodPatch, "api/me", qa1, `{"max_boxes_cap":5}`).Code; code != http.StatusOK {
+		t.Errorf("self update = %d", code)
+	}
+	if u, _ := env.users.Get(created.ID); u.MaxBoxesCap != 1 || u.Residential {
+		t.Errorf("user after self update = %+v, want the cap untouched and residential off", u)
+	}
+	if code := env.do(t, http.MethodPatch, "api/users/"+created.ID, root, `{"residential":true}`).Code; code != http.StatusOK {
+		t.Errorf("admin residential flip = %d", code)
+	}
+	if u, _ := env.users.Get(created.ID); !u.Residential {
+		t.Errorf("user after admin flip = %+v, want residential on", u)
 	}
 	if code := env.do(t, http.MethodPatch, "api/users/"+created.ID, root, `{"max_boxes_cap":3,"max_boxes":2}`).Code; code != http.StatusOK {
 		t.Errorf("admin cap change = %d", code)
