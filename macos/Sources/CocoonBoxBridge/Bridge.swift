@@ -100,9 +100,13 @@ public actor Bridge {
         var params = params
         let name = params["name"] as? String ?? ""
         var arguments = params["arguments"] as? [String: Any] ?? [:]
-        if Self.defaulted.contains(name), arguments["box"] == nil, let box = try? await target(nil) {
-            arguments["box"] = box
-            params["arguments"] = arguments
+        if Self.defaulted.contains(name), arguments["box"] == nil {
+            do {
+                arguments["box"] = try await target(nil)
+                params["arguments"] = arguments
+            } catch let failure as ToolFailure where pinned != nil {
+                return reply(id, failure.result)
+            } catch {}
         }
         var deleted: String?
         if name == "box_delete", let ref = arguments["box"] as? String {

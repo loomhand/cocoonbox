@@ -537,7 +537,6 @@ final class AppModel {
     func deleteBox(_ target: Box) {
         guard let connection else { return }
         busy = true
-        if target.id == selectedBoxID { stopAgentSide() }
         Task {
             defer { busy = false }
             do {

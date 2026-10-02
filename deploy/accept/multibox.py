@@ -148,7 +148,7 @@ def main():
     _, result, _ = control.tool("box_ensure", {"box": "main"})
     check(result.get("isError") and f"box test ({test_id}) is running" in text(result), "1. waking main while test runs is refused, naming test")
 
-    # 2. the same token drives both boxes by id over the edge.
+    # 2. the same token drives both boxes by id over the edge; each answers from its own identity file, since clones share a hostname.
     hosts = {}
     for name, box in (("test", test_id), ("main", main_id)):
         if name == "main":
@@ -156,10 +156,10 @@ def main():
             control.tool("box_ensure", {"box": "main"})
         session = MCP("/cocoonbox.mcp/" + box, token)
         check(session.open() == 200, f"2. an MCP session opens on {name}")
-        _, result, _ = session.tool("shell", {"command": "uname -n"})
-        hosts[name] = text(result).strip()
-        note(f"{name}: uname -n = {hosts[name][:80]!r}")
-    check(hosts["test"] and hosts["main"] and hosts["test"] != hosts["main"], "2. uname -n differs between the boxes")
+        _, result, _ = session.tool("shell", {"command": "uname -n; cat /run/cocoonbox-identity/identity"})
+        hosts[name] = text(result)
+        note(f"{name}: uname -n = {hosts[name].split()[0] if hosts[name].split() else ''!r}")
+        check(f'"box_id":"{box}"' in hosts[name], f"2. the shell call to {name} ran in {box}")
     _, result, _ = control.tool("box_list")
     listed = [(b["name"], b["state"]) for b in result.get("structuredContent", {}).get("boxes", [])]
     check(listed == [("main", "running"), ("test", "hibernated")], f"2. box_list = {listed}")

@@ -99,7 +99,7 @@ actor MockWorld {
     // MARK: boxes
 
     // box is the first box, which a client without a box id means.
-    var box: Box { boxes[0] }
+    var box: Box { boxes.first ?? Box() }
 
     func box(_ ref: String) -> Box? {
         ref.isEmpty ? boxes.first : boxes.first { $0.id == ref || $0.name == ref }
