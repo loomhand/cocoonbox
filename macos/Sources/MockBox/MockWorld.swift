@@ -13,17 +13,21 @@ typealias Entry = Cocoonbox_Agent_V1_TranscriptEntry
 typealias Agent = Cocoonbox_Agent_V1_Agent
 typealias Share = Cocoonbox_Control_V1_Share
 
-// MockWorld holds the state of one fake box: lifecycle, agents, transcript,
-// the event bus and the synthetic desktop the Screen stream shows.
+// MockWorld holds the state of a user's fake boxes: their lifecycle within
+// the api's running limit and box quota, and the agents, transcript, event
+// bus and synthetic desktop that every box shows alike.
 actor MockWorld {
     static let ringSize = 512
+    static let maxBoxes = 3
     static let users = ["qa2": "u-qa2000000002", "qa3": "u-qa3000000003"]
     static let shareID = "sh-mock000000"
 
     let token: String
     let bootDelay: Duration
-    private(set) var box: Box
+    // boxes is oldest first, as the api lists them.
+    private(set) var boxes: [Box]
     private var operations: [String: [OperationEvent]] = [:]
+    private var operationBoxes: [String: String] = [:]
     private var operationWaiters: [String: [UUID: AsyncStream<OperationEvent>.Continuation]] = [:]
     private var agents: [String: Agent] = [:]
     private var untitled: Set<String> = []
@@ -51,6 +55,7 @@ actor MockWorld {
         self.restoreOnWake = restoreOnWake
         var box = Box()
         box.id = "cb-mock00000000"
+        box.name = "main"
         box.state = .hibernated
         box.image = "cocoonbox-desktop-v1"
         box.latestImage = "cocoonbox-desktop-v2"
@@ -59,7 +64,7 @@ actor MockWorld {
         box.flavor.memoryMib = 8192
         box.flavor.diskGib = 40
         box.createdAtMs = Self.now()
-        self.box = box
+        boxes = [box]
         if externalHistory {
             agents = Self.externalHistory()
         }
@@ -93,31 +98,94 @@ actor MockWorld {
 
     // MARK: boxes
 
-    func ensure() -> Cocoonbox_Control_V1_EnsureResponse {
+    // box is the first box, which a client without a box id means.
+    var box: Box { boxes[0] }
+
+    func box(_ ref: String) -> Box? {
+        ref.isEmpty ? boxes.first : boxes.first { $0.id == ref || $0.name == ref }
+    }
+
+    func ensure(_ boxID: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
+        guard let target = box(boxID) else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
         var response = Cocoonbox_Control_V1_EnsureResponse()
-        if box.state == .running || box.state == .starting {
-            response.box = box
-            if box.state == .starting, let id = operations.keys.sorted().last {
+        if target.state == .running || target.state == .starting {
+            response.box = target
+            if target.state == .starting, let id = operations.keys.filter({ operationBoxes[$0] == target.id }).sorted().last {
                 response.operation.id = id
-                response.operation.boxID = box.id
+                response.operation.boxID = target.id
             }
             return response
         }
-        let waking = box.state == .hibernated
-        box.state = .starting
-        let id = "op-\(UUID().uuidString.prefix(8).lowercased())"
-        operations[id] = []
-        response.box = box
-        response.operation.id = id
-        response.operation.boxID = box.id
+        try checkRunning(besides: target.id)
+        let waking = target.state == .hibernated
+        let id = newOperation(target.id)
+        setState(target.id, .starting)
+        response.box = box(target.id) ?? target
+        response.operation = operation(id)
         if waking, restoreOnWake {
             Task { await self.restore(id: id) }
             return response
         }
-        let phase: Cocoonbox_Control_V1_Phase = waking ? .waking : .creating
+        boot(id, phase: waking ? .waking : .creating, image: target.image)
+        return response
+    }
+
+    // create adds a box within the quota and starts it, as Boxes.Create does.
+    func create(name: String) throws -> Cocoonbox_Control_V1_EnsureResponse {
+        guard !name.isEmpty, name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }), !name.hasPrefix("cb-") else {
+            throw RPCError(code: .invalidArgument, message: "invalid request: a box name is 1 to 32 lowercase letters, digits, - or _")
+        }
+        guard !boxes.contains(where: { $0.name == name }) else { throw RPCError(code: .alreadyExists, message: "already exists: a box is already named \"\(name)\"") }
+        guard boxes.count < Self.maxBoxes else { throw RPCError(code: .failedPrecondition, message: "quota reached: \(Self.maxBoxes) boxes is the most this user may have") }
+        try checkRunning(besides: "")
+        var created = boxes[0]
+        created.id = "cb-mock" + String(format: "%08d", boxes.count)
+        created.name = name
+        created.state = .starting
+        created.image = created.latestImage
+        created.lastSavedAtMs = 0
+        created.createdAtMs = Self.now()
+        boxes.append(created)
+        let id = newOperation(created.id)
+        boot(id, phase: .creating, image: created.image)
+        return .with {
+            $0.box = created
+            $0.operation = operation(id)
+        }
+    }
+
+    func rename(box boxID: String, name: String) throws -> Box {
+        guard let index = boxes.firstIndex(where: { $0.id == boxID }) else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        guard !boxes.contains(where: { $0.name == name }) else { throw RPCError(code: .alreadyExists, message: "already exists: a box is already named \"\(name)\"") }
+        boxes[index].name = name
+        return boxes[index]
+    }
+
+    // delete plays Boxes.Delete: a save when the box runs, then the machine and the box go.
+    func delete(box boxID: String) throws -> Cocoonbox_Control_V1_Operation {
+        guard let target = box(boxID), target.id == boxID else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        let id = newOperation(target.id)
+        Task {
+            if target.state == .running {
+                await self.transfer(id: id, phase: .saving, detail: "uploading changed files", state: .running, prefix: [])
+            }
+            self.emitOperation(id: id, phase: .deleting, detail: "removing machine \(target.id)", state: target.state)
+            self.boxes.removeAll { $0.id == target.id }
+            self.emitOperation(id: id, phase: .done, detail: "deleted; the saved state of \(target.id) stays in storage", state: .unspecified)
+        }
+        return operation(id)
+    }
+
+    // checkRunning refuses a start while another box holds the running limit of 1.
+    private func checkRunning(besides boxID: String) throws {
+        guard let running = boxes.first(where: { $0.id != boxID && [.starting, .running, .hibernating].contains($0.state) }) else { return }
+        throw RPCError(code: .failedPrecondition, message: "box \(running.name) (\(running.id)) is running, and 1 may run at a time; hibernate it first")
+    }
+
+    private func boot(_ id: String, phase: Cocoonbox_Control_V1_Phase, image: String) {
         let steps: [(Cocoonbox_Control_V1_Phase, String, Cocoonbox_Control_V1_BoxState)] = [
             (phase, "scheduling on cocoon-cb", .starting),
-            (phase, waking ? "restoring memory snapshot" : "cloning cocoonbox-desktop-v1", .starting),
+            (phase, phase == .waking ? "restoring memory snapshot" : "cloning \(image)", .starting),
             (phase, "waiting for the agent", .starting),
             (.done, "box is running", .running),
         ]
@@ -128,12 +196,12 @@ actor MockWorld {
                 self.emitOperation(id: id, phase: step.0, detail: step.1, state: step.2)
             }
         }
-        return response
     }
 
-    func hibernate() -> Cocoonbox_Control_V1_Operation {
-        let id = newOperation()
-        box.state = .hibernating
+    func hibernate(_ boxID: String = "") -> Cocoonbox_Control_V1_Operation {
+        let target = box(boxID)?.id ?? box.id
+        let id = newOperation(target)
+        setState(target, .hibernating)
         Task {
             try? await Task.sleep(for: .milliseconds(400))
             self.emitOperation(id: id, phase: .snapshotting, detail: "snapshotting memory and disk", state: .hibernating)
@@ -144,12 +212,13 @@ actor MockWorld {
     }
 
     // saveState plays a quiesced save: the browser closes, then chunks upload with byte progress.
-    func saveState() -> Cocoonbox_Control_V1_Operation {
-        let id = newOperation()
-        let state = box.state
+    func saveState(_ boxID: String = "") -> Cocoonbox_Control_V1_Operation {
+        let target = box(boxID) ?? box
+        let id = newOperation(target.id)
+        let state = target.state
         Task {
             await self.transfer(id: id, phase: .saving, detail: "uploading changed files", state: state, prefix: [(.snapshotting, "closing the browser and snapshotting home, /workspace and agent.db")])
-            self.box.lastSavedAtMs = Self.now()
+            self.update(target.id) { $0.lastSavedAtMs = Self.now() }
             self.emitOperation(id: id, phase: .done, detail: "saved", state: state)
         }
         return operation(id)
@@ -157,16 +226,19 @@ actor MockWorld {
 
     // rebase plays an image upgrade with the box states the api reports: save
     // on the old machine, new machine from the latest image, restore, switch.
-    func rebase(image: String) -> Cocoonbox_Control_V1_Operation {
-        let id = newOperation()
-        let target = image.isEmpty ? box.latestImage : image
+    func rebase(_ boxID: String = "", image: String) -> Cocoonbox_Control_V1_Operation {
+        let rebased = box(boxID) ?? box
+        let id = newOperation(rebased.id)
+        let target = image.isEmpty ? rebased.latestImage : image
         Task {
             await self.transfer(id: id, phase: .saving, detail: "uploading changed files", state: .running, prefix: [(.snapshotting, "closing the browser and snapshotting home, /workspace and agent.db")])
             self.emitOperation(id: id, phase: .creating, detail: "new machine from \(target)", state: .starting)
             try? await Task.sleep(for: self.bootDelay)
             await self.transfer(id: id, phase: .restoring, detail: "restoring files into the new machine", state: .running, prefix: [])
-            self.box.image = target
-            self.box.lastSavedAtMs = Self.now()
+            self.update(rebased.id) {
+                $0.image = target
+                $0.lastSavedAtMs = Self.now()
+            }
             self.emitOperation(id: id, phase: .done, detail: "running on \(target)", state: .running)
         }
         return operation(id)
@@ -180,17 +252,26 @@ actor MockWorld {
         emitOperation(id: id, phase: .done, detail: "restored the saved state", state: .running)
     }
 
-    private func newOperation() -> String {
+    private func newOperation(_ boxID: String) -> String {
         let id = "op-\(UUID().uuidString.prefix(8).lowercased())"
         operations[id] = []
+        operationBoxes[id] = boxID
         return id
     }
 
     private func operation(_ id: String) -> Cocoonbox_Control_V1_Operation {
         var op = Cocoonbox_Control_V1_Operation()
         op.id = id
-        op.boxID = box.id
+        op.boxID = operationBoxes[id] ?? box.id
         return op
+    }
+
+    private func update(_ boxID: String, _ change: (inout Box) -> Void) {
+        if let index = boxes.firstIndex(where: { $0.id == boxID }) { change(&boxes[index]) }
+    }
+
+    private func setState(_ boxID: String, _ state: Cocoonbox_Control_V1_BoxState) {
+        update(boxID) { $0.state = state }
     }
 
     private func transfer(id: String, phase: Cocoonbox_Control_V1_Phase, detail: String, state: Cocoonbox_Control_V1_BoxState, prefix: [(Cocoonbox_Control_V1_Phase, String)]) async {
@@ -215,7 +296,7 @@ actor MockWorld {
         event.offsetKey = String(format: "%04d", (operations[id]?.count ?? 0) + 1)
         event.atMs = Self.now()
         event.boxState = state
-        box.state = state
+        if state != .unspecified { setState(operationBoxes[id] ?? box.id, state) }
         if state == .running, let delay = externalDelay {
             externalDelay = nil
             Task {
@@ -554,12 +635,12 @@ actor MockWorld {
     // MARK: shares
 
     func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Cocoonbox_Control_V1_ShareSecret {
-        guard request.boxID == box.id else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        guard box(request.boxID)?.id == request.boxID else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
         if let share, share.expiresAtMs > Self.now() { throw RPCError(code: .alreadyExists, message: "the box already has a live share") }
         guard (0...30 * 86400).contains(request.ttlSeconds) else { throw RPCError(code: .invalidArgument, message: "ttl must be at most 30 days") }
         var created = Share()
         created.id = sharesCreated == 0 ? Self.shareID : "sh-\(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(12).lowercased())"
-        created.boxID = box.id
+        created.boxID = request.boxID
         created.write = request.write
         created.createdAtMs = Self.now()
         created.expiresAtMs = created.createdAtMs + (request.ttlSeconds == 0 ? 86400 : request.ttlSeconds) * 1000
@@ -644,7 +725,7 @@ actor MockWorld {
     }
 
     // externalCall runs one MCP tool call against the mock desktop and records it in the agent's transcript; an owner session has no agent and records nothing.
-    func externalCall(agent id: String, tool: String, arguments: String) async -> (text: String, image: Data?, isError: Bool) {
+    func externalCall(agent id: String, tool: String, arguments: String, on boxName: String = "main") async -> (text: String, image: Data?, isError: Bool) {
         let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
         let turn = "mcp-\(id)"
         append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
@@ -658,7 +739,7 @@ actor MockWorld {
         var isError = false
         switch tool {
         case "shell":
-            text = "$ \(args["command"] as? String ?? "")\nLinux 6.12.0 (mockbox)\nnotes.md"
+            text = "$ \(args["command"] as? String ?? "")\nLinux 6.12.0 (mockbox) on \(boxName)\nnotes.md"
         case "read_file":
             text = "# Notes\nThe box is reachable over MCP."
         case "write_file", "edit_file":

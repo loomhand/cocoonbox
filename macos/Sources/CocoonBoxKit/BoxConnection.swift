@@ -60,11 +60,32 @@ public final class BoxConnection: Sendable {
     // MARK: Boxes
 
     public func firstBox() async throws -> Cocoonbox_Control_V1_Box? {
-        try await boxes.list(Cocoonbox_Control_V1_ListBoxesRequest()).boxes.first
+        try await listBoxes().first
     }
 
-    public func ensure() async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        try await boxes.ensure(Cocoonbox_Control_V1_EnsureRequest())
+    // listBoxes returns the user's boxes, oldest first.
+    public func listBoxes() async throws -> [Cocoonbox_Control_V1_Box] {
+        try await boxes.list(Cocoonbox_Control_V1_ListBoxesRequest()).boxes
+    }
+
+    // ensure wakes or creates boxID, or the user's first box when it is empty.
+    public func ensure(boxID: String = "") async throws -> Cocoonbox_Control_V1_EnsureResponse {
+        try await boxes.ensure(.with { $0.boxID = boxID })
+    }
+
+    public func createBox(name: String) async throws -> Cocoonbox_Control_V1_EnsureResponse {
+        try await boxes.create(.with { $0.name = name })
+    }
+
+    public func renameBox(boxID: String, name: String) async throws -> Cocoonbox_Control_V1_Box {
+        try await boxes.rename(.with {
+            $0.boxID = boxID
+            $0.name = name
+        })
+    }
+
+    public func deleteBox(boxID: String) async throws -> Cocoonbox_Control_V1_Operation {
+        try await boxes.delete(.with { $0.boxID = boxID })
     }
 
     public func hibernate(boxID: String) async throws -> Cocoonbox_Control_V1_Operation {

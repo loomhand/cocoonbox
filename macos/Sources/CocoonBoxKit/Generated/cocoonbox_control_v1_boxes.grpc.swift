@@ -33,6 +33,45 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Create" metadata.
+        public enum Create: Sendable {
+            /// Request type for "Create".
+            public typealias Input = Cocoonbox_Control_V1_CreateBoxRequest
+            /// Response type for "Create".
+            public typealias Output = Cocoonbox_Control_V1_EnsureResponse
+            /// Descriptor for "Create".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "Create",
+                type: .unary
+            )
+        }
+        /// Namespace for "Rename" metadata.
+        public enum Rename: Sendable {
+            /// Request type for "Rename".
+            public typealias Input = Cocoonbox_Control_V1_RenameBoxRequest
+            /// Response type for "Rename".
+            public typealias Output = Cocoonbox_Control_V1_Box
+            /// Descriptor for "Rename".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "Rename",
+                type: .unary
+            )
+        }
+        /// Namespace for "Delete" metadata.
+        public enum Delete: Sendable {
+            /// Request type for "Delete".
+            public typealias Input = Cocoonbox_Control_V1_BoxRef
+            /// Response type for "Delete".
+            public typealias Output = Cocoonbox_Control_V1_Operation
+            /// Descriptor for "Delete".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "Delete",
+                type: .unary
+            )
+        }
         /// Namespace for "Get" metadata.
         public enum Get: Sendable {
             /// Request type for "Get".
@@ -114,6 +153,9 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
         /// Descriptors for all methods in the "cocoonbox.control.v1.Boxes" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Ensure.descriptor,
+            Create.descriptor,
+            Rename.descriptor,
+            Delete.descriptor,
             Get.descriptor,
             List.descriptor,
             Hibernate.descriptor,
@@ -156,7 +198,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (user, flavor). Progress arrives on WatchOperation.
+        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Control_V1_EnsureRequest` messages.
@@ -169,6 +211,58 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_EnsureRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_EnsureResponse>
+
+        /// Handle the "Create" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Create adds a box to the caller's boxes and starts it, within the user's
+        /// > box quota and the api's running limit.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_CreateBoxRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_EnsureResponse` messages.
+        func create(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_CreateBoxRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_EnsureResponse>
+
+        /// Handle the "Rename" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_RenameBoxRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Box` messages.
+        func rename(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RenameBoxRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Box>
+
+        /// Handle the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete saves the box quiesced when it runs, then removes its machine and
+        /// > the box. Its saved state stays in object storage.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Operation` messages.
+        func delete(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation>
 
         /// Handle the "Get" method.
         ///
@@ -284,7 +378,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (user, flavor). Progress arrives on WatchOperation.
+        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -297,6 +391,58 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_EnsureRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_EnsureResponse>
+
+        /// Handle the "Create" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Create adds a box to the caller's boxes and starts it, within the user's
+        /// > box quota and the api's running limit.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_CreateBoxRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_EnsureResponse` message.
+        func create(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_CreateBoxRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_EnsureResponse>
+
+        /// Handle the "Rename" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RenameBoxRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Box` message.
+        func rename(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RenameBoxRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Box>
+
+        /// Handle the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete saves the box quiesced when it runs, then removes its machine and
+        /// > the box. Its saved state stays in object storage.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Operation` message.
+        func delete(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>
 
         /// Handle the "Get" method.
         ///
@@ -410,7 +556,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (user, flavor). Progress arrives on WatchOperation.
+        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -423,6 +569,58 @@ extension Cocoonbox_Control_V1_Boxes {
             request: Cocoonbox_Control_V1_EnsureRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_EnsureResponse
+
+        /// Handle the "Create" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Create adds a box to the caller's boxes and starts it, within the user's
+        /// > box quota and the api's running limit.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_CreateBoxRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_EnsureResponse` to respond with.
+        func create(
+            request: Cocoonbox_Control_V1_CreateBoxRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_EnsureResponse
+
+        /// Handle the "Rename" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_RenameBoxRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_Box` to respond with.
+        func rename(
+            request: Cocoonbox_Control_V1_RenameBoxRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_Box
+
+        /// Handle the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete saves the box quiesced when it runs, then removes its machine and
+        /// > the box. Its saved state stays in object storage.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_Operation` to respond with.
+        func delete(
+            request: Cocoonbox_Control_V1_BoxRef,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_Operation
 
         /// Handle the "Get" method.
         ///
@@ -538,6 +736,39 @@ extension Cocoonbox_Control_V1_Boxes.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.Create.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_CreateBoxRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_EnsureResponse>(),
+            handler: { request, context in
+                try await self.create(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.Rename.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_RenameBoxRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Box>(),
+            handler: { request, context in
+                try await self.rename(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.Delete.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BoxRef>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Operation>(),
+            handler: { request, context in
+                try await self.delete(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
             forMethod: Cocoonbox_Control_V1_Boxes.Method.Get.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_GetBoxRequest>(),
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Box>(),
@@ -620,6 +851,39 @@ extension Cocoonbox_Control_V1_Boxes.ServiceProtocol {
         return GRPCCore.StreamingServerResponse(single: response)
     }
 
+    public func create(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_CreateBoxRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_EnsureResponse> {
+        let response = try await self.create(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func rename(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RenameBoxRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Box> {
+        let response = try await self.rename(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func delete(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation> {
+        let response = try await self.delete(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
     public func get(
         request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_GetBoxRequest>,
         context: GRPCCore.ServerContext
@@ -696,6 +960,45 @@ extension Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_EnsureResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_EnsureResponse>(
             message: try await self.ensure(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func create(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_CreateBoxRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_EnsureResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_EnsureResponse>(
+            message: try await self.create(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func rename(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RenameBoxRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Box> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Box>(
+            message: try await self.rename(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func delete(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>(
+            message: try await self.delete(
                 request: request.message,
                 context: context
             ),
@@ -805,7 +1108,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (user, flavor). Progress arrives on WatchOperation.
+        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -822,6 +1125,73 @@ extension Cocoonbox_Control_V1_Boxes {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_EnsureResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_EnsureResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Create" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Create adds a box to the caller's boxes and starts it, within the user's
+        /// > box quota and the api's running limit.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_CreateBoxRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_CreateBoxRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_EnsureResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func create<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_CreateBoxRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_CreateBoxRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_EnsureResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_EnsureResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Rename" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RenameBoxRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RenameBoxRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Box` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func rename<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RenameBoxRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RenameBoxRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Box>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete saves the box quiesced when it runs, then removes its machine and
+        /// > the box. Its saved state stays in object storage.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func delete<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "Get" method.
@@ -976,7 +1346,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-        /// > Idempotent per (user, flavor). Progress arrives on WatchOperation.
+        /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -999,6 +1369,106 @@ extension Cocoonbox_Control_V1_Boxes {
             try await self.client.unary(
                 request: request,
                 descriptor: Cocoonbox_Control_V1_Boxes.Method.Ensure.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Create" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Create adds a box to the caller's boxes and starts it, within the user's
+        /// > box quota and the api's running limit.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_CreateBoxRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_CreateBoxRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_EnsureResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func create<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_CreateBoxRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_CreateBoxRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_EnsureResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_EnsureResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.Create.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Rename" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RenameBoxRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RenameBoxRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Box` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func rename<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RenameBoxRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RenameBoxRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Box>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.Rename.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Delete" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Delete saves the box quiesced when it runs, then removes its machine and
+        /// > the box. Its saved state stays in object storage.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func delete<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.Delete.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -1205,7 +1675,7 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-    /// > Idempotent per (user, flavor). Progress arrives on WatchOperation.
+    /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Control_V1_EnsureRequest` message.
@@ -1225,6 +1695,91 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_EnsureRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_EnsureResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Create" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Create adds a box to the caller's boxes and starts it, within the user's
+    /// > box quota and the api's running limit.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_CreateBoxRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func create<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_CreateBoxRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_EnsureResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.create(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_CreateBoxRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_EnsureResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rename" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_RenameBoxRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rename<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RenameBoxRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.rename(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RenameBoxRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Box>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Delete" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete saves the box quiesced when it runs, then removes its machine and
+    /// > the box. Its saved state stays in object storage.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func delete<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.delete(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BoxRef>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Operation>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1398,7 +1953,7 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Ensure creates the caller's box, or wakes it, and returns immediately.
-    /// > Idempotent per (user, flavor). Progress arrives on WatchOperation.
+    /// > Idempotent per (box, flavor). Progress arrives on WatchOperation.
     ///
     /// - Parameters:
     ///   - message: request message to send.
@@ -1421,6 +1976,103 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             metadata: metadata
         )
         return try await self.ensure(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Create" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Create adds a box to the caller's boxes and starts it, within the user's
+    /// > box quota and the api's running limit.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func create<Result>(
+        _ message: Cocoonbox_Control_V1_CreateBoxRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_EnsureResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_CreateBoxRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.create(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Rename" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func rename<Result>(
+        _ message: Cocoonbox_Control_V1_RenameBoxRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Box>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_RenameBoxRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.rename(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Delete" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Delete saves the box quiesced when it runs, then removes its machine and
+    /// > the box. Its saved state stays in object storage.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func delete<Result>(
+        _ message: Cocoonbox_Control_V1_BoxRef,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.delete(
             request: request,
             options: options,
             onResponse: handleResponse

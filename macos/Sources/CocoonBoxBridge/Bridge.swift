@@ -2,26 +2,36 @@ import CocoonBoxKit
 import Foundation
 
 // Bridge is the stdio MCP server a local agent runs as `cocoonbox mcp`
-// (design.md §13.2). Lifecycle tools go to the control MCP, box tools to the
-// box's MCP; the box is woken on the first box-tool call unless `wake` is off.
-// The token stays in memory and in the Authorization header of its requests.
+// (design.md §13.2, §19.2). Lifecycle tools go to the control MCP, box tools
+// to the MCP of the box their `box` argument names, else the default box:
+// `--box`, else the newest running box when the bridge first needs one. It
+// opens one session per box on first use and wakes a box on its first
+// box-tool call unless `wake` is off. The token stays in memory and in the
+// Authorization header of its requests.
 public actor Bridge {
+    static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
+
     private let endpoint: Endpoint
     private let token: String
     private let wake: Bool
+    private let pinned: String?
     private let cache: URL
     private let output: @Sendable (Data) -> Void
     private var client: [String: Any] = [:]
     private var control: MCPUpstream?
-    private var box: MCPUpstream?
+    private var sessions: [String: MCPUpstream] = [:]
+    private var opening: [String: Task<MCPUpstream, any Error>] = [:]
+    // ids maps every box name and id of the user to the box id.
+    private var ids: [String: String] = [:]
+    private var defaultBox: String?
     private var boxTools: [[String: Any]]
-    private var opening: Task<MCPUpstream, any Error>?
     private var nextID = 1
 
-    public init(endpoint: Endpoint, token: String, wake: Bool, cache: URL, output: @escaping @Sendable (Data) -> Void) {
+    public init(endpoint: Endpoint, token: String, wake: Bool, box: String? = nil, cache: URL, output: @escaping @Sendable (Data) -> Void) {
         self.endpoint = endpoint
         self.token = token
         self.wake = wake
+        pinned = box
         self.cache = cache
         self.output = output
         boxTools = ToolCatalog.loadBox(from: cache) ?? ToolCatalog.boxFallback
@@ -39,9 +49,11 @@ public actor Bridge {
     }
 
     public func shutdown() async {
-        await box?.close()
+        for upstream in sessions.values {
+            await upstream.close()
+        }
         await control?.close()
-        box = nil
+        sessions = [:]
         control = nil
     }
 
@@ -59,16 +71,16 @@ public actor Bridge {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": true]],
                 "serverInfo": ["name": "cocoonbox", "version": "0.1.0"],
-                "instructions": "These tools run on the user's cocoonbox cloud desktop, not on this Mac. box_* tools manage the box; the others act on it.",
+                "instructions": "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the others act on one box, the one their box argument names, else the default box of this session.",
             ])
         case "ping":
             reply(id, [:])
         case "tools/list":
-            reply(id, ["tools": ToolCatalog.control + boxTools])
+            reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox)])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             if ToolCatalog.controlNames.contains(name) {
-                await forward(id, params, to: { try await self.openControl() })
+                await callControl(id, params)
             } else {
                 await callBox(id, params)
             }
@@ -77,24 +89,58 @@ public actor Bridge {
         }
     }
 
-    // warmUp opens the box session right away when the box already runs, so
-    // the app lists this client and the tool list is the box's own.
+    // warmUp opens the default box's session right away when that box runs, so the tool list is the box's own.
     private func warmUp() async {
-        guard let status = try? await status(), status["state"] as? String == "running" else { return }
-        _ = try? await openBox(status)
+        guard let box = try? await target(nil), let status = try? await status(box), status["state"] as? String == "running" else { return }
+        _ = try? await openBox(box)
+    }
+
+    // callControl forwards a lifecycle tool, naming the default box when the call names none.
+    private func callControl(_ id: Any, _ params: [String: Any]) async {
+        var params = params
+        let name = params["name"] as? String ?? ""
+        var arguments = params["arguments"] as? [String: Any] ?? [:]
+        if Self.defaulted.contains(name), arguments["box"] == nil, let box = try? await target(nil) {
+            arguments["box"] = box
+            params["arguments"] = arguments
+        }
+        var deleted: String?
+        if name == "box_delete", let ref = arguments["box"] as? String {
+            deleted = try? await resolve(ref)
+        }
+        await forward(id, params, to: { try await self.openControl() })
+        if name == "box_create" || name == "box_delete" { ids = [:] }
+        if let deleted {
+            await sessions.removeValue(forKey: deleted)?.close()
+            if defaultBox == deleted { defaultBox = nil }
+        }
     }
 
     private func callBox(_ id: Any, _ params: [String: Any]) async {
+        var params = params
+        var arguments = params["arguments"] as? [String: Any] ?? [:]
+        let ref = arguments.removeValue(forKey: "box") as? String
+        params["arguments"] = arguments
         let progress = (params["_meta"] as? [String: Any])?["progressToken"]
+        let box: String
+        do {
+            box = try await target(ref)
+        } catch let failure as ToolFailure {
+            return reply(id, failure.result)
+        } catch {
+            return reply(id, ToolFailure("Could not reach cocoonbox: \(error)").result)
+        }
         for attempt in 0..<2 {
             do {
-                let upstream = try await readyBox(progress: progress)
+                let upstream = try await readyBox(box, progress: progress)
                 let answer = try await call(upstream, "tools/call", params)
                 return relay(id, answer)
             } catch MCPUpstream.Failure.sessionExpired where attempt == 0 {
-                box = nil
+                sessions[box] = nil
             } catch MCPUpstream.Failure.http(let status) where attempt == 0 && (status == 502 || status == 503) {
-                box = nil
+                sessions[box] = nil
+            } catch MCPUpstream.Failure.http(403) {
+                return reply(id, ToolFailure("cocoonbox refused box \(box): it is not one of your boxes.").result)
             } catch let failure as ToolFailure {
                 return reply(id, failure.result)
             } catch {
@@ -103,41 +149,80 @@ public actor Bridge {
         }
     }
 
-    // readyBox returns the box session, waking the box first when it is not
-    // running; concurrent callers share one wake.
-    private func readyBox(progress: Any?) async throws -> MCPUpstream {
-        if let box { return box }
-        if let opening { return try await opening.value }
+    // target returns the id of the box ref names, or of the default box when ref is empty.
+    // An id passes as is, so the edge decides whether it is the user's.
+    private func target(_ ref: String?) async throws -> String {
+        if let ref, !ref.isEmpty {
+            return try await resolve(ref)
+        }
+        if let defaultBox { return defaultBox }
+        if let pinned {
+            defaultBox = try await resolve(pinned)
+        } else {
+            let list = try await listBoxes()
+            guard let pick = list.last(where: { $0["state"] as? String == "running" }) ?? list.first, let box = pick["box_id"] as? String else {
+                throw ToolFailure("You have no box yet. Call box_ensure to create it.")
+            }
+            defaultBox = box
+        }
+        return defaultBox ?? ""
+    }
+
+    private func resolve(_ ref: String) async throws -> String {
+        if let box = ids[ref] { return box }
+        if ref.hasPrefix("cb-") { return ref }
+        _ = try await listBoxes()
+        guard let box = ids[ref] else { throw ToolFailure("You have no box \"\(ref)\"; box_list lists your boxes.") }
+        return box
+    }
+
+    private func listBoxes() async throws -> [[String: Any]] {
+        let answer = try await call(try await openControl(), "tools/call", ["name": "box_list", "arguments": [:] as [String: Any]])
+        guard let result = answer["result"] as? [String: Any], let list = (result["structuredContent"] as? [String: Any])?["boxes"] as? [[String: Any]] else {
+            throw ToolFailure("Could not list your boxes.")
+        }
+        ids = [:]
+        for entry in list {
+            guard let box = entry["box_id"] as? String else { continue }
+            ids[box] = box
+            if let name = entry["name"] as? String, !name.isEmpty { ids[name] = box }
+        }
+        return list
+    }
+
+    // readyBox returns box's session, waking the box first when it is not
+    // running; concurrent callers of one box share one wake.
+    private func readyBox(_ box: String, progress: Any?) async throws -> MCPUpstream {
+        if let upstream = sessions[box] { return upstream }
+        if let task = opening[box] { return try await task.value }
         let progressToken = Progress(token: progress)
-        let task = Task { try await self.wakeAndOpen(progress: progressToken.token) }
-        opening = task
-        defer { opening = nil }
+        let task = Task { try await self.wakeAndOpen(box, progress: progressToken.token) }
+        opening[box] = task
+        defer { opening[box] = nil }
         return try await task.value
     }
 
-    private func wakeAndOpen(progress: Any?) async throws -> MCPUpstream {
-        var status = try await status()
+    private func wakeAndOpen(_ box: String, progress: Any?) async throws -> MCPUpstream {
+        let status = try await status(box)
         if status["state"] as? String != "running" {
             guard wake else {
                 throw ToolFailure("The box is \(status["state"] as? String ?? "absent"). Call box_ensure to start it.")
             }
-            var params: [String: Any] = ["name": "box_ensure", "arguments": ["wait": true]]
+            var params: [String: Any] = ["name": "box_ensure", "arguments": ["box": box, "wait": true]]
             if let progress { params["_meta"] = ["progressToken": progress] }
             let answer = try await call(try await openControl(), "tools/call", params)
             if let result = answer["result"] as? [String: Any], result["isError"] as? Bool == true {
                 throw ToolFailure(result)
             }
-            status = try await self.status()
         }
-        return try await openBox(status)
+        return try await openBox(box)
     }
 
-    private func openBox(_ status: [String: Any]) async throws -> MCPUpstream {
-        if let box { return box }
-        guard let id = status["box_id"] as? String, !id.isEmpty else { throw ToolFailure("You have no box yet. Call box_ensure to create it.") }
-        let upstream = try MCPUpstream(endpoint: endpoint, path: "/cocoonbox.mcp/\(id)", token: token)
+    private func openBox(_ box: String) async throws -> MCPUpstream {
+        if let upstream = sessions[box] { return upstream }
+        let upstream = try MCPUpstream(endpoint: endpoint, path: "/cocoonbox.mcp/\(box)", token: token)
         try await initialize(upstream)
-        box = upstream
+        sessions[box] = upstream
         if let tools = (try? await call(upstream, "tools/list", [:]))?["result"] as? [String: Any], let list = tools["tools"] as? [[String: Any]], !list.isEmpty {
             ToolCatalog.saveBox(list, to: cache)
             if !ToolCatalog.same(list, boxTools) {
@@ -156,8 +241,7 @@ public actor Bridge {
         return upstream
     }
 
-    // initialize opens an upstream session with the client's own initialize,
-    // so the box records the session under the client's name.
+    // initialize opens an upstream session with the client's own initialize.
     private func initialize(_ upstream: MCPUpstream) async throws {
         var params = client
         if params.isEmpty { params = ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": "cocoonbox", "version": "0.1.0"]] }
@@ -166,11 +250,11 @@ public actor Bridge {
         _ = try await upstream.post(Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8), id: nil)
     }
 
-    private func status() async throws -> [String: Any] {
-        let answer = try await call(try await openControl(), "tools/call", ["name": "box_status", "arguments": [:] as [String: Any]])
-        guard let result = answer["result"] as? [String: Any], let status = result["structuredContent"] as? [String: Any] else {
-            throw ToolFailure("Could not read the box state.")
-        }
+    private func status(_ box: String) async throws -> [String: Any] {
+        let answer = try await call(try await openControl(), "tools/call", ["name": "box_status", "arguments": ["box": box]])
+        guard let result = answer["result"] as? [String: Any] else { throw ToolFailure("Could not read the box state.") }
+        if result["isError"] as? Bool == true { throw ToolFailure(result) }
+        guard let status = result["structuredContent"] as? [String: Any] else { throw ToolFailure("Could not read the box state.") }
         return status
     }
 

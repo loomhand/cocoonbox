@@ -2,7 +2,8 @@
 # End-to-end test of the cocoonbox CLI and its stdio MCP bridge against MockBox:
 # lifecycle commands over gRPC, the bridge's tool list while the box is
 # hibernated, the wake on the first box-tool call with progress, the control
-# tools and their refusals, --no-wake, and the headers helper. Nothing touches
+# tools and their refusals, --no-wake, the headers helper, and several boxes:
+# routing by `box`, the default box, the running limit, --box and box_delete. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -100,7 +101,9 @@ check("initialize answered by the bridge", init["result"]["serverInfo"]["name"] 
 b.send("notifications/initialized", notify=True)
 tools, _ = b.call("tools/list")
 names = [t["name"] for t in tools["result"]["tools"]]
-check("tools/list while hibernated: 5 control + 13 box tools", len(names) == 18 and "box_ensure" in names and "computer_act" in names, names)
+check("tools/list while hibernated: 8 control + 13 box tools", len(names) == 21 and "box_ensure" in names and "box_create" in names and "computer_act" in names, names)
+shell_tool = next(t for t in tools["result"]["tools"] if t["name"] == "shell")
+check("box tools take a box argument", "box" in shell_tool["inputSchema"].get("properties", {}), shell_tool)
 
 result, _ = b.tool("box_status")
 check("box_status via the control MCP", result["structuredContent"]["state"] == "hibernated", result)
@@ -153,6 +156,65 @@ ensure = run("ensure")
 check("ensure over gRPC with progress on stderr", "waking" in ensure.stderr and "running" in ensure.stdout, ensure.stdout + ensure.stderr)
 upgrade = run("upgrade")
 check("upgrade without --yes refuses", upgrade.returncode != 0 and "--yes" in upgrade.stderr, upgrade.stderr)
+
+# Several boxes: main runs here after `ensure`.
+m = Bridge()
+m.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "multi-client", "version": "1"}})
+m.send("notifications/initialized", notify=True)
+result, _ = m.tool("box_create", {"name": "test"})
+check("box_create beside a running box is refused, naming it", result.get("isError") and "box main (cb-mock00000000) is running" in text(result), result)
+result, _ = m.tool("box_hibernate")
+check("box_hibernate without box acts on the default box, main", result["structuredContent"]["box_id"] == "cb-mock00000000" and result["structuredContent"]["state"] == "hibernated", result)
+result, _ = m.tool("box_create", {"name": "test"})
+check("box_create test", result.get("structuredContent", {}).get("name") == "test" and result["structuredContent"]["state"] == "running", result)
+test_id = result.get("structuredContent", {}).get("box_id", "")
+result, _ = m.tool("box_list")
+listed = [(b["name"], b["state"]) for b in result["structuredContent"]["boxes"]]
+check("box_list lists both, oldest first", listed == [("main", "hibernated"), ("test", "running")], listed)
+result, _ = m.tool("shell", {"box": "test", "command": "uname -n"})
+check("shell with box=test runs in test", "on test" in text(result), result)
+result, _ = m.tool("shell", {"box": "main", "command": "uname -n"})
+check("waking main while test runs is refused by the running limit", result.get("isError") and "box test (" + test_id + ") is running" in text(result), result)
+result, _ = m.tool("shell", {"box": "cb-mock99999999", "command": "id"})
+check("another user's box id is refused", result.get("isError") and "no box" in text(result), result)
+m.close()
+
+d = Bridge()
+d.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "default-client", "version": "1"}})
+result, _ = d.tool("shell", {"command": "uname -n"})
+check("without box and --box, the default is the newest running box", "on test" in text(result), result)
+d.close()
+
+p = Bridge("--box", "main")
+p.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "pinned-client", "version": "1"}})
+result, _ = p.tool("box_status")
+check("--box main is the default of control tools", result["structuredContent"]["box_id"] == "cb-mock00000000", result)
+result, _ = p.tool("box_hibernate", {"box": "test"})
+check("box_hibernate with box=test", result["structuredContent"]["box_id"] == test_id and result["structuredContent"]["state"] == "hibernated", result)
+result, _ = p.tool("shell", {"command": "uname -n"})
+check("--box main wakes main for a box tool", "on main" in text(result), result)
+result, _ = p.tool("box_delete", {"box": "test"})
+check("box_delete without confirm is refused", result.get("isError") and "confirm: true" in text(result), result)
+result, _ = p.tool("box_delete", {"confirm": True})
+check("box_delete without box is refused", result.get("isError") and "Name the box" in text(result), result)
+result, _ = p.tool("box_delete", {"box": "test", "confirm": True})
+check("box_delete test", result.get("structuredContent", {}).get("box_id") == test_id, result)
+result, _ = p.tool("box_list")
+check("box_list after delete", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
+p.close()
+
+import os, urllib.request, urllib.error
+def mcp_status(box):
+    req = urllib.request.Request(os.environ["COCOONBOX_ENDPOINT"] + "/cocoonbox.mcp/" + box, data=b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
+                                 headers={"Authorization": "Bearer mock-token", "Content-Type": "application/json"}, method="POST")
+    try:
+        return urllib.request.urlopen(req, timeout=10).status
+    except urllib.error.HTTPError as e:
+        return e.code
+check("the edge refuses another user's box id with 403", mcp_status("cb-mock99999999") == 403)
+time.sleep(1)
+log = open(mocklog).read()
+check("box tool calls reached each box's own MCP path", "/cocoonbox.mcp/" + test_id + " auth=ok" in log and "rpc=tools/call tool=shell" in log, log[-600:])
 
 # Writes stay inside the HOME the CLI is given: every file command runs under a
 # sandbox that denies writes outside the test directory and the process temp.

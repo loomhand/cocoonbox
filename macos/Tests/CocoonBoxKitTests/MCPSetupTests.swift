@@ -55,7 +55,7 @@ import Testing
     }
 
     @Test func controlToolsMatchTheContract() {
-        #expect(ToolCatalog.controlNames == ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"])
+        #expect(ToolCatalog.controlNames == ["box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete"])
         #expect(ToolCatalog.boxNames.count == 13)
     }
 }

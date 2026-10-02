@@ -84,6 +84,9 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
 
   /// Writing the user state into a new machine.
   case restoring // = 7
+
+  /// Removing the box's machine.
+  case deleting // = 8
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -100,6 +103,7 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
     case 5: self = .failed
     case 6: self = .saving
     case 7: self = .restoring
+    case 8: self = .deleting
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -114,6 +118,7 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
     case .failed: return 5
     case .saving: return 6
     case .restoring: return 7
+    case .deleting: return 8
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -128,6 +133,7 @@ public nonisolated enum Cocoonbox_Control_V1_Phase: SwiftProtobuf.Enum, Swift.Ca
     .failed,
     .saving,
     .restoring,
+    .deleting,
   ]
 
 }
@@ -190,6 +196,9 @@ public nonisolated struct Cocoonbox_Control_V1_Box: Sendable {
   /// Image a new box gets today, and the default Rebase target; differs from image when an upgrade is available.
   public var latestImage: String = String()
 
+  /// Unique among the user's boxes.
+  public var name: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -225,11 +234,54 @@ public nonisolated struct Cocoonbox_Control_V1_EnsureRequest: Sendable {
   /// Clears the value of `flavor`. Subsequent reads from it will return its default value.
   public mutating func clearFlavor() {self._flavor = nil}
 
+  /// Empty selects the user's first box, and creates one when the user has none.
+  public var boxID: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
   fileprivate var _flavor: Cocoonbox_Control_V1_Flavor? = nil
+}
+
+public nonisolated struct Cocoonbox_Control_V1_CreateBoxRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var name: String = String()
+
+  /// Empty selects the current default image.
+  public var image: String = String()
+
+  public var flavor: Cocoonbox_Control_V1_Flavor {
+    get {_flavor ?? Cocoonbox_Control_V1_Flavor()}
+    set {_flavor = newValue}
+  }
+  /// Returns true if `flavor` has been explicitly set.
+  public var hasFlavor: Bool {self._flavor != nil}
+  /// Clears the value of `flavor`. Subsequent reads from it will return its default value.
+  public mutating func clearFlavor() {self._flavor = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _flavor: Cocoonbox_Control_V1_Flavor? = nil
+}
+
+public nonisolated struct Cocoonbox_Control_V1_RenameBoxRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var boxID: String = String()
+
+  public var name: String = String()
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
 }
 
 public nonisolated struct Cocoonbox_Control_V1_EnsureResponse: Sendable {
@@ -364,7 +416,7 @@ nonisolated extension Cocoonbox_Control_V1_BoxState: SwiftProtobuf._ProtoNamePro
 }
 
 nonisolated extension Cocoonbox_Control_V1_Phase: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PHASE_UNSPECIFIED\0\u{1}PHASE_CREATING\0\u{1}PHASE_WAKING\0\u{1}PHASE_SNAPSHOTTING\0\u{1}PHASE_DONE\0\u{1}PHASE_FAILED\0\u{1}PHASE_SAVING\0\u{1}PHASE_RESTORING\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0PHASE_UNSPECIFIED\0\u{1}PHASE_CREATING\0\u{1}PHASE_WAKING\0\u{1}PHASE_SNAPSHOTTING\0\u{1}PHASE_DONE\0\u{1}PHASE_FAILED\0\u{1}PHASE_SAVING\0\u{1}PHASE_RESTORING\0\u{1}PHASE_DELETING\0")
 }
 
 nonisolated extension Cocoonbox_Control_V1_BoxRef: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -439,7 +491,7 @@ nonisolated extension Cocoonbox_Control_V1_Flavor: SwiftProtobuf.Message, SwiftP
 
 nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Box"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{1}flavor\0\u{3}failure_reason\0\u{3}created_at_ms\0\u{3}last_saved_at_ms\0\u{3}latest_image\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}state\0\u{1}image\0\u{1}flavor\0\u{3}failure_reason\0\u{3}created_at_ms\0\u{3}last_saved_at_ms\0\u{3}latest_image\0\u{1}name\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -455,6 +507,7 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
       case 6: try { try decoder.decodeSingularInt64Field(value: &self.createdAtMs) }()
       case 7: try { try decoder.decodeSingularInt64Field(value: &self.lastSavedAtMs) }()
       case 8: try { try decoder.decodeSingularStringField(value: &self.latestImage) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.name) }()
       default: break
       }
     }
@@ -489,6 +542,9 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     if !self.latestImage.isEmpty {
       try visitor.visitSingularStringField(value: self.latestImage, fieldNumber: 8)
     }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 9)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -501,6 +557,7 @@ nonisolated extension Cocoonbox_Control_V1_Box: SwiftProtobuf.Message, SwiftProt
     if lhs.createdAtMs != rhs.createdAtMs {return false}
     if lhs.lastSavedAtMs != rhs.lastSavedAtMs {return false}
     if lhs.latestImage != rhs.latestImage {return false}
+    if lhs.name != rhs.name {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -543,7 +600,7 @@ nonisolated extension Cocoonbox_Control_V1_Operation: SwiftProtobuf.Message, Swi
 
 nonisolated extension Cocoonbox_Control_V1_EnsureRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".EnsureRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}flavor\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}flavor\0\u{3}box_id\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -552,6 +609,7 @@ nonisolated extension Cocoonbox_Control_V1_EnsureRequest: SwiftProtobuf.Message,
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularMessageField(value: &self._flavor) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.boxID) }()
       default: break
       }
     }
@@ -565,11 +623,94 @@ nonisolated extension Cocoonbox_Control_V1_EnsureRequest: SwiftProtobuf.Message,
     try { if let v = self._flavor {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
     } }()
+    if !self.boxID.isEmpty {
+      try visitor.visitSingularStringField(value: self.boxID, fieldNumber: 2)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Control_V1_EnsureRequest, rhs: Cocoonbox_Control_V1_EnsureRequest) -> Bool {
     if lhs._flavor != rhs._flavor {return false}
+    if lhs.boxID != rhs.boxID {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_CreateBoxRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".CreateBoxRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}name\0\u{1}image\0\u{1}flavor\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.image) }()
+      case 3: try { try decoder.decodeSingularMessageField(value: &self._flavor) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 1)
+    }
+    if !self.image.isEmpty {
+      try visitor.visitSingularStringField(value: self.image, fieldNumber: 2)
+    }
+    try { if let v = self._flavor {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_CreateBoxRequest, rhs: Cocoonbox_Control_V1_CreateBoxRequest) -> Bool {
+    if lhs.name != rhs.name {return false}
+    if lhs.image != rhs.image {return false}
+    if lhs._flavor != rhs._flavor {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_RenameBoxRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".RenameBoxRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}box_id\0\u{1}name\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.boxID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.boxID.isEmpty {
+      try visitor.visitSingularStringField(value: self.boxID, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_RenameBoxRequest, rhs: Cocoonbox_Control_V1_RenameBoxRequest) -> Bool {
+    if lhs.boxID != rhs.boxID {return false}
+    if lhs.name != rhs.name {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -1,15 +1,21 @@
 import Foundation
 
-// ToolCatalog holds the tools the bridge lists without asking the box: the
+// ToolCatalog holds the tools the bridge lists without asking a box: the
 // control tools from contracts.md "Control MCP", and the box tools from the
-// cache of the box's last answer, else the contract's names with open schemas.
+// cache of a box's last answer, else the contract's names with open schemas.
+// Every box serves the same box tools, so they are listed once, with `box`.
 public enum ToolCatalog {
+    nonisolated(unsafe) static let box: [String: Any] = ["type": "string", "description": "The box's name or id, as box_list shows them; without it, the default box of this session."]
+
     nonisolated(unsafe) public static let control: [[String: Any]] = [
-        tool("box_status", "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.", [:]),
-        tool("box_ensure", "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer.", ["wait": ["type": "boolean", "default": true]]),
-        tool("box_hibernate", "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.", [:]),
-        tool("box_save", "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.", [:]),
-        tool("box_upgrade", "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.", ["confirm": ["type": "boolean"]], required: ["confirm"]),
+        tool("box_list", "List your cocoonbox cloud desktops with their names, states and images.", [:]),
+        tool("box_status", "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.", ["box": box]),
+        tool("box_ensure", "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer.", ["box": box, "wait": ["type": "boolean", "default": true]]),
+        tool("box_create", "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once.", ["name": ["type": "string"], "wait": ["type": "boolean", "default": true]], required: ["name"]),
+        tool("box_hibernate", "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.", ["box": box]),
+        tool("box_save", "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.", ["box": box]),
+        tool("box_upgrade", "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.", ["box": box, "confirm": ["type": "boolean"]], required: ["confirm"]),
+        tool("box_delete", "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state stays in storage. Requires the box and confirm: true.", ["box": box, "confirm": ["type": "boolean"]], required: ["box", "confirm"]),
     ]
 
     public static let controlNames = Set(control.compactMap { $0["name"] as? String })
@@ -34,6 +40,17 @@ public enum ToolCatalog {
         if let data = try? JSONSerialization.data(withJSONObject: tools, options: [.sortedKeys]) {
             try? data.write(to: file, options: .atomic)
         }
+    }
+
+    // withBox adds the optional box argument to a box tool's input schema.
+    static func withBox(_ tool: [String: Any]) -> [String: Any] {
+        var tool = tool
+        var schema = tool["inputSchema"] as? [String: Any] ?? ["type": "object"]
+        var properties = schema["properties"] as? [String: Any] ?? [:]
+        properties["box"] = box
+        schema["properties"] = properties
+        tool["inputSchema"] = schema
+        return tool
     }
 
     static func same(_ a: [[String: Any]], _ b: [[String: Any]]) -> Bool {

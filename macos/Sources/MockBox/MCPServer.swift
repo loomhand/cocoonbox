@@ -140,6 +140,7 @@ struct HTTPResponse {
 // stream). Every session is the owner's, which the box does not track as an agent.
 // It logs one line per request with the auth verdict, never the token.
 final class MCPServer: Sendable {
+    static let prefix = "/cocoonbox.mcp/"
     nonisolated(unsafe) static let tools: [[String: Any]] = [
         tool("shell", "Run a shell command on the box.", ["command": "string"]),
         tool("read_file", "Read a file on the box.", ["path": "string"]),
@@ -158,14 +159,12 @@ final class MCPServer: Sendable {
 
     private let world: MockWorld
     private let token: String
-    private let boxID: String
     private let sessions = Mutex<Set<String>>([])
     private let control: ControlMCP
 
-    init(world: MockWorld, token: String, boxID: String) {
+    init(world: MockWorld, token: String) {
         self.world = world
         self.token = token
-        self.boxID = boxID
         control = ControlMCP(world: world)
     }
 
@@ -183,7 +182,8 @@ final class MCPServer: Sendable {
         var line = "mcp \(method) \(path) auth=\(auth) ua=\(headers["user-agent"]?.split(separator: " ").first ?? "-")"
         defer { print(line) }
         let target = path.split(separator: "?").first.map(String.init) ?? ""
-        guard target == "/cocoonbox.mcp/\(boxID)" || target == ControlMCP.path else {
+        let boxID = target.hasPrefix(Self.prefix) && target != ControlMCP.path ? String(target.dropFirst(Self.prefix.count)) : ""
+        guard target == ControlMCP.path || !boxID.isEmpty else {
             return HTTPResponse(status: 404, reason: "Not Found")
         }
         guard auth == "ok" else {
@@ -196,7 +196,10 @@ final class MCPServer: Sendable {
             }
             return await control.handle(message, line: &line)
         }
-        guard await world.box.state == .running else {
+        guard let box = await world.box(boxID), box.id == boxID else {
+            return HTTPResponse(status: 403, reason: "Forbidden")
+        }
+        guard box.state == .running else {
             return HTTPResponse(status: 503, reason: "Service Unavailable")
         }
         let sessionID = headers["mcp-session-id"] ?? ""
@@ -242,7 +245,7 @@ final class MCPServer: Sendable {
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"].flatMap { try? JSONSerialization.data(withJSONObject: $0) }.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
             line += " tool=\(name)"
-            let outcome = await world.externalCall(agent: "", tool: name, arguments: arguments)
+            let outcome = await world.externalCall(agent: "", tool: name, arguments: arguments, on: box.name)
             var content: [[String: Any]] = [["type": "text", "text": outcome.text]]
             if let image = outcome.image {
                 content.append(["type": "image", "data": image.base64EncodedString(), "mimeType": "image/png"])

@@ -14,13 +14,17 @@ usage: cocoonbox <command> [options]
   status [--json]                       show the box
   ensure | hibernate | save             wake, hibernate or save the box, with progress
   upgrade [--yes]                       move the box to the latest desktop image
-  mcp [--no-wake]                       serve the box to a local agent over stdio MCP
+  mcp [--no-wake]                       serve your boxes to a local agent over stdio MCP
   mcp-headers                           print the Authorization header as JSON (Claude Code headersHelper)
   setup claude|codex|cursor [--print]   install the cocoonbox plugin or MCP entry for that client
   install                               link this binary into ~/.local/bin
   plugin export DIR                     write the plugin marketplace to DIR
 
-environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory.
+--box NAME|ID picks the box of status, ensure, hibernate, save and upgrade (default: your first box)
+and the default box of mcp (default: the newest running box).
+
+environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
+COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain.
 """
 
 let arguments = Array(CommandLine.arguments.dropFirst())
@@ -61,6 +65,7 @@ func endpoint() -> Endpoint {
 }
 
 func token(_ endpoint: Endpoint) -> String {
+    if let token = ProcessInfo.processInfo.environment["COCOONBOX_TOKEN"], !token.isEmpty { return token }
     guard let token = Keychain.token(for: endpoint, service: service) else { fail("not signed in to \(endpoint.url); run cocoonbox login") }
     return token
 }
@@ -87,9 +92,17 @@ func stateName(_ state: Cocoonbox_Control_V1_BoxState) -> String {
     }
 }
 
+// selectedBox is the box --box names, else the first box.
+func selectedBox(_ connection: BoxConnection) async throws -> Cocoonbox_Control_V1_Box? {
+    let boxes = try await connection.listBoxes()
+    guard let ref = value(of: "--box") else { return boxes.first }
+    guard let box = boxes.first(where: { $0.id == ref || $0.name == ref }) else { fail("you have no box \(ref)") }
+    return box
+}
+
 func printBox(_ box: Cocoonbox_Control_V1_Box?, json: Bool) {
     let object: [String: Any] = [
-        "box_id": box?.id ?? "", "state": stateName(box?.state ?? .unspecified), "image": box?.image ?? "",
+        "box_id": box?.id ?? "", "name": box?.name ?? "", "state": stateName(box?.state ?? .unspecified), "image": box?.image ?? "",
         "latest_image": box?.latestImage ?? "", "last_saved_at_ms": box?.lastSavedAtMs ?? 0,
         "upgrade_available": box.map { !$0.latestImage.isEmpty && $0.latestImage != $0.image } ?? false,
     ]
@@ -99,7 +112,7 @@ func printBox(_ box: Cocoonbox_Control_V1_Box?, json: Bool) {
         return
     }
     guard let box else { return print("no box yet; run cocoonbox ensure") }
-    var line = "\(box.id) \(stateName(box.state)) \(box.image)"
+    var line = "\(box.name) \(box.id) \(stateName(box.state)) \(box.image)"
     if !box.latestImage.isEmpty, box.latestImage != box.image { line += " (upgrade available: \(box.latestImage))" }
     if box.lastSavedAtMs > 0 {
         line += ", saved \(Int(Date().timeIntervalSince1970 - Double(box.lastSavedAtMs) / 1000) / 60) min ago"
@@ -129,25 +142,25 @@ func lifecycle(_ command: String) async {
     do {
         switch command {
         case "status":
-            printBox(try await connection.firstBox(), json: flags.contains("--json"))
+            printBox(try await selectedBox(connection), json: flags.contains("--json"))
         case "ensure", "wake":
-            let response = try await connection.ensure()
+            let response = try await connection.ensure(boxID: try await selectedBox(connection)?.id ?? "")
             if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
-            printBox(try await connection.firstBox(), json: flags.contains("--json"))
+            printBox(try await connection.listBoxes().first { $0.id == response.box.id }, json: flags.contains("--json"))
         case "hibernate", "save":
-            guard let box = try await connection.firstBox() else { fail("no box yet") }
+            guard let box = try await selectedBox(connection) else { fail("no box yet") }
             let operation = command == "save" ? try await connection.saveState(boxID: box.id) : try await connection.hibernate(boxID: box.id)
             await follow(connection, operation.id)
-            printBox(try await connection.firstBox(), json: flags.contains("--json"))
+            printBox(try await selectedBox(connection), json: flags.contains("--json"))
         case "upgrade":
-            guard let box = try await connection.firstBox() else { fail("no box yet") }
+            guard let box = try await selectedBox(connection) else { fail("no box yet") }
             guard !box.latestImage.isEmpty, box.latestImage != box.image else { return print("already on the latest desktop (\(box.image))") }
             guard flags.contains("--yes") else {
                 fail("upgrading to \(box.latestImage) restarts running programs; files, logins and agent history are kept. Run again with --yes.")
             }
             let operation = try await connection.rebase(boxID: box.id, image: box.latestImage)
             await follow(connection, operation.id)
-            printBox(try await connection.firstBox(), json: flags.contains("--json"))
+            printBox(try await selectedBox(connection), json: flags.contains("--json"))
         default:
             break
         }
@@ -207,7 +220,7 @@ func serve() async {
         ?? home.appendingPathComponent("Library/Caches/cocoonbox")
     let output = Output()
     let bridge = Bridge(
-        endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"),
+        endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"), box: value(of: "--box"),
         cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { output.write($0) }
     )
     // a client that stops the bridge with SIGTERM still gets its sessions closed

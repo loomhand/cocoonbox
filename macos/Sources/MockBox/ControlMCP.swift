@@ -1,18 +1,24 @@
 import CocoonBoxKit
 import Foundation
+import GRPCCore
 
 // ControlMCP plays the api's control MCP (contracts.md "Control MCP") on
-// MockWorld: the box lifecycle tools, their progress and their errors.
+// MockWorld: the lifecycle tools of the user's boxes, their progress and their errors.
 final class ControlMCP: Sendable {
     static let path = "/cocoonbox.mcp/control"
     static let versions = ["2025-06-18", "2025-11-25"]
 
+    nonisolated(unsafe) static let box: [String: Any] = ["type": "string", "description": "The box's name or id; without it, your first box."]
+
     nonisolated(unsafe) static let tools: [[String: Any]] = [
-        tool("box_status", "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.", [:], []),
-        tool("box_ensure", "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer.", ["wait": ["type": "boolean", "default": true]], []),
-        tool("box_hibernate", "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.", [:], []),
-        tool("box_save", "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.", [:], []),
-        tool("box_upgrade", "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.", ["confirm": ["type": "boolean"]], ["confirm"]),
+        tool("box_list", "List your cocoonbox cloud desktops with their names, states and images.", [:], []),
+        tool("box_status", "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.", ["box": box], []),
+        tool("box_ensure", "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer.", ["box": box, "wait": ["type": "boolean", "default": true]], []),
+        tool("box_create", "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once.", ["name": ["type": "string"], "wait": ["type": "boolean", "default": true]], ["name"]),
+        tool("box_hibernate", "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.", ["box": box], []),
+        tool("box_save", "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.", ["box": box], []),
+        tool("box_upgrade", "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.", ["box": box, "confirm": ["type": "boolean"]], ["confirm"]),
+        tool("box_delete", "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state stays in storage. Requires the box and confirm: true.", ["box": box, "confirm": ["type": "boolean"]], ["box", "confirm"]),
     ]
 
     private let world: MockWorld
@@ -56,23 +62,55 @@ final class ControlMCP: Sendable {
     }
 
     private func call(_ name: String, _ arguments: [String: Any], id: Any, token: Any?) async -> HTTPResponse {
-        let box = await world.box
+        let ref = arguments["box"] as? String ?? ""
+        if name == "box_list" {
+            let boxes = await world.boxes.map { ["box_id": $0.id, "name": $0.name, "state": Self.state($0.state), "image": $0.image, "last_saved_at_ms": $0.lastSavedAtMs] as [String: Any] }
+            return Self.reply(id, Self.success(["boxes": boxes]))
+        }
+        if name == "box_create" {
+            do {
+                let response = try await world.create(name: arguments["name"] as? String ?? "")
+                guard arguments["wait"] as? Bool ?? true else {
+                    return Self.reply(id, Self.success(["box_id": response.box.id, "name": response.box.name, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
+                }
+                return await wait(response.operation.id, box: response.box.id, id: id, token: token, verb: "Create") { box, op in
+                    ["box_id": box.id, "name": box.name, "state": Self.state(box.state), "operation_id": op]
+                }
+            } catch let error as RPCError {
+                return Self.reply(id, Self.failure(error.message))
+            } catch {
+                return Self.error(id, -32603, "\(error)")
+            }
+        }
+        if name == "box_delete", ref.isEmpty {
+            return Self.reply(id, Self.failure("Name the box to delete in box."))
+        }
+        guard let box = await world.box(ref) else {
+            return Self.reply(id, Self.failure("You have no box \"\(ref)\"; box_list lists your boxes."))
+        }
         switch name {
         case "box_status":
             return Self.reply(id, Self.success(status(box)))
         case "box_ensure":
-            let response = await world.ensure()
+            let response: Cocoonbox_Control_V1_EnsureResponse
+            do {
+                response = try await world.ensure(box.id)
+            } catch let error as RPCError {
+                return Self.reply(id, Self.failure(error.message))
+            } catch {
+                return Self.error(id, -32603, "\(error)")
+            }
             guard response.hasOperation, !response.operation.id.isEmpty, arguments["wait"] as? Bool ?? true else {
                 return Self.reply(id, Self.success(["box_id": box.id, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
             }
-            return await wait(response.operation.id, id: id, token: token, verb: "Ensure") { box, op in
+            return await wait(response.operation.id, box: box.id, id: id, token: token, verb: "Ensure") { box, op in
                 ["box_id": box.id, "state": Self.state(box.state), "operation_id": op]
             }
         case "box_hibernate", "box_save":
             guard box.state == .running else { return Self.reply(id, Self.failure("The box is \(Self.state(box.state)).")) }
             let hibernate = name == "box_hibernate"
-            let op = hibernate ? await world.hibernate() : await world.saveState()
-            return await wait(op.id, id: id, token: token, verb: hibernate ? "Hibernate" : "Save") { box, op in
+            let op = hibernate ? await world.hibernate(box.id) : await world.saveState(box.id)
+            return await wait(op.id, box: box.id, id: id, token: token, verb: hibernate ? "Hibernate" : "Save") { box, op in
                 hibernate
                     ? ["box_id": box.id, "state": Self.state(box.state), "operation_id": op]
                     : ["box_id": box.id, "last_saved_at_ms": box.lastSavedAtMs, "operation_id": op, "bytes": 48 << 20]
@@ -82,9 +120,23 @@ final class ControlMCP: Sendable {
                 return Self.reply(id, Self.failure("Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."))
             }
             guard box.latestImage != box.image else { return Self.reply(id, Self.failure("Already on the latest desktop.")) }
-            let op = await world.rebase(image: box.latestImage)
-            return await wait(op.id, id: id, token: token, verb: "Upgrade") { box, op in
+            let op = await world.rebase(box.id, image: box.latestImage)
+            return await wait(op.id, box: box.id, id: id, token: token, verb: "Upgrade") { box, op in
                 ["box_id": box.id, "state": Self.state(box.state), "image": box.image, "operation_id": op]
+            }
+        case "box_delete":
+            guard arguments["confirm"] as? Bool == true else {
+                return Self.reply(id, Self.failure("Deleting removes the box and stops its running programs; its last saved state stays in storage. Call again with confirm: true."))
+            }
+            let op: Cocoonbox_Control_V1_Operation
+            do {
+                op = try await world.delete(box: box.id)
+            } catch {
+                return Self.error(id, -32603, "\(error)")
+            }
+            let deleted = box.id
+            return await wait(op.id, box: box.id, id: id, token: token, verb: "Delete") { _, op in
+                ["box_id": deleted, "operation_id": op]
             }
         default:
             return Self.error(id, -32602, "unknown tool \(name)")
@@ -92,7 +144,7 @@ final class ControlMCP: Sendable {
     }
 
     // wait follows the operation to its end, as progress notifications when the caller sent a token.
-    private func wait(_ op: String, id: Any, token: Any?, verb: String, result: @escaping @Sendable (Box, String) -> [String: Any]) async -> HTTPResponse {
+    private func wait(_ op: String, box boxID: String, id: Any, token: Any?, verb: String, result: @escaping @Sendable (Box, String) -> [String: Any]) async -> HTTPResponse {
         let (stream, continuation) = AsyncStream<Data>.makeStream()
         let world = world
         let ids = JSONValues(id: id, token: token)
@@ -116,7 +168,7 @@ final class ControlMCP: Sendable {
                     if event.phase == .failed { final = Self.failure("\(verb) failed: \(event.detail)") }
                 }
             }
-            if final.isEmpty { final = Self.success(result(await world.box, op)) }
+            if final.isEmpty { final = Self.success(result(await world.box(boxID) ?? Box(), op)) }
             continuation.yield(Self.encode(["jsonrpc": "2.0", "id": id, "result": final]))
             continuation.finish()
         }
@@ -137,7 +189,7 @@ final class ControlMCP: Sendable {
 
     private func status(_ box: Box) -> [String: Any] {
         [
-            "box_id": box.id, "state": Self.state(box.state), "image": box.image, "latest_image": box.latestImage,
+            "box_id": box.id, "name": box.name, "state": Self.state(box.state), "image": box.image, "latest_image": box.latestImage,
             "upgrade_available": !box.latestImage.isEmpty && box.latestImage != box.image, "last_saved_at_ms": box.lastSavedAtMs,
         ]
     }
@@ -168,6 +220,7 @@ final class ControlMCP: Sendable {
         case .snapshotting: "snapshotting"
         case .saving: "saving"
         case .restoring: "restoring"
+        case .deleting: "deleting"
         case .done: "done"
         case .failed: "failed"
         default: "unspecified"

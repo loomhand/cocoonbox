@@ -5,7 +5,8 @@ import GRPCNIOTransportHTTP2TransportServices
 
 // MockBox serves Boxes, Agents and Session over plaintext HTTP/2, and MCP at
 // /cocoonbox.mcp/<box id> on the same port, with canned agent turns and a
-// synthetic RFB desktop, for running the app without a box.
+// synthetic RFB desktop, for running the app without a box. It starts with
+// one box, main; Boxes.Create adds more, which show the same desktop.
 //   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS] [--external-ms MS] [--external-history 1] [--restore-on-wake 1] [--credentials 0]
 // --external-ms starts one scripted guest MCP session through the share (agent mcp:claude-code@<share id>) MS after the box runs.
 // --external-history 1 adds idle guest sessions from earlier hours.
@@ -34,12 +35,12 @@ let transport = HTTP2ServerTransport.TransportServices(
 let server = GRPCServer(
     transport: transport,
     services: [BoxesService(world: world), SharesService(world: world), AgentsService(world: world), SessionService(world: world, credentials: options["--credentials"] != "0")],
-    interceptors: [AuthCheck(token: token, boxID: boxID)]
+    interceptors: [AuthCheck(token: token, world: world)]
 )
 try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { try await server.serve() }
     guard let grpc = try await transport.listeningAddress.ipv4 else { throw CancellationError() }
-    try FrontDoor(grpcPort: UInt16(grpc.port), mcp: MCPServer(world: world, token: token, boxID: boxID)).start(port: UInt16(port))
+    try FrontDoor(grpcPort: UInt16(grpc.port), mcp: MCPServer(world: world, token: token)).start(port: UInt16(port))
     print("mockbox listening on http://127.0.0.1:\(port) token=\(token) box=\(boxID) mcp=/cocoonbox.mcp/\(boxID)")
     try await group.next()
 }

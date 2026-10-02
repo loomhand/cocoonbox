@@ -5,7 +5,7 @@ import RFBTestServer
 
 struct AuthCheck: ServerInterceptor {
     let token: String
-    let boxID: String
+    let world: MockWorld
 
     func intercept<Input: Sendable, Output: Sendable>(
         request: StreamingServerRequest<Input>,
@@ -17,7 +17,7 @@ struct AuthCheck: ServerInterceptor {
         }
         if context.descriptor.service.package == "cocoonbox.agent.v1" {
             let box = request.metadata[stringValues: "x-cocoonbox-box"].first(where: { _ in true })
-            guard box == boxID else {
+            guard let box, await world.box(box)?.id == box else {
                 throw RPCError(code: .notFound, message: "box \(box ?? "<none>") is not yours")
             }
         }
@@ -29,28 +29,45 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     let world: MockWorld
 
     func ensure(request: Cocoonbox_Control_V1_EnsureRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        await world.ensure()
+        try await world.ensure(request.boxID)
+    }
+
+    func create(request: Cocoonbox_Control_V1_CreateBoxRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_EnsureResponse {
+        try await world.create(name: request.name)
+    }
+
+    func rename(request: Cocoonbox_Control_V1_RenameBoxRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Box {
+        try await world.rename(box: request.boxID, name: request.name)
+    }
+
+    func delete(request: Cocoonbox_Control_V1_BoxRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
+        try await world.delete(box: request.boxID)
     }
 
     func get(request: Cocoonbox_Control_V1_GetBoxRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Box {
-        await world.box
+        try await owned(request.boxID)
     }
 
     func list(request: Cocoonbox_Control_V1_ListBoxesRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ListBoxesResponse {
-        let box = await world.box
-        return .with { $0.boxes = [box] }
+        let boxes = await world.boxes
+        return .with { $0.boxes = boxes }
     }
 
     func hibernate(request: Cocoonbox_Control_V1_BoxRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
-        await world.hibernate()
+        await world.hibernate(try await owned(request.boxID).id)
     }
 
     func saveState(request: Cocoonbox_Control_V1_BoxRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
-        await world.saveState()
+        await world.saveState(try await owned(request.boxID).id)
     }
 
     func rebase(request: Cocoonbox_Control_V1_RebaseRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
-        await world.rebase(image: request.image)
+        await world.rebase(try await owned(request.boxID).id, image: request.image)
+    }
+
+    private func owned(_ boxID: String) async throws -> Cocoonbox_Control_V1_Box {
+        guard let box = await world.box(boxID), box.id == boxID else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        return box
     }
 
     func watchOperation(request: Cocoonbox_Control_V1_WatchOperationRequest, response: RPCWriter<Cocoonbox_Control_V1_OperationEvent>, context: ServerContext) async throws {
