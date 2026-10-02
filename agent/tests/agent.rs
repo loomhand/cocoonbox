@@ -2185,12 +2185,14 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
     };
     let site = field_pages().await;
     let url = |path: &str| format!("http://{site}{path}");
+    let site_b = format!("http://{}", site.replace("127.0.0.1", "localhost"));
+    let url_b = |path: &str| format!("{site_b}{path}");
     let h = Harness::with_chrome(Vec::new(), &chrome).await;
     let mut a = McpClient::connect(&h).await;
     let mut b = McpClient::connect(&h).await;
     let (na, nb) = tokio::join!(
         a.call("browser_navigate", json!({"url": url("/a")})),
-        b.call("browser_navigate", json!({"url": url("/b")}))
+        b.call("browser_navigate", json!({"url": url_b("/b")}))
     );
     for (nav, field) in [(&na, "field /a"), (&nb, "field /b")] {
         let text = nav["content"][0]["text"].as_str().unwrap();
@@ -2211,7 +2213,7 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
     );
     let open = tabs(h.cdp_port).await;
     let tab = |u: String| open.iter().find(|t| t.1 == u).cloned().unwrap();
-    let (tab_a, tab_b) = (tab(url("/a")), tab(url("/b")));
+    let (tab_a, tab_b) = (tab(url("/a")), tab(url_b("/b")));
     assert_ne!(tab_a.0, tab_b.0);
     let value = "document.querySelector('input').value";
     assert_eq!(tab_eval(&tab_a.2, value).await, text_a.as_str());
@@ -2234,6 +2236,21 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
     assert!(tab_a2.0 != tab_a.0 && tab_a2.0 != tab_b.0, "{tab_a2:?}");
     assert_eq!(tab_eval(&tab_b.2, value).await, text_b.as_str());
 
+    let mut session = h.session().await;
+    for (client, origin) in [(&mut b, site_b.clone()), (&mut a, format!("http://{site}"))] {
+        client.call("browser_snapshot", json!({})).await;
+        let active = session
+            .active_origin(authed(pb::ActiveOriginRequest {}))
+            .await
+            .unwrap()
+            .into_inner()
+            .origin;
+        assert_eq!(
+            active, origin,
+            "ActiveOrigin follows the window last acted on"
+        );
+    }
+
     let closed = reqwest::Client::new()
         .delete(format!("{}/mcp", h.endpoint))
         .header("x-cocoonbox-edge-token", TOKEN)
@@ -2243,7 +2260,7 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
         .unwrap();
     assert_eq!(closed.status(), 204);
     assert!(
-        tab_gone(h.cdp_port, &url("/b")).await,
+        tab_gone(h.cdp_port, &url_b("/b")).await,
         "the closed session's window stayed open"
     );
     assert!(tabs(h.cdp_port).await.iter().any(|t| t.0 == tab_a2.0));

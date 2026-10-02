@@ -212,6 +212,7 @@ pub struct Browser {
     life: RwLock<()>,
     starting: Mutex<()>,
     windows: Mutex<HashMap<String, Arc<Mutex<Option<Target>>>>>,
+    last: Mutex<String>,
 }
 
 impl Browser {
@@ -225,6 +226,7 @@ impl Browser {
             life: RwLock::new(()),
             starting: Mutex::new(()),
             windows: Mutex::new(HashMap::new()),
+            last: Mutex::new(String::new()),
         }
     }
 
@@ -259,6 +261,9 @@ impl Browser {
         );
         let mut window = slot.lock().await;
         let mut cdp = self.connect(&mut window).await?;
+        if let Some(t) = window.as_ref() {
+            t.ws_url.clone_into(&mut *self.last.lock().await);
+        }
         match tool {
             "browser_navigate" => {
                 let a: NavigateArgs = parse(args)?;
@@ -386,23 +391,23 @@ impl Browser {
         Ok(json!({"filled": r["filled"], "submitted": submitted}).to_string())
     }
 
-    /// The tab the user is looking at: the focused one, else the most recently active.
+    /// The window the browser tools last acted on, else the first tab Chrome lists.
     async fn attach(&self) -> Result<Cdp, String> {
+        let last = self.last.lock().await.clone();
+        if !last.is_empty()
+            && let Ok(cdp) = Cdp::open(&last).await
+        {
+            return Ok(cdp);
+        }
         let targets = self
             .targets()
             .await
             .map_err(|_| "Chrome is not running in the box".to_owned())?;
-        let mut first = None;
-        for page in targets.into_iter().filter(Target::is_tab) {
-            let Ok(mut cdp) = Cdp::open(&page.ws_url).await else {
-                continue;
-            };
-            if cdp.eval("document.hasFocus()").await == Ok(Value::Bool(true)) {
-                return Ok(cdp);
-            }
-            first.get_or_insert(cdp);
-        }
-        first.ok_or_else(|| "no tab is open in the box's Chrome".to_owned())
+        let page = targets
+            .into_iter()
+            .find(Target::is_tab)
+            .ok_or("no tab is open in the box's Chrome")?;
+        Cdp::open(&page.ws_url).await
     }
 
     /// Attaches to the window in `window`, opening a new one when it is missing or was closed.
