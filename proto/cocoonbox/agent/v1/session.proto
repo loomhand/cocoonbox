@@ -20,9 +20,9 @@ service Session {
   // only: it is no MCP tool, and its values are never logged or recorded.
   rpc FillCredential(FillCredentialRequest) returns (FillCredentialResponse);
   // Exec runs a command as the desktop user and carries its stdin, stdout and
-  // stderr. The first client frame must be `start`; the client half-closing
-  // the stream closes the command's stdin. The last server frame is
-  // `exit_code`. Cancelling the stream kills the command's process group.
+  // stderr. The first client frame must be `start`. `eof`, or the client
+  // half-closing the stream, closes the command's stdin. The last server frame
+  // is `exit_code`. Cancelling the stream kills the command's process group.
   // Owner only.
   rpc Exec(stream ExecClientFrame) returns (stream ExecServerFrame);
 }
@@ -31,12 +31,40 @@ message ExecClientFrame {
   oneof body {
     ExecStart start = 1;
     bytes stdin = 2;
+    ExecEof eof = 3;
+    // Sent to the command's process group.
+    ExecSignal signal = 4;
+    // The terminal size of a command started with `tty`.
+    ExecWindow resize = 5;
   }
 }
 
 message ExecStart {
-  // Run by `bash -c` in /workspace, as rsh and ssh run a remote command.
+  // Run by a login shell, `bash -lc`, in /workspace, as rsh and ssh run a
+  // remote command.
   string command = 1;
+  // Present: the command runs on a pseudo-terminal, and stdout carries its
+  // stderr too.
+  ExecTty tty = 2;
+}
+
+message ExecTty {
+  // TERM for the command.
+  string term = 1;
+  ExecWindow window = 2;
+}
+
+message ExecWindow {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
+
+message ExecEof {}
+
+enum ExecSignal {
+  EXEC_SIGNAL_UNSPECIFIED = 0;
+  EXEC_SIGNAL_INT = 1;
+  EXEC_SIGNAL_TERM = 2;
 }
 
 message ExecServerFrame {
