@@ -18,6 +18,7 @@ use crate::exec;
 use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
 use crate::llm;
 use crate::mcp::Mcp;
+use crate::offload;
 use crate::pb::agents_server::{Agents, AgentsServer};
 use crate::pb::session_server::{Session, SessionServer};
 use crate::pb::state_server::{State, StateServer};
@@ -448,6 +449,12 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     };
     let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
     mcp.spawn_reaper();
+    // detached: ends with rt.stop
+    tokio::spawn(offload::inbox::relay(
+        rt.cfg.offload_socket.clone(),
+        Arc::clone(&rt.journal),
+        rt.stop.clone(),
+    ));
     let agents = AgentsServer::new(AgentsSvc {
         rt: Arc::clone(&rt),
         mcp: Arc::clone(&mcp),
@@ -513,7 +520,8 @@ fn share_refused() -> Status {
     Status::permission_denied("a share reaches only the screen and MCP")
 }
 
-async fn shutdown_signal() {
+/// Resolves on the first SIGTERM or SIGINT.
+pub(crate) async fn shutdown_signal() {
     let term = async {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
             Ok(mut s) => {

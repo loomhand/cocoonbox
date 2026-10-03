@@ -2,16 +2,26 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use cocoonbox_agent::config::{ServeConfig, ToolhostConfig};
-use cocoonbox_agent::{server, toolhost};
+use cocoonbox_agent::{offload, server, toolhost};
 
 const RUNTIME_SHUTDOWN: Duration = Duration::from_millis(200);
-const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost|version>";
+const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost|offload|version>";
 
 fn main() -> ExitCode {
     let cmd = std::env::args().nth(1).unwrap_or_default();
     let result = match cmd.as_str() {
         "serve" => run(async { server::serve(ServeConfig::from_env()?).await }),
         "toolhost" => run(async { toolhost::run(ToolhostConfig::from_env()?).await }),
+        "offload" => {
+            let args = std::env::args().skip(2).collect();
+            return match run(async { Ok(offload::main(args).await) }) {
+                Ok(code) => ExitCode::from(code),
+                Err(e) => {
+                    eprintln!("cocoonbox-agent offload: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
         "version" | "--version" => {
             println!("cocoonbox-agent {}", env!("CB_AGENT_VERSION"));
             Ok(())
@@ -30,7 +40,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(fut: impl Future<Output = Result<(), String>>) -> Result<(), String> {
+fn run<T>(fut: impl Future<Output = Result<T, String>>) -> Result<T, String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()

@@ -16,7 +16,7 @@ use cocoonbox_agent::pb::{
 };
 use cocoonbox_agent::runner::Runtime;
 use cocoonbox_agent::toolhost::state::Root;
-use cocoonbox_agent::{server, toolhost};
+use cocoonbox_agent::{offload, server, toolhost};
 use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -134,6 +134,7 @@ impl Harness {
             listen: "127.0.0.1:0".parse().unwrap(),
             state_dir: dir.path().join("state"),
             toolhost_socket: toolhost_socket.clone(),
+            offload_socket: dir.path().join("offload.sock"),
             vnc_addr: fake_vnc().await,
             anthropic_messages,
             mcp_idle,
@@ -3598,6 +3599,113 @@ async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
         !ids.contains(&intruder),
         "agent.db was not restored: {ids:?}"
     );
+}
+
+#[tokio::test]
+async fn a_plan_leaves_out_the_offload_excludes_under_the_workspace_only() {
+    let h = Harness::start(Vec::new(), false).await;
+    let repo = h.workspace.join("gron");
+    std::fs::create_dir_all(repo.join("target/debug")).unwrap();
+    std::fs::write(repo.join("main.go"), b"package main").unwrap();
+    std::fs::write(repo.join("target/debug/big"), noise(10_000, 61)).unwrap();
+    std::fs::write(repo.join("target/x"), b"x").unwrap();
+    std::fs::create_dir_all(h.home.join("docs")).unwrap();
+    std::fs::write(h.home.join("docs/a.txt"), b"a").unwrap();
+    let before = plan(&h, pb::Consistency::Live, "").await;
+    let listed = h.home.join(offload::Layout::excludes_rel());
+    std::fs::create_dir_all(listed.parent().unwrap()).unwrap();
+    std::fs::write(
+        &listed,
+        format!(
+            "{}/\n{}\n{}/../gron\nnot-absolute\n",
+            repo.join("target").display(),
+            h.home.join("docs").display(),
+            h.workspace.display()
+        ),
+    )
+    .unwrap();
+    let after = plan(&h, pb::Consistency::Live, "").await;
+    assert_eq!(
+        after.files,
+        before.files - 2 + 1,
+        "target's two files leave and the excludes file joins; lines outside /workspace are ignored"
+    );
+}
+
+#[tokio::test]
+async fn an_offload_post_reaches_session_events_without_its_body() {
+    let h = Harness::start(Vec::new(), false).await;
+    let tmux = h._dir.path().join("fake-tmux");
+    write_script(&tmux, "cat >/dev/null; exit 0");
+    let layout = offload::Layout {
+        state: h.home.join(".local/share/cocoonbox/offload"),
+        socket: h._dir.path().join("offload.sock"),
+        secrets: h._dir.path().join("secrets"),
+        workspace: h.workspace.clone(),
+        home: h.home.clone(),
+        tmux,
+    };
+    let mut index = offload::Index::new();
+    index.insert(
+        "0123456789ab".to_owned(),
+        offload::Copy {
+            name: "gron".into(),
+            dir: h.workspace.clone(),
+            offload_id: "a1b2c3d4e5f6".into(),
+            unreturned: false,
+        },
+    );
+    std::fs::create_dir_all(&layout.state).unwrap();
+    std::fs::write(
+        layout.state.join("index.json"),
+        serde_json::to_vec(&index).unwrap(),
+    )
+    .unwrap();
+    let listener = UnixListener::bind(&layout.socket).unwrap();
+    let inbox = offload::inbox::Inbox::open(layout.clone()).await.unwrap();
+    tokio::spawn(inbox.run(listener, tokio_util::sync::CancellationToken::new()));
+    let started = offload::request(
+        &layout.socket,
+        &json!({"op": "send", "repo": "0123456789ab", "cli": "claude",
+                "offload_id": "a1b2c3d4e5f6", "body": "go", "start": true}),
+    )
+    .await
+    .unwrap();
+    assert_eq!(started["delivery"], "started", "{started}");
+    let mut events = h
+        .session()
+        .await
+        .events(authed(pb::EventsRequest { from_offset: 0 }))
+        .await
+        .unwrap()
+        .into_inner();
+    for n in 0..40 {
+        let body = format!("SECRET-{n}");
+        offload::request(
+            &layout.socket,
+            &json!({"op": "post", "repo": "0123456789ab", "kind": "question", "body": body}),
+        )
+        .await
+        .unwrap();
+        let Ok(Some(Ok(ev))) =
+            tokio::time::timeout(Duration::from_millis(300), events.next()).await
+        else {
+            continue;
+        };
+        let Some(event::Body::Offload(update)) = &ev.body else {
+            continue;
+        };
+        assert_eq!(update.repo, "0123456789ab");
+        assert_eq!(update.name, "gron");
+        assert_eq!(update.cli, "claude");
+        assert_eq!(update.offload_id, "a1b2c3d4e5f6");
+        assert_eq!(update.entry, pb::OffloadEntry::Question as i32);
+        assert!((1..=n + 1).contains(&update.seq), "{}", update.seq);
+        let encoded = prost::Message::encode_to_vec(&ev);
+        assert!(!encoded.windows(7).any(|w| w == b"SECRET-"));
+        return;
+    }
+    panic!("no offload event reached Session.Events");
 }
 
 #[tokio::test]

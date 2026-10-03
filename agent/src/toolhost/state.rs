@@ -1,5 +1,6 @@
 //! State-layer file access as `user`: walk, streamed reads and writes, directory setup and atomic swaps.
 
+use std::collections::HashSet;
 use std::fs::{self, FileTimes};
 use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
@@ -90,11 +91,20 @@ pub struct Stamp {
     pub error: Option<String>,
 }
 
+/// A file listing absolute paths to leave out, one per line; only lines under the root named `root` count.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Listed {
+    pub file: PathBuf,
+    pub root: String,
+}
+
 #[derive(Deserialize)]
 struct WalkArgs {
     roots: Vec<Root>,
     #[serde(default)]
     excludes: Excludes,
+    #[serde(default)]
+    listed: Option<Listed>,
 }
 
 #[derive(Deserialize)]
@@ -156,7 +166,13 @@ pub async fn walk(args: Value) -> Result<String, String> {
     let entries = tokio::task::spawn_blocking(move || {
         let mut out = Vec::new();
         for root in &a.roots {
-            walk_root(root, &a.excludes, &mut out);
+            let skip = a
+                .listed
+                .as_ref()
+                .filter(|l| l.root == root.name)
+                .map(|l| listed_paths(&l.file, &root.path))
+                .unwrap_or_default();
+            walk_root(root, &a.excludes, &skip, &mut out);
         }
         out
     })
@@ -409,7 +425,24 @@ async fn write_file<R: AsyncRead + Unpin>(a: &WriteArgs, r: &mut R) -> Result<u6
     Ok(n)
 }
 
-fn walk_root(root: &Root, excludes: &Excludes, out: &mut Vec<Entry>) {
+/// The lines of `file` that name a path strictly under `root`, relative to it; a missing file lists nothing.
+fn listed_paths(file: &Path, root: &Path) -> HashSet<String> {
+    let Ok(text) = fs::read_to_string(file) else {
+        return HashSet::new();
+    };
+    text.lines()
+        .filter_map(|l| Path::new(l.trim_end_matches('/')).strip_prefix(root).ok())
+        .filter(|rel| {
+            rel.components().next().is_some()
+                && rel
+                    .components()
+                    .all(|c| matches!(c, std::path::Component::Normal(_)))
+        })
+        .filter_map(|rel| rel.to_str().map(str::to_owned))
+        .collect()
+}
+
+fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut Vec<Entry>) {
     let mut stack = vec![String::new()];
     while let Some(rel) = stack.pop() {
         let dir = if rel.is_empty() {
@@ -429,7 +462,7 @@ fn walk_root(root: &Root, excludes: &Excludes, out: &mut Vec<Entry>) {
             } else {
                 format!("{rel}/{name}")
             };
-            if excludes.matches(&path) {
+            if excludes.matches(&path) || skip.contains(&path) {
                 continue;
             }
             let Ok(meta) = fs::symlink_metadata(child.path()) else {

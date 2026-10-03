@@ -247,7 +247,8 @@ pub async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
     }
 }
 
-fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
+/// Binds a unix socket at `path`, mode 0660, owned by `group` when it exists.
+pub(crate) fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
     }

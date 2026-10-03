@@ -24,6 +24,18 @@ pub fn signal_group(pgid: u32, signal: i32) -> io::Result<()> {
     }
 }
 
+/// Sends `signal` to the process `pid`.
+pub fn signal_process(pid: u32, signal: i32) -> io::Result<()> {
+    let pid = libc::pid_t::try_from(pid).map_err(io::Error::other)?;
+    // SAFETY: kill takes plain integers and touches no memory owned by this process.
+    let rc = unsafe { libc::kill(pid, signal) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
 /// Opens a pseudo-terminal of `rows` by `cols`; returns its non-blocking master end and its
 /// slave end, both close-on-exec.
 pub fn openpty(rows: u16, cols: u16) -> io::Result<(OwnedFd, OwnedFd)> {

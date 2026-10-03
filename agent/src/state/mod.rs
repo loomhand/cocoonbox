@@ -21,7 +21,7 @@ use crate::pb;
 use crate::runner::Preempt;
 use crate::store::Store;
 use crate::toolhost::rpc::{self, Call, FileReader, FileWriter};
-use crate::toolhost::state::{Entry, Excludes, Kind, Root};
+use crate::toolhost::state::{Entry, Excludes, Kind, Listed, Root};
 use crypto::Keys;
 use manifest::{Blob, FileRecord, Manifest};
 
@@ -43,6 +43,7 @@ const SQLITE_SIDECARS: [&str; 2] = ["-wal", "-journal"];
 
 const MANIFEST_FILE: &str = "manifest";
 const HOME_ROOT: &str = "home";
+const WORKSPACE_ROOT: &str = "workspace";
 const RESTORED_DIR: &str = "Restored";
 const KNOWN_FILE: &str = "known-chunks.json";
 
@@ -683,10 +684,18 @@ impl StateEngine {
             sizes: std::sync::Mutex::new(HashMap::new()),
         };
         let settled_ns = (crate::now_ms() - REUSE_AGE_MS) * 1_000_000;
+        let listed = self
+            .roots
+            .iter()
+            .find(|r| r.name == HOME_ROOT)
+            .map(|home| Listed {
+                file: home.path.join(crate::offload::Layout::excludes_rel()),
+                root: WORKSPACE_ROOT.to_owned(),
+            });
         let walked = self
             .tool(
                 "state_walk",
-                json!({"roots": self.roots, "excludes": self.excludes}),
+                json!({"roots": self.roots, "excludes": self.excludes, "listed": listed}),
             )
             .await?;
         let entries: Vec<Entry> =
@@ -1299,11 +1308,11 @@ impl Meter {
 pub fn default_roots() -> Vec<Root> {
     vec![
         Root {
-            name: "home".to_owned(),
+            name: HOME_ROOT.to_owned(),
             path: PathBuf::from("/home/user"),
         },
         Root {
-            name: "workspace".to_owned(),
+            name: WORKSPACE_ROOT.to_owned(),
             path: PathBuf::from("/workspace"),
         },
     ]
