@@ -9,6 +9,7 @@ import sys
 
 S = "/srv/cb/sbx"
 TOKEN = "/etc/cocoonbox/sandboxd-token"
+EGRESS_CA = "/etc/cocoonbox/egress-ca"
 LISTEN = "127.0.0.1:17780"
 GATEWAY = "10.203.0.1"
 GW_PORT = 18090
@@ -56,6 +57,10 @@ conf = {
     "secrets": [{"name": "GW_KEY", "header": "Authorization"}],
     "pools": pools,
 }
+if os.path.exists(f"{EGRESS_CA}/root.crt"):
+    conf["egress_ca"] = {"root_cert": f"{EGRESS_CA}/root.crt",
+                         "intermediate_cert": f"{EGRESS_CA}/cbsbx-bench.crt",
+                         "intermediate_key": f"{EGRESS_CA}/cbsbx-bench.key"}
 path = f"{S}/sandboxd.json"
 fd = os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 with os.fdopen(fd, "w") as f:
