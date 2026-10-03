@@ -19,6 +19,33 @@ service Session {
   // equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
   // only: it is no MCP tool, and its values are never logged or recorded.
   rpc FillCredential(FillCredentialRequest) returns (FillCredentialResponse);
+  // Exec runs a command as the desktop user and carries its stdin, stdout and
+  // stderr. The first client frame must be `start`; the client half-closing
+  // the stream closes the command's stdin. The last server frame is
+  // `exit_code`. Cancelling the stream kills the command's process group.
+  // Owner only.
+  rpc Exec(stream ExecClientFrame) returns (stream ExecServerFrame);
+}
+
+message ExecClientFrame {
+  oneof body {
+    ExecStart start = 1;
+    bytes stdin = 2;
+  }
+}
+
+message ExecStart {
+  // Run by `bash -c` in /workspace, as rsh and ssh run a remote command.
+  string command = 1;
+}
+
+message ExecServerFrame {
+  oneof body {
+    bytes stdout = 1;
+    bytes stderr = 2;
+    // The command's exit status, or 128 plus the signal that ended it.
+    int32 exit_code = 3;
+  }
 }
 
 message HelloRequest {
