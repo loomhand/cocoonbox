@@ -200,21 +200,43 @@ public struct OffloadStore: Sendable {
         return keys.compactMap(record).sorted { $0.startedAtMs < $1.startedAtMs }
     }
 
+    // RepoSettings is what repos.json keeps per repo key: names and paths, never a secret's value.
+    struct RepoSettings: Codable {
+        var secrets: [String] = []
+        var sizeConfirmed = false
+    }
+
     // secrets is the repo's opted-in secret entries, from repos.json.
     public func secrets(_ key: String) -> [String] {
-        repos()[key] ?? []
+        repos()[key]?.secrets ?? []
     }
 
     public func setSecrets(_ entries: [String], for key: String) throws {
-        var all = repos()
-        all[key] = entries.isEmpty ? nil : entries
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        try Self.encoder.encode(all).write(to: root.appendingPathComponent("repos.json"), options: .atomic)
+        try update(key) { $0.secrets = entries }
     }
 
-    private func repos() -> [String: [String]] {
+    // sizeConfirmed is whether the user said yes to the size confirm of this repo once.
+    func sizeConfirmed(_ key: String) -> Bool {
+        repos()[key]?.sizeConfirmed ?? false
+    }
+
+    func confirmSize(_ key: String) throws {
+        try update(key) { $0.sizeConfirmed = true }
+    }
+
+    private func update(_ key: String, _ change: (inout RepoSettings) -> Void) throws {
+        var all = repos()
+        change(&all[key, default: RepoSettings()])
+        if let settings = all[key], settings.secrets.isEmpty, !settings.sizeConfirmed { all[key] = nil }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let file = root.appendingPathComponent("repos.json")
+        try Self.encoder.encode(all).write(to: file, options: .atomic)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: file.path)
+    }
+
+    private func repos() -> [String: RepoSettings] {
         guard let data = try? Data(contentsOf: root.appendingPathComponent("repos.json")) else { return [:] }
-        return (try? JSONDecoder().decode([String: [String]].self, from: data)) ?? [:]
+        return (try? Self.decoder.decode([String: RepoSettings].self, from: data)) ?? [:]
     }
 
     static let encoder: JSONEncoder = {

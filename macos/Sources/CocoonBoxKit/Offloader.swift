@@ -150,7 +150,7 @@ public struct Offloader: Sendable {
         if let repo {
             findings += Preflight.mac(repo: repo, handover: request.handover, optedIn: store.secrets(key), environment: environment)
             try Data(try repo.ignored().map { "/" + Self.escape($0) + "\n" }.joined().utf8).write(to: excludes)
-            if let size = Preflight.size(try dryRun(repo, excludes: excludes, stage: stage)) { findings.append(size) }
+            if !store.sizeConfirmed(key), let size = Preflight.size(try dryRun(repo, excludes: excludes, stage: stage)) { findings.append(size) }
         }
         mark("preflight")
         guard !findings.contains(where: { $0.outcome == .block }) else { throw OffloadError.refused(findings) }
@@ -170,6 +170,11 @@ public struct Offloader: Sendable {
         guard !findings.contains(where: { $0.outcome == .block }) else { throw OffloadError.refused(findings) }
         guard request.yes || findings.isEmpty else { throw OffloadError.needsYes(findings) }
         guard let dir = begin["dir"] as? String, !dir.isEmpty else { throw OffloadError.failed("begin named no directory") }
+        if let ignored = begin["ignored"] as? [String], !ignored.isEmpty, let handle = try? FileHandle(forWritingTo: excludes) {
+            try handle.seekToEnd()
+            try handle.write(contentsOf: Data(ignored.map { "/" + Self.escape($0) + "\n" }.joined().utf8))
+            try handle.close()
+        }
 
         let refs = ["refs/cocoonbox/offload/\(id)", "refs/cocoonbox/index/\(id)"]
         let bundle = stage.appendingPathComponent("offload.bundle")
@@ -217,6 +222,7 @@ public struct Offloader: Sendable {
             refs.forEach { ref in _ = try? repo?.git("update-ref", "-d", ref) }
             throw error
         }
+        if findings.contains(where: { $0.check == "size" }) { try? store.confirmSize(key) }
         let cli = begin["cli"] as? [String: Any] ?? [:]
         let account = (cli["account"] as? String).map { $0.isEmpty ? "" : ", signed in as \($0)" } ?? ""
         return OffloadOutcome(record: record, accepted: reply["accepted"] as? Bool ?? false, findings: findings,
@@ -318,7 +324,7 @@ public struct Offloader: Sendable {
             let fetch = try repo.run(["fetch", "-q", "box:\(record.dir)", "+refs/heads/*:refs/cocoonbox/box/*", "+\(ref):\(ref)"],
                                      extra: ["GIT_SSH_COMMAND": rsh, "GIT_SSH_VARIANT": "simple"])
             guard fetch.status == 0 else { throw OffloadError.failed("git fetch from the box failed: \(fetch.error.split(separator: "\n").last ?? "")") }
-            landing = try repo.land(base: base, box: ref, index: try store.directory(key).appendingPathComponent("snapshot.index"))
+            landing = try repo.land(id: record.id, base: base, box: ref, index: try store.directory(key).appendingPathComponent("snapshot.index"))
         }
         _ = try await verb(["end", "--repo", key])
         store.remove(key)

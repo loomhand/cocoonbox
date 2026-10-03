@@ -165,8 +165,9 @@ public struct GitRepo: Sendable {
 
     // land brings the box's snapshot S' home against base S: a fast-forward
     // when this repo still equals S, else a clean three-way merge applied
-    // uncommitted, else a branch at S' with this work tree untouched.
-    func land(base: String, box: String, index: URL, now: Date = Date()) throws -> Landing {
+    // uncommitted that leaves the user's uncommitted paths alone, else a
+    // branch at S' with this work tree untouched.
+    func land(id: String, base: String, box: String, index: URL, now: Date = Date()) throws -> Landing {
         let start = verify(base + "^")
         let boxHead = verify(box + "^")
         let head = head
@@ -177,7 +178,7 @@ public struct GitRepo: Sendable {
         let follows = boxHead.map { b in start.map { b == $0 || ((try? git("merge-base", "--is-ancestor", $0, b)) != nil) } ?? true } ?? false
         let move = boxHead.flatMap { $0 != head && head == start && follows ? (old: head, new: $0) : nil }
         if head == start, localTree == baseTree, follows || boxHead == nil {
-            guard try settle(from: base, to: box, move: move, scratch: index) else { return try branch(box, conflicts: [], now: now) }
+            guard try settle(id: id, from: base, to: box, move: move, scratch: index) else { return try branch(box, conflicts: [], now: now) }
             return .fastForward
         }
         let merge = try run(["merge-tree", "--write-tree", "--name-only", "--merge-base=\(base)", local, box])
@@ -186,13 +187,16 @@ public struct GitRepo: Sendable {
             return try branch(box, conflicts: merge.status == 1 ? Array(lines.dropFirst().prefix { !$0.isEmpty }) : [], now: now)
         }
         let files = try git("diff-tree", "-r", "--name-only", "--no-renames", localTree, merged).split(separator: "\n").map(String.init)
-        guard try settle(from: localTree, to: merged, move: move, scratch: index) else { return try branch(box, conflicts: [], now: now) }
+        let dirty = Set(try git("diff-tree", "-r", "--name-only", "--no-renames", try head.map(tree) ?? git("mktree", input: Data()), localTree).split(separator: "\n").map(String.init))
+        let touched = files.filter(dirty.contains)
+        guard touched.isEmpty else { return try branch(box, conflicts: touched, now: now) }
+        guard try settle(id: id, from: localTree, to: merged, move: move, scratch: index) else { return try branch(box, conflicts: [], now: now) }
         return .merged(files)
     }
 
     // settle moves the work tree between trees and, with move, HEAD's branch and the index; the index is
     // built aside under git's index.lock first, so a held lock or a patch that does not apply changes nothing.
-    private func settle(from: String, to: String, move: (old: String?, new: String)?, scratch: URL) throws -> Bool {
+    private func settle(id: String, from: String, to: String, move: (old: String?, new: String)?, scratch: URL) throws -> Bool {
         let manager = FileManager.default
         var lock: URL?
         defer { if let lock { try? manager.removeItem(at: lock) } }
@@ -219,6 +223,7 @@ public struct GitRepo: Sendable {
         let patch = try diff(from, to)
         if !patch.isEmpty, try run(["apply", "--binary", "--whitespace=nowarn", "-"], input: patch).status != 0 { return false }
         if let move, let held = lock {
+            if let old = move.old { try git("update-ref", "refs/cocoonbox/pre-back/\(id)", old) }
             let ref = (try? git("symbolic-ref", "-q", "HEAD")).flatMap { $0.isEmpty ? nil : $0 }
             try git(["update-ref", "-m", "cocoonbox back"] + (ref.map { [$0] } ?? ["--no-deref", "HEAD"]) + [move.new] + (move.old.map { [$0] } ?? []))
             guard Darwin.rename(held.path, try gitPath("index").path) == 0 else { throw OffloadError.failed("installing the index failed: errno \(errno)") }

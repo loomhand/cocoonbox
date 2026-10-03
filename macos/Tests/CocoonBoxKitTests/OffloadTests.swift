@@ -27,6 +27,7 @@ import Testing
         #expect(back.landing == .fastForward)
         #expect(try box.state(repo) == box.state(copy))
         #expect(try box.sh("git log -1 --format=%s", in: repo) == "box")
+        #expect(try box.sh("git rev-parse refs/cocoonbox/pre-back/\(outcome.record.id)", in: repo) == box.sh("git rev-parse HEAD~1", in: repo))
         #expect(box.store.record(outcome.record.repo) == nil)
         #expect(try String(contentsOf: back.file, encoding: .utf8) == Self.handover)
     }
@@ -58,6 +59,48 @@ import Testing
         #expect(try box.sh("git log -1 --format=%s", in: repo) == "box")
         #expect(try box.sh("git status --porcelain", in: repo) == "M a.txt")
         #expect(try box.sh("tail -1 a.txt; tail -1 b.txt", in: repo) == "macline\nboxline")
+    }
+
+    @Test func aMergeThatTouchesUncommittedWorkTakesTheBranch() async throws {
+        let box = try await Harness.shared()
+        let repo = try box.repo("dirty")
+        try box.sh("printf 'one\\n\\n\\n\\n\\nsix\\n' > a.txt && git commit -qam spaced", in: repo)
+        let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
+        let copy = URL(fileURLWithPath: outcome.record.dir)
+        try box.sh("sed -i '' 's/six/SIX/' a.txt && git -c user.name=b -c user.email=b@b commit -qam box", in: copy)
+        try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
+        try box.sh("sed -i '' 's/one/ONE/' a.txt", in: repo)
+        let before = try box.state(repo)
+        let back = try await box.offloader().back(outcome.record.repo, interrupt: false)
+        guard case .branch(_, let paths) = back.landing else { Issue.record("landed \(String(describing: back.landing))"); return }
+        #expect(paths == ["a.txt"])
+        #expect(try box.state(repo) == before)
+    }
+
+    @Test func theBoxsOwnIgnoredDirectoriesStay() async throws {
+        let box = try await Harness.shared()
+        let repo = try box.repo("ignored")
+        try box.sh("printf 'target/\\n' >> .gitignore && git commit -qam ignore", in: repo)
+        let first = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
+        let built = URL(fileURLWithPath: first.record.dir).appendingPathComponent("target/out.bin")
+        try box.sh("mkdir -p target && echo built > target/out.bin", in: URL(fileURLWithPath: first.record.dir))
+        try box.autoBack(true)
+        defer { try? box.autoBack(false) }
+        _ = try await box.offloader().back(first.record.repo, interrupt: false)
+        _ = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
+        #expect(FileManager.default.fileExists(atPath: built.path))
+    }
+
+    @Test func reposJSONKeepsSecretsAndTheSizeYes() throws {
+        let store = OffloadStore(support: try Harness.temporary("repos"))
+        try store.setSecrets(["file:.env"], for: "k1")
+        try store.confirmSize("k1")
+        try store.confirmSize("k2")
+        #expect(store.secrets("k1") == ["file:.env"] && store.sizeConfirmed("k1") && store.sizeConfirmed("k2") && !store.sizeConfirmed("k3"))
+        try store.setSecrets([], for: "k1")
+        #expect(store.secrets("k1").isEmpty && store.sizeConfirmed("k1"))
+        let mode = try FileManager.default.attributesOfItem(atPath: store.root.appendingPathComponent("repos.json").path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
     }
 
     @Test func aHeldIndexLockChangesNothingUntilItIsGone() async throws {

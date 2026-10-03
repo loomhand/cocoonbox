@@ -711,7 +711,7 @@ func back() async {
         case .unchanged?: "unchanged: the box made no change"
         case .fastForward?: "fast-forward: this repo now holds the box's commits and changes"
         case .merged(let files)?: "merged: the box's changes are applied uncommitted (\(files.joined(separator: ", ")))"
-        case .branch(let name, let conflicts)?: "conflict: the box's work is on the branch \(name); your work tree is untouched" + (conflicts.isEmpty ? "" : " (conflicts: \(conflicts.joined(separator: ", ")))")
+        case .branch(let name, let conflicts)?: "conflict: the box's work is on the branch \(name); your work tree is untouched" + (conflicts.isEmpty ? "" : " (it conflicts with, or would change your uncommitted, \(conflicts.joined(separator: ", ")))")
         }
         if json { return printJSON(["ok": true, "landing": landing, "handover": outcome.handover, "file": outcome.file.path, "offload_id": record.id]) }
         print(landing)

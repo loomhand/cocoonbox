@@ -121,10 +121,14 @@ if verb == "begin":
         for line in git(entry["dir"], "for-each-ref", "--format=%(refname) %(objectname)", check=False).splitlines():
             ref, oid = line.split(" ")
             refs[ref] = oid
+    ignored = []
+    if os.path.isdir(os.path.join(entry["dir"], ".git")):
+        listed = git(entry["dir"], "ls-files", "-z", "-o", "-i", "--exclude-standard", "--directory", check=False)
+        ignored = [p for p in listed.split("\0") if p.endswith("/")]
     entry.update(copy="mirror", id=opt["id"])
     index[key] = entry
     save(index_path, index)
-    reply({"ok": True, "dir": entry["dir"], "copy": copy, "refs": refs,
+    reply({"ok": True, "dir": entry["dir"], "copy": copy, "refs": refs, "ignored": ignored,
            "cli": {"kind": opt["kind"], "version": "9.9.9", "signed_in": True, "account": "stub@box"}, "findings": findings})
 
 elif verb == "send" and ("message" in flags or "back" in flags):
