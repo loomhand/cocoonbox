@@ -1,11 +1,12 @@
 #!/bin/sh
-# usage: sudo install-gw-config FILE
-# Installs FILE as /etc/gw/gateway.yaml (root:gw 0640; it seeds an empty gw config store) and publishes it to the running gw.
+# usage: sudo install-gw-config FILE EXPECTED_VERSION
+# Installs FILE as /etc/gw/gateway.yaml (root:gw 0640; it seeds an empty gw config store) and publishes it to the running gw with expected_version, so a newer live head refuses the PUT.
 set -eu
-src=${1:?usage: install-gw-config FILE}
+src=${1:?usage: install-gw-config FILE EXPECTED_VERSION}
+version=${2:?usage: install-gw-config FILE EXPECTED_VERSION}
 out=/etc/gw/gateway.yaml
 token_file=/etc/gw/admin-token
-url=http://10.203.0.1:18090/admin/config
+url="http://10.203.0.1:18090/admin/config?expected_version=$version"
 
 install -o root -g gw -m 0640 "$src" "$out"
 if ! systemctl is-active -q gw; then
