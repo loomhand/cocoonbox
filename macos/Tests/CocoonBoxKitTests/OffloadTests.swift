@@ -181,13 +181,13 @@ import Testing
     @Test func aSignedOutBoxCLIBlocksWithNothingChanged() async throws {
         let box = try await Harness.shared()
         let repo = try box.repo("signedout")
-        try box.findings([Finding(check: "cli", outcome: .block, detail: "Claude Code is signed out in the box")])
+        try box.findings([Finding(check: "box_tools", outcome: .block, detail: "tmux is missing"), Finding(check: "box_cli", outcome: .block, detail: "Claude Code is signed out in the box")])
         defer { try? box.findings([]) }
         do {
             _ = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: true))
             Issue.record("offloaded with a signed-out box CLI")
         } catch let error as OffloadError {
-            #expect(error.findings.contains { $0.outcome == .block && $0.detail == "Claude Code is signed out in the box" })
+            #expect(error.findings.map(\.check) == ["box_tools", "box_cli"] && error.findings.last?.detail == "Claude Code is signed out in the box")
         }
         #expect(try box.sh("git for-each-ref refs/cocoonbox", in: repo).isEmpty)
         #expect(box.store.record(try #require(box.key(repo))) == nil)

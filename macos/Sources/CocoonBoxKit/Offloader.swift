@@ -5,7 +5,7 @@ public enum OffloadError: Error, CustomStringConvertible {
     case handover([String])
     case refused([Finding])
     case needsYes([Finding])
-    case box(code: String, message: String)
+    case box(code: String, message: String, reply: [String: Any])
     case failed(String)
 
     public var description: String {
@@ -13,7 +13,7 @@ public enum OffloadError: Error, CustomStringConvertible {
         case .handover(let problems): "the hand-over breaks the template: " + problems.joined(separator: "; ")
         case .refused: "refused by the preflight; nothing changed"
         case .needsYes: "the preflight has warnings; go on only with the user's yes (--yes)"
-        case .box(let code, let message): "the box said \(code): \(message)"
+        case .box(let code, let message, _): "the box said \(code): \(message)"
         case .failed(let message): message
         }
     }
@@ -160,12 +160,11 @@ public struct Offloader: Sendable {
         let begin: [String: Any]
         do {
             begin = try await verb(["begin", "--repo", key, "--name", name, "--kind", request.kind.rawValue, "--id", id] + (repo == nil ? ["--no-repo"] : []))
-        } catch OffloadError.box(let code, let message) where code == "refused" {
-            throw OffloadError.refused(findings + [Finding(check: "box", outcome: .block, detail: message)])
+        } catch OffloadError.box(let code, let message, let reply) where code == "refused" {
+            let refusal = Self.findings(reply)
+            throw OffloadError.refused(findings + (refusal.isEmpty ? [Finding(check: "box", outcome: .block, detail: message)] : refusal))
         }
-        findings += (begin["findings"] as? [[String: Any]] ?? []).map {
-            Finding(check: $0["check"] as? String ?? "box", outcome: Finding.Outcome(rawValue: $0["outcome"] as? String ?? "") ?? .warn, detail: $0["detail"] as? String ?? "")
-        }
+        findings += Self.findings(begin)
         mark("begin")
         guard !findings.contains(where: { $0.outcome == .block }) else { throw OffloadError.refused(findings) }
         guard request.yes || findings.isEmpty else { throw OffloadError.needsYes(findings) }
@@ -381,7 +380,7 @@ public struct Offloader: Sendable {
             throw OffloadError.failed("the box cannot run `cocoonbox-agent offload \(args.first ?? "")` (\(reason)); upgrade the box to cbdesk:v\(Preflight.minimumImage) or later")
         }
         guard code == 0, reply["ok"] as? Bool == true else {
-            throw OffloadError.box(code: reply["code"] as? String ?? "failed", message: reply["error"] as? String ?? "exit \(code)")
+            throw OffloadError.box(code: reply["code"] as? String ?? "failed", message: reply["error"] as? String ?? "exit \(code)", reply: reply)
         }
         return reply
     }
@@ -398,6 +397,13 @@ public struct Offloader: Sendable {
         }
         guard let code else { throw OffloadError.failed("the box ended `\(command.prefix(60))` without an exit code") }
         return (code, out.withLock { $0 }, err.withLock { $0 })
+    }
+
+    // findings reads a box reply's findings, in begin's output and in its refusal.
+    static func findings(_ reply: [String: Any]) -> [Finding] {
+        (reply["findings"] as? [[String: Any]] ?? []).map {
+            Finding(check: $0["check"] as? String ?? "box", outcome: Finding.Outcome(rawValue: $0["outcome"] as? String ?? "") ?? .warn, detail: $0["detail"] as? String ?? "")
+        }
     }
 
     static func quote(_ word: String) -> String {
