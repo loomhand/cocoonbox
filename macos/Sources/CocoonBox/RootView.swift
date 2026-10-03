@@ -299,7 +299,7 @@ struct ShareSessionRow: View {
 }
 
 // LocalAgentRow is a local agent with the boxes it acted on in the last
-// minute; its context menu changes the default box.
+// minute, on a line kept when empty so the row height stays fixed.
 struct LocalAgentRow: View {
     @Environment(AppModel.self) private var model
     let session: LocalAgentSession
@@ -315,18 +315,14 @@ struct LocalAgentRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 TimelineView(.periodic(from: .now, by: 5)) { context in
-                    if let activity = Self.activity(model.recentBoxes(of: session, now: context.date)) {
-                        Text(activity)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .help("Boxes this agent acted on in the last minute")
-                    }
+                    let activity = Self.activity(model.recentBoxes(of: session, now: context.date))
+                    Text(activity ?? " ")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .help(activity == nil ? "" : "Boxes this agent acted on in the last minute")
                 }
             }
-        }
-        .contextMenu {
-            DefaultBoxPicker(title: "Default Box", session: session)
         }
     }
 
