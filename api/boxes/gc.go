@@ -111,7 +111,11 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	}
 	unlock := l.lock(p.box)
 	defer unlock()
-	if !found {
+	if found {
+		if tl, _, err = l.readTimeline(ctx, p); err != nil {
+			return nil, nil, err
+		}
+	} else {
 		if built, err = l.readEntries(ctx, p, built); err != nil {
 			return nil, nil, err
 		}

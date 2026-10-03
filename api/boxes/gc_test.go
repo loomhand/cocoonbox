@@ -5,6 +5,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -206,6 +207,46 @@ func TestGCWaitsForASaveBetweenItsIndexReadAndCommit(t *testing.T) {
 		t.Errorf("the GC deleted c1, which the save committed during its sweep: %+v", r)
 	}
 	env.restoreHead(t)
+}
+
+func TestGCPrunesWithTheTimelineOfASaveThatCommittedWhileItWaited(t *testing.T) {
+	env := newStateEnv(t)
+	p := statePath{user: alice, box: aliceBox}
+	env.agent.chunks = hexIDs("c1")
+	env.save(t)
+	env.collect(t, GCOptions{DeleteBatch: 1000}, 0)
+	uploading, release := make(chan struct{}), make(chan struct{})
+	env.agent.onUpload = func(machines.Endpoint) {
+		close(uploading)
+		<-release
+	}
+	env.agent.chunks = hexIDs("c1", "c2")
+	op, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+	if err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+	<-uploading
+	readTimeline := make(chan struct{})
+	var once sync.Once
+	env.store.before = func(op, key string) {
+		if op == "get" && key == p.timeline() {
+			once.Do(func() { close(readTimeline) })
+		}
+	}
+	collected := make(chan error, 1)
+	go func() {
+		_, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now())
+		collected <- err
+	}()
+	<-readTimeline
+	close(release)
+	watch(t, env.svc, env.ctx, op.GetId(), "")
+	if err := <-collected; err != nil {
+		t.Fatalf("collect after a save committed while it waited: %v", err)
+	}
+	if ids := env.timelineIDs(t, p); !slices.Equal(ids, []string{snapshotID(1), snapshotID(2)}) {
+		t.Errorf("timeline = %v", ids)
+	}
 }
 
 func TestGCDeletesChunksWhileNoSaveRuns(t *testing.T) {
