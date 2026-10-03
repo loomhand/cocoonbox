@@ -25,7 +25,8 @@ const (
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
-  cocoonbox-api [-config FILE] state migrate [-keyring DIR]`
+  cocoonbox-api [-config FILE] state migrate [-keyring DIR]
+  cocoonbox-api [-config FILE] state expand [-user ID]`
 
 	defaultKeyringDir = "/var/lib/cocoonbox-api/keys"
 )
@@ -39,6 +40,9 @@ type stateKeys interface {
 func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) >= 2 && args[0] == "state" && args[1] == "migrate" {
 		return migrateState(ctx, cfg, args[2:], stdout)
+	}
+	if len(args) >= 2 && args[0] == "state" && args[1] == "expand" {
+		return expandState(ctx, cfg, args[2:], stdout)
 	}
 	if len(args) < 3 || args[0] != "user" {
 		return errors.New(cliUsage)
@@ -128,6 +132,37 @@ func migrateState(ctx context.Context, cfg *config.Config, args []string, stdout
 			return fmt.Errorf("migrate state of %s: %w", u.Name, err)
 		}
 		if _, err := fmt.Fprintf(stdout, "user %s (%s): state key set, %d objects copied from %s/\n", u.Name, u.ID, copied, box); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expandState rewrites every delta record and manifest delta as full objects, for a rollback to an api without delta records; stop the api first.
+func expandState(ctx context.Context, cfg *config.Config, args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("expand", flag.ContinueOnError)
+	only := flags.String("user", "", "expand only this user id")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	st, err := newStore(cfg)
+	if err != nil {
+		return err
+	}
+	accounts, err := openUsers(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer accounts.Close()
+	for _, u := range accounts.List() {
+		if *only != "" && u.ID != *only {
+			continue
+		}
+		n, err := boxes.ExpandState(ctx, st, accounts, u.ID)
+		if err != nil {
+			return fmt.Errorf("expand state of %s: %w", u.Name, err)
+		}
+		if _, err := fmt.Fprintf(stdout, "user %s (%s): %d snapshots made full\n", u.Name, u.ID, n); err != nil {
 			return err
 		}
 	}

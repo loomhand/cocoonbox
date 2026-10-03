@@ -67,6 +67,8 @@ type State struct {
 	Interval        Duration `json:"interval"`
 	PresignTTL      Duration `json:"presign_ttl"`
 	GC              GC       `json:"gc"`
+	// DeltaUsers are the user ids whose saves write delta records (design §25.8); empty writes only full ones.
+	DeltaUsers []string `json:"delta_users"`
 }
 
 // GC configures snapshot retention and chunk garbage collection; a zero Interval turns it off.

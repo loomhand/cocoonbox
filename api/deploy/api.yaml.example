@@ -25,6 +25,7 @@ state:
     dry_run: false             # log what a pass would remove, remove nothing
     users: []                  # user ids to collect; empty means every user
     delete_batch: 1000         # keys per DeleteObjects request, at most 1000
+  delta_users: []              # user ids whose saves write delta records (design §25.8); empty writes full ones
 provision:                     # every box's identity file (design §12) and its user's gw key
   signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519
   gw_admin:                    # per-user gw keys through gw's admin API

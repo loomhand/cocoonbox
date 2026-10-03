@@ -27,6 +27,13 @@ func (s *Service) EnableState(agents StateAgents, st store.Store, keys keyring.K
 	s.state = newStateLayer(agents, st, keys)
 }
 
+// EnableDeltas makes the saves of users write delta records against the day's first full snapshot, and lets the GC compact their manifests.
+func (s *Service) EnableDeltas(users []string) {
+	for _, u := range users {
+		s.state.deltaUsers[u] = true
+	}
+}
+
 func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
 	box := ref.GetBoxId()
 	user, err := s.ownerOf(ctx, box)

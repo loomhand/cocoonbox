@@ -908,9 +908,11 @@ func (a *fakeAgent) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1
 	if a.files != nil {
 		resp.SnapshotId, plan.manifest = sealManifest(req.GetKey().GetKey(), a.files)
 		chunks = nil
+		seen := map[string]bool{}
 		for _, f := range a.files {
 			for _, id := range f.Chunks {
-				if !slices.Contains(chunks, id) {
+				if !seen[id] {
+					seen[id] = true
 					chunks = append(chunks, id)
 				}
 			}

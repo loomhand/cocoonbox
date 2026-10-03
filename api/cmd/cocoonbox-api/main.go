@@ -245,9 +245,10 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 		return err
 	}
 	svc.EnableState(agents, st, accounts)
+	svc.EnableDeltas(cfg.State.DeltaUsers)
 	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
 	logger := log.WithFunc("main.enableState")
-	logger.Infof(ctx, "state layer on %s/%s, saves every %s", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval))
+	logger.Infof(ctx, "state layer on %s/%s, saves every %s, delta records for %q", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval), cfg.State.DeltaUsers)
 	if gc := cfg.State.GC; gc.Interval > 0 {
 		go svc.RunGC(ctx, boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, DeleteBatch: gc.DeleteBatch}, func() []string {
 			var ids []string

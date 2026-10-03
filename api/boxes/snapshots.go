@@ -217,15 +217,18 @@ func (l *stateLayer) browse(ctx context.Context, p statePath, id string) (map[st
 func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.Endpoint, e timelineEntry, paths []boxPath, progress dialer.ProgressFunc) (restoredPaths, error) {
 	var done restoredPaths
 	// The caller's pin keeps e from a prune that starts later; the box lock orders this check after a prune already running.
-	unlock := l.lock(p.box)
-	_, err := l.keptEntry(ctx, p, e.ID)
-	unlock()
-	if err != nil {
-		return done, err
-	}
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return done, fmt.Errorf("state key: %w", err)
+	}
+	unlock := l.lock(p.box)
+	_, err = l.keptEntry(ctx, p, e.ID)
+	if err == nil {
+		err = l.materialize(ctx, p, key, e.ID)
+	}
+	unlock()
+	if err != nil {
+		return done, err
 	}
 	m, err := l.openManifest(ctx, p, key, e.ID)
 	if err != nil {

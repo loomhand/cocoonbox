@@ -28,6 +28,7 @@ cocoonbox-api -config /etc/cocoonbox/api.yaml user delete NAME   # only a user w
 printf '%s\n' "$PASSWORD" | cocoonbox-api -config /etc/cocoonbox/api.yaml user passwd NAME -stdin
 printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user token-sha256 NAME -stdin
 cocoonbox-api -config /etc/cocoonbox/api.yaml state migrate [-keyring DIR]   # per-box keys and layout to per-user; safe to rerun
+cocoonbox-api -config /etc/cocoonbox/api.yaml state expand [-user ID]       # delta records and manifests to full ones, before a rollback; api stopped
 ```
 
 ## Build

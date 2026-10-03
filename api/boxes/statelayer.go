@@ -58,6 +58,8 @@ type timelineEntry struct {
 	ChangedFiles  *uint64 `json:"changed_files,omitempty"`
 	NewChunks     int     `json:"new_chunks"`
 	UploadedBytes uint64  `json:"uploaded_bytes"`
+	// Base is the full snapshot a delta record and manifest are written against; empty for a full one.
+	Base string `json:"base,omitempty"`
 }
 
 // snapshotRecord is the plaintext index entry of one snapshot; chunk ids are keyed hashes.
@@ -115,13 +117,16 @@ type stateLayer struct {
 	heads   map[statePath]head
 	pins    map[statePath]map[string]int
 	browsed map[statePath]browsed
+	// deltaUsers are the users whose saves write delta records.
+	deltaUsers map[string]bool
+	bases      map[statePath]*snapshotRecord
 }
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay,
 		locks: map[string]*sync.Mutex{}, users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
-		browsed: map[statePath]browsed{},
+		browsed: map[statePath]browsed{}, deltaUsers: map[string]bool{}, bases: map[statePath]*snapshotRecord{},
 	}
 }
 
@@ -151,8 +156,13 @@ func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint
 		return nil, err
 	}
 	rec.Parent = h.Latest
-	rec.SavedAtMs = time.Now().UnixMilli()
-	if err := l.commit(ctx, p, key.ID, rec); err != nil {
+	now := time.Now()
+	rec.SavedAtMs = now.UnixMilli()
+	base, err := l.deltaBase(ctx, p, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := l.commit(ctx, p, key.ID, rec, base); err != nil {
 		return nil, err
 	}
 	return rec, nil
@@ -259,6 +269,9 @@ func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpo
 	if err != nil {
 		return nil, fmt.Errorf("state key: %w", err)
 	}
+	if err = l.materialize(ctx, p, key, id); err != nil {
+		return nil, err
+	}
 	manifest, err := l.store.PresignGet(ctx, p.manifest(id))
 	if err != nil {
 		return nil, err
@@ -319,12 +332,12 @@ func (l *stateLayer) lastSaved(ctx context.Context, p statePath) int64 {
 	return h.SavedAtMs
 }
 
-// commit adds the uploaded chunks to the index, then writes the snapshot record, the timeline and the head, so a crash leaves the previous head valid.
-func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord) error {
+// commit adds the uploaded chunks to the index, then writes the snapshot record (a delta against base when set), the timeline and the head, so a crash leaves the previous head valid.
+func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, base *snapshotRecord) error {
 	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks) }); err != nil {
 		return err
 	}
-	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.record(rec.ID), rec) }); err != nil {
+	if err := l.retry(ctx, func() error { return l.putRecord(ctx, p, rec, base) }); err != nil {
 		return err
 	}
 	if err := l.retry(ctx, func() error { return l.addToTimeline(ctx, p, rec.timelineEntry) }); err != nil {
@@ -440,11 +453,7 @@ func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[
 }
 
 func (l *stateLayer) record(ctx context.Context, p statePath, id string) (*snapshotRecord, error) {
-	var rec snapshotRecord
-	if err := getJSON(ctx, l.store, p.record(id), &rec); err != nil {
-		return nil, fmt.Errorf("snapshot %s: %w", id, err)
-	}
-	return &rec, nil
+	return l.readRecord(ctx, p, id, nil)
 }
 
 func (l *stateLayer) lock(name string) func() {

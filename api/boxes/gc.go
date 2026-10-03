@@ -8,10 +8,12 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
 
+	"github.com/CMGS/cocoonbox/api/keyring"
 	"github.com/CMGS/cocoonbox/api/store"
 )
 
@@ -40,7 +42,12 @@ type gcReport struct {
 	chunks        int
 	chunkBytes    int64
 	indexEntries  int
+	expanded      int
+	compacted     int
 }
+
+// keySource returns the user's state key, read once per pass.
+type keySource func() (keyring.Key, error)
 
 // RunGC prunes and collects the state of every user that users returns, at once and then every opts.Interval, until ctx ends.
 func (s *Service) RunGC(ctx context.Context, opts GCOptions, users func() []string) {
@@ -72,10 +79,10 @@ func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []st
 			logger.Errorf(ctx, err, "collect the state of user %s", user)
 			continue
 		}
-		logger.Infof(ctx, "user %s: %s %d snapshots (%d kept in %d boxes) and %d of %d chunks (%d index entries), %.1f MiB: records %.1f, manifests %.1f, chunks %.1f; %s",
+		logger.Infof(ctx, "user %s: %s %d snapshots (%d kept in %d boxes) and %d of %d chunks (%d index entries), %.1f MiB: records %.1f, manifests %.1f, chunks %.1f; %d made full, %d manifests compacted; %s",
 			user, verb, r.pruned, r.kept, r.boxes, r.chunks, r.stored, r.indexEntries,
 			float64(r.recordBytes+r.manifestBytes+r.chunkBytes)/mib, float64(r.recordBytes)/mib, float64(r.manifestBytes)/mib, float64(r.chunkBytes)/mib,
-			time.Since(start).Round(time.Millisecond))
+			r.expanded, r.compacted, time.Since(start).Round(time.Millisecond))
 	}
 }
 
@@ -96,7 +103,7 @@ func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, n
 	return r, l.sweep(ctx, user, opts, kept, dropped, &r)
 }
 
-// prune applies the retention rule to p's timeline under the box lock and removes the dropped snapshots and every record or manifest the timeline does not name.
+// prune applies the retention rule to p's timeline under the box lock, makes the only dependent of a dropped base full, removes the dropped snapshots and every record or manifest the timeline does not name or need, and compacts the kept manifests.
 func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now time.Time, r *gcReport) ([]string, map[string]bool, error) {
 	tl, found, err := l.readTimeline(ctx, p)
 	if err != nil {
@@ -148,25 +155,12 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 			dropped[e.ID] = true
 		}
 	}
-	var records, manifests []string
-	for _, obj := range listing {
-		dir, name, _ := strings.Cut(strings.TrimPrefix(obj.Key, p.boxDir()), "/")
-		id := strings.TrimSuffix(name, ".json")
-		if !objectID.MatchString(id) || retained[id] {
-			continue
-		}
-		switch {
-		case dir == "snapshots" && name == id+".json":
-			records = append(records, obj.Key)
-			r.recordBytes += obj.Size
-		case dir == "manifests" && name == id:
-			manifests = append(manifests, obj.Key)
-			r.manifestBytes += obj.Size
-		default:
-			continue
-		}
-		dropped[id] = true
+	keys := sync.OnceValues(func() (keyring.Key, error) { return l.keys.StateKey(ctx, p.user) })
+	needed, rebased, err := l.settleBases(ctx, p, &next, retained, keys, opts.DryRun, r)
+	if err != nil {
+		return nil, nil, err
 	}
+	records, manifests, full := obsolete(p, listing, func(id string) bool { return retained[id] || needed[id] }, dropped, r)
 	r.kept += len(next.Snapshots)
 	r.pruned += len(dropped)
 	ids := make([]string, 0, len(next.Snapshots))
@@ -176,7 +170,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	if opts.DryRun {
 		return ids, dropped, nil
 	}
-	if !found || len(next.Snapshots) != len(tl.Snapshots) {
+	if !found || rebased || len(next.Snapshots) != len(tl.Snapshots) {
 		if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.timeline(), next) }); err != nil {
 			return nil, nil, err
 		}
@@ -184,7 +178,62 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	if err := l.deleteKeys(ctx, records, opts.DeleteBatch); err != nil {
 		return nil, nil, err
 	}
-	return ids, dropped, l.deleteKeys(ctx, manifests, opts.DeleteBatch)
+	if err := l.deleteKeys(ctx, manifests, opts.DeleteBatch); err != nil {
+		return nil, nil, err
+	}
+	l.compact(ctx, p, next, keep, full, keys, r)
+	return ids, dropped, nil
+}
+
+// settleBases makes the only kept dependent of a dropped base full, so the base can go, and returns the dropped bases that several kept snapshots still need.
+func (l *stateLayer) settleBases(ctx context.Context, p statePath, next *timeline, retained map[string]bool, keys keySource, dryRun bool, r *gcReport) (map[string]bool, bool, error) {
+	dependents := map[string][]int{}
+	for i, e := range next.Snapshots {
+		if e.Base != "" && !retained[e.Base] {
+			dependents[e.Base] = append(dependents[e.Base], i)
+		}
+	}
+	needed, rebased := map[string]bool{}, false
+	for base, idx := range dependents {
+		if len(idx) > 1 {
+			needed[base] = true
+			continue
+		}
+		r.expanded++
+		if dryRun {
+			continue
+		}
+		key, err := keys()
+		if err != nil {
+			return nil, false, err
+		}
+		if err := l.expandSnapshot(ctx, p, key, next.Snapshots[idx[0]].ID); err != nil {
+			return nil, false, fmt.Errorf("expand snapshot %s off base %s: %w", next.Snapshots[idx[0]].ID, base, err)
+		}
+		next.Snapshots[idx[0]].Base = ""
+		rebased = true
+	}
+	return needed, rebased, nil
+}
+
+// compact turns the full manifest of every kept delta snapshot other than the head and the pinned ones into a delta; a failure leaves that manifest full.
+func (l *stateLayer) compact(ctx context.Context, p statePath, next timeline, keep, full map[string]bool, keys keySource, r *gcReport) {
+	logger := log.WithFunc("boxes.stateLayer.compact").WithField("box", p.box)
+	bases := map[string]manifestParts{}
+	for _, e := range next.Snapshots {
+		if e.Base == "" || keep[e.ID] || !full[e.ID] {
+			continue
+		}
+		key, err := keys()
+		if err == nil {
+			err = l.compactManifest(ctx, p, key, e, bases)
+		}
+		if err != nil {
+			logger.Warnf(ctx, "keep the full manifest of %s: %v", e.ID, err)
+			continue
+		}
+		r.compacted++
+	}
 }
 
 // sweep marks the chunks of kept without a lock, then under the user lock marks the snapshots committed since, writes the index without the garbage and deletes it.
@@ -258,8 +307,9 @@ func (l *stateLayer) mark(ctx context.Context, p statePath, ids []string, marked
 	if seen[p.box] == nil {
 		seen[p.box] = map[string]bool{}
 	}
+	bases := map[string]*snapshotRecord{}
 	for _, id := range ids {
-		rec, err := l.record(ctx, p, id)
+		rec, err := l.readRecord(ctx, p, id, bases)
 		if err != nil {
 			return err
 		}
@@ -355,6 +405,35 @@ func (l *stateLayer) deleteKeys(ctx context.Context, keys []string, batch int) e
 		}
 	}
 	return nil
+}
+
+// obsolete sorts the records and manifests in listing that keep does not name into dropped and r, and returns them with the snapshots that have a full manifest.
+func obsolete(p statePath, listing []store.Object, keep func(string) bool, dropped map[string]bool, r *gcReport) ([]string, []string, map[string]bool) {
+	var records, manifests []string
+	full := map[string]bool{}
+	for _, obj := range listing {
+		dir, name, _ := strings.Cut(strings.TrimPrefix(obj.Key, p.boxDir()), "/")
+		id := strings.TrimSuffix(strings.TrimSuffix(name, ".json"), deltaSuffix)
+		manifest := dir == "manifests" && (name == id || name == id+deltaSuffix)
+		if manifest && name == id {
+			full[id] = true
+		}
+		if !objectID.MatchString(id) || keep(id) {
+			continue
+		}
+		switch {
+		case dir == "snapshots" && name == id+".json":
+			records = append(records, obj.Key)
+			r.recordBytes += obj.Size
+		case manifest:
+			manifests = append(manifests, obj.Key)
+			r.manifestBytes += obj.Size
+		default:
+			continue
+		}
+		dropped[id] = true
+	}
+	return records, manifests, full
 }
 
 // retain returns the ids the rule keeps: all of the last day, the newest of each UTC day for 30 days, the newest of each UTC week, and keep.

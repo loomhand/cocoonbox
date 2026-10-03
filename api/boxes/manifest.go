@@ -6,6 +6,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -130,13 +131,9 @@ func (bp boxPath) contains(f manifestFile) bool {
 	return f.Root == bp.root.name && (bp.rel == "" || f.Path == bp.rel || strings.HasPrefix(f.Path, bp.rel+"/"))
 }
 
-// openManifest reads the manifest of snapshot id of p's box and decrypts it with key.
+// openManifest reads the manifest of snapshot id of p's box, rebuilding it from a delta when needed, and decodes it with key.
 func (l *stateLayer) openManifest(ctx context.Context, p statePath, key keyring.Key, id string) (*manifest, error) {
-	sealed, err := l.store.Get(ctx, p.manifest(id))
-	if err != nil {
-		return nil, fmt.Errorf("manifest %s: %w", id, err)
-	}
-	plain, err := openSealed(key.Secret, id, sealed, manifestLimit)
+	plain, err := l.manifestPlain(ctx, p, key, id)
 	if err != nil {
 		return nil, err
 	}
@@ -172,20 +169,28 @@ func parseBoxPath(p string) (boxPath, error) {
 
 // openSealed reverses the agent's seal: AES-256-GCM bound to id, zstd, and the keyed hash of the plaintext equal to id.
 func openSealed(secret []byte, id string, sealed []byte, limit int64) ([]byte, error) {
-	block, err := aes.NewCipher(mac(secret, sealLabel))
+	plain, err := openObject(secret, id, sealed, limit)
 	if err != nil {
 		return nil, err
 	}
-	gcm, err := cipher.NewGCM(block)
+	if !matchesID(secret, id, plain) {
+		return nil, fmt.Errorf("object %s does not match its id", id)
+	}
+	return plain, nil
+}
+
+// openObject decrypts sealed with aad as associated data and decompresses at most limit bytes.
+func openObject(secret []byte, aad string, sealed []byte, limit int64) ([]byte, error) {
+	gcm, err := sealCipher(secret)
 	if err != nil {
 		return nil, err
 	}
 	if len(sealed) < nonceSize {
-		return nil, fmt.Errorf("object %s is truncated", id)
+		return nil, fmt.Errorf("object %s is truncated", aad)
 	}
-	packed, err := gcm.Open(nil, sealed[:nonceSize], sealed[nonceSize:], []byte(id))
+	packed, err := gcm.Open(nil, sealed[:nonceSize], sealed[nonceSize:], []byte(aad))
 	if err != nil {
-		return nil, fmt.Errorf("object %s failed authentication", id)
+		return nil, fmt.Errorf("object %s failed authentication", aad)
 	}
 	dec, err := zstd.NewReader(bytes.NewReader(packed), zstd.WithDecoderConcurrency(1))
 	if err != nil {
@@ -194,16 +199,47 @@ func openSealed(secret []byte, id string, sealed []byte, limit int64) ([]byte, e
 	defer dec.Close()
 	plain, err := io.ReadAll(io.LimitReader(dec, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("decompress %s: %w", id, err)
+		return nil, fmt.Errorf("decompress %s: %w", aad, err)
 	}
 	if int64(len(plain)) > limit {
-		return nil, fmt.Errorf("object %s exceeds %d bytes", id, limit)
-	}
-	want, err := hex.DecodeString(id)
-	if err != nil || !hmac.Equal(mac(mac(secret, idLabel), plain), want) {
-		return nil, fmt.Errorf("object %s does not match its id", id)
+		return nil, fmt.Errorf("object %s exceeds %d bytes", aad, limit)
 	}
 	return plain, nil
+}
+
+// sealObject seals plain as the agent does: zstd, then AES-256-GCM with aad as associated data.
+func sealObject(secret []byte, aad string, plain []byte) ([]byte, error) {
+	gcm, err := sealCipher(secret)
+	if err != nil {
+		return nil, err
+	}
+	enc, err := zstd.NewWriter(nil, zstd.WithEncoderConcurrency(1))
+	if err != nil {
+		return nil, err
+	}
+	packed := enc.EncodeAll(plain, nil)
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, nonceSize)
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	return gcm.Seal(nonce, nonce, packed, []byte(aad)), nil
+}
+
+func sealCipher(secret []byte) (cipher.AEAD, error) {
+	block, err := aes.NewCipher(mac(secret, sealLabel))
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+// matchesID reports whether id is the keyed hash of plain.
+func matchesID(secret []byte, id string, plain []byte) bool {
+	want, err := hex.DecodeString(id)
+	return err == nil && hmac.Equal(mac(mac(secret, idLabel), plain), want)
 }
 
 func mac(key, data []byte) []byte {
