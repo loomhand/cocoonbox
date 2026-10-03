@@ -45,6 +45,7 @@ log "reflink cow"
 cp --reflink=always "$cow" "$B/cow.raw"
 
 add=$B/add
+CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 install -d "$add/usr/local/bin" "$add/etc/systemd/system/sysinit.target.wants" "$add/etc/cocoonbox" "$add/etc/apt/apt.conf.d"
 printf 'Acquire::http::Proxy "%s";\nAcquire::https::Proxy "%s";\n' "$PROXY" "$PROXY" > "$add/etc/apt/apt.conf.d/90cocoonbox-proxy"
 install -m 0755 "$SILKD" "$add/usr/local/bin/silkd"
@@ -74,6 +75,7 @@ for u in system/cocoonbox-agent system/cocoonbox-toolhost system/cocoonbox-sessi
 [Service]
 Environment=http_proxy=$PROXY https_proxy=$PROXY HTTP_PROXY=$PROXY HTTPS_PROXY=$PROXY
 Environment=no_proxy=$NO_PROXY NO_PROXY=$NO_PROXY
+Environment=REQUESTS_CA_BUNDLE=$CA_BUNDLE SSL_CERT_FILE=$CA_BUNDLE NODE_EXTRA_CA_CERTS=$CA_BUNDLE NODE_USE_ENV_PROXY=1
 EOF
 done
 
