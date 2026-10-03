@@ -84,10 +84,6 @@ final class AppModel {
     var offloads: [OffloadRecord] = []
     // offloadActivity is each repo key's box CLI status and last activity, from `offload status` and offload events.
     var offloadActivity: [String: OffloadActivity] = [:]
-    // bringingBack is the step of each repo key on its way back.
-    var bringingBack: [String: String] = [:]
-    // broughtBack keeps each repo key's finished bring-back until the user dismisses it.
-    var broughtBack: [String: BroughtBack] = [:]
     var boxTerminals: [String: RemoteTerminal] = [:]
     var boxCLISheet: BoxCLISheet?
     var busyWarning: BusyWarning?

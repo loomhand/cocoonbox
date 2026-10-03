@@ -179,7 +179,7 @@ struct SidebarView: View {
                     }
                 }
                 Section {
-                    ForEach(model.offloadRows, id: \.repo) { record in
+                    ForEach(model.offloads, id: \.repo) { record in
                         OffloadRow(record: record).tag(AppModel.selectionID(offload: record.repo))
                     }
                 } header: {

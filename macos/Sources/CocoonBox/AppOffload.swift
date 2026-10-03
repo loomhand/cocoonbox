@@ -31,13 +31,6 @@ struct OffloadActivity: Equatable {
     var at: Date?
 }
 
-// BroughtBack is a finished bring-back: how the work landed and where the box agent's hand-over is.
-struct BroughtBack: Equatable {
-    var record: OffloadRecord
-    var landing: String
-    var handover: URL
-}
-
 // PluginSetup is the "Install Claude Code Plugin" run: its output, then its exit code.
 struct PluginSetup: Equatable {
     var output = ""
@@ -75,13 +68,8 @@ extension AppModel {
         "offload:\(key)"
     }
 
-    // offloadRows is the Offloaded section: the offloads in flight, then the finished bring-backs not yet dismissed.
-    var offloadRows: [OffloadRecord] {
-        offloads + broughtBack.values.map(\.record).filter { done in !offloads.contains { $0.repo == done.repo } }.sorted { $0.startedAtMs < $1.startedAtMs }
-    }
-
     var selectedOffload: OffloadRecord? {
-        offloadRows.first { Self.selectionID(offload: $0.repo) == selectedAgentID }
+        offloads.first { Self.selectionID(offload: $0.repo) == selectedAgentID }
     }
 
     // refreshOffloads rereads the records and asks each running box with one for its box CLI sessions; a hibernated box is not woken.
@@ -98,31 +86,6 @@ extension AppModel {
             }
         }
         Perf.mark("offloads", "rows=\(offloads.count)")
-    }
-
-    // bringBack runs `back` for record's repo in the app: it waits for the box agent's hand-over, lands the box's work in the Mac repo, and ends the box CLI session.
-    func bringBack(_ record: OffloadRecord) {
-        guard bringingBack[record.repo] == nil else { return }
-        bringingBack[record.repo] = "Waiting for the box agent's hand-over…"
-        Task {
-            defer { bringingBack[record.repo] = nil }
-            do {
-                let packer = try await packer(for: record.box)
-                defer { packer.connection.close() }
-                let outcome = try await packer.back(record.repo, interrupt: false)
-                closeOffloadTerminal(record.repo)
-                broughtBack[record.repo] = BroughtBack(record: record, landing: outcome.landing?.summary ?? "no repo", handover: outcome.file)
-                Perf.mark("offload", "back \(record.name) landing=\(outcome.landing?.summary ?? "-")")
-            } catch {
-                report("bring back", error)
-            }
-            await refreshOffloads()
-        }
-    }
-
-    func dismissBroughtBack(_ key: String) {
-        broughtBack[key] = nil
-        if selectedAgentID == Self.selectionID(offload: key) { selectedAgentID = nil }
     }
 
     // openOffloadTerminal attaches to the box CLI's tmux session of an offload (D9).

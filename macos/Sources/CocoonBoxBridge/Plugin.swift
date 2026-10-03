@@ -113,8 +113,8 @@ public enum Plugin {
            - For a secret it warns about, ask the user; only they opt one in
              (`cocoonbox offload secrets add file:.env`). Never opt in on your own.
         4. When it prints `offloaded`, tell the user the box, that its agent runs with permission
-           prompts bypassed, and that `/cocoonbox:back`, `cocoonbox back` or "Bring back" in the
-           app's Offloaded section returns the work. End your turn and make no more changes to this
+           prompts bypassed, and that `/cocoonbox:back` or `cocoonbox back` returns the
+           work. End your turn and make no more changes to this
            repo.
         5. On exit 1, report its last line. Nothing changed on this Mac; do not retry by hand.
 
@@ -129,8 +129,7 @@ public enum Plugin {
         box's work against the snapshot taken at the offload. Report how the code landed:
         fast-forward, merged (applied uncommitted), unchanged, or a branch with conflicts, where
         your work tree is untouched. If it says nothing of this repo is in a box and names a
-        `back.md`, the app's "Bring back" has landed the work already: read that file as the
-        hand-over. Then check the hand-over's claims against `git log` and `git diff`, run its
+        `back.md`, the work has landed already: read that file as the hand-over. Then check the hand-over's claims against `git log` and `git diff`, run its
         verify commands, and continue from its next steps.
 
         ## Hand-over template

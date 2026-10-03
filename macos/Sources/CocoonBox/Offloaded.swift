@@ -71,8 +71,6 @@ struct OffloadRow: View {
 
     // status is the box CLI's status in words; a box that is not running cannot report one.
     static func status(_ model: AppModel, _ record: OffloadRecord) -> String {
-        if model.bringingBack[record.repo] != nil { return "bringing back" }
-        guard model.offloads.contains(where: { $0.repo == record.repo }) else { return "brought back" }
         if let box = model.boxes.first(where: { $0.id == record.box }), box.state != .running { return "box \(StateBadge.label(box.state).lowercased())" }
         switch model.offloadActivity[record.repo]?.status {
         case "working": return "working"
@@ -100,19 +98,17 @@ struct OffloadRow: View {
         case "working": .green
         case "waiting for you": .orange
         case "blocked": .red
-        case "brought back": .teal
         default: .secondary
         }
     }
 }
 
-// OffloadPane shows the box CLI's terminal of an offload, with Bring back; after a bring-back, how to resume on this Mac.
+// OffloadPane shows the box CLI's terminal of an offload, with how to bring it back from the user's terminal.
 struct OffloadPane: View {
     @Environment(AppModel.self) private var model
     let record: OffloadRecord
 
     var body: some View {
-        let inFlight = model.offloads.contains { $0.repo == record.repo }
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Image(systemName: "shippingbox")
@@ -123,14 +119,6 @@ struct OffloadPane: View {
                     .lineLimit(1)
                     .layoutPriority(-1)
                 Spacer()
-                if let step = model.bringingBack[record.repo] {
-                    ProgressView().controlSize(.small)
-                    Text(step).font(.caption).foregroundStyle(.secondary).fixedSize()
-                } else if inFlight {
-                    Button("Bring back") { model.bringBack(record) }
-                        .controlSize(.small)
-                        .help("Ask the box agent for its hand-over, land its work in \(record.top ?? "the repo"), and end its session")
-                }
                 if let box = model.boxes.first(where: { $0.id == record.box }) {
                     Menu("Box CLI") {
                         Button("Install \(record.kind.title) in \(box.name)…") { model.boxCLISheet = .install(record.kind, box) }
@@ -143,9 +131,9 @@ struct OffloadPane: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
-            if !inFlight, let done = model.broughtBack[record.repo] {
-                BroughtBackView(done: done)
-            } else if let terminal = model.boxTerminals[record.repo] {
+            HelpLine(record: record)
+            Divider()
+            if let terminal = model.boxTerminals[record.repo] {
                 ZStack(alignment: .bottom) {
                     LocalAgentTerminal(session: terminal)
                         .id(ObjectIdentifier(terminal))
@@ -166,50 +154,26 @@ struct OffloadPane: View {
     }
 }
 
-// BroughtBackView tells the user how the work landed and how to resume in their own terminal.
-struct BroughtBackView: View {
+// HelpLine tells the user to bring the offload back from their own terminal; the app only watches.
+struct HelpLine: View {
     @Environment(AppModel.self) private var model
-    let done: BroughtBack
+    let record: OffloadRecord
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label("Bring-back done", systemImage: "checkmark.circle")
-                .font(.title3.bold())
-                .foregroundStyle(.green)
-            Text(done.landing).textSelection(.enabled)
-            if let command = done.command {
-                Text("Resume in your own terminal:")
-                HStack(alignment: .top, spacing: 8) {
-                    Text(command)
-                        .font(.callout.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-                    Button("Copy") { model.copy(command) }
-                        .controlSize(.small)
-                }
-            }
-            Text("The box agent's hand-over is at \(done.handover.path). Ask your agent to read it, check its claims and continue from its next steps.")
+        let command = "/cocoonbox:back"
+        HStack(spacing: 8) {
+            Text("Bring this back from your terminal: \(command) (or cocoonbox back) in \(record.top ?? OffloadRow.repoName(record))")
+                .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Show Hand-over in Finder") { NSWorkspace.shared.activateFileViewerSelecting([done.handover]) }
-                Spacer()
-                Button("Done") { model.dismissBroughtBack(done.record.repo) }
-                    .keyboardShortcut(.defaultAction)
-            }
+            Spacer()
+            Button("Copy") { model.copy(command) }
+                .controlSize(.small)
         }
-        .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-    }
-}
-
-extension BroughtBack {
-    // command resumes the newest conversation of the offload's CLI kind in the repo.
-    var command: String? {
-        record.top.map { "cd '\($0.replacingOccurrences(of: "'", with: "'\\''"))' && \(record.kind.resume)" }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
     }
 }
 

@@ -30,8 +30,7 @@ import Foundation
 // capsule-snapshot:<n> (the n-th newest, from 0), capsule-browse:<dir>,
 // capsule-restore:<path>[,<path>...] (from the browsed snapshot),
 // offloads:<label> (rereads the offloads and logs each Offloaded row: repo, box, CLI, status, since),
-// select-offload[:<repo name>] (the first row without a name), bring-back (on the selected offload; logs how it landed
-// and the resume command), plugin-setup (Install Claude Code Plugin; logs its exit code and output),
+// select-offload[:<repo name>] (the first row without a name), plugin-setup (Install Claude Code Plugin; logs its exit code and output),
 // box-signin:<kind>|off (the Sign in sheet for the selected box), signin-paste (puts CB_CLIP_TEXT on the CB_PASTEBOARD
 // pasteboard, then sends Command+V to the sheet as a keyboard would; logs the first responder), quit.
 @MainActor
@@ -248,18 +247,11 @@ enum Autopilot {
             await until(10) { model.operation?.title == AppModel.restoreTitle }
         case "offloads":
             await model.refreshOffloads()
-            let rows = model.offloadRows.map { "\(OffloadRow.repoName($0))/\(OffloadRow.place(model, $0))/\(OffloadRow.status(model, $0))/\(OffloadRow.since(model, $0, now: Date()))" }
+            let rows = model.offloads.map { "\(OffloadRow.repoName($0))/\(OffloadRow.place(model, $0))/\(OffloadRow.status(model, $0))/\(OffloadRow.since(model, $0, now: Date()))" }
             Perf.mark("offloads_rows", "label=\(arg) rows=\(rows.joined(separator: ",")) selected=\(model.selectedOffload.map(OffloadRow.repoName) ?? "-") terminal=\(model.selectedOffload.map { model.boxTerminals[$0.repo] != nil } ?? false)")
         case "select-offload":
-            await until(30) { model.offloadRows.contains { arg.isEmpty || OffloadRow.repoName($0) == arg } }
-            model.selectedAgentID = model.offloadRows.first { arg.isEmpty || OffloadRow.repoName($0) == arg }.map { AppModel.selectionID(offload: $0.repo) }
-        case "bring-back":
-            if let record = model.selectedOffload {
-                model.bringBack(record)
-                await until(120) { model.bringingBack[record.repo] == nil }
-                let done = model.broughtBack[record.repo]
-                Perf.mark("brought_back", "repo=\(OffloadRow.repoName(record)) landing=\(done?.landing ?? "-") command=\(done?.command ?? "-") handover=\(done?.handover.lastPathComponent ?? "-") error=\(model.lastError ?? "-")")
-            }
+            await until(30) { model.offloads.contains { arg.isEmpty || OffloadRow.repoName($0) == arg } }
+            model.selectedAgentID = model.offloads.first { arg.isEmpty || OffloadRow.repoName($0) == arg }.map { AppModel.selectionID(offload: $0.repo) }
         case "plugin-setup":
             model.installClaudePlugin()
             await until(180) { model.pluginSetup?.code != nil }

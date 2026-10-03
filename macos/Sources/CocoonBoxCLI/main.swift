@@ -685,7 +685,7 @@ func offload() async {
             print("  copy \(record.dir), tmux \(record.tmux), offload \(record.id)")
             print("  sent \(outcome.sent.formatted(.byteCount(style: .file))); " + outcome.timings.map { "\($0.0) \(String(format: "%.1f", $0.1)) s" }.joined(separator: ", "))
             if !outcome.accepted { print("  the box CLI has not taken the hand-over yet; watch it with `cocoonbox offload status`") }
-            print("Bring it back with /cocoonbox:back, `cocoonbox back`, or \"Bring back\" in the app's Offloaded section.")
+            print("Bring it back with /cocoonbox:back or `cocoonbox back`.")
         }
     } catch let error as OffloadError {
         offloadFailed(error, json: json)
