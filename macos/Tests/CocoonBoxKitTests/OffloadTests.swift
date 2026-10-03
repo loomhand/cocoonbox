@@ -19,6 +19,7 @@ import Testing
         let copy = URL(fileURLWithPath: outcome.record.dir)
         #expect(try box.state(copy) == before)
         #expect(!FileManager.default.fileExists(atPath: copy.appendingPathComponent("d.log").path))
+        #expect(try await box.offloader().status(outcome.record.repo).first?.activityMs ?? 0 >= outcome.record.startedAtMs - 1000)
         #expect(try box.sh("git rev-parse refs/cocoonbox/offload/\(outcome.record.id)^", in: repo) == box.sh("git rev-parse HEAD", in: repo))
 
         try box.sh("echo box > e.txt && git add e.txt && git -c user.name=b -c user.email=b@b commit -qm box && echo more >> b.txt", in: copy)

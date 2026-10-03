@@ -8,7 +8,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.2.0"
+    static let version = "0.3.0"
     static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -92,9 +92,9 @@ public enum Plugin {
 
         The agent in the box starts fresh. It knows only what your hand-over says, plus the repo.
         Write the hand-over as if for a capable engineer who has never seen this conversation.
-        `cocoonbox` below is `\(command)`. It does every mechanical step: never copy files or
-        secrets yourself, never print a secret, never edit the files it writes. In a session the
-        CocoonBox app started (COCOONBOX_AGENT is set), add `--no-repo` to every command.
+        `cocoonbox` below is `\(command)`. Run it in the repo the user works in. It does every
+        mechanical step: never copy files or secrets yourself, never print a secret, never edit the
+        files it writes.
 
         ## OFFLOAD (on the Mac)
 
@@ -106,34 +106,52 @@ public enum Plugin {
         3. Run `cocoonbox offload --kind <claude|codex|cursor>`, naming the CLI you are unless the
            user asked for another one in the box. Add `--box NAME` when the user names a box.
            - Exit 3 is a block: stop and tell the user why, one line per finding. If the box CLI is
-             missing or signed out, tell the user to use "Sign in in the box" in the app.
+             missing or signed out, tell the user to open the CocoonBox app and use "Install in box"
+             or "Sign in in the box" in the Offloaded section's box menu.
            - Exit 4 is warnings: tell the user each one, and run again with `--yes` only when they
              agree, or said beforehand to go ahead.
            - For a secret it warns about, ask the user; only they opt one in
              (`cocoonbox offload secrets add file:.env`). Never opt in on your own.
         4. When it prints `offloaded`, tell the user the box, that its agent runs with permission
-           prompts bypassed, and that "Bring back" in the app, `/cocoonbox:back` or `cocoonbox back`
-           returns the work. End your turn and make no more changes to this repo.
+           prompts bypassed, and that `/cocoonbox:back`, `cocoonbox back` or "Bring back" in the
+           app's Offloaded section returns the work. End your turn and make no more changes to this
+           repo.
         5. On exit 1, report its last line. Nothing changed on this Mac; do not retry by hand.
 
         While the task is in the box, `cocoonbox offload inbox` shows what the box agent posted
         (progress, questions), `cocoonbox offload send "<answer>"` answers it, and
-        `cocoonbox offload status` shows whether it is working.
+        `cocoonbox offload status` shows whether it is working. The app's Offloaded section shows
+        the box agent's terminal.
 
         ## BACK (on the Mac)
 
-        Run `cocoonbox back` in the repo (the app does it for "Bring back"). It waits for the box
-        agent's hand-over, then lands the box's work against the snapshot taken at the offload.
-        Report how the code landed: fast-forward, merged (applied uncommitted), unchanged, or a
-        branch with conflicts, where your work tree is untouched. Then read the hand-over it
-        printed, check its claims against `git log` and `git diff`, run its verify commands, and
-        continue from its next steps.
+        Run `cocoonbox back` in the repo. It waits for the box agent's hand-over, then lands the
+        box's work against the snapshot taken at the offload. Report how the code landed:
+        fast-forward, merged (applied uncommitted), unchanged, or a branch with conflicts, where
+        your work tree is untouched. If it says nothing of this repo is in a box and names a
+        `back.md`, the app's "Bring back" has landed the work already: read that file as the
+        hand-over. Then check the hand-over's claims against `git log` and `git diff`, run its
+        verify commands, and continue from its next steps.
 
         ## Hand-over template
 
         ```markdown
         \(Handover.template)```
 
+        """
+    }
+
+    // offloadPrompt is the OFFLOAD request a user pastes into a CLI without the offload skill, such as Codex.
+    public static func offloadPrompt(command: String, handover: String, kind: OffloadKind) -> String {
+        """
+        OFFLOAD: move this task into my cocoonbox, where a fresh \(kind.title) session continues it while I am away. It knows only what your hand-over says, plus the repo.
+        1. Finish the step you are in, or stop at a safe point. Do not start new work.
+        2. Write a hand-over of this session to \(handover) with the template below. Fill every section; write "none" for an empty one. Be concrete: exact commands, versions, paths, errors, decisions with their reasons. Names only for secrets, never values. The file is outside this repo: if your sandbox refuses the write, ask me to approve it.
+        3. Run in this repo: \(command) offload --kind \(kind.rawValue)
+           It needs the network: if your sandbox refuses, ask me to approve it. Exit 3 is a block: tell me why, one line per finding. Exit 4 is warnings: tell me each one and run again with --yes only if I agree. Exit 1: tell me its last line.
+        4. When it prints "offloaded", tell me the box, end your turn and change nothing more in this repo. `\(command) back` in this repo brings the work back.
+
+        \(Handover.template)
         """
     }
 

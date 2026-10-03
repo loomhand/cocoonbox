@@ -161,6 +161,15 @@ public struct GitRepo: Sendable {
         case fastForward
         case merged([String])
         case branch(String, [String])
+
+        public var summary: String {
+            switch self {
+            case .unchanged: "unchanged: the box made no change"
+            case .fastForward: "fast-forward: this repo now holds the box's commits and changes"
+            case .merged(let files): "merged: the box's changes are applied uncommitted (\(files.joined(separator: ", ")))"
+            case .branch(let name, let conflicts): "conflict: the box's work is on the branch \(name); your work tree is untouched" + (conflicts.isEmpty ? "" : " (it conflicts with, or would change your uncommitted, \(conflicts.joined(separator: ", ")))")
+            }
+        }
     }
 
     // land brings the box's snapshot S' home against base S: a fast-forward

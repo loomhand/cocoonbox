@@ -52,6 +52,8 @@ public struct BoxSession: Sendable, Equatable {
     public var cli: String
     public var offloadID: String
     public var status: String
+    // activityMs is the newest of the last hook, the transcript's mtime and the tmux window's activity; 0 when none is known.
+    public var activityMs: Int64
 
     init(_ object: [String: Any]) {
         repo = object["repo"] as? String ?? ""
@@ -59,6 +61,7 @@ public struct BoxSession: Sendable, Equatable {
         cli = object["cli"] as? String ?? ""
         offloadID = object["offload_id"] as? String ?? ""
         status = object["status"] as? String ?? ""
+        activityMs = ["hook_at_ms", "transcript_mtime_ms", "window_activity_ms"].compactMap { (object[$0] as? NSNumber)?.int64Value }.max() ?? 0
     }
 }
 
@@ -314,7 +317,7 @@ public struct Offloader: Sendable {
             back = entries.last { $0.kind == "back" && $0.offloadID == record.id }
             if back == nil, status == "stopped" { throw OffloadError.failed("the box CLI session stopped without handing the work back") }
         }
-        let file = try store.directory(key).appendingPathComponent("back.md")
+        let file = try store.back(key)
         try Data(back!.body.utf8).write(to: file)
         var landing: GitRepo.Landing?
         if let base = record.base, let top = record.top {

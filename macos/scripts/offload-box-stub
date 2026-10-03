@@ -221,7 +221,8 @@ elif verb == "status":
     keys = [key] if key else list(index)
     sessions = [{"repo": k, "name": index.get(k, {}).get("name", ""), "status": load(os.path.join(state, k, "session.json"), {}).get("status", "stopped"),
                  "offload_id": load(os.path.join(state, k, "session.json"), {}).get("offload_id", ""), "copy": index.get(k, {}).get("copy", "absent"),
-                 "cli": load(os.path.join(state, k, "session.json"), {}).get("cli", "")}
+                 "cli": load(os.path.join(state, k, "session.json"), {}).get("cli", ""),
+                 "hook_at_ms": int(os.path.getmtime(os.path.join(state, k, "session.json")) * 1000)}
                 for k in keys if os.path.exists(os.path.join(state, k, "session.json"))]
     reply({"ok": True, "sessions": sessions})
 

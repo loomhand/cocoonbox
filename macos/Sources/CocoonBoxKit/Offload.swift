@@ -41,6 +41,15 @@ public enum OffloadKind: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    // resume continues the newest conversation of the CLI in the working directory, on the Mac.
+    public var resume: String {
+        switch self {
+        case .claude: "claude --continue"
+        case .codex: "codex resume --last"
+        case .cursor: "cursor-agent resume"
+        }
+    }
+
     // probe prints `version` and exits 10 when the CLI is missing, 11 when it is signed out.
     public var probe: String {
         let status = switch self {
@@ -177,6 +186,11 @@ public struct OffloadStore: Sendable {
 
     public func handover(_ key: String) throws -> URL {
         try directory(key).appendingPathComponent("handover.md")
+    }
+
+    // back is where the box agent's last hand-over lands.
+    public func back(_ key: String) throws -> URL {
+        try directory(key).appendingPathComponent("back.md")
     }
 
     public func record(_ key: String) -> OffloadRecord? {

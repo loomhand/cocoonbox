@@ -431,7 +431,9 @@ check("back leaves the uncommitted change", open(os.path.join(offrepo, "a.txt"))
 r = cb("offload", "status", "--json")
 check("after back the session is stopped", json.loads(r.stdout)["sessions"][0]["status"] == "stopped", r)
 r = cb("back")
-check("back with nothing in the box fails", r.returncode == 1 and "nothing of this repo is in a box" in r.stderr, r)
+check("back with nothing in the box fails and names the last hand-over", r.returncode == 1 and "nothing of this repo is in a box" in r.stderr and path.replace("handover.md", "back.md") in r.stderr, r)
+r = cb("offload", "--handover-prompt", "--kind", "codex")
+check("offload --handover-prompt names the hand-over path, the offload and the template", r.returncode == 0 and r.stdout.startswith("OFFLOAD: ") and f"to {path} " in r.stdout and " offload --kind codex" in r.stdout and "## Open questions" in r.stdout, r)
 r = subprocess.run([os.path.basename(cli), "offload", "--kind", "claude", "--box", "main"], capture_output=True, text=True, timeout=120, cwd=offrepo,
                    env={**os.environ, "PATH": os.path.dirname(cli) + ":" + os.environ["PATH"]})
 check("an offload run by its name on PATH copies the repo", r.returncode == 0 and "offloaded to main" in r.stdout, r)
@@ -455,8 +457,8 @@ open(profile, "w").write(f"""(version 1)
 (allow default)
 (deny file-write* (require-all (require-not (subpath "{os.path.realpath(work)}")) (require-not (subpath "/private/var/folders")) (require-not (subpath "/dev"))))
 """)
-def confined(*args):
-    env = dict(os.environ, HOME=home)
+def confined(*args, extra=None):
+    env = dict(os.environ, HOME=home, **(extra or {}))
     env.pop("COCOONBOX_CONFIG_DIR", None)
     env.pop("COCOONBOX_CACHE_DIR", None)
     return subprocess.run(["sandbox-exec", "-f", profile, cli, *args], capture_output=True, text=True, timeout=60, env=env)
@@ -479,6 +481,10 @@ if shutil.which("claude"):
     for target in ("plugins", "plugins/cocoonbox"):
         r = subprocess.run(["claude", "plugin", "validate", "--strict", os.path.join(home, target)], capture_output=True, text=True, timeout=120, env=env)
         check("claude plugin validate --strict " + target, r.returncode == 0 and "Validation passed" in r.stdout, r.stdout + r.stderr)
+    setups = [confined("setup", "claude", extra={"CLAUDE_CONFIG_DIR": env["CLAUDE_CONFIG_DIR"]}) for _ in range(2)]
+    installed = json.load(open(os.path.join(home, ".claude", "plugins", "installed_plugins.json")))["plugins"].get("cocoonbox@cocoonbox", [])
+    check("setup claude installs the plugin into the given CLAUDE_CONFIG_DIR", setups[0].returncode == 0 and len(installed) == 1 and installed[0]["version"] == "0.3.0", setups[0].stderr + json.dumps(installed))
+    check("setup claude again changes nothing and succeeds", setups[1].returncode == 0 and "already installed" in setups[1].stdout + setups[1].stderr and "already at the latest version" in setups[1].stdout + setups[1].stderr, setups[1].stdout + setups[1].stderr)
 else:
     print("SKIP claude plugin validate: Claude Code is not installed")
 

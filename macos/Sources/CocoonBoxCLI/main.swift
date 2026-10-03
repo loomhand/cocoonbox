@@ -23,15 +23,16 @@ usage: cocoonbox <command> [options]
   offload [--box NAME|ID] [--kind claude|codex|cursor] [--dir PATH] [--handover FILE] [--yes] [--json]
                                         move this repo's task into a box: preflight, copy, and a fresh box CLI
                                         session that starts from the hand-over
-  offload --no-repo [--agent ID] ...    the same for an app local agent's session, which has no repo
-  offload handover-path [--no-repo]     print where to write the hand-over
+  offload --handover-prompt [--kind K]  print the request to paste into Codex (or another CLI without the
+                                        plugin): it writes the hand-over, then runs offload
+  offload handover-path                 print where to write the hand-over
   offload inbox [--wait SECONDS] [--all] [--json]
                                         print what the box agent posted since the last look
   offload status [--all] [--json]       show the box CLI session of this repo, or of every repo
   offload send [--interrupt] [TEXT...]  give the box agent a message (TEXT, else stdin)
   offload secrets [add|remove ENTRY]    list or change this repo's opted-in secrets: file:PATH, aws, kube,
                                         gcloud, ssh:KEY
-  back [--interrupt] [--no-repo] [--json]
+  back [--interrupt] [--json]
                                         bring the task back: the box agent's hand-over, its commits and
                                         changes, merged against the offload's snapshot
   setup claude|codex|cursor [--print]   install the cocoonbox plugin or MCP entry for that client
@@ -547,16 +548,9 @@ func runningBox(_ connection: BoxConnection, _ ref: String?) async throws -> Coc
     return try await connection.listBoxes().first { $0.id == box.id } ?? box
 }
 
-// offloadKey is the repo key of --dir or the working directory, or with --no-repo the app local agent's key.
-// For an offload in flight it falls back to the record of the same top level, whose key changes when
-// an empty repo gets its first commit.
+// offloadKey is the repo key of --dir or the working directory. For an offload in flight it falls back
+// to the record of the same top level, whose key changes when an empty repo gets its first commit.
 func offloadKey(inFlight: Bool = false) -> String {
-    if flags.contains("--no-repo") {
-        guard let agent = value(of: "--agent") ?? ProcessInfo.processInfo.environment["COCOONBOX_AGENT"] else {
-            fail("--no-repo needs --agent ID, or COCOONBOX_AGENT, which the app sets for its local agents")
-        }
-        return OffloadNames.agentKey(agent)
-    }
     let dir = URL(fileURLWithPath: value(of: "--dir") ?? FileManager.default.currentDirectoryPath)
     guard let repo = GitRepo.open(dir, environment: ProcessInfo.processInfo.environment) else { fail("\(dir.path) is not in a git repository") }
     guard inFlight, offloadStore.record(repo.key) == nil else { return repo.key }
@@ -569,7 +563,7 @@ func positional(after sub: String) -> [String] {
     var rest = arguments.drop { $0 != sub }.dropFirst()[...]
     while let word = rest.first {
         rest = rest.dropFirst()
-        if ["--box", "--dir", "--agent", "--endpoint", "--wait", "--kind", "--handover"].contains(word) {
+        if ["--box", "--dir", "--endpoint", "--wait", "--kind", "--handover"].contains(word) {
             rest = rest.dropFirst()
         } else if !word.hasPrefix("--") {
             words.append(word)
@@ -603,6 +597,14 @@ func offload() async {
         }
     }
     if sub == "secrets" { return secrets() }
+    if flags.contains("--handover-prompt") {
+        let kind = value(of: "--kind").flatMap(OffloadKind.init) ?? OffloadKind.current(ProcessInfo.processInfo.environment) ?? .codex
+        do {
+            return print(Plugin.offloadPrompt(command: executable, handover: try offloadStore.handover(offloadKey()).path, kind: kind))
+        } catch {
+            fail("\(error)")
+        }
+    }
     let connection = connection()
     defer { connection.close() }
     let json = flags.contains("--json")
@@ -656,16 +658,12 @@ func offload() async {
             guard let kind = value(of: "--kind").flatMap(OffloadKind.init) ?? OffloadKind.current(ProcessInfo.processInfo.environment) else {
                 fail("name the box CLI with --kind claude, codex or cursor")
             }
-            let noRepo = flags.contains("--no-repo")
             let key = offloadKey()
             let file = try value(of: "--handover").map { URL(fileURLWithPath: $0) } ?? offloadStore.handover(key)
             guard let handover = try? String(contentsOf: file, encoding: .utf8) else { fail("no hand-over at \(file.path); write it there first (cocoonbox offload handover-path)") }
             let box = try await runningBox(connection, value(of: "--box"))
-            let request = OffloadRequest(
-                directory: noRepo ? nil : URL(fileURLWithPath: value(of: "--dir") ?? FileManager.default.currentDirectoryPath),
-                agent: noRepo ? value(of: "--agent") ?? ProcessInfo.processInfo.environment["COCOONBOX_AGENT"] : nil,
-                kind: kind, handover: handover, yes: flags.contains("--yes")
-            )
+            let request = OffloadRequest(directory: URL(fileURLWithPath: value(of: "--dir") ?? FileManager.default.currentDirectoryPath),
+                                         kind: kind, handover: handover, yes: flags.contains("--yes"))
             let outcome = try await offloader(connection, box).offload(request)
             let record = outcome.record
             if json {
@@ -678,7 +676,7 @@ func offload() async {
             print("  copy \(record.dir), tmux \(record.tmux), offload \(record.id)")
             print("  sent \(outcome.sent.formatted(.byteCount(style: .file))); " + outcome.timings.map { "\($0.0) \(String(format: "%.1f", $0.1)) s" }.joined(separator: ", "))
             if !outcome.accepted { print("  the box CLI has not taken the hand-over yet; watch it with `cocoonbox offload status`") }
-            print("Bring it back with \"Bring back\" in the app, /cocoonbox:back, or `cocoonbox back`.")
+            print("Bring it back with /cocoonbox:back, `cocoonbox back`, or \"Bring back\" in the app's Offloaded section.")
         }
     } catch let error as OffloadError {
         offloadFailed(error, json: json)
@@ -698,7 +696,7 @@ func offloadFailed(_ error: OffloadError, json: Bool) -> Never {
     } else {
         printFindings(error.findings)
         if error.findings.contains(where: { $0.outcome == .block && $0.check.contains("cli") }) {
-            print("Install or sign in the box CLI with \"Sign in in the box\" in the app, or: cocoonbox rsh --box BOX -t '<the CLI's login>'")
+            print("Open the CocoonBox app: \"Install in box\" and \"Sign in in the box\" are in the Offloaded section's box menu. Or: cocoonbox rsh --box BOX -t '<the CLI's login>'")
         }
         FileHandle.standardError.write(Data("cocoonbox: \(error)\(code == 1 ? "; nothing changed on this Mac" : "")\n".utf8))
     }
@@ -710,19 +708,17 @@ func back() async {
     defer { connection.close() }
     let json = flags.contains("--json")
     let key = offloadKey(inFlight: true)
-    guard let record = offloadStore.record(key) else { fail("nothing of this repo is in a box") }
+    guard let record = offloadStore.record(key) else {
+        let last = offloadStore.root.appendingPathComponent("\(key)/back.md")
+        let modified = (try? FileManager.default.attributesOfItem(atPath: last.path)[.modificationDate]) as? Date
+        fail("nothing of this repo is in a box" + (modified.map { "; the hand-over brought back at \($0.formatted(date: .abbreviated, time: .shortened)) is in \(last.path)" } ?? ""))
+    }
     do {
         let packer = offloader(connection, try await runningBox(connection, record.box))
         let outcome = try await packer.back(key, interrupt: flags.contains("--interrupt")) { entry in
             FileHandle.standardError.write(Data("box agent \(entry.kind) #\(entry.seq)\(entry.kind == "question" ? ":\n" + entry.body : "")\n".utf8))
         }
-        let landing: String = switch outcome.landing {
-        case nil: "no repo"
-        case .unchanged?: "unchanged: the box made no change"
-        case .fastForward?: "fast-forward: this repo now holds the box's commits and changes"
-        case .merged(let files)?: "merged: the box's changes are applied uncommitted (\(files.joined(separator: ", ")))"
-        case .branch(let name, let conflicts)?: "conflict: the box's work is on the branch \(name); your work tree is untouched" + (conflicts.isEmpty ? "" : " (it conflicts with, or would change your uncommitted, \(conflicts.joined(separator: ", ")))")
-        }
+        let landing = outcome.landing?.summary ?? "no repo"
         if json { return printJSON(["ok": true, "landing": landing, "handover": outcome.handover, "file": outcome.file.path, "offload_id": record.id]) }
         print(landing)
         print("The box agent's hand-over (also in \(outcome.file.path)):\n")
@@ -807,12 +803,14 @@ func setup() {
     } catch {
         fail("\(error)")
     }
+    let id = "\(Plugin.name)@\(Plugin.marketplace)"
+    // install leaves an installed plugin at its recorded version, so update moves it to this one
     let steps: [[String]] = client == "claude"
-        ? [["claude", "plugin", "marketplace", "add", root.path], ["claude", "plugin", "install", "\(Plugin.name)@\(Plugin.marketplace)"]]
-        : [["codex", "plugin", "marketplace", "add", root.path], ["codex", "plugin", "add", "\(Plugin.name)@\(Plugin.marketplace)"]]
+        ? [["claude", "plugin", "marketplace", "add", root.path], ["claude", "plugin", "install", id], ["claude", "plugin", "update", id]]
+        : [["codex", "plugin", "marketplace", "add", root.path], ["codex", "plugin", "add", id]]
     if flags.contains("--print") { return steps.forEach { print($0.joined(separator: " ")) } }
     let update = client == "claude" ? ["claude", "plugin", "marketplace", "update", Plugin.marketplace] : ["codex", "plugin", "marketplace", "upgrade", Plugin.marketplace]
-    guard run(steps[0]) || run(update), run(steps[1]) else { fail("\(client) did not install the plugin") }
+    guard run(steps[0]) || run(update), steps.dropFirst().allSatisfy(run) else { fail("\(client) did not install the plugin") }
     print("installed the cocoonbox plugin for \(client)")
 }
 

@@ -52,6 +52,14 @@ import Testing
         let template = try #require(skill.components(separatedBy: "```markdown\n").last?.components(separatedBy: "```").first)
         #expect(Handover.problems(template).isEmpty)
         #expect(files["cocoonbox/commands/offload.md"]?.contains("OFFLOAD") == true && files["cocoonbox/commands/back.md"]?.contains("BACK") == true)
+        #expect(!skill.contains("COCOONBOX_AGENT") && !skill.contains("--no-repo"))
+    }
+
+    @Test func thePastedOffloadRequestNamesTheHandoverAndTheKind() throws {
+        let prompt = Plugin.offloadPrompt(command: "/Users/me/.local/bin/cocoonbox", handover: "/h/handover.md", kind: .codex)
+        #expect(prompt.hasPrefix("OFFLOAD: ") && prompt.contains("to /h/handover.md") && prompt.contains("/Users/me/.local/bin/cocoonbox offload --kind codex"))
+        let start = try #require(prompt.range(of: Handover.title))
+        #expect(Handover.problems(String(prompt[start.lowerBound...])).isEmpty)
     }
 
     @Test func everyClientRunsTheBridge() throws {
