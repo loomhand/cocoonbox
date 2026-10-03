@@ -179,6 +179,7 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
 
     let world: MockWorld
     var credentials = true
+    var workspace = FileManager.default.temporaryDirectory
 
     func hello(request: Cocoonbox_Agent_V1_HelloRequest, context: ServerContext) async throws -> Cocoonbox_Agent_V1_HelloResponse {
         .with {
@@ -263,6 +264,75 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
             }
             try await group.next()
             group.cancelAll()
+        }
+    }
+
+    // exec runs the command with bash on this Mac in workspace, standing in for the box's desktop user.
+    func exec(request: RPCAsyncSequence<Cocoonbox_Agent_V1_ExecClientFrame, any Error>, response: RPCWriter<Cocoonbox_Agent_V1_ExecServerFrame>, context: ServerContext) async throws {
+        let (commands, command) = AsyncStream<String>.makeStream()
+        let input = Pipe(), output = Pipe(), errors = Pipe()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                var started = false
+                for try await frame in request {
+                    switch frame.body {
+                    case .start(let start) where !started:
+                        started = true
+                        command.yield(start.command)
+                        command.finish()
+                    case .stdin(let data) where started:
+                        try? input.fileHandleForWriting.write(contentsOf: data)
+                    default:
+                        command.finish()
+                        throw RPCError(code: .invalidArgument, message: "the first Exec frame must be start")
+                    }
+                }
+                command.finish()
+                try? input.fileHandleForWriting.close()
+            }
+            var commandLine: String?
+            for await line in commands { commandLine = line }
+            guard let commandLine else { return try await group.waitForAll() }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = ["-c", commandLine]
+            process.currentDirectoryURL = workspace
+            process.standardInput = input
+            process.standardOutput = output
+            process.standardError = errors
+            let (exits, exited) = AsyncStream<Int32>.makeStream()
+            process.terminationHandler = { p in
+                exited.yield(p.terminationReason == .uncaughtSignal ? 128 + p.terminationStatus : p.terminationStatus)
+                exited.finish()
+            }
+            try process.run()
+            try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(of: Void.self) { pipes in
+                    pipes.addTask { for await data in Self.chunks(output.fileHandleForReading) { try await response.write(.with { $0.stdout = data }) } }
+                    pipes.addTask { for await data in Self.chunks(errors.fileHandleForReading) { try await response.write(.with { $0.stderr = data }) } }
+                    try await pipes.waitForAll()
+                }
+                for await code in exits {
+                    try await response.write(.with { $0.exitCode = code })
+                }
+            } onCancel: {
+                process.terminate()
+            }
+            group.cancelAll()
+        }
+    }
+
+    private static func chunks(_ handle: FileHandle) -> AsyncStream<Data> {
+        AsyncStream { continuation in
+            handle.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    continuation.finish()
+                } else {
+                    continuation.yield(data)
+                }
+            }
         }
     }
 }

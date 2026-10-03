@@ -16,12 +16,22 @@ usage: cocoonbox <command> [options]
   upgrade [--yes]                       move the box to the latest desktop image
   mcp [--no-wake]                       serve your boxes to a local agent over stdio MCP
   mcp-headers                           print the Authorization header as JSON (Claude Code headersHelper)
+  rsh [--box NAME|ID] [HOST] COMMAND... run COMMAND in a box with its stdin, stdout and stderr; exits
+                                        with its exit code, or 255 when the box cannot run it
   setup claude|codex|cursor [--print]   install the cocoonbox plugin or MCP entry for that client
   install                               link this binary into ~/.local/bin
   plugin export DIR                     write the plugin marketplace to DIR
 
 --box NAME|ID picks the box of status, ensure, hibernate, save and upgrade (default: your first box)
 and the default box of mcp (default: the newest running box).
+
+rsh is the remote shell of rsync and git, which pass a host word first:
+  rsync -az -e "cocoonbox rsh" ./ main:/workspace/repo/   (the host names the box)
+  rsync -az -e "cocoonbox rsh --box main" ./ box:/workspace/repo/
+  GIT_SSH_COMMAND="cocoonbox rsh" git clone main:/workspace/repo
+Without --box, the first word names the box. With --box, a first word that is `box` or names
+that box is dropped as the host. A user@ prefix and -l USER are ignored: the command runs as the
+box's desktop user, by bash in /workspace. rsh wakes a box that is not running.
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
 COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain;
@@ -34,9 +44,12 @@ let command = arguments.first ?? "help"
 let flags = Set(arguments.dropFirst().filter { $0.hasPrefix("--") })
 let words = arguments.dropFirst().filter { !$0.hasPrefix("--") }
 
+// rsh exits 255 on its own failures, so they differ from the command's exit codes.
+let failureStatus: Int32 = command == "rsh" ? 255 : 1
+
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("cocoonbox: \(message)\n".utf8))
-    exit(1)
+    exit(failureStatus)
 }
 
 func value(of flag: String) -> String? {
@@ -59,8 +72,8 @@ func savedEndpoint() -> String? {
     return object["endpoint"]
 }
 
-func endpoint() -> Endpoint {
-    let url = value(of: "--endpoint") ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.defaultURL
+func endpoint(_ flag: String? = value(of: "--endpoint")) -> Endpoint {
+    let url = flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.defaultURL
     guard let endpoint = Endpoint(url: url) else { fail("\(url) is not an http(s) URL") }
     guard endpoint.usesTLS || endpoint.isLoopback else { fail("\(endpoint.host) is not on this Mac, so it needs https: the token would travel in plaintext") }
     return endpoint
@@ -246,6 +259,134 @@ func headers() {
     print(String(decoding: data, as: UTF8.self))
 }
 
+// MARK: rsh
+
+let rshUsage = "usage: cocoonbox rsh [--box NAME|ID] [-l USER] [HOST] COMMAND..."
+
+// StdinChunks reads fd 0 on its own thread, one read per chunk the consumer asks for, so at
+// most one chunk waits in memory.
+struct StdinChunks: AsyncSequence, Sendable {
+    typealias Element = Data
+    typealias Failure = Never
+
+    struct AsyncIterator: AsyncIteratorProtocol {
+        var chunks: AsyncStream<Data>.Iterator
+        let wanted: DispatchSemaphore
+
+        mutating func next() async -> Data? {
+            wanted.signal()
+            return await chunks.next()
+        }
+    }
+
+    private let chunks: AsyncStream<Data>
+    private let wanted = DispatchSemaphore(value: 0)
+
+    init() {
+        let (chunks, continuation) = AsyncStream<Data>.makeStream()
+        let wanted = wanted
+        Thread.detachNewThread {
+            var buffer = [UInt8](repeating: 0, count: 64 << 10)
+            while true {
+                wanted.wait()
+                var n: Int
+                repeat {
+                    n = read(STDIN_FILENO, &buffer, buffer.count)
+                } while n < 0 && retry(STDIN_FILENO, POLLIN)
+                guard n > 0 else { break }
+                continuation.yield(Data(buffer[..<n]))
+            }
+            continuation.finish()
+        }
+        self.chunks = chunks
+    }
+
+    func makeAsyncIterator() -> AsyncIterator {
+        AsyncIterator(chunks: chunks.makeAsyncIterator(), wanted: wanted)
+    }
+}
+
+// retry says whether a failed read or write of fd should run again, after waiting for fd when
+// it is non-blocking: rsync hands its remote shell non-blocking descriptors.
+func retry(_ fd: Int32, _ event: Int32) -> Bool {
+    switch errno {
+    case EINTR:
+        return true
+    case EAGAIN:
+        var ready = pollfd(fd: fd, events: Int16(event), revents: 0)
+        _ = poll(&ready, 1, -1)
+        return true
+    default:
+        return false
+    }
+}
+
+func writeAll(_ fd: Int32, _ data: Data) throws {
+    try data.withUnsafeBytes { bytes in
+        guard let base = bytes.baseAddress else { return }
+        var done = 0
+        while done < bytes.count {
+            let n = write(fd, base + done, bytes.count - done)
+            if n >= 0 {
+                done += n
+            } else if !retry(fd, POLLOUT) {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+        }
+    }
+}
+
+func rsh() async {
+    var rest = arguments.dropFirst()
+    var options: [String: String] = [:]
+    while let option = rest.first, option.hasPrefix("-") {
+        guard ["--box", "--endpoint", "-l"].contains(option), rest.count > 1 else { fail("unknown option \(option)\n\(rshUsage)") }
+        options[option] = rest[rest.index(after: rest.startIndex)]
+        rest = rest.dropFirst(2)
+    }
+    let endpoint = endpoint(options["--endpoint"])
+    let connection: BoxConnection
+    do {
+        connection = try BoxConnection(endpoint: endpoint, token: token(endpoint))
+    } catch {
+        fail("\(error)")
+    }
+    var words = Array(rest)
+    let code: Int32?
+    do {
+        let boxes = try await connection.listBoxes()
+        func named(_ word: String) -> Cocoonbox_Control_V1_Box? {
+            let host = word.split(separator: "@").last.map(String.init) ?? word
+            return boxes.first { $0.id == host || $0.name == host }
+        }
+        var box: Cocoonbox_Control_V1_Box
+        if let ref = options["--box"] {
+            guard let pinned = boxes.first(where: { $0.id == ref || $0.name == ref }) else { fail("you have no box \(ref)") }
+            box = pinned
+            if let host = words.first, host.split(separator: "@").last == "box" || named(host)?.id == box.id { words.removeFirst() }
+        } else {
+            guard let host = words.first, let hosted = named(host) else { fail("name the box with --box or as the host\n\(rshUsage)") }
+            box = hosted
+            words.removeFirst()
+        }
+        guard !words.isEmpty else { fail("no command: rsh runs a command, not a login shell\n\(rshUsage)") }
+        if box.state != .running {
+            FileHandle.standardError.write(Data("cocoonbox: waking \(box.name)\n".utf8))
+            let response = try await connection.ensure(boxID: box.id)
+            if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
+        }
+        connection.boxID = box.id
+        signal(SIGPIPE, SIG_IGN)
+        code = try await connection.exec(command: words.joined(separator: " "), stdin: StdinChunks()) { data, toStderr in
+            try writeAll(toStderr ? STDERR_FILENO : STDOUT_FILENO, data)
+        }
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+    guard let code else { fail("the box ended the command without an exit code") }
+    exit(code)
+}
+
 // MARK: setup
 
 let executable: String = {
@@ -336,6 +477,8 @@ case "mcp":
     await serve()
 case "mcp-headers":
     headers()
+case "rsh":
+    await rsh()
 case "setup":
     setup()
 case "install":

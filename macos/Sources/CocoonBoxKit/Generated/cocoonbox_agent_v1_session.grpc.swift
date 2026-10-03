@@ -85,13 +85,27 @@ public enum Cocoonbox_Agent_V1_Session: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Exec" metadata.
+        public enum Exec: Sendable {
+            /// Request type for "Exec".
+            public typealias Input = Cocoonbox_Agent_V1_ExecClientFrame
+            /// Response type for "Exec".
+            public typealias Output = Cocoonbox_Agent_V1_ExecServerFrame
+            /// Descriptor for "Exec".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.agent.v1.Session"),
+                method: "Exec",
+                type: .bidirectionalStreaming
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.agent.v1.Session" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Hello.descriptor,
             Events.descriptor,
             Screen.descriptor,
             ActiveOrigin.descriptor,
-            FillCredential.descriptor
+            FillCredential.descriptor,
+            Exec.descriptor
         ]
     }
 }
@@ -206,6 +220,28 @@ extension Cocoonbox_Agent_V1_Session {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_FillCredentialResponse>
+
+        /// Handle the "Exec" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Exec runs a command as the desktop user and carries its stdin, stdout and
+        /// > stderr. The first client frame must be `start`; the client half-closing
+        /// > the stream closes the command's stdin. The last server frame is
+        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > Owner only.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Agent_V1_ExecServerFrame` messages.
+        func exec(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_ExecClientFrame>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ExecServerFrame>
     }
 
     /// Service protocol for the "cocoonbox.agent.v1.Session" service.
@@ -304,6 +340,28 @@ extension Cocoonbox_Agent_V1_Session {
             request: GRPCCore.ServerRequest<Cocoonbox_Agent_V1_FillCredentialRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Agent_V1_FillCredentialResponse>
+
+        /// Handle the "Exec" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Exec runs a command as the desktop user and carries its stdin, stdout and
+        /// > stderr. The first client frame must be `start`; the client half-closing
+        /// > the stream closes the command's stdin. The last server frame is
+        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > Owner only.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Agent_V1_ExecServerFrame` messages.
+        func exec(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_ExecClientFrame>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ExecServerFrame>
     }
 
     /// Simple service protocol for the "cocoonbox.agent.v1.Session" service.
@@ -402,6 +460,29 @@ extension Cocoonbox_Agent_V1_Session {
             request: Cocoonbox_Agent_V1_FillCredentialRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Agent_V1_FillCredentialResponse
+
+        /// Handle the "Exec" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Exec runs a command as the desktop user and carries its stdin, stdout and
+        /// > stderr. The first client frame must be `start`; the client half-closing
+        /// > the stream closes the command's stdin. The last server frame is
+        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > Owner only.
+        ///
+        /// - Parameters:
+        ///   - request: A stream of `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+        ///   - response: A response stream of `Cocoonbox_Agent_V1_ExecServerFrame` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        func exec(
+            request: GRPCCore.RPCAsyncSequence<Cocoonbox_Agent_V1_ExecClientFrame, any Swift.Error>,
+            response: GRPCCore.RPCWriter<Cocoonbox_Agent_V1_ExecServerFrame>,
+            context: GRPCCore.ServerContext
+        ) async throws
     }
 }
 
@@ -459,6 +540,17 @@ extension Cocoonbox_Agent_V1_Session.StreamingServiceProtocol {
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_FillCredentialResponse>(),
             handler: { request, context in
                 try await self.fillCredential(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Agent_V1_Session.Method.Exec.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_ExecClientFrame>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_ExecServerFrame>(),
+            handler: { request, context in
+                try await self.exec(
                     request: request,
                     context: context
                 )
@@ -590,6 +682,23 @@ extension Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
             metadata: [:]
         )
     }
+
+    public func exec(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Agent_V1_ExecClientFrame>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ExecServerFrame> {
+        return GRPCCore.StreamingServerResponse<Cocoonbox_Agent_V1_ExecServerFrame>(
+            metadata: [:],
+            producer: { writer in
+                try await self.exec(
+                    request: request.messages,
+                    response: writer,
+                    context: context
+                )
+                return [:]
+            }
+        )
+    }
 }
 
 // MARK: cocoonbox.agent.v1.Session (client)
@@ -713,6 +822,33 @@ extension Cocoonbox_Agent_V1_Session {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_FillCredentialResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Agent_V1_FillCredentialResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Exec" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Exec runs a command as the desktop user and carries its stdin, stdout and
+        /// > stderr. The first client frame must be `start`; the client half-closing
+        /// > the stream closes the command's stdin. The last server frame is
+        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > Owner only.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request producing `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_ExecServerFrame` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func exec<Result>(
+            request: GRPCCore.StreamingClientRequest<Cocoonbox_Agent_V1_ExecClientFrame>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_ExecClientFrame>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_ExecServerFrame>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Agent_V1_ExecServerFrame>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -896,6 +1032,42 @@ extension Cocoonbox_Agent_V1_Session {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "Exec" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Exec runs a command as the desktop user and carries its stdin, stdout and
+        /// > stderr. The first client frame must be `start`; the client half-closing
+        /// > the stream closes the command's stdin. The last server frame is
+        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > Owner only.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request producing `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+        ///   - serializer: A serializer for `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Agent_V1_ExecServerFrame` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func exec<Result>(
+            request: GRPCCore.StreamingClientRequest<Cocoonbox_Agent_V1_ExecClientFrame>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Agent_V1_ExecClientFrame>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Agent_V1_ExecServerFrame>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Agent_V1_ExecServerFrame>) async throws -> Result
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.bidirectionalStreaming(
+                request: request,
+                descriptor: Cocoonbox_Agent_V1_Session.Method.Exec.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -1037,6 +1209,37 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_FillCredentialRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_FillCredentialResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Exec" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Exec runs a command as the desktop user and carries its stdin, stdout and
+    /// > stderr. The first client frame must be `start`; the client half-closing
+    /// > the stream closes the command's stdin. The last server frame is
+    /// > `exit_code`. Cancelling the stream kills the command's process group.
+    /// > Owner only.
+    ///
+    /// - Parameters:
+    ///   - request: A streaming request producing `Cocoonbox_Agent_V1_ExecClientFrame` messages.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func exec<Result>(
+        request: GRPCCore.StreamingClientRequest<Cocoonbox_Agent_V1_ExecClientFrame>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Agent_V1_ExecServerFrame>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        try await self.exec(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Agent_V1_ExecClientFrame>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Agent_V1_ExecServerFrame>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1201,6 +1404,42 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
             metadata: metadata
         )
         return try await self.fillCredential(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Exec" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Exec runs a command as the desktop user and carries its stdin, stdout and
+    /// > stderr. The first client frame must be `start`; the client half-closing
+    /// > the stream closes the command's stdin. The last server frame is
+    /// > `exit_code`. Cancelling the stream kills the command's process group.
+    /// > Owner only.
+    ///
+    /// - Parameters:
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - producer: A closure producing request messages to send to the server. Returning
+    ///       from the closure closes the request stream.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func exec<Result>(
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        requestProducer producer: @Sendable @escaping (GRPCCore.RPCWriter<Cocoonbox_Agent_V1_ExecClientFrame>) async throws -> Void,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Agent_V1_ExecServerFrame>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.StreamingClientRequest<Cocoonbox_Agent_V1_ExecClientFrame>(
+            metadata: metadata,
+            producer: producer
+        )
+        return try await self.exec(
             request: request,
             options: options,
             onResponse: handleResponse

@@ -4,7 +4,8 @@
 # hibernated, the wake on the first box-tool call with progress, the control
 # tools and their refusals, --no-wake, the headers helper, several boxes:
 # routing by `box`, the default box, the running limit, --box and box_delete,
-# and the app's socket: reported box-tool calls and a default box the app sets. Nothing touches
+# the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
+# and git over it (MockBox runs Exec commands on this Mac in a test workspace). Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -23,12 +24,12 @@ export COCOONBOX_CACHE_DIR="$work/cache"
 export COCOONBOX_CONFIG_DIR="$work/config"
 export HOME="$work/home"
 export CB_KEYCHAIN_FILE="$work/test.keychain-db"
-mkdir -p "$HOME"
+mkdir -p "$HOME" "$work/workspace"
 security create-keychain -p test "$CB_KEYCHAIN_FILE"
 security set-keychain-settings "$CB_KEYCHAIN_FILE"
 security unlock-keychain -p test "$CB_KEYCHAIN_FILE"
 
-"$bin/MockBox" --port "$port" --boot-ms 1500 >"$work/mockbox.log" 2>&1 &
+"$bin/MockBox" --port "$port" --boot-ms 1500 --workspace "$work/workspace" >"$work/mockbox.log" 2>&1 &
 mock=$!
 cleanup() {
   kill "$mock" 2>/dev/null || true
@@ -304,6 +305,52 @@ check("the edge refuses another user's box id with 403", mcp_status("cb-mock9999
 time.sleep(1)
 log = open(mocklog).read()
 check("box tool calls reached each box's own MCP path", "/cocoonbox.mcp/" + test_id + " auth=ok" in log and "rpc=tools/call tool=shell" in log, log[-600:])
+
+# rsh: the remote shell of rsync and git; the command's own exit code, or 255.
+import shutil
+work = os.path.dirname(mocklog)
+workspace = os.path.realpath(os.path.join(work, "workspace"))
+def rsh(*args, data=b"", env=None):
+    return subprocess.run([cli, "rsh", *args], input=data, capture_output=True, timeout=120, env=env)
+
+subprocess.run([cli, "hibernate", "--box", "main"], capture_output=True, timeout=60)
+r = rsh("--box", "main", "echo out; echo err >&2; pwd; exit 7")
+check("rsh wakes the box and runs the command", b"waking main" in r.stderr and json.loads(run("status", "--json", "--box", "main").stdout)["state"] == "running", r.stderr)
+check("rsh keeps stdout and stderr apart and exits with the command's code", r.returncode == 7 and r.stdout == b"out\n" + workspace.encode() + b"\n" and r.stderr.endswith(b"err\n"), r)
+r = rsh("main", "echo", "hosted")
+check("without --box the host word names the box", r.returncode == 0 and r.stdout == b"hosted\n", r)
+for host in ("box", "main", "u@main"):
+    r = rsh("--box", "main", host, "echo", "dropped")
+    check("with --box the host word " + host + " is dropped", r.returncode == 0 and r.stdout == b"dropped\n", r)
+r = rsh("--box", "main", "-l", "u", "uname")
+check("-l USER is ignored", r.returncode == 0 and r.stdout.strip() == os.uname().sysname.encode(), r)
+data = os.urandom(3 << 20)
+r = rsh("--box", "main", "cat", data=data)
+check("3 MiB of binary stdin come back through cat unchanged", r.returncode == 0 and r.stdout == data, (len(r.stdout), r.stderr))
+r = rsh("--box", "main", "wc", "-c", data=b"four")
+check("the end of stdin reaches the command", r.returncode == 0 and r.stdout.strip() == b"4", r)
+for label, args in (("an unknown box", ["--box", "nosuch", "true"]), ("an unknown option (git's -G probe)", ["-G", "main"]),
+                    ("no command", ["--box", "main"]), ("no box", ["nosuch", "true"])):
+    r = rsh(*args)
+    check("rsh exits 255 on " + label, r.returncode == 255, r)
+if shutil.which("rsync"):
+    src = os.path.join(work, "src")
+    os.makedirs(os.path.join(src, "sub"))
+    open(os.path.join(src, "a.txt"), "w").write("a")
+    open(os.path.join(src, "sub", "b.bin"), "wb").write(os.urandom(200_000))
+    r = subprocess.run(["rsync", "-a", "-e", cli + " rsh --box main", src + "/", "box:dest/"], capture_output=True, timeout=120)
+    dest = os.path.join(workspace, "dest")
+    same = all(open(os.path.join(src, f), "rb").read() == open(os.path.join(dest, f), "rb").read() for f in ("a.txt", "sub/b.bin")) if r.returncode == 0 else False
+    check("rsync -e 'cocoonbox rsh --box main' copies a tree", same, r.stderr)
+else:
+    print("SKIP rsync: not installed")
+repo = os.path.join(work, "repo")
+subprocess.run(["git", "init", "-q", repo], check=True)
+subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first"], check=True)
+clone = os.path.join(work, "clone")
+r = subprocess.run(["git", "clone", "-q", "main:" + repo, clone], capture_output=True, timeout=120, env=dict(os.environ, GIT_SSH_COMMAND=cli + " rsh"))
+log = subprocess.run(["git", "-C", clone, "log", "--format=%s"], capture_output=True, text=True).stdout if r.returncode == 0 else ""
+check("git clone with GIT_SSH_COMMAND='cocoonbox rsh'", log.strip() == "first", r.stderr)
 
 # Writes stay inside the HOME the CLI is given: every file command runs under a
 # sandbox that denies writes outside the test directory and the process temp.
