@@ -3,6 +3,7 @@
 set -euo pipefail
 
 systemctl stop cocoonbox-agent.service cocoonbox-toolhost.service
+systemctl --user -M user@ stop cocoonbox-offload-inbox.service
 rm -rf /var/lib/cocoonbox/* /run/cocoonbox/*
 
 pkill -u user -x chrome || true
@@ -11,7 +12,7 @@ sleep 2
 rm -rf /workspace/* /workspace/.[!.]* \
 	/home/user/.config/cocoonbox-chrome /home/user/.config/google-chrome /home/user/.cache/google-chrome /home/user/.cache/fontconfig \
 	/home/user/.config/Mousepad /home/user/.local/share/Mousepad /home/user/.cache/Mousepad /home/user/.local/share/recently-used.xbel \
-	/home/user/.local/state/xfce4-session /home/user/.config/cocoonbox \
+	/home/user/.local/state/xfce4-session /home/user/.config/cocoonbox /home/user/.local/share/cocoonbox \
 	/home/user/.bash_history /root/.bash_history
 runuser -u user -- env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus dconf reset -f /org/xfce/mousepad/
 find /tmp -mindepth 1 -maxdepth 1 ! -name '.X11-unix' ! -name '.ICE-unix' ! -name '.X*-lock' ! -name 'systemd-private-*' -exec rm -rf {} +
@@ -22,7 +23,7 @@ journalctl --vacuum-time=1s >/dev/null
 find /var/log/journal -mindepth 1 -maxdepth 1 -type d ! -name "$(cat /etc/machine-id)" -exec rm -rf {} +
 
 systemctl restart cocoonbox-xorg.service cocoonbox-session.service
-systemctl --user -M user@ restart cua-driver.service
+systemctl --user -M user@ restart cua-driver.service cocoonbox-offload-inbox.service
 systemctl reset-failed
 abandoned=$(systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}')
 [ -z "$abandoned" ] || { echo "seal: abandoned session scopes: $abandoned" >&2; exit 1; }

@@ -1,0 +1,16 @@
+[Unit]
+Description=cocoonbox offload inbox (the box CLI sessions of offloaded repos)
+ConditionPathExists=/usr/local/bin/cocoonbox-agent
+
+[Service]
+Type=simple
+Environment=LANG=en_US.UTF-8
+ExecStart=/usr/local/bin/cocoonbox-agent offload serve
+Restart=always
+RestartSec=2s
+TimeoutStopSec=5s
+# tmux and the box CLIs it runs outlive a restart of the inbox
+KillMode=process
+
+[Install]
+WantedBy=default.target

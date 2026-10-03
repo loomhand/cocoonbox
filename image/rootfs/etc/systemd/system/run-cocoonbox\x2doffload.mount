@@ -1,0 +1,11 @@
+[Unit]
+Description=cocoonbox offload secrets (tmpfs, never saved)
+
+[Mount]
+What=tmpfs
+Where=/run/cocoonbox-offload
+Type=tmpfs
+Options=mode=0700,uid=1000,gid=1000,size=64M,nosuid,nodev,noexec
+
+[Install]
+WantedBy=local-fs.target

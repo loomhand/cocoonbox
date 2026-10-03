@@ -147,7 +147,8 @@ enable_units() {
 	systemctl daemon-reload
 	udevadm control --reload
 	udevadm trigger --name-match=uinput
-	systemctl enable --now nftables.service cocoonbox-machine-id.path cocoonbox-egress-ca.path cocoonbox-github-git.path
+	systemctl enable --now nftables.service cocoonbox-machine-id.path cocoonbox-egress-ca.path cocoonbox-github-git.path 'run-cocoonbox\x2doffload.mount'
+	systemctl --global enable cocoonbox-offload-inbox.service
 	systemctl enable cocoonbox-github-git.service
 	nft -f /etc/nftables.conf
 	systemctl reload systemd-logind
@@ -156,7 +157,7 @@ enable_units() {
 	systemctl start user@1000.service
 	systemctl restart cocoonbox-xorg.service cocoonbox-session.service
 	systemctl --user -M user@ daemon-reload
-	systemctl --user -M user@ restart cua-driver.service
+	systemctl --user -M user@ restart cua-driver.service cocoonbox-offload-inbox.service
 }
 
 setup_packages
