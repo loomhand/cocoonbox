@@ -52,6 +52,10 @@ message ExecTty {
   // TERM for the command.
   string term = 1;
   ExecWindow window = 2;
+  // The terminfo source of `term` (`infocmp -x` output), at most 256 KiB. A box
+  // without an entry for `term` compiles it into the user's ~/.terminfo;
+  // without one, or when it does not compile, the command gets xterm-256color.
+  string terminfo = 3;
 }
 
 message ExecWindow {
