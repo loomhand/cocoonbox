@@ -884,7 +884,7 @@ final class AppModel {
             Perf.mark("computer_action", "\(action.action) \(action.x),\(action.y)")
             computerActions += 1
             screen.showMarker(action)
-        case nil:
+        case .offload, nil:
             break
         }
     }

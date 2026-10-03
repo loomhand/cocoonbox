@@ -130,7 +130,43 @@ message Event {
     TextDelta text_delta = 13;
     ReasoningDelta reasoning_delta = 14;
     AgentDeleted agent_deleted = 15;
+    OffloadUpdate offload = 16;
   }
+}
+
+// OffloadUpdate says a box CLI session of an offloaded repo posted to its
+// outbox or changed status. It carries no message text; `cocoonbox-agent
+// offload read` returns that.
+message OffloadUpdate {
+  // The repo key.
+  string repo = 1;
+  // The directory name under /workspace.
+  string name = 2;
+  // The box CLI: "claude", "codex" or "cursor".
+  string cli = 3;
+  string offload_id = 4;
+  // Unspecified for a status change.
+  OffloadEntry entry = 5;
+  // The outbox seq of `entry`; 0 for a status change.
+  uint64 seq = 6;
+  OffloadStatus status = 7;
+}
+
+enum OffloadEntry {
+  OFFLOAD_ENTRY_UNSPECIFIED = 0;
+  OFFLOAD_ENTRY_PROGRESS = 1;
+  OFFLOAD_ENTRY_QUESTION = 2;
+  OFFLOAD_ENTRY_BACK = 3;
+  OFFLOAD_ENTRY_BLOCKED = 4;
+}
+
+enum OffloadStatus {
+  OFFLOAD_STATUS_UNSPECIFIED = 0;
+  OFFLOAD_STATUS_WORKING = 1;
+  OFFLOAD_STATUS_IDLE = 2;
+  OFFLOAD_STATUS_WAITING_FOR_USER = 3;
+  OFFLOAD_STATUS_BLOCKED = 4;
+  OFFLOAD_STATUS_STOPPED = 5;
 }
 
 // AgentDeleted says the agent and its transcript are gone.

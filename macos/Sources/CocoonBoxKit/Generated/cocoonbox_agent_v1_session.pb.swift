@@ -63,6 +63,102 @@ public nonisolated enum Cocoonbox_Agent_V1_ExecSignal: SwiftProtobuf.Enum, Swift
 
 }
 
+public nonisolated enum Cocoonbox_Agent_V1_OffloadEntry: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case progress // = 1
+  case question // = 2
+  case back // = 3
+  case blocked // = 4
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .progress
+    case 2: self = .question
+    case 3: self = .back
+    case 4: self = .blocked
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .progress: return 1
+    case .question: return 2
+    case .back: return 3
+    case .blocked: return 4
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Cocoonbox_Agent_V1_OffloadEntry] = [
+    .unspecified,
+    .progress,
+    .question,
+    .back,
+    .blocked,
+  ]
+
+}
+
+public nonisolated enum Cocoonbox_Agent_V1_OffloadStatus: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case working // = 1
+  case idle // = 2
+  case waitingForUser // = 3
+  case blocked // = 4
+  case stopped // = 5
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .working
+    case 2: self = .idle
+    case 3: self = .waitingForUser
+    case 4: self = .blocked
+    case 5: self = .stopped
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .working: return 1
+    case .idle: return 2
+    case .waitingForUser: return 3
+    case .blocked: return 4
+    case .stopped: return 5
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Cocoonbox_Agent_V1_OffloadStatus] = [
+    .unspecified,
+    .working,
+    .idle,
+    .waitingForUser,
+    .blocked,
+    .stopped,
+  ]
+
+}
+
 public nonisolated struct Cocoonbox_Agent_V1_ExecClientFrame: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -435,6 +531,14 @@ public nonisolated struct Cocoonbox_Agent_V1_Event: Sendable {
     set {body = .agentDeleted(newValue)}
   }
 
+  public var offload: Cocoonbox_Agent_V1_OffloadUpdate {
+    get {
+      if case .offload(let v)? = body {return v}
+      return Cocoonbox_Agent_V1_OffloadUpdate()
+    }
+    set {body = .offload(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
@@ -444,8 +548,41 @@ public nonisolated struct Cocoonbox_Agent_V1_Event: Sendable {
     case textDelta(Cocoonbox_Agent_V1_TextDelta)
     case reasoningDelta(Cocoonbox_Agent_V1_ReasoningDelta)
     case agentDeleted(Cocoonbox_Agent_V1_AgentDeleted)
+    case offload(Cocoonbox_Agent_V1_OffloadUpdate)
 
   }
+
+  public init() {}
+}
+
+/// OffloadUpdate says a box CLI session of an offloaded repo posted to its
+/// outbox or changed status. It carries no message text; `cocoonbox-agent
+/// offload read` returns that.
+public nonisolated struct Cocoonbox_Agent_V1_OffloadUpdate: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// The repo key.
+  public var repo: String = String()
+
+  /// The directory name under /workspace.
+  public var name: String = String()
+
+  /// The box CLI: "claude", "codex" or "cursor".
+  public var cli: String = String()
+
+  public var offloadID: String = String()
+
+  /// Unspecified for a status change.
+  public var entry: Cocoonbox_Agent_V1_OffloadEntry = .unspecified
+
+  /// The outbox seq of `entry`; 0 for a status change.
+  public var seq: UInt64 = 0
+
+  public var status: Cocoonbox_Agent_V1_OffloadStatus = .unspecified
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 }
@@ -591,6 +728,14 @@ fileprivate nonisolated let _protobuf_package = "cocoonbox.agent.v1"
 
 nonisolated extension Cocoonbox_Agent_V1_ExecSignal: SwiftProtobuf._ProtoNameProviding {
   public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EXEC_SIGNAL_UNSPECIFIED\0\u{1}EXEC_SIGNAL_INT\0\u{1}EXEC_SIGNAL_TERM\0")
+}
+
+nonisolated extension Cocoonbox_Agent_V1_OffloadEntry: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OFFLOAD_ENTRY_UNSPECIFIED\0\u{1}OFFLOAD_ENTRY_PROGRESS\0\u{1}OFFLOAD_ENTRY_QUESTION\0\u{1}OFFLOAD_ENTRY_BACK\0\u{1}OFFLOAD_ENTRY_BLOCKED\0")
+}
+
+nonisolated extension Cocoonbox_Agent_V1_OffloadStatus: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0OFFLOAD_STATUS_UNSPECIFIED\0\u{1}OFFLOAD_STATUS_WORKING\0\u{1}OFFLOAD_STATUS_IDLE\0\u{1}OFFLOAD_STATUS_WAITING_FOR_USER\0\u{1}OFFLOAD_STATUS_BLOCKED\0\u{1}OFFLOAD_STATUS_STOPPED\0")
 }
 
 nonisolated extension Cocoonbox_Agent_V1_ExecClientFrame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
@@ -1175,7 +1320,7 @@ nonisolated extension Cocoonbox_Agent_V1_EventsRequest: SwiftProtobuf.Message, S
 
 nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Event"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}offset\0\u{2}\u{9}transcript\0\u{1}agent\0\u{3}computer_action\0\u{3}text_delta\0\u{3}reasoning_delta\0\u{3}agent_deleted\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}offset\0\u{2}\u{9}transcript\0\u{1}agent\0\u{3}computer_action\0\u{3}text_delta\0\u{3}reasoning_delta\0\u{3}agent_deleted\0\u{1}offload\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1262,6 +1407,19 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
           self.body = .agentDeleted(v)
         }
       }()
+      case 16: try {
+        var v: Cocoonbox_Agent_V1_OffloadUpdate?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .offload(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .offload(v)
+        }
+      }()
       default: break
       }
     }
@@ -1300,6 +1458,10 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
       guard case .agentDeleted(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
     }()
+    case .offload?: try {
+      guard case .offload(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -1308,6 +1470,66 @@ nonisolated extension Cocoonbox_Agent_V1_Event: SwiftProtobuf.Message, SwiftProt
   public static func ==(lhs: Cocoonbox_Agent_V1_Event, rhs: Cocoonbox_Agent_V1_Event) -> Bool {
     if lhs.offset != rhs.offset {return false}
     if lhs.body != rhs.body {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_OffloadUpdate: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".OffloadUpdate"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}repo\0\u{1}name\0\u{1}cli\0\u{3}offload_id\0\u{1}entry\0\u{1}seq\0\u{1}status\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.repo) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.name) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.cli) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.offloadID) }()
+      case 5: try { try decoder.decodeSingularEnumField(value: &self.entry) }()
+      case 6: try { try decoder.decodeSingularUInt64Field(value: &self.seq) }()
+      case 7: try { try decoder.decodeSingularEnumField(value: &self.status) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.repo.isEmpty {
+      try visitor.visitSingularStringField(value: self.repo, fieldNumber: 1)
+    }
+    if !self.name.isEmpty {
+      try visitor.visitSingularStringField(value: self.name, fieldNumber: 2)
+    }
+    if !self.cli.isEmpty {
+      try visitor.visitSingularStringField(value: self.cli, fieldNumber: 3)
+    }
+    if !self.offloadID.isEmpty {
+      try visitor.visitSingularStringField(value: self.offloadID, fieldNumber: 4)
+    }
+    if self.entry != .unspecified {
+      try visitor.visitSingularEnumField(value: self.entry, fieldNumber: 5)
+    }
+    if self.seq != 0 {
+      try visitor.visitSingularUInt64Field(value: self.seq, fieldNumber: 6)
+    }
+    if self.status != .unspecified {
+      try visitor.visitSingularEnumField(value: self.status, fieldNumber: 7)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_OffloadUpdate, rhs: Cocoonbox_Agent_V1_OffloadUpdate) -> Bool {
+    if lhs.repo != rhs.repo {return false}
+    if lhs.name != rhs.name {return false}
+    if lhs.cli != rhs.cli {return false}
+    if lhs.offloadID != rhs.offloadID {return false}
+    if lhs.entry != rhs.entry {return false}
+    if lhs.seq != rhs.seq {return false}
+    if lhs.status != rhs.status {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
