@@ -19,7 +19,7 @@ import (
 const (
 	manifestDeltaVersion = 2
 	// deltaShare bounds a delta record to 1/deltaShare of its base's chunks; a larger change is saved full.
-	deltaShare  = 8
+	deltaShare  = 4
 	deltaSuffix = ".d"
 )
 
