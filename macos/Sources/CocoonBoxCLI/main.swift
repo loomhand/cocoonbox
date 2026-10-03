@@ -16,7 +16,8 @@ usage: cocoonbox <command> [options]
   upgrade [--yes]                       move the box to the latest desktop image
   mcp [--no-wake]                       serve your boxes to a local agent over stdio MCP
   mcp-headers                           print the Authorization header as JSON (Claude Code headersHelper)
-  rsh [--box NAME|ID] [HOST] COMMAND... run COMMAND in a box with its stdin, stdout and stderr; exits
+  rsh [--box NAME|ID] [-t] [HOST] COMMAND...
+                                        run COMMAND in a box with its stdin, stdout and stderr; exits
                                         with its exit code, or 255 when the box cannot run it
   setup claude|codex|cursor [--print]   install the cocoonbox plugin or MCP entry for that client
   install                               link this binary into ~/.local/bin
@@ -28,10 +29,12 @@ and the default box of mcp (default: the newest running box).
 rsh is the remote shell of rsync and git, which pass a host word first:
   rsync -az -e "cocoonbox rsh" ./ main:/workspace/repo/   (the host names the box)
   rsync -az -e "cocoonbox rsh --box main" ./ box:/workspace/repo/
-  GIT_SSH_COMMAND="cocoonbox rsh" git clone main:/workspace/repo
-Without --box, the first word names the box. With --box, a first word that is `box` or names
-that box is dropped as the host. A user@ prefix and -l USER are ignored: the command runs as the
-box's desktop user, by bash in /workspace. rsh wakes a box that is not running.
+  GIT_SSH_COMMAND="cocoonbox rsh" GIT_SSH_VARIANT=simple git clone main:/workspace/repo
+Without --box, the first word names the box. With --box, which wins, a first word that is `box`
+or names one of your boxes is dropped as the host. A user@ prefix and -l USER are ignored: the
+command runs as the box's desktop user, by a login bash in /workspace. -t runs it on a terminal
+when stdin is one. The first SIGINT or SIGTERM goes to the command; a second ends rsh, which
+kills it. rsh wakes a box that is not running.
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
 COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain;
@@ -261,30 +264,32 @@ func headers() {
 
 // MARK: rsh
 
-let rshUsage = "usage: cocoonbox rsh [--box NAME|ID] [-l USER] [HOST] COMMAND..."
+let rshUsage = "usage: cocoonbox rsh [--box NAME|ID] [-t] [-l USER] [HOST] COMMAND..."
 
-// StdinChunks reads fd 0 on its own thread, one read per chunk the consumer asks for, so at
-// most one chunk waits in memory.
-struct StdinChunks: AsyncSequence, Sendable {
-    typealias Element = Data
+// ExecInput is the frames an rsh call sends after start: stdin chunks read from fd 0 on their
+// own thread, one read per frame the call asks for, so a chunk or two at most wait in memory,
+// then eof; and any signal or terminal size sent in between.
+struct ExecInput: AsyncSequence, Sendable {
+    typealias Element = Cocoonbox_Agent_V1_ExecClientFrame
     typealias Failure = Never
 
     struct AsyncIterator: AsyncIteratorProtocol {
-        var chunks: AsyncStream<Data>.Iterator
+        var frames: AsyncStream<Element>.Iterator
         let wanted: DispatchSemaphore
 
-        mutating func next() async -> Data? {
+        mutating func next() async -> Element? {
             wanted.signal()
-            return await chunks.next()
+            return await frames.next()
         }
     }
 
-    private let chunks: AsyncStream<Data>
+    private let frames: AsyncStream<Element>
+    private let continuation: AsyncStream<Element>.Continuation
     private let wanted = DispatchSemaphore(value: 0)
 
     init() {
-        let (chunks, continuation) = AsyncStream<Data>.makeStream()
-        let wanted = wanted
+        (frames, continuation) = AsyncStream<Element>.makeStream()
+        let (continuation, wanted) = (continuation, wanted)
         Thread.detachNewThread {
             var buffer = [UInt8](repeating: 0, count: 64 << 10)
             while true {
@@ -294,15 +299,47 @@ struct StdinChunks: AsyncSequence, Sendable {
                     n = read(STDIN_FILENO, &buffer, buffer.count)
                 } while n < 0 && retry(STDIN_FILENO, POLLIN)
                 guard n > 0 else { break }
-                continuation.yield(Data(buffer[..<n]))
+                let chunk = Data(buffer[..<n])
+                continuation.yield(.with { $0.stdin = chunk })
             }
-            continuation.finish()
+            continuation.yield(.with { $0.eof = Cocoonbox_Agent_V1_ExecEof() })
         }
-        self.chunks = chunks
+    }
+
+    func send(_ frame: Element) {
+        continuation.yield(frame)
     }
 
     func makeAsyncIterator() -> AsyncIterator {
-        AsyncIterator(chunks: chunks.makeAsyncIterator(), wanted: wanted)
+        AsyncIterator(frames: frames.makeAsyncIterator(), wanted: wanted)
+    }
+}
+
+// Terminal puts the terminal on stdin in raw mode, as ssh -t does, and restores it.
+final class Terminal: Sendable {
+    private let saved: termios
+
+    init?() {
+        var saved = termios()
+        guard isatty(STDIN_FILENO) != 0, tcgetattr(STDIN_FILENO, &saved) == 0 else { return nil }
+        self.saved = saved
+        var raw = saved
+        cfmakeraw(&raw)
+        tcsetattr(STDIN_FILENO, TCSANOW, &raw)
+    }
+
+    func restore() {
+        var saved = saved
+        tcsetattr(STDIN_FILENO, TCSANOW, &saved)
+    }
+
+    static var window: Cocoonbox_Agent_V1_ExecWindow {
+        var size = winsize()
+        _ = withUnsafeMutablePointer(to: &size) { ioctl(STDIN_FILENO, TIOCGWINSZ, $0) }
+        return .with {
+            $0.rows = UInt32(size.ws_row)
+            $0.cols = UInt32(size.ws_col)
+        }
     }
 }
 
@@ -340,6 +377,11 @@ func rsh() async {
     var rest = arguments.dropFirst()
     var options: [String: String] = [:]
     while let option = rest.first, option.hasPrefix("-") {
+        if option == "-t" {
+            options[option] = ""
+            rest = rest.dropFirst()
+            continue
+        }
         guard ["--box", "--endpoint", "-l"].contains(option), rest.count > 1 else { fail("unknown option \(option)\n\(rshUsage)") }
         options[option] = rest[rest.index(after: rest.startIndex)]
         rest = rest.dropFirst(2)
@@ -352,7 +394,6 @@ func rsh() async {
         fail("\(error)")
     }
     var words = Array(rest)
-    let code: Int32?
     do {
         let boxes = try await connection.listBoxes()
         func named(_ word: String) -> Cocoonbox_Control_V1_Box? {
@@ -363,7 +404,7 @@ func rsh() async {
         if let ref = options["--box"] {
             guard let pinned = boxes.first(where: { $0.id == ref || $0.name == ref }) else { fail("you have no box \(ref)") }
             box = pinned
-            if let host = words.first, host.split(separator: "@").last == "box" || named(host)?.id == box.id { words.removeFirst() }
+            if let host = words.first, host.split(separator: "@").last == "box" || named(host) != nil { words.removeFirst() }
         } else {
             guard let host = words.first, let hosted = named(host) else { fail("name the box with --box or as the host\n\(rshUsage)") }
             box = hosted
@@ -376,13 +417,55 @@ func rsh() async {
             if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
         }
         connection.boxID = box.id
-        signal(SIGPIPE, SIG_IGN)
-        code = try await connection.exec(command: words.joined(separator: " "), stdin: StdinChunks()) { data, toStderr in
-            try writeAll(toStderr ? STDERR_FILENO : STDOUT_FILENO, data)
-        }
     } catch {
         fail(BoxConnection.describe(error))
     }
+    var start = Cocoonbox_Agent_V1_ExecStart.with { $0.command = words.joined(separator: " ") }
+    let input = ExecInput()
+    var terminal: Terminal?
+    if options["-t"] != nil {
+        if isatty(STDIN_FILENO) != 0 {
+            start.tty = .with {
+                $0.term = ProcessInfo.processInfo.environment["TERM"] ?? ""
+                $0.window = Terminal.window
+            }
+            terminal = Terminal()
+        } else {
+            FileHandle.standardError.write(Data("cocoonbox: no terminal for the command because stdin is not a terminal\n".utf8))
+        }
+    }
+    let finish: @Sendable (Int32) -> Never = { [terminal] status in
+        terminal?.restore()
+        exit(status)
+    }
+    signal(SIGPIPE, SIG_IGN)
+    let forwarded = Mutex(false)
+    var sources = [(SIGINT, Cocoonbox_Agent_V1_ExecSignal.int), (SIGTERM, .term)].map { number, name in
+        signal(number, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+        source.setEventHandler {
+            if forwarded.withLock({ again in defer { again = true }; return again }) { finish(failureStatus) }
+            input.send(.with { $0.signal = name })
+        }
+        return source
+    }
+    if terminal != nil {
+        signal(SIGWINCH, SIG_IGN)
+        let resize = DispatchSource.makeSignalSource(signal: SIGWINCH, queue: .main)
+        resize.setEventHandler { input.send(.with { $0.resize = Terminal.window }) }
+        sources.append(resize)
+    }
+    sources.forEach { $0.resume() }
+    let code: Int32?
+    do {
+        code = try await connection.exec(start: start, input: input) { data, toStderr in
+            try writeAll(toStderr ? STDERR_FILENO : STDOUT_FILENO, data)
+        }
+    } catch {
+        terminal?.restore()
+        fail(BoxConnection.describe(error))
+    }
+    terminal?.restore()
     guard let code else { fail("the box ended the command without an exit code") }
     exit(code)
 }

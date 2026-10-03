@@ -267,9 +267,11 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
         }
     }
 
-    // exec runs the command with bash on this Mac in workspace, standing in for the box's desktop user.
+    // exec runs the command with bash on this Mac in workspace, standing in for the box's desktop
+    // user; it takes no terminal and ignores sizes.
     func exec(request: RPCAsyncSequence<Cocoonbox_Agent_V1_ExecClientFrame, any Error>, response: RPCWriter<Cocoonbox_Agent_V1_ExecServerFrame>, context: ServerContext) async throws {
         let (commands, command) = AsyncStream<String>.makeStream()
+        let (signals, signal) = AsyncStream<Cocoonbox_Agent_V1_ExecSignal>.makeStream()
         let input = Pipe(), output = Pipe(), errors = Pipe()
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
@@ -282,6 +284,12 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
                         command.finish()
                     case .stdin(let data) where started:
                         try? input.fileHandleForWriting.write(contentsOf: data)
+                    case .eof where started:
+                        try? input.fileHandleForWriting.close()
+                    case .signal(let name) where started:
+                        signal.yield(name)
+                    case .resize where started:
+                        break
                     default:
                         command.finish()
                         throw RPCError(code: .invalidArgument, message: "the first Exec frame must be start")
@@ -306,6 +314,11 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
                 exited.finish()
             }
             try process.run()
+            group.addTask {
+                for await name in signals {
+                    if name == .int { process.interrupt() } else { process.terminate() }
+                }
+            }
             try await withTaskCancellationHandler {
                 try await withThrowingTaskGroup(of: Void.self) { pipes in
                     pipes.addTask { for await data in Self.chunks(output.fileHandleForReading) { try await response.write(.with { $0.stdout = data }) } }

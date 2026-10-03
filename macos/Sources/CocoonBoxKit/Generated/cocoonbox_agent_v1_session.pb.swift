@@ -25,6 +25,44 @@ fileprivate nonisolated struct _GeneratedWithProtocGenSwiftVersion: SwiftProtobu
   typealias Version = _2
 }
 
+public nonisolated enum Cocoonbox_Agent_V1_ExecSignal: SwiftProtobuf.Enum, Swift.CaseIterable {
+  public typealias RawValue = Int
+  case unspecified // = 0
+  case int // = 1
+  case term // = 2
+  case UNRECOGNIZED(Int)
+
+  public init() {
+    self = .unspecified
+  }
+
+  public init?(rawValue: Int) {
+    switch rawValue {
+    case 0: self = .unspecified
+    case 1: self = .int
+    case 2: self = .term
+    default: self = .UNRECOGNIZED(rawValue)
+    }
+  }
+
+  public var rawValue: Int {
+    switch self {
+    case .unspecified: return 0
+    case .int: return 1
+    case .term: return 2
+    case .UNRECOGNIZED(let i): return i
+    }
+  }
+
+  // The compiler won't synthesize support with the UNRECOGNIZED case.
+  public static let allCases: [Cocoonbox_Agent_V1_ExecSignal] = [
+    .unspecified,
+    .int,
+    .term,
+  ]
+
+}
+
 public nonisolated struct Cocoonbox_Agent_V1_ExecClientFrame: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -48,11 +86,42 @@ public nonisolated struct Cocoonbox_Agent_V1_ExecClientFrame: Sendable {
     set {body = .stdin(newValue)}
   }
 
+  public var eof: Cocoonbox_Agent_V1_ExecEof {
+    get {
+      if case .eof(let v)? = body {return v}
+      return Cocoonbox_Agent_V1_ExecEof()
+    }
+    set {body = .eof(newValue)}
+  }
+
+  /// Sent to the command's process group.
+  public var signal: Cocoonbox_Agent_V1_ExecSignal {
+    get {
+      if case .signal(let v)? = body {return v}
+      return .unspecified
+    }
+    set {body = .signal(newValue)}
+  }
+
+  /// The terminal size of a command started with `tty`.
+  public var resize: Cocoonbox_Agent_V1_ExecWindow {
+    get {
+      if case .resize(let v)? = body {return v}
+      return Cocoonbox_Agent_V1_ExecWindow()
+    }
+    set {body = .resize(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
     case start(Cocoonbox_Agent_V1_ExecStart)
     case stdin(Data)
+    case eof(Cocoonbox_Agent_V1_ExecEof)
+    /// Sent to the command's process group.
+    case signal(Cocoonbox_Agent_V1_ExecSignal)
+    /// The terminal size of a command started with `tty`.
+    case resize(Cocoonbox_Agent_V1_ExecWindow)
 
   }
 
@@ -64,8 +133,70 @@ public nonisolated struct Cocoonbox_Agent_V1_ExecStart: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// Run by `bash -c` in /workspace, as rsh and ssh run a remote command.
+  /// Run by a login shell, `bash -lc`, in /workspace, as rsh and ssh run a
+  /// remote command.
   public var command: String = String()
+
+  /// Present: the command runs on a pseudo-terminal, and stdout carries its
+  /// stderr too.
+  public var tty: Cocoonbox_Agent_V1_ExecTty {
+    get {_tty ?? Cocoonbox_Agent_V1_ExecTty()}
+    set {_tty = newValue}
+  }
+  /// Returns true if `tty` has been explicitly set.
+  public var hasTty: Bool {self._tty != nil}
+  /// Clears the value of `tty`. Subsequent reads from it will return its default value.
+  public mutating func clearTty() {self._tty = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _tty: Cocoonbox_Agent_V1_ExecTty? = nil
+}
+
+public nonisolated struct Cocoonbox_Agent_V1_ExecTty: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// TERM for the command.
+  public var term: String = String()
+
+  public var window: Cocoonbox_Agent_V1_ExecWindow {
+    get {_window ?? Cocoonbox_Agent_V1_ExecWindow()}
+    set {_window = newValue}
+  }
+  /// Returns true if `window` has been explicitly set.
+  public var hasWindow: Bool {self._window != nil}
+  /// Clears the value of `window`. Subsequent reads from it will return its default value.
+  public mutating func clearWindow() {self._window = nil}
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+
+  fileprivate var _window: Cocoonbox_Agent_V1_ExecWindow? = nil
+}
+
+public nonisolated struct Cocoonbox_Agent_V1_ExecWindow: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var rows: UInt32 = 0
+
+  public var cols: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Agent_V1_ExecEof: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -453,9 +584,13 @@ public nonisolated struct Cocoonbox_Agent_V1_ScreenServerFrame: Sendable {
 
 fileprivate nonisolated let _protobuf_package = "cocoonbox.agent.v1"
 
+nonisolated extension Cocoonbox_Agent_V1_ExecSignal: SwiftProtobuf._ProtoNameProviding {
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0EXEC_SIGNAL_UNSPECIFIED\0\u{1}EXEC_SIGNAL_INT\0\u{1}EXEC_SIGNAL_TERM\0")
+}
+
 nonisolated extension Cocoonbox_Agent_V1_ExecClientFrame: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecClientFrame"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stdin\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}start\0\u{1}stdin\0\u{1}eof\0\u{1}signal\0\u{1}resize\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -484,6 +619,40 @@ nonisolated extension Cocoonbox_Agent_V1_ExecClientFrame: SwiftProtobuf.Message,
           self.body = .stdin(v)
         }
       }()
+      case 3: try {
+        var v: Cocoonbox_Agent_V1_ExecEof?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .eof(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .eof(v)
+        }
+      }()
+      case 4: try {
+        var v: Cocoonbox_Agent_V1_ExecSignal?
+        try decoder.decodeSingularEnumField(value: &v)
+        if let v = v {
+          if self.body != nil {try decoder.handleConflictingOneOf()}
+          self.body = .signal(v)
+        }
+      }()
+      case 5: try {
+        var v: Cocoonbox_Agent_V1_ExecWindow?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .resize(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .resize(v)
+        }
+      }()
       default: break
       }
     }
@@ -503,6 +672,18 @@ nonisolated extension Cocoonbox_Agent_V1_ExecClientFrame: SwiftProtobuf.Message,
       guard case .stdin(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularBytesField(value: v, fieldNumber: 2)
     }()
+    case .eof?: try {
+      guard case .eof(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 3)
+    }()
+    case .signal?: try {
+      guard case .signal(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularEnumField(value: v, fieldNumber: 4)
+    }()
+    case .resize?: try {
+      guard case .resize(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 5)
+    }()
     case nil: break
     }
     try unknownFields.traverse(visitor: &visitor)
@@ -517,7 +698,7 @@ nonisolated extension Cocoonbox_Agent_V1_ExecClientFrame: SwiftProtobuf.Message,
 
 nonisolated extension Cocoonbox_Agent_V1_ExecStart: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecStart"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}command\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}command\0\u{1}tty\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -526,20 +707,122 @@ nonisolated extension Cocoonbox_Agent_V1_ExecStart: SwiftProtobuf.Message, Swift
       // enabled. https://github.com/apple/swift-protobuf/issues/1034
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.command) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._tty) }()
       default: break
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
     if !self.command.isEmpty {
       try visitor.visitSingularStringField(value: self.command, fieldNumber: 1)
     }
+    try { if let v = self._tty {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_ExecStart, rhs: Cocoonbox_Agent_V1_ExecStart) -> Bool {
     if lhs.command != rhs.command {return false}
+    if lhs._tty != rhs._tty {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_ExecTty: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExecTty"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}term\0\u{1}window\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.term) }()
+      case 2: try { try decoder.decodeSingularMessageField(value: &self._window) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    // The use of inline closures is to circumvent an issue where the compiler
+    // allocates stack space for every if/case branch local when no optimizations
+    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+    // https://github.com/apple/swift-protobuf/issues/1182
+    if !self.term.isEmpty {
+      try visitor.visitSingularStringField(value: self.term, fieldNumber: 1)
+    }
+    try { if let v = self._window {
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
+    } }()
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_ExecTty, rhs: Cocoonbox_Agent_V1_ExecTty) -> Bool {
+    if lhs.term != rhs.term {return false}
+    if lhs._window != rhs._window {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_ExecWindow: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExecWindow"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}rows\0\u{1}cols\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularUInt32Field(value: &self.rows) }()
+      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.cols) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if self.rows != 0 {
+      try visitor.visitSingularUInt32Field(value: self.rows, fieldNumber: 1)
+    }
+    if self.cols != 0 {
+      try visitor.visitSingularUInt32Field(value: self.cols, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_ExecWindow, rhs: Cocoonbox_Agent_V1_ExecWindow) -> Bool {
+    if lhs.rows != rhs.rows {return false}
+    if lhs.cols != rhs.cols {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_ExecEof: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ExecEof"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_ExecEof, rhs: Cocoonbox_Agent_V1_ExecEof) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

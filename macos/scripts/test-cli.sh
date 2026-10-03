@@ -322,6 +322,18 @@ check("without --box the host word names the box", r.returncode == 0 and r.stdou
 for host in ("box", "main", "u@main"):
     r = rsh("--box", "main", host, "echo", "dropped")
     check("with --box the host word " + host + " is dropped", r.returncode == 0 and r.stdout == b"dropped\n", r)
+r = rsh("-t", "--box", "main", "echo", "plain")
+check("-t without a terminal on stdin runs without one, with a notice", r.returncode == 0 and r.stdout == b"plain\n" and b"not a terminal" in r.stderr, r)
+import signal as sig
+for name, signals, want in (("the first SIGINT reaches the command", [sig.SIGINT], 9), ("a second signal ends rsh with 255", [sig.SIGINT, sig.SIGTERM], 255)):
+    p = subprocess.Popen([cli, "rsh", "--box", "main", "trap 'echo got-int; exit 9' INT; trap '' TERM; echo ready; while :; do sleep 0.1; done" if want == 9 else "trap '' INT TERM; echo ready; sleep 30"],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    ready = p.stdout.readline()
+    for s_ in signals:
+        p.send_signal(s_)
+        time.sleep(0.3)
+    out, err = p.communicate(timeout=30)
+    check(name, ready == b"ready\n" and p.returncode == want and (want != 9 or out == b"got-int\n"), (ready, out, err, p.returncode))
 r = rsh("--box", "main", "-l", "u", "uname")
 check("-l USER is ignored", r.returncode == 0 and r.stdout.strip() == os.uname().sysname.encode(), r)
 data = os.urandom(3 << 20)
@@ -348,9 +360,14 @@ repo = os.path.join(work, "repo")
 subprocess.run(["git", "init", "-q", repo], check=True)
 subprocess.run(["git", "-C", repo, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "first"], check=True)
 clone = os.path.join(work, "clone")
-r = subprocess.run(["git", "clone", "-q", "main:" + repo, clone], capture_output=True, timeout=120, env=dict(os.environ, GIT_SSH_COMMAND=cli + " rsh"))
-log = subprocess.run(["git", "-C", clone, "log", "--format=%s"], capture_output=True, text=True).stdout if r.returncode == 0 else ""
-check("git clone with GIT_SSH_COMMAND='cocoonbox rsh'", log.strip() == "first", r.stderr)
+for variant in ("", "simple"):
+    target = clone + variant
+    env = dict(os.environ, GIT_SSH_COMMAND=cli + " rsh")
+    if variant:
+        env["GIT_SSH_VARIANT"] = variant
+    r = subprocess.run(["git", "clone", "-q", "main:" + repo, target], capture_output=True, timeout=120, env=env)
+    log = subprocess.run(["git", "-C", target, "log", "--format=%s"], capture_output=True, text=True).stdout if r.returncode == 0 else ""
+    check("git clone with GIT_SSH_COMMAND='cocoonbox rsh'" + (" and GIT_SSH_VARIANT=" + variant if variant else ""), log.strip() == "first", r.stderr)
 
 # Writes stay inside the HOME the CLI is given: every file command runs under a
 # sandbox that denies writes outside the test directory and the process temp.

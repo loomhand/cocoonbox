@@ -226,9 +226,9 @@ extension Cocoonbox_Agent_V1_Session {
         /// > Source IDL Documentation:
         /// >
         /// > Exec runs a command as the desktop user and carries its stdin, stdout and
-        /// > stderr. The first client frame must be `start`; the client half-closing
-        /// > the stream closes the command's stdin. The last server frame is
-        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > stderr. The first client frame must be `start`. `eof`, or the client
+        /// > half-closing the stream, closes the command's stdin. The last server frame
+        /// > is `exit_code`. Cancelling the stream kills the command's process group.
         /// > Owner only.
         ///
         /// - Parameters:
@@ -346,9 +346,9 @@ extension Cocoonbox_Agent_V1_Session {
         /// > Source IDL Documentation:
         /// >
         /// > Exec runs a command as the desktop user and carries its stdin, stdout and
-        /// > stderr. The first client frame must be `start`; the client half-closing
-        /// > the stream closes the command's stdin. The last server frame is
-        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > stderr. The first client frame must be `start`. `eof`, or the client
+        /// > half-closing the stream, closes the command's stdin. The last server frame
+        /// > is `exit_code`. Cancelling the stream kills the command's process group.
         /// > Owner only.
         ///
         /// - Parameters:
@@ -466,9 +466,9 @@ extension Cocoonbox_Agent_V1_Session {
         /// > Source IDL Documentation:
         /// >
         /// > Exec runs a command as the desktop user and carries its stdin, stdout and
-        /// > stderr. The first client frame must be `start`; the client half-closing
-        /// > the stream closes the command's stdin. The last server frame is
-        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > stderr. The first client frame must be `start`. `eof`, or the client
+        /// > half-closing the stream, closes the command's stdin. The last server frame
+        /// > is `exit_code`. Cancelling the stream kills the command's process group.
         /// > Owner only.
         ///
         /// - Parameters:
@@ -829,9 +829,9 @@ extension Cocoonbox_Agent_V1_Session {
         /// > Source IDL Documentation:
         /// >
         /// > Exec runs a command as the desktop user and carries its stdin, stdout and
-        /// > stderr. The first client frame must be `start`; the client half-closing
-        /// > the stream closes the command's stdin. The last server frame is
-        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > stderr. The first client frame must be `start`. `eof`, or the client
+        /// > half-closing the stream, closes the command's stdin. The last server frame
+        /// > is `exit_code`. Cancelling the stream kills the command's process group.
         /// > Owner only.
         ///
         /// - Parameters:
@@ -1038,9 +1038,9 @@ extension Cocoonbox_Agent_V1_Session {
         /// > Source IDL Documentation:
         /// >
         /// > Exec runs a command as the desktop user and carries its stdin, stdout and
-        /// > stderr. The first client frame must be `start`; the client half-closing
-        /// > the stream closes the command's stdin. The last server frame is
-        /// > `exit_code`. Cancelling the stream kills the command's process group.
+        /// > stderr. The first client frame must be `start`. `eof`, or the client
+        /// > half-closing the stream, closes the command's stdin. The last server frame
+        /// > is `exit_code`. Cancelling the stream kills the command's process group.
         /// > Owner only.
         ///
         /// - Parameters:
@@ -1219,9 +1219,9 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Exec runs a command as the desktop user and carries its stdin, stdout and
-    /// > stderr. The first client frame must be `start`; the client half-closing
-    /// > the stream closes the command's stdin. The last server frame is
-    /// > `exit_code`. Cancelling the stream kills the command's process group.
+    /// > stderr. The first client frame must be `start`. `eof`, or the client
+    /// > half-closing the stream, closes the command's stdin. The last server frame
+    /// > is `exit_code`. Cancelling the stream kills the command's process group.
     /// > Owner only.
     ///
     /// - Parameters:
@@ -1415,9 +1415,9 @@ extension Cocoonbox_Agent_V1_Session.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Exec runs a command as the desktop user and carries its stdin, stdout and
-    /// > stderr. The first client frame must be `start`; the client half-closing
-    /// > the stream closes the command's stdin. The last server frame is
-    /// > `exit_code`. Cancelling the stream kills the command's process group.
+    /// > stderr. The first client frame must be `start`. `eof`, or the client
+    /// > half-closing the stream, closes the command's stdin. The last server frame
+    /// > is `exit_code`. Cancelling the stream kills the command's process group.
     /// > Owner only.
     ///
     /// - Parameters:

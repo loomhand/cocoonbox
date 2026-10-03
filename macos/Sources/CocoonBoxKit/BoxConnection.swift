@@ -210,20 +210,19 @@ public final class BoxConnection: Sendable {
         })
     }
 
-    // exec runs command in the box as its desktop user. Each chunk of stdin goes up as it
-    // comes, and the end of stdin closes the command's stdin; stdout and stderr chunks reach
-    // output, flagged true for stderr. It returns the exit code, or nil when the stream ended
-    // without one.
+    // exec runs a command in the box as its desktop user: start names it, and input carries its
+    // stdin, the end of stdin, signals and terminal sizes. stdout and stderr chunks reach output,
+    // flagged true for stderr. It returns the exit code, or nil when the stream ended without one.
     public func exec(
-        command: String,
-        stdin: some AsyncSequence<Data, Never> & Sendable,
+        start: Cocoonbox_Agent_V1_ExecStart,
+        input: some AsyncSequence<Cocoonbox_Agent_V1_ExecClientFrame, Never> & Sendable,
         output: @escaping @Sendable (Data, Bool) async throws -> Void
     ) async throws -> Int32? {
         try await session.exec(
             requestProducer: { writer in
-                try await writer.write(.with { $0.start = .with { $0.command = command } })
-                for await chunk in stdin {
-                    try await writer.write(.with { $0.stdin = chunk })
+                try await writer.write(.with { $0.start = start })
+                for await frame in input {
+                    try await writer.write(frame)
                 }
             },
             onResponse: { response in
