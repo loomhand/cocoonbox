@@ -1,3 +1,4 @@
+import CocoonBoxKit
 import Foundation
 
 // Plugin is the cocoonbox plugin as a local marketplace (design.md §13.5):
@@ -7,8 +8,8 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.1.0"
-    static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate)."
+    static let version = "0.2.0"
+    static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
     public static func files(command: String) -> [String: String] {
@@ -37,10 +38,13 @@ public enum Plugin {
             ]),
             "\(name)/.mcp.json": mcpConfig(command: command),
             "\(name)/skills/cocoonbox/SKILL.md": skill,
+            "\(name)/skills/cocoonbox-offload/SKILL.md": offloadSkill(command: command),
             "\(name)/commands/status.md": slash("Show the state of my cocoonbox", "Call the cocoonbox tool box_status and tell me the state, the image, whether an upgrade is available and when my files were last saved."),
             "\(name)/commands/wake.md": slash("Wake my cocoonbox", "Call the cocoonbox tool box_ensure and tell me when the box is running."),
             "\(name)/commands/save.md": slash("Save my cocoonbox now", "Call the cocoonbox tool box_save. Tell me it closes the box's browser during the save, and report the result."),
             "\(name)/commands/sleep.md": slash("Hibernate my cocoonbox", "Call the cocoonbox tool box_hibernate and tell me when the box is hibernated."),
+            "\(name)/commands/offload.md": slash("Move this coding task into my cocoonbox, where an agent keeps working on it", "Use the cocoonbox-offload skill: OFFLOAD this task to my box. $ARGUMENTS"),
+            "\(name)/commands/back.md": slash("Bring the task back from my cocoonbox and continue it here", "Use the cocoonbox-offload skill: BACK. $ARGUMENTS"),
         ]
     }
 
@@ -77,6 +81,61 @@ public enum Plugin {
     - If `box_hibernate` or `box_ensure` times out, the operation continues on the box; call `box_status` and wait until the state settles.
 
     """
+
+    // offloadSkill drives the local agent's side of an offload (design.md §27); `command` runs every mechanical step.
+    static func offloadSkill(command: String) -> String {
+        """
+        ---
+        name: cocoonbox-offload
+        description: Hand this coding task to an agent in the user's cocoonbox (their cloud desktop) and take it back. Use when the user says offload, "move this to my box", "keep working while I'm away", "I'm back" or "bring it back", or when a message is exactly OFFLOAD or BACK.
+        ---
+
+        The agent in the box starts fresh. It knows only what your hand-over says, plus the repo.
+        Write the hand-over as if for a capable engineer who has never seen this conversation.
+        `cocoonbox` below is `\(command)`. It does every mechanical step: never copy files or
+        secrets yourself, never print a secret, never edit the files it writes. In a session the
+        CocoonBox app started (COCOONBOX_AGENT is set), add `--no-repo` to every command.
+
+        ## OFFLOAD (on the Mac)
+
+        1. Finish the step you are in, or stop at a safe point. Do not start new work.
+        2. Run `cocoonbox offload handover-path` in the repo and write the hand-over to the path it
+           prints, with the template below. Fill every section; write "none" for an empty one. Be
+           concrete: exact commands, versions you saw, file paths, error messages, decisions with
+           their reasons. Under "Secrets needed" give names only, never values.
+        3. Run `cocoonbox offload --kind <claude|codex|cursor>`, naming the CLI you are unless the
+           user asked for another one in the box. Add `--box NAME` when the user names a box.
+           - Exit 3 is a block: stop and tell the user why, one line per finding. If the box CLI is
+             missing or signed out, tell the user to use "Sign in in the box" in the app.
+           - Exit 4 is warnings: tell the user each one, and run again with `--yes` only when they
+             agree, or said beforehand to go ahead.
+           - For a secret it warns about, ask the user; only they opt one in
+             (`cocoonbox offload secrets add file:.env`). Never opt in on your own.
+        4. When it prints `offloaded`, tell the user the box, that its agent runs with permission
+           prompts bypassed, and that "Bring back" in the app, `/cocoonbox:back` or `cocoonbox back`
+           returns the work. End your turn and make no more changes to this repo.
+        5. On exit 1, report its last line. Nothing changed on this Mac; do not retry by hand.
+
+        While the task is in the box, `cocoonbox offload inbox` shows what the box agent posted
+        (progress, questions), `cocoonbox offload send "<answer>"` answers it, and
+        `cocoonbox offload status` shows whether it is working.
+
+        ## BACK (on the Mac)
+
+        Run `cocoonbox back` in the repo (the app does it for "Bring back"). It waits for the box
+        agent's hand-over, then lands the box's work against the snapshot taken at the offload.
+        Report how the code landed: fast-forward, merged (applied uncommitted), unchanged, or a
+        branch with conflicts, where your work tree is untouched. Then read the hand-over it
+        printed, check its claims against `git log` and `git diff`, run its verify commands, and
+        continue from its next steps.
+
+        ## Hand-over template
+
+        ```markdown
+        \(Handover.template)```
+
+        """
+    }
 
     private static func slash(_ description: String, _ body: String) -> String {
         "---\ndescription: \(description)\n---\n\n\(body)\n"

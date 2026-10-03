@@ -467,6 +467,13 @@ for args in (["plugin", "export", os.path.join(home, "plugins")], ["install"]):
     ran = confined(*args)
     check("confined: " + " ".join(args[:2]), ran.returncode == 0, ran.stderr)
 check("install links inside the given HOME", os.path.islink(os.path.join(home, ".local", "bin", "cocoonbox")))
+if shutil.which("claude"):
+    env = dict(os.environ, HOME=home, CLAUDE_CONFIG_DIR=os.path.join(home, ".claude"))
+    for target in ("plugins", "plugins/cocoonbox"):
+        r = subprocess.run(["claude", "plugin", "validate", "--strict", os.path.join(home, target)], capture_output=True, text=True, timeout=120, env=env)
+        check("claude plugin validate --strict " + target, r.returncode == 0 and "Validation passed" in r.stdout, r.stdout + r.stderr)
+else:
+    print("SKIP claude plugin validate: Claude Code is not installed")
 
 print(f"{len(failures)} failed" if failures else "all passed")
 sys.exit(1 if failures else 0)

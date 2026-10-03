@@ -45,6 +45,15 @@ import Testing
         #expect(files.keys.contains(".claude-plugin/marketplace.json") && files.keys.contains(".agents/plugins/marketplace.json"))
     }
 
+    @Test func theOffloadSkillCarriesTheCommandAndTheTemplate() throws {
+        let files = Plugin.files(command: "/Users/me/.local/bin/cocoonbox")
+        let skill = try #require(files["cocoonbox/skills/cocoonbox-offload/SKILL.md"])
+        #expect(skill.hasPrefix("---\nname: cocoonbox-offload\ndescription: ") && skill.contains("`cocoonbox` below is `/Users/me/.local/bin/cocoonbox`"))
+        let template = try #require(skill.components(separatedBy: "```markdown\n").last?.components(separatedBy: "```").first)
+        #expect(Handover.problems(template).isEmpty)
+        #expect(files["cocoonbox/commands/offload.md"]?.contains("OFFLOAD") == true && files["cocoonbox/commands/back.md"]?.contains("BACK") == true)
+    }
+
     @Test func everyClientRunsTheBridge() throws {
         let data = Data(Plugin.mcpConfig(command: "/Users/me/.local/bin/cocoonbox").utf8)
         let root = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
