@@ -82,6 +82,19 @@ The endpoint comes from `login` (`~/Library/Application Support/CocoonBox/cli.js
 
 The box header shows when the box's user data (home, `/workspace`, agent history) was last saved to storage, with **Save now** (`Boxes.SaveState`; the browser in the box closes during the save). **Upgrade desktop…** is enabled only when `Box.latest_image` differs from `Box.image`; it runs `Boxes.Rebase` after a confirmation that running programs restart while files, logins and agent history are kept. Both show their operation's steps, with a byte progress bar while saving or restoring. MockBox starts on `cocoonbox-desktop-v1` with `v2` available and plays both operations.
 
+## Offload
+
+Offload moves a coding task from the user's own Claude Code or Codex session into a box, where a fresh box CLI continues it, and back (design.md §27, contracts.md "Offload"). The app's own local agents drive boxes over MCP and do not offload.
+
+```bash
+cocoonbox setup claude                  # once: installs or updates the plugin; then /cocoonbox:offload and /cocoonbox:back in any repo
+cocoonbox offload --handover-prompt     # Codex: paste the printed request; it writes the hand-over, then runs cocoonbox offload
+cocoonbox offload --kind codex          # by hand, after writing the hand-over to `cocoonbox offload handover-path`
+cocoonbox back                          # lands the box's work and prints the box agent's hand-over
+```
+
+File > Install Claude Code Plugin… runs `cocoonbox setup claude` and shows its output. The sidebar's **Offloaded** section lists the offloads in flight on every box: repo, box, box CLI, status and time since its last activity. Selecting one shows the box CLI's terminal (tmux over Exec), with Reattach; **Bring back** runs `back` in the app and then shows how the work landed, the command that resumes the session in your terminal, and where the hand-over is. The section's menu installs a box CLI or signs it in, in any box. Autopilot's `offloads`, `select-offload`, `bring-back` and `plugin-setup` steps log the same.
+
 ## Live view
 
 The app opens `Session.Screen` and runs a [swift-rfb](https://github.com/CMGS/swift-rfb) client directly on it: server bytes feed an `RFBPipe`, and the client's bytes go back as `ScreenClientFrame`s. There is no loopback socket. The client decodes into page-aligned memory that `RFBView` shows as a Metal texture without a copy. It draws on the display link only after a change, and asks for the next update once the GPU has read the frame, so an idle screen costs no CPU and no wakeups. It uses ContinuousUpdates when the server offers them. Otherwise it paces incremental requests every 33 ms while updates arrive, so a high-latency path is not held to one update per round trip.
