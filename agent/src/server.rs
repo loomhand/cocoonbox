@@ -35,6 +35,9 @@ const MAX_PAGE: u32 = 1000;
 const EVENT_BUFFER: usize = 256;
 const SCREEN_WIDTH: u32 = 1280;
 const SCREEN_HEIGHT: u32 = 800;
+// h2 frees connection credit only as a stream is read, so each stalled Exec stdin holds one stream window.
+const STREAM_WINDOW: u32 = 1 << 20;
+const CONNECTION_WINDOW: u32 = 64 << 20;
 const CONNECTION_GRACE: Duration = Duration::from_millis(1000);
 const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 
@@ -477,6 +480,8 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         .into_axum_router()
         .merge(Arc::clone(&mcp).router());
     let server = Server::builder()
+        .initial_stream_window_size(STREAM_WINDOW)
+        .initial_connection_window_size(CONNECTION_WINDOW)
         .accept_http1(true)
         .add_routes(Routes::from(routes))
         .serve_with_incoming_shutdown(

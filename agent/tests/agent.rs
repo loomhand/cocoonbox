@@ -1765,6 +1765,46 @@ async fn cancelling_exec_kills_the_command() {
     }
 }
 
+#[tokio::test]
+async fn an_exec_with_a_full_stdin_leaves_the_connection_to_other_calls() {
+    let h = Harness::start(Vec::new(), false).await;
+    let channel = h.channel().await;
+    let mut session = SessionClient::new(channel);
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(exec_start("exec sleep 300")).await.unwrap();
+    let _frames = session.exec(authed(tokio_stream_from(rx))).await.unwrap();
+    let chunk = noise(64 << 10, 5);
+    while tokio::time::timeout(Duration::from_millis(300), tx.send(exec_stdin(&chunk)))
+        .await
+        .is_ok()
+    {}
+    let hello = tokio::time::timeout(
+        Duration::from_secs(3),
+        session.hello(authed(pb::HelloRequest::default())),
+    )
+    .await;
+    assert!(
+        hello.is_ok_and(|r| r.is_ok()),
+        "Hello on the same connection stalled behind the exec"
+    );
+    let (tx2, rx2) = tokio::sync::mpsc::channel(4);
+    tx2.send(exec_start("cat")).await.unwrap();
+    tx2.send(exec_stdin(&chunk)).await.unwrap();
+    drop(tx2);
+    let frames = tokio::time::timeout(
+        Duration::from_secs(3),
+        session.exec(authed(tokio_stream_from(rx2))),
+    )
+    .await
+    .expect("a second exec stalled")
+    .unwrap()
+    .into_inner();
+    let (out, _, code) = tokio::time::timeout(Duration::from_secs(3), exec_output(frames))
+        .await
+        .expect("a second exec's stdin stalled");
+    assert_eq!((out.len(), code), (chunk.len(), Some(0)));
+}
+
 /// A TCP forwarder to `endpoint`; aborting it closes every connection, as a client that dies does.
 async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
     let target = endpoint.trim_start_matches("http://").to_owned();
