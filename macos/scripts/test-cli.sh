@@ -29,7 +29,9 @@ security create-keychain -p test "$CB_KEYCHAIN_FILE"
 security set-keychain-settings "$CB_KEYCHAIN_FILE"
 security unlock-keychain -p test "$CB_KEYCHAIN_FILE"
 
-"$bin/MockBox" --port "$port" --boot-ms 1500 --workspace "$work/workspace" >"$work/mockbox.log" 2>&1 &
+mkdir -p "$work/box" "$work/bin"
+ln -s "$PWD/scripts/offload-box-stub" "$work/bin/cocoonbox-agent"
+HOME="$work/box" PATH="$work/bin:$PATH" "$bin/MockBox" --port "$port" --boot-ms 1500 --workspace "$work/workspace" >"$work/mockbox.log" 2>&1 &
 mock=$!
 cleanup() {
   kill "$mock" 2>/dev/null || true
@@ -385,6 +387,55 @@ for variant in ("", "simple"):
     r = subprocess.run(["git", "clone", "-q", "main:" + repo, target], capture_output=True, timeout=120, env=env)
     log = subprocess.run(["git", "-C", target, "log", "--format=%s"], capture_output=True, text=True).stdout if r.returncode == 0 else ""
     check("git clone with GIT_SSH_COMMAND='cocoonbox rsh'" + (" and GIT_SSH_VARIANT=" + variant if variant else ""), log.strip() == "first", r.stderr)
+
+# offload and back through the CLI; MockBox's HOME is the box's, with the box packer stub on its PATH.
+offrepo = os.path.join(work, "offrepo")
+os.makedirs(offrepo)
+def git_in(*args):
+    return subprocess.run(["git", "-C", offrepo, "-c", "user.name=t", "-c", "user.email=t@t", *args], capture_output=True, text=True, check=True).stdout.strip()
+git_in("init", "-q", "-b", "main")
+open(os.path.join(offrepo, "a.txt"), "w").write("one\n")
+git_in("add", ".")
+git_in("commit", "-qm", "first")
+open(os.path.join(offrepo, "a.txt"), "a").write("uncommitted\n")
+def cb(*args, data=None):
+    return subprocess.run([cli, *args], capture_output=True, text=True, timeout=120, cwd=offrepo, input=data)
+path = cb("offload", "handover-path").stdout.strip()
+check("offload handover-path names the repo key's directory", "/offload/" in path and path.endswith("/handover.md"), path)
+headings = ["Goal and definition of done", "User preferences and constraints", "Current state", "Decisions made", "Files touched",
+            "Next steps", "Commands", "Environment facts", "Gotchas learned", "Open questions"]
+open(path, "w").write("# Hand-over: finish a.txt\n\nFrom: Mac\n\n" + "".join(f"## {h}\nnone\n\n" for h in headings[:-1]))
+r = cb("offload", "--kind", "claude", "--box", "main")
+check("offload refuses a hand-over missing a heading", r.returncode == 1 and "missing \"## Open questions\"" in r.stderr, r)
+open(path, "a").write("## Open questions\nnone\n")
+r = cb("offload", "--kind", "claude", "--box", "main")
+check("offload copies the repo and starts the box session", r.returncode == 0 and "offloaded to main" in r.stdout and "tmux cb-off-" in r.stdout, r)
+copy = next((l.split("copy ")[1].split(",")[0] for l in r.stdout.splitlines() if "copy " in l), "")
+check("the box copy holds the uncommitted change", copy and open(os.path.join(copy, "a.txt")).read() == "one\nuncommitted\n", copy)
+r = cb("offload", "status", "--json")
+check("offload status shows the session working", r.returncode == 0 and json.loads(r.stdout)["sessions"][0]["status"] == "working", r)
+r = cb("offload", "send", "also", "fix", "b")
+check("offload send reaches the box agent", r.returncode == 0 and "sent to the box agent: pasted" in r.stdout, r)
+r = cb("offload", "inbox")
+check("offload inbox with nothing posted", r.returncode == 0 and "nothing new from the box agent (working)" in r.stdout, r)
+r = cb("offload", "--kind", "claude", "--box", "main", "--json")
+check("a second offload is refused with exit 3 and the box's reason", r.returncode == 3 and "bring the last offload back first" in r.stdout, r)
+r = run("hibernate")
+check("hibernate refuses while the box agent works", r.returncode == 1 and "a box agent is working on offrepo (claude)" in r.stderr, r.stderr)
+r = run("upgrade")
+check("upgrade names the working box agent", r.returncode == 1 and "restarts it from its last hand-over" in r.stderr, r.stderr)
+open(os.path.join(work, "box", "stub-auto-back"), "w").close()
+r = cb("back")
+check("back fetches, lands and prints the box agent's hand-over", r.returncode == 0 and r.stdout.startswith("unchanged") and "# Hand-over: finish a.txt" in r.stdout, r)
+check("back leaves the uncommitted change", open(os.path.join(offrepo, "a.txt")).read() == "one\nuncommitted\n")
+r = cb("offload", "status", "--json")
+check("after back the session is stopped", json.loads(r.stdout)["sessions"][0]["status"] == "stopped", r)
+r = cb("back")
+check("back with nothing in the box fails", r.returncode == 1 and "nothing of this repo is in a box" in r.stderr, r)
+r = cb("offload", "secrets", "add", "file:.env")
+check("offload secrets add records the entry", r.returncode == 0 and r.stdout.strip() == "file:.env", r)
+r = cb("offload", "secrets", "remove", "file:.env")
+check("offload secrets remove", r.stdout.strip() == "no secrets opted in", r)
 
 # Writes stay inside the HOME the CLI is given: every file command runs under a
 # sandbox that denies writes outside the test directory and the process temp.

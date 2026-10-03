@@ -12,13 +12,28 @@ usage: cocoonbox <command> [options]
   login [--endpoint URL] [--from-app]   store your token in the Keychain (read from stdin or a prompt)
   logout                                delete the stored token
   status [--json]                       show the box
-  ensure | hibernate | save             wake, hibernate or save the box, with progress
+  ensure | save                         wake or save the box, with progress
+  hibernate [--yes]                     hibernate the box, with progress
   upgrade [--yes]                       move the box to the latest desktop image
   mcp [--no-wake]                       serve your boxes to a local agent over stdio MCP
   mcp-headers                           print the Authorization header as JSON (Claude Code headersHelper)
   rsh [--box NAME|ID] [-t] [HOST] COMMAND...
                                         run COMMAND in a box with its stdin, stdout and stderr; exits
                                         with its exit code, or 255 when the box cannot run it
+  offload [--box NAME|ID] [--kind claude|codex|cursor] [--dir PATH] [--handover FILE] [--yes] [--json]
+                                        move this repo's task into a box: preflight, copy, and a fresh box CLI
+                                        session that starts from the hand-over
+  offload --no-repo [--agent ID] ...    the same for an app local agent's session, which has no repo
+  offload handover-path [--no-repo]     print where to write the hand-over
+  offload inbox [--wait SECONDS] [--all] [--json]
+                                        print what the box agent posted since the last look
+  offload status [--all] [--json]       show the box CLI session of this repo, or of every repo
+  offload send [--interrupt] [TEXT...]  give the box agent a message (TEXT, else stdin)
+  offload secrets [add|remove ENTRY]    list or change this repo's opted-in secrets: file:PATH, aws, kube,
+                                        gcloud, ssh:KEY
+  back [--interrupt] [--no-repo] [--json]
+                                        bring the task back: the box agent's hand-over, its commits and
+                                        changes, merged against the offload's snapshot
   setup claude|codex|cursor [--print]   install the cocoonbox plugin or MCP entry for that client
   install                               link this binary into ~/.local/bin
   plugin export DIR                     write the plugin marketplace to DIR
@@ -36,6 +51,10 @@ command runs as the box's desktop user, by a login bash in /workspace. -t runs i
 when stdin is one, with this terminal's terminfo for a box that lacks it. The first SIGINT or
 SIGTERM goes to the command; a second ends rsh, which kills it. rsh wakes a box that is not
 running.
+
+offload and back exit 0 when done, 1 on a failure (nothing changed on this Mac), 3 when the preflight
+blocks, and 4 when it warns and --yes was not given: ask the user, then run again with --yes.
+hibernate and upgrade ask for --yes while a box agent works on an offloaded task.
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
 COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain;
@@ -168,6 +187,9 @@ func lifecycle(_ command: String) async {
             printBox(try await connection.listBoxes().first { $0.id == response.box.id }, json: flags.contains("--json"))
         case "hibernate", "save":
             guard let box = try await selectedBox(connection) else { fail("no box yet") }
+            if command == "hibernate", !flags.contains("--yes"), let busy = await working(connection, box) {
+                fail("\(busy); hibernating pauses it until the box wakes. Run again with --yes.")
+            }
             let operation = command == "save" ? try await connection.saveState(boxID: box.id) : try await connection.hibernate(boxID: box.id)
             await follow(connection, operation.id)
             printBox(try await selectedBox(connection), json: flags.contains("--json"))
@@ -175,7 +197,8 @@ func lifecycle(_ command: String) async {
             guard let box = try await selectedBox(connection) else { fail("no box yet") }
             guard !box.latestImage.isEmpty, box.latestImage != box.image else { return print("already on the latest desktop (\(box.image))") }
             guard flags.contains("--yes") else {
-                fail("upgrading to \(box.latestImage) restarts running programs; files, logins and agent history are kept. Run again with --yes.")
+                let busy = await working(connection, box).map { " \($0); the upgrade restarts it from its last hand-over." } ?? ""
+                fail("upgrading to \(box.latestImage) restarts running programs; files, logins and agent history are kept.\(busy) Run again with --yes.")
             }
             let operation = try await connection.rebase(boxID: box.id, image: box.latestImage)
             await follow(connection, operation.id)
@@ -496,6 +519,212 @@ func rsh() async {
     exit(code)
 }
 
+// MARK: offload
+
+let offloadStore = OffloadStore(support: support)
+
+// working names the box CLI sessions at work in a running box, for the warning before a hibernate or an upgrade.
+func working(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) async -> String? {
+    guard box.state == .running else { return nil }
+    let sessions = await offloader(connection, box).working()
+    guard !sessions.isEmpty else { return nil }
+    return "a box agent is working on " + sessions.map { "\($0.name) (\($0.cli))" }.joined(separator: ", ")
+}
+
+func offloader(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) -> Offloader {
+    Offloader(connection: connection, box: box, token: token(connection.endpoint), cli: executable, store: offloadStore,
+              environment: ProcessInfo.processInfo.environment) { FileHandle.standardError.write(Data("\($0)\n".utf8)) }
+}
+
+// runningBox is the box ref names, else the first box, woken when it does not run.
+func runningBox(_ connection: BoxConnection, _ ref: String?) async throws -> Cocoonbox_Control_V1_Box {
+    let boxes = try await connection.listBoxes()
+    guard let box = ref.map({ ref in boxes.first { $0.id == ref || $0.name == ref } }) ?? boxes.first else { fail(ref.map { "you have no box \($0)" } ?? "no box yet") }
+    guard box.state != .running else { return box }
+    FileHandle.standardError.write(Data("cocoonbox: waking \(box.name)\n".utf8))
+    let response = try await connection.ensure(boxID: box.id)
+    if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
+    return try await connection.listBoxes().first { $0.id == box.id } ?? box
+}
+
+// offloadKey is the repo key of --dir or the working directory, or with --no-repo the app local agent's key.
+func offloadKey() -> String {
+    if flags.contains("--no-repo") {
+        guard let agent = value(of: "--agent") ?? ProcessInfo.processInfo.environment["COCOONBOX_AGENT"] else {
+            fail("--no-repo needs --agent ID, or COCOONBOX_AGENT, which the app sets for its local agents")
+        }
+        return OffloadNames.agentKey(agent)
+    }
+    let dir = URL(fileURLWithPath: value(of: "--dir") ?? FileManager.default.currentDirectoryPath)
+    guard let repo = GitRepo.open(dir, environment: ProcessInfo.processInfo.environment) else { fail("\(dir.path) is not in a git repository") }
+    return repo.key
+}
+
+func printJSON(_ object: [String: Any]) {
+    let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+    print(String(decoding: data, as: UTF8.self))
+}
+
+func findingObjects(_ findings: [Finding]) -> [[String: String]] {
+    findings.map { ["check": $0.check, "outcome": $0.outcome.rawValue, "detail": $0.detail] }
+}
+
+func printFindings(_ findings: [Finding]) {
+    for finding in findings {
+        print("\(finding.outcome.rawValue.padding(toLength: 8, withPad: " ", startingAt: 0))\(finding.check): \(finding.detail)")
+    }
+}
+
+func offload() async {
+    let sub = arguments.dropFirst().first.flatMap { ["handover-path", "inbox", "status", "send", "secrets"].contains($0) ? $0 : nil }
+    if sub == "handover-path" {
+        do {
+            return print(try offloadStore.handover(offloadKey()).path)
+        } catch {
+            fail("\(error)")
+        }
+    }
+    if sub == "secrets" { return secrets() }
+    let connection = connection()
+    defer { connection.close() }
+    let json = flags.contains("--json")
+    do {
+        switch sub {
+        case "inbox", "status", "send":
+            let all = flags.contains("--all")
+            let key = all && sub == "status" ? nil : offloadKey()
+            let record = key.flatMap(offloadStore.record)
+            let packer = offloader(connection, try await runningBox(connection, value(of: "--box") ?? record?.box))
+            if sub == "status" {
+                let sessions = try await packer.status(key)
+                if json { return printJSON(["sessions": sessions.map { ["repo": $0.repo, "name": $0.name, "cli": $0.cli, "offload_id": $0.offloadID, "status": $0.status] }]) }
+                if sessions.isEmpty { return print("no box CLI session") }
+                return sessions.forEach { print("\($0.name) \($0.cli) \($0.status) offload \($0.offloadID) (repo \($0.repo))") }
+            }
+            guard let key else { fail("name the repo") }
+            if sub == "send" {
+                let rest = Array(arguments.drop { $0 != "send" }.dropFirst().filter { !$0.hasPrefix("--") })
+                let text = rest.isEmpty ? String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self) : rest.joined(separator: " ")
+                guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { fail("no message") }
+                let delivery = try await packer.send(key, message: text, interrupt: flags.contains("--interrupt"))
+                return json ? printJSON(["delivery": delivery]) : print("sent to the box agent: \(delivery)")
+            }
+            let since = all ? 0 : record?.seen ?? 0
+            let (entries, status) = try await packer.read(key, since: since, wait: value(of: "--wait").flatMap { Int($0) })
+            if var record, let last = entries.last, last.seq > record.seen {
+                record.seen = last.seq
+                try? offloadStore.save(record)
+            }
+            if json {
+                return printJSON(["status": status, "entries": entries.map { ["seq": $0.seq, "kind": $0.kind, "offload_id": $0.offloadID, "cli": $0.cli, "time_ms": $0.timeMs, "body": $0.body] }])
+            }
+            if entries.isEmpty { print("nothing new from the box agent (\(status.isEmpty ? "no session" : status))") }
+            for entry in entries {
+                let time = Date(timeIntervalSince1970: Double(entry.timeMs) / 1000).formatted(date: .omitted, time: .shortened)
+                print("#\(entry.seq) \(entry.kind) at \(time)\n\(entry.body)\n")
+            }
+        default:
+            if let named = value(of: "--kind"), OffloadKind(rawValue: named) == nil { fail("--kind is claude, codex or cursor") }
+            guard let kind = value(of: "--kind").flatMap(OffloadKind.init) ?? OffloadKind.current(ProcessInfo.processInfo.environment) else {
+                fail("name the box CLI with --kind claude, codex or cursor")
+            }
+            let noRepo = flags.contains("--no-repo")
+            let key = offloadKey()
+            let file = try value(of: "--handover").map { URL(fileURLWithPath: $0) } ?? offloadStore.handover(key)
+            guard let handover = try? String(contentsOf: file, encoding: .utf8) else { fail("no hand-over at \(file.path); write it there first (cocoonbox offload handover-path)") }
+            let box = try await runningBox(connection, value(of: "--box"))
+            let request = OffloadRequest(
+                directory: noRepo ? nil : URL(fileURLWithPath: value(of: "--dir") ?? FileManager.default.currentDirectoryPath),
+                agent: noRepo ? value(of: "--agent") ?? ProcessInfo.processInfo.environment["COCOONBOX_AGENT"] : nil,
+                kind: kind, handover: handover, yes: flags.contains("--yes")
+            )
+            let outcome = try await offloader(connection, box).offload(request)
+            let record = outcome.record
+            if json {
+                return printJSON(["ok": true, "box": box.name, "box_id": box.id, "dir": record.dir, "tmux": record.tmux, "offload_id": record.id, "repo": record.repo,
+                                  "accepted": outcome.accepted, "sent_bytes": outcome.sent, "findings": findingObjects(outcome.findings),
+                                  "timings_ms": Dictionary(uniqueKeysWithValues: outcome.timings.map { ($0.0, Int($0.1 * 1000)) })])
+            }
+            printFindings(outcome.findings)
+            print("offloaded to \(box.name): \(outcome.cli)")
+            print("  copy \(record.dir), tmux \(record.tmux), offload \(record.id)")
+            print("  sent \(outcome.sent.formatted(.byteCount(style: .file))); " + outcome.timings.map { "\($0.0) \(String(format: "%.1f", $0.1)) s" }.joined(separator: ", "))
+            if !outcome.accepted { print("  the box CLI has not taken the hand-over yet; watch it with `cocoonbox offload status`") }
+            print("Bring it back with \"Bring back\" in the app, /cocoonbox:back, or `cocoonbox back`.")
+        }
+    } catch let error as OffloadError {
+        offloadFailed(error, json: json)
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+func offloadFailed(_ error: OffloadError, json: Bool) -> Never {
+    let code: Int32 = switch error {
+    case .refused: 3
+    case .needsYes: 4
+    default: 1
+    }
+    if json {
+        printJSON(["ok": false, "code": code == 3 ? "refused" : code == 4 ? "confirm" : "failed", "error": error.description, "findings": findingObjects(error.findings)])
+    } else {
+        printFindings(error.findings)
+        if error.findings.contains(where: { $0.outcome == .block && $0.check.contains("cli") }) {
+            print("Install or sign in the box CLI with \"Sign in in the box\" in the app, or: cocoonbox rsh --box BOX -t '<the CLI's login>'")
+        }
+        FileHandle.standardError.write(Data("cocoonbox: \(error)\(code == 1 ? "; nothing changed on this Mac" : "")\n".utf8))
+    }
+    exit(code)
+}
+
+func back() async {
+    let connection = connection()
+    defer { connection.close() }
+    let json = flags.contains("--json")
+    let key = offloadKey()
+    guard let record = offloadStore.record(key) else { fail("nothing of this repo is in a box") }
+    do {
+        let packer = offloader(connection, try await runningBox(connection, record.box))
+        let outcome = try await packer.back(key, interrupt: flags.contains("--interrupt")) { entry in
+            FileHandle.standardError.write(Data("box agent \(entry.kind) #\(entry.seq)\(entry.kind == "question" ? ":\n" + entry.body : "")\n".utf8))
+        }
+        let landing: String = switch outcome.landing {
+        case nil: "no repo"
+        case .unchanged?: "unchanged: the box made no change"
+        case .fastForward?: "fast-forward: this repo now holds the box's commits and changes"
+        case .merged(let files)?: "merged: the box's changes are applied uncommitted (\(files.joined(separator: ", ")))"
+        case .branch(let name, let conflicts)?: "conflict: the box's work is on the branch \(name); your work tree is untouched" + (conflicts.isEmpty ? "" : " (conflicts: \(conflicts.joined(separator: ", ")))")
+        }
+        if json { return printJSON(["ok": true, "landing": landing, "handover": outcome.handover, "file": outcome.file.path, "offload_id": record.id]) }
+        print(landing)
+        print("The box agent's hand-over (also in \(outcome.file.path)):\n")
+        print(outcome.handover)
+    } catch let error as OffloadError {
+        offloadFailed(error, json: json)
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+// secrets lists or changes the repo's opted-in secrets; only names and paths are stored.
+func secrets() {
+    let key = offloadKey()
+    var entries = offloadStore.secrets(key)
+    let rest = Array(arguments.drop { $0 != "secrets" }.dropFirst().filter { !$0.hasPrefix("--") })
+    if let action = rest.first {
+        guard ["add", "remove"].contains(action), rest.count == 2 else { fail("usage: cocoonbox offload secrets [add|remove ENTRY]") }
+        let entry = rest[1]
+        guard entry.hasPrefix("file:") || entry.hasPrefix("ssh:") || ["aws", "kube", "gcloud"].contains(entry) else { fail("an entry is file:PATH, aws, kube, gcloud or ssh:KEY") }
+        entries = action == "add" ? entries.filter { $0 != entry } + [entry] : entries.filter { $0 != entry }
+        do {
+            try offloadStore.setSecrets(entries, for: key)
+        } catch {
+            fail("\(error)")
+        }
+    }
+    print(entries.isEmpty ? "no secrets opted in" : entries.joined(separator: "\n"))
+}
+
 // MARK: setup
 
 let executable: String = {
@@ -588,6 +817,10 @@ case "mcp-headers":
     headers()
 case "rsh":
     await rsh()
+case "offload":
+    await offload()
+case "back":
+    await back()
 case "setup":
     setup()
 case "install":
