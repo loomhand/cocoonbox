@@ -256,9 +256,9 @@ import Testing
 }
 
 @Suite struct PreflightTests {
-    @Test func imagesOlderThanV21Block() {
-        #expect(Preflight.image("cbdesk:v20")?.outcome == .block)
-        #expect(Preflight.image("cbdesk:v21") == nil && Preflight.image("cbdesk:v104") == nil && Preflight.image("custom") == nil)
+    @Test func imagesOlderThanV22Block() {
+        #expect(Preflight.image("cbdesk:v21")?.outcome == .block)
+        #expect(Preflight.image("cbdesk:v22") == nil && Preflight.image("cbdesk:v104") == nil && Preflight.image("custom") == nil)
     }
 
     @Test func macOSOnlyWork() throws {

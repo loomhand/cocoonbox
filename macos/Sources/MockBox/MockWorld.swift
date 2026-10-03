@@ -57,8 +57,8 @@ actor MockWorld {
         box.id = "cb-mock00000000"
         box.name = "main"
         box.state = .hibernated
-        box.image = "cbdesk:v21"
-        box.latestImage = "cbdesk:v22"
+        box.image = "cbdesk:v22"
+        box.latestImage = "cbdesk:v23"
         box.lastSavedAtMs = Self.now() - 12 * 60_000
         box.flavor.vcpus = 4
         box.flavor.memoryMib = 8192

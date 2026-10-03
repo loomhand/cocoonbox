@@ -23,14 +23,14 @@ public struct Finding: Codable, Equatable, Sendable {
 
 // Preflight is the Mac half of the offload preflight (contracts.md "Offload", Preflight).
 enum Preflight {
-    static let minimumImage = 21
+    static let minimumImage = 22
     static let sizeLimit: Int64 = 500_000_000
     static let macTools: Set = ["xcodebuild", "xcrun", "security", "launchctl", "open"]
     static let applePlatforms: Set = ["macOS", "iOS", "tvOS", "watchOS", "visionOS", "macCatalyst", "driverKit"]
     static let commonNames: Set = ["HOME", "PATH", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR", "PWD", "LANG", "LC_ALL", "CI", "DEBUG", "EDITOR", "TZ",
                                    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"]
 
-    // image blocks a box on an image older than cbdesk:v21; an image name of another form passes to begin's own checks.
+    // image blocks a box on an image older than cbdesk:v22; an image name of another form passes to begin's own checks.
     static func image(_ image: String) -> Finding? {
         guard let tag = image.split(separator: ":").last, tag.hasPrefix("v"), let version = Int(tag.dropFirst().prefix { $0.isNumber }),
               version < minimumImage
