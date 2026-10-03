@@ -64,7 +64,7 @@ final class AppModel {
     var busy = false
     var answeredApprovals: Set<String> = []
     var localAgents: [LocalAgentSession] = []
-    // localCalls is each local agent's last call per box, under the box id or name its bridge reported.
+    // localCalls is each local agent's last box-tool call per box id.
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
     // shareSecret is the secret of the last Create or Regenerate, kept only in memory and only for that share.
@@ -180,7 +180,7 @@ final class AppModel {
     // recentBoxes is the boxes session called in the last recentCall seconds.
     func recentBoxes(of session: LocalAgentSession, now: Date = Date()) -> [Box] {
         let calls = localCalls[session.id] ?? [:]
-        return boxes.filter { box in [box.id, box.name].contains { calls[$0].map { now.timeIntervalSince($0) < Self.recentCall } ?? false } }
+        return boxes.filter { box in calls[box.id].map { now.timeIntervalSince($0) < Self.recentCall } ?? false }
     }
 
     // setDefaultBox moves session's calls that name no box to box, from its next call on.
@@ -191,11 +191,11 @@ final class AppModel {
         Perf.mark("local_agent", "default \(session.kind.rawValue) \(box.name)")
     }
 
-    // noteCall records a local agent's call; a box the list lacks, as after box_create, refreshes the list.
-    private func noteCall(agent: String, box ref: String, at: Date) {
+    // noteCall records a local agent's box-tool call; a box the list lacks, as after box_create, refreshes the list.
+    private func noteCall(agent: String, box: String, at: Date) {
         guard let session = localAgents.first(where: { $0.id.uuidString == agent }) else { return }
-        localCalls[session.id, default: [:]][ref] = at
-        if !boxes.contains(where: { $0.id == ref || $0.name == ref }) { Task { await refreshBoxes() } }
+        localCalls[session.id, default: [:]][box] = at
+        if !boxes.contains(where: { $0.id == box }) { Task { await refreshBoxes() } }
     }
 
     // launchLocal starts an agent CLI on this Mac whose MCP server is the bridge, with the selected box as its default.

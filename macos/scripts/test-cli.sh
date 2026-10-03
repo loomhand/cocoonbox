@@ -4,7 +4,7 @@
 # hibernated, the wake on the first box-tool call with progress, the control
 # tools and their refusals, --no-wake, the headers helper, several boxes:
 # routing by `box`, the default box, the running limit, --box and box_delete,
-# and the app's socket: reported calls and a default box the app sets. Nothing touches
+# and the app's socket: reported box-tool calls and a default box the app sets. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -186,7 +186,7 @@ result, _ = d.tool("shell", {"command": "uname -n"})
 check("without box and --box, the default is the newest running box", "on test" in text(result), result)
 d.close()
 
-# The app's socket: the bridge names its agent, reports each routed call and
+# The app's socket: the bridge names its agent, reports each box-tool call and
 # takes the default box the app sends, first in answer to its hello, then on a change.
 import os, socket, threading
 class FakeApp:
@@ -249,12 +249,16 @@ check("each routed box call is reported with agent, box id and time",
 app.push("cb-mock00000000")
 result, _ = l.tool("box_status")
 check("a default box pushed by the app reaches control tools with no restart", result["structuredContent"]["box_id"] == "cb-mock00000000", result)
+l.tool("box_list")
+l.tool("box_status", {"box": "test"})
+time.sleep(0.3)
+check("control tools are not reported, with or without box", len(app.calls) == 2, app.calls)
 result, _ = l.tool("shell", {"command": "uname -n"})
 check("and box tools: shell goes to hibernated main, refused by the running limit", result.get("isError") and "box test (" + test_id + ") is running" in text(result), result)
 app.push(test_id)
 result, _ = l.tool("shell", {"command": "uname -n"})
 check("a second change also applies at the next call", "on test" in text(result), result)
-check("reports follow the default", wait_for(lambda: len(app.calls) == 5) and [c["box"] for c in app.calls[2:]] == ["cb-mock00000000", "cb-mock00000000", test_id], app.calls)
+check("box-tool reports follow the default", wait_for(lambda: len(app.calls) == 4) and [c["box"] for c in app.calls[2:]] == ["cb-mock00000000", test_id], app.calls)
 app.close()
 os.unlink(app_sock)
 time.sleep(0.3)

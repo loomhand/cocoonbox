@@ -4,7 +4,7 @@ import Synchronization
 
 // AgentLinkServer is the app's end of the local socket between the app and
 // the bridges of the local agents it starts (design.md §19.6). A bridge names
-// its agent, {"agent"}, then reports each routed call, {"agent","box","at"};
+// its agent, {"agent"}, then reports each box-tool call, {"agent","box","at"};
 // the app answers the first line with the agent's default box, {"box"}, and
 // sends it again on every change. Neither end blocks on the other: a line that
 // does not fit the socket buffer is dropped.

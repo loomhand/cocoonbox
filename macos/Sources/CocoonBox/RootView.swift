@@ -298,8 +298,8 @@ struct ShareSessionRow: View {
     }
 }
 
-// LocalAgentRow is a local agent with its default box, which the context menu
-// changes, and a badge for each box it called in the last minute.
+// LocalAgentRow is a local agent with the boxes it acted on in the last
+// minute; its context menu changes the default box.
 struct LocalAgentRow: View {
     @Environment(AppModel.self) private var model
     let session: LocalAgentSession
@@ -310,36 +310,47 @@ struct LocalAgentRow: View {
                 .foregroundStyle(session.closed ? Color.secondary : Color.teal)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.record.displayName).lineLimit(1)
-                Text("\(session.kind.title) · \(session.closed ? "exited" : "default \(model.defaultBox(of: session)?.name ?? "–")")")
+                Text(Self.subtitle(session))
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 TimelineView(.periodic(from: .now, by: 5)) { context in
-                    let recent = model.recentBoxes(of: session, now: context.date)
-                    if !recent.isEmpty {
-                        HStack(spacing: 4) {
-                            ForEach(recent, id: \.id) { box in
-                                Text(box.name)
-                                    .font(.caption2.bold())
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 1)
-                                    .background(.teal.opacity(0.2), in: Capsule())
-                                    .foregroundStyle(.teal)
-                                    .lineLimit(1)
-                            }
-                        }
-                        .help("Boxes this agent called in the last minute")
+                    if let activity = Self.activity(model.recentBoxes(of: session, now: context.date)) {
+                        Text(activity)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .help("Boxes this agent acted on in the last minute")
                     }
                 }
             }
         }
         .contextMenu {
-            Picker("Default Box", selection: Binding(get: { session.record.boxID }, set: { id in
-                if let box = model.boxes.first(where: { $0.id == id }) { model.setDefaultBox(session, to: box) }
-            })) {
-                ForEach(model.boxes, id: \.id) { box in
-                    Text(box.name).tag(box.id)
-                }
+            DefaultBoxPicker(title: "Default Box", session: session)
+        }
+    }
+
+    static func subtitle(_ session: LocalAgentSession) -> String {
+        session.closed ? "\(session.kind.title) · exited" : session.kind.title
+    }
+
+    static func activity(_ boxes: [Box]) -> String? {
+        boxes.isEmpty ? nil : "↗ " + boxes.map(\.name).joined(separator: " · ")
+    }
+}
+
+// DefaultBoxPicker sets the box of a local agent's calls that name none, from its next call on.
+struct DefaultBoxPicker: View {
+    @Environment(AppModel.self) private var model
+    let title: String
+    let session: LocalAgentSession
+
+    var body: some View {
+        Picker(title, selection: Binding(get: { session.record.boxID }, set: { id in
+            if let box = model.boxes.first(where: { $0.id == id }) { model.setDefaultBox(session, to: box) }
+        })) {
+            ForEach(model.boxes, id: \.id) { box in
+                Text(box.name).tag(box.id)
             }
         }
     }

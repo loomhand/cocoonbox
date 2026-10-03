@@ -10,7 +10,7 @@ import Foundation
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
 // select:<agent name>, select-local:<kind>, sidebar:<label> (logs the selected box and agent, the External
-// rows and every local agent with its default and recent boxes), local-box:<box name> (the selected local agent's default),
+// rows and every local agent with its default box, row subtitle, activity label and pane hint), local-box:<box name> (the selected local agent's default),
 // connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // wait-local:<count>[:seconds] (that many local agents open, as after a reopen),
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
@@ -106,7 +106,7 @@ enum Autopilot {
             model.selectedAgentID = model.localAgents.first { $0.kind.rawValue == arg }.map(AppModel.selectionID)
         case "sidebar":
             let external = model.externalAgents().map { "\($0.id)/\($0.shareSession.map(model.guest(of:)) ?? "-")/\($0.externalClient ?? "-")/\($0.status)" }
-            let local = model.localAgents.map { "\($0.kind.rawValue)/default=\(model.defaultBox(of: $0)?.name ?? "-")/recent=\(model.recentBoxes(of: $0).map(\.name).joined(separator: "+"))" }
+            let local = model.localAgents.map { "\($0.kind.rawValue)/default=\(model.defaultBox(of: $0)?.name ?? "-")/subtitle=\(LocalAgentRow.subtitle($0))/activity=\(LocalAgentRow.activity(model.recentBoxes(of: $0)) ?? "-")/hint=\(LocalAgentPane.hint(screen: model.box, default: model.defaultBox(of: $0)) ?? "-")" }
             Perf.mark("sidebar", "label=\(arg) box=\(model.box?.name ?? "-") selected=\(model.selectedAgentID ?? "-") local=\(model.selectedLocal?.kind.rawValue ?? "-") on_mac=\(local.joined(separator: ",")) external=\(external.joined(separator: ",")) agents=\(model.agents.map { "\($0.id)/\($0.name)/\($0.status)" }.joined(separator: ","))")
         case "local-box":
             if let session = model.selectedLocal, let box = model.boxes.first(where: { $0.name == arg }) { model.setDefaultBox(session, to: box) }

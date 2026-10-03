@@ -7,7 +7,7 @@ import Foundation
 // `--box`, else the newest running box when the bridge first needs one. It
 // opens one session per box on first use and wakes a box on its first
 // box-tool call unless `wake` is off. With the app's link it reports each
-// routed call to the app and takes the default box the app sends. The token
+// box-tool call to the app and takes the default box the app sends. The token
 // stays in memory and in the Authorization header of its requests.
 public actor Bridge {
     static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
@@ -111,7 +111,6 @@ public actor Bridge {
                 return reply(id, failure.result)
             } catch {}
         }
-        if let box = arguments["box"] as? String { link?.report(box: box) }
         var deleted: String?
         if name == "box_delete", let ref = arguments["box"] as? String {
             deleted = try? await resolve(ref)

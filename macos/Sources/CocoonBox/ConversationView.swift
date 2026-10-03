@@ -115,7 +115,21 @@ struct LocalAgentPane: View {
                 Text(session.closed ? "exited" : "on this Mac, driving the box over MCP")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .layoutPriority(-1)
                 Spacer()
+                if !session.closed {
+                    if let hint = Self.hint(screen: model.box, default: model.defaultBox(of: session)) {
+                        Text(hint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                    }
+                    DefaultBoxPicker(title: "Default box", session: session)
+                        .pickerStyle(.menu)
+                        .controlSize(.small)
+                        .fixedSize()
+                }
                 Button(session.closed ? "Remove" : "End") { model.closeLocal(session) }
                     .controlSize(.small)
             }
@@ -126,6 +140,12 @@ struct LocalAgentPane: View {
                 .id(session.id)
                 .frame(minHeight: 220, maxHeight: .infinity)
         }
+    }
+
+    // hint names the box the screen shows when it is not the agent's default.
+    static func hint(screen: Box?, default box: Box?) -> String? {
+        guard let screen, screen.id != box?.id else { return nil }
+        return "Screen shows \(screen.name)"
     }
 }
 
