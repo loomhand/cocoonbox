@@ -172,6 +172,11 @@ public nonisolated struct Cocoonbox_Agent_V1_ExecTty: Sendable {
   /// Clears the value of `window`. Subsequent reads from it will return its default value.
   public mutating func clearWindow() {self._window = nil}
 
+  /// The terminfo source of `term` (`infocmp -x` output), at most 256 KiB. A box
+  /// without an entry for `term` compiles it into the user's ~/.terminfo;
+  /// without one, or when it does not compile, the command gets xterm-256color.
+  public var terminfo: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -737,7 +742,7 @@ nonisolated extension Cocoonbox_Agent_V1_ExecStart: SwiftProtobuf.Message, Swift
 
 nonisolated extension Cocoonbox_Agent_V1_ExecTty: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".ExecTty"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}term\0\u{1}window\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}term\0\u{1}window\0\u{1}terminfo\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -747,6 +752,7 @@ nonisolated extension Cocoonbox_Agent_V1_ExecTty: SwiftProtobuf.Message, SwiftPr
       switch fieldNumber {
       case 1: try { try decoder.decodeSingularStringField(value: &self.term) }()
       case 2: try { try decoder.decodeSingularMessageField(value: &self._window) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.terminfo) }()
       default: break
       }
     }
@@ -763,12 +769,16 @@ nonisolated extension Cocoonbox_Agent_V1_ExecTty: SwiftProtobuf.Message, SwiftPr
     try { if let v = self._window {
       try visitor.visitSingularMessageField(value: v, fieldNumber: 2)
     } }()
+    if !self.terminfo.isEmpty {
+      try visitor.visitSingularStringField(value: self.terminfo, fieldNumber: 3)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_ExecTty, rhs: Cocoonbox_Agent_V1_ExecTty) -> Bool {
     if lhs.term != rhs.term {return false}
     if lhs._window != rhs._window {return false}
+    if lhs.terminfo != rhs.terminfo {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

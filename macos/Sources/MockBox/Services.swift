@@ -280,6 +280,7 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
                     switch frame.body {
                     case .start(let start) where !started:
                         started = true
+                        print("exec tty=\(start.hasTty) term=\(start.tty.term) terminfo=\(start.tty.terminfo.utf8.count)")
                         command.yield(start.command)
                         command.finish()
                     case .stdin(let data) where started:

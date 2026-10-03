@@ -324,6 +324,23 @@ for host in ("box", "main", "u@main"):
     check("with --box the host word " + host + " is dropped", r.returncode == 0 and r.stdout == b"dropped\n", r)
 r = rsh("-t", "--box", "main", "echo", "plain")
 check("-t without a terminal on stdin runs without one, with a notice", r.returncode == 0 and r.stdout == b"plain\n" and b"not a terminal" in r.stderr, r)
+import pty
+def rsh_on_pty(*args):
+    primary, secondary = pty.openpty()
+    p = subprocess.Popen([cli, "rsh", *args], stdin=secondary, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=dict(os.environ, TERM="xterm-256color"))
+    os.close(secondary)
+    out, err = p.communicate(timeout=60)
+    os.close(primary)
+    return p.returncode, out, err
+def exec_lines():
+    return [l for l in open(mocklog).read().splitlines() if l.startswith("exec ")]
+want = len(subprocess.run(["infocmp", "-x", "xterm-256color"], capture_output=True).stdout)
+seen = len(exec_lines())
+code, out, err = rsh_on_pty("-t", "--box", "main", "echo", "tty")
+check("-t on a terminal sends TERM and its local terminfo", code == 0 and exec_lines()[seen:] == [f"exec tty=true term=xterm-256color terminfo={want}"] and want > 1000, (exec_lines()[seen:], want, err))
+seen = len(exec_lines())
+code, out, err = rsh_on_pty("--box", "main", "echo", "plain")
+check("without -t no terminal and no terminfo go along", code == 0 and exec_lines()[seen:] == ["exec tty=false term= terminfo=0"], (exec_lines()[seen:], err))
 import signal as sig
 for name, signals, want in (("the first SIGINT reaches the command", [sig.SIGINT], 9), ("a second signal ends rsh with 255", [sig.SIGINT, sig.SIGTERM], 255)):
     p = subprocess.Popen([cli, "rsh", "--box", "main", "trap 'echo got-int; exit 9' INT; trap '' TERM; echo ready; while :; do sleep 0.1; done" if want == 9 else "trap '' INT TERM; echo ready; sleep 30"],

@@ -33,8 +33,9 @@ rsh is the remote shell of rsync and git, which pass a host word first:
 Without --box, the first word names the box. With --box, which wins, a first word that is `box`
 or names one of your boxes is dropped as the host. A user@ prefix and -l USER are ignored: the
 command runs as the box's desktop user, by a login bash in /workspace. -t runs it on a terminal
-when stdin is one. The first SIGINT or SIGTERM goes to the command; a second ends rsh, which
-kills it. rsh wakes a box that is not running.
+when stdin is one, with this terminal's terminfo for a box that lacks it. The first SIGINT or
+SIGTERM goes to the command; a second ends rsh, which kills it. rsh wakes a box that is not
+running.
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
 COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain;
@@ -265,6 +266,7 @@ func headers() {
 // MARK: rsh
 
 let rshUsage = "usage: cocoonbox rsh [--box NAME|ID] [-t] [-l USER] [HOST] COMMAND..."
+let maxTerminfo = 256 << 10
 
 // ExecInput is the frames an rsh call sends after start: stdin chunks read from fd 0 on their
 // own thread, one read per frame the call asks for, so a chunk or two at most wait in memory,
@@ -341,6 +343,24 @@ final class Terminal: Sendable {
             $0.cols = UInt32(size.ws_col)
         }
     }
+}
+
+// terminfo is the local terminfo source of term as `infocmp -x` prints it, which a box without
+// the entry compiles; empty when infocmp has none or it is larger than a box takes.
+func terminfo(_ term: String) -> String {
+    guard !term.isEmpty else { return "" }
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = ["infocmp", "-x", term]
+    let output = Pipe()
+    process.standardInput = FileHandle.nullDevice
+    process.standardOutput = output
+    process.standardError = FileHandle.nullDevice
+    guard (try? process.run()) != nil else { return "" }
+    let data = output.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0, data.count <= maxTerminfo else { return "" }
+    return String(decoding: data, as: UTF8.self)
 }
 
 // retry says whether a failed read or write of fd should run again, after waiting for fd when
@@ -425,9 +445,11 @@ func rsh() async {
     var terminal: Terminal?
     if options["-t"] != nil {
         if isatty(STDIN_FILENO) != 0 {
+            let term = ProcessInfo.processInfo.environment["TERM"] ?? ""
             start.tty = .with {
-                $0.term = ProcessInfo.processInfo.environment["TERM"] ?? ""
+                $0.term = term
                 $0.window = Terminal.window
+                $0.terminfo = terminfo(term)
             }
             terminal = Terminal()
         } else {
