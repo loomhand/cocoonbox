@@ -174,7 +174,13 @@ async function loadShares(boxes) {
     const write = document.createElement("input");
     write.type = "checkbox";
     write.checked = sh.write;
-    write.addEventListener("change", () => shareCall("PATCH", sh.id, "", { write: write.checked }));
+    write.addEventListener("change", () => {
+      if (write.checked && !confirm($("write-warning").textContent)) {
+        write.checked = false;
+        return;
+      }
+      shareCall("PATCH", sh.id, "", { write: write.checked });
+    });
     cell(row, "").appendChild(write);
     cell(row, new Date(sh.expires_at_ms).toLocaleString());
     const actions = cell(row, "");

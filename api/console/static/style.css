@@ -72,6 +72,7 @@ input[type="number"] { width: 64px; }
 button { cursor: pointer; }
 button:hover { border-color: var(--accent); }
 button.danger { color: var(--danger); }
+.warn { color: var(--danger); font-size: 13px; }
 
 table { width: 100%; border-collapse: collapse; overflow-x: auto; display: block; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }

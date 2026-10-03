@@ -1,6 +1,8 @@
 import CocoonBoxKit
 import SwiftUI
 
+private let writeWarning = "Write hands guests every login in the box: browser sessions and agent CLI logins (Claude Code, Codex, Cursor)."
+
 // ShareSheet creates and manages the box's share link; the api returns the link to the owner only.
 struct ShareSheet: View {
     @Environment(AppModel.self) private var model
@@ -53,9 +55,12 @@ private struct NewShareForm: View {
                 TextField("User names", text: $users, prompt: Text("a tester, alice"))
             }
             Toggle("Allow write", isOn: $write)
-            Text(write ? "Guests' agents get every box tool: shell, files, browser and input." : "Guests' agents can take screenshots and read files and pages.")
+            Text(write ? "Guests' agents get every box tool: shell, files, browser and input." : "Guests' agents can take screenshots, read pages and read files under /workspace.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text(writeWarning)
+                .font(.caption)
+                .foregroundStyle(.orange)
         }
         .formStyle(.grouped)
         HStack {
@@ -96,6 +101,13 @@ private struct LiveShareView: View {
                 Text("Guests").foregroundStyle(.secondary)
                 Toggle("Allow write", isOn: Binding(get: { share.write }, set: { write in Task { await model.setShareWrite(write) } }))
                     .help("Applies to each guest's next call")
+            }
+            GridRow {
+                Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                Text(writeWarning)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         if let setup = model.shareSetup {
