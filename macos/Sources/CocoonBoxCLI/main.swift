@@ -628,9 +628,19 @@ func offload() async {
                 return json ? printJSON(["delivery": delivery]) : print("sent to the box agent: \(delivery)")
             }
             let since = all ? 0 : record?.seen ?? 0
-            let (entries, status) = try await packer.read(key, since: since, wait: value(of: "--wait").flatMap { Int($0) })
-            if var record, let last = entries.last, last.seq > record.seen {
-                record.seen = last.seq
+            let wait = value(of: "--wait").flatMap { Int($0) }
+            var (entries, status) = try await packer.read(key, since: since, wait: wait)
+            var newest = entries.last?.seq ?? since
+            if !all, let id = record?.id {
+                let current = { (entry: OutboxEntry) in entry.offloadID == id || entry.offloadID.isEmpty }
+                if !entries.isEmpty, !entries.contains(where: current) {
+                    (entries, status) = try await packer.read(key, since: newest, wait: wait)
+                    newest = entries.last?.seq ?? newest
+                }
+                entries = entries.filter(current)
+            }
+            if var record, newest > record.seen {
+                record.seen = newest
                 try? offloadStore.save(record)
             }
             if json {
@@ -745,11 +755,12 @@ func secrets() {
 
 // MARK: setup
 
+let ownPath = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath().path
+
 let executable: String = {
     let linked = home.appendingPathComponent(".local/bin/cocoonbox").path
-    let own = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
     let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: linked)).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
-    return target == own ? linked : own
+    return target == ownPath ? linked : ownPath
 }()
 
 func run(_ argv: [String]) -> Bool {
@@ -808,15 +819,14 @@ func setup() {
 func install() {
     let bin = home.appendingPathComponent(".local/bin")
     let link = bin.appendingPathComponent("cocoonbox")
-    let own = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().path
     do {
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: link)
-        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: own)
+        try FileManager.default.createSymbolicLink(atPath: link.path, withDestinationPath: ownPath)
     } catch {
         fail("\(error)")
     }
-    print("linked \(link.path) -> \(own)")
+    print("linked \(link.path) -> \(ownPath)")
 }
 
 // MARK: main
