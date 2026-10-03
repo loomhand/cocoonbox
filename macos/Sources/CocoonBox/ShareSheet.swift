@@ -34,6 +34,7 @@ struct ShareSheet: View {
 private struct NewShareForm: View {
     @Environment(AppModel.self) private var model
     @State private var ttl: Int64 = 24 * 3600
+    @State private var named = false
     @State private var users = ""
     @State private var write = false
     @State private var creating = false
@@ -45,7 +46,13 @@ private struct NewShareForm: View {
                 Text("7 days").tag(Int64(7 * 24 * 3600))
                 Text("30 days").tag(Int64(30 * 24 * 3600))
             }
-            TextField("Only these users", text: $users, prompt: Text("anyone with the link"))
+            Picker("Who can use it", selection: $named) {
+                Text("Anyone with the link").tag(false)
+                Text("Only these users").tag(true)
+            }
+            if named {
+                TextField("User names", text: $users, prompt: Text("a tester, alice"))
+            }
             Toggle("Allow write", isOn: $write)
             Text(write ? "Guests' agents get every box tool: shell, files, browser and input." : "Guests' agents can take screenshots and read files and pages.")
                 .font(.caption)
@@ -57,11 +64,11 @@ private struct NewShareForm: View {
             Button("Create link") {
                 creating = true
                 Task {
-                    await model.createShare(ttlSeconds: ttl, userNames: Self.names(users), write: write)
+                    await model.createShare(ttlSeconds: ttl, userNames: named ? Self.names(users) : [], write: write)
                     creating = false
                 }
             }
-            .disabled(creating || model.box == nil)
+            .disabled(creating || model.box == nil || (named && Self.names(users).isEmpty))
         }
     }
 
