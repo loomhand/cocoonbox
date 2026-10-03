@@ -261,8 +261,12 @@ func (x *ExecStart) GetTty() *ExecTty {
 type ExecTty struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// TERM for the command.
-	Term          string      `protobuf:"bytes,1,opt,name=term,proto3" json:"term,omitempty"`
-	Window        *ExecWindow `protobuf:"bytes,2,opt,name=window,proto3" json:"window,omitempty"`
+	Term   string      `protobuf:"bytes,1,opt,name=term,proto3" json:"term,omitempty"`
+	Window *ExecWindow `protobuf:"bytes,2,opt,name=window,proto3" json:"window,omitempty"`
+	// The terminfo source of `term` (`infocmp -x` output), at most 256 KiB. A box
+	// without an entry for `term` compiles it into the user's ~/.terminfo;
+	// without one, or when it does not compile, the command gets xterm-256color.
+	Terminfo      string `protobuf:"bytes,3,opt,name=terminfo,proto3" json:"terminfo,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -309,6 +313,13 @@ func (x *ExecTty) GetWindow() *ExecWindow {
 		return x.Window
 	}
 	return nil
+}
+
+func (x *ExecTty) GetTerminfo() string {
+	if x != nil {
+		return x.Terminfo
+	}
+	return ""
 }
 
 type ExecWindow struct {
@@ -1513,10 +1524,11 @@ const file_cocoonbox_agent_v1_session_proto_rawDesc = "" +
 	"\x04body\"T\n" +
 	"\tExecStart\x12\x18\n" +
 	"\acommand\x18\x01 \x01(\tR\acommand\x12-\n" +
-	"\x03tty\x18\x02 \x01(\v2\x1b.cocoonbox.agent.v1.ExecTtyR\x03tty\"U\n" +
+	"\x03tty\x18\x02 \x01(\v2\x1b.cocoonbox.agent.v1.ExecTtyR\x03tty\"q\n" +
 	"\aExecTty\x12\x12\n" +
 	"\x04term\x18\x01 \x01(\tR\x04term\x126\n" +
-	"\x06window\x18\x02 \x01(\v2\x1e.cocoonbox.agent.v1.ExecWindowR\x06window\"4\n" +
+	"\x06window\x18\x02 \x01(\v2\x1e.cocoonbox.agent.v1.ExecWindowR\x06window\x12\x1a\n" +
+	"\bterminfo\x18\x03 \x01(\tR\bterminfo\"4\n" +
 	"\n" +
 	"ExecWindow\x12\x12\n" +
 	"\x04rows\x18\x01 \x01(\rR\x04rows\x12\x12\n" +
