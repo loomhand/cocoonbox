@@ -12,7 +12,7 @@ PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
 	tigervnc-xorg-extension xauth x11-xserver-utils x11-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
-	mousepad nftables sudo libnss-myhostname libnss3-tools
+	mousepad nftables sudo libnss-myhostname libnss3-tools rsync
 	locales fonts-noto-cjk fonts-noto-color-emoji
 )
 
