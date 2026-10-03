@@ -17,7 +17,7 @@ public enum LocalAgentError: Error, CustomStringConvertible {
 // shows it in a Ghostty surface fed through the in-memory backend. The
 // terminal view outlives SwiftUI remounts; close hangs up the CLI.
 @MainActor @Observable
-public final class LocalAgentSession: Identifiable {
+public final class LocalAgentSession: Identifiable, HostedTerminal {
     public let id: UUID
     public let kind: LocalAgentKind
     public private(set) var record: LocalAgentRecord
@@ -93,7 +93,7 @@ public final class LocalAgentSession: Identifiable {
         return session
     }
 
-    private static let theme = TerminalTheme(light: .afterglow.background("000000"), dark: .afterglow.background("000000"))
+    static let theme = TerminalTheme(light: .afterglow.background("000000"), dark: .afterglow.background("000000"))
 
     // terminal names the workspace in PWD, which Claude Code takes as its
     // project, and a terminal type every CLI knows.
@@ -138,6 +138,11 @@ public final class LocalAgentSession: Identifiable {
     public func rename(_ name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         record.name = name.isEmpty ? nil : name
+    }
+
+    // setOffload records the box CLI session that continues this agent's task, or clears it once the task is back.
+    public func setOffload(_ offload: LocalOffload?) {
+        record.offload = offload
     }
 
     // setDefaultBox sets the box of the agent's calls that name none.
@@ -186,11 +191,18 @@ private final class SurfaceEvents: TerminalSurfaceTitleDelegate {
     }
 }
 
-// LocalAgentTerminal hosts a session's terminal view in SwiftUI.
-public struct LocalAgentTerminal: NSViewRepresentable {
-    let session: LocalAgentSession
+// HostedTerminal is a terminal view that outlives SwiftUI remounts.
+@MainActor
+public protocol HostedTerminal: AnyObject {
+    var view: NSView { get }
+    func focus()
+}
 
-    public init(session: LocalAgentSession) {
+// LocalAgentTerminal hosts a session's or a box program's terminal view in SwiftUI.
+public struct LocalAgentTerminal: NSViewRepresentable {
+    let session: any HostedTerminal
+
+    public init(session: any HostedTerminal) {
         self.session = session
     }
 
@@ -210,7 +222,7 @@ public struct LocalAgentTerminal: NSViewRepresentable {
 
 // TerminalContainer takes the terminal when it enters a window and focuses it unless another view, not the sidebar list, holds the keyboard.
 private final class TerminalContainer: NSView {
-    weak var session: LocalAgentSession?
+    weak var session: (any HostedTerminal)?
 
     func claim() {
         guard let view = session?.view, view.superview !== self else { return }

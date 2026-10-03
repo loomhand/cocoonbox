@@ -68,6 +68,15 @@ struct RootView: View {
         .sheet(isPresented: $model.showPasswordSignIn) {
             PasswordSignInSheet()
         }
+        .sheet(item: $model.boxCLISheet) { sheet in
+            BoxCLISheetView(sheet: sheet).id(sheet.id)
+        }
+        .alert(model.busyWarning?.title ?? "", isPresented: Binding(get: { model.busyWarning != nil }, set: { if !$0 { model.busyWarning = nil } }), presenting: model.busyWarning) { warning in
+            Button("Continue", role: .destructive) { warning.proceed() }
+            Button("Cancel", role: .cancel) {}
+        } message: { warning in
+            Text(warning.detail)
+        }
         .onChange(of: model.screen.poppedOut) { _, poppedOut in
             if poppedOut { openWindow(id: "screen") }
         }

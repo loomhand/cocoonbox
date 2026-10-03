@@ -102,7 +102,7 @@ struct ConversationView: View {
     }
 }
 
-// LocalAgentPane shows a local agent's terminal.
+// LocalAgentPane shows a local agent's terminal, or while its task is in a box, the box CLI's.
 struct LocalAgentPane: View {
     @Environment(AppModel.self) private var model
     let session: LocalAgentSession
@@ -110,15 +110,22 @@ struct LocalAgentPane: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
-                Image(systemName: "terminal")
+                Image(systemName: session.record.offload == nil ? "terminal" : "shippingbox")
                 Text(session.record.displayName).font(.headline).lineLimit(1)
-                Text(session.closed ? "exited" : "on this Mac, driving the box over MCP")
+                Text(status)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .layoutPriority(-1)
                 Spacer()
-                if !session.closed {
+                if let step = model.offloading[session.id] {
+                    ProgressView().controlSize(.small)
+                    Text(step).font(.caption).foregroundStyle(.secondary).fixedSize()
+                } else if session.record.offload != nil {
+                    Button("Bring back") { model.bringBack(session) }
+                        .controlSize(.small)
+                        .help("Ask the box agent for its hand-over, end its session, and continue here")
+                } else if !session.closed {
                     if let hint = Self.hint(screen: model.box, default: model.defaultBox(of: session)) {
                         Text(hint)
                             .font(.caption)
@@ -129,16 +136,67 @@ struct LocalAgentPane: View {
                         .pickerStyle(.menu)
                         .controlSize(.small)
                         .fixedSize()
+                    Button("Move to box") { model.moveToBox(session) }
+                        .controlSize(.small)
+                        .disabled(model.defaultBox(of: session) == nil)
+                        .help("This agent writes a hand-over, and a fresh \(session.kind.title) in the default box continues the task, with its permission prompts bypassed")
+                    if let box = model.defaultBox(of: session) {
+                        Menu("Box CLI") {
+                            Button("Install \(session.kind.title) in \(box.name)…") { model.boxCLISheet = .install(session.kind.offloadKind, box) }
+                            Button("Sign in in the box…") { model.boxCLISheet = .signIn(session.kind.offloadKind, box) }
+                        }
+                        .controlSize(.small)
+                        .fixedSize()
+                    }
                 }
-                Button(session.closed ? "Remove" : "End") { model.closeLocal(session) }
-                    .controlSize(.small)
+                if session.record.offload == nil {
+                    Button(session.closed ? "Remove" : "End") { model.closeLocal(session) }
+                        .controlSize(.small)
+                }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             Divider()
-            LocalAgentTerminal(session: session)
-                .id(session.id)
+            if session.record.offload != nil, let terminal = model.boxTerminals[session.id] {
+                ZStack(alignment: .bottom) {
+                    LocalAgentTerminal(session: terminal)
+                        .id(ObjectIdentifier(terminal))
+                    if terminal.exitCode != nil {
+                        Button("Reattach") { model.reattach(session) }
+                            .padding(12)
+                            .help("The view of the box CLI ended; the box CLI may still run")
+                    }
+                }
                 .frame(minHeight: 220, maxHeight: .infinity)
+            } else if session.record.offload != nil {
+                ProgressView("Attaching to the box CLI…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task(id: session.id) { model.openBoxTerminal(session) }
+            } else {
+                LocalAgentTerminal(session: session)
+                    .id(session.id)
+                    .frame(minHeight: 220, maxHeight: .infinity)
+            }
+        }
+    }
+
+    private var status: String {
+        if let offload = session.record.offload {
+            let box = model.boxes.first { $0.id == offload.box }?.name ?? offload.box
+            let state = model.boxStatus[offload.repo].map { " · \(Self.label($0))" } ?? ""
+            return "in the box \(box), \(offload.cli)\(state)"
+        }
+        return session.closed ? "exited" : "on this Mac, driving the box over MCP"
+    }
+
+    static func label(_ status: Cocoonbox_Agent_V1_OffloadStatus) -> String {
+        switch status {
+        case .working: "working"
+        case .idle: "idle"
+        case .waitingForUser: "waiting for you"
+        case .blocked: "stopped: usage limit or API error"
+        case .stopped: "stopped"
+        default: "…"
         }
     }
 

@@ -80,6 +80,14 @@ final class AppModel {
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
     var capsule = CapsuleBrowser()
+    // offloading is the step each local agent moving to or back from a box is on.
+    var offloading: [UUID: String] = [:]
+    // boxStatus is each offloaded repo key's box CLI status, from offload events.
+    var boxStatus: [String: Cocoonbox_Agent_V1_OffloadStatus] = [:]
+    var boxTerminals: [UUID: RemoteTerminal] = [:]
+    var boxCLISheet: BoxCLISheet?
+    var busyWarning: BusyWarning?
+    @ObservationIgnored var attachTasks: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
     @ObservationIgnored private var restoredLocal = false
@@ -277,7 +285,7 @@ final class AppModel {
     }
 
     // persistLocal writes the open local agents to the session file, with the session ids Codex and Cursor have chosen by now.
-    private func persistLocal() {
+    func persistLocal() {
         localAgents.forEach { $0.settle() }
         do {
             try LocalAgentStore.save(localAgents.map(\.record) + pendingLocal)
@@ -297,6 +305,7 @@ final class AppModel {
     }
 
     func closeLocal(_ session: LocalAgentSession) {
+        closeBoxTerminal(session)
         session.close()
         localAgents.removeAll { $0 === session }
         localCalls[session.id] = nil
@@ -694,6 +703,11 @@ final class AppModel {
     }
 
     func upgrade() {
+        guard let box, upgradeAvailable else { return }
+        warnIfBusy(box, title: "Upgrade while a box agent works?", consequence: "The upgrade restarts it from its last hand-over.") { self.upgradeNow() }
+    }
+
+    private func upgradeNow() {
         guard let connection, let box, upgradeAvailable else { return }
         busy = true
         let target = box.latestImage
@@ -709,6 +723,11 @@ final class AppModel {
     }
 
     func hibernate() {
+        guard let box else { return }
+        warnIfBusy(box, title: "Hibernate while a box agent works?", consequence: "Hibernating pauses it until the box wakes.") { self.hibernateNow() }
+    }
+
+    private func hibernateNow() {
         guard let connection, let box else { return }
         busy = true
         stopAgentSide()
@@ -884,7 +903,9 @@ final class AppModel {
             Perf.mark("computer_action", "\(action.action) \(action.x),\(action.y)")
             computerActions += 1
             screen.showMarker(action)
-        case .offload, nil:
+        case .offload(let update):
+            notifyOffload(update)
+        case nil:
             break
         }
     }
@@ -1029,7 +1050,7 @@ final class AppModel {
         }
     }
 
-    private func report(_ what: String, _ error: any Error) {
+    func report(_ what: String, _ error: any Error) {
         let message = "\(what): \(BoxConnection.describe(error))"
         lastError = message
         Perf.mark("error", message)

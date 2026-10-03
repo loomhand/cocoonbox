@@ -21,6 +21,15 @@ import Testing
         #expect(LocalAgentStore.load(from: home.appendingPathComponent("missing.json")).isEmpty)
     }
 
+    @Test func anOffloadedAgentKeepsItsBoxSessionAcrossARestart() throws {
+        let url = try temporaryHome().appendingPathComponent("local-agents.json")
+        var record = LocalAgentRecord(kind: .claudeCode, boxID: "cb-1", sessionID: "s-1", workspace: workspace, startedAt: Date(timeIntervalSince1970: 1_790_000_000))
+        record.offload = LocalOffload(id: "0a1b2c3d4e5f", repo: "agent-1234abcd", box: "cb-1", cli: "claude", startedAt: Date(timeIntervalSince1970: 1_790_000_100))
+        try LocalAgentStore.save([record], to: url)
+        #expect(LocalAgentStore.load(from: url) == [record])
+        #expect(record.offload?.tmux == "cb-off-agent-1234abcd-claude")
+    }
+
     @Test func recordsOfTheOldShapeReopenWithTheirBoxAsDefault() throws {
         let home = try temporaryHome()
         let url = home.appendingPathComponent("local-agents.json")

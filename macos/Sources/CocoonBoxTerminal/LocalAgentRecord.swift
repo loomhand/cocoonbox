@@ -17,6 +17,8 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
     public var until: Date?
     public var title: String?
     public var name: String?
+    // offload is the box CLI session that continues the task while it is in a box.
+    public var offload: LocalOffload?
 
     public init(kind: LocalAgentKind, boxID: String, sessionID: String? = nil, workspace: String, startedAt: Date = Date()) {
         self.kind = kind
@@ -150,6 +152,28 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
             }
         }
         return nil
+    }
+}
+
+// LocalOffload names an app local agent's task in a box: the offload id, the
+// repo key of its box CLI session, the box and the box CLI.
+public struct LocalOffload: Codable, Equatable, Sendable {
+    public var id: String
+    public var repo: String
+    public var box: String
+    public var cli: String
+    public var startedAt: Date
+
+    public init(id: String, repo: String, box: String, cli: String, startedAt: Date) {
+        self.id = id
+        self.repo = repo
+        self.box = box
+        self.cli = cli
+        self.startedAt = startedAt
+    }
+
+    public var tmux: String {
+        "cb-off-\(repo)-\(cli)"
     }
 }
 
