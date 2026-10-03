@@ -1,11 +1,15 @@
 //! Session.Exec: relays a command's stdin, stdout and stderr between the stream and the toolhost.
 
+use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::{Status, Streaming};
 
-use crate::pb::{ExecClientFrame, ExecServerFrame, exec_client_frame, exec_server_frame};
+use crate::pb::{
+    ExecClientFrame, ExecServerFrame, ExecSignal, exec_client_frame::Body as In,
+    exec_server_frame::Body as Out,
+};
 use crate::toolhost::rpc;
 
 const OUT_FRAMES: usize = 16;
@@ -21,70 +25,71 @@ pub async fn relay(
     mut inbound: Streaming<ExecClientFrame>,
     stop: CancellationToken,
 ) -> Result<ServerStream, Status> {
-    let command = match inbound.message().await? {
-        Some(ExecClientFrame {
-            body: Some(exec_client_frame::Body::Start(start)),
-        }) => start.command,
-        _ => {
-            return Err(Status::invalid_argument(
-                "the first Exec frame must be start",
-            ));
-        }
+    let Some(ExecClientFrame {
+        body: Some(In::Start(start)),
+    }) = inbound.message().await?
+    else {
+        return Err(Status::invalid_argument(
+            "the first Exec frame must be start",
+        ));
     };
+    let tty = start.tty.map(|tty| {
+        let window = tty.window.unwrap_or_default();
+        json!({"term": tty.term, "rows": window.rows, "cols": window.cols})
+    });
     let (mut rd, mut wr) = tools
-        .exec(&command)
+        .exec(&start.command, tty)
         .await
         .map_err(Status::unavailable)?
         .into_split();
     let (tx, rx) = mpsc::channel(OUT_FRAMES);
     let done = CancellationToken::new();
     let feeding = done.clone();
-    // detached pumps: the stdin side keeps the connection open until the output side is done
+    // detached pumps: the input side keeps the connection open until the output side is done
     tokio::spawn(async move {
+        let mut open = true;
         loop {
             let frame = tokio::select! {
-                f = inbound.message() => f,
+                f = inbound.message(), if open => f,
                 () = feeding.cancelled() => return,
             };
-            let data = match frame {
-                Ok(Some(ExecClientFrame {
-                    body: Some(exec_client_frame::Body::Stdin(data)),
-                })) if !data.is_empty() => data,
+            let (tag, data) = match frame {
+                Ok(Some(ExecClientFrame { body: Some(body) })) => match to_toolhost(body) {
+                    Some(framed) => framed,
+                    None => continue,
+                },
                 Ok(Some(_)) => continue,
-                Ok(None) => break,
+                Ok(None) => {
+                    open = false;
+                    (rpc::EOF, Vec::new())
+                }
                 Err(_) => {
                     feeding.cancel();
                     return;
                 }
             };
             let written = tokio::select! {
-                r = rpc::write_data(&mut wr, &data) => r,
+                r = rpc::write_tagged(&mut wr, tag, &data) => r,
                 () = feeding.cancelled() => return,
             };
             if written.is_err() {
                 return;
             }
         }
-        if rpc::write_data(&mut wr, &[]).await.is_ok() {
-            feeding.cancelled().await;
-        }
     });
     tokio::spawn(async move {
         loop {
             let next = tokio::select! {
-                r = rpc::read_output(&mut rd) => r,
+                r = rpc::read_tagged(&mut rd) => r,
                 () = tx.closed() => break,
                 () = done.cancelled() => break,
                 () = stop.cancelled() => break,
             };
             let (body, last) = match next {
-                Ok((rpc::STDOUT, data)) => (exec_server_frame::Body::Stdout(data.into()), false),
-                Ok((rpc::STDERR, data)) => (exec_server_frame::Body::Stderr(data.into()), false),
+                Ok((rpc::STDOUT, data)) => (Out::Stdout(data.into()), false),
+                Ok((rpc::STDERR, data)) => (Out::Stderr(data.into()), false),
                 Ok((rpc::EXIT, data)) => match <[u8; 4]>::try_from(data.as_slice()) {
-                    Ok(code) => (
-                        exec_server_frame::Body::ExitCode(i32::from_be_bytes(code)),
-                        true,
-                    ),
+                    Ok(code) => (Out::ExitCode(i32::from_be_bytes(code)), true),
                     Err(_) => {
                         let _ = tx.send(Err(Status::internal("bad exit frame"))).await;
                         break;
@@ -108,4 +113,28 @@ pub async fn relay(
         done.cancel();
     });
     Ok(ReceiverStream::new(rx))
+}
+
+/// The toolhost frame for one client frame; `None` for a frame it does not take.
+fn to_toolhost(body: In) -> Option<(u8, Vec<u8>)> {
+    match body {
+        In::Stdin(data) if !data.is_empty() => Some((rpc::STDIN, data.to_vec())),
+        In::Eof(_) => Some((rpc::EOF, Vec::new())),
+        In::Signal(signal) => {
+            let signal = match ExecSignal::try_from(signal).ok()? {
+                ExecSignal::Int => libc::SIGINT,
+                ExecSignal::Term => libc::SIGTERM,
+                ExecSignal::Unspecified => return None,
+            };
+            Some((rpc::SIGNAL, signal.to_be_bytes().to_vec()))
+        }
+        In::Resize(window) => {
+            let clamp = |n: u32| u16::try_from(n).unwrap_or(u16::MAX).to_be_bytes();
+            Some((
+                rpc::RESIZE,
+                [clamp(window.rows), clamp(window.cols)].concat(),
+            ))
+        }
+        In::Start(_) | In::Stdin(_) => None,
+    }
 }

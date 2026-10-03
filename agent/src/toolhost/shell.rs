@@ -29,6 +29,8 @@ impl Shell {
     /// Starts bash in `cwd`; `script` is the per-session scratch file for commands.
     pub async fn spawn(cwd: &Path, script: PathBuf) -> Result<Self, String> {
         let mut child = bash(cwd)
+            .args(["--noprofile", "--norc"])
+            .process_group(0)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -116,16 +118,14 @@ impl Shell {
     }
 }
 
-/// bash in `cwd`, in its own process group, with the environment of the shell tool.
+/// bash in `cwd` with the environment of the shell tool.
 pub fn bash(cwd: &Path) -> Command {
     let mut cmd = Command::new("bash");
-    cmd.args(["--noprofile", "--norc"])
-        .current_dir(cwd)
+    cmd.current_dir(cwd)
         .env("TERM", "dumb")
         .env("PAGER", "cat")
         .env("GIT_PAGER", "cat")
         .env("NO_COLOR", "1")
-        .process_group(0)
         .kill_on_drop(true);
     cmd
 }

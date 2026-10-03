@@ -1,6 +1,6 @@
 //! Toolhost wire format: one length-prefixed JSON request and response per connection;
-//! state transfers add raw data frames between them, and `exec` streams data frames in
-//! and tagged output frames out.
+//! state transfers add raw data frames between them, and `exec` streams tagged frames
+//! both ways.
 
 use std::path::{Path, PathBuf};
 
@@ -13,12 +13,20 @@ use zeroize::Zeroize;
 
 use super::state::Stamp;
 
-/// Output tag of a command's stdout data.
+/// Tag of a command's stdout data, from the toolhost.
 pub const STDOUT: u8 = 1;
-/// Output tag of a command's stderr data.
+/// Tag of a command's stderr data, from the toolhost.
 pub const STDERR: u8 = 2;
-/// Output tag of a command's exit code, a big-endian i32; the last frame.
+/// Tag of a command's exit code, a big-endian i32; the toolhost's last frame.
 pub const EXIT: u8 = 3;
+/// Tag of a command's stdin data, to the toolhost.
+pub const STDIN: u8 = 4;
+/// Tag of the end of a command's stdin, to the toolhost.
+pub const EOF: u8 = 5;
+/// Tag of a signal for the command's process group, a big-endian i32, to the toolhost.
+pub const SIGNAL: u8 = 6;
+/// Tag of a terminal size, big-endian u16 rows and cols, to the toolhost.
+pub const RESIZE: u8 = 7;
 
 const MAX_FRAME: usize = 64 << 20;
 
@@ -114,14 +122,13 @@ impl Client {
         })
     }
 
-    /// Starts `command` as `user`; the connection then takes its stdin as data frames,
-    /// ended by an empty one, and yields its output as [`read_output`] frames. Closing
-    /// the connection kills the command.
-    pub async fn exec(&self, command: &str) -> Result<UnixStream, String> {
+    /// Starts `command` as `user`, on a terminal when `tty` is `{term, rows, cols}`; the
+    /// connection then carries [`write_tagged`] frames both ways. Closing it kills the command.
+    pub async fn exec(&self, command: &str, tty: Option<Value>) -> Result<UnixStream, String> {
         let call = Call {
             agent_id: String::new(),
             tool: "exec".to_owned(),
-            args: json!({"command": command}),
+            args: json!({"command": command, "tty": tty}),
         };
         let mut stream = self.open(&call).await?;
         let started: Output = read_frame(&mut stream).await?;
@@ -264,37 +271,37 @@ pub async fn read_data<R: AsyncRead + Unpin>(r: &mut R) -> Result<Option<Vec<u8>
     Ok(Some(data))
 }
 
-/// Writes one output frame of a command: the tag, a big-endian u32 length and the data.
-pub async fn write_output<W: AsyncWrite + Unpin>(
+/// Writes one frame of an `exec` exchange: the tag, a big-endian u32 length and the data.
+pub async fn write_tagged<W: AsyncWrite + Unpin>(
     w: &mut W,
     tag: u8,
     data: &[u8],
 ) -> Result<(), String> {
-    let len = u32::try_from(data.len()).map_err(|_| "output frame too large".to_owned())?;
+    let len = u32::try_from(data.len()).map_err(|_| "tagged frame too large".to_owned())?;
     let mut head = [tag, 0, 0, 0, 0];
     head[1..].copy_from_slice(&len.to_be_bytes());
     w.write_all(&head)
         .await
-        .map_err(|e| format!("write output: {e}"))?;
+        .map_err(|e| format!("write tagged frame: {e}"))?;
     w.write_all(data)
         .await
-        .map_err(|e| format!("write output: {e}"))
+        .map_err(|e| format!("write tagged frame: {e}"))
 }
 
-/// Reads one frame written by [`write_output`].
-pub async fn read_output<R: AsyncRead + Unpin>(r: &mut R) -> Result<(u8, Vec<u8>), String> {
+/// Reads one frame written by [`write_tagged`].
+pub async fn read_tagged<R: AsyncRead + Unpin>(r: &mut R) -> Result<(u8, Vec<u8>), String> {
     let mut head = [0u8; 5];
     r.read_exact(&mut head)
         .await
-        .map_err(|e| format!("read output header: {e}"))?;
+        .map_err(|e| format!("read tagged frame header: {e}"))?;
     let len = u32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
     if len > MAX_FRAME {
-        return Err(format!("output frame of {len} bytes exceeds {MAX_FRAME}"));
+        return Err(format!("tagged frame of {len} bytes exceeds {MAX_FRAME}"));
     }
     let mut data = vec![0u8; len];
     r.read_exact(&mut data)
         .await
-        .map_err(|e| format!("read output: {e}"))?;
+        .map_err(|e| format!("read tagged frame: {e}"))?;
     Ok((head[0], data))
 }
 

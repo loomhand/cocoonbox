@@ -1611,8 +1611,13 @@ fn exec_start(command: &str) -> pb::ExecClientFrame {
     pb::ExecClientFrame {
         body: Some(exec_client_frame::Body::Start(pb::ExecStart {
             command: command.into(),
+            tty: None,
         })),
     }
+}
+
+fn exec_frame(body: exec_client_frame::Body) -> pb::ExecClientFrame {
+    pb::ExecClientFrame { body: Some(body) }
 }
 
 fn exec_stdin(data: &[u8]) -> pb::ExecClientFrame {
@@ -1689,6 +1694,105 @@ async fn exec_carries_binary_stdio_until_stdin_ends_and_returns_the_exit_code() 
         (String::from_utf8(out).unwrap().trim(), code),
         ("4", Some(0))
     );
+}
+
+#[tokio::test]
+async fn exec_runs_a_login_shell_and_forwards_signals_after_stdin_ends() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (out, _, code) = exec(&h, "shopt -q login_shell && echo login", Vec::new()).await;
+    assert_eq!((out, code), (b"login\n".to_vec(), Some(0)));
+
+    for (signal, want_out, want_code) in [
+        (pb::ExecSignal::Int, "ready\ngot-int\n", 9),
+        (pb::ExecSignal::Term, "ready\n", 128 + 15),
+    ] {
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tx.send(exec_start(
+            "trap 'echo got-int; exit 9' INT; echo ready; while :; do sleep 0.1; done",
+        ))
+        .await
+        .unwrap();
+        tx.send(exec_frame(exec_client_frame::Body::Eof(pb::ExecEof {})))
+            .await
+            .unwrap();
+        let mut frames = h
+            .session()
+            .await
+            .exec(authed(tokio_stream_from(rx)))
+            .await
+            .unwrap()
+            .into_inner();
+        let first = frames.message().await.unwrap().unwrap();
+        assert_eq!(
+            first.body,
+            Some(exec_server_frame::Body::Stdout(bytes::Bytes::from_static(
+                b"ready\n"
+            )))
+        );
+        tx.send(exec_frame(exec_client_frame::Body::Signal(signal.into())))
+            .await
+            .unwrap();
+        let (out, _, code) = exec_output(frames).await;
+        assert_eq!(
+            (format!("ready\n{}", String::from_utf8(out).unwrap()), code),
+            (want_out.to_owned(), Some(want_code)),
+            "{signal:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(pb::ExecClientFrame {
+        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
+            command: "tty; echo \"term=$TERM\"; stty size; read x; stty size; exit 4".into(),
+            tty: Some(pb::ExecTty {
+                term: "xterm-test".into(),
+                window: Some(pb::ExecWindow {
+                    rows: 30,
+                    cols: 100,
+                }),
+            }),
+        })),
+    })
+    .await
+    .unwrap();
+    let mut frames = h
+        .session()
+        .await
+        .exec(authed(tokio_stream_from(rx)))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut seen = Vec::new();
+    while !String::from_utf8_lossy(&seen).contains("30 100") {
+        match frames.message().await.unwrap().unwrap().body.unwrap() {
+            exec_server_frame::Body::Stdout(d) => seen.extend_from_slice(&d),
+            other => panic!("unexpected frame before the size: {other:?}"),
+        }
+    }
+    tx.send(exec_frame(exec_client_frame::Body::Resize(
+        pb::ExecWindow {
+            rows: 40,
+            cols: 120,
+        },
+    )))
+    .await
+    .unwrap();
+    tx.send(exec_stdin(b"go\n")).await.unwrap();
+    let (out, err, code) = exec_output(frames).await;
+    seen.extend_from_slice(&out);
+    let text = String::from_utf8_lossy(&seen);
+    assert!(
+        text.starts_with("/dev/") && !text.contains("not a tty"),
+        "{text}"
+    );
+    assert!(text.contains("term=xterm-test\r\n"), "{text}");
+    assert!(text.contains("go\r\n40 120\r\n"), "{text}");
+    assert!(err.is_empty());
+    assert_eq!(code, Some(4));
 }
 
 #[tokio::test]
