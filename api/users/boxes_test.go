@@ -144,3 +144,33 @@ func firstBoxID(user string) string {
 	s := sha256.Sum256([]byte(user))
 	return "cb-" + hex.EncodeToString(s[:])[:12]
 }
+
+func TestTheRunningLimitIsTheUsersOwnOrTheDefault(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if u.MaxRunning != 0 || svc.MaxRunning(u.ID) != 0 {
+		t.Fatalf("a new user's running limit = %d, want 0 (the default)", svc.MaxRunning(u.ID))
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxRunning: new(2)}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a running limit over max boxes = %v, want ErrInvalid", err)
+	}
+	if got, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(3), MaxBoxes: new(3), MaxRunning: new(3)}); err != nil || got.MaxRunning != 3 {
+		t.Fatalf("Update = %+v, %v", got, err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(2)}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("lowering max boxes under the running limit = %v, want ErrInvalid", err)
+	}
+	if got := openTestService(t, dsn, gw, tenants).MaxRunning(u.ID); got != 3 {
+		t.Errorf("running limit after reopen = %d, want 3", got)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxRunning: new(0)}); err != nil || svc.MaxRunning(u.ID) != 0 {
+		t.Fatalf("back to the default: %v, limit %d", err, svc.MaxRunning(u.ID))
+	}
+	var stored *int
+	if err := query(t, dsn, "SELECT max_running FROM users WHERE id = $1", u.ID).Scan(&stored); err != nil || stored != nil {
+		t.Errorf("max_running after inherit = %v, %v, want NULL", stored, err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxRunning: new(-1)}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a negative running limit = %v, want ErrInvalid", err)
+	}
+}

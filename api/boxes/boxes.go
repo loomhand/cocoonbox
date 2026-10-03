@@ -39,6 +39,8 @@ type Registry interface {
 	AddBox(ctx context.Context, b users.Box) (users.Box, error)
 	RenameBox(ctx context.Context, owner, id, name string) (users.Box, error)
 	RemoveBox(ctx context.Context, owner, id string) error
+	// MaxRunning is the owner's own running limit, 0 for MaxRunning of the defaults.
+	MaxRunning(owner string) int
 }
 
 // Service implements controlv1.BoxesServer and resolves boxes for the edge.
@@ -313,7 +315,7 @@ func (s *Service) firstBox(ctx context.Context, user string) (string, error) {
 	return b.ID, nil
 }
 
-// checkRunning refuses to start box while another box of user holds the running limit.
+// checkRunning refuses to start box while other boxes of user hold the user's running limit.
 func (s *Service) checkRunning(user, box string, current map[string]machines.Machine) error {
 	var running []string
 	for id, m := range current {
@@ -321,18 +323,23 @@ func (s *Service) checkRunning(user, box string, current map[string]machines.Mac
 			running = append(running, id)
 		}
 	}
-	if len(running) < s.defaults.MaxRunning {
+	limit := cmp.Or(s.registry.MaxRunning(user), s.defaults.MaxRunning)
+	if len(running) < limit {
 		return nil
 	}
 	slices.Sort(running)
-	names := make([]string, 0, len(running))
+	named := map[string]string{}
 	for _, b := range s.registry.Boxes(user) {
-		if slices.Contains(running, b.ID) {
-			names = append(names, fmt.Sprintf("%s (%s)", b.Name, b.ID))
-		}
+		named[b.ID] = b.Name
 	}
-	return status.Errorf(codes.FailedPrecondition, "box %s is running, and %d may run at a time; hibernate it first",
-		strings.Join(names, ", "), s.defaults.MaxRunning)
+	names := make([]string, 0, len(running))
+	for _, id := range running {
+		names = append(names, fmt.Sprintf("%s (%s)", cmp.Or(named[id], "deleted"), id))
+	}
+	if len(names) > 1 {
+		return status.Errorf(codes.FailedPrecondition, "boxes %s are running, and %d may run at a time; hibernate one first", strings.Join(names, ", "), limit)
+	}
+	return status.Errorf(codes.FailedPrecondition, "box %s is running, and %d may run at a time; hibernate it first", names[0], limit)
 }
 
 func (s *Service) flavor(req *controlv1.Flavor) (machines.Flavor, error) {

@@ -93,12 +93,17 @@ type Server struct {
 	authn   *auth.Authenticator
 	screens Screens
 
-	defaultDailyCap int64
+	defaultDailyCap   int64
+	defaultMaxRunning int
 }
 
-// New serves the console for users and their boxes; defaultDailyCap is gw's per-user default daily cap in micros.
-func New(us *users.Service, boxes Boxes, defaultDailyCap int64) *Server {
-	s := &Server{users: us, boxes: boxes, limiter: newLimiter(failWindow), mux: http.NewServeMux(), defaultDailyCap: defaultDailyCap}
+// New serves the console for users and their boxes; defaultDailyCap is gw's per-user default daily cap in micros,
+// defaultMaxRunning the api's running limit for users without their own.
+func New(us *users.Service, boxes Boxes, defaultDailyCap int64, defaultMaxRunning int) *Server {
+	s := &Server{
+		users: us, boxes: boxes, limiter: newLimiter(failWindow), mux: http.NewServeMux(),
+		defaultDailyCap: defaultDailyCap, defaultMaxRunning: defaultMaxRunning,
+	}
 	files, _ := fs.Sub(static, "static")
 	s.mux.Handle("GET "+Prefix, http.StripPrefix(Prefix, http.FileServerFS(files)))
 	s.mux.HandleFunc("POST "+Prefix+"api/login", s.login)
@@ -195,8 +200,9 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		UsageError      string         `json:"usage_error,omitempty"`
 		DailyCap        *int64         `json:"daily_cap_micros"`
 		DefaultDailyCap int64          `json:"default_daily_cap_micros,omitempty"`
+		DefaultRunning  int            `json:"default_max_running"`
 		SpentToday      int64          `json:"spent_today_micros"`
-	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap}
+	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning}
 	list, err := s.boxes.List(s.ownerCtx(r), &controlv1.ListBoxesRequest{})
 	if err != nil {
 		s.fail(w, r, err)
@@ -225,12 +231,17 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Residential *bool `json:"residential"`
 		MaxBoxes    *int  `json:"max_boxes"`
+		MaxRunning  *int  `json:"max_running"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	if req.Residential != nil {
 		writeError(w, http.StatusForbidden, "only an admin can change the residential exit")
+		return
+	}
+	if req.MaxRunning != nil {
+		writeError(w, http.StatusForbidden, "only an admin can change the running limit")
 		return
 	}
 	u, err := s.users.Update(r.Context(), caller(r).ID, users.Settings{MaxBoxes: req.MaxBoxes})

@@ -64,6 +64,7 @@ async function load() {
   form.max_boxes.value = u.max_boxes;
   form.max_boxes.max = u.max_boxes_cap;
   $("cap").textContent = "of at most " + u.max_boxes_cap;
+  $("running").textContent = "Boxes running at once: " + (u.max_running || me.default_max_running) + (u.max_running ? "" : " (default)") + ". Only an admin changes it.";
 
   const boxes = $("boxes");
   boxes.replaceChildren();
@@ -131,6 +132,10 @@ async function loadUsers(self) {
     cell(row, "").appendChild(max);
     const cap = number(u.max_boxes_cap, (v) => update(u.id, { max_boxes_cap: v }));
     cell(row, "").appendChild(cap);
+    const running = number(u.max_running || "", (v) => update(u.id, { max_running: v || 0 }));
+    running.placeholder = "default";
+    running.title = "How many of the user's boxes run at once; empty for the default";
+    cell(row, "").appendChild(running);
     const daily = document.createElement("input");
     daily.size = 9;
     daily.placeholder = "default";

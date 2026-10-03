@@ -187,6 +187,31 @@ func TestTheUserPageManagesBoxes(t *testing.T) {
 	}
 }
 
+func TestOnlyAnAdminSetsTheRunningLimit(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	u, _ := env.users.Create(t.Context(), users.NewUser{Name: "qa1", Password: password})
+	qa1 := env.login(t, "qa1")
+	if body := env.do(t, http.MethodGet, "api/me", qa1, "").Body.String(); !strings.Contains(body, `"max_running":0`) || !strings.Contains(body, `"default_max_running":1`) {
+		t.Errorf("me = %s", body)
+	}
+	if code := env.do(t, http.MethodPatch, "api/me", qa1, `{"max_running":1}`).Code; code != http.StatusForbidden {
+		t.Errorf("self running limit = %d, want 403", code)
+	}
+	if code := env.do(t, http.MethodPatch, "api/users/"+u.ID, root, `{"max_boxes_cap":3,"max_boxes":3,"max_running":3}`).Code; code != http.StatusOK {
+		t.Errorf("admin running limit = %d", code)
+	}
+	if body := env.do(t, http.MethodGet, "api/me", qa1, "").Body.String(); !strings.Contains(body, `"max_running":3`) {
+		t.Errorf("me after the admin's change = %s", body)
+	}
+	if code := env.do(t, http.MethodPatch, "api/users/"+u.ID, root, `{"max_running":4}`).Code; code != http.StatusBadRequest {
+		t.Errorf("running limit over max boxes = %d, want 400", code)
+	}
+	if env.users.MaxRunning(u.ID) != 3 {
+		t.Errorf("running limit = %d, want 3", env.users.MaxRunning(u.ID))
+	}
+}
+
 func TestAdminSetsADailyCapThatTheUserSees(t *testing.T) {
 	env := newEnv(t)
 	root := env.login(t, "root")
@@ -330,7 +355,7 @@ func newEnv(t *testing.T) *env {
 	if _, err := us.Create(t.Context(), users.NewUser{Name: "root", Password: password, Admin: true}); err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
-	e.users, e.srv = us, New(us, e.boxes, 5_000_000)
+	e.users, e.srv = us, New(us, e.boxes, 5_000_000, 1)
 	return e
 }
 

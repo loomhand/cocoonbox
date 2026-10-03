@@ -21,7 +21,7 @@ const (
 
 	uniqueViolation = "23505"
 
-	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, created_at,
+	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, coalesce(max_running, 0), created_at,
 		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed`
 )
 
@@ -103,7 +103,7 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
 		var r record
-		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.CreatedAt,
+		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.CreatedAt,
 			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey)
 		r.HasToken = r.tokenSHA256 != ""
 		return r, err
@@ -216,8 +216,8 @@ func (s *store) setToken(ctx context.Context, id, sha string) error {
 }
 
 func (s *store) setSettings(ctx context.Context, r record) error {
-	return s.exec(ctx, "UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5 WHERE id = $1",
-		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap)
+	return s.exec(ctx, "UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0) WHERE id = $1",
+		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning)
 }
 
 func (s *store) setStateKey(ctx context.Context, r record) error {

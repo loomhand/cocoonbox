@@ -53,7 +53,7 @@ var (
 	hexSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
-// User is a cocoonbox user as the console shows it; it never carries a credential.
+// User is a cocoonbox user as the console shows it; it never carries a credential. MaxRunning 0 is the api's default.
 type User struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
@@ -63,6 +63,7 @@ type User struct {
 	Residential bool      `json:"residential"`
 	MaxBoxes    int       `json:"max_boxes"`
 	MaxBoxesCap int       `json:"max_boxes_cap"`
+	MaxRunning  int       `json:"max_running"`
 	HasToken    bool      `json:"has_token"`
 	CreatedAt   time.Time `json:"created_at"`
 }
@@ -75,12 +76,13 @@ type NewUser struct {
 	Admin    bool
 }
 
-// Settings changes a user's settings; a nil field keeps its value.
+// Settings changes a user's settings; a nil field keeps its value, and MaxRunning 0 returns the user to the api's default.
 type Settings struct {
 	Disabled    *bool `json:"disabled,omitempty"`
 	Residential *bool `json:"residential,omitempty"`
 	MaxBoxes    *int  `json:"max_boxes,omitempty"`
 	MaxBoxesCap *int  `json:"max_boxes_cap,omitempty"`
+	MaxRunning  *int  `json:"max_running,omitempty"`
 }
 
 // GWKeys issues, revokes and meters each user's gw key and keeps the user's own daily cap, found by owner = user id.
@@ -388,6 +390,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	if set.MaxBoxes != nil {
 		r.MaxBoxes = *set.MaxBoxes
 	}
+	r.MaxRunning = deref(set.MaxRunning, r.MaxRunning)
 	r.Disabled = deref(set.Disabled, r.Disabled)
 	r.Residential = deref(set.Residential, r.Residential)
 	switch {
@@ -397,6 +400,8 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 		return User{}, fmt.Errorf("%w: max boxes must be in 1..%d", ErrInvalid, r.MaxBoxesCap)
 	case r.MaxBoxes < old.MaxBoxes && r.MaxBoxes < len(s.Boxes(id)):
 		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, len(s.Boxes(id)))
+	case r.MaxRunning < 0 || r.MaxRunning > r.MaxBoxes:
+		return User{}, fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, r.MaxBoxes)
 	}
 	if r.MaxBoxes != old.MaxBoxes {
 		if err := s.tenants.Put(ctx, id, "", r.claimCap()); err != nil {
@@ -604,6 +609,15 @@ func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) err
 	}
 	s.put(r)
 	return nil
+}
+
+// MaxRunning returns how many of user id's boxes may run at once, 0 when the user takes the api's default.
+func (s *Service) MaxRunning(id string) int {
+	r, err := s.record(id)
+	if err != nil {
+		return 0
+	}
+	return r.MaxRunning
 }
 
 // Residential reports whether user id's boxes take the residential exit.

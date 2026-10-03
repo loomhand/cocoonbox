@@ -280,13 +280,14 @@ func TestResolve(t *testing.T) {
 
 // fakeRegistry gives every user the first box BoxID(user), as users.Service does at sign-up.
 type fakeRegistry struct {
-	mu    sync.Mutex
-	boxes map[string][]users.Box
-	max   int
+	mu      sync.Mutex
+	boxes   map[string][]users.Box
+	max     int
+	running map[string]int
 }
 
 func newFakeRegistry() *fakeRegistry {
-	return &fakeRegistry{boxes: map[string][]users.Box{}, max: 3}
+	return &fakeRegistry{boxes: map[string][]users.Box{}, max: 3, running: map[string]int{}}
 }
 
 func (r *fakeRegistry) Boxes(owner string) []users.Box {
@@ -330,6 +331,12 @@ func (r *fakeRegistry) RenameBox(_ context.Context, owner, id, name string) (use
 		}
 	}
 	return users.Box{}, users.ErrNotFound
+}
+
+func (r *fakeRegistry) MaxRunning(owner string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.running[owner]
 }
 
 func (r *fakeRegistry) RemoveBox(_ context.Context, owner, id string) error {

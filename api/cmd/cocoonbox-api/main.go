@@ -122,7 +122,7 @@ func main() {
 	httpMux := http.NewServeMux()
 	httpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
 	httpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, signer))
-	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros)
+	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros, cfg.MaxRunningBoxes)
 	web.EnableSharing(shareSvc, authn, proxy)
 	httpMux.Handle(console.Prefix, web)
 	var protocols http.Protocols

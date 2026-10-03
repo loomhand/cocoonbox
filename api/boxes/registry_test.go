@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"fmt"
 	"regexp"
 	"slices"
 	"strings"
@@ -60,6 +61,42 @@ func TestCreateAddsANamedBoxWithinTheRunningLimit(t *testing.T) {
 	}
 	if renamed, err := svc.Rename(ctx, &controlv1.RenameBoxRequest{BoxId: test, Name: "work"}); err != nil || renamed.GetName() != "work" {
 		t.Errorf("Rename = %v, %v", renamed, err)
+	}
+}
+
+func TestTheRunningLimitIsPerUser(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		own     int
+		running int
+	}{
+		{name: "inherits the default of 1", own: 0, running: 1},
+		{name: "own limit 1", own: 1, running: 1},
+		{name: "own limit 3", own: 3, running: 3},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newFakeMachines()
+			registry := newFakeRegistry()
+			registry.max, registry.running[alice] = 4, tt.own
+			svc := New(fake, testDefaults, registry)
+			ctx := auth.WithUser(t.Context(), alice)
+			if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{}); err != nil {
+				t.Fatalf("Ensure main: %v", err)
+			}
+			for i := 1; i < tt.running; i++ {
+				if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: fmt.Sprintf("box%d", i)}); err != nil {
+					t.Fatalf("Create box %d of %d: %v", i+1, tt.running, err)
+				}
+			}
+			_, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "over"})
+			want := fmt.Sprintf("and %d may run at a time", tt.running)
+			if status.Code(err) != codes.FailedPrecondition || !strings.Contains(status.Convert(err).Message(), want) {
+				t.Fatalf("Create past %d running = %v, want FailedPrecondition with %q", tt.running, err, want)
+			}
+			if tt.running > 1 && !strings.HasPrefix(status.Convert(err).Message(), "boxes ") {
+				t.Errorf("refusal %q does not name every running box", status.Convert(err).Message())
+			}
+		})
 	}
 }
 
