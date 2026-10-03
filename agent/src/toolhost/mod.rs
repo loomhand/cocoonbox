@@ -2,6 +2,7 @@
 
 pub mod browser;
 pub mod cua;
+pub mod exec;
 pub mod files;
 pub mod rpc;
 pub mod shell;
@@ -219,6 +220,10 @@ pub async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
             if let Err(e) = state::read(call.args, &mut wr).await {
                 eprintln!("toolhost: state_read: {e}");
             }
+            return;
+        }
+        "exec" => {
+            exec::run(&host.workspace, &call.args, rd, wr).await;
             return;
         }
         "state_write" => {

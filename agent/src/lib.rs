@@ -4,6 +4,7 @@ pub mod bus;
 pub mod computer;
 pub mod config;
 pub mod dispatch;
+pub mod exec;
 pub mod identity;
 pub mod journal;
 pub mod llm;

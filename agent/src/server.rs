@@ -14,6 +14,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::config::ServeConfig;
+use crate::exec;
 use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
 use crate::llm;
 use crate::mcp::Mcp;
@@ -201,6 +202,7 @@ impl SessionSvc {
 impl Session for SessionSvc {
     type EventsStream = ReceiverStream<Result<Event, Status>>;
     type ScreenStream = screen::ServerStream;
+    type ExecStream = exec::ServerStream;
 
     async fn hello(
         &self,
@@ -322,6 +324,16 @@ impl Session for SessionSvc {
                 .unwrap_or_default(),
             submitted: out["submitted"].as_bool().unwrap_or(false),
         }))
+    }
+
+    async fn exec(
+        &self,
+        req: Request<Streaming<pb::ExecClientFrame>>,
+    ) -> Result<Response<Self::ExecStream>, Status> {
+        owner(&req)?;
+        exec::relay(&self.tools, req.into_inner(), self.rt.stop.clone())
+            .await
+            .map(Response::new)
     }
 }
 

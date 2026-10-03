@@ -11,7 +11,9 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use cocoonbox_agent::config::{ServeConfig, ToolhostConfig};
 use cocoonbox_agent::pb::agents_client::AgentsClient;
 use cocoonbox_agent::pb::session_client::SessionClient;
-use cocoonbox_agent::pb::{self, event, screen_client_frame, transcript_entry::Body};
+use cocoonbox_agent::pb::{
+    self, event, exec_client_frame, exec_server_frame, screen_client_frame, transcript_entry::Body,
+};
 use cocoonbox_agent::runner::Runtime;
 use cocoonbox_agent::toolhost::state::Root;
 use cocoonbox_agent::{server, toolhost};
@@ -1599,10 +1601,201 @@ async fn screen_relays_raw_rfb_bytes() {
     assert_eq!(&echo.data[..], b"RFB 003.008\n");
 }
 
-fn tokio_stream_from(
-    rx: tokio::sync::mpsc::Receiver<pb::ScreenClientFrame>,
-) -> tokio_stream::wrappers::ReceiverStream<pb::ScreenClientFrame> {
+fn tokio_stream_from<T>(
+    rx: tokio::sync::mpsc::Receiver<T>,
+) -> tokio_stream::wrappers::ReceiverStream<T> {
     tokio_stream::wrappers::ReceiverStream::new(rx)
+}
+
+fn exec_start(command: &str) -> pb::ExecClientFrame {
+    pb::ExecClientFrame {
+        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
+            command: command.into(),
+        })),
+    }
+}
+
+fn exec_stdin(data: &[u8]) -> pb::ExecClientFrame {
+    pb::ExecClientFrame {
+        body: Some(exec_client_frame::Body::Stdin(
+            bytes::Bytes::copy_from_slice(data),
+        )),
+    }
+}
+
+/// Reads an Exec stream to its end: stdout, stderr and the exit code of the last frame.
+async fn exec_output(
+    mut frames: tonic::Streaming<pb::ExecServerFrame>,
+) -> (Vec<u8>, Vec<u8>, Option<i32>) {
+    let (mut out, mut err, mut code) = (Vec::new(), Vec::new(), None);
+    while let Some(frame) = frames.message().await.unwrap() {
+        assert!(code.is_none(), "a frame after the exit code");
+        match frame.body.unwrap() {
+            exec_server_frame::Body::Stdout(d) => out.extend_from_slice(&d),
+            exec_server_frame::Body::Stderr(d) => err.extend_from_slice(&d),
+            exec_server_frame::Body::ExitCode(c) => code = Some(c),
+        }
+    }
+    (out, err, code)
+}
+
+/// Runs `command` through Session.Exec, sends `stdin` in 64 KiB frames and half-closes.
+async fn exec(h: &Harness, command: &str, stdin: Vec<u8>) -> (Vec<u8>, Vec<u8>, Option<i32>) {
+    let (tx, rx) = tokio::sync::mpsc::channel(4);
+    tx.send(exec_start(command)).await.unwrap();
+    tokio::spawn(async move {
+        for chunk in stdin.chunks(64 << 10) {
+            if tx.send(exec_stdin(chunk)).await.is_err() {
+                return;
+            }
+        }
+    });
+    let frames = h
+        .session()
+        .await
+        .exec(authed(tokio_stream_from(rx)))
+        .await
+        .unwrap()
+        .into_inner();
+    exec_output(frames).await
+}
+
+#[tokio::test]
+async fn exec_carries_binary_stdio_until_stdin_ends_and_returns_the_exit_code() {
+    let h = Harness::start(Vec::new(), false).await;
+    let data = noise(3 << 20, 7);
+    let (out, err, code) = exec(&h, "pwd >&2; echo \"$TERM\" >&2; cat; exit 3", data.clone()).await;
+    assert!(
+        out == data,
+        "stdout differs: {} of {} bytes",
+        out.len(),
+        data.len()
+    );
+    let cwd = h.workspace.canonicalize().unwrap();
+    assert_eq!(
+        String::from_utf8(err).unwrap(),
+        format!("{}\ndumb\n", cwd.display())
+    );
+    assert_eq!(code, Some(3));
+
+    assert_eq!(
+        exec(&h, "false", Vec::new()).await,
+        (Vec::new(), Vec::new(), Some(1))
+    );
+    let (_, _, code) = exec(&h, "kill -TERM $$", Vec::new()).await;
+    assert_eq!(code, Some(128 + 15));
+    let (out, _, code) = exec(&h, "wc -c", b"four".to_vec()).await;
+    assert_eq!(
+        (String::from_utf8(out).unwrap().trim(), code),
+        ("4", Some(0))
+    );
+}
+
+#[tokio::test]
+async fn exec_is_for_the_owner_only() {
+    let h = Harness::start(Vec::new(), false).await;
+    let edge = Edge::provision(&h);
+    for principal in ["share:sh-1:write", "share:sh-1:read:u-1"] {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        tx.send(exec_start("touch shared")).await.unwrap();
+        let err = h
+            .session()
+            .await
+            .exec(signed(tokio_stream_from(rx), &edge.share(principal)))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code(), Code::PermissionDenied, "{principal}");
+    }
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    tx.send(exec_start("touch owned")).await.unwrap();
+    drop(tx);
+    let frames = h
+        .session()
+        .await
+        .exec(signed(tokio_stream_from(rx), &edge.owner()))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(exec_output(frames).await.2, Some(0));
+    assert!(h.workspace.join("owned").exists());
+    assert!(!h.workspace.join("shared").exists());
+}
+
+#[tokio::test]
+async fn cancelling_exec_kills_the_command() {
+    let h = Harness::start(Vec::new(), false).await;
+    for (name, fill) in [("idle", false), ("stdin-blocked", true)] {
+        let pid = h.workspace.join(format!("{name}.pid"));
+        let (addr, link) = severable(&h.endpoint).await;
+        let channel = Channel::from_shared(addr).unwrap().connect().await.unwrap();
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        tx.send(exec_start(&format!("echo $$ > {name}.pid; exec sleep 300")))
+            .await
+            .unwrap();
+        let _frames = SessionClient::new(channel)
+            .exec(authed(tokio_stream_from(rx)))
+            .await
+            .unwrap();
+        for _ in 0..100 {
+            if std::fs::read_to_string(&pid).is_ok_and(|p| !p.trim().is_empty()) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(alive(&pid), "{name}: not running");
+        if fill {
+            let chunk = noise(64 << 10, 3);
+            let mut sent = 0;
+            while tokio::time::timeout(Duration::from_millis(300), tx.send(exec_stdin(&chunk)))
+                .await
+                .is_ok()
+            {
+                sent += chunk.len();
+            }
+            assert!(
+                sent > 64 << 10,
+                "{name}: only {sent} bytes went out before the stream stalled"
+            );
+        }
+        link.abort();
+        assert!(
+            wait_gone(&pid).await,
+            "{name}: the command survived the cancel"
+        );
+    }
+}
+
+/// A TCP forwarder to `endpoint`; aborting it closes every connection, as a client that dies does.
+async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
+    let target = endpoint.trim_start_matches("http://").to_owned();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let mut conns = tokio::task::JoinSet::new();
+        loop {
+            let (mut down, _) = listener.accept().await.unwrap();
+            let target = target.clone();
+            conns.spawn(async move {
+                let mut up = tokio::net::TcpStream::connect(target).await.unwrap();
+                let _ = tokio::io::copy_bidirectional(&mut down, &mut up).await;
+            });
+        }
+    });
+    (addr, task)
+}
+
+#[tokio::test]
+async fn exec_needs_start_first() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    tx.send(exec_stdin(b"x")).await.unwrap();
+    let err = h
+        .session()
+        .await
+        .exec(authed(tokio_stream_from(rx)))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::InvalidArgument);
 }
 
 #[tokio::test]
