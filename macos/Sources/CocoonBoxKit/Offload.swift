@@ -32,13 +32,14 @@ public enum OffloadKind: String, CaseIterable, Codable, Sendable {
         }
     }
 
-    // login is the vendor's own sign-in, run on a terminal in the box.
+    // login is the vendor's own sign-in, run on a terminal in the box; BROWSER and NO_OPEN_BROWSER keep the box's browser shut, so the user approves on the Mac.
     public var login: String {
-        switch self {
+        let command = switch self {
         case .claude: "claude auth login"
         case .codex: "codex login --device-auth"
         case .cursor: "cursor-agent login"
         }
+        return "BROWSER=true NO_OPEN_BROWSER=1 \(command)"
     }
 
     // resume continues the newest conversation of the CLI in the working directory, on the Mac.

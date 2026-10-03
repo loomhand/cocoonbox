@@ -31,7 +31,9 @@ import Foundation
 // capsule-restore:<path>[,<path>...] (from the browsed snapshot),
 // offloads:<label> (rereads the offloads and logs each Offloaded row: repo, box, CLI, status, since),
 // select-offload[:<repo name>] (the first row without a name), bring-back (on the selected offload; logs how it landed
-// and the resume command), plugin-setup (Install Claude Code Plugin; logs its exit code and output), quit.
+// and the resume command), plugin-setup (Install Claude Code Plugin; logs its exit code and output),
+// box-signin:<kind>|off (the Sign in sheet for the selected box), signin-paste (puts CB_CLIP_TEXT on the CB_PASTEBOARD
+// pasteboard, then sends Command+V to the sheet as a keyboard would; logs the first responder), quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -262,6 +264,10 @@ enum Autopilot {
             model.installClaudePlugin()
             await until(180) { model.pluginSetup?.code != nil }
             Perf.mark("plugin_setup_done", "exit=\(model.pluginSetup?.code.map(String.init) ?? "-") output=\(model.pluginSetup?.output.split(separator: "\n").joined(separator: " | ") ?? "")")
+        case "box-signin":
+            model.boxCLISheet = OffloadKind(rawValue: arg).flatMap { kind in model.box.map { .signIn(kind, $0) } }
+        case "signin-paste":
+            signInPaste(model)
         case "quit":
             NSApp.terminate(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }
@@ -295,6 +301,21 @@ enum Autopilot {
         let item = NSApp.mainMenu?.items.lazy.compactMap { $0.submenu?.items.first { $0.keyEquivalent == key && $0.keyEquivalentModifierMask == .command } }.first
         guard let action = item?.action, let responder = model.screen.container.window?.firstResponder else { return }
         Perf.mark("autopilot_command", "key=\(key) action=\(action) handled=\(responder.tryToPerform(action, with: item))")
+    }
+
+    private static func signInPaste(_ model: AppModel) {
+        guard ProcessInfo.processInfo.environment["CB_PASTEBOARD"] != nil, let sheet = NSApp.windows.first(where: { $0.isSheet && $0.isVisible }) else {
+            Perf.mark("autopilot_unknown", "signin-paste needs CB_PASTEBOARD and the sign-in sheet")
+            return
+        }
+        model.screen.pasteboard.clearContents()
+        model.screen.pasteboard.setString(ProcessInfo.processInfo.environment["CB_CLIP_TEXT"] ?? "", forType: .string)
+        let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: .command, timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: sheet.windowNumber, context: nil, characters: "v", charactersIgnoringModifiers: "v", isARepeat: false, keyCode: 9
+        )
+        let handled = event.map(sheet.performKeyEquivalent) ?? false
+        Perf.mark("signin_paste", "handled=\(handled) responder=\(sheet.firstResponder.map { String(describing: type(of: $0)) } ?? "-")")
     }
 
     private static func fillCredential(_ model: AppModel, username: String) async {

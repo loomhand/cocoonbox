@@ -1,3 +1,4 @@
+import AppKit
 import CocoonBoxKit
 import CocoonBoxTerminal
 import Foundation
@@ -177,10 +178,11 @@ extension AppModel {
         }.value
     }
 
-    // attach runs command in box on a terminal over Session.Exec; the Exec ends when the command does or the task is cancelled.
-    func attach(_ command: String, box: String, key: String) -> RemoteTerminal {
+    // attach runs command in box on a terminal over Session.Exec, passing its output on to watch too; the Exec ends when the command does or the task is cancelled.
+    func attach(_ command: String, box: String, key: String, watch: (@Sendable (Data) -> Void)? = nil) -> RemoteTerminal {
         let (frames, input) = AsyncStream<Cocoonbox_Agent_V1_ExecClientFrame>.makeStream()
         let terminal = RemoteTerminal(
+            pasteboard: screen.pasteboard,
             input: { data in input.yield(.with { $0.stdin = data }) },
             resize: { columns, rows in input.yield(.with { $0.resize = .with { $0.cols = UInt32(columns); $0.rows = UInt32(rows) } }) }
         )
@@ -200,7 +202,10 @@ extension AppModel {
                         }
                     }
                 }
-                code = try await packer.connection.exec(start: start, input: frames) { data, _ in feed.receive(data) } ?? 255
+                code = try await packer.connection.exec(start: start, input: frames) { data, _ in
+                    feed.receive(data)
+                    watch?(data)
+                } ?? 255
             } catch {
                 feed.receive(Data("\r\n[\(BoxConnection.describe(error))]\r\n".utf8))
             }
@@ -222,6 +227,13 @@ extension AppModel {
             output("\n\(BoxConnection.describe(error))\n")
             return false
         }
+    }
+
+    // openSignInLink opens a box CLI's sign-in link in the Mac's default browser; a CB_NO_BROWSER run only logs it.
+    func openSignInLink(_ url: URL) {
+        let open = ProcessInfo.processInfo.environment["CB_NO_BROWSER"] == nil
+        Perf.mark("signin_link", "host=\(url.host() ?? "-") opened=\(open)")
+        if open { NSWorkspace.shared.open(url) }
     }
 
     // notifyOffload records a box CLI session's status and notifies a question, work ready to bring back, or a stopped agent.

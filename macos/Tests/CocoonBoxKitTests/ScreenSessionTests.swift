@@ -56,7 +56,7 @@ final class SyntheticTransport: ScreenTransport {
     }
 }
 
-func eventually(_ timeout: Duration = .seconds(5), _ condition: () -> Bool) async -> Bool {
+func eventually(_ timeout: Duration = .seconds(5), isolation: isolated (any Actor)? = #isolation, _ condition: () -> Bool) async -> Bool {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
         if condition() { return true }

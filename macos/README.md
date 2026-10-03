@@ -93,7 +93,7 @@ cocoonbox offload --kind codex          # by hand, after writing the hand-over t
 cocoonbox back                          # lands the box's work and prints the box agent's hand-over
 ```
 
-File > Install Claude Code Plugin… runs `cocoonbox setup claude` and shows its output. The sidebar's **Offloaded** section lists the offloads in flight on every box: repo, box, box CLI, status and time since its last activity. Selecting one shows the box CLI's terminal (tmux over Exec), with Reattach; **Bring back** runs `back` in the app and then shows how the work landed, the command that resumes the session in your terminal, and where the hand-over is. The section's menu installs a box CLI or signs it in, in any box. Autopilot's `offloads`, `select-offload`, `bring-back` and `plugin-setup` steps log the same.
+File > Install Claude Code Plugin… runs `cocoonbox setup claude` and shows its output. The sidebar's **Offloaded** section lists the offloads in flight on every box: repo, box, box CLI, status and time since its last activity. Selecting one shows the box CLI's terminal (tmux over Exec), with Reattach; **Bring back** runs `back` in the app and then shows how the work landed, the command that resumes the session in your terminal, and where the hand-over is. The section's menu installs a box CLI or signs it in, in any box. Sign-in runs the CLI's own login in the box with `BROWSER=true NO_OPEN_BROWSER=1`, so the box's browser stays shut; the app opens the first link it prints on the vendor's sign-in hosts in the Mac's browser, once, with Open in Browser and Copy Link, and the code goes in with ⌘V in the terminal or the field under it. Autopilot's `offloads`, `select-offload`, `bring-back`, `plugin-setup`, `box-signin` and `signin-paste` steps log the same.
 
 ## Live view
 
@@ -112,7 +112,8 @@ These environment variables serve test runs:
 - `CB_KEYCHAIN_FILE`: a keychain file to use instead of the login keychain, so tests never touch the user's own. Create it with `security create-keychain` and unlock it with `security unlock-keychain`; `scripts/test-cli.sh` does this, and also runs with `HOME` set to a test directory.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.
-- `CB_PASTEBOARD=<name>`: use that private pasteboard instead of the general one, so a test run leaves the user's clipboard alone. Autopilot's `clip-paste` needs it.
+- `CB_PASTEBOARD=<name>`: use that private pasteboard instead of the general one, so a test run leaves the user's clipboard alone. Autopilot's `clip-paste` and `signin-paste` need it.
+- `CB_NO_BROWSER=1`: log a box CLI's sign-in link (`signin_link`) instead of opening it in the Mac's browser.
 - `CB_RFB_RAW=1`: offer only Raw, for throughput baselines.
 - `CB_RFB_PACE=0`: turn off request pacing, for A/B runs.
 - `CB_RFB_EAGER=1`: send the whole client side of the RFB handshake before the server's banner. This saves a round trip, but works only with a server that speaks RFB 3.8 without a password. It overrides the `rfbEagerHandshake` default (`defaults write me.cmgs.cocoonbox rfbEagerHandshake -bool true`), which is off.

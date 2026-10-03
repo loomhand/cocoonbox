@@ -196,14 +196,17 @@ public protocol HostedTerminal: AnyObject {
 // LocalAgentTerminal hosts a session's or a box program's terminal view in SwiftUI.
 public struct LocalAgentTerminal: NSViewRepresentable {
     let session: any HostedTerminal
+    let takesFocus: Bool
 
-    public init(session: any HostedTerminal) {
+    public init(session: any HostedTerminal, takesFocus: Bool = false) {
         self.session = session
+        self.takesFocus = takesFocus
     }
 
     public func makeNSView(context: Context) -> NSView {
         let container = TerminalContainer()
         container.session = session
+        container.takesFocus = takesFocus
         if session.view.superview == nil { container.claim() }
         return container
     }
@@ -215,9 +218,10 @@ public struct LocalAgentTerminal: NSViewRepresentable {
     }
 }
 
-// TerminalContainer takes the terminal when it enters a window and focuses it unless another view, not the sidebar list, holds the keyboard.
+// TerminalContainer takes the terminal when it enters a window and focuses it unless another view, not the sidebar list, holds the keyboard and it does not take focus.
 private final class TerminalContainer: NSView {
     weak var session: (any HostedTerminal)?
+    var takesFocus = false
 
     func claim() {
         guard let view = session?.view, view.superview !== self else { return }
@@ -231,7 +235,7 @@ private final class TerminalContainer: NSView {
         super.viewDidMoveToWindow()
         guard let window else { return }
         claim()
-        if let responder = window.firstResponder, responder !== window, !(responder is NSTableView) { return }
+        if !takesFocus, let responder = window.firstResponder, responder !== window, !(responder is NSTableView) { return }
         session?.focus()
     }
 }
