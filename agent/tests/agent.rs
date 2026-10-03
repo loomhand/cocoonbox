@@ -2192,6 +2192,79 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
 }
 
 #[tokio::test]
+async fn a_read_share_reads_files_only_under_the_workspace() {
+    let h = Harness::start(Vec::new(), false).await;
+    let edge = Edge::provision(&h);
+    std::fs::create_dir_all(h.workspace.join("docs")).unwrap();
+    std::fs::write(h.workspace.join("docs/x.txt"), "shared\n").unwrap();
+    let claude = h.home.join(".claude");
+    std::fs::create_dir_all(&claude).unwrap();
+    std::fs::write(claude.join("x"), "secret\n").unwrap();
+    std::os::unix::fs::symlink(&claude, h.workspace.join("abs")).unwrap();
+    std::os::unix::fs::symlink("../home/.claude", h.workspace.join("rel")).unwrap();
+    let ws = h.workspace.display().to_string();
+    let secret = claude.join("x").display().to_string();
+    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
+
+    let mut reader = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read"))).await;
+    for path in [
+        "docs/x.txt".to_owned(),
+        format!("{ws}/docs/x.txt"),
+        format!("{ws}/docs/../docs/x.txt"),
+    ] {
+        let out = reader.call("read_file", json!({"path": path})).await;
+        assert_eq!(out["isError"], false, "{path}: {out}");
+        assert!(text(&out).contains("shared"), "{path}: {out}");
+    }
+    for path in [json!({}), json!({"path": ws}), json!({"path": "docs"})] {
+        let out = reader.call("list_dir", path.clone()).await;
+        assert_eq!(out["isError"], false, "{path}: {out}");
+    }
+    assert!(text(&reader.call("list_dir", json!({})).await).contains("docs/"));
+    let escapes = [
+        (secret.clone(), claude.display().to_string()),
+        (
+            format!("{ws}/../home/.claude/x"),
+            format!("{ws}/../home/.claude"),
+        ),
+        ("../home/.claude/x".to_owned(), "..".to_owned()),
+        (
+            "docs/../../home/.claude/x".to_owned(),
+            "docs/../..".to_owned(),
+        ),
+        ("abs/x".to_owned(), "abs".to_owned()),
+        ("rel/x".to_owned(), "rel".to_owned()),
+    ];
+    for (file, dir) in &escapes {
+        for (tool, path) in [("read_file", file), ("list_dir", dir)] {
+            for args in [
+                json!({"path": path}),
+                json!({"path": path, "workspace_only": false}),
+            ] {
+                let out = reader.call(tool, args).await;
+                assert_eq!(out["isError"], true, "{tool} {path}: {out}");
+                assert!(
+                    text(&out).contains("is refused: a read-only share reads files only under"),
+                    "{tool} {path}: {out}"
+                );
+                assert!(!text(&out).contains("secret"), "{tool} {path}: {out}");
+            }
+        }
+    }
+
+    let mut owner = McpClient::connect_as(&h, Some(edge.owner())).await;
+    let mut writer = McpClient::connect_as(&h, Some(edge.share("share:sh-1:write"))).await;
+    for client in [&mut owner, &mut writer] {
+        for (file, dir) in &escapes {
+            let out = client.call("read_file", json!({"path": file})).await;
+            assert!(text(&out).contains("secret"), "{file}: {out}");
+            let out = client.call("list_dir", json!({"path": dir})).await;
+            assert_eq!(out["isError"], false, "{dir}: {out}");
+        }
+    }
+}
+
+#[tokio::test]
 async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
     let h = Harness::start(Vec::new(), false).await;
     let mut mcp = McpClient::connect(&h).await;

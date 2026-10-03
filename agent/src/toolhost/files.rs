@@ -1,10 +1,16 @@
 //! File tools. Relative paths resolve under the workspace; absolute paths are
 //! used as given, so the toolhost's uid (`user`) is the access boundary.
+//! A call with `workspace_only` (a read-only share) reads only beneath the workspace.
 
 use std::fmt::Write as _;
+use std::fs::File;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
+use tokio::io::AsyncReadExt;
+
+use crate::sys;
 
 const READ_LINES: usize = 2000;
 const LINE_CHARS: usize = 2000;
@@ -18,6 +24,8 @@ struct ReadArgs {
     offset: Option<usize>,
     #[serde(default)]
     limit: Option<usize>,
+    #[serde(default)]
+    workspace_only: bool,
 }
 
 #[derive(Deserialize)]
@@ -39,6 +47,8 @@ struct EditArgs {
 struct ListArgs {
     #[serde(default)]
     path: Option<String>,
+    #[serde(default)]
+    workspace_only: bool,
 }
 
 /// Resolves a model-supplied path against `workspace`.
@@ -55,9 +65,20 @@ pub fn resolve(workspace: &Path, path: &str) -> PathBuf {
 pub async fn read(workspace: &Path, args: serde_json::Value) -> Result<String, String> {
     let a: ReadArgs = parse(args)?;
     let path = resolve(workspace, &a.path);
-    let data = tokio::fs::read(&path)
+    let data = if a.workspace_only {
+        let mut data = Vec::new();
+        tokio::fs::File::from_std(open_beneath(
+            workspace,
+            &path,
+            libc::O_RDONLY | libc::O_NONBLOCK,
+        )?)
+        .read_to_end(&mut data)
         .await
-        .map_err(|e| format!("read {}: {e}", path.display()))?;
+        .map(|_| data)
+    } else {
+        tokio::fs::read(&path).await
+    }
+    .map_err(|e| format!("read {}: {e}", path.display()))?;
     if data.iter().take(8192).any(|&b| b == 0) {
         return Ok(format!(
             "{} is a binary file of {} bytes",
@@ -141,7 +162,16 @@ pub async fn edit(workspace: &Path, args: serde_json::Value) -> Result<String, S
 pub async fn list(workspace: &Path, args: serde_json::Value) -> Result<String, String> {
     let a: ListArgs = parse(args)?;
     let path = resolve(workspace, a.path.as_deref().unwrap_or("."));
-    let mut dir = tokio::fs::read_dir(&path)
+    let beneath = if a.workspace_only {
+        Some(open_beneath(workspace, &path, libc::O_DIRECTORY)?)
+    } else {
+        None
+    };
+    let source = beneath.as_ref().map_or_else(
+        || path.clone(),
+        |d| PathBuf::from(format!("/proc/self/fd/{}", d.as_raw_fd())),
+    );
+    let mut dir = tokio::fs::read_dir(&source)
         .await
         .map_err(|e| format!("list {}: {e}", path.display()))?;
     let mut entries = Vec::new();
@@ -182,6 +212,28 @@ pub async fn write_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
     tokio::fs::write(path, data)
         .await
         .map_err(|e| format!("write {}: {e}", path.display()))
+}
+
+/// Opens `path` so that it resolves beneath `workspace`, `..` and symlinks included.
+fn open_beneath(workspace: &Path, path: &Path, flags: libc::c_int) -> Result<File, String> {
+    let refused = || {
+        format!(
+            "{} is refused: a read-only share reads files only under {}",
+            path.display(),
+            workspace.display()
+        )
+    };
+    let rel = path.strip_prefix(workspace).map_err(|_| refused())?;
+    let rel = if rel.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        rel
+    };
+    let root = File::open(workspace).map_err(|e| format!("open {}: {e}", workspace.display()))?;
+    sys::open_beneath(&root, rel, flags).map_err(|e| match e.raw_os_error() {
+        Some(libc::EXDEV) => refused(),
+        _ => format!("open {}: {e}", path.display()),
+    })
 }
 
 fn parse<T: serde::de::DeserializeOwned>(args: serde_json::Value) -> Result<T, String> {

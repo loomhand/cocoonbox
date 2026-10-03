@@ -414,11 +414,14 @@ impl Mcp {
                 format!("{name} is not allowed: the owner shares this box read-only"),
             ));
         }
-        let requested = match &params["arguments"] {
+        let mut requested = match &params["arguments"] {
             Value::Null => json!({}),
             v @ Value::Object(_) => v.clone(),
             _ => return Err((-32602, "arguments must be an object".to_owned())),
         };
+        if let Principal::Share { write: false, .. } = principal {
+            requested["workspace_only"] = true.into();
+        }
         let label = {
             let mut d = lock(&s.driver);
             d.used |= uses_driver(name);
