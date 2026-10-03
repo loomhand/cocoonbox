@@ -4,11 +4,11 @@ import Foundation
 // terminal's shell would have it. An app started by launchd sees only the
 // system PATH, and one started by `open` carries the caller's shell state
 // (PWD and the like), so neither is handed to a CLI as is.
-enum LoginShell {
+public enum LoginShell {
     static let seed = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "SSH_AUTH_SOCK", "LANG"]
     static let dropped = ["PWD", "OLDPWD", "SHLVL", "_"]
 
-    static func environment() async -> [String: String] {
+    public static func environment() async -> [String: String] {
         let inherited = ProcessInfo.processInfo.environment
         let shell = inherited["SHELL"] ?? "/bin/zsh"
         let marker = "__cocoonbox_env__"

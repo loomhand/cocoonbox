@@ -1,0 +1,253 @@
+import AppKit
+import CocoonBoxKit
+import CocoonBoxTerminal
+import SwiftUI
+
+// OffloadedHeader titles the Offloaded section, with the box menu for each box's CLIs and the Claude Code plugin.
+struct OffloadedHeader: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack {
+            Text("Offloaded")
+            Spacer()
+            Menu {
+                Button("Install Claude Code Plugin…") { model.installClaudePlugin() }
+                Divider()
+                ForEach(model.boxes, id: \.id) { box in
+                    Menu(box.name) {
+                        ForEach(OffloadKind.allCases, id: \.self) { kind in
+                            Button("Install \(kind.title) in Box…") { model.boxCLISheet = .install(kind, box) }
+                        }
+                        Divider()
+                        ForEach(OffloadKind.allCases, id: \.self) { kind in
+                            Button("Sign In to \(kind.title) in the Box…") { model.boxCLISheet = .signIn(kind, box) }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Install or sign in a box CLI, or install the Claude Code plugin for /cocoonbox:offload")
+        }
+    }
+}
+
+// OffloadRow is one offload: the repo, its box and CLI, the box CLI's status and the time since its last activity.
+struct OffloadRow: View {
+    @Environment(AppModel.self) private var model
+    let record: OffloadRecord
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "shippingbox")
+                .foregroundStyle(Self.color(Self.status(model, record)))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(Self.repoName(record)).lineLimit(1)
+                Text(Self.place(model, record))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                TimelineView(.periodic(from: .now, by: 30)) { context in
+                    Text("\(Self.status(model, record)) · \(Self.since(model, record, now: context.date))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+    }
+
+    static func repoName(_ record: OffloadRecord) -> String {
+        record.top.map { URL(fileURLWithPath: $0).lastPathComponent } ?? record.name
+    }
+
+    static func place(_ model: AppModel, _ record: OffloadRecord) -> String {
+        "\(model.boxes.first { $0.id == record.box }?.name ?? record.boxName) · \(record.kind.title)"
+    }
+
+    // status is the box CLI's status in words; a box that is not running cannot report one.
+    static func status(_ model: AppModel, _ record: OffloadRecord) -> String {
+        if model.bringingBack[record.repo] != nil { return "bringing back" }
+        guard model.offloads.contains(where: { $0.repo == record.repo }) else { return "brought back" }
+        if let box = model.boxes.first(where: { $0.id == record.box }), box.state != .running { return "box \(StateBadge.label(box.state).lowercased())" }
+        switch model.offloadActivity[record.repo]?.status {
+        case "working": return "working"
+        case "idle": return "idle"
+        case "waiting_for_user": return "waiting for you"
+        case "blocked": return "blocked"
+        case "stopped": return "stopped"
+        default: return "…"
+        }
+    }
+
+    static func since(_ model: AppModel, _ record: OffloadRecord, now: Date) -> String {
+        let at = model.offloadActivity[record.repo]?.at ?? Date(timeIntervalSince1970: Double(record.startedAtMs) / 1000)
+        let minutes = Int(now.timeIntervalSince(at)) / 60
+        switch minutes {
+        case ..<1: return "just now"
+        case ..<60: return "\(minutes) min ago"
+        case ..<(24 * 60): return "\(minutes / 60) h ago"
+        default: return at.formatted(date: .abbreviated, time: .shortened)
+        }
+    }
+
+    static func color(_ status: String) -> Color {
+        switch status {
+        case "working": .green
+        case "waiting for you": .orange
+        case "blocked": .red
+        case "brought back": .teal
+        default: .secondary
+        }
+    }
+}
+
+// OffloadPane shows the box CLI's terminal of an offload, with Bring back; after a bring-back, how to resume on this Mac.
+struct OffloadPane: View {
+    @Environment(AppModel.self) private var model
+    let record: OffloadRecord
+
+    var body: some View {
+        let inFlight = model.offloads.contains { $0.repo == record.repo }
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "shippingbox")
+                Text(OffloadRow.repoName(record)).font(.headline).lineLimit(1)
+                Text("\(OffloadRow.place(model, record)) · \(OffloadRow.status(model, record))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .layoutPriority(-1)
+                Spacer()
+                if let step = model.bringingBack[record.repo] {
+                    ProgressView().controlSize(.small)
+                    Text(step).font(.caption).foregroundStyle(.secondary).fixedSize()
+                } else if inFlight {
+                    Button("Bring back") { model.bringBack(record) }
+                        .controlSize(.small)
+                        .help("Ask the box agent for its hand-over, land its work in \(record.top ?? "the repo"), and end its session")
+                }
+                if let box = model.boxes.first(where: { $0.id == record.box }) {
+                    Menu("Box CLI") {
+                        Button("Install \(record.kind.title) in \(box.name)…") { model.boxCLISheet = .install(record.kind, box) }
+                        Button("Sign in in the box…") { model.boxCLISheet = .signIn(record.kind, box) }
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            Divider()
+            if !inFlight, let done = model.broughtBack[record.repo] {
+                BroughtBackView(done: done)
+            } else if let terminal = model.boxTerminals[record.repo] {
+                ZStack(alignment: .bottom) {
+                    LocalAgentTerminal(session: terminal)
+                        .id(ObjectIdentifier(terminal))
+                    if terminal.exitCode != nil {
+                        Button("Reattach") { model.reattach(record) }
+                            .padding(12)
+                            .help("The view of the box CLI ended; the box CLI may still run")
+                    }
+                }
+                .frame(minHeight: 220, maxHeight: .infinity)
+            } else {
+                ProgressView("Attaching to the box CLI…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task(id: record.repo) { model.openOffloadTerminal(record) }
+            }
+        }
+        .task(id: record.repo) { await model.refreshOffloads() }
+    }
+}
+
+// BroughtBackView tells the user how the work landed and how to resume in their own terminal.
+struct BroughtBackView: View {
+    @Environment(AppModel.self) private var model
+    let done: BroughtBack
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Bring-back done", systemImage: "checkmark.circle")
+                .font(.title3.bold())
+                .foregroundStyle(.green)
+            Text(done.landing).textSelection(.enabled)
+            if let command = done.command {
+                Text("Resume in your own terminal:")
+                HStack(alignment: .top, spacing: 8) {
+                    Text(command)
+                        .font(.callout.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    Button("Copy") { model.copy(command) }
+                        .controlSize(.small)
+                }
+            }
+            Text("The box agent's hand-over is at \(done.handover.path). Ask your agent to read it, check its claims and continue from its next steps.")
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Show Hand-over in Finder") { NSWorkspace.shared.activateFileViewerSelecting([done.handover]) }
+                Spacer()
+                Button("Done") { model.dismissBroughtBack(done.record.repo) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+extension BroughtBack {
+    // command resumes the newest conversation of the offload's CLI kind in the repo.
+    var command: String? {
+        record.top.map { "cd '\($0.replacingOccurrences(of: "'", with: "'\\''"))' && \(record.kind.resume)" }
+    }
+}
+
+// PluginSetupSheet shows the run of `cocoonbox setup claude`.
+struct PluginSetupSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let setup: PluginSetup
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Install the Claude Code plugin").font(.title2.bold())
+            Text("This runs `cocoonbox setup claude`, which adds the cocoonbox plugin to your own Claude Code, or updates it. Then /cocoonbox:offload and /cocoonbox:back work in any repo. A running Claude Code loads it after /reload-plugins or a restart.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ScrollView {
+                Text(setup.output.isEmpty ? " " : setup.output)
+                    .font(.caption.monospaced())
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            .frame(height: 200)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 6))
+            HStack {
+                if let code = setup.code {
+                    Label(code == 0 ? "Installed" : "Failed (exit \(code))", systemImage: code == 0 ? "checkmark.circle" : "xmark.octagon")
+                        .foregroundStyle(code == 0 ? .green : .red)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(setup.code == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 620)
+    }
+}

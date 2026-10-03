@@ -21,13 +21,11 @@ import Testing
         #expect(LocalAgentStore.load(from: home.appendingPathComponent("missing.json")).isEmpty)
     }
 
-    @Test func anOffloadedAgentKeepsItsBoxSessionAcrossARestart() throws {
+    @Test func aRecordWithAnAppOffloadStillReopens() throws {
         let url = try temporaryHome().appendingPathComponent("local-agents.json")
-        var record = LocalAgentRecord(kind: .claudeCode, boxID: "cb-1", sessionID: "s-1", workspace: workspace, startedAt: Date(timeIntervalSince1970: 1_790_000_000))
-        record.offload = LocalOffload(id: "0a1b2c3d4e5f", repo: "agent-1234abcd", box: "cb-1", cli: "claude", startedAt: Date(timeIntervalSince1970: 1_790_000_100))
-        try LocalAgentStore.save([record], to: url)
-        #expect(LocalAgentStore.load(from: url) == [record])
-        #expect(record.offload?.tmux == "cb-off-agent-1234abcd-claude")
+        try Data(#"[{"boxID":"cb-1","id":"BC293D2C-45E1-4A33-AF0C-352962DB4F57","kind":"claudeCode","offload":{"box":"cb-1","cli":"claude","id":"0a1b2c3d4e5f","repo":"agent-1234abcd","startedAt":"2026-10-02T00:00:00.000Z"},"sessionID":"s-1","startedAt":"2026-10-02T00:00:00.000Z","workspace":"/nonexistent"}]"#.utf8).write(to: url)
+        let loaded = try #require(LocalAgentStore.load(from: url).first)
+        #expect(loaded.sessionID == "s-1" && loaded.boxID == "cb-1")
     }
 
     @Test func recordsOfTheOldShapeReopenWithTheirBoxAsDefault() throws {

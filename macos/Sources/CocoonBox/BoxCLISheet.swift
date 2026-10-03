@@ -13,7 +13,7 @@ struct BoxCLISheetView: View {
     @State private var running = false
     @State private var installed: Bool?
     @State private var terminal: RemoteTerminal?
-    @State private var key = UUID()
+    @State private var key = UUID().uuidString
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {

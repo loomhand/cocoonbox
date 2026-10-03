@@ -71,6 +71,9 @@ struct RootView: View {
         .sheet(item: $model.boxCLISheet) { sheet in
             BoxCLISheetView(sheet: sheet).id(sheet.id)
         }
+        .sheet(isPresented: Binding(get: { model.pluginSetup != nil }, set: { if !$0 { model.pluginSetup = nil } })) {
+            if let setup = model.pluginSetup { PluginSetupSheet(setup: setup) }
+        }
         .alert(model.busyWarning?.title ?? "", isPresented: Binding(get: { model.busyWarning != nil }, set: { if !$0 { model.busyWarning = nil } }), presenting: model.busyWarning) { warning in
             Button("Continue", role: .destructive) { warning.proceed() }
             Button("Cancel", role: .cancel) {}
@@ -174,6 +177,13 @@ struct SidebarView: View {
                     if !model.localAgents.isEmpty {
                         Text("On this Mac")
                     }
+                }
+                Section {
+                    ForEach(model.offloadRows, id: \.repo) { record in
+                        OffloadRow(record: record).tag(AppModel.selectionID(offload: record.repo))
+                    }
+                } header: {
+                    OffloadedHeader()
                 }
             }
             .listStyle(.sidebar)

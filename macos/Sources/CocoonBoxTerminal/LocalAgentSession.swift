@@ -140,11 +140,6 @@ public final class LocalAgentSession: Identifiable, HostedTerminal {
         record.name = name.isEmpty ? nil : name
     }
 
-    // setOffload records the box CLI session that continues this agent's task, or clears it once the task is back.
-    public func setOffload(_ offload: LocalOffload?) {
-        record.offload = offload
-    }
-
     // setDefaultBox sets the box of the agent's calls that name none.
     public func setDefaultBox(_ boxID: String) {
         record.boxID = boxID

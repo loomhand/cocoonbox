@@ -80,14 +80,19 @@ final class AppModel {
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
     var capsule = CapsuleBrowser()
-    // offloading is the step each local agent moving to or back from a box is on.
-    var offloading: [UUID: String] = [:]
-    // boxStatus is each offloaded repo key's box CLI status, from offload events.
-    var boxStatus: [String: Cocoonbox_Agent_V1_OffloadStatus] = [:]
-    var boxTerminals: [UUID: RemoteTerminal] = [:]
+    // offloads is the offloads in flight, from the records on this Mac, oldest first.
+    var offloads: [OffloadRecord] = []
+    // offloadActivity is each repo key's box CLI status and last activity, from `offload status` and offload events.
+    var offloadActivity: [String: OffloadActivity] = [:]
+    // bringingBack is the step of each repo key on its way back.
+    var bringingBack: [String: String] = [:]
+    // broughtBack keeps each repo key's finished bring-back until the user dismisses it.
+    var broughtBack: [String: BroughtBack] = [:]
+    var boxTerminals: [String: RemoteTerminal] = [:]
     var boxCLISheet: BoxCLISheet?
     var busyWarning: BusyWarning?
-    @ObservationIgnored var attachTasks: [UUID: Task<Void, Never>] = [:]
+    var pluginSetup: PluginSetup?
+    @ObservationIgnored var attachTasks: [String: Task<Void, Never>] = [:]
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
     @ObservationIgnored private var restoredLocal = false
@@ -115,7 +120,10 @@ final class AppModel {
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self, self.connection != nil else { return }
-                Task { await self.refreshBoxes() }
+                Task {
+                    await self.refreshBoxes()
+                    await self.refreshOffloads()
+                }
             }
         }
     }
@@ -305,7 +313,6 @@ final class AppModel {
     }
 
     func closeLocal(_ session: LocalAgentSession) {
-        closeBoxTerminal(session)
         session.close()
         localAgents.removeAll { $0 === session }
         localCalls[session.id] = nil
@@ -357,7 +364,7 @@ final class AppModel {
         return true
     }
 
-    private func copy(_ text: String) {
+    func copy(_ text: String) {
         screen.pasteboard.clearContents()
         screen.pasteboard.setString(text, forType: .string)
     }
@@ -543,6 +550,7 @@ final class AppModel {
                 try? await pause(Backoff().delay(attempt: attempt))
                 attempt += 1
             }
+            await refreshOffloads()
         }
     }
 
@@ -610,7 +618,7 @@ final class AppModel {
         hello = nil
         share = nil
         selectedBoxID = id
-        selectedAgentID = selectedLocal.map(Self.selectionID)
+        selectedAgentID = selectedLocal.map(Self.selectionID) ?? selectedOffload.map { Self.selectionID(offload: $0.repo) }
         Perf.mark("box_select", "\(id) \(box?.name ?? "-") \(box?.state ?? .unspecified)")
         if boxRunning { startAgentSide() }
     }
@@ -839,7 +847,7 @@ final class AppModel {
         do {
             agents = try await connection.listAgents().sorted { $0.createdAtMs < $1.createdAtMs }
             live = [:]
-            selectedAgentID = Agent.resynced(selectedAgentID, local: selectedLocal != nil, in: agents)
+            selectedAgentID = Agent.resynced(selectedAgentID, local: selectedLocal != nil || selectedOffload != nil, in: agents)
             loadedTranscripts = []
             if let id = selectedTranscriptID {
                 loadedTranscripts.insert(id)

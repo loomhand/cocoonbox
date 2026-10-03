@@ -24,29 +24,37 @@ struct BusyWarning: Identifiable {
     var proceed: @MainActor () -> Void
 }
 
-extension LocalAgentKind {
-    var offloadKind: OffloadKind {
-        switch self {
-        case .claudeCode: .claude
-        case .codex: .codex
-        case .cursor: .cursor
-        }
-    }
+// OffloadActivity is a box CLI session's last known status and when it last did something.
+struct OffloadActivity: Equatable {
+    var status: String
+    var at: Date?
+}
+
+// BroughtBack is a finished bring-back: how the work landed and where the box agent's hand-over is.
+struct BroughtBack: Equatable {
+    var record: OffloadRecord
+    var landing: String
+    var handover: URL
+}
+
+// PluginSetup is the "Install Claude Code Plugin" run: its output, then its exit code.
+struct PluginSetup: Equatable {
+    var output = ""
+    var code: Int32?
 }
 
 extension AppModel {
     static let offloadStore = OffloadStore(support: LocalAgentStore.defaultURL.deletingLastPathComponent())
-    static let offloadWait: Duration = .seconds(30 * 60)
 
-    // packer reaches box id over a connection of its own, so its Exec calls never move the agent side's box; the box is woken first.
-    func packer(for boxID: String) async throws -> Offloader {
+    // packer reaches box id over a connection of its own, so its Exec calls never move the agent side's box; the box is woken first unless wake is false.
+    func packer(for boxID: String, wake: Bool = true) async throws -> Offloader {
         guard let endpoint = Endpoint(url: endpointURL), let token = Keychain.token(for: endpoint), let cli = Self.bridge else {
             throw OffloadError.failed("sign in first; the cocoonbox CLI must sit next to the app")
         }
         let connection = try BoxConnection(endpoint: endpoint, token: token)
         do {
             var box = try await connection.listBoxes().first { $0.id == boxID }
-            if box?.state != .running {
+            if wake, box?.state != .running {
                 _ = try await connection.ensure(boxID: boxID)
                 for _ in 0..<120 where box?.state != .running {
                     try await pause(.seconds(1))
@@ -62,96 +70,115 @@ extension AppModel {
         }
     }
 
-    // moveToBox checks the box CLI of session's kind in its default box, then
-    // has the agent write its hand-over and run `cocoonbox offload --no-repo`;
-    // the row turns to the box terminal once the offload is recorded.
-    func moveToBox(_ session: LocalAgentSession) {
-        guard let box = defaultBox(of: session), let cli = Self.bridge else { return }
-        let kind = session.kind.offloadKind
-        offloading[session.id] = "Checking \(kind.title) in \(box.name)…"
-        Task {
-            defer { offloading[session.id] = nil }
-            do {
-                let packer = try await packer(for: box.id)
-                let probe = try await packer.probe(kind)
-                packer.connection.close()
-                Perf.mark("offload", "probe \(kind.rawValue) installed=\(probe.installed) signed_in=\(probe.signedIn)")
-                guard probe.installed else { return boxCLISheet = .install(kind, box) }
-                guard probe.signedIn else { return boxCLISheet = .signIn(kind, box) }
-                let key = OffloadNames.agentKey(session.id.uuidString)
-                let asked = Date()
-                session.paste(Self.offloadPrompt(kind: kind, box: box, handover: try Self.offloadStore.handover(key).path, cli: cli, endpoint: endpointURL))
-                session.press(.enter)
-                offloading[session.id] = "Writing the hand-over…"
-                let deadline = ContinuousClock.now + Self.offloadWait
-                while ContinuousClock.now < deadline, !session.closed {
-                    if let record = Self.offloadStore.record(key), Double(record.startedAtMs) / 1000 >= asked.timeIntervalSince1970 - 1 {
-                        session.setOffload(LocalOffload(id: record.id, repo: key, box: record.box, cli: record.kind.rawValue,
-                                                        startedAt: Date(timeIntervalSince1970: Double(record.startedAtMs) / 1000)))
-                        persistLocal()
-                        Perf.mark("offload", "moved \(session.kind.rawValue) to \(record.boxName)")
-                        return
-                    }
-                    try await pause(.seconds(2))
-                }
-            } catch {
-                report("move to box", error)
+    static func selectionID(offload key: String) -> String {
+        "offload:\(key)"
+    }
+
+    // offloadRows is the Offloaded section: the offloads in flight, then the finished bring-backs not yet dismissed.
+    var offloadRows: [OffloadRecord] {
+        offloads + broughtBack.values.map(\.record).filter { done in !offloads.contains { $0.repo == done.repo } }.sorted { $0.startedAtMs < $1.startedAtMs }
+    }
+
+    var selectedOffload: OffloadRecord? {
+        offloadRows.first { Self.selectionID(offload: $0.repo) == selectedAgentID }
+    }
+
+    // refreshOffloads rereads the records and asks each running box with one for its box CLI sessions; a hibernated box is not woken.
+    func refreshOffloads() async {
+        offloads = Self.offloadStore.records()
+        for key in boxTerminals.keys where !offloads.contains(where: { $0.repo == key }) { closeOffloadTerminal(key) }
+        for boxID in Set(offloads.map(\.box)) where boxes.first(where: { $0.id == boxID })?.state == .running {
+            guard let packer = try? await packer(for: boxID, wake: false) else { continue }
+            let sessions = (try? await packer.status()) ?? []
+            packer.connection.close()
+            for session in sessions where offloads.contains(where: { $0.repo == session.repo && $0.id == session.offloadID }) {
+                let at = session.activityMs > 0 ? Date(timeIntervalSince1970: Double(session.activityMs) / 1000) : offloadActivity[session.repo]?.at
+                offloadActivity[session.repo] = OffloadActivity(status: session.status, at: at)
             }
         }
+        Perf.mark("offloads", "rows=\(offloads.count)")
     }
 
-    static func offloadPrompt(kind: OffloadKind, box: Box, handover: String, cli: String, endpoint: String) -> String {
-        """
-        OFFLOAD: move this task into my cocoonbox "\(box.name)", where a fresh \(kind.title) session continues it while I am away. It knows only what your hand-over says.
-        1. Write a hand-over of this session to \(handover) with the template below. Fill every section, "none" when empty. Be concrete: exact commands, versions, paths, errors, decisions with their reasons. Names only for secrets, never values.
-        2. Run: \(cli) offload --no-repo --kind \(kind.rawValue) --box \(box.id) --endpoint \(endpoint)
-           Exit 3 is a block: tell me why. Exit 4 is warnings: tell me each one and run again with --yes only if I agree. Exit 1: tell me its last line.
-        3. When it prints "offloaded", end your turn and change nothing more.
-
-        \(Handover.template)
-        """
-    }
-
-    // bringBack asks the box agent for its hand-over, ends its session, and gives the hand-over to the local agent as its next message.
-    func bringBack(_ session: LocalAgentSession) {
-        guard let offload = session.record.offload else { return }
-        offloading[session.id] = "Waiting for the box agent's hand-over…"
+    // bringBack runs `back` for record's repo in the app: it waits for the box agent's hand-over, lands the box's work in the Mac repo, and ends the box CLI session.
+    func bringBack(_ record: OffloadRecord) {
+        guard bringingBack[record.repo] == nil else { return }
+        bringingBack[record.repo] = "Waiting for the box agent's hand-over…"
         Task {
-            defer { offloading[session.id] = nil }
+            defer { bringingBack[record.repo] = nil }
             do {
-                let packer = try await packer(for: offload.box)
+                let packer = try await packer(for: record.box)
                 defer { packer.connection.close() }
-                let outcome = try await packer.back(offload.repo, interrupt: false)
-                closeBoxTerminal(session)
-                session.setOffload(nil)
-                persistLocal()
-                session.paste("BACK: the task is back from the box. Its agent's hand-over follows; check its claims before you rely on them, then continue from its next steps.\n\n" + outcome.handover)
-                session.press(.enter)
-                Perf.mark("offload", "back \(session.kind.rawValue)")
+                let outcome = try await packer.back(record.repo, interrupt: false)
+                closeOffloadTerminal(record.repo)
+                broughtBack[record.repo] = BroughtBack(record: record, landing: outcome.landing?.summary ?? "no repo", handover: outcome.file)
+                Perf.mark("offload", "back \(record.name) landing=\(outcome.landing?.summary ?? "-")")
             } catch {
                 report("bring back", error)
             }
+            await refreshOffloads()
         }
     }
 
-    // openBoxTerminal attaches to the box CLI's tmux session of an offloaded local agent (D9).
-    func openBoxTerminal(_ session: LocalAgentSession) {
-        guard let offload = session.record.offload, boxTerminals[session.id] == nil else { return }
-        boxTerminals[session.id] = attach("tmux attach -t \(offload.tmux)", box: offload.box, key: session.id)
+    func dismissBroughtBack(_ key: String) {
+        broughtBack[key] = nil
+        if selectedAgentID == Self.selectionID(offload: key) { selectedAgentID = nil }
     }
 
-    func reattach(_ session: LocalAgentSession) {
-        closeBoxTerminal(session)
-        openBoxTerminal(session)
+    // openOffloadTerminal attaches to the box CLI's tmux session of an offload (D9).
+    func openOffloadTerminal(_ record: OffloadRecord) {
+        guard boxTerminals[record.repo] == nil else { return }
+        boxTerminals[record.repo] = attach("tmux attach -t \(record.tmux)", box: record.box, key: record.repo)
     }
 
-    func closeBoxTerminal(_ session: LocalAgentSession) {
-        attachTasks.removeValue(forKey: session.id)?.cancel()
-        boxTerminals.removeValue(forKey: session.id)?.close()
+    func reattach(_ record: OffloadRecord) {
+        closeOffloadTerminal(record.repo)
+        openOffloadTerminal(record)
+    }
+
+    func closeOffloadTerminal(_ key: String) {
+        attachTasks.removeValue(forKey: key)?.cancel()
+        boxTerminals.removeValue(forKey: key)?.close()
+    }
+
+    // installClaudePlugin runs `cocoonbox setup claude` with the login shell's environment, so it finds the user's claude.
+    func installClaudePlugin() {
+        guard let cli = Self.bridge else {
+            lastError = "the cocoonbox CLI must sit next to the app"
+            return
+        }
+        pluginSetup = PluginSetup()
+        Task {
+            let environment = await LoginShell.environment()
+            let (code, output) = await Self.run(cli, ["setup", "claude"], environment: environment)
+            pluginSetup = PluginSetup(output: output, code: code)
+            Perf.mark("plugin_setup", "exit=\(code) last=\(output.split(separator: "\n").last ?? "")")
+        }
+    }
+
+    // run runs executable to its end, off the main actor, and returns its exit code and its stdout and stderr together.
+    nonisolated static func run(_ executable: String, _ arguments: [String], environment: [String: String]) async -> (Int32, String) {
+        await Task.detached {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            process.environment = environment
+            process.standardInput = FileHandle.nullDevice
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = pipe
+            do {
+                try process.run()
+            } catch {
+                return (-1, "\(error)")
+            }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+        }.value
     }
 
     // attach runs command in box on a terminal over Session.Exec; the Exec ends when the command does or the task is cancelled.
-    func attach(_ command: String, box: String, key: UUID) -> RemoteTerminal {
+    func attach(_ command: String, box: String, key: String) -> RemoteTerminal {
         let (frames, input) = AsyncStream<Cocoonbox_Agent_V1_ExecClientFrame>.makeStream()
         let terminal = RemoteTerminal(
             input: { data in input.yield(.with { $0.stdin = data }) },
@@ -199,7 +226,8 @@ extension AppModel {
 
     // notifyOffload records a box CLI session's status and notifies a question, work ready to bring back, or a stopped agent.
     func notifyOffload(_ update: Cocoonbox_Agent_V1_OffloadUpdate) {
-        boxStatus[update.repo] = update.status
+        offloadActivity[update.repo] = OffloadActivity(status: update.status.verbName, at: Date())
+        if !offloads.contains(where: { $0.repo == update.repo }) { offloads = Self.offloadStore.records() }
         Perf.mark("offload_event", "repo=\(update.repo) entry=\(update.entry) seq=\(update.seq) status=\(update.status)")
         let text: String? = switch update.entry {
         case .question: "The box agent working on \(update.name) has a question."
@@ -232,6 +260,20 @@ extension AppModel {
             guard !sessions.isEmpty else { return proceed() }
             let names = sessions.map { "\($0.name) (\($0.cli))" }.joined(separator: ", ")
             busyWarning = BusyWarning(title: title, detail: "A box agent is working on \(names). \(consequence)", proceed: proceed)
+        }
+    }
+}
+
+extension Cocoonbox_Agent_V1_OffloadStatus {
+    // verbName is the status as the `offload status` verb spells it.
+    var verbName: String {
+        switch self {
+        case .working: "working"
+        case .idle: "idle"
+        case .waitingForUser: "waiting_for_user"
+        case .blocked: "blocked"
+        case .stopped: "stopped"
+        default: ""
         }
     }
 }

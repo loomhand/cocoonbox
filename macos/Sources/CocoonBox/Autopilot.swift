@@ -28,7 +28,10 @@ import Foundation
 // box-create:<name>, box-delete:<name>, boxes:<label> (logs every box and the selection),
 // capsule[:off] (the Restore files sheet, which lists the snapshots and browses the newest),
 // capsule-snapshot:<n> (the n-th newest, from 0), capsule-browse:<dir>,
-// capsule-restore:<path>[,<path>...] (from the browsed snapshot), quit.
+// capsule-restore:<path>[,<path>...] (from the browsed snapshot),
+// offloads:<label> (rereads the offloads and logs each Offloaded row: repo, box, CLI, status, since),
+// select-offload[:<repo name>] (the first row without a name), bring-back (on the selected offload; logs how it landed
+// and the resume command), plugin-setup (Install Claude Code Plugin; logs its exit code and output), quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -241,6 +244,24 @@ enum Autopilot {
         case "capsule-restore":
             model.restoreFiles(arg.split(separator: ",").map(String.init))
             await until(10) { model.operation?.title == AppModel.restoreTitle }
+        case "offloads":
+            await model.refreshOffloads()
+            let rows = model.offloadRows.map { "\(OffloadRow.repoName($0))/\(OffloadRow.place(model, $0))/\(OffloadRow.status(model, $0))/\(OffloadRow.since(model, $0, now: Date()))" }
+            Perf.mark("offloads_rows", "label=\(arg) rows=\(rows.joined(separator: ",")) selected=\(model.selectedOffload.map(OffloadRow.repoName) ?? "-") terminal=\(model.selectedOffload.map { model.boxTerminals[$0.repo] != nil } ?? false)")
+        case "select-offload":
+            await until(30) { model.offloadRows.contains { arg.isEmpty || OffloadRow.repoName($0) == arg } }
+            model.selectedAgentID = model.offloadRows.first { arg.isEmpty || OffloadRow.repoName($0) == arg }.map { AppModel.selectionID(offload: $0.repo) }
+        case "bring-back":
+            if let record = model.selectedOffload {
+                model.bringBack(record)
+                await until(120) { model.bringingBack[record.repo] == nil }
+                let done = model.broughtBack[record.repo]
+                Perf.mark("brought_back", "repo=\(OffloadRow.repoName(record)) landing=\(done?.landing ?? "-") command=\(done?.command ?? "-") handover=\(done?.handover.lastPathComponent ?? "-") error=\(model.lastError ?? "-")")
+            }
+        case "plugin-setup":
+            model.installClaudePlugin()
+            await until(180) { model.pluginSetup?.code != nil }
+            Perf.mark("plugin_setup_done", "exit=\(model.pluginSetup?.code.map(String.init) ?? "-") output=\(model.pluginSetup?.output.split(separator: "\n").joined(separator: " | ") ?? "")")
         case "quit":
             NSApp.terminate(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }
