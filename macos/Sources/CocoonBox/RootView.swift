@@ -147,7 +147,7 @@ struct SidebarView: View {
                     }
                 }
                 Section {
-                    ForEach(model.boxLocalAgents) { session in
+                    ForEach(model.localAgents) { session in
                         Group {
                             if editingID == AppModel.selectionID(session) {
                                 nameField { commitRename(session) }
@@ -159,7 +159,7 @@ struct SidebarView: View {
                         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(session) })
                     }
                 } header: {
-                    if !model.boxLocalAgents.isEmpty {
+                    if !model.localAgents.isEmpty {
                         Text("On this Mac")
                     }
                 }
@@ -298,7 +298,10 @@ struct ShareSessionRow: View {
     }
 }
 
+// LocalAgentRow is a local agent with its default box, which the context menu
+// changes, and a badge for each box it called in the last minute.
 struct LocalAgentRow: View {
+    @Environment(AppModel.self) private var model
     let session: LocalAgentSession
 
     var body: some View {
@@ -307,9 +310,36 @@ struct LocalAgentRow: View {
                 .foregroundStyle(session.closed ? Color.secondary : Color.teal)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.record.displayName).lineLimit(1)
-                Text("\(session.kind.title) · \(session.closed ? "exited" : "MCP")")
+                Text("\(session.kind.title) · \(session.closed ? "exited" : "default \(model.defaultBox(of: session)?.name ?? "–")")")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                TimelineView(.periodic(from: .now, by: 5)) { context in
+                    let recent = model.recentBoxes(of: session, now: context.date)
+                    if !recent.isEmpty {
+                        HStack(spacing: 4) {
+                            ForEach(recent, id: \.id) { box in
+                                Text(box.name)
+                                    .font(.caption2.bold())
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(.teal.opacity(0.2), in: Capsule())
+                                    .foregroundStyle(.teal)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .help("Boxes this agent called in the last minute")
+                    }
+                }
+            }
+        }
+        .contextMenu {
+            Picker("Default Box", selection: Binding(get: { session.record.boxID }, set: { id in
+                if let box = model.boxes.first(where: { $0.id == id }) { model.setDefaultBox(session, to: box) }
+            })) {
+                ForEach(model.boxes, id: \.id) { box in
+                    Text(box.name).tag(box.id)
+                }
             }
         }
     }

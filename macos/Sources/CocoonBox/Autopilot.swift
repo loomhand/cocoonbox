@@ -9,7 +9,8 @@ import Foundation
 // wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
 // through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
 // respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
-// select:<agent name>, select-local:<kind>, sidebar:<label> (logs the selection and the External rows),
+// select:<agent name>, select-local:<kind>, sidebar:<label> (logs the selected box and agent, the External
+// rows and every local agent with its default and recent boxes), local-box:<box name> (the selected local agent's default),
 // connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
 // wait-local:<count>[:seconds] (that many local agents open, as after a reopen),
 // terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
@@ -105,7 +106,10 @@ enum Autopilot {
             model.selectedAgentID = model.localAgents.first { $0.kind.rawValue == arg }.map(AppModel.selectionID)
         case "sidebar":
             let external = model.externalAgents().map { "\($0.id)/\($0.shareSession.map(model.guest(of:)) ?? "-")/\($0.externalClient ?? "-")/\($0.status)" }
-            Perf.mark("sidebar", "label=\(arg) selected=\(model.selectedAgentID ?? "-") local=\(model.selectedLocal?.kind.rawValue ?? "-") external=\(external.joined(separator: ",")) agents=\(model.agents.map { "\($0.id)/\($0.name)/\($0.status)" }.joined(separator: ","))")
+            let local = model.localAgents.map { "\($0.kind.rawValue)/default=\(model.defaultBox(of: $0)?.name ?? "-")/recent=\(model.recentBoxes(of: $0).map(\.name).joined(separator: "+"))" }
+            Perf.mark("sidebar", "label=\(arg) box=\(model.box?.name ?? "-") selected=\(model.selectedAgentID ?? "-") local=\(model.selectedLocal?.kind.rawValue ?? "-") on_mac=\(local.joined(separator: ",")) external=\(external.joined(separator: ",")) agents=\(model.agents.map { "\($0.id)/\($0.name)/\($0.status)" }.joined(separator: ","))")
+        case "local-box":
+            if let session = model.selectedLocal, let box = model.boxes.first(where: { $0.name == arg }) { model.setDefaultBox(session, to: box) }
         case "connect-agent":
             model.showConnectAgent = arg != "off"
         case "password-signin":
@@ -220,7 +224,7 @@ enum Autopilot {
                 await until(60) { !model.boxes.contains { $0.id == box.id } }
             }
         case "boxes":
-            Perf.mark("boxes", "label=\(arg) boxes=\(model.boxes.map { "\($0.name)/\($0.state)" }.joined(separator: ",")) selected=\(model.box?.name ?? "-") running=\(model.boxRunning) live=\(model.eventsLive) agents=\(model.agents.count) local=\(model.boxLocalAgents.count) operation=\(model.boxOperation?.status ?? "-") error=\(model.lastError ?? "-")")
+            Perf.mark("boxes", "label=\(arg) boxes=\(model.boxes.map { "\($0.name)/\($0.state)" }.joined(separator: ",")) selected=\(model.box?.name ?? "-") running=\(model.boxRunning) live=\(model.eventsLive) agents=\(model.agents.count) local=\(model.localAgents.count) operation=\(model.boxOperation?.status ?? "-") error=\(model.lastError ?? "-")")
         case "quit":
             NSApp.terminate(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }

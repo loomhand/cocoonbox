@@ -24,7 +24,9 @@ usage: cocoonbox <command> [options]
 and the default box of mcp (default: the newest running box).
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
-COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain.
+COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain;
+COCOONBOX_APP_SOCKET and COCOONBOX_AGENT, also set by the app, let mcp report its calls to the app
+and take the default box the app sets.
 """
 
 let arguments = Array(CommandLine.arguments.dropFirst())
@@ -219,8 +221,10 @@ func serve() async {
     let caches = ProcessInfo.processInfo.environment["COCOONBOX_CACHE_DIR"].map { URL(fileURLWithPath: $0) }
         ?? home.appendingPathComponent("Library/Caches/cocoonbox")
     let output = Output()
+    let environment = ProcessInfo.processInfo.environment
+    let link = environment["COCOONBOX_APP_SOCKET"].flatMap { path in environment["COCOONBOX_AGENT"].flatMap { AgentLinkClient(path: path, agent: $0) } }
     let bridge = Bridge(
-        endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"), box: value(of: "--box"),
+        endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"), box: value(of: "--box"), link: link,
         cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { output.write($0) }
     )
     // a client that stops the bridge with SIGTERM still gets its sessions closed

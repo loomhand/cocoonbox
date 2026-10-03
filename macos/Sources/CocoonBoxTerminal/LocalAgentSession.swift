@@ -60,7 +60,7 @@ public final class LocalAgentSession: Identifiable {
         if !resume, kind != .claudeCode { record.sessionID = nil }
         record.workspace = workspace.path
         record.until = nil
-        let launch = kind.launch(executable: executable, target: target, session: record.sessionID, resume: resume)
+        let launch = kind.launch(executable: executable, target: target, agent: record.id, session: record.sessionID, resume: resume)
         try Self.write(launch.files, in: workspace)
         record.startedAt = Date()
         let process = try PTYProcess(
@@ -138,6 +138,11 @@ public final class LocalAgentSession: Identifiable {
     public func rename(_ name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         record.name = name.isEmpty ? nil : name
+    }
+
+    // setDefaultBox sets the box of the agent's calls that name none.
+    public func setDefaultBox(_ boxID: String) {
+        record.boxID = boxID
     }
 
     // until bounds the sessions this one can claim: another fresh session of its kind started then.

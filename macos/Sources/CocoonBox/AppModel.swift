@@ -64,14 +64,17 @@ final class AppModel {
     var busy = false
     var answeredApprovals: Set<String> = []
     var localAgents: [LocalAgentSession] = []
+    // localCalls is each local agent's last call per box, under the box id or name its bridge reported.
+    var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
     // shareSecret is the secret of the last Create or Regenerate, kept only in memory and only for that share.
     var shareSecret: String?
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
-    @ObservationIgnored private var restoredLocal: Set<String> = []
-    // pendingLocal is the session file's records of boxes whose local agents are not reopened yet.
+    @ObservationIgnored private var restoredLocal = false
+    // pendingLocal is the session file's records until the local agents reopen.
     @ObservationIgnored private lazy var pendingLocal: [LocalAgentRecord] = LocalAgentStore.load()
+    @ObservationIgnored private var link: AgentLinkServer?
 
     let screen = ScreenController()
 
@@ -82,10 +85,12 @@ final class AppModel {
 
     init() {
         endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"] ?? Endpoint.defaultURL
+        listen()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.persistLocal()
                 self?.closeAllLocal()
+                self?.link?.close()
             }
         }
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
@@ -102,11 +107,6 @@ final class AppModel {
 
     var box: Box? {
         boxes.first { $0.id == selectedBoxID }
-    }
-
-    // boxLocalAgents is the local agents that drive the selected box.
-    var boxLocalAgents: [LocalAgentSession] {
-        localAgents.filter { $0.record.boxID == selectedBoxID }
     }
 
     // boxOperation is the operation on the selected box, the one the sidebar shows.
@@ -150,10 +150,55 @@ final class AppModel {
 
     private func localTarget(_ boxID: String) -> MCPTarget? {
         guard let bridge = Self.bridge, let endpoint = Endpoint(url: endpointURL), let token = Keychain.token(for: endpoint) else { return nil }
-        return MCPTarget(bridge: bridge, box: boxID, endpoint: endpoint.url, token: token)
+        return MCPTarget(bridge: bridge, box: boxID, endpoint: endpoint.url, token: token, socket: link?.path)
     }
 
-    // launchLocal starts an agent CLI on this Mac whose MCP server is the bridge, with --box set to the selected box.
+    // listen opens the socket on which the local agents' bridges report their
+    // calls and take their default box; without it they keep their --box.
+    private func listen() {
+        let path = LocalAgentStore.defaultURL.deletingLastPathComponent().appendingPathComponent("agents.sock").path
+        do {
+            try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+            link = try AgentLinkServer(
+                path: path,
+                defaultBox: { [weak self] agent in MainActor.assumeIsolated { self?.localAgents.first { $0.id.uuidString == agent }?.record.boxID } },
+                onCall: { [weak self] agent, box, at in MainActor.assumeIsolated { self?.noteCall(agent: agent, box: box, at: at) } }
+            )
+            Perf.mark("agent_link", path)
+        } catch {
+            Perf.mark("agent_link", "off: \(error)")
+        }
+    }
+
+    // recentCall is how long a box badge stays on a local agent's row after its last call there (design.md §19.6).
+    static let recentCall: TimeInterval = 60
+
+    func defaultBox(of session: LocalAgentSession) -> Box? {
+        boxes.first { $0.id == session.record.boxID }
+    }
+
+    // recentBoxes is the boxes session called in the last recentCall seconds.
+    func recentBoxes(of session: LocalAgentSession, now: Date = Date()) -> [Box] {
+        let calls = localCalls[session.id] ?? [:]
+        return boxes.filter { box in [box.id, box.name].contains { calls[$0].map { now.timeIntervalSince($0) < Self.recentCall } ?? false } }
+    }
+
+    // setDefaultBox moves session's calls that name no box to box, from its next call on.
+    func setDefaultBox(_ session: LocalAgentSession, to box: Box) {
+        session.setDefaultBox(box.id)
+        persistLocal()
+        link?.push(agent: session.id.uuidString, box: box.id)
+        Perf.mark("local_agent", "default \(session.kind.rawValue) \(box.name)")
+    }
+
+    // noteCall records a local agent's call; a box the list lacks, as after box_create, refreshes the list.
+    private func noteCall(agent: String, box ref: String, at: Date) {
+        guard let session = localAgents.first(where: { $0.id.uuidString == agent }) else { return }
+        localCalls[session.id, default: [:]][ref] = at
+        if !boxes.contains(where: { $0.id == ref || $0.name == ref }) { Task { await refreshBoxes() } }
+    }
+
+    // launchLocal starts an agent CLI on this Mac whose MCP server is the bridge, with the selected box as its default.
     func launchLocal(_ kind: LocalAgentKind) {
         guard let box, let target = localTarget(box.id) else {
             lastError = "local agent: sign in and start the box first; the cocoonbox CLI must sit next to the app"
@@ -171,17 +216,20 @@ final class AppModel {
         }
     }
 
-    // restoreLocal reopens, once per launch and box, the local agents the session file keeps for the selected box.
+    // restoreLocal reopens, once per launch, every local agent the session file
+    // keeps; one whose default box is gone takes the selected box.
     private func restoreLocal() {
-        guard let box, !restoredLocal.contains(box.id), let target = localTarget(box.id) else { return }
-        restoredLocal.insert(box.id)
-        let records = pendingLocal.filter { $0.boxID == box.id }
-        pendingLocal.removeAll { $0.boxID == box.id }
+        guard !restoredLocal, let box, localTarget(box.id) != nil else { return }
+        restoredLocal = true
+        let records = pendingLocal
+        pendingLocal = []
         Task {
             var sessions: [LocalAgentSession] = []
-            for record in records {
+            for var record in records {
+                if !boxes.contains(where: { $0.id == record.boxID }) { record.boxID = box.id }
+                guard let target = localTarget(record.boxID) else { continue }
                 do {
-                    sessions.append(try await LocalAgentSession.start(record.kind, target: target, boxID: box.id, restoring: record))
+                    sessions.append(try await LocalAgentSession.start(record.kind, target: target, boxID: record.boxID, restoring: record))
                     Perf.mark("local_agent", "reopened \(record.kind.rawValue)")
                 } catch {
                     report("reopen local agent", error)
@@ -240,6 +288,7 @@ final class AppModel {
     func closeLocal(_ session: LocalAgentSession) {
         session.close()
         localAgents.removeAll { $0 === session }
+        localCalls[session.id] = nil
         persistLocal()
         if selectedAgentID == Self.selectionID(session) {
             selectedAgentID = agents.last { $0.externalClient == nil }?.id
@@ -454,6 +503,7 @@ final class AppModel {
 
     // apply takes the box list; without a selection, or when the selected box is gone, it selects the newest running box, else the first.
     private func apply(boxes list: [Box]) {
+        defer { restoreLocal() }
         let wasRunning = boxRunning
         boxes = list
         guard box == nil else { return followSelected(wasRunning: wasRunning) }
@@ -484,7 +534,7 @@ final class AppModel {
         }
     }
 
-    // selectBox moves the screen, the agents and the lifecycle buttons to box id.
+    // selectBox moves the screen, the in-box agents and the lifecycle buttons to box id; a selected local agent stays selected.
     func selectBox(_ id: String) {
         guard id != selectedBoxID else { return }
         stopAgentSide()
@@ -496,7 +546,7 @@ final class AppModel {
         share = nil
         shareSecret = nil
         selectedBoxID = id
-        selectedAgentID = boxLocalAgents.first.map(Self.selectionID)
+        selectedAgentID = selectedLocal.map(Self.selectionID)
         Perf.mark("box_select", "\(id) \(box?.name ?? "-") \(box?.state ?? .unspecified)")
         if boxRunning { startAgentSide() }
     }
@@ -678,7 +728,6 @@ final class AppModel {
             )
         }
         screen.start(connection)
-        restoreLocal()
         Task { await loadShare() }
     }
 

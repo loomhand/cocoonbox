@@ -2,8 +2,9 @@
 # End-to-end test of the cocoonbox CLI and its stdio MCP bridge against MockBox:
 # lifecycle commands over gRPC, the bridge's tool list while the box is
 # hibernated, the wake on the first box-tool call with progress, the control
-# tools and their refusals, --no-wake, the headers helper, and several boxes:
-# routing by `box`, the default box, the running limit, --box and box_delete. Nothing touches
+# tools and their refusals, --no-wake, the headers helper, several boxes:
+# routing by `box`, the default box, the running limit, --box and box_delete,
+# and the app's socket: reported calls and a default box the app sets. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -56,8 +57,8 @@ status = run("status", "--json")
 check("status over gRPC", json.loads(status.stdout)["state"] == "hibernated", status.stdout + status.stderr)
 
 class Bridge:
-    def __init__(self, *flags):
-        self.p = subprocess.Popen([cli, "mcp", *flags], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+    def __init__(self, *flags, env=None):
+        self.p = subprocess.Popen([cli, "mcp", *flags], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, env=env)
         self.next = 1
 
     def send(self, method, params=None, notify=False):
@@ -184,6 +185,90 @@ d.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clie
 result, _ = d.tool("shell", {"command": "uname -n"})
 check("without box and --box, the default is the newest running box", "on test" in text(result), result)
 d.close()
+
+# The app's socket: the bridge names its agent, reports each routed call and
+# takes the default box the app sends, first in answer to its hello, then on a change.
+import os, socket, threading
+class FakeApp:
+    def __init__(self, path, default):
+        self.default, self.hellos, self.calls, self.conns = default, [], [], []
+        self.s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.s.bind(path)
+        self.s.listen(4)
+        threading.Thread(target=self.accept, daemon=True).start()
+
+    def accept(self):
+        while True:
+            try:
+                c, _ = self.s.accept()
+            except OSError:
+                return
+            self.conns.append(c)
+            threading.Thread(target=self.read, args=(c,), daemon=True).start()
+
+    def read(self, c):
+        for line in c.makefile("r"):
+            m = json.loads(line)
+            if "box" in m:
+                self.calls.append(m)
+                continue
+            self.hellos.append(m)
+            c.sendall((json.dumps({"box": self.default}) + "\n").encode())
+
+    def push(self, box):
+        for c in self.conns:
+            c.sendall((json.dumps({"box": box}) + "\n").encode())
+        time.sleep(0.3)
+
+    def close(self):
+        for c in self.conns:
+            c.close()
+        self.s.close()
+
+def wait_for(condition, seconds=5):
+    deadline = time.time() + seconds
+    while not condition() and time.time() < deadline:
+        time.sleep(0.05)
+    return condition()
+
+app_sock = os.path.join(os.path.dirname(mocklog), "app.sock")
+app = FakeApp(app_sock, test_id)
+linked_env = dict(os.environ, COCOONBOX_APP_SOCKET=app_sock, COCOONBOX_AGENT="agent-1")
+l = Bridge("--box", "main", env=linked_env)
+l.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "linked-client", "version": "1"}})
+check("the bridge names its agent on the app's socket", wait_for(lambda: app.hellos == [{"agent": "agent-1"}]), app.hellos)
+time.sleep(0.3)
+started = time.time() * 1000
+result, _ = l.tool("shell", {"command": "uname -n"})
+check("the default the app answers the hello with beats --box", "on test" in text(result), result)
+result, _ = l.tool("shell", {"box": "test", "command": "uname -n"})
+check("shell with box=test still runs in test", "on test" in text(result), result)
+check("each routed box call is reported with agent, box id and time",
+      wait_for(lambda: len(app.calls) == 2) and [(c["agent"], c["box"]) for c in app.calls] == [("agent-1", test_id)] * 2
+      and all(started - 1000 <= c["at"] <= time.time() * 1000 for c in app.calls), app.calls)
+app.push("cb-mock00000000")
+result, _ = l.tool("box_status")
+check("a default box pushed by the app reaches control tools with no restart", result["structuredContent"]["box_id"] == "cb-mock00000000", result)
+result, _ = l.tool("shell", {"command": "uname -n"})
+check("and box tools: shell goes to hibernated main, refused by the running limit", result.get("isError") and "box test (" + test_id + ") is running" in text(result), result)
+app.push(test_id)
+result, _ = l.tool("shell", {"command": "uname -n"})
+check("a second change also applies at the next call", "on test" in text(result), result)
+check("reports follow the default", wait_for(lambda: len(app.calls) == 5) and [c["box"] for c in app.calls[2:]] == ["cb-mock00000000", "cb-mock00000000", test_id], app.calls)
+app.close()
+os.unlink(app_sock)
+time.sleep(0.3)
+result, _ = l.tool("shell", {"command": "uname -n"})
+check("after the app quits, the bridge keeps working with the last default", "on test" in text(result), result)
+l.close()
+
+for label, env in (("with no socket", dict(os.environ, COCOONBOX_APP_SOCKET=app_sock, COCOONBOX_AGENT="agent-1")),
+                   ("with the socket path unset", dict(os.environ, COCOONBOX_AGENT="agent-1"))):
+    n = Bridge("--box", "test", env=env)
+    n.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "unlinked-client", "version": "1"}})
+    result, _ = n.tool("shell", {"command": "uname -n"})
+    check("the bridge works " + label + ", with its --box", "on test" in text(result), result)
+    n.close()
 
 p = Bridge("--box", "main")
 p.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "pinned-client", "version": "1"}})

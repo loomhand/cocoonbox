@@ -15,6 +15,34 @@ import Testing
         #expect(config.contains(target.bridge) && config.contains("cb-9f86d081884c") && config.contains("COCOONBOX_TOKEN"))
     }
 
+    @Test(arguments: LocalAgentKind.allCases)
+    func socketAndAgentTravelOnlyInTheEnvironment(kind: LocalAgentKind) throws {
+        let linked = MCPTarget(bridge: target.bridge, box: target.box, endpoint: target.endpoint, token: target.token, socket: "/Users/me/Library/Application Support/CocoonBox/agents.sock")
+        let agent = try #require(UUID(uuidString: "BC293D2C-45E1-4A33-AF0C-352962DB4F57"))
+        let launch = kind.launch(executable: kind.executable, target: linked, agent: agent)
+        #expect(launch.environment == ["COCOONBOX_TOKEN": "tok-secret", "COCOONBOX_APP_SOCKET": linked.socket, "COCOONBOX_AGENT": agent.uuidString])
+        let config = (launch.arguments + launch.files.values).joined(separator: "\n")
+        #expect(!config.contains("agents.sock") && !config.contains(agent.uuidString))
+        #expect(config.contains("COCOONBOX_APP_SOCKET") && config.contains("COCOONBOX_AGENT"))
+        #expect(kind.launch(executable: kind.executable, target: linked).environment.keys.sorted() == ["COCOONBOX_TOKEN"])
+    }
+
+    @Test func eachClientPassesTheLinkVariables() throws {
+        let linked = MCPTarget(bridge: target.bridge, box: target.box, endpoint: target.endpoint, token: target.token, socket: "/tmp/a.sock")
+        let claude = LocalAgentKind.claudeCode.launch(executable: "claude", target: linked, agent: UUID())
+        let config = try #require(claude.arguments.firstIndex(of: "--mcp-config").map { claude.arguments[$0 + 1] })
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
+        #expect(((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])?["env"] as? [String: String]
+            == ["COCOONBOX_TOKEN": "${COCOONBOX_TOKEN}", "COCOONBOX_APP_SOCKET": "${COCOONBOX_APP_SOCKET}", "COCOONBOX_AGENT": "${COCOONBOX_AGENT}"])
+        let codex = LocalAgentKind.codex.launch(executable: "codex", target: linked, agent: UUID())
+        #expect(codex.arguments.contains(#"mcp_servers.cocoonbox.env_vars=["COCOONBOX_AGENT", "COCOONBOX_APP_SOCKET", "COCOONBOX_TOKEN"]"#))
+        let cursor = LocalAgentKind.cursor.launch(executable: "cursor-agent", target: linked, agent: UUID())
+        let text = try #require(cursor.files[".cursor/mcp.json"])
+        let file = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        #expect(((file["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])?["env"] as? [String: String]
+            == ["COCOONBOX_TOKEN": "${env:COCOONBOX_TOKEN}", "COCOONBOX_APP_SOCKET": "${env:COCOONBOX_APP_SOCKET}", "COCOONBOX_AGENT": "${env:COCOONBOX_AGENT}"])
+    }
+
     @Test func claudeRunsTheBridgeForTheBox() throws {
         let launch = LocalAgentKind.claudeCode.launch(executable: "claude", target: target)
         let config = try #require(launch.arguments.firstIndex(of: "--mcp-config").map { launch.arguments[$0 + 1] })

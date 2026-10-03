@@ -6,15 +6,16 @@ import Foundation
 // to the MCP of the box their `box` argument names, else the default box:
 // `--box`, else the newest running box when the bridge first needs one. It
 // opens one session per box on first use and wakes a box on its first
-// box-tool call unless `wake` is off. The token stays in memory and in the
-// Authorization header of its requests.
+// box-tool call unless `wake` is off. With the app's link it reports each
+// routed call to the app and takes the default box the app sends. The token
+// stays in memory and in the Authorization header of its requests.
 public actor Bridge {
     static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
 
     private let endpoint: Endpoint
     private let token: String
     private let wake: Bool
-    private let pinned: String?
+    private let link: AgentLinkClient?
     private let cache: URL
     private let output: @Sendable (Data) -> Void
     private var client: [String: Any] = [:]
@@ -23,15 +24,17 @@ public actor Bridge {
     private var opening: [String: Task<MCPUpstream, any Error>] = [:]
     // ids maps every box name and id of the user to the box id.
     private var ids: [String: String] = [:]
+    private var pinned: String?
     private var defaultBox: String?
     private var boxTools: [[String: Any]]
     private var nextID = 1
 
-    public init(endpoint: Endpoint, token: String, wake: Bool, box: String? = nil, cache: URL, output: @escaping @Sendable (Data) -> Void) {
+    public init(endpoint: Endpoint, token: String, wake: Bool, box: String? = nil, link: AgentLinkClient? = nil, cache: URL, output: @escaping @Sendable (Data) -> Void) {
         self.endpoint = endpoint
         self.token = token
         self.wake = wake
         pinned = box
+        self.link = link
         self.cache = cache
         self.output = output
         boxTools = ToolCatalog.loadBox(from: cache) ?? ToolCatalog.boxFallback
@@ -108,6 +111,7 @@ public actor Bridge {
                 return reply(id, failure.result)
             } catch {}
         }
+        if let box = arguments["box"] as? String { link?.report(box: box) }
         var deleted: String?
         if name == "box_delete", let ref = arguments["box"] as? String {
             deleted = try? await resolve(ref)
@@ -134,6 +138,7 @@ public actor Bridge {
         } catch {
             return reply(id, ToolFailure("Could not reach cocoonbox: \(error)").result)
         }
+        link?.report(box: box)
         for attempt in 0..<2 {
             do {
                 let upstream = try await readyBox(box, progress: progress)
@@ -158,6 +163,10 @@ public actor Bridge {
     private func target(_ ref: String?) async throws -> String {
         if let ref, !ref.isEmpty {
             return try await resolve(ref)
+        }
+        if let pushed = link?.defaultBox, pushed != pinned {
+            pinned = pushed
+            defaultBox = nil
         }
         if let defaultBox { return defaultBox }
         if let pinned {

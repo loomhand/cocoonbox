@@ -21,6 +21,20 @@ import Testing
         #expect(LocalAgentStore.load(from: home.appendingPathComponent("missing.json")).isEmpty)
     }
 
+    @Test func recordsOfTheOldShapeReopenWithTheirBoxAsDefault() throws {
+        let home = try temporaryHome()
+        let url = home.appendingPathComponent("local-agents.json")
+        try Data(#"[{"boxID":"cb-mock00000000","id":"BC293D2C-45E1-4A33-AF0C-352962DB4F57","kind":"codex","sessionID":"01a0f8b2","startedAt":"2026-10-02T00:00:00.000Z","title":"Open Chrome","workspace":"/nonexistent"}]"#.utf8).write(to: url)
+        let loaded = try #require(LocalAgentStore.load(from: url).first)
+        #expect(loaded.id.uuidString == "BC293D2C-45E1-4A33-AF0C-352962DB4F57")
+        #expect(loaded.boxID == "cb-mock00000000")
+        #expect(loaded.sessionID == "01a0f8b2" && loaded.displayName == "Open Chrome")
+        var moved = loaded
+        moved.boxID = "cb-test"
+        try LocalAgentStore.save([moved], to: url)
+        #expect(LocalAgentStore.load(from: url) == [moved])
+    }
+
     @Test func codexClaimsTheFirstRolloutInItsWindow() throws {
         let home = try temporaryHome()
         try rollout(home, id: "before", at: start.addingTimeInterval(-5))

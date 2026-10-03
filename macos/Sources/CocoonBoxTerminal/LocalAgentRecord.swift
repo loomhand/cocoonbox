@@ -2,7 +2,8 @@ import CryptoKit
 import Foundation
 
 // LocalAgentRecord is an open local agent as the session file keeps it, so
-// the app reopens it with the CLI's own resume after a restart. Codex and
+// the app reopens it with the CLI's own resume after a restart. `boxID` is
+// the agent's default box, which the user can change. Codex and
 // Cursor pick their session id themselves; `until` is when the next fresh
 // session of the same kind started, which bounds the sessions this one can
 // claim in the shared workspace.
