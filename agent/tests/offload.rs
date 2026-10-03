@@ -703,3 +703,53 @@ async fn a_second_send_takes_history_while_the_synced_refs_name_objects_only_the
     assert_eq!(sh(&copy, "git log --format=%s -1"), "two");
     assert_eq!(sh(&copy, "git status --porcelain"), "");
 }
+
+#[tokio::test]
+async fn begin_takes_the_copy_and_reports_its_ignored_directories() {
+    let b = TestBox::start(false).await;
+    let fakebin = b.layout.home.join("fakebin");
+    std::fs::create_dir_all(&fakebin).unwrap();
+    for (name, body) in [
+        ("mise", "exit 0"),
+        (
+            "claude",
+            r#"case "$1" in --version) echo "2.1.288 (Claude Code)";; auth) echo '{"loggedIn": true, "email": "u@example.com"}';; esac"#,
+        ),
+    ] {
+        let path = fakebin.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+    }
+    std::fs::write(
+        b.layout.home.join(".profile"),
+        "PATH=\"$HOME/fakebin:$PATH\"\n",
+    )
+    .unwrap();
+    let copy = b.layout.workspace.join("gron");
+    sh(
+        &copy,
+        "git init -q && printf 'target/\\nnode_modules/\\n*.log\\n' > .gitignore \
+        && mkdir -p target/debug node_modules/x && touch target/debug/a node_modules/x/b a.log",
+    );
+    let a = args(&[
+        "--repo",
+        REPO,
+        "--name",
+        "gron",
+        "--kind",
+        "claude",
+        "--id",
+        "ffffffffffff",
+    ]);
+    let out = packer::begin(&b.layout, &a).await.unwrap();
+    assert_eq!(out["copy"], "mirror", "{out}");
+    assert_eq!(out["dir"], copy.to_string_lossy().as_ref());
+    assert_eq!(out["ignored"], json!(["node_modules/", "target/"]));
+    assert_eq!(out["cli"]["signed_in"], true);
+    assert_eq!(out["cli"]["account"], "u@example.com");
+    assert_eq!(out["findings"], json!([]));
+    let index: Index =
+        serde_json::from_slice(&std::fs::read(b.layout.state.join("index.json")).unwrap()).unwrap();
+    assert_eq!(index[REPO].offload_id, "ffffffffffff");
+}

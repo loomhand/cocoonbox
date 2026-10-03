@@ -12,7 +12,7 @@ use tokio::io::AsyncBufReadExt;
 use super::env::{self, Spec};
 use super::handover::{self, MAX_BODY};
 use super::{
-    Args, Copy, Fail, Layout, call, git, git_env, locked, login_shell, read_index, with_index,
+    Args, Copy, Fail, Layout, call, git, git_env, home_shell, locked, read_index, with_index,
     write_atomic,
 };
 
@@ -57,7 +57,7 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
     let mut block = |check: &str, detail: String| {
         findings.push(json!({"check": check, "outcome": "block", "detail": detail}));
     };
-    let missing = login_shell(
+    let missing = home_shell(
         &layout.home,
         "for t in git rsync tmux mise; do command -v \"$t\" >/dev/null || echo \"missing:$t\"; done",
     )
@@ -150,12 +150,18 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
         .await
         .map_err(|e| format!("create {}: {e}", copy.dir.display()))?;
     let refs = copy_refs(&copy.dir).await;
+    let ignored = if copy.dir.join(".git").exists() {
+        ignored_dirs(&copy.dir).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
     Ok(json!({
         "ok": true,
         "dir": copy.dir,
         "name": copy.name,
         "copy": was,
         "refs": refs,
+        "ignored": ignored,
         "cli": cli,
         "findings": [],
     }))
@@ -824,7 +830,7 @@ async fn probe_cli(home: &Path, kind: &str) -> Value {
         _ => ("cursor-agent --version", "cursor-agent status"),
     };
     let run = |cmd: &'static str| async move {
-        tokio::time::timeout(PROBE_TIMEOUT, login_shell(home, cmd))
+        tokio::time::timeout(PROBE_TIMEOUT, home_shell(home, cmd))
             .await
             .unwrap_or_else(|_| Err(format!("{cmd}: timed out")))
     };
@@ -970,15 +976,10 @@ async fn run_tmux(bin: &Path, args: &[&str]) -> Option<String> {
 
 /// Replaces the copy's lines in `excludes` with its git-ignored directories.
 async fn write_excludes(layout: &Layout, dir: &Path) -> Result<(), Fail> {
-    let listed = git(
-        dir,
-        &["ls-files", "-oi", "--exclude-standard", "--directory"],
-    )
-    .await?;
-    let ignored: Vec<PathBuf> = listed
-        .lines()
-        .filter_map(|l| l.strip_suffix('/'))
-        .map(|l| dir.join(l))
+    let ignored: Vec<PathBuf> = ignored_dirs(dir)
+        .await?
+        .iter()
+        .map(|d| dir.join(d.trim_end_matches('/')))
         .collect();
     let file = layout.excludes();
     let dir = dir.to_path_buf();
@@ -998,6 +999,21 @@ async fn write_excludes(layout: &Layout, dir: &Path) -> Result<(), Fail> {
         Ok(())
     })
     .await
+}
+
+/// The copy's git-ignored directories as `git ls-files -oi --exclude-standard --directory` lists
+/// them, relative and with their trailing `/`.
+async fn ignored_dirs(dir: &Path) -> Result<Vec<String>, String> {
+    let listed = git(
+        dir,
+        &["ls-files", "-z", "-oi", "--exclude-standard", "--directory"],
+    )
+    .await?;
+    Ok(listed
+        .split('\0')
+        .filter(|l| l.ends_with('/'))
+        .map(str::to_owned)
+        .collect())
 }
 
 /// Starts the repo's ssh-agent as a transient user unit with its socket on the tmpfs, adds the

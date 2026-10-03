@@ -365,9 +365,23 @@ pub async fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
 
 /// Runs `cmd` in a login bash in `dir`; its stdout on success, else its stderr.
 pub async fn login_shell(dir: &Path, cmd: &str) -> Result<String, String> {
-    let out = tokio::process::Command::new("bash")
+    shell(tokio::process::Command::new("bash").current_dir(dir), cmd).await
+}
+
+/// Runs `cmd` in a login bash of the user whose home is `home`, in that home.
+pub async fn home_shell(home: &Path, cmd: &str) -> Result<String, String> {
+    shell(
+        tokio::process::Command::new("bash")
+            .current_dir(home)
+            .env("HOME", home),
+        cmd,
+    )
+    .await
+}
+
+async fn shell(bash: &mut tokio::process::Command, cmd: &str) -> Result<String, String> {
+    let out = bash
         .args(["-lc", cmd])
-        .current_dir(dir)
         .stdin(std::process::Stdio::null())
         .output()
         .await
