@@ -140,11 +140,6 @@ func TestRenameAndRemoveBox(t *testing.T) {
 	}
 }
 
-func firstBoxID(user string) string {
-	s := sha256.Sum256([]byte(user))
-	return "cb-" + hex.EncodeToString(s[:])[:12]
-}
-
 func TestTheRunningLimitIsTheUsersOwnOrTheDefault(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
@@ -173,4 +168,9 @@ func TestTheRunningLimitIsTheUsersOwnOrTheDefault(t *testing.T) {
 	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxRunning: new(-1)}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("a negative running limit = %v, want ErrInvalid", err)
 	}
+}
+
+func firstBoxID(user string) string {
+	s := sha256.Sum256([]byte(user))
+	return "cb-" + hex.EncodeToString(s[:])[:12]
 }
