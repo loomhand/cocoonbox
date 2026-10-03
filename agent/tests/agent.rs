@@ -120,6 +120,7 @@ impl Harness {
             cdp_port,
             cua_socket,
             session_save: session_save.clone(),
+            home: home.clone(),
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -1749,11 +1750,12 @@ async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
         body: Some(exec_client_frame::Body::Start(pb::ExecStart {
             command: "tty; echo \"term=$TERM\"; stty size; read x; stty size; exit 4".into(),
             tty: Some(pb::ExecTty {
-                term: "xterm-test".into(),
+                term: "vt220".into(),
                 window: Some(pb::ExecWindow {
                     rows: 30,
                     cols: 100,
                 }),
+                terminfo: String::new(),
             }),
         })),
     })
@@ -1789,10 +1791,118 @@ async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
         text.starts_with("/dev/") && !text.contains("not a tty"),
         "{text}"
     );
-    assert!(text.contains("term=xterm-test\r\n"), "{text}");
+    assert!(text.contains("term=vt220\r\n"), "{text}");
     assert!(text.contains("go\r\n40 120\r\n"), "{text}");
     assert!(err.is_empty());
     assert_eq!(code, Some(4));
+}
+
+/// Runs `command` on a terminal of type `term` with `terminfo` sent along and stdin ended.
+async fn exec_tty(h: &Harness, command: &str, term: &str, terminfo: &str) -> (String, String) {
+    let (tx, rx) = tokio::sync::mpsc::channel(2);
+    tx.send(pb::ExecClientFrame {
+        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
+            command: command.into(),
+            tty: Some(pb::ExecTty {
+                term: term.into(),
+                window: Some(pb::ExecWindow { rows: 24, cols: 80 }),
+                terminfo: terminfo.into(),
+            }),
+        })),
+    })
+    .await
+    .unwrap();
+    drop(tx);
+    let frames = h
+        .session()
+        .await
+        .exec(authed(tokio_stream_from(rx)))
+        .await
+        .unwrap()
+        .into_inner();
+    let (out, err, code) = exec_output(frames).await;
+    assert_eq!(code, Some(0));
+    (
+        String::from_utf8(out).unwrap(),
+        String::from_utf8(err).unwrap(),
+    )
+}
+
+const TEST_TERMINFO: &str =
+    "cb-test-term|cocoonbox test terminal,\n\tam, cols#80, lines#24, clear=\\E[H\\E[2J, Cbx,\n";
+
+#[tokio::test]
+async fn exec_tty_installs_the_terminfo_sent_for_a_term_the_box_lacks() {
+    let h = Harness::start(Vec::new(), false).await;
+    let show = "echo \"term=$TERM\"; infocmp -x | grep -c Cbx";
+    let (out, err) = exec_tty(&h, show, "cb-test-term", TEST_TERMINFO).await;
+    assert_eq!(out, "term=cb-test-term\r\n1\r\n");
+    assert_eq!(err, "");
+    let dir = h.home.join(".terminfo");
+    assert!(
+        ["c", "63"]
+            .iter()
+            .any(|d| dir.join(d).join("cb-test-term").is_file())
+    );
+
+    let (out, err) = exec_tty(&h, show, "cb-test-term", "").await;
+    assert_eq!(
+        (out.as_str(), err.as_str()),
+        ("term=cb-test-term\r\n1\r\n", "")
+    );
+}
+
+#[tokio::test]
+async fn exec_tty_falls_back_to_xterm_256color_without_a_usable_terminfo() {
+    let h = Harness::start(Vec::new(), false).await;
+    for (term, terminfo, why) in [
+        ("cb-missing-term", "", "the client sent no terminfo"),
+        (
+            "cb-missing-term",
+            TEST_TERMINFO,
+            "the terminfo sent does not define it",
+        ),
+        (
+            "cb-broken-term",
+            "cb-broken-term|broken terminal,\n\tuse=cb-no-such-term,\n",
+            "tic: ",
+        ),
+    ] {
+        let (out, err) = exec_tty(&h, "echo \"term=$TERM\"", term, terminfo).await;
+        assert_eq!(out, "term=xterm-256color\r\n", "{term} {why}");
+        assert!(
+            err.starts_with(&format!(
+                "cocoonbox: no terminfo for {term} in the box ({why}"
+            )) && err.ends_with("; using TERM=xterm-256color\r\n"),
+            "{err}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn exec_refuses_an_oversized_terminfo() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (tx, rx) = tokio::sync::mpsc::channel(1);
+    tx.send(pb::ExecClientFrame {
+        body: Some(exec_client_frame::Body::Start(pb::ExecStart {
+            command: "true".into(),
+            tty: Some(pb::ExecTty {
+                term: "cb-huge-term".into(),
+                window: None,
+                terminfo: "#".repeat((256 << 10) + 1),
+            }),
+        })),
+    })
+    .await
+    .unwrap();
+    let err = h
+        .session()
+        .await
+        .exec(authed(tokio_stream_from(rx)))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), Code::InvalidArgument);
+    assert!(!h.home.join(".terminfo").exists());
 }
 
 #[tokio::test]

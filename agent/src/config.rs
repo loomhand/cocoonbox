@@ -106,6 +106,7 @@ pub struct ToolhostConfig {
     pub cdp_port: u16,
     pub cua_socket: PathBuf,
     pub session_save: PathBuf,
+    pub home: PathBuf,
 }
 
 impl ToolhostConfig {
@@ -129,6 +130,7 @@ impl ToolhostConfig {
                 Into::into,
             ),
             session_save: SESSION_SAVE.into(),
+            home: home.into(),
         })
     }
 }

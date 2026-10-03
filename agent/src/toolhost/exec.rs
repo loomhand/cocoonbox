@@ -9,7 +9,7 @@ use std::time::Duration;
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, Interest};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf, pipe};
-use tokio::process::Child;
+use tokio::process::{Child, Command};
 
 use super::rpc::{self, Output};
 use super::shell;
@@ -18,6 +18,7 @@ use crate::sys;
 const READ_CHUNK: usize = 64 << 10;
 const HANGUP_POLL: Duration = Duration::from_millis(200);
 const DEFAULT_TERM: &str = "xterm-256color";
+const TERMINFO_TIMEOUT: Duration = Duration::from_secs(5);
 
 type Reader = Box<dyn AsyncRead + Send + Unpin>;
 type Writer = Box<dyn AsyncWrite + Send + Unpin>;
@@ -33,14 +34,25 @@ struct Started {
 
 /// Runs `args.command` with a login bash in `cwd` until it exits; the agent closing the
 /// connection first kills its process group.
-pub async fn run(cwd: &Path, args: &Value, rd: OwnedReadHalf, mut wr: OwnedWriteHalf) {
+pub async fn run(cwd: &Path, home: &Path, args: &Value, rd: OwnedReadHalf, mut wr: OwnedWriteHalf) {
+    let tty = &args["tty"];
+    let (term, notice) = if tty.is_null() {
+        (String::new(), None)
+    } else {
+        terminal_type(
+            home,
+            tty["term"].as_str().unwrap_or_default(),
+            tty["terminfo"].as_str().unwrap_or_default(),
+        )
+        .await
+    };
     let Started {
         mut child,
         stdin,
         stdout,
         stderr,
         tty,
-    } = match spawn(cwd, args) {
+    } = match spawn(cwd, home, args, &term) {
         Ok(started) => started,
         Err(e) => {
             let _ = rpc::write_frame(&mut wr, &Output::error(e)).await;
@@ -48,10 +60,11 @@ pub async fn run(cwd: &Path, args: &Value, rd: OwnedReadHalf, mut wr: OwnedWrite
         }
     };
     let pid = child.id();
-    if rpc::write_frame(&mut wr, &Output::text("started"))
-        .await
-        .is_err()
-    {
+    let mut started = rpc::write_frame(&mut wr, &Output::text("started")).await;
+    if let (Ok(()), Some(notice)) = (&started, notice) {
+        started = rpc::write_tagged(&mut wr, rpc::STDERR, notice.as_bytes()).await;
+    }
+    if started.is_err() {
         kill(pid);
         return;
     }
@@ -72,7 +85,7 @@ pub async fn run(cwd: &Path, args: &Value, rd: OwnedReadHalf, mut wr: OwnedWrite
     }
 }
 
-fn spawn(cwd: &Path, args: &Value) -> Result<Started, String> {
+fn spawn(cwd: &Path, home: &Path, args: &Value, term: &str) -> Result<Started, String> {
     let command = args["command"]
         .as_str()
         .ok_or("exec needs a command string")?;
@@ -105,19 +118,14 @@ fn spawn(cwd: &Path, args: &Value) -> Result<Started, String> {
     let (master, slave) =
         sys::openpty(size("rows"), size("cols")).map_err(|e| format!("openpty: {e}"))?;
     let (out, err, reader, resizer) = (dup(&slave)?, dup(&slave)?, dup(&master)?, dup(&master)?);
-    cmd.env(
-        "TERM",
-        tty["term"]
-            .as_str()
-            .filter(|t| !t.is_empty())
-            .unwrap_or(DEFAULT_TERM),
-    )
-    .env_remove("PAGER")
-    .env_remove("GIT_PAGER")
-    .env_remove("NO_COLOR")
-    .stdin(slave)
-    .stdout(out)
-    .stderr(err);
+    cmd.env("TERM", term)
+        .env("HOME", home)
+        .env_remove("PAGER")
+        .env_remove("GIT_PAGER")
+        .env_remove("NO_COLOR")
+        .stdin(slave)
+        .stdout(out)
+        .stderr(err);
     sys::take_terminal(&mut cmd);
     let child = cmd.spawn().map_err(|e| format!("spawn bash: {e}"))?;
     drop(cmd);
@@ -129,6 +137,78 @@ fn spawn(cwd: &Path, args: &Value) -> Result<Started, String> {
         stderr: None,
         tty: Some(resizer),
     })
+}
+
+/// The TERM of a terminal command: `term` when the box has its terminfo or `source` compiles
+/// it into `~/.terminfo` as this user, else the default and a notice for the command's stderr.
+async fn terminal_type(home: &Path, term: &str, source: &str) -> (String, Option<String>) {
+    if term.is_empty() {
+        return (DEFAULT_TERM.to_owned(), None);
+    }
+    if known(home, term).await {
+        return (term.to_owned(), None);
+    }
+    let why = if source.is_empty() {
+        "the client sent no terminfo".to_owned()
+    } else {
+        match compile(home, source).await {
+            Ok(()) if known(home, term).await => return (term.to_owned(), None),
+            Ok(()) => "the terminfo sent does not define it".to_owned(),
+            Err(e) => e,
+        }
+    };
+    let notice = format!(
+        "cocoonbox: no terminfo for {term} in the box ({why}); using TERM={DEFAULT_TERM}\r\n"
+    );
+    (DEFAULT_TERM.to_owned(), Some(notice))
+}
+
+/// Whether the terminfo database the command reads, `~/.terminfo` first, has `term`.
+async fn known(home: &Path, term: &str) -> bool {
+    let check = Command::new("infocmp")
+        .args(["--", term])
+        .env("HOME", home)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .status();
+    matches!(tokio::time::timeout(TERMINFO_TIMEOUT, check).await, Ok(Ok(s)) if s.success())
+}
+
+/// Compiles the terminfo `source` into `~/.terminfo` with `tic -x`.
+async fn compile(home: &Path, source: &str) -> Result<(), String> {
+    let dir = home.join(".terminfo");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| format!("create {}: {e}", dir.display()))?;
+    let mut child = Command::new("tic")
+        .args(["-x", "-o"])
+        .arg(&dir)
+        .arg("-")
+        .env("HOME", home)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("tic: {e}"))?;
+    let mut input = child.stdin.take().ok_or("tic: no stdin")?;
+    let feed = async move {
+        let _ = input.write_all(source.as_bytes()).await;
+    };
+    let ran = tokio::time::timeout(TERMINFO_TIMEOUT, async {
+        tokio::join!(feed, child.wait_with_output()).1
+    })
+    .await
+    .map_err(|_| format!("tic ran past {}s", TERMINFO_TIMEOUT.as_secs()))?
+    .map_err(|e| format!("tic: {e}"))?;
+    if ran.status.success() {
+        return Ok(());
+    }
+    let err = String::from_utf8_lossy(&ran.stderr);
+    let last = err.lines().rfind(|l| !l.trim().is_empty());
+    Err(format!("tic: {}", last.unwrap_or("failed").trim()))
 }
 
 /// Applies the agent's frames to the command and returns only when the agent hangs up;

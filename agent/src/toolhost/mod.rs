@@ -39,6 +39,7 @@ pub struct Host {
     browser: Browser,
     cua: Cua,
     session_save: PathBuf,
+    home: PathBuf,
 }
 
 impl Host {
@@ -55,6 +56,7 @@ impl Host {
             ),
             cua: Cua::new(cfg.cua_socket.clone()),
             session_save: cfg.session_save.clone(),
+            home: cfg.home.clone(),
         }
     }
 
@@ -223,7 +225,7 @@ pub async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
             return;
         }
         "exec" => {
-            exec::run(&host.workspace, &call.args, rd, wr).await;
+            exec::run(&host.workspace, &host.home, &call.args, rd, wr).await;
             return;
         }
         "state_write" => {

@@ -13,6 +13,7 @@ use crate::pb::{
 use crate::toolhost::rpc;
 
 const OUT_FRAMES: usize = 16;
+const MAX_TERMINFO: usize = 256 << 10;
 
 /// Stream of frames sent back to the client.
 pub type ServerStream = ReceiverStream<Result<ExecServerFrame, Status>>;
@@ -33,9 +34,18 @@ pub async fn relay(
             "the first Exec frame must be start",
         ));
     };
+    if start
+        .tty
+        .as_ref()
+        .is_some_and(|tty| tty.terminfo.len() > MAX_TERMINFO)
+    {
+        return Err(Status::invalid_argument(format!(
+            "the terminfo source exceeds {MAX_TERMINFO} bytes"
+        )));
+    }
     let tty = start.tty.map(|tty| {
         let window = tty.window.unwrap_or_default();
-        json!({"term": tty.term, "rows": window.rows, "cols": window.cols})
+        json!({"term": tty.term, "terminfo": tty.terminfo, "rows": window.rows, "cols": window.cols})
     });
     let (mut rd, mut wr) = tools
         .exec(&start.command, tty)
