@@ -1,0 +1,9 @@
+[Unit]
+Description=Set git's GH_GIT placeholder for github.com from the claim env flag COCOONBOX_GH_GIT
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/cocoonbox/github-git
+
+[Install]
+WantedBy=multi-user.target

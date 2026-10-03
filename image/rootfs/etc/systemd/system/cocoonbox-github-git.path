@@ -1,0 +1,8 @@
+[Unit]
+Description=Follow the claim env flag COCOONBOX_GH_GIT into git's config
+
+[Path]
+PathChanged=/run/silkd.env
+
+[Install]
+WantedBy=multi-user.target

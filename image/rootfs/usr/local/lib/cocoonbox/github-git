@@ -1,0 +1,11 @@
+#!/bin/sh
+# git sends the GH_GIT placeholder to github.com only while the claim env sets COCOONBOX_GH_GIT=1
+set -eu
+conf=/run/cocoonbox-github.gitconfig
+if grep -qx 'COCOONBOX_GH_GIT="1"' /run/silkd.env 2>/dev/null; then
+	printf '[http "https://github.com/"]\n\textraHeader = Authorization: Basic @GH_GIT@\n' > "$conf.tmp"
+	chmod 0644 "$conf.tmp"
+	mv -f "$conf.tmp" "$conf"
+else
+	rm -f "$conf"
+fi

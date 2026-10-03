@@ -1,0 +1,7 @@
+[Unit]
+Description=Trust the sandboxd egress root in the desktop user's NSS db
+
+[Service]
+Type=oneshot
+User=user
+ExecStart=/usr/local/lib/cocoonbox/egress-ca-nss

@@ -21,6 +21,7 @@ Environment=XDG_CURRENT_DESKTOP=XFCE
 Environment=GTK_MODULES=gail:atk-bridge
 Environment=QT_ACCESSIBILITY=1
 Environment="PROMPT_COMMAND=history -a"
+ExecStartPre=-/usr/local/lib/cocoonbox/egress-ca-nss
 ExecStart=/usr/local/lib/cocoonbox/desktop-session
 ExecStartPost=-/usr/bin/systemctl --user start cua-driver.service
 ExecStopPost=-/usr/bin/systemctl --user stop cua-driver.service

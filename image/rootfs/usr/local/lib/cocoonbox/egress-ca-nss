@@ -1,0 +1,12 @@
+#!/bin/sh
+# trusts the sandboxd egress root in the desktop user's NSS db, which Chrome reads instead of /etc/ssl/certs; runs as user
+set -eu
+cert=/usr/local/share/ca-certificates/sandbox-egress.crt
+dir=$HOME/.pki/nssdb
+name="sandbox egress"
+[ -f "$cert" ] || [ -d "$dir" ] || exit 0
+if [ -f "$cert" ] && certutil -d "sql:$dir" -L -n "$name" -a 2>/dev/null | tr -d "\r" | cmp -s - "$cert"; then exit 0; fi
+mkdir -p "$dir"
+[ -f "$dir/cert9.db" ] || certutil -d "sql:$dir" -N --empty-password
+while certutil -d "sql:$dir" -D -n "$name" 2>/dev/null; do :; done
+[ ! -f "$cert" ] || certutil -d "sql:$dir" -A -n "$name" -t C,, -i "$cert"

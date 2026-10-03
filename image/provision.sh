@@ -12,7 +12,7 @@ PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
 	tigervnc-xorg-extension xauth x11-xserver-utils x11-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
-	mousepad nftables sudo libnss-myhostname
+	mousepad nftables sudo libnss-myhostname libnss3-tools
 	locales fonts-noto-cjk fonts-noto-color-emoji
 )
 
@@ -128,7 +128,8 @@ enable_units() {
 	systemctl daemon-reload
 	udevadm control --reload
 	udevadm trigger --name-match=uinput
-	systemctl enable --now nftables.service cocoonbox-machine-id.path
+	systemctl enable --now nftables.service cocoonbox-machine-id.path cocoonbox-egress-ca.path cocoonbox-github-git.path
+	systemctl enable cocoonbox-github-git.service
 	nft -f /etc/nftables.conf
 	systemctl reload systemd-logind
 	systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}' | xargs -r systemctl stop

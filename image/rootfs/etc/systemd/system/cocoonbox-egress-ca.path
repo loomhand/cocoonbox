@@ -1,0 +1,8 @@
+[Unit]
+Description=Follow a new sandboxd egress root into the desktop user's NSS db
+
+[Path]
+PathChanged=/usr/local/share/ca-certificates/sandbox-egress.crt
+
+[Install]
+WantedBy=multi-user.target
