@@ -857,9 +857,10 @@ type knownChunks struct {
 }
 
 type pinnedPlan struct {
-	keyID   string
-	chunks  []string
-	spooled map[string]bool
+	keyID    string
+	chunks   []string
+	spooled  map[string]bool
+	manifest []byte
 }
 
 // fakeAgent plans snapshots s1, s2, ... over chunks (or byBox[ep.Key]) and moves objects in the fake store as presigned URLs name them.
@@ -867,21 +868,24 @@ type fakeAgent struct {
 	store       *fakeStore
 	chunks      []string
 	byBox       map[string][]string
+	files       []manifestFile
+	changed     *uint64
 	size        uint64
 	snapshotID  string
 	restoreErr  error
 	restoreGate chan struct{}
 	onUpload    func(ep machines.Endpoint)
 
-	mu          sync.Mutex
-	planReqs    []*agentv1.PlanRequest
-	uploads     []*agentv1.UploadRequest
-	restores    []restoreCall
-	snapshots   int
-	known       map[string]knownChunks
-	pinned      map[string]pinnedPlan
-	planCred    string
-	restoreCred string
+	mu           sync.Mutex
+	planReqs     []*agentv1.PlanRequest
+	uploads      []*agentv1.UploadRequest
+	restores     []restoreCall
+	pathRestores []restoreCall
+	snapshots    int
+	known        map[string]knownChunks
+	pinned       map[string]pinnedPlan
+	planCred     string
+	restoreCred  string
 }
 
 func newFakeAgent(st *fakeStore) *fakeAgent {
@@ -894,13 +898,25 @@ func (a *fakeAgent) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1
 	a.planCred = outgoingCredential(ctx)
 	a.planReqs = append(a.planReqs, req)
 	a.snapshots++
-	resp := &agentv1.PlanResponse{SnapshotId: cmp.Or(a.snapshotID, snapshotID(a.snapshots)), Files: 7, LogicalBytes: 3 << 20, TakenAtMs: time.Now().UnixMilli()}
+	resp := &agentv1.PlanResponse{SnapshotId: cmp.Or(a.snapshotID, snapshotID(a.snapshots)), Files: 7, LogicalBytes: 3 << 20, TakenAtMs: time.Now().UnixMilli(), ChangedFiles: a.changed}
 	chunks := a.chunks
 	if own, ok := a.byBox[ep.Key]; ok {
 		chunks = own
 	}
 	known := a.known[ep.Key]
 	plan := pinnedPlan{keyID: req.GetKey().GetKeyId(), chunks: chunks, spooled: map[string]bool{}}
+	if a.files != nil {
+		resp.SnapshotId, plan.manifest = sealManifest(req.GetKey().GetKey(), a.files)
+		chunks = nil
+		for _, f := range a.files {
+			for _, id := range f.Chunks {
+				if !slices.Contains(chunks, id) {
+					chunks = append(chunks, id)
+				}
+			}
+		}
+		plan.chunks = chunks
+	}
 	for _, id := range chunks {
 		resp.Chunks = append(resp.Chunks, &agentv1.ChunkRef{Id: id, Size: a.chunkSize()})
 		if req.GetParent() == "" || known.keyID != plan.keyID || !slices.Contains(known.chunks, id) {
@@ -931,7 +947,11 @@ func (a *fakeAgent) Upload(_ context.Context, ep machines.Endpoint, req *agentv1
 	}
 	total := uint64(len(req.GetPuts())) * a.chunkSize()
 	for i, put := range puts {
-		if err := a.store.Put(context.Background(), strings.TrimPrefix(put.GetUrl(), "fake://put/"), []byte(put.GetChunkId())); err != nil {
+		body := []byte(put.GetChunkId())
+		if put == req.GetManifest() && plan.manifest != nil {
+			body = plan.manifest
+		}
+		if err := a.store.Put(context.Background(), strings.TrimPrefix(put.GetUrl(), "fake://put/"), body); err != nil {
 			return nil, err
 		}
 		progress(&agentv1.TransferProgress{
@@ -951,6 +971,14 @@ func (a *fakeAgent) Upload(_ context.Context, ep machines.Endpoint, req *agentv1
 }
 
 func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+	return a.serveRestore(ctx, ep, reqs, progress, &a.restores)
+}
+
+func (a *fakeAgent) RestorePaths(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+	return a.serveRestore(ctx, ep, reqs, progress, &a.pathRestores)
+}
+
+func (a *fakeAgent) serveRestore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc, calls *[]restoreCall) (*agentv1.TransferProgress, error) {
 	call := restoreCall{addr: ep.Key}
 	for req, err := range reqs {
 		if err != nil {
@@ -960,7 +988,7 @@ func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, reqs iter
 	}
 	a.mu.Lock()
 	a.restoreCred = outgoingCredential(ctx)
-	a.restores = append(a.restores, call)
+	*calls = append(*calls, call)
 	a.mu.Unlock()
 	if a.restoreGate != nil {
 		<-a.restoreGate
@@ -977,6 +1005,9 @@ func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, reqs iter
 	n := uint32(len(call.gets()))
 	progress(&agentv1.TransferProgress{DoneBytes: 1, TotalBytes: 2, DoneChunks: n / 2, TotalChunks: n})
 	final := &agentv1.TransferProgress{DoneBytes: 2, TotalBytes: 2, DoneChunks: n, TotalChunks: n, Finished: true, ManifestId: manifest.GetChunkId()}
+	if scope := call.reqs[0].GetScope(); scope != nil {
+		final.Target = scope.GetTarget() + "-2"
+	}
 	progress(final)
 	return final, nil
 }

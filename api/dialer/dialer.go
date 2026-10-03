@@ -32,6 +32,8 @@ var connectParams = grpc.ConnectParams{
 // ProgressFunc receives each progress message of a transfer.
 type ProgressFunc func(*agentv1.TransferProgress)
 
+type restoreCall func(agentv1.StateClient, context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[agentv1.RestoreRequest, agentv1.TransferProgress], error)
+
 // Dialer keeps one connection per agent endpoint.
 type Dialer struct {
 	mu    sync.Mutex
@@ -67,13 +69,32 @@ func (d *Dialer) Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.
 
 // Restore sends reqs as the request stream of State.Restore and returns the final progress message; an error from reqs ends the call with it.
 func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	return d.restore(ctx, ep, agentv1.StateClient.Restore, reqs, progress)
+}
+
+// RestorePaths sends reqs as the request stream of State.RestorePaths, like Restore.
+func (d *Dialer) RestorePaths(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	return d.restore(ctx, ep, agentv1.StateClient.RestorePaths, reqs, progress)
+}
+
+// Close closes every connection.
+func (d *Dialer) Close() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for key, conn := range d.conns {
+		_ = conn.Close()
+		delete(d.conns, key)
+	}
+}
+
+func (d *Dialer) restore(ctx context.Context, ep machines.Endpoint, open restoreCall, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
 	client, err := d.state(ep)
 	if err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, err := client.Restore(ctx)
+	stream, err := open(client, ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -85,16 +106,6 @@ func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Se
 		return nil, sendErr
 	}
 	return final, err
-}
-
-// Close closes every connection.
-func (d *Dialer) Close() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for key, conn := range d.conns {
-		_ = conn.Close()
-		delete(d.conns, key)
-	}
 }
 
 func (d *Dialer) state(ep machines.Endpoint) (agentv1.StateClient, error) {

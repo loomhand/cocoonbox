@@ -29,6 +29,9 @@ const (
 	Boxes_WatchOperation_FullMethodName = "/cocoonbox.control.v1.Boxes/WatchOperation"
 	Boxes_SaveState_FullMethodName      = "/cocoonbox.control.v1.Boxes/SaveState"
 	Boxes_Rebase_FullMethodName         = "/cocoonbox.control.v1.Boxes/Rebase"
+	Boxes_ListSnapshots_FullMethodName  = "/cocoonbox.control.v1.Boxes/ListSnapshots"
+	Boxes_BrowseSnapshot_FullMethodName = "/cocoonbox.control.v1.Boxes/BrowseSnapshot"
+	Boxes_RestorePaths_FullMethodName   = "/cocoonbox.control.v1.Boxes/RestorePaths"
 )
 
 // BoxesClient is the client API for Boxes service.
@@ -59,6 +62,15 @@ type BoxesClient interface {
 	// quiesced save, new machine from the image, restore, switch, delete the old
 	// machine. The box id stays the same; running programs restart.
 	Rebase(ctx context.Context, in *RebaseRequest, opts ...grpc.CallOption) (*Operation, error)
+	// ListSnapshots lists the box's kept snapshots, newest first.
+	ListSnapshots(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*ListSnapshotsResponse, error)
+	// BrowseSnapshot lists one directory of a kept snapshot; the box may be
+	// hibernated.
+	BrowseSnapshot(ctx context.Context, in *BrowseSnapshotRequest, opts ...grpc.CallOption) (*BrowseSnapshotResponse, error)
+	// RestorePaths copies files and folders of a kept snapshot into
+	// ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+	// Nothing outside that folder changes and nothing restarts.
+	RestorePaths(ctx context.Context, in *RestorePathsRequest, opts ...grpc.CallOption) (*Operation, error)
 }
 
 type boxesClient struct {
@@ -178,6 +190,36 @@ func (c *boxesClient) Rebase(ctx context.Context, in *RebaseRequest, opts ...grp
 	return out, nil
 }
 
+func (c *boxesClient) ListSnapshots(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*ListSnapshotsResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListSnapshotsResponse)
+	err := c.cc.Invoke(ctx, Boxes_ListSnapshots_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) BrowseSnapshot(ctx context.Context, in *BrowseSnapshotRequest, opts ...grpc.CallOption) (*BrowseSnapshotResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(BrowseSnapshotResponse)
+	err := c.cc.Invoke(ctx, Boxes_BrowseSnapshot_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) RestorePaths(ctx context.Context, in *RestorePathsRequest, opts ...grpc.CallOption) (*Operation, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Operation)
+	err := c.cc.Invoke(ctx, Boxes_RestorePaths_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BoxesServer is the server API for Boxes service.
 // All implementations must embed UnimplementedBoxesServer
 // for forward compatibility.
@@ -206,6 +248,15 @@ type BoxesServer interface {
 	// quiesced save, new machine from the image, restore, switch, delete the old
 	// machine. The box id stays the same; running programs restart.
 	Rebase(context.Context, *RebaseRequest) (*Operation, error)
+	// ListSnapshots lists the box's kept snapshots, newest first.
+	ListSnapshots(context.Context, *BoxRef) (*ListSnapshotsResponse, error)
+	// BrowseSnapshot lists one directory of a kept snapshot; the box may be
+	// hibernated.
+	BrowseSnapshot(context.Context, *BrowseSnapshotRequest) (*BrowseSnapshotResponse, error)
+	// RestorePaths copies files and folders of a kept snapshot into
+	// ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+	// Nothing outside that folder changes and nothing restarts.
+	RestorePaths(context.Context, *RestorePathsRequest) (*Operation, error)
 	mustEmbedUnimplementedBoxesServer()
 }
 
@@ -245,6 +296,15 @@ func (UnimplementedBoxesServer) SaveState(context.Context, *BoxRef) (*Operation,
 }
 func (UnimplementedBoxesServer) Rebase(context.Context, *RebaseRequest) (*Operation, error) {
 	return nil, status.Error(codes.Unimplemented, "method Rebase not implemented")
+}
+func (UnimplementedBoxesServer) ListSnapshots(context.Context, *BoxRef) (*ListSnapshotsResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListSnapshots not implemented")
+}
+func (UnimplementedBoxesServer) BrowseSnapshot(context.Context, *BrowseSnapshotRequest) (*BrowseSnapshotResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method BrowseSnapshot not implemented")
+}
+func (UnimplementedBoxesServer) RestorePaths(context.Context, *RestorePathsRequest) (*Operation, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestorePaths not implemented")
 }
 func (UnimplementedBoxesServer) mustEmbedUnimplementedBoxesServer() {}
 func (UnimplementedBoxesServer) testEmbeddedByValue()               {}
@@ -440,6 +500,60 @@ func _Boxes_Rebase_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Boxes_ListSnapshots_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BoxRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).ListSnapshots(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_ListSnapshots_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).ListSnapshots(ctx, req.(*BoxRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_BrowseSnapshot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BrowseSnapshotRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).BrowseSnapshot(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_BrowseSnapshot_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).BrowseSnapshot(ctx, req.(*BrowseSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_RestorePaths_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestorePathsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).RestorePaths(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_RestorePaths_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).RestorePaths(ctx, req.(*RestorePathsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Boxes_ServiceDesc is the grpc.ServiceDesc for Boxes service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -482,6 +596,18 @@ var Boxes_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Rebase",
 			Handler:    _Boxes_Rebase_Handler,
+		},
+		{
+			MethodName: "ListSnapshots",
+			Handler:    _Boxes_ListSnapshots_Handler,
+		},
+		{
+			MethodName: "BrowseSnapshot",
+			Handler:    _Boxes_BrowseSnapshot_Handler,
+		},
+		{
+			MethodName: "RestorePaths",
+			Handler:    _Boxes_RestorePaths_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

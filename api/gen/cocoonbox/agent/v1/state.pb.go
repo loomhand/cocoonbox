@@ -240,12 +240,14 @@ func (x *ChunkRef) GetSize() uint64 {
 }
 
 type PlanResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SnapshotId    string                 `protobuf:"bytes,1,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
-	Chunks        []*ChunkRef            `protobuf:"bytes,2,rep,name=chunks,proto3" json:"chunks,omitempty"`
-	Files         uint64                 `protobuf:"varint,3,opt,name=files,proto3" json:"files,omitempty"`
-	LogicalBytes  uint64                 `protobuf:"varint,4,opt,name=logical_bytes,json=logicalBytes,proto3" json:"logical_bytes,omitempty"`
-	TakenAtMs     int64                  `protobuf:"varint,5,opt,name=taken_at_ms,json=takenAtMs,proto3" json:"taken_at_ms,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	SnapshotId   string                 `protobuf:"bytes,1,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
+	Chunks       []*ChunkRef            `protobuf:"bytes,2,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	Files        uint64                 `protobuf:"varint,3,opt,name=files,proto3" json:"files,omitempty"`
+	LogicalBytes uint64                 `protobuf:"varint,4,opt,name=logical_bytes,json=logicalBytes,proto3" json:"logical_bytes,omitempty"`
+	TakenAtMs    int64                  `protobuf:"varint,5,opt,name=taken_at_ms,json=takenAtMs,proto3" json:"taken_at_ms,omitempty"`
+	// Files new, changed or removed since the last upload.
+	ChangedFiles  *uint64 `protobuf:"varint,6,opt,name=changed_files,json=changedFiles,proto3,oneof" json:"changed_files,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -311,6 +313,13 @@ func (x *PlanResponse) GetLogicalBytes() uint64 {
 func (x *PlanResponse) GetTakenAtMs() int64 {
 	if x != nil {
 		return x.TakenAtMs
+	}
+	return 0
+}
+
+func (x *PlanResponse) GetChangedFiles() uint64 {
+	if x != nil && x.ChangedFiles != nil {
+		return *x.ChangedFiles
 	}
 	return 0
 }
@@ -502,7 +511,9 @@ type RestoreRequest struct {
 	Manifest *PresignedGet          `protobuf:"bytes,2,opt,name=manifest,proto3" json:"manifest,omitempty"`
 	// At most 2048 per message; by the end of the stream every chunk the
 	// manifest references has a URL.
-	Gets          []*PresignedGet `protobuf:"bytes,3,rep,name=gets,proto3" json:"gets,omitempty"`
+	Gets []*PresignedGet `protobuf:"bytes,3,rep,name=gets,proto3" json:"gets,omitempty"`
+	// Set only on the first message of RestorePaths.
+	Scope         *RestoreScope `protobuf:"bytes,4,opt,name=scope,proto3" json:"scope,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -558,6 +569,67 @@ func (x *RestoreRequest) GetGets() []*PresignedGet {
 	return nil
 }
 
+func (x *RestoreRequest) GetScope() *RestoreScope {
+	if x != nil {
+		return x.Scope
+	}
+	return nil
+}
+
+type RestoreScope struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Box paths under the state roots, such as /workspace/app.
+	Paths []string `protobuf:"bytes,1,rep,name=paths,proto3" json:"paths,omitempty"`
+	// One folder name under ~/Restored; the agent adds -2, -3, ... when it exists.
+	Target        string `protobuf:"bytes,2,opt,name=target,proto3" json:"target,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreScope) Reset() {
+	*x = RestoreScope{}
+	mi := &file_cocoonbox_agent_v1_state_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreScope) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreScope) ProtoMessage() {}
+
+func (x *RestoreScope) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_agent_v1_state_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreScope.ProtoReflect.Descriptor instead.
+func (*RestoreScope) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_agent_v1_state_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RestoreScope) GetPaths() []string {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
+}
+
+func (x *RestoreScope) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
 type TransferProgress struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	DoneBytes   uint64                 `protobuf:"varint,1,opt,name=done_bytes,json=doneBytes,proto3" json:"done_bytes,omitempty"`
@@ -565,15 +637,17 @@ type TransferProgress struct {
 	DoneChunks  uint32                 `protobuf:"varint,3,opt,name=done_chunks,json=doneChunks,proto3" json:"done_chunks,omitempty"`
 	TotalChunks uint32                 `protobuf:"varint,4,opt,name=total_chunks,json=totalChunks,proto3" json:"total_chunks,omitempty"`
 	// Set on the final message.
-	Finished      bool   `protobuf:"varint,5,opt,name=finished,proto3" json:"finished,omitempty"`
-	ManifestId    string `protobuf:"bytes,6,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"`
+	Finished   bool   `protobuf:"varint,5,opt,name=finished,proto3" json:"finished,omitempty"`
+	ManifestId string `protobuf:"bytes,6,opt,name=manifest_id,json=manifestId,proto3" json:"manifest_id,omitempty"`
+	// The folder under ~/Restored that RestorePaths wrote, on its final message.
+	Target        string `protobuf:"bytes,7,opt,name=target,proto3" json:"target,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TransferProgress) Reset() {
 	*x = TransferProgress{}
-	mi := &file_cocoonbox_agent_v1_state_proto_msgTypes[8]
+	mi := &file_cocoonbox_agent_v1_state_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -585,7 +659,7 @@ func (x *TransferProgress) String() string {
 func (*TransferProgress) ProtoMessage() {}
 
 func (x *TransferProgress) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_agent_v1_state_proto_msgTypes[8]
+	mi := &file_cocoonbox_agent_v1_state_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -598,7 +672,7 @@ func (x *TransferProgress) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferProgress.ProtoReflect.Descriptor instead.
 func (*TransferProgress) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_agent_v1_state_proto_rawDescGZIP(), []int{8}
+	return file_cocoonbox_agent_v1_state_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *TransferProgress) GetDoneBytes() uint64 {
@@ -643,6 +717,13 @@ func (x *TransferProgress) GetManifestId() string {
 	return ""
 }
 
+func (x *TransferProgress) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
 var File_cocoonbox_agent_v1_state_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_agent_v1_state_proto_rawDesc = "" +
@@ -657,14 +738,16 @@ const file_cocoonbox_agent_v1_state_proto_rawDesc = "" +
 	"\x06parent\x18\x03 \x01(\tR\x06parent\".\n" +
 	"\bChunkRef\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
-	"\x04size\x18\x02 \x01(\x04R\x04size\"\xc0\x01\n" +
+	"\x04size\x18\x02 \x01(\x04R\x04size\"\xfc\x01\n" +
 	"\fPlanResponse\x12\x1f\n" +
 	"\vsnapshot_id\x18\x01 \x01(\tR\n" +
 	"snapshotId\x124\n" +
 	"\x06chunks\x18\x02 \x03(\v2\x1c.cocoonbox.agent.v1.ChunkRefR\x06chunks\x12\x14\n" +
 	"\x05files\x18\x03 \x01(\x04R\x05files\x12#\n" +
 	"\rlogical_bytes\x18\x04 \x01(\x04R\flogicalBytes\x12\x1e\n" +
-	"\vtaken_at_ms\x18\x05 \x01(\x03R\ttakenAtMs\"\xc0\x01\n" +
+	"\vtaken_at_ms\x18\x05 \x01(\x03R\ttakenAtMs\x12(\n" +
+	"\rchanged_files\x18\x06 \x01(\x04H\x00R\fchangedFiles\x88\x01\x01B\x10\n" +
+	"\x0e_changed_files\"\xc0\x01\n" +
 	"\fPresignedPut\x12\x19\n" +
 	"\bchunk_id\x18\x01 \x01(\tR\achunkId\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12G\n" +
@@ -680,11 +763,15 @@ const file_cocoonbox_agent_v1_state_proto_rawDesc = "" +
 	"\bmanifest\x18\x04 \x01(\v2 .cocoonbox.agent.v1.PresignedPutR\bmanifest\";\n" +
 	"\fPresignedGet\x12\x19\n" +
 	"\bchunk_id\x18\x01 \x01(\tR\achunkId\x12\x10\n" +
-	"\x03url\x18\x02 \x01(\tR\x03url\"\xb4\x01\n" +
+	"\x03url\x18\x02 \x01(\tR\x03url\"\xec\x01\n" +
 	"\x0eRestoreRequest\x12.\n" +
 	"\x03key\x18\x01 \x01(\v2\x1c.cocoonbox.agent.v1.StateKeyR\x03key\x12<\n" +
 	"\bmanifest\x18\x02 \x01(\v2 .cocoonbox.agent.v1.PresignedGetR\bmanifest\x124\n" +
-	"\x04gets\x18\x03 \x03(\v2 .cocoonbox.agent.v1.PresignedGetR\x04gets\"\xd3\x01\n" +
+	"\x04gets\x18\x03 \x03(\v2 .cocoonbox.agent.v1.PresignedGetR\x04gets\x126\n" +
+	"\x05scope\x18\x04 \x01(\v2 .cocoonbox.agent.v1.RestoreScopeR\x05scope\"<\n" +
+	"\fRestoreScope\x12\x14\n" +
+	"\x05paths\x18\x01 \x03(\tR\x05paths\x12\x16\n" +
+	"\x06target\x18\x02 \x01(\tR\x06target\"\xeb\x01\n" +
 	"\x10TransferProgress\x12\x1d\n" +
 	"\n" +
 	"done_bytes\x18\x01 \x01(\x04R\tdoneBytes\x12\x1f\n" +
@@ -695,15 +782,17 @@ const file_cocoonbox_agent_v1_state_proto_rawDesc = "" +
 	"\ftotal_chunks\x18\x04 \x01(\rR\vtotalChunks\x12\x1a\n" +
 	"\bfinished\x18\x05 \x01(\bR\bfinished\x12\x1f\n" +
 	"\vmanifest_id\x18\x06 \x01(\tR\n" +
-	"manifestId*Z\n" +
+	"manifestId\x12\x16\n" +
+	"\x06target\x18\a \x01(\tR\x06target*Z\n" +
 	"\vConsistency\x12\x1b\n" +
 	"\x17CONSISTENCY_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10CONSISTENCY_LIVE\x10\x01\x12\x18\n" +
-	"\x14CONSISTENCY_QUIESCED\x10\x022\x80\x02\n" +
+	"\x14CONSISTENCY_QUIESCED\x10\x022\xde\x02\n" +
 	"\x05State\x12I\n" +
 	"\x04Plan\x12\x1f.cocoonbox.agent.v1.PlanRequest\x1a .cocoonbox.agent.v1.PlanResponse\x12S\n" +
 	"\x06Upload\x12!.cocoonbox.agent.v1.UploadRequest\x1a$.cocoonbox.agent.v1.TransferProgress0\x01\x12W\n" +
-	"\aRestore\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01B>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
+	"\aRestore\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01\x12\\\n" +
+	"\fRestorePaths\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01B>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cocoonbox_agent_v1_state_proto_rawDescOnce sync.Once
@@ -718,7 +807,7 @@ func file_cocoonbox_agent_v1_state_proto_rawDescGZIP() []byte {
 }
 
 var file_cocoonbox_agent_v1_state_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cocoonbox_agent_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_cocoonbox_agent_v1_state_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_cocoonbox_agent_v1_state_proto_goTypes = []any{
 	(Consistency)(0),         // 0: cocoonbox.agent.v1.Consistency
 	(*StateKey)(nil),         // 1: cocoonbox.agent.v1.StateKey
@@ -729,31 +818,35 @@ var file_cocoonbox_agent_v1_state_proto_goTypes = []any{
 	(*UploadRequest)(nil),    // 6: cocoonbox.agent.v1.UploadRequest
 	(*PresignedGet)(nil),     // 7: cocoonbox.agent.v1.PresignedGet
 	(*RestoreRequest)(nil),   // 8: cocoonbox.agent.v1.RestoreRequest
-	(*TransferProgress)(nil), // 9: cocoonbox.agent.v1.TransferProgress
-	nil,                      // 10: cocoonbox.agent.v1.PresignedPut.HeadersEntry
+	(*RestoreScope)(nil),     // 9: cocoonbox.agent.v1.RestoreScope
+	(*TransferProgress)(nil), // 10: cocoonbox.agent.v1.TransferProgress
+	nil,                      // 11: cocoonbox.agent.v1.PresignedPut.HeadersEntry
 }
 var file_cocoonbox_agent_v1_state_proto_depIdxs = []int32{
 	1,  // 0: cocoonbox.agent.v1.PlanRequest.key:type_name -> cocoonbox.agent.v1.StateKey
 	0,  // 1: cocoonbox.agent.v1.PlanRequest.consistency:type_name -> cocoonbox.agent.v1.Consistency
 	3,  // 2: cocoonbox.agent.v1.PlanResponse.chunks:type_name -> cocoonbox.agent.v1.ChunkRef
-	10, // 3: cocoonbox.agent.v1.PresignedPut.headers:type_name -> cocoonbox.agent.v1.PresignedPut.HeadersEntry
+	11, // 3: cocoonbox.agent.v1.PresignedPut.headers:type_name -> cocoonbox.agent.v1.PresignedPut.HeadersEntry
 	1,  // 4: cocoonbox.agent.v1.UploadRequest.key:type_name -> cocoonbox.agent.v1.StateKey
 	5,  // 5: cocoonbox.agent.v1.UploadRequest.puts:type_name -> cocoonbox.agent.v1.PresignedPut
 	5,  // 6: cocoonbox.agent.v1.UploadRequest.manifest:type_name -> cocoonbox.agent.v1.PresignedPut
 	1,  // 7: cocoonbox.agent.v1.RestoreRequest.key:type_name -> cocoonbox.agent.v1.StateKey
 	7,  // 8: cocoonbox.agent.v1.RestoreRequest.manifest:type_name -> cocoonbox.agent.v1.PresignedGet
 	7,  // 9: cocoonbox.agent.v1.RestoreRequest.gets:type_name -> cocoonbox.agent.v1.PresignedGet
-	2,  // 10: cocoonbox.agent.v1.State.Plan:input_type -> cocoonbox.agent.v1.PlanRequest
-	6,  // 11: cocoonbox.agent.v1.State.Upload:input_type -> cocoonbox.agent.v1.UploadRequest
-	8,  // 12: cocoonbox.agent.v1.State.Restore:input_type -> cocoonbox.agent.v1.RestoreRequest
-	4,  // 13: cocoonbox.agent.v1.State.Plan:output_type -> cocoonbox.agent.v1.PlanResponse
-	9,  // 14: cocoonbox.agent.v1.State.Upload:output_type -> cocoonbox.agent.v1.TransferProgress
-	9,  // 15: cocoonbox.agent.v1.State.Restore:output_type -> cocoonbox.agent.v1.TransferProgress
-	13, // [13:16] is the sub-list for method output_type
-	10, // [10:13] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	9,  // 10: cocoonbox.agent.v1.RestoreRequest.scope:type_name -> cocoonbox.agent.v1.RestoreScope
+	2,  // 11: cocoonbox.agent.v1.State.Plan:input_type -> cocoonbox.agent.v1.PlanRequest
+	6,  // 12: cocoonbox.agent.v1.State.Upload:input_type -> cocoonbox.agent.v1.UploadRequest
+	8,  // 13: cocoonbox.agent.v1.State.Restore:input_type -> cocoonbox.agent.v1.RestoreRequest
+	8,  // 14: cocoonbox.agent.v1.State.RestorePaths:input_type -> cocoonbox.agent.v1.RestoreRequest
+	4,  // 15: cocoonbox.agent.v1.State.Plan:output_type -> cocoonbox.agent.v1.PlanResponse
+	10, // 16: cocoonbox.agent.v1.State.Upload:output_type -> cocoonbox.agent.v1.TransferProgress
+	10, // 17: cocoonbox.agent.v1.State.Restore:output_type -> cocoonbox.agent.v1.TransferProgress
+	10, // 18: cocoonbox.agent.v1.State.RestorePaths:output_type -> cocoonbox.agent.v1.TransferProgress
+	15, // [15:19] is the sub-list for method output_type
+	11, // [11:15] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_agent_v1_state_proto_init() }
@@ -761,13 +854,14 @@ func file_cocoonbox_agent_v1_state_proto_init() {
 	if File_cocoonbox_agent_v1_state_proto != nil {
 		return
 	}
+	file_cocoonbox_agent_v1_state_proto_msgTypes[3].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_agent_v1_state_proto_rawDesc), len(file_cocoonbox_agent_v1_state_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

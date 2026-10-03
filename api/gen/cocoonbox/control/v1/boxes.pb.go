@@ -94,6 +94,8 @@ const (
 	Phase_PHASE_RESTORING Phase = 7
 	// Removing the box's machine.
 	Phase_PHASE_DELETING Phase = 8
+	// Copying files of a snapshot into the running box.
+	Phase_PHASE_RESTORING_FILES Phase = 9
 )
 
 // Enum value maps for Phase.
@@ -108,17 +110,19 @@ var (
 		6: "PHASE_SAVING",
 		7: "PHASE_RESTORING",
 		8: "PHASE_DELETING",
+		9: "PHASE_RESTORING_FILES",
 	}
 	Phase_value = map[string]int32{
-		"PHASE_UNSPECIFIED":  0,
-		"PHASE_CREATING":     1,
-		"PHASE_WAKING":       2,
-		"PHASE_SNAPSHOTTING": 3,
-		"PHASE_DONE":         4,
-		"PHASE_FAILED":       5,
-		"PHASE_SAVING":       6,
-		"PHASE_RESTORING":    7,
-		"PHASE_DELETING":     8,
+		"PHASE_UNSPECIFIED":     0,
+		"PHASE_CREATING":        1,
+		"PHASE_WAKING":          2,
+		"PHASE_SNAPSHOTTING":    3,
+		"PHASE_DONE":            4,
+		"PHASE_FAILED":          5,
+		"PHASE_SAVING":          6,
+		"PHASE_RESTORING":       7,
+		"PHASE_DELETING":        8,
+		"PHASE_RESTORING_FILES": 9,
 	}
 )
 
@@ -147,6 +151,58 @@ func (x Phase) Number() protoreflect.EnumNumber {
 // Deprecated: Use Phase.Descriptor instead.
 func (Phase) EnumDescriptor() ([]byte, []int) {
 	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{1}
+}
+
+type EntryKind int32
+
+const (
+	EntryKind_ENTRY_KIND_UNSPECIFIED EntryKind = 0
+	EntryKind_ENTRY_KIND_FILE        EntryKind = 1
+	EntryKind_ENTRY_KIND_DIR         EntryKind = 2
+	EntryKind_ENTRY_KIND_SYMLINK     EntryKind = 3
+)
+
+// Enum value maps for EntryKind.
+var (
+	EntryKind_name = map[int32]string{
+		0: "ENTRY_KIND_UNSPECIFIED",
+		1: "ENTRY_KIND_FILE",
+		2: "ENTRY_KIND_DIR",
+		3: "ENTRY_KIND_SYMLINK",
+	}
+	EntryKind_value = map[string]int32{
+		"ENTRY_KIND_UNSPECIFIED": 0,
+		"ENTRY_KIND_FILE":        1,
+		"ENTRY_KIND_DIR":         2,
+		"ENTRY_KIND_SYMLINK":     3,
+	}
+)
+
+func (x EntryKind) Enum() *EntryKind {
+	p := new(EntryKind)
+	*p = x
+	return p
+}
+
+func (x EntryKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (EntryKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_cocoonbox_control_v1_boxes_proto_enumTypes[2].Descriptor()
+}
+
+func (EntryKind) Type() protoreflect.EnumType {
+	return &file_cocoonbox_control_v1_boxes_proto_enumTypes[2]
+}
+
+func (x EntryKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use EntryKind.Descriptor instead.
+func (EntryKind) EnumDescriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{2}
 }
 
 type BoxRef struct {
@@ -966,6 +1022,389 @@ func (x *OperationEvent) GetTotalBytes() uint64 {
 	return 0
 }
 
+type Snapshot struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Id           string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	SavedAtMs    int64                  `protobuf:"varint,2,opt,name=saved_at_ms,json=savedAtMs,proto3" json:"saved_at_ms,omitempty"`
+	Quiesced     bool                   `protobuf:"varint,3,opt,name=quiesced,proto3" json:"quiesced,omitempty"`
+	Files        uint64                 `protobuf:"varint,4,opt,name=files,proto3" json:"files,omitempty"`
+	LogicalBytes uint64                 `protobuf:"varint,5,opt,name=logical_bytes,json=logicalBytes,proto3" json:"logical_bytes,omitempty"`
+	// Files new, changed or removed since the save before; absent for saves by
+	// agents older than this field.
+	ChangedFiles *uint64 `protobuf:"varint,6,opt,name=changed_files,json=changedFiles,proto3,oneof" json:"changed_files,omitempty"`
+	// Plaintext bytes of the chunks this save added to the store.
+	AddedBytes    uint64 `protobuf:"varint,7,opt,name=added_bytes,json=addedBytes,proto3" json:"added_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Snapshot) Reset() {
+	*x = Snapshot{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Snapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Snapshot) ProtoMessage() {}
+
+func (x *Snapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Snapshot.ProtoReflect.Descriptor instead.
+func (*Snapshot) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *Snapshot) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Snapshot) GetSavedAtMs() int64 {
+	if x != nil {
+		return x.SavedAtMs
+	}
+	return 0
+}
+
+func (x *Snapshot) GetQuiesced() bool {
+	if x != nil {
+		return x.Quiesced
+	}
+	return false
+}
+
+func (x *Snapshot) GetFiles() uint64 {
+	if x != nil {
+		return x.Files
+	}
+	return 0
+}
+
+func (x *Snapshot) GetLogicalBytes() uint64 {
+	if x != nil {
+		return x.LogicalBytes
+	}
+	return 0
+}
+
+func (x *Snapshot) GetChangedFiles() uint64 {
+	if x != nil && x.ChangedFiles != nil {
+		return *x.ChangedFiles
+	}
+	return 0
+}
+
+func (x *Snapshot) GetAddedBytes() uint64 {
+	if x != nil {
+		return x.AddedBytes
+	}
+	return 0
+}
+
+type ListSnapshotsResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Snapshots     []*Snapshot            `protobuf:"bytes,1,rep,name=snapshots,proto3" json:"snapshots,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListSnapshotsResponse) Reset() {
+	*x = ListSnapshotsResponse{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListSnapshotsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListSnapshotsResponse) ProtoMessage() {}
+
+func (x *ListSnapshotsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListSnapshotsResponse.ProtoReflect.Descriptor instead.
+func (*ListSnapshotsResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListSnapshotsResponse) GetSnapshots() []*Snapshot {
+	if x != nil {
+		return x.Snapshots
+	}
+	return nil
+}
+
+type BrowseSnapshotRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	BoxId      string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
+	SnapshotId string                 `protobuf:"bytes,2,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
+	// A box path such as /home/user/Documents; empty lists the roots.
+	Dir           string `protobuf:"bytes,3,opt,name=dir,proto3" json:"dir,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BrowseSnapshotRequest) Reset() {
+	*x = BrowseSnapshotRequest{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BrowseSnapshotRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BrowseSnapshotRequest) ProtoMessage() {}
+
+func (x *BrowseSnapshotRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BrowseSnapshotRequest.ProtoReflect.Descriptor instead.
+func (*BrowseSnapshotRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *BrowseSnapshotRequest) GetBoxId() string {
+	if x != nil {
+		return x.BoxId
+	}
+	return ""
+}
+
+func (x *BrowseSnapshotRequest) GetSnapshotId() string {
+	if x != nil {
+		return x.SnapshotId
+	}
+	return ""
+}
+
+func (x *BrowseSnapshotRequest) GetDir() string {
+	if x != nil {
+		return x.Dir
+	}
+	return ""
+}
+
+type SnapshotEntry struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The box path.
+	Path          string    `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Kind          EntryKind `protobuf:"varint,2,opt,name=kind,proto3,enum=cocoonbox.control.v1.EntryKind" json:"kind,omitempty"`
+	Size          uint64    `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	MtimeMs       int64     `protobuf:"varint,4,opt,name=mtime_ms,json=mtimeMs,proto3" json:"mtime_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotEntry) Reset() {
+	*x = SnapshotEntry{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotEntry) ProtoMessage() {}
+
+func (x *SnapshotEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotEntry.ProtoReflect.Descriptor instead.
+func (*SnapshotEntry) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *SnapshotEntry) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *SnapshotEntry) GetKind() EntryKind {
+	if x != nil {
+		return x.Kind
+	}
+	return EntryKind_ENTRY_KIND_UNSPECIFIED
+}
+
+func (x *SnapshotEntry) GetSize() uint64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+func (x *SnapshotEntry) GetMtimeMs() int64 {
+	if x != nil {
+		return x.MtimeMs
+	}
+	return 0
+}
+
+type BrowseSnapshotResponse struct {
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Entries []*SnapshotEntry       `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	// The directory holds more entries than one answer carries.
+	Truncated     bool `protobuf:"varint,2,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BrowseSnapshotResponse) Reset() {
+	*x = BrowseSnapshotResponse{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BrowseSnapshotResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BrowseSnapshotResponse) ProtoMessage() {}
+
+func (x *BrowseSnapshotResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BrowseSnapshotResponse.ProtoReflect.Descriptor instead.
+func (*BrowseSnapshotResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *BrowseSnapshotResponse) GetEntries() []*SnapshotEntry {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+func (x *BrowseSnapshotResponse) GetTruncated() bool {
+	if x != nil {
+		return x.Truncated
+	}
+	return false
+}
+
+type RestorePathsRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	BoxId      string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
+	SnapshotId string                 `protobuf:"bytes,2,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
+	// Box paths of files or folders, each under /home/user or /workspace.
+	Paths         []string `protobuf:"bytes,3,rep,name=paths,proto3" json:"paths,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestorePathsRequest) Reset() {
+	*x = RestorePathsRequest{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestorePathsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestorePathsRequest) ProtoMessage() {}
+
+func (x *RestorePathsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestorePathsRequest.ProtoReflect.Descriptor instead.
+func (*RestorePathsRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *RestorePathsRequest) GetBoxId() string {
+	if x != nil {
+		return x.BoxId
+	}
+	return ""
+}
+
+func (x *RestorePathsRequest) GetSnapshotId() string {
+	if x != nil {
+		return x.SnapshotId
+	}
+	return ""
+}
+
+func (x *RestorePathsRequest) GetPaths() []string {
+	if x != nil {
+		return x.Paths
+	}
+	return nil
+}
+
 var File_cocoonbox_control_v1_boxes_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
@@ -1026,14 +1465,44 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\n" +
 	"done_bytes\x18\a \x01(\x04R\tdoneBytes\x12\x1f\n" +
 	"\vtotal_bytes\x18\b \x01(\x04R\n" +
-	"totalBytes*\x9f\x01\n" +
+	"totalBytes\"\xee\x01\n" +
+	"\bSnapshot\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1e\n" +
+	"\vsaved_at_ms\x18\x02 \x01(\x03R\tsavedAtMs\x12\x1a\n" +
+	"\bquiesced\x18\x03 \x01(\bR\bquiesced\x12\x14\n" +
+	"\x05files\x18\x04 \x01(\x04R\x05files\x12#\n" +
+	"\rlogical_bytes\x18\x05 \x01(\x04R\flogicalBytes\x12(\n" +
+	"\rchanged_files\x18\x06 \x01(\x04H\x00R\fchangedFiles\x88\x01\x01\x12\x1f\n" +
+	"\vadded_bytes\x18\a \x01(\x04R\n" +
+	"addedBytesB\x10\n" +
+	"\x0e_changed_files\"U\n" +
+	"\x15ListSnapshotsResponse\x12<\n" +
+	"\tsnapshots\x18\x01 \x03(\v2\x1e.cocoonbox.control.v1.SnapshotR\tsnapshots\"a\n" +
+	"\x15BrowseSnapshotRequest\x12\x15\n" +
+	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x1f\n" +
+	"\vsnapshot_id\x18\x02 \x01(\tR\n" +
+	"snapshotId\x12\x10\n" +
+	"\x03dir\x18\x03 \x01(\tR\x03dir\"\x87\x01\n" +
+	"\rSnapshotEntry\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x123\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x1f.cocoonbox.control.v1.EntryKindR\x04kind\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x04R\x04size\x12\x19\n" +
+	"\bmtime_ms\x18\x04 \x01(\x03R\amtimeMs\"u\n" +
+	"\x16BrowseSnapshotResponse\x12=\n" +
+	"\aentries\x18\x01 \x03(\v2#.cocoonbox.control.v1.SnapshotEntryR\aentries\x12\x1c\n" +
+	"\ttruncated\x18\x02 \x01(\bR\ttruncated\"c\n" +
+	"\x13RestorePathsRequest\x12\x15\n" +
+	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x1f\n" +
+	"\vsnapshot_id\x18\x02 \x01(\tR\n" +
+	"snapshotId\x12\x14\n" +
+	"\x05paths\x18\x03 \x03(\tR\x05paths*\x9f\x01\n" +
 	"\bBoxState\x12\x19\n" +
 	"\x15BOX_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12BOX_STATE_STARTING\x10\x01\x12\x15\n" +
 	"\x11BOX_STATE_RUNNING\x10\x02\x12\x19\n" +
 	"\x15BOX_STATE_HIBERNATING\x10\x03\x12\x18\n" +
 	"\x14BOX_STATE_HIBERNATED\x10\x04\x12\x14\n" +
-	"\x10BOX_STATE_FAILED\x10\x05*\xb9\x01\n" +
+	"\x10BOX_STATE_FAILED\x10\x05*\xd4\x01\n" +
 	"\x05Phase\x12\x15\n" +
 	"\x11PHASE_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0ePHASE_CREATING\x10\x01\x12\x10\n" +
@@ -1044,7 +1513,13 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\fPHASE_FAILED\x10\x05\x12\x10\n" +
 	"\fPHASE_SAVING\x10\x06\x12\x13\n" +
 	"\x0fPHASE_RESTORING\x10\a\x12\x12\n" +
-	"\x0ePHASE_DELETING\x10\b2\xb9\x06\n" +
+	"\x0ePHASE_DELETING\x10\b\x12\x19\n" +
+	"\x15PHASE_RESTORING_FILES\x10\t*h\n" +
+	"\tEntryKind\x12\x1a\n" +
+	"\x16ENTRY_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
+	"\x0fENTRY_KIND_FILE\x10\x01\x12\x12\n" +
+	"\x0eENTRY_KIND_DIR\x10\x02\x12\x16\n" +
+	"\x12ENTRY_KIND_SYMLINK\x10\x032\xde\b\n" +
 	"\x05Boxes\x12S\n" +
 	"\x06Ensure\x12#.cocoonbox.control.v1.EnsureRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12V\n" +
 	"\x06Create\x12&.cocoonbox.control.v1.CreateBoxRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12K\n" +
@@ -1055,7 +1530,10 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\tHibernate\x12\x1c.cocoonbox.control.v1.BoxRef\x1a\x1f.cocoonbox.control.v1.Operation\x12e\n" +
 	"\x0eWatchOperation\x12+.cocoonbox.control.v1.WatchOperationRequest\x1a$.cocoonbox.control.v1.OperationEvent0\x01\x12J\n" +
 	"\tSaveState\x12\x1c.cocoonbox.control.v1.BoxRef\x1a\x1f.cocoonbox.control.v1.Operation\x12N\n" +
-	"\x06Rebase\x12#.cocoonbox.control.v1.RebaseRequest\x1a\x1f.cocoonbox.control.v1.OperationBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\x06Rebase\x12#.cocoonbox.control.v1.RebaseRequest\x1a\x1f.cocoonbox.control.v1.Operation\x12Z\n" +
+	"\rListSnapshots\x12\x1c.cocoonbox.control.v1.BoxRef\x1a+.cocoonbox.control.v1.ListSnapshotsResponse\x12k\n" +
+	"\x0eBrowseSnapshot\x12+.cocoonbox.control.v1.BrowseSnapshotRequest\x1a,.cocoonbox.control.v1.BrowseSnapshotResponse\x12Z\n" +
+	"\fRestorePaths\x12).cocoonbox.control.v1.RestorePathsRequest\x1a\x1f.cocoonbox.control.v1.OperationBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_boxes_proto_rawDescOnce sync.Once
@@ -1069,61 +1547,77 @@ func file_cocoonbox_control_v1_boxes_proto_rawDescGZIP() []byte {
 	return file_cocoonbox_control_v1_boxes_proto_rawDescData
 }
 
-var file_cocoonbox_control_v1_boxes_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_cocoonbox_control_v1_boxes_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
+var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
-	(BoxState)(0),                 // 0: cocoonbox.control.v1.BoxState
-	(Phase)(0),                    // 1: cocoonbox.control.v1.Phase
-	(*BoxRef)(nil),                // 2: cocoonbox.control.v1.BoxRef
-	(*Flavor)(nil),                // 3: cocoonbox.control.v1.Flavor
-	(*Box)(nil),                   // 4: cocoonbox.control.v1.Box
-	(*Operation)(nil),             // 5: cocoonbox.control.v1.Operation
-	(*EnsureRequest)(nil),         // 6: cocoonbox.control.v1.EnsureRequest
-	(*CreateBoxRequest)(nil),      // 7: cocoonbox.control.v1.CreateBoxRequest
-	(*RenameBoxRequest)(nil),      // 8: cocoonbox.control.v1.RenameBoxRequest
-	(*EnsureResponse)(nil),        // 9: cocoonbox.control.v1.EnsureResponse
-	(*RebaseRequest)(nil),         // 10: cocoonbox.control.v1.RebaseRequest
-	(*GetBoxRequest)(nil),         // 11: cocoonbox.control.v1.GetBoxRequest
-	(*ListBoxesRequest)(nil),      // 12: cocoonbox.control.v1.ListBoxesRequest
-	(*ListBoxesResponse)(nil),     // 13: cocoonbox.control.v1.ListBoxesResponse
-	(*WatchOperationRequest)(nil), // 14: cocoonbox.control.v1.WatchOperationRequest
-	(*OperationEvent)(nil),        // 15: cocoonbox.control.v1.OperationEvent
+	(BoxState)(0),                  // 0: cocoonbox.control.v1.BoxState
+	(Phase)(0),                     // 1: cocoonbox.control.v1.Phase
+	(EntryKind)(0),                 // 2: cocoonbox.control.v1.EntryKind
+	(*BoxRef)(nil),                 // 3: cocoonbox.control.v1.BoxRef
+	(*Flavor)(nil),                 // 4: cocoonbox.control.v1.Flavor
+	(*Box)(nil),                    // 5: cocoonbox.control.v1.Box
+	(*Operation)(nil),              // 6: cocoonbox.control.v1.Operation
+	(*EnsureRequest)(nil),          // 7: cocoonbox.control.v1.EnsureRequest
+	(*CreateBoxRequest)(nil),       // 8: cocoonbox.control.v1.CreateBoxRequest
+	(*RenameBoxRequest)(nil),       // 9: cocoonbox.control.v1.RenameBoxRequest
+	(*EnsureResponse)(nil),         // 10: cocoonbox.control.v1.EnsureResponse
+	(*RebaseRequest)(nil),          // 11: cocoonbox.control.v1.RebaseRequest
+	(*GetBoxRequest)(nil),          // 12: cocoonbox.control.v1.GetBoxRequest
+	(*ListBoxesRequest)(nil),       // 13: cocoonbox.control.v1.ListBoxesRequest
+	(*ListBoxesResponse)(nil),      // 14: cocoonbox.control.v1.ListBoxesResponse
+	(*WatchOperationRequest)(nil),  // 15: cocoonbox.control.v1.WatchOperationRequest
+	(*OperationEvent)(nil),         // 16: cocoonbox.control.v1.OperationEvent
+	(*Snapshot)(nil),               // 17: cocoonbox.control.v1.Snapshot
+	(*ListSnapshotsResponse)(nil),  // 18: cocoonbox.control.v1.ListSnapshotsResponse
+	(*BrowseSnapshotRequest)(nil),  // 19: cocoonbox.control.v1.BrowseSnapshotRequest
+	(*SnapshotEntry)(nil),          // 20: cocoonbox.control.v1.SnapshotEntry
+	(*BrowseSnapshotResponse)(nil), // 21: cocoonbox.control.v1.BrowseSnapshotResponse
+	(*RestorePathsRequest)(nil),    // 22: cocoonbox.control.v1.RestorePathsRequest
 }
 var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	0,  // 0: cocoonbox.control.v1.Box.state:type_name -> cocoonbox.control.v1.BoxState
-	3,  // 1: cocoonbox.control.v1.Box.flavor:type_name -> cocoonbox.control.v1.Flavor
-	3,  // 2: cocoonbox.control.v1.EnsureRequest.flavor:type_name -> cocoonbox.control.v1.Flavor
-	3,  // 3: cocoonbox.control.v1.CreateBoxRequest.flavor:type_name -> cocoonbox.control.v1.Flavor
-	4,  // 4: cocoonbox.control.v1.EnsureResponse.box:type_name -> cocoonbox.control.v1.Box
-	5,  // 5: cocoonbox.control.v1.EnsureResponse.operation:type_name -> cocoonbox.control.v1.Operation
-	4,  // 6: cocoonbox.control.v1.ListBoxesResponse.boxes:type_name -> cocoonbox.control.v1.Box
+	4,  // 1: cocoonbox.control.v1.Box.flavor:type_name -> cocoonbox.control.v1.Flavor
+	4,  // 2: cocoonbox.control.v1.EnsureRequest.flavor:type_name -> cocoonbox.control.v1.Flavor
+	4,  // 3: cocoonbox.control.v1.CreateBoxRequest.flavor:type_name -> cocoonbox.control.v1.Flavor
+	5,  // 4: cocoonbox.control.v1.EnsureResponse.box:type_name -> cocoonbox.control.v1.Box
+	6,  // 5: cocoonbox.control.v1.EnsureResponse.operation:type_name -> cocoonbox.control.v1.Operation
+	5,  // 6: cocoonbox.control.v1.ListBoxesResponse.boxes:type_name -> cocoonbox.control.v1.Box
 	1,  // 7: cocoonbox.control.v1.OperationEvent.phase:type_name -> cocoonbox.control.v1.Phase
 	0,  // 8: cocoonbox.control.v1.OperationEvent.box_state:type_name -> cocoonbox.control.v1.BoxState
-	6,  // 9: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
-	7,  // 10: cocoonbox.control.v1.Boxes.Create:input_type -> cocoonbox.control.v1.CreateBoxRequest
-	8,  // 11: cocoonbox.control.v1.Boxes.Rename:input_type -> cocoonbox.control.v1.RenameBoxRequest
-	2,  // 12: cocoonbox.control.v1.Boxes.Delete:input_type -> cocoonbox.control.v1.BoxRef
-	11, // 13: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
-	12, // 14: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
-	2,  // 15: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
-	14, // 16: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
-	2,  // 17: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
-	10, // 18: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
-	9,  // 19: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
-	9,  // 20: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
-	4,  // 21: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
-	5,  // 22: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
-	4,  // 23: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
-	13, // 24: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
-	5,  // 25: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
-	15, // 26: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
-	5,  // 27: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
-	5,  // 28: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
-	19, // [19:29] is the sub-list for method output_type
-	9,  // [9:19] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	17, // 9: cocoonbox.control.v1.ListSnapshotsResponse.snapshots:type_name -> cocoonbox.control.v1.Snapshot
+	2,  // 10: cocoonbox.control.v1.SnapshotEntry.kind:type_name -> cocoonbox.control.v1.EntryKind
+	20, // 11: cocoonbox.control.v1.BrowseSnapshotResponse.entries:type_name -> cocoonbox.control.v1.SnapshotEntry
+	7,  // 12: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
+	8,  // 13: cocoonbox.control.v1.Boxes.Create:input_type -> cocoonbox.control.v1.CreateBoxRequest
+	9,  // 14: cocoonbox.control.v1.Boxes.Rename:input_type -> cocoonbox.control.v1.RenameBoxRequest
+	3,  // 15: cocoonbox.control.v1.Boxes.Delete:input_type -> cocoonbox.control.v1.BoxRef
+	12, // 16: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
+	13, // 17: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
+	3,  // 18: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
+	15, // 19: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
+	3,  // 20: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
+	11, // 21: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
+	3,  // 22: cocoonbox.control.v1.Boxes.ListSnapshots:input_type -> cocoonbox.control.v1.BoxRef
+	19, // 23: cocoonbox.control.v1.Boxes.BrowseSnapshot:input_type -> cocoonbox.control.v1.BrowseSnapshotRequest
+	22, // 24: cocoonbox.control.v1.Boxes.RestorePaths:input_type -> cocoonbox.control.v1.RestorePathsRequest
+	10, // 25: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
+	10, // 26: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
+	5,  // 27: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
+	6,  // 28: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
+	5,  // 29: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
+	14, // 30: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
+	6,  // 31: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
+	16, // 32: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
+	6,  // 33: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
+	6,  // 34: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
+	18, // 35: cocoonbox.control.v1.Boxes.ListSnapshots:output_type -> cocoonbox.control.v1.ListSnapshotsResponse
+	21, // 36: cocoonbox.control.v1.Boxes.BrowseSnapshot:output_type -> cocoonbox.control.v1.BrowseSnapshotResponse
+	6,  // 37: cocoonbox.control.v1.Boxes.RestorePaths:output_type -> cocoonbox.control.v1.Operation
+	25, // [25:38] is the sub-list for method output_type
+	12, // [12:25] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_control_v1_boxes_proto_init() }
@@ -1131,13 +1625,14 @@ func file_cocoonbox_control_v1_boxes_proto_init() {
 	if File_cocoonbox_control_v1_boxes_proto != nil {
 		return
 	}
+	file_cocoonbox_control_v1_boxes_proto_msgTypes[14].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_boxes_proto_rawDesc), len(file_cocoonbox_control_v1_boxes_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   14,
+			NumEnums:      3,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

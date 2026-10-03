@@ -39,6 +39,7 @@ type StateAgents interface {
 	Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error)
 	Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 	Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	RestorePaths(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 }
 
 type chunk struct {
@@ -48,14 +49,15 @@ type chunk struct {
 
 // timelineEntry describes one kept snapshot without its chunk list.
 type timelineEntry struct {
-	ID            string `json:"id"`
-	Consistency   string `json:"consistency"`
-	TakenAtMs     int64  `json:"taken_at_ms"`
-	SavedAtMs     int64  `json:"saved_at_ms"`
-	Files         uint64 `json:"files"`
-	LogicalBytes  uint64 `json:"logical_bytes"`
-	NewChunks     int    `json:"new_chunks"`
-	UploadedBytes uint64 `json:"uploaded_bytes"`
+	ID            string  `json:"id"`
+	Consistency   string  `json:"consistency"`
+	TakenAtMs     int64   `json:"taken_at_ms"`
+	SavedAtMs     int64   `json:"saved_at_ms"`
+	Files         uint64  `json:"files"`
+	LogicalBytes  uint64  `json:"logical_bytes"`
+	ChangedFiles  *uint64 `json:"changed_files,omitempty"`
+	NewChunks     int     `json:"new_chunks"`
+	UploadedBytes uint64  `json:"uploaded_bytes"`
 }
 
 // snapshotRecord is the plaintext index entry of one snapshot; chunk ids are keyed hashes.
@@ -107,17 +109,19 @@ type stateLayer struct {
 	keys       keyring.Keyring
 	retryDelay time.Duration
 
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
-	users map[string]*sync.RWMutex
-	heads map[statePath]head
-	pins  map[statePath]map[string]int
+	mu      sync.Mutex
+	locks   map[string]*sync.Mutex
+	users   map[string]*sync.RWMutex
+	heads   map[statePath]head
+	pins    map[statePath]map[string]int
+	browsed map[statePath]browsed
 }
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay,
 		locks: map[string]*sync.Mutex{}, users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
+		browsed: map[statePath]browsed{},
 	}
 }
 
@@ -168,7 +172,7 @@ func (l *stateLayer) snapshot(ctx context.Context, p statePath, ep machines.Endp
 	}
 	rec := &snapshotRecord{
 		ID: plan.GetSnapshotId(), Consistency: consistency.String(), TakenAtMs: plan.GetTakenAtMs(),
-		Files: plan.GetFiles(), LogicalBytes: plan.GetLogicalBytes(),
+		Files: plan.GetFiles(), LogicalBytes: plan.GetLogicalBytes(), ChangedFiles: plan.ChangedFiles,
 	}
 	var missing []chunk
 	seen := map[string]bool{}
