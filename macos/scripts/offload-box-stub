@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+# A stand-in for `cocoonbox-agent offload <verb>` (contracts.md "Offload") for the Mac packer's
+# tests: MockBox runs it on this Mac through Session.Exec, in its workspace, with HOME as the
+# box's home. It keeps the copy states, the outbox and the S check the real box packer keeps;
+# there is no tmux and no box CLI. Files in HOME steer it: stub-findings.json (a list of findings)
+# feeds begin, and stub-auto-back makes a `send --back` post a back hand-over at once, as a box
+# agent would.
+import json, os, subprocess, sys, tarfile, tempfile, time
+
+HEADINGS = ["## Goal and definition of done", "## User preferences and constraints", "## Current state", "## Decisions made",
+            "## Files touched", "## Next steps", "## Commands", "## Environment facts", "## Gotchas learned", "## Open questions"]
+state = os.path.join(os.environ["HOME"], ".local/share/cocoonbox/offload")
+
+
+def reply(obj, code=0):
+    print(json.dumps(obj))
+    sys.exit(code)
+
+
+def fail(code, error, status, **extra):
+    reply({"ok": False, "code": code, "error": error, **extra}, status)
+
+
+def load(path, default):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return default
+
+
+def save(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(obj, f)
+
+
+def git(cwd, *args, env=None, check=True):
+    run = subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, env={**os.environ, **(env or {})})
+    if check and run.returncode != 0:
+        fail("failed", f"git {args[0]}: {run.stderr.strip()}", 1)
+    return run.stdout.strip()
+
+
+def snapshot(cwd, message):
+    with tempfile.TemporaryDirectory() as tmp:
+        env = {"GIT_INDEX_FILE": os.path.join(tmp, "index")}
+        head = git(cwd, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False)
+        git(cwd, "read-tree", head, env=env) if head else git(cwd, "read-tree", "--empty", env=env)
+        git(cwd, "add", "-A", env=env)
+        tree = git(cwd, "write-tree", env=env)
+    ident = {"GIT_AUTHOR_NAME": "box", "GIT_AUTHOR_EMAIL": "box@box", "GIT_COMMITTER_NAME": "box", "GIT_COMMITTER_EMAIL": "box@box"}
+    return git(cwd, "commit-tree", tree, *(["-p", head] if head else []), "-m", message, env=ident)
+
+
+def args(argv):
+    out, flags = {}, set()
+    i = 0
+    while i < len(argv):
+        if argv[i] in ("--repo", "--name", "--kind", "--id", "--since", "--wait"):
+            out[argv[i][2:]] = argv[i + 1]
+            i += 2
+        else:
+            flags.add(argv[i][2:])
+            i += 1
+    return out, flags
+
+
+argv = sys.argv[1:]
+if argv[:1] == ["offload"]:
+    argv = argv[1:]
+verb, (opt, flags) = argv[0], args(argv[1:])
+index_path = os.path.join(state, "index.json")
+index = load(index_path, {})
+key = opt.get("repo") or os.environ.get("COCOONBOX_OFFLOAD_REPO", "")
+entry = index.get(key, {})
+session_path = os.path.join(state, key, "session.json")
+outbox_path = os.path.join(state, key, "outbox.json")
+session = load(session_path, {})
+outbox = load(outbox_path, [])
+
+
+def post(kind, body):
+    outbox.append({"seq": len(outbox) + 1, "kind": kind, "offload_id": session.get("offload_id", ""), "cli": session.get("cli", ""),
+                   "time_ms": int(time.time() * 1000), "body": body})
+    save(outbox_path, outbox)
+    return len(outbox)
+
+
+def make_back(body):
+    missing = [h for h in HEADINGS if h not in body.splitlines()]
+    if missing:
+        fail("refused", "the hand-over lacks " + ", ".join(missing), 3)
+    if not session.get("no_repo"):
+        copy = entry["dir"]
+        git(copy, "update-ref", "refs/cocoonbox/back/" + session["offload_id"], snapshot(copy, "cocoonbox back"))
+    return post("back", body)
+
+
+if verb == "begin":
+    findings = load(os.path.join(os.environ["HOME"], "stub-findings.json"), [])
+    blocks = [f for f in findings if f["outcome"] == "block"]
+    if blocks:
+        fail("refused", blocks[0]["detail"], 3, findings=blocks)
+    if entry.get("copy") in ("unreturned", "busy"):
+        fail("refused", "bring the last offload back first", 3)
+    if not entry:
+        if "no-repo" in flags:
+            name, path = opt["name"], os.path.join(os.environ["HOME"], "cocoonbox-agents", opt["kind"])
+        else:
+            taken = {e["name"] for e in index.values()}
+            name, n = opt["name"], 2
+            while name in taken:
+                name, n = f"{opt['name']}-{n}", n + 1
+            path = os.path.join(os.getcwd(), name)
+        entry = {"name": name, "dir": path}
+    copy = "mirror" if os.path.isdir(entry["dir"]) else "absent"
+    os.makedirs(entry["dir"], exist_ok=True)
+    refs = {}
+    if os.path.isdir(os.path.join(entry["dir"], ".git")):
+        for line in git(entry["dir"], "for-each-ref", "--format=%(refname) %(objectname)", check=False).splitlines():
+            ref, oid = line.split(" ")
+            refs[ref] = oid
+    entry.update(copy="mirror", id=opt["id"])
+    index[key] = entry
+    save(index_path, index)
+    reply({"ok": True, "dir": entry["dir"], "copy": copy, "refs": refs,
+           "cli": {"kind": opt["kind"], "version": "9.9.9", "signed_in": True, "account": "stub@box"}, "findings": findings})
+
+elif verb == "send" and ("message" in flags or "back" in flags):
+    if not session or session.get("status") == "stopped":
+        fail("refused", "no running session", 3)
+    body = sys.stdin.read()
+    seq = len(load(os.path.join(state, key, "inbox.json"), [])) + 1
+    save(os.path.join(state, key, "inbox.json"), load(os.path.join(state, key, "inbox.json"), []) + [{"back": "back" in flags, "body": body}])
+    if "back" in flags and os.path.exists(os.path.join(os.environ["HOME"], "stub-auto-back")):
+        make_back(open(os.path.join(state, key, "handover.md")).read().replace("From: Mac", "From: box"))
+    reply({"ok": True, "seq": seq, "delivery": "pasted"})
+
+elif verb == "send":
+    if entry.get("id") != opt["id"]:
+        fail("refused", "the copy is taken for another offload", 3)
+    stage = os.path.join(state, key, "stage")
+    os.makedirs(stage, exist_ok=True)
+    names = []
+    with tarfile.open(fileobj=sys.stdin.buffer, mode="r|") as tar:
+        for member in tar:
+            names.append(member.name)
+            target = os.path.join(stage, member.name)
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "wb") as f:
+                f.write(tar.extractfile(member).read())
+    copy = entry["dir"]
+    if "no-repo" not in flags:
+        dotgit = os.path.join(copy, ".git")
+        if "HEAD" in names and not os.path.isdir(dotgit):
+            git(copy, "init", "-q")
+        os.makedirs(os.path.join(dotgit, "objects/pack"), exist_ok=True)
+        os.makedirs(os.path.join(dotgit, "objects/info"), exist_ok=True)
+        if "offload.bundle" in names:
+            if "HEAD" in names:
+                git(copy, "fetch", "-q", "--update-head-ok", os.path.join(stage, "offload.bundle"), "+refs/*:refs/*")
+            else:
+                # the rsynced refs name commits the bundle brings, so `bundle unbundle` refuses
+                # the walk; index-pack takes the pack after the bundle's header as it is
+                data = open(os.path.join(stage, "offload.bundle"), "rb").read()
+                pack = data[data.index(b"\n\n") + 2:]
+                run = subprocess.run(["git", "-C", copy, "index-pack", "--stdin", "--fix-thin"], input=pack, capture_output=True)
+                if run.returncode != 0:
+                    fail("failed", "git index-pack: " + run.stderr.decode().strip(), 1)
+        for name in ("HEAD", "index"):
+            if name in names:
+                os.replace(os.path.join(stage, name), os.path.join(dotgit, name))
+        git(copy, "-c", "core.fsmonitor=false", "update-index", "-q", "--refresh", check=False)
+        s = "refs/cocoonbox/offload/" + opt["id"]
+        head = git(copy, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False)
+        parent = git(copy, "rev-parse", "-q", "--verify", s + "^", check=False)
+        work = snapshot(copy, "check")
+        if git(copy, "rev-parse", work + "^{tree}") != git(copy, "rev-parse", s + "^{tree}") or head != parent:
+            fail("failed", "the copy does not equal S", 1)
+    for name in names:
+        if name.startswith("secrets/"):
+            target = os.path.join(os.environ["HOME"], "stub-secrets", key, name[len("secrets/"):])
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            os.replace(os.path.join(stage, name), target)
+            if name.startswith("secrets/file/"):
+                link = os.path.join(copy, name[len("secrets/file/"):])
+                if os.path.lexists(link):
+                    os.remove(link)
+                os.symlink(target, link)
+    os.replace(os.path.join(stage, "handover.md"), os.path.join(state, key, "handover.md"))
+    if "env.json" in names:
+        os.replace(os.path.join(stage, "env.json"), os.path.join(state, key, "env.json"))
+    entry["copy"] = "busy"
+    save(index_path, index)
+    save(session_path, {"status": "working", "offload_id": opt["id"], "cli": opt["kind"], "no_repo": "no-repo" in flags})
+    reply({"ok": True, "delivery": "started", "accepted": True, "tmux": f"cb-off-{key}-{opt['kind']}", "timings_ms": {}})
+
+elif verb == "post":
+    kind = next(k for k in ("progress", "question", "back") if k in flags)
+    body = sys.stdin.read()
+    seq = make_back(body) if kind == "back" else post(kind, body)
+    reply({"ok": True, "seq": seq, "status": "ready" if kind == "back" else "posted"})
+
+elif verb == "read":
+    since, wait = int(opt.get("since", 0)), min(float(opt.get("wait", 0)), float(os.environ.get("STUB_WAIT_CAP", 600)))
+    deadline = time.time() + wait
+    while True:
+        outbox = load(outbox_path, [])
+        entries = [e for e in outbox if e["seq"] > since]
+        if entries or time.time() >= deadline:
+            break
+        time.sleep(0.1)
+    reply({"ok": True, "entries": entries, "status": load(session_path, {}).get("status", "stopped")})
+
+elif verb == "status":
+    keys = [key] if key else list(index)
+    sessions = [{"repo": k, "name": index.get(k, {}).get("name", ""), "status": load(os.path.join(state, k, "session.json"), {}).get("status", "stopped"),
+                 "offload_id": load(os.path.join(state, k, "session.json"), {}).get("offload_id", ""), "copy": index.get(k, {}).get("copy", "absent")}
+                for k in keys if os.path.exists(os.path.join(state, k, "session.json"))]
+    reply({"ok": True, "sessions": sessions})
+
+elif verb == "end":
+    session["status"] = "stopped"
+    save(session_path, session)
+    entry["copy"] = "mirror"
+    save(index_path, index)
+    subprocess.run(["rm", "-rf", os.path.join(os.environ["HOME"], "stub-secrets", key)])
+    reply({"ok": True})
+
+else:
+    fail("usage", "unknown verb " + verb, 2)
