@@ -397,6 +397,10 @@ func rsh() async {
     var rest = arguments.dropFirst()
     var options: [String: String] = [:]
     while let option = rest.first, option.hasPrefix("-") {
+        if option == "--" {
+            rest = rest.dropFirst()
+            break
+        }
         if option == "-t" {
             options[option] = ""
             rest = rest.dropFirst()
