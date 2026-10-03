@@ -548,7 +548,9 @@ func runningBox(_ connection: BoxConnection, _ ref: String?) async throws -> Coc
 }
 
 // offloadKey is the repo key of --dir or the working directory, or with --no-repo the app local agent's key.
-func offloadKey() -> String {
+// For an offload in flight it falls back to the record of the same top level, whose key changes when
+// an empty repo gets its first commit.
+func offloadKey(inFlight: Bool = false) -> String {
     if flags.contains("--no-repo") {
         guard let agent = value(of: "--agent") ?? ProcessInfo.processInfo.environment["COCOONBOX_AGENT"] else {
             fail("--no-repo needs --agent ID, or COCOONBOX_AGENT, which the app sets for its local agents")
@@ -557,7 +559,23 @@ func offloadKey() -> String {
     }
     let dir = URL(fileURLWithPath: value(of: "--dir") ?? FileManager.default.currentDirectoryPath)
     guard let repo = GitRepo.open(dir, environment: ProcessInfo.processInfo.environment) else { fail("\(dir.path) is not in a git repository") }
-    return repo.key
+    guard inFlight, offloadStore.record(repo.key) == nil else { return repo.key }
+    return offloadStore.records().last { $0.top == repo.top.path }?.repo ?? repo.key
+}
+
+// positional is the words after sub that are neither options nor their values.
+func positional(after sub: String) -> [String] {
+    var words: [String] = []
+    var rest = arguments.drop { $0 != sub }.dropFirst()[...]
+    while let word = rest.first {
+        rest = rest.dropFirst()
+        if ["--box", "--dir", "--agent", "--endpoint", "--wait", "--kind", "--handover"].contains(word) {
+            rest = rest.dropFirst()
+        } else if !word.hasPrefix("--") {
+            words.append(word)
+        }
+    }
+    return words
 }
 
 func printJSON(_ object: [String: Any]) {
@@ -592,7 +610,7 @@ func offload() async {
         switch sub {
         case "inbox", "status", "send":
             let all = flags.contains("--all")
-            let key = all && sub == "status" ? nil : offloadKey()
+            let key = all && sub == "status" ? nil : offloadKey(inFlight: true)
             let record = key.flatMap(offloadStore.record)
             let packer = offloader(connection, try await runningBox(connection, value(of: "--box") ?? record?.box))
             if sub == "status" {
@@ -603,7 +621,7 @@ func offload() async {
             }
             guard let key else { fail("name the repo") }
             if sub == "send" {
-                let rest = Array(arguments.drop { $0 != "send" }.dropFirst().filter { !$0.hasPrefix("--") })
+                let rest = positional(after: "send")
                 let text = rest.isEmpty ? String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self) : rest.joined(separator: " ")
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { fail("no message") }
                 let delivery = try await packer.send(key, message: text, interrupt: flags.contains("--interrupt"))
@@ -681,7 +699,7 @@ func back() async {
     let connection = connection()
     defer { connection.close() }
     let json = flags.contains("--json")
-    let key = offloadKey()
+    let key = offloadKey(inFlight: true)
     guard let record = offloadStore.record(key) else { fail("nothing of this repo is in a box") }
     do {
         let packer = offloader(connection, try await runningBox(connection, record.box))
@@ -710,7 +728,7 @@ func back() async {
 func secrets() {
     let key = offloadKey()
     var entries = offloadStore.secrets(key)
-    let rest = Array(arguments.drop { $0 != "secrets" }.dropFirst().filter { !$0.hasPrefix("--") })
+    let rest = positional(after: "secrets")
     if let action = rest.first {
         guard ["add", "remove"].contains(action), rest.count == 2 else { fail("usage: cocoonbox offload secrets [add|remove ENTRY]") }
         let entry = rest[1]

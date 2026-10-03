@@ -171,18 +171,22 @@ public struct Offloader: Sendable {
         guard request.yes || findings.isEmpty else { throw OffloadError.needsYes(findings) }
         guard let dir = begin["dir"] as? String, !dir.isEmpty else { throw OffloadError.failed("begin named no directory") }
 
-        let ref = "refs/cocoonbox/offload/\(id)"
+        let refs = ["refs/cocoonbox/offload/\(id)", "refs/cocoonbox/index/\(id)"]
         let bundle = stage.appendingPathComponent("offload.bundle")
         defer { try? FileManager.default.removeItem(at: bundle) }
-        var base: String?
+        var record = OffloadRecord(id: id, repo: key, box: box.id, boxName: box.name, name: name, dir: dir, kind: request.kind, base: nil,
+                                   top: repo?.top.path, startedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
         var sent: Int64 = 0
+        var sending = false
         let reply: [String: Any]
         do {
             var members: [(String, ExecFrames.Part)] = [("handover.md", .bytes(Data(request.handover.utf8)))]
             if let repo {
-                let snapshot = try repo.snapshot(index: stage.appendingPathComponent("snapshot.index"), message: "cocoonbox offload \(id)")
-                base = snapshot
-                try repo.git("update-ref", ref, snapshot)
+                let index = stage.appendingPathComponent("snapshot.index")
+                let snapshot = try repo.snapshot(index: index, message: "cocoonbox offload \(id)")
+                record.base = snapshot
+                try repo.git("update-ref", refs[0], snapshot)
+                try repo.keepIndex(refs[1], scratch: index)
                 let env = EnvProbe.json(repo.top, environment: environment)
                 try env.write(to: stage.appendingPathComponent("env.json"))
                 members.append(("env.json", .bytes(env)))
@@ -200,15 +204,19 @@ public struct Offloader: Sendable {
                 members += try secrets(store.secrets(key), top: repo.top).map { ($0.0, .bytes($0.1)) }
                 mark("bundle")
             }
+            try store.save(record)
+            sending = true
             reply = try await verb(["send", "--repo", key, "--kind", request.kind.rawValue, "--id", id] + (repo == nil ? ["--no-repo"] : []), input: ExecFrames.tar(members))
             mark("send")
         } catch {
-            if base != nil { _ = try? repo?.git("update-ref", "-d", ref) }
+            // a send cut off in transit may have started the box CLI, so its record stays for back
+            if sending, !(error is OffloadError) {
+                throw OffloadError.failed("the connection broke while the box took the task (\(BoxConnection.describe(error))); check `cocoonbox offload status`, then offload again or bring it back")
+            }
+            store.remove(key)
+            refs.forEach { ref in _ = try? repo?.git("update-ref", "-d", ref) }
             throw error
         }
-        let record = OffloadRecord(id: id, repo: key, box: box.id, boxName: box.name, name: name, dir: dir, kind: request.kind, base: base,
-                                   top: repo?.top.path, startedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
-        try store.save(record)
         let cli = begin["cli"] as? [String: Any] ?? [:]
         let account = (cli["account"] as? String).map { $0.isEmpty ? "" : ", signed in as \($0)" } ?? ""
         return OffloadOutcome(record: record, accepted: reply["accepted"] as? Bool ?? false, findings: findings,

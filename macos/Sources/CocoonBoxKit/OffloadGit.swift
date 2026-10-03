@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 // Command runs a program found on the given environment's PATH, feeding it
@@ -118,8 +119,21 @@ public struct GitRepo: Sendable {
         }
         try git("add", "-A", extra: env)
         let tree = try git("write-tree", extra: env)
-        let ident = ["GIT_AUTHOR_NAME": "cocoonbox", "GIT_AUTHOR_EMAIL": "cocoonbox@localhost", "GIT_COMMITTER_NAME": "cocoonbox", "GIT_COMMITTER_EMAIL": "cocoonbox@localhost"]
-        return try git(["commit-tree", tree] + (head.map { ["-p", $0] } ?? []) + ["-m", message], extra: ident)
+        return try git(["commit-tree", tree] + (head.map { ["-p", $0] } ?? []) + ["-m", message], extra: Self.ident)
+    }
+
+    static let ident = ["GIT_AUTHOR_NAME": "cocoonbox", "GIT_AUTHOR_EMAIL": "cocoonbox@localhost", "GIT_COMMITTER_NAME": "cocoonbox", "GIT_COMMITTER_EMAIL": "cocoonbox@localhost"]
+
+    // keepIndex points ref at a commit of the index's tree, so a bundle carries
+    // staged content no other ref reaches; a conflicted index is left out.
+    func keepIndex(_ ref: String, scratch: URL) throws {
+        try? FileManager.default.removeItem(at: scratch)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        let real = try gitPath("index")
+        guard FileManager.default.fileExists(atPath: real.path) else { return }
+        try FileManager.default.copyItem(at: real, to: scratch)
+        guard let tree = try? git("write-tree", extra: ["GIT_INDEX_FILE": scratch.path]) else { return }
+        try git("update-ref", ref, try git("commit-tree", tree, "-m", "cocoonbox index", extra: Self.ident))
     }
 
     // ignored lists the git-ignored entries, directories ending in /, relative to the top level.
@@ -161,46 +175,65 @@ public struct GitRepo: Sendable {
         let (baseTree, localTree, boxTree) = (try tree(base), try tree(local), try tree(box))
         if boxTree == baseTree, boxHead == start { return .unchanged }
         let follows = boxHead.map { b in start.map { b == $0 || ((try? git("merge-base", "--is-ancestor", $0, b)) != nil) } ?? true } ?? false
+        let move = boxHead.flatMap { $0 != head && head == start && follows ? (old: head, new: $0) : nil }
         if head == start, localTree == baseTree, follows || boxHead == nil {
-            guard try apply(from: base, to: box) else { return try branch(box, conflicts: [], now: now) }
-            if let boxHead, boxHead != head { try move(from: head, to: boxHead) }
+            guard try settle(from: base, to: box, move: move, scratch: index) else { return try branch(box, conflicts: [], now: now) }
             return .fastForward
         }
         let merge = try run(["merge-tree", "--write-tree", "--name-only", "--merge-base=\(base)", local, box])
         let lines = merge.text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-        switch merge.status {
-        case 0:
-            guard let merged = lines.first else { throw OffloadError.failed("git merge-tree printed no tree") }
-            let files = try git("diff", "--name-only", "--no-renames", localTree, merged).split(separator: "\n").map(String.init)
-            guard try apply(from: localTree, to: merged) else { return try branch(box, conflicts: files, now: now) }
-            if head == start, follows, let boxHead, boxHead != head { try move(from: head, to: boxHead) }
-            return .merged(files)
-        case 1:
-            return try branch(box, conflicts: Array(lines.dropFirst().prefix { !$0.isEmpty }), now: now)
-        default:
-            throw OffloadError.failed("git merge-tree: \(merge.error)")
+        guard merge.status == 0, let merged = lines.first else {
+            return try branch(box, conflicts: merge.status == 1 ? Array(lines.dropFirst().prefix { !$0.isEmpty }) : [], now: now)
         }
+        let files = try git("diff-tree", "-r", "--name-only", "--no-renames", localTree, merged).split(separator: "\n").map(String.init)
+        guard try settle(from: localTree, to: merged, move: move, scratch: index) else { return try branch(box, conflicts: [], now: now) }
+        return .merged(files)
     }
 
-    // apply moves the work tree from one tree to another; false, with nothing changed, when it does not apply.
-    private func apply(from: String, to: String) throws -> Bool {
-        let patch = try run(["diff", "--binary", "--full-index", "--no-renames", from, to])
-        guard patch.status == 0 else { throw OffloadError.failed("git diff: \(patch.error)") }
-        guard !patch.out.isEmpty else { return true }
-        return try run(["apply", "--binary", "--whitespace=nowarn", "-"], input: patch.out).status == 0
+    // settle moves the work tree between trees and, with move, HEAD's branch and the index; the index is
+    // built aside under git's index.lock first, so a held lock or a patch that does not apply changes nothing.
+    private func settle(from: String, to: String, move: (old: String?, new: String)?, scratch: URL) throws -> Bool {
+        let manager = FileManager.default
+        var lock: URL?
+        defer { if let lock { try? manager.removeItem(at: lock) } }
+        if let move {
+            try? manager.removeItem(at: scratch)
+            defer { try? manager.removeItem(at: scratch) }
+            let real = try gitPath("index")
+            if manager.fileExists(atPath: real.path) { try manager.copyItem(at: real, to: scratch) }
+            let env = ["GIT_INDEX_FILE": scratch.path]
+            var carried = false
+            if let old = move.old {
+                let patch = try diff(old, move.new)
+                carried = try patch.isEmpty || run(["apply", "--cached", "--binary", "--whitespace=nowarn", "-"], input: patch, extra: env).status == 0
+            }
+            if !carried { try git(["read-tree", "-m", move.new], extra: env) }
+            let path = try gitPath("index.lock")
+            let fd = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL, 0o644)
+            guard fd >= 0 else { throw OffloadError.failed("another git command holds \(path.path); nothing changed, try again") }
+            lock = path
+            let handle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+            try handle.write(contentsOf: try Data(contentsOf: scratch))
+            try handle.close()
+        }
+        let patch = try diff(from, to)
+        if !patch.isEmpty, try run(["apply", "--binary", "--whitespace=nowarn", "-"], input: patch).status != 0 { return false }
+        if let move, let held = lock {
+            let ref = (try? git("symbolic-ref", "-q", "HEAD")).flatMap { $0.isEmpty ? nil : $0 }
+            try git(["update-ref", "-m", "cocoonbox back"] + (ref.map { [$0] } ?? ["--no-deref", "HEAD"]) + [move.new] + (move.old.map { [$0] } ?? []))
+            guard Darwin.rename(held.path, try gitPath("index").path) == 0 else { throw OffloadError.failed("installing the index failed: errno \(errno)") }
+            lock = nil
+            _ = try? run(["update-index", "-q", "--refresh"])
+        }
+        return true
     }
 
-    // move points HEAD's branch at commit and carries the staged changes over, else resets the index to it.
-    private func move(from old: String?, to new: String) throws {
-        let ref = (try? git("symbolic-ref", "-q", "HEAD")).flatMap { $0.isEmpty ? nil : $0 }
-        try git(["update-ref", "-m", "cocoonbox back"] + (ref == nil ? ["--no-deref", "HEAD"] : [ref!]) + [new] + (old.map { [$0] } ?? []))
-        var carried = false
-        if let old {
-            let patch = try run(["diff", "--binary", "--full-index", "--no-renames", old, new]).out
-            carried = try patch.isEmpty || run(["apply", "--cached", "--binary", "-"], input: patch).status == 0
-        }
-        if !carried { try git("read-tree", "-m", new) }
-        _ = try? run(["update-index", "-q", "--refresh"])
+    // diff is a binary patch between two trees that the user's diff settings cannot change.
+    private func diff(_ from: String, _ to: String) throws -> Data {
+        let run = try run(["diff-tree", "-p", "--binary", "--full-index", "--no-renames", "--no-ext-diff", "--no-textconv", "--no-color",
+                           "--src-prefix=a/", "--dst-prefix=b/", from, to])
+        guard run.status == 0 else { throw OffloadError.failed("git diff-tree: \(run.error)") }
+        return run.out
     }
 
     private func branch(_ box: String, conflicts: [String], now: Date) throws -> Landing {

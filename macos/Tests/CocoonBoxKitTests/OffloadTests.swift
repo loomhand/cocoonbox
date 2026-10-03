@@ -13,7 +13,7 @@ import Testing
     @Test func roundTripKeepsStagedUnstagedAndUntrackedChanges() async throws {
         let box = try await Harness.shared()
         let repo = try box.repo("round")
-        try box.sh("echo staged >> a.txt && git add a.txt && echo unstaged >> b.txt && echo new > c.txt && echo log > d.log", in: repo)
+        try box.sh("echo staged >> a.txt && git add a.txt && echo later >> a.txt && echo unstaged >> b.txt && echo new > c.txt && echo log > d.log", in: repo)
         let before = try box.state(repo)
         let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
         let copy = URL(fileURLWithPath: outcome.record.dir)
@@ -52,12 +52,30 @@ import Testing
         let copy = URL(fileURLWithPath: outcome.record.dir)
         try box.sh("echo boxline >> b.txt && git -c user.name=b -c user.email=b@b commit -qam box", in: copy)
         try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
-        try box.sh("echo macline >> a.txt", in: repo)
+        try box.sh("echo macline >> a.txt && git config diff.noprefix true && git config color.ui always", in: repo)
         let back = try await box.offloader().back(outcome.record.repo, interrupt: false)
         #expect(back.landing == .merged(["b.txt"]))
         #expect(try box.sh("git log -1 --format=%s", in: repo) == "box")
         #expect(try box.sh("git status --porcelain", in: repo) == "M a.txt")
         #expect(try box.sh("tail -1 a.txt; tail -1 b.txt", in: repo) == "macline\nboxline")
+    }
+
+    @Test func aHeldIndexLockChangesNothingUntilItIsGone() async throws {
+        let box = try await Harness.shared()
+        let repo = try box.repo("locked")
+        try box.sh("echo staged >> a.txt && git add a.txt", in: repo)
+        let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: false))
+        let copy = URL(fileURLWithPath: outcome.record.dir)
+        try box.sh("echo box > n.txt && git add n.txt && git -c user.name=b -c user.email=b@b commit -qm box", in: copy)
+        try box.post(back: Self.handover, in: copy, key: outcome.record.repo)
+        try box.sh("touch .git/index.lock", in: repo)
+        let before = try box.sh("git rev-parse HEAD; ls; cat .git/index | shasum", in: repo)
+        await #expect(throws: OffloadError.self) { try await box.offloader().back(outcome.record.repo, interrupt: false) }
+        #expect(try box.sh("git rev-parse HEAD; ls; cat .git/index | shasum", in: repo) == before)
+        try box.sh("rm .git/index.lock", in: repo)
+        let back = try await box.offloader().back(outcome.record.repo, interrupt: false)
+        #expect(back.landing == .fastForward)
+        #expect(try box.state(repo) == box.state(copy))
     }
 
     @Test func aConflictingEditGivesABranchAndAnUntouchedTree() async throws {
