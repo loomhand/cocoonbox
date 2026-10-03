@@ -2883,6 +2883,7 @@ async fn restore_pages(
             url: format!("{base}/{manifest_id}"),
         }),
         gets: Vec::new(),
+        scope: None,
     }];
     reqs.extend(gets.chunks(2).map(|page| pb::RestoreRequest {
         gets: page.to_vec(),
@@ -3188,6 +3189,7 @@ async fn restore_fetches_a_page_before_the_stream_ends() {
         key: Some(state_key()),
         manifest: Some(get(&planned.snapshot_id)),
         gets: vec![get(&planned.chunks[0].id)],
+        scope: None,
     })
     .await
     .unwrap();
@@ -3392,8 +3394,8 @@ async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_m
     assert!(sent <= 3, "sent {sent} chunks");
     let index = known_files(&h);
     assert!(index.get("workspace/a.txt").is_some(), "{index}");
-    assert!(
-        index.get("workspace/fresh.txt").is_none(),
+    assert_eq!(
+        index["workspace/fresh.txt"]["compare_only"], true,
         "a file changed within a second of the walk is never reused: {index}"
     );
 
@@ -3581,4 +3583,283 @@ async fn a_failed_plan_removes_its_spool() {
         .filter(|n| n.to_string_lossy().starts_with("spool-"))
         .collect();
     assert!(spools.is_empty(), "{spools:?}");
+}
+
+#[tokio::test]
+async fn plan_counts_changed_files_against_the_last_upload() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    for (name, seed) in [("a.txt", 51), ("b.txt", 52), ("c.txt", 53)] {
+        std::fs::write(h.workspace.join(name), noise(10_000, seed)).unwrap();
+    }
+    let db = rusqlite::Connection::open(h.workspace.join("e.db")).unwrap();
+    db.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES (1);")
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let first = plan(&h, pb::Consistency::Live, "").await;
+    assert_eq!(
+        first.changed_files, None,
+        "a plan without a parent has no baseline"
+    );
+    upload_missing(&h, &base, &objects, &first).await;
+
+    std::fs::write(h.workspace.join("a.txt"), noise(10_000, 54)).unwrap();
+    std::fs::remove_file(h.workspace.join("b.txt")).unwrap();
+    std::fs::write(h.workspace.join("d.txt"), noise(10_000, 55)).unwrap();
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    let second = plan(&h, pb::Consistency::Live, &first.snapshot_id).await;
+    assert_eq!(
+        second.changed_files,
+        Some(3),
+        "a rewritten, b removed, d new"
+    );
+    upload_missing(&h, &base, &objects, &second).await;
+
+    let third = plan(&h, pb::Consistency::Live, &second.snapshot_id).await;
+    assert_eq!(
+        third.changed_files,
+        Some(0),
+        "the SQLite file is read again through its backup but its chunks did not change"
+    );
+}
+
+#[tokio::test]
+async fn restore_paths_copies_a_subtree_into_restored_and_touches_nothing_else() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    let docs = h.home.join("Documents");
+    std::fs::create_dir_all(docs.join("sub")).unwrap();
+    std::fs::create_dir_all(h.workspace.join("app")).unwrap();
+    std::fs::write(docs.join("a.txt"), b"saved").unwrap();
+    std::fs::write(docs.join("sub/b.bin"), noise(300_000, 61)).unwrap();
+    std::fs::set_permissions(docs.join("sub/b.bin"), PermissionsExt::from_mode(0o600)).unwrap();
+    std::os::unix::fs::symlink("a.txt", docs.join("link")).unwrap();
+    std::fs::write(h.workspace.join("app/main.go"), b"package main").unwrap();
+    std::fs::write(h.workspace.join("app/other.go"), noise(200_000, 62)).unwrap();
+    std::fs::set_permissions(docs.join("sub"), PermissionsExt::from_mode(0o555)).unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+
+    std::fs::set_permissions(docs.join("sub"), PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(docs.join("a.txt"), b"live").unwrap();
+    std::fs::write(docs.join("sub/b.bin"), b"live").unwrap();
+    std::fs::write(h.workspace.join("app/main.go"), b"package live").unwrap();
+    std::fs::write(h.workspace.join("late.txt"), b"after the save").unwrap();
+    let mut agents = h.agents().await;
+    let late_agent = create_agent(&mut agents).await;
+    let before = tree(&[&h.home, &h.workspace]);
+
+    let m = manifest_of(&objects, &planned.snapshot_id);
+    let mut needed: Vec<String> = Vec::new();
+    for p in ["Documents/a.txt", "Documents/sub/b.bin", "app/main.go"] {
+        for id in chunks_of(&m, p).as_array().unwrap() {
+            needed.push(id.as_str().unwrap().to_owned());
+        }
+    }
+    let paths = vec![
+        format!("{}/Documents/", h.home.display()),
+        format!("{}/app/main.go", h.workspace.display()),
+    ];
+    let done = restore_paths(
+        &h,
+        &base,
+        &planned.snapshot_id,
+        &paths,
+        "2026-10-02T1608Z",
+        &needed,
+    )
+    .await
+    .unwrap();
+    assert!(done.finished);
+    assert_eq!(done.target, "2026-10-02T1608Z");
+    let out = h.home.join("Restored/2026-10-02T1608Z");
+    let at = |p: &Path| out.join(p.strip_prefix("/").unwrap());
+    let rdocs = at(&docs);
+    assert_eq!(std::fs::read(rdocs.join("a.txt")).unwrap(), b"saved");
+    assert_eq!(
+        std::fs::read(rdocs.join("sub/b.bin")).unwrap(),
+        noise(300_000, 61)
+    );
+    assert_eq!(
+        std::fs::read_link(rdocs.join("link")).unwrap(),
+        PathBuf::from("a.txt")
+    );
+    assert_eq!(
+        std::fs::metadata(rdocs.join("sub/b.bin"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o600
+    );
+    assert_eq!(
+        std::fs::metadata(rdocs.join("sub"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o7777,
+        0o555
+    );
+    assert_eq!(
+        std::fs::read(at(&h.workspace).join("app/main.go")).unwrap(),
+        b"package main"
+    );
+    assert!(
+        !at(&h.workspace).join("app/other.go").exists(),
+        "only the named paths are restored"
+    );
+
+    let after = tree(&[&h.home, &h.workspace]);
+    let outside: Vec<_> = after
+        .iter()
+        .filter(|(p, _)| !p.starts_with(h.home.join("Restored")))
+        .collect();
+    assert_eq!(
+        outside,
+        before.iter().collect::<Vec<_>>(),
+        "live files changed"
+    );
+    let ids: Vec<String> = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner()
+        .agents
+        .into_iter()
+        .map(|a| a.id)
+        .collect();
+    assert!(ids.contains(&late_agent), "agent.db was replaced: {ids:?}");
+
+    let again = restore_paths(
+        &h,
+        &base,
+        &planned.snapshot_id,
+        &paths[1..],
+        "2026-10-02T1608Z",
+        &needed,
+    )
+    .await
+    .unwrap();
+    assert_eq!(again.target, "2026-10-02T1608Z-2");
+    assert_eq!(
+        std::fs::read(
+            h.home
+                .join("Restored/2026-10-02T1608Z-2")
+                .join(h.workspace.strip_prefix("/").unwrap())
+                .join("app/main.go")
+        )
+        .unwrap(),
+        b"package main"
+    );
+    let mut names: Vec<String> = std::fs::read_dir(h.home.join("Restored"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(names, ["2026-10-02T1608Z", "2026-10-02T1608Z-2"]);
+    std::fs::set_permissions(rdocs.join("sub"), PermissionsExt::from_mode(0o755)).unwrap();
+}
+
+#[tokio::test]
+async fn restore_paths_refuses_bad_scopes_before_writing() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    std::fs::write(h.workspace.join("a.txt"), b"a").unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    let ws = h.workspace.display().to_string();
+    let good = format!("{ws}/a.txt");
+    for (paths, target) in [
+        (vec![good.clone()], ""),
+        (vec![good.clone()], "a/b"),
+        (vec![good.clone()], ".."),
+        (vec![good.clone()], ".cb-restore-x"),
+        (vec![], "t"),
+        (vec!["/etc/passwd".to_owned()], "t"),
+        (vec![format!("{ws}/../etc")], "t"),
+        (vec![format!("{ws}//a.txt")], "t"),
+        (vec!["relative".to_owned()], "t"),
+        (vec![format!("{ws}/missing")], "t"),
+    ] {
+        let err = restore_paths(&h, &base, &planned.snapshot_id, &paths, target, &[])
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.code(),
+            Code::InvalidArgument,
+            "{paths:?} {target:?}: {err:?}"
+        );
+    }
+    assert!(!h.home.join("Restored").exists());
+}
+
+async fn restore_paths(
+    h: &Harness,
+    base: &str,
+    manifest_id: &str,
+    paths: &[String],
+    target: &str,
+    chunks: &[String],
+) -> Result<pb::TransferProgress, tonic::Status> {
+    let mut reqs = vec![pb::RestoreRequest {
+        key: Some(state_key()),
+        manifest: Some(pb::PresignedGet {
+            chunk_id: manifest_id.into(),
+            url: format!("{base}/{manifest_id}"),
+        }),
+        gets: Vec::new(),
+        scope: Some(pb::RestoreScope {
+            paths: paths.to_vec(),
+            target: target.into(),
+        }),
+    }];
+    reqs.extend(chunks.chunks(2).map(|page| {
+        pb::RestoreRequest {
+            gets: page
+                .iter()
+                .map(|id| pb::PresignedGet {
+                    chunk_id: id.clone(),
+                    url: format!("{base}/{id}"),
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }));
+    let mut stream = state_client(h)
+        .await
+        .restore_paths(authed(tokio_stream::iter(reqs)))
+        .await?
+        .into_inner();
+    let mut last = None;
+    while let Some(p) = stream.message().await? {
+        last = Some(p);
+    }
+    Ok(last.unwrap())
+}
+
+/// Every entry under the roots with its kind, mode and content.
+fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    let mut stack: Vec<PathBuf> = roots.iter().map(|r| r.to_path_buf()).collect();
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let path = e.unwrap().path();
+            let meta = std::fs::symlink_metadata(&path).unwrap();
+            let mode = meta.permissions().mode();
+            let what = if meta.is_dir() {
+                stack.push(path.clone());
+                format!("dir {mode:o}")
+            } else if meta.is_symlink() {
+                format!("link {:?}", std::fs::read_link(&path).unwrap())
+            } else {
+                format!(
+                    "file {mode:o} {:x}",
+                    Sha256::digest(std::fs::read(&path).unwrap())
+                )
+            };
+            out.push((path, what));
+        }
+    }
+    out.sort();
+    out
 }

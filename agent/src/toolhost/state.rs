@@ -14,6 +14,7 @@ use super::rpc::{self, Output};
 const READ_BLOCK: usize = 1 << 20;
 const TRASH_PREFIX: &str = ".cb-trash-";
 const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+const PLACE_TRIES: u32 = 100;
 
 /// A tree to walk, named in the manifest.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -140,6 +141,13 @@ struct SwapArgs {
     names: Vec<String>,
     #[serde(default)]
     keep: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct PlaceArgs {
+    staging: PathBuf,
+    dir: PathBuf,
+    name: String,
 }
 
 /// `state_walk`: every file, directory and symlink under the roots, sorted, minus exclusions.
@@ -337,6 +345,40 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
         "swapped {} entries, removed {removed}",
         a.names.len()
     ))
+}
+
+/// `state_place`: renames `staging` to `dir/name`, or `name-2`, `name-3`, ... when that exists,
+/// and returns the name it took; it never replaces an existing entry.
+pub async fn place(args: Value) -> Result<String, String> {
+    let a: PlaceArgs = parse(args)?;
+    tokio::task::spawn_blocking(move || {
+        for n in 1..=PLACE_TRIES {
+            let name = if n == 1 {
+                a.name.clone()
+            } else {
+                format!("{}-{n}", a.name)
+            };
+            let target = a.dir.join(&name);
+            match fs::create_dir(&target) {
+                // rename(2) replaces only an empty directory, so the one just created claims the name
+                Ok(()) => {
+                    return fs::rename(&a.staging, &target).map(|()| name).map_err(|e| {
+                        let _ = fs::remove_dir(&target);
+                        format!(
+                            "rename {} to {}: {e}",
+                            a.staging.display(),
+                            target.display()
+                        )
+                    });
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => return Err(format!("mkdir {}: {e}", target.display())),
+            }
+        }
+        Err(format!("{} and {PLACE_TRIES} variants exist", a.name))
+    })
+    .await
+    .map_err(|e| format!("place task: {e}"))?
 }
 
 async fn write_file<R: AsyncRead + Unpin>(a: &WriteArgs, r: &mut R) -> Result<u64, String> {

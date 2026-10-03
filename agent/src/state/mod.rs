@@ -42,6 +42,8 @@ const STAGING_PREFIX: &str = ".cb-restore-";
 const SQLITE_SIDECARS: [&str; 2] = ["-wal", "-journal"];
 
 const MANIFEST_FILE: &str = "manifest";
+const HOME_ROOT: &str = "home";
+const RESTORED_DIR: &str = "Restored";
 const KNOWN_FILE: &str = "known-chunks.json";
 
 const EXCLUDED_PREFIXES: [&str; 2] = [".cache", ".local/share/Trash"];
@@ -230,6 +232,98 @@ impl StateEngine {
         S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
     {
         let _one = self.pinned.lock().await;
+        let opened = self.open(&mut reqs).await?;
+        let cache = self.cache().await?;
+        let result = self
+            .restore_from(
+                &opened.keys,
+                &opened.manifest,
+                opened.gets,
+                reqs,
+                &cache,
+                progress,
+                &opened.manifest_id,
+            )
+            .await;
+        let _ = tokio::fs::remove_dir_all(&cache).await;
+        result
+    }
+
+    /// Copies the scope's paths of the manifest into a new folder under `~/Restored`, staged and
+    /// renamed into place at the end; nothing else is written, paused or restarted.
+    pub async fn restore_paths<S>(
+        &self,
+        mut reqs: S,
+        progress: mpsc::Sender<pb::TransferProgress>,
+    ) -> Result<(), StateError>
+    where
+        S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
+    {
+        let _one = self.pinned.lock().await;
+        let opened = self.open(&mut reqs).await?;
+        let scope = opened
+            .scope
+            .as_ref()
+            .ok_or_else(|| StateError::Invalid("missing scope".to_owned()))?;
+        let records = select(&self.roots, &opened.manifest, scope)?;
+        let home = self
+            .roots
+            .iter()
+            .find(|r| r.name == HOME_ROOT)
+            .ok_or_else(|| StateError::Invalid("no home root".to_owned()))?;
+        let restored = home.path.join(RESTORED_DIR);
+        let staging = restored.join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4().simple()));
+        let mut dirs = vec![json!({"path": staging, "mode": 0o700})];
+        let mut links = Vec::new();
+        let mut modes = Vec::new();
+        let mut targets = Vec::new();
+        for (root, r) in records {
+            let path = staging
+                .join(root.path.strip_prefix("/").unwrap_or(&root.path))
+                .join(&r.entry.path);
+            match r.entry.kind {
+                Kind::Dir => {
+                    dirs.push(json!({"path": path, "mode": r.entry.mode | 0o700}));
+                    modes.push(json!({"path": path, "mode": r.entry.mode}));
+                }
+                Kind::Symlink => links.push(json!({
+                    "path": path,
+                    "target": r.entry.target.clone().unwrap_or_default(),
+                })),
+                Kind::File => targets.push(Target {
+                    dest: Dest::Staged(path, &r.entry),
+                    chunks: &r.chunks,
+                }),
+            }
+        }
+        self.tool("state_apply", json!({"dirs": dirs, "symlinks": []}))
+            .await?;
+        let cache = self.cache().await?;
+        let filled = self
+            .fill(&opened.keys, targets, opened.gets, reqs, &cache, progress)
+            .await;
+        let _ = tokio::fs::remove_dir_all(&cache).await;
+        let mut meter = filled?;
+        self.tool(
+            "state_apply",
+            json!({"dirs": [], "symlinks": links, "modes": modes}),
+        )
+        .await?;
+        meter.msg.target = self
+            .tool(
+                "state_place",
+                json!({"staging": staging, "dir": restored, "name": scope.target}),
+            )
+            .await?;
+        meter.finish(&opened.manifest_id).await;
+        Ok(())
+    }
+
+    /// Reads the first message of a restore stream and opens the manifest it names.
+    async fn open<S>(&self, reqs: &mut S) -> Result<Opened, StateError>
+    where
+        S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
+    {
         let first = reqs
             .next()
             .await
@@ -252,25 +346,23 @@ impl StateEngine {
                 manifest.version
             )));
         }
+        Ok(Opened {
+            keys,
+            manifest,
+            manifest_id: get.chunk_id,
+            gets: first.gets,
+            scope: first.scope,
+        })
+    }
+
+    async fn cache(&self) -> Result<PathBuf, String> {
         let cache = self
             .work
             .join(format!("restore-{}", uuid::Uuid::new_v4().simple()));
         tokio::fs::create_dir_all(&cache)
             .await
             .map_err(|e| format!("create {}: {e}", cache.display()))?;
-        let result = self
-            .restore_from(
-                &keys,
-                &manifest,
-                first.gets,
-                reqs,
-                &cache,
-                progress,
-                &get.chunk_id,
-            )
-            .await;
-        let _ = tokio::fs::remove_dir_all(&cache).await;
-        result
+        Ok(cache)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -611,16 +703,27 @@ impl StateEngine {
         let (sidecars, rest): (Vec<Entry>, Vec<Entry>) = entries.into_iter().partition(|e| {
             e.kind == Kind::File && SQLITE_SIDECARS.iter().any(|s| e.path.ends_with(s))
         });
+        let baseline = !last.key_id.is_empty();
+        let mut before: HashMap<String, Vec<String>> = HashMap::new();
+        let mut reread = Vec::new();
         let mut prepare = |mut entry: Entry| {
             let key = format!("{}/{}", entry.root, entry.path);
             let ctime_ns = entry.ctime_ns.take();
             let step = if entry.kind != Kind::File {
                 Step::Keep
             } else if let Some(root) = roots.get(entry.root.as_str()) {
-                last.files
-                    .remove(&key)
-                    .filter(|r| r.matches(&entry, ctime_ns))
-                    .map_or_else(|| Step::Read(root.join(&entry.path)), Step::Reuse)
+                match last.files.remove(&key) {
+                    Some(r) if r.matches(&entry, ctime_ns) => Step::Reuse(r),
+                    prev => {
+                        if let Some(r) = prev {
+                            before.insert(
+                                key.clone(),
+                                r.chunks.into_iter().map(|(id, _)| id).collect(),
+                            );
+                        }
+                        Step::Read(root.join(&entry.path))
+                    }
+                }
             } else {
                 Step::Drop
             };
@@ -665,16 +768,18 @@ impl StateEngine {
                     }
                     Step::Chunked(Some((chunks, backup))) => {
                         if backup {
-                            backed_up.insert(key);
-                        } else if let Some(ctime_ns) = ctime_ns.filter(|c| *c < settled_ns) {
-                            let r = Reuse {
-                                size: entry.size,
-                                mtime_ms: entry.mtime_ms,
-                                ctime_ns,
-                                chunks: chunker.sized(&chunks)?,
-                            };
-                            reuse.insert(key, r);
+                            backed_up.insert(key.clone());
                         }
+                        let settled = ctime_ns.filter(|c| *c < settled_ns);
+                        let r = Reuse {
+                            size: entry.size,
+                            mtime_ms: entry.mtime_ms,
+                            ctime_ns: settled.unwrap_or_default(),
+                            chunks: chunker.sized(&chunks)?,
+                            compare_only: backup || settled.is_none(),
+                        };
+                        reread.push((key.clone(), files.len()));
+                        reuse.insert(key, r);
                         files.push(FileRecord { entry, chunks });
                     }
                     Step::Chunked(None) => skipped.push(key),
@@ -682,6 +787,11 @@ impl StateEngine {
                 }
             }
         }
+        let changed = reread
+            .iter()
+            .filter(|(key, i)| before.get(key) != Some(&files[*i].chunks))
+            .count()
+            + last.files.len();
         let db_copy = self
             .work
             .join(format!("agent-db-{}.db", uuid::Uuid::new_v4().simple()));
@@ -725,6 +835,7 @@ impl StateEngine {
                 .count() as u64,
             logical_bytes: manifest.files.iter().map(|f| f.entry.size).sum::<u64>() + db_size,
             taken_at_ms,
+            changed_files: baseline.then_some(changed as u64),
         };
         let pinned = Pinned {
             snapshot_id,
@@ -896,6 +1007,15 @@ impl StateEngine {
     }
 }
 
+/// The first message of a restore stream with its manifest opened.
+struct Opened {
+    keys: Arc<Keys>,
+    manifest: Manifest,
+    manifest_id: String,
+    gets: Vec<pb::PresignedGet>,
+    scope: Option<pb::RestoreScope>,
+}
+
 /// The snapshot waiting for Upload.
 struct Pinned {
     snapshot_id: String,
@@ -919,12 +1039,16 @@ struct Reuse {
     mtime_ms: i64,
     ctime_ns: i64,
     chunks: Vec<(String, u64)>,
+    /// Read through an SQLite backup or changed within `REUSE_AGE_MS` of the walk: compared for `changed_files`, never reused.
+    #[serde(default)]
+    compare_only: bool,
 }
 
 impl Reuse {
     /// Size, mtime and the kernel-set ctime all match, so no write happened since the last walk.
     fn matches(&self, entry: &Entry, ctime_ns: Option<i64>) -> bool {
-        self.size == entry.size
+        !self.compare_only
+            && self.size == entry.size
             && self.mtime_ms == entry.mtime_ms
             && ctime_ns == Some(self.ctime_ns)
     }
@@ -1203,6 +1327,74 @@ fn chrome_start(closed: bool, restored: bool) -> Option<serde_json::Value> {
     } else {
         closed.then(|| json!({}))
     }
+}
+
+/// The manifest's records under the scope's paths, each with its root; refuses a target that is
+/// not one plain folder name, a path outside the roots, and a path the manifest lacks.
+fn select<'a>(
+    roots: &'a [Root],
+    manifest: &'a Manifest,
+    scope: &pb::RestoreScope,
+) -> Result<Vec<(&'a Root, &'a FileRecord)>, StateError> {
+    let t = &scope.target;
+    if t.is_empty() || t.starts_with('.') || t.contains(['/', '\0']) {
+        return Err(StateError::Invalid(format!("invalid target {t:?}")));
+    }
+    if scope.paths.is_empty() {
+        return Err(StateError::Invalid("no path to restore".to_owned()));
+    }
+    let wanted = scope
+        .paths
+        .iter()
+        .map(|p| scope_path(roots, p))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut found = vec![false; wanted.len()];
+    let mut out = Vec::new();
+    for f in &manifest.files {
+        let mut hit = None;
+        for (i, (root, rel)) in wanted.iter().enumerate() {
+            let under = rel.is_empty()
+                || f.entry.path == *rel
+                || f.entry
+                    .path
+                    .strip_prefix(rel.as_str())
+                    .is_some_and(|r| r.starts_with('/'));
+            if f.entry.root == root.name && under {
+                found[i] = true;
+                hit = Some(*root);
+            }
+        }
+        if let Some(root) = hit {
+            out.push((root, f));
+        }
+    }
+    if let Some(i) = found.iter().position(|f| !f) {
+        return Err(StateError::Invalid(format!(
+            "{} is not in the snapshot",
+            scope.paths[i]
+        )));
+    }
+    Ok(out)
+}
+
+/// Splits an absolute box path into its root and the path relative to it; no `.`, `..` or empty parts.
+fn scope_path<'a>(roots: &'a [Root], path: &str) -> Result<(&'a Root, String), StateError> {
+    let invalid = || StateError::Invalid(format!("invalid path {path:?}"));
+    let trimmed = path.strip_suffix('/').unwrap_or(path);
+    let rest = trimmed.strip_prefix('/').ok_or_else(invalid)?;
+    if rest
+        .split('/')
+        .any(|c| c.is_empty() || c == "." || c == "..")
+    {
+        return Err(invalid());
+    }
+    roots
+        .iter()
+        .find_map(|r| {
+            let rel = Path::new(trimmed).strip_prefix(&r.path).ok()?;
+            Some((r, rel.to_str()?.to_owned()))
+        })
+        .ok_or_else(invalid)
 }
 
 /// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.

@@ -81,6 +81,7 @@ impl Host {
             "state_walk" => state::walk(call.args).await.map(Output::text),
             "state_apply" => state::apply(call.args).await.map(Output::text),
             "state_swap" => state::swap(call.args).await.map(Output::text),
+            "state_place" => state::place(call.args).await.map(Output::text),
             "desktop_save" => self.desktop_save().await.map(Output::text),
             "active_origin" => self.browser.origin().await.map(Output::text),
             "credential_fill" => {

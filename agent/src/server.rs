@@ -337,6 +337,7 @@ type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
 impl State for StateSvc {
     type UploadStream = ProgressStream;
     type RestoreStream = ProgressStream;
+    type RestorePathsStream = ProgressStream;
 
     async fn plan(
         &self,
@@ -374,6 +375,19 @@ impl State for StateSvc {
             rt.recover("interrupted: the user state was restored")
                 .await
                 .map_err(StateError::Failed)
+        })))
+    }
+
+    async fn restore_paths(
+        &self,
+        req: Request<Streaming<pb::RestoreRequest>>,
+    ) -> Result<Response<Self::RestorePathsStream>, Status> {
+        let engine = Arc::clone(&self.engine);
+        let reqs = req
+            .into_inner()
+            .map(|r| r.map_err(|s| format!("restore stream: {}", s.message())));
+        Ok(Response::new(progress_stream(move |tx| async move {
+            engine.restore_paths(reqs, tx).await
         })))
     }
 }

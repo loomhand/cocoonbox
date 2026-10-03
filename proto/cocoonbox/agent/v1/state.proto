@@ -19,6 +19,10 @@ service State {
   // Restore replaces the user state with the given manifest. The first message
   // carries the key and the manifest; later messages carry pages of chunk URLs.
   rpc Restore(stream RestoreRequest) returns (stream TransferProgress);
+  // RestorePaths copies the scope's paths of a manifest into a new folder under
+  // ~/Restored and changes nothing else. Messages flow as in Restore; the first
+  // carries the scope, and later pages carry only the chunks of those paths.
+  rpc RestorePaths(stream RestoreRequest) returns (stream TransferProgress);
 }
 
 enum Consistency {
@@ -54,6 +58,8 @@ message PlanResponse {
   uint64 files = 3;
   uint64 logical_bytes = 4;
   int64 taken_at_ms = 5;
+  // Files new, changed or removed since the last upload.
+  optional uint64 changed_files = 6;
 }
 
 message PresignedPut {
@@ -81,6 +87,15 @@ message RestoreRequest {
   // At most 2048 per message; by the end of the stream every chunk the
   // manifest references has a URL.
   repeated PresignedGet gets = 3;
+  // Set only on the first message of RestorePaths.
+  RestoreScope scope = 4;
+}
+
+message RestoreScope {
+  // Box paths under the state roots, such as /workspace/app.
+  repeated string paths = 1;
+  // One folder name under ~/Restored; the agent adds -2, -3, ... when it exists.
+  string target = 2;
 }
 
 message TransferProgress {
@@ -91,4 +106,6 @@ message TransferProgress {
   // Set on the final message.
   bool finished = 5;
   string manifest_id = 6;
+  // The folder under ~/Restored that RestorePaths wrote, on its final message.
+  string target = 7;
 }
