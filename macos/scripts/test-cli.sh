@@ -446,6 +446,36 @@ check("offload secrets add records the entry", r.returncode == 0 and r.stdout.st
 r = cb("offload", "secrets", "remove", "file:.env")
 check("offload secrets remove", r.stdout.strip() == "no secrets opted in", r)
 
+# App sign-in: a CLI with no item of its own copies the app's. The app's item is
+# the CLI's own under a service one ".cli" shorter, so the CLI writes every item
+# and each item's ACL trusts the binary that reads it: no Keychain prompt.
+if not os.environ.get("CB_KEYCHAIN_FILE", "").startswith(os.path.dirname(mocklog)):
+    sys.exit("refusing to run the sign-in tests outside the throwaway keychain")
+def as_service(service, *args, data=None, binary=None):
+    return subprocess.run([binary or cli, *args], input=data, capture_output=True, text=True, timeout=60, env=dict(os.environ, CB_KEYCHAIN_SERVICE=service))
+def app_service(name):
+    seed = os.environ["CB_KEYCHAIN_SERVICE"] + "." + name
+    login = as_service(seed, "login", data="mock-token\n")
+    check("the app's item for " + name, login.returncode == 0, login.stderr)
+    return seed + ".cli"
+def signed_in_alone(service):
+    as_service(service.removesuffix(".cli"), "logout")
+    alone = as_service(service, "status", "--json")
+    return alone.returncode == 0 and alone.stderr == ""
+
+service = os.environ["CB_KEYCHAIN_SERVICE"] + ".none.cli"
+none = as_service(service, "status", "--json")
+check("with no sign-in at all the CLI says to log in", none.returncode != 0 and "run cocoonbox login" in none.stderr and "--from-app" not in none.stderr, none.stderr)
+bundled = os.path.join(work, "CocoonBox.app", "Contents", "MacOS", "cocoonbox-cli")
+os.makedirs(os.path.dirname(bundled))
+shutil.copy2(cli, bundled)
+none = as_service(service, "status", "--json", binary=bundled)
+check("the CLI in the app's bundle also suggests login --from-app", none.returncode != 0 and "cocoonbox login --from-app" in none.stderr, none.stderr)
+service = app_service("status")
+via_app = as_service(service, "status", "--json")
+check("with only the app's item a command works and says so once", via_app.returncode == 0 and via_app.stderr.count("using the CocoonBox app's sign-in") == 1, via_app.stderr)
+check("and the CLI keeps it without the app's item", signed_in_alone(service))
+
 # Writes stay inside the HOME the CLI is given: every file command runs under a
 # sandbox that denies writes outside the test directory and the process temp.
 import os, hashlib, pathlib
@@ -485,6 +515,10 @@ if shutil.which("claude"):
     installed = json.load(open(os.path.join(home, ".claude", "plugins", "installed_plugins.json")))["plugins"].get("cocoonbox@cocoonbox", [])
     check("setup claude installs the plugin into the given CLAUDE_CONFIG_DIR", setups[0].returncode == 0 and len(installed) == 1 and installed[0]["version"] == "0.3.0", setups[0].stderr + json.dumps(installed))
     check("setup claude again changes nothing and succeeds", setups[1].returncode == 0 and "already installed" in setups[1].stdout + setups[1].stderr and "already at the latest version" in setups[1].stdout + setups[1].stderr, setups[1].stdout + setups[1].stderr)
+    service = app_service("setup")
+    adopted = confined("setup", "claude", extra={"CLAUDE_CONFIG_DIR": env["CLAUDE_CONFIG_DIR"], "CB_KEYCHAIN_SERVICE": service})
+    check("setup claude copies the app's sign-in to the CLI", adopted.returncode == 0 and "using the CocoonBox app's sign-in" in adopted.stderr, adopted.stdout + adopted.stderr)
+    check("and the CLI keeps it without the app's item", signed_in_alone(service))
 else:
     print("SKIP claude plugin validate: Claude Code is not installed")
 

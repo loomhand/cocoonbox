@@ -105,7 +105,16 @@ func endpoint(_ flag: String? = value(of: "--endpoint")) -> Endpoint {
 
 func token(_ endpoint: Endpoint) -> String {
     if let token = ProcessInfo.processInfo.environment["COCOONBOX_TOKEN"], !token.isEmpty { return token }
-    guard let token = Keychain.token(for: endpoint, service: service) else { fail("not signed in to \(endpoint.url); run cocoonbox login") }
+    if let token = Keychain.token(for: endpoint, service: service) ?? appToken(endpoint) { return token }
+    let hint = ownPath.contains(".app/Contents/") ? "run cocoonbox login, or cocoonbox login --from-app once the CocoonBox app is signed in" : "run cocoonbox login"
+    fail("not signed in to \(endpoint.url); \(hint)")
+}
+
+// appToken copies the app's token into the CLI's own item, which later runs read.
+func appToken(_ endpoint: Endpoint) -> String? {
+    guard let token = Keychain.token(for: endpoint), !token.isEmpty else { return nil }
+    try? Keychain.setToken(token, for: endpoint, service: service)
+    FileHandle.standardError.write(Data("cocoonbox: using the CocoonBox app's sign-in\n".utf8))
     return token
 }
 
@@ -812,6 +821,8 @@ func setup() {
     let update = client == "claude" ? ["claude", "plugin", "marketplace", "update", Plugin.marketplace] : ["codex", "plugin", "marketplace", "upgrade", Plugin.marketplace]
     guard run(steps[0]) || run(update), steps.dropFirst().allSatisfy(run) else { fail("\(client) did not install the plugin") }
     print("installed the cocoonbox plugin for \(client)")
+    let target = endpoint()
+    if Keychain.token(for: target, service: service) == nil { _ = appToken(target) }
 }
 
 func install() {
