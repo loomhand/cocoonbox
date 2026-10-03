@@ -44,9 +44,9 @@ type SessionClient interface {
 	// only: it is no MCP tool, and its values are never logged or recorded.
 	FillCredential(ctx context.Context, in *FillCredentialRequest, opts ...grpc.CallOption) (*FillCredentialResponse, error)
 	// Exec runs a command as the desktop user and carries its stdin, stdout and
-	// stderr. The first client frame must be `start`; the client half-closing
-	// the stream closes the command's stdin. The last server frame is
-	// `exit_code`. Cancelling the stream kills the command's process group.
+	// stderr. The first client frame must be `start`. `eof`, or the client
+	// half-closing the stream, closes the command's stdin. The last server frame
+	// is `exit_code`. Cancelling the stream kills the command's process group.
 	// Owner only.
 	Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecClientFrame, ExecServerFrame], error)
 }
@@ -151,9 +151,9 @@ type SessionServer interface {
 	// only: it is no MCP tool, and its values are never logged or recorded.
 	FillCredential(context.Context, *FillCredentialRequest) (*FillCredentialResponse, error)
 	// Exec runs a command as the desktop user and carries its stdin, stdout and
-	// stderr. The first client frame must be `start`; the client half-closing
-	// the stream closes the command's stdin. The last server frame is
-	// `exit_code`. Cancelling the stream kills the command's process group.
+	// stderr. The first client frame must be `start`. `eof`, or the client
+	// half-closing the stream, closes the command's stdin. The last server frame
+	// is `exit_code`. Cancelling the stream kills the command's process group.
 	// Owner only.
 	Exec(grpc.BidiStreamingServer[ExecClientFrame, ExecServerFrame]) error
 	mustEmbedUnimplementedSessionServer()
