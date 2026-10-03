@@ -168,6 +168,16 @@ func TestShareSecretIsNoGRPCToken(t *testing.T) {
 	if _, err := env.client.Hello(ctx, &agentv1.HelloRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Hello with a share secret: %v, want Unauthenticated", err)
 	}
+	stream, err := env.client.Exec(ctx)
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if _, err := stream.Recv(); status.Code(err) != codes.Unauthenticated {
+		t.Errorf("Exec with a share secret: %v, want Unauthenticated", err)
+	}
+	if env.agent.calls.Load() != 0 {
+		t.Errorf("agent received %d share-secret calls", env.agent.calls.Load())
+	}
 }
 
 func TestScreenFiltersBothDirections(t *testing.T) {

@@ -112,6 +112,38 @@ func TestStreamPassesFramesThrough(t *testing.T) {
 	}
 }
 
+func TestExecAnswersAfterTheClientHalfCloses(t *testing.T) {
+	env := newProxyEnv(t)
+	stream, err := env.client.Exec(env.aliceCtx(t))
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	frames := []*agentv1.ExecClientFrame{
+		{Body: &agentv1.ExecClientFrame_Start{Start: &agentv1.ExecStart{Command: "cat"}}},
+		{Body: &agentv1.ExecClientFrame_Stdin{Stdin: []byte("in-")}},
+		{Body: &agentv1.ExecClientFrame_Stdin{Stdin: []byte("put")}},
+	}
+	for _, f := range frames {
+		if err := stream.Send(f); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+	}
+	if err := stream.CloseSend(); err != nil {
+		t.Fatalf("CloseSend: %v", err)
+	}
+	out, err := stream.Recv()
+	if err != nil || string(out.GetStdout()) != "in-put" {
+		t.Fatalf("recv stdout = %q, %v; want in-put", out.GetStdout(), err)
+	}
+	exit, err := stream.Recv()
+	if err != nil || exit.GetBody() == nil || exit.GetExitCode() != 7 {
+		t.Fatalf("recv exit = %v, %v; want exit_code 7", exit, err)
+	}
+	if _, err := stream.Recv(); !errors.Is(err, io.EOF) {
+		t.Errorf("recv after exit: %v, want io.EOF", err)
+	}
+}
+
 func TestStreamPropagatesStatus(t *testing.T) {
 	env := newProxyEnv(t)
 	stream, err := env.client.Screen(env.aliceCtx(t))
@@ -384,6 +416,26 @@ func (a *fakeAgent) screen(stream grpc.BidiStreamingServer[agentv1.ScreenClientF
 			return err
 		}
 	}
+}
+
+// Exec echoes the stdin it got once the client half-closed, then exits 7.
+func (a *fakeAgent) Exec(stream grpc.BidiStreamingServer[agentv1.ExecClientFrame, agentv1.ExecServerFrame]) error {
+	a.calls.Add(1)
+	var in []byte
+	for {
+		f, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		in = append(in, f.GetStdin()...)
+	}
+	if err := stream.Send(&agentv1.ExecServerFrame{Body: &agentv1.ExecServerFrame_Stdout{Stdout: in}}); err != nil {
+		return err
+	}
+	return stream.Send(&agentv1.ExecServerFrame{Body: &agentv1.ExecServerFrame_ExitCode{ExitCode: 7}})
 }
 
 func first(values []string) string {

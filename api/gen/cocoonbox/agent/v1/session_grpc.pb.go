@@ -24,6 +24,7 @@ const (
 	Session_Screen_FullMethodName         = "/cocoonbox.agent.v1.Session/Screen"
 	Session_ActiveOrigin_FullMethodName   = "/cocoonbox.agent.v1.Session/ActiveOrigin"
 	Session_FillCredential_FullMethodName = "/cocoonbox.agent.v1.Session/FillCredential"
+	Session_Exec_FullMethodName           = "/cocoonbox.agent.v1.Session/Exec"
 )
 
 // SessionClient is the client API for Session service.
@@ -42,6 +43,12 @@ type SessionClient interface {
 	// equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
 	// only: it is no MCP tool, and its values are never logged or recorded.
 	FillCredential(ctx context.Context, in *FillCredentialRequest, opts ...grpc.CallOption) (*FillCredentialResponse, error)
+	// Exec runs a command as the desktop user and carries its stdin, stdout and
+	// stderr. The first client frame must be `start`; the client half-closing
+	// the stream closes the command's stdin. The last server frame is
+	// `exit_code`. Cancelling the stream kills the command's process group.
+	// Owner only.
+	Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecClientFrame, ExecServerFrame], error)
 }
 
 type sessionClient struct {
@@ -114,6 +121,19 @@ func (c *sessionClient) FillCredential(ctx context.Context, in *FillCredentialRe
 	return out, nil
 }
 
+func (c *sessionClient) Exec(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecClientFrame, ExecServerFrame], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Session_ServiceDesc.Streams[2], Session_Exec_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ExecClientFrame, ExecServerFrame]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Session_ExecClient = grpc.BidiStreamingClient[ExecClientFrame, ExecServerFrame]
+
 // SessionServer is the server API for Session service.
 // All implementations must embed UnimplementedSessionServer
 // for forward compatibility.
@@ -130,6 +150,12 @@ type SessionServer interface {
 	// equals `origin` (scheme, host and port), else FAILED_PRECONDITION. App
 	// only: it is no MCP tool, and its values are never logged or recorded.
 	FillCredential(context.Context, *FillCredentialRequest) (*FillCredentialResponse, error)
+	// Exec runs a command as the desktop user and carries its stdin, stdout and
+	// stderr. The first client frame must be `start`; the client half-closing
+	// the stream closes the command's stdin. The last server frame is
+	// `exit_code`. Cancelling the stream kills the command's process group.
+	// Owner only.
+	Exec(grpc.BidiStreamingServer[ExecClientFrame, ExecServerFrame]) error
 	mustEmbedUnimplementedSessionServer()
 }
 
@@ -154,6 +180,9 @@ func (UnimplementedSessionServer) ActiveOrigin(context.Context, *ActiveOriginReq
 }
 func (UnimplementedSessionServer) FillCredential(context.Context, *FillCredentialRequest) (*FillCredentialResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FillCredential not implemented")
+}
+func (UnimplementedSessionServer) Exec(grpc.BidiStreamingServer[ExecClientFrame, ExecServerFrame]) error {
+	return status.Error(codes.Unimplemented, "method Exec not implemented")
 }
 func (UnimplementedSessionServer) mustEmbedUnimplementedSessionServer() {}
 func (UnimplementedSessionServer) testEmbeddedByValue()                 {}
@@ -248,6 +277,13 @@ func _Session_FillCredential_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Session_Exec_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SessionServer).Exec(&grpc.GenericServerStream[ExecClientFrame, ExecServerFrame]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Session_ExecServer = grpc.BidiStreamingServer[ExecClientFrame, ExecServerFrame]
+
 // Session_ServiceDesc is the grpc.ServiceDesc for Session service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -277,6 +313,12 @@ var Session_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Screen",
 			Handler:       _Session_Screen_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Exec",
+			Handler:       _Session_Exec_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},
