@@ -65,6 +65,20 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         await world.rebase(try await owned(request.boxID).id, image: request.image)
     }
 
+    func listSnapshots(request: Cocoonbox_Control_V1_BoxRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_ListSnapshotsResponse {
+        let box = try await owned(request.boxID)
+        let snapshots = await world.snapshots(of: box.id)
+        return .with { $0.snapshots = snapshots }
+    }
+
+    func browseSnapshot(request: Cocoonbox_Control_V1_BrowseSnapshotRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_BrowseSnapshotResponse {
+        try await world.browse(box: try await owned(request.boxID).id, snapshot: request.snapshotID, dir: request.dir)
+    }
+
+    func restorePaths(request: Cocoonbox_Control_V1_RestorePathsRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
+        try await world.restorePaths(box: try await owned(request.boxID).id, snapshot: request.snapshotID, paths: request.paths)
+    }
+
     private func owned(_ boxID: String) async throws -> Cocoonbox_Control_V1_Box {
         guard let box = await world.box(boxID), box.id == boxID else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
         return box

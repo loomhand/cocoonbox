@@ -25,7 +25,10 @@ import Foundation
 // share-sheet[:off], share-create[:write,<user name>,...] (24 h), share-write:on|off, share-regenerate,
 // share-revoke, share-copy:<link|claudeCode|codexConfig|cursor> (logs bytes, never the text),
 // end-external (ends the first listed share session), box:<name> (selects that box),
-// box-create:<name>, box-delete:<name>, boxes:<label> (logs every box and the selection), quit.
+// box-create:<name>, box-delete:<name>, boxes:<label> (logs every box and the selection),
+// capsule[:off] (the Restore files sheet, which lists the snapshots and browses the newest),
+// capsule-snapshot:<n> (the n-th newest, from 0), capsule-browse:<dir>,
+// capsule-restore:<path>[,<path>...] (from the browsed snapshot), quit.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -225,6 +228,19 @@ enum Autopilot {
             }
         case "boxes":
             Perf.mark("boxes", "label=\(arg) boxes=\(model.boxes.map { "\($0.name)/\($0.state)" }.joined(separator: ",")) selected=\(model.box?.name ?? "-") running=\(model.boxRunning) live=\(model.eventsLive) agents=\(model.agents.count) local=\(model.localAgents.count) operation=\(model.boxOperation?.status ?? "-") error=\(model.lastError ?? "-")")
+        case "capsule":
+            model.showTimeCapsule = arg != "off"
+            if model.showTimeCapsule { await until(30) { model.capsule.snapshotID != nil } }
+        case "capsule-snapshot":
+            if let index = Int(arg), model.capsule.snapshots.indices.contains(index) {
+                let id = model.capsule.snapshots[index].id
+                await model.browse(snapshot: id, dir: model.capsule.dir)
+            }
+        case "capsule-browse":
+            if let id = model.capsule.snapshotID { await model.browse(snapshot: id, dir: arg) }
+        case "capsule-restore":
+            model.restoreFiles(arg.split(separator: ",").map(String.init))
+            await until(10) { model.operation?.title == AppModel.restoreTitle }
         case "quit":
             NSApp.terminate(nil)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) { exit(0) }

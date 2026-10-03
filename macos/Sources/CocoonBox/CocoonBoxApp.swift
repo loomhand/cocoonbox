@@ -36,6 +36,8 @@ struct CocoonBoxApp: App {
                     .disabled(model.box == nil)
                 Button("Share Box…") { model.showShare = true }
                     .disabled(model.box == nil)
+                Button("Restore Files…") { model.showTimeCapsule = true }
+                    .disabled(model.box == nil)
                 Button("Sign Out") { model.signOut() }
             }
         }

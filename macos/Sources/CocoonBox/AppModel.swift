@@ -11,6 +11,8 @@ typealias Agent = Cocoonbox_Agent_V1_Agent
 typealias Entry = Cocoonbox_Agent_V1_TranscriptEntry
 typealias ComputerAction = Cocoonbox_Agent_V1_ComputerAction
 typealias Share = Cocoonbox_Control_V1_Share
+typealias BoxSnapshot = Cocoonbox_Control_V1_Snapshot
+typealias SnapshotEntry = Cocoonbox_Control_V1_SnapshotEntry
 
 // LiveBlock is an assistant text or reasoning block still streaming as deltas.
 struct LiveBlock: Equatable {
@@ -19,6 +21,15 @@ struct LiveBlock: Equatable {
     var reasoning: Bool
     var subagent: String
     var text: String
+}
+
+// CapsuleBrowser is the time capsule sheet's view of one box: its snapshots and one directory of the chosen one.
+struct CapsuleBrowser: Equatable {
+    var snapshots: [BoxSnapshot] = []
+    var snapshotID: String?
+    var dir = ""
+    var entries: [SnapshotEntry] = []
+    var truncated = false
 }
 
 struct OperationProgress: Equatable {
@@ -41,6 +52,7 @@ final class AppModel {
     var showSignIn = false
     var showConnectAgent = false
     var showShare = false
+    var showTimeCapsule = false
     var showPasswordSignIn = false
     var confirmSave = false
     var confirmUpgrade = false
@@ -67,6 +79,7 @@ final class AppModel {
     // localCalls is each local agent's last box-tool call per box id.
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
+    var capsule = CapsuleBrowser()
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
     @ObservationIgnored private var restoredLocal = false
@@ -410,6 +423,51 @@ final class AppModel {
     // markShare logs the share's state; the secret appears only as its length.
     private func markShare(_ what: String) {
         Perf.mark("share", "\(what) id=\(share?.id ?? "-") write=\(share?.write ?? false) users=\(share?.users.map(\.name).joined(separator: ",") ?? "-") expires_in_s=\(share.map { ($0.expiresAtMs - Int64(Date().timeIntervalSince1970 * 1000)) / 1000 } ?? 0) secret_len=\(shareSecret?.count ?? 0)")
+    }
+
+    // MARK: time capsule
+
+    static let restoreTitle = "Restoring files"
+
+    // openCapsule lists the selected box's snapshots and shows the newest one's roots.
+    func openCapsule() async {
+        guard let connection, let box else { return }
+        do {
+            let snapshots = try await connection.listSnapshots(boxID: box.id)
+            capsule = CapsuleBrowser(snapshots: snapshots)
+            Perf.mark("capsule", "snapshots=\(snapshots.count) changed=\(snapshots.map { $0.hasChangedFiles ? String($0.changedFiles) : "-" }.joined(separator: ","))")
+            if let newest = snapshots.first { await browse(snapshot: newest.id, dir: "") }
+        } catch {
+            report("list snapshots", error)
+        }
+    }
+
+    func browse(snapshot id: String, dir: String) async {
+        guard let connection, let box else { return }
+        do {
+            let listing = try await connection.browseSnapshot(boxID: box.id, snapshotID: id, dir: dir)
+            capsule.snapshotID = id
+            capsule.dir = dir
+            capsule.entries = listing.entries.sorted { ($0.kind == .dir ? 0 : 1, $0.path) < ($1.kind == .dir ? 0 : 1, $1.path) }
+            capsule.truncated = listing.truncated
+            Perf.mark("capsule_browse", "dir=\(dir.isEmpty ? "/" : dir) entries=\(listing.entries.count) truncated=\(listing.truncated)")
+        } catch {
+            report("browse snapshot", error)
+        }
+    }
+
+    func restoreFiles(_ paths: [String]) {
+        guard let connection, let box, let id = capsule.snapshotID, !paths.isEmpty else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                let op = try await connection.restorePaths(boxID: box.id, snapshotID: id, paths: paths)
+                watch(operation: op.id, box: box.id, title: Self.restoreTitle)
+            } catch {
+                report("restore files", error)
+            }
+        }
     }
 
     // MARK: session

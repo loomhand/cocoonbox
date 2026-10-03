@@ -220,6 +220,7 @@ final class ControlMCP: Sendable {
         case .snapshotting: "snapshotting"
         case .saving: "saving"
         case .restoring: "restoring"
+        case .restoringFiles: "restoring_files"
         case .deleting: "deleting"
         case .done: "done"
         case .failed: "failed"

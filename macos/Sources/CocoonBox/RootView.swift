@@ -62,6 +62,9 @@ struct RootView: View {
         .sheet(isPresented: $model.showShare) {
             ShareSheet()
         }
+        .sheet(isPresented: $model.showTimeCapsule) {
+            TimeCapsuleSheet()
+        }
         .sheet(isPresented: $model.showPasswordSignIn) {
             PasswordSignInSheet()
         }
@@ -477,10 +480,15 @@ struct StateLayerControls: View {
                     .font(.caption)
                     .foregroundStyle(.blue)
             }
-            Button("Upgrade desktop…") { model.confirmUpgrade = true }
-                .controlSize(.small)
-                .disabled(!idle || !model.upgradeAvailable)
-                .help(model.upgradeAvailable ? "Move this box to \(box.latestImage)" : "Already on the latest desktop")
+            HStack {
+                Button("Upgrade desktop…") { model.confirmUpgrade = true }
+                    .disabled(!idle || !model.upgradeAvailable)
+                    .help(model.upgradeAvailable ? "Move this box to \(box.latestImage)" : "Already on the latest desktop")
+                Button("Restore files…") { model.showTimeCapsule = true }
+                    .disabled(box.lastSavedAtMs == 0)
+                    .help("Copy files and folders from an earlier save into ~/Restored")
+            }
+            .controlSize(.small)
         }
         .alert("Save your box now?", isPresented: $model.confirmSave) {
             Button("Save") { model.saveNow() }
@@ -605,6 +613,7 @@ extension Cocoonbox_Control_V1_Phase {
         case .snapshotting: "snapshot"
         case .saving: "save"
         case .restoring: "restore"
+        case .restoringFiles: "restore files"
         case .deleting: "delete"
         case .done: "done"
         case .failed: "failed"

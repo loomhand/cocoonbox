@@ -150,6 +150,45 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "ListSnapshots" metadata.
+        public enum ListSnapshots: Sendable {
+            /// Request type for "ListSnapshots".
+            public typealias Input = Cocoonbox_Control_V1_BoxRef
+            /// Response type for "ListSnapshots".
+            public typealias Output = Cocoonbox_Control_V1_ListSnapshotsResponse
+            /// Descriptor for "ListSnapshots".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "ListSnapshots",
+                type: .unary
+            )
+        }
+        /// Namespace for "BrowseSnapshot" metadata.
+        public enum BrowseSnapshot: Sendable {
+            /// Request type for "BrowseSnapshot".
+            public typealias Input = Cocoonbox_Control_V1_BrowseSnapshotRequest
+            /// Response type for "BrowseSnapshot".
+            public typealias Output = Cocoonbox_Control_V1_BrowseSnapshotResponse
+            /// Descriptor for "BrowseSnapshot".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "BrowseSnapshot",
+                type: .unary
+            )
+        }
+        /// Namespace for "RestorePaths" metadata.
+        public enum RestorePaths: Sendable {
+            /// Request type for "RestorePaths".
+            public typealias Input = Cocoonbox_Control_V1_RestorePathsRequest
+            /// Response type for "RestorePaths".
+            public typealias Output = Cocoonbox_Control_V1_Operation
+            /// Descriptor for "RestorePaths".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "RestorePaths",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.control.v1.Boxes" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Ensure.descriptor,
@@ -161,7 +200,10 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
             Hibernate.descriptor,
             WatchOperation.descriptor,
             SaveState.descriptor,
-            Rebase.descriptor
+            Rebase.descriptor,
+            ListSnapshots.descriptor,
+            BrowseSnapshot.descriptor,
+            RestorePaths.descriptor
         ]
     }
 }
@@ -358,6 +400,63 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RebaseRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation>
+
+        /// Handle the "ListSnapshots" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListSnapshots lists the box's kept snapshots, newest first.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_ListSnapshotsResponse` messages.
+        func listSnapshots(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListSnapshotsResponse>
+
+        /// Handle the "BrowseSnapshot" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > BrowseSnapshot lists one directory of a kept snapshot; the box may be
+        /// > hibernated.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_BrowseSnapshotRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_BrowseSnapshotResponse` messages.
+        func browseSnapshot(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse>
+
+        /// Handle the "RestorePaths" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > RestorePaths copies files and folders of a kept snapshot into
+        /// > ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+        /// > Nothing outside that folder changes and nothing restarts.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_RestorePathsRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_Operation` messages.
+        func restorePaths(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation>
     }
 
     /// Service protocol for the "cocoonbox.control.v1.Boxes" service.
@@ -536,6 +635,63 @@ extension Cocoonbox_Control_V1_Boxes {
         /// - Returns: A response containing a single `Cocoonbox_Control_V1_Operation` message.
         func rebase(
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RebaseRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>
+
+        /// Handle the "ListSnapshots" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListSnapshots lists the box's kept snapshots, newest first.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_ListSnapshotsResponse` message.
+        func listSnapshots(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListSnapshotsResponse>
+
+        /// Handle the "BrowseSnapshot" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > BrowseSnapshot lists one directory of a kept snapshot; the box may be
+        /// > hibernated.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BrowseSnapshotRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_BrowseSnapshotResponse` message.
+        func browseSnapshot(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse>
+
+        /// Handle the "RestorePaths" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > RestorePaths copies files and folders of a kept snapshot into
+        /// > ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+        /// > Nothing outside that folder changes and nothing restarts.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RestorePathsRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_Operation` message.
+        func restorePaths(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>
     }
@@ -717,6 +873,63 @@ extension Cocoonbox_Control_V1_Boxes {
             request: Cocoonbox_Control_V1_RebaseRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_Operation
+
+        /// Handle the "ListSnapshots" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListSnapshots lists the box's kept snapshots, newest first.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_ListSnapshotsResponse` to respond with.
+        func listSnapshots(
+            request: Cocoonbox_Control_V1_BoxRef,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_ListSnapshotsResponse
+
+        /// Handle the "BrowseSnapshot" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > BrowseSnapshot lists one directory of a kept snapshot; the box may be
+        /// > hibernated.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_BrowseSnapshotRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_BrowseSnapshotResponse` to respond with.
+        func browseSnapshot(
+            request: Cocoonbox_Control_V1_BrowseSnapshotRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_BrowseSnapshotResponse
+
+        /// Handle the "RestorePaths" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > RestorePaths copies files and folders of a kept snapshot into
+        /// > ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+        /// > Nothing outside that folder changes and nothing restarts.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_RestorePathsRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_Operation` to respond with.
+        func restorePaths(
+            request: Cocoonbox_Control_V1_RestorePathsRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_Operation
     }
 }
 
@@ -834,6 +1047,39 @@ extension Cocoonbox_Control_V1_Boxes.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.ListSnapshots.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BoxRef>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ListSnapshotsResponse>(),
+            handler: { request, context in
+                try await self.listSnapshots(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.BrowseSnapshot.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BrowseSnapshotRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BrowseSnapshotResponse>(),
+            handler: { request, context in
+                try await self.browseSnapshot(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.RestorePaths.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_RestorePathsRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Operation>(),
+            handler: { request, context in
+                try await self.restorePaths(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -944,6 +1190,39 @@ extension Cocoonbox_Control_V1_Boxes.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation> {
         let response = try await self.rebase(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func listSnapshots(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListSnapshotsResponse> {
+        let response = try await self.listSnapshots(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func browseSnapshot(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse> {
+        let response = try await self.browseSnapshot(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func restorePaths(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation> {
+        let response = try await self.restorePaths(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -1081,6 +1360,45 @@ extension Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>(
             message: try await self.rebase(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func listSnapshots(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListSnapshotsResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListSnapshotsResponse>(
+            message: try await self.listSnapshots(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func browseSnapshot(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse>(
+            message: try await self.browseSnapshot(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func restorePaths(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>(
+            message: try await self.restorePaths(
                 request: request.message,
                 context: context
             ),
@@ -1314,6 +1632,78 @@ extension Cocoonbox_Control_V1_Boxes {
         func rebase<Result>(
             request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RebaseRequest>,
             serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RebaseRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ListSnapshots" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListSnapshots lists the box's kept snapshots, newest first.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ListSnapshotsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listSnapshots<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ListSnapshotsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListSnapshotsResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "BrowseSnapshot" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > BrowseSnapshot lists one directory of a kept snapshot; the box may be
+        /// > hibernated.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BrowseSnapshotRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BrowseSnapshotRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_BrowseSnapshotResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func browseSnapshot<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_BrowseSnapshotResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "RestorePaths" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > RestorePaths copies files and folders of a kept snapshot into
+        /// > ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+        /// > Nothing outside that folder changes and nothing restarts.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RestorePathsRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RestorePathsRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func restorePaths<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RestorePathsRequest>,
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result
@@ -1664,6 +2054,111 @@ extension Cocoonbox_Control_V1_Boxes {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "ListSnapshots" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListSnapshots lists the box's kept snapshots, newest first.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ListSnapshotsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listSnapshots<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ListSnapshotsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListSnapshotsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.ListSnapshots.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "BrowseSnapshot" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > BrowseSnapshot lists one directory of a kept snapshot; the box may be
+        /// > hibernated.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BrowseSnapshotRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BrowseSnapshotRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_BrowseSnapshotResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func browseSnapshot<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_BrowseSnapshotResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.BrowseSnapshot.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "RestorePaths" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > RestorePaths copies files and folders of a kept snapshot into
+        /// > ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+        /// > Nothing outside that folder changes and nothing restarts.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_RestorePathsRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_RestorePathsRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_Operation` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func restorePaths<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_RestorePathsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.RestorePaths.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -1938,6 +2433,96 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
         try await self.rebase(
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RebaseRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Operation>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListSnapshots" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ListSnapshots lists the box's kept snapshots, newest first.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listSnapshots<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListSnapshotsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listSnapshots(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BoxRef>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ListSnapshotsResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "BrowseSnapshot" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > BrowseSnapshot lists one directory of a kept snapshot; the box may be
+    /// > hibernated.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_BrowseSnapshotRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func browseSnapshot<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.browseSnapshot(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BrowseSnapshotRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BrowseSnapshotResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RestorePaths" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > RestorePaths copies files and folders of a kept snapshot into
+    /// > ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+    /// > Nothing outside that folder changes and nothing restarts.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_RestorePathsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func restorePaths<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.restorePaths(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RestorePathsRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Operation>(),
             options: options,
             onResponse: handleResponse
@@ -2256,6 +2841,108 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             metadata: metadata
         )
         return try await self.rebase(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListSnapshots" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ListSnapshots lists the box's kept snapshots, newest first.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listSnapshots<Result>(
+        _ message: Cocoonbox_Control_V1_BoxRef,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListSnapshotsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listSnapshots(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "BrowseSnapshot" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > BrowseSnapshot lists one directory of a kept snapshot; the box may be
+    /// > hibernated.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func browseSnapshot<Result>(
+        _ message: Cocoonbox_Control_V1_BrowseSnapshotRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_BrowseSnapshotResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_BrowseSnapshotRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.browseSnapshot(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "RestorePaths" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > RestorePaths copies files and folders of a kept snapshot into
+    /// > ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
+    /// > Nothing outside that folder changes and nothing restarts.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func restorePaths<Result>(
+        _ message: Cocoonbox_Control_V1_RestorePathsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_RestorePathsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.restorePaths(
             request: request,
             options: options,
             onResponse: handleResponse

@@ -103,6 +103,28 @@ public final class BoxConnection: Sendable {
         })
     }
 
+    // listSnapshots returns the box's kept snapshots, newest first.
+    public func listSnapshots(boxID: String) async throws -> [Cocoonbox_Control_V1_Snapshot] {
+        try await boxes.listSnapshots(.with { $0.boxID = boxID }).snapshots
+    }
+
+    // browseSnapshot lists one directory of a snapshot; an empty dir lists the roots.
+    public func browseSnapshot(boxID: String, snapshotID: String, dir: String) async throws -> Cocoonbox_Control_V1_BrowseSnapshotResponse {
+        try await boxes.browseSnapshot(.with {
+            $0.boxID = boxID
+            $0.snapshotID = snapshotID
+            $0.dir = dir
+        })
+    }
+
+    public func restorePaths(boxID: String, snapshotID: String, paths: [String]) async throws -> Cocoonbox_Control_V1_Operation {
+        try await boxes.restorePaths(.with {
+            $0.boxID = boxID
+            $0.snapshotID = snapshotID
+            $0.paths = paths
+        })
+    }
+
     public func watchOperation(
         _ id: String,
         after offsetKey: String,

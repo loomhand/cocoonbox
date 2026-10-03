@@ -244,6 +244,77 @@ actor MockWorld {
         return operation(id)
     }
 
+    // snapshots are three saves an hour apart, newest first; the oldest predates changed-file counts.
+    func snapshots(of boxID: String) -> [Cocoonbox_Control_V1_Snapshot] {
+        let newest = (box(boxID)?.lastSavedAtMs).flatMap { $0 > 0 ? $0 : nil } ?? Self.now()
+        return (0..<3).map { index in
+            .with {
+                $0.id = "snap-\(index)"
+                $0.savedAtMs = newest - Int64(index) * 3_600_000
+                $0.files = 1200
+                $0.logicalBytes = 96 << 20
+                $0.addedBytes = UInt64(3 - index) << 20
+                if index < 2 { $0.changedFiles = UInt64(index + 1) }
+            }
+        }
+    }
+
+    func browse(box boxID: String, snapshot: String, dir: String) throws -> Cocoonbox_Control_V1_BrowseSnapshotResponse {
+        guard snapshots(of: boxID).contains(where: { $0.id == snapshot }) else {
+            throw RPCError(code: .notFound, message: "snapshot not found")
+        }
+        guard let children = Self.capsuleTree[dir] else {
+            throw RPCError(code: .invalidArgument, message: "invalid box path: \(dir)")
+        }
+        return .with {
+            $0.entries = children.map { path in
+                .with {
+                    $0.path = path
+                    $0.kind = Self.capsuleTree[path] == nil ? .file : .dir
+                    $0.size = Self.capsuleTree[path] == nil ? 4096 : 0
+                    $0.mtimeMs = Self.now() - 86_400_000
+                }
+            }
+        }
+    }
+
+    // restorePaths plays a file restore into the running box; every path must be in the mock tree.
+    func restorePaths(box boxID: String, snapshot: String, paths: [String]) throws -> Cocoonbox_Control_V1_Operation {
+        guard let target = box(boxID), target.state == .running else {
+            throw RPCError(code: .failedPrecondition, message: "box is not running")
+        }
+        guard let saved = snapshots(of: boxID).first(where: { $0.id == snapshot }) else {
+            throw RPCError(code: .notFound, message: "snapshot not found")
+        }
+        let known = Set(Self.capsuleTree.values.joined())
+        guard !paths.isEmpty, paths.allSatisfy(known.contains) else {
+            throw RPCError(code: .invalidArgument, message: "invalid box path")
+        }
+        let id = newOperation(target.id)
+        let folder = Self.restoredFolder(saved.savedAtMs)
+        Task {
+            await self.transfer(id: id, phase: .restoringFiles, detail: "restoring", state: .running, prefix: [])
+            self.emitOperation(id: id, phase: .done, detail: "restored \(paths.count) paths (\(paths.joined(separator: ", "))) into ~/Restored/\(folder)", state: .running)
+        }
+        return operation(id)
+    }
+
+    private static let capsuleTree: [String: [String]] = [
+        "": ["/home/user", "/workspace"],
+        "/home/user": ["/home/user/Documents", "/home/user/notes.txt"],
+        "/home/user/Documents": ["/home/user/Documents/drafts", "/home/user/Documents/report.pdf"],
+        "/home/user/Documents/drafts": ["/home/user/Documents/drafts/v1.txt"],
+        "/workspace": ["/workspace/README.md", "/workspace/app"],
+        "/workspace/app": ["/workspace/app/main.go"],
+    ]
+
+    private static func restoredFolder(_ ms: Int64) -> String {
+        let format = DateFormatter()
+        format.timeZone = TimeZone(identifier: "UTC")
+        format.dateFormat = "yyyy-MM-dd'T'HHmm'Z'"
+        return format.string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+    }
+
     // restore plays a wake of a box with no machine: a new one boots and the saved state is restored into it.
     private func restore(id: String) async {
         emitOperation(id: id, phase: .creating, detail: "machine for the saved state", state: .starting)
