@@ -17,6 +17,7 @@ PACKAGES=(
 	tigervnc-xorg-extension xauth x11-xserver-utils x11-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
 	mousepad nftables sudo libnss-myhostname libnss3-tools rsync git tmux
+	build-essential ncurses-bin
 	locales fonts-noto-cjk fonts-noto-color-emoji
 )
 
