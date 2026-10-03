@@ -7,12 +7,16 @@ CUA_VERSION=0.30.4
 CUA_SHA256=84445347ceb3039034ce30577b3b7c19a1f0c1f67639423f9da3a71be0418f90
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
 CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/${CUA_TARBALL}"
+MISE_VERSION=2026.10.0
+MISE_SHA256=6ae3d2bda39cca86713501317edf623b59b75cd8afa2e31c20b1ee6500b4b739
+MISE_TARBALL="mise-v${MISE_VERSION}-linux-x64.tar.gz"
+MISE_URL="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/${MISE_TARBALL}"
 CHROME_URL=https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
 	tigervnc-xorg-extension xauth x11-xserver-utils x11-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
-	mousepad nftables sudo libnss-myhostname libnss3-tools rsync
+	mousepad nftables sudo libnss-myhostname libnss3-tools rsync git tmux
 	locales fonts-noto-cjk fonts-noto-color-emoji
 )
 
@@ -112,6 +116,20 @@ setup_cua_driver() {
 	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
 }
 
+setup_mise() {
+	log "mise $MISE_VERSION"
+	local dir=/opt/mise/$MISE_VERSION tmp
+	if [ ! -x "$dir/bin/mise" ]; then
+		tmp=$(mktemp -d)
+		curl -fsSL "$MISE_URL" -o "$tmp/$MISE_TARBALL"
+		echo "$MISE_SHA256  $tmp/$MISE_TARBALL" | sha256sum -c --quiet -
+		install -d "$dir"
+		tar -xzf "$tmp/$MISE_TARBALL" -C "$dir" --strip-components=1
+		rm -rf "$tmp"
+	fi
+	ln -sfn "$dir/bin/mise" /usr/local/bin/mise
+}
+
 setup_cocoonbox_dirs() {
 	log "cocoonbox dirs"
 	install -d -m 0755 -o user -g user /workspace
@@ -145,6 +163,7 @@ setup_users
 install_rootfs
 setup_desktop
 setup_cua_driver
+setup_mise
 setup_cocoonbox_dirs
 enable_units
 log "done"
