@@ -80,6 +80,7 @@ type share struct {
 	Box       string   `json:"box_id"`
 	Users     []string `json:"users"`
 	Write     bool     `json:"write"`
+	Secret    string   `json:"secret,omitempty"`
 	ExpiresAt int64    `json:"expires_at_ms"`
 }
 
@@ -637,7 +638,7 @@ func toBox(b *controlv1.Box) box {
 }
 
 func toShare(sh *controlv1.Share) share {
-	out := share{ID: sh.GetId(), Box: sh.GetBoxId(), Users: []string{}, Write: sh.GetWrite(), ExpiresAt: sh.GetExpiresAtMs()}
+	out := share{ID: sh.GetId(), Box: sh.GetBoxId(), Users: []string{}, Write: sh.GetWrite(), Secret: sh.GetSecret(), ExpiresAt: sh.GetExpiresAtMs()}
 	for _, u := range sh.GetUsers() {
 		out.Users = append(out.Users, u.GetName())
 	}

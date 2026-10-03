@@ -7,6 +7,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/projecteru2/core/log"
+
 	"github.com/CMGS/cocoonbox/api/auth"
 )
 
@@ -21,14 +23,16 @@ const (
 	shareSecretBytes = 16
 )
 
-// Share is a live share of a box as its owner sees it; it never carries the secret.
+// Share is a live share of a box as its owner sees it, for the owner only.
 type Share struct {
 	ID    string
 	Owner string
 	Box   string
 	// Users are the users the share admits; empty admits anyone with the link.
-	Users     []ShareUser
-	Write     bool
+	Users []ShareUser
+	Write bool
+	// Secret is empty for a share created before the api kept secrets.
+	Secret    string
 	ExpiresAt time.Time
 	CreatedAt time.Time
 }
@@ -48,20 +52,20 @@ type NewShare struct {
 	Write     bool
 }
 
-// CreateShare shares box ns.Box of ns.Owner and returns the share with its secret, which only its sha256 outlives.
-func (s *Service) CreateShare(ctx context.Context, ns NewShare) (Share, string, error) {
+// CreateShare shares box ns.Box of ns.Owner and returns the share with its secret, which the api keeps sealed.
+func (s *Service) CreateShare(ctx context.Context, ns NewShare) (Share, error) {
 	ttl := cmp.Or(ns.TTL, DefaultShareTTL)
 	if ttl < minShareTTL || ttl > MaxShareTTL {
-		return Share{}, "", fmt.Errorf("%w: a share lasts from %s to %s", ErrInvalid, minShareTTL, MaxShareTTL)
+		return Share{}, fmt.Errorf("%w: a share lasts from %s to %s", ErrInvalid, minShareTTL, MaxShareTTL)
 	}
 	if _, err := s.record(ns.Owner); err != nil {
-		return Share{}, "", err
+		return Share{}, err
 	}
 	ids := make([]string, 0, len(ns.UserNames))
 	for _, name := range ns.UserNames {
 		u, err := s.ByName(name)
 		if err != nil {
-			return Share{}, "", fmt.Errorf("%w: no user is named %q", ErrInvalid, name)
+			return Share{}, fmt.Errorf("%w: no user is named %q", ErrInvalid, name)
 		}
 		if !slices.Contains(ids, u.ID) {
 			ids = append(ids, u.ID)
@@ -69,17 +73,18 @@ func (s *Service) CreateShare(ctx context.Context, ns NewShare) (Share, string, 
 	}
 	now := time.Now()
 	secret := auth.SecretPrefix + randomHex(shareSecretBytes)
+	id := shareIDPrefix + randomHex(idBytes)
 	rec := &shareRecord{
-		id: shareIDPrefix + randomHex(idBytes), owner: ns.Owner, box: ns.Box, userIDs: ids, write: ns.Write,
-		expiresAt: now.Add(ttl).Truncate(time.Millisecond), createdAt: now.Truncate(time.Millisecond), secretSHA256: hashHex(secret),
+		id: id, owner: ns.Owner, box: ns.Box, userIDs: ids, write: ns.Write,
+		expiresAt: now.Add(ttl).Truncate(time.Millisecond), createdAt: now.Truncate(time.Millisecond), secret: secret, secretSHA256: hashHex(secret),
 	}
-	if err := s.store.insertShare(ctx, rec); err != nil {
-		return Share{}, "", err
+	if err := s.store.insertShare(ctx, rec, s.seal.seal(secret, shareData(id, ns.Box))); err != nil {
+		return Share{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.putShare(rec)
-	return s.view(rec), secret, nil
+	return s.view(rec), nil
 }
 
 // Shares returns owner's live shares, oldest first.
@@ -98,7 +103,7 @@ func (s *Service) Shares(owner string) []Share {
 
 // SetShareWrite turns write on or off for owner's share id; open MCP streams of the share learn it at once.
 func (s *Service) SetShareWrite(ctx context.Context, owner, id string, write bool) (Share, error) {
-	if err := s.owns(owner, id); err != nil {
+	if _, err := s.shareBox(owner, id); err != nil {
 		return Share{}, err
 	}
 	if err := s.store.setShareWrite(ctx, id, write); err != nil {
@@ -118,34 +123,35 @@ func (s *Service) SetShareWrite(ctx context.Context, owner, id string, write boo
 	return s.view(rec), nil
 }
 
-// RegenerateShare gives owner's share id a new secret, returned once, and ends every session of the old one.
-func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share, string, error) {
-	if err := s.owns(owner, id); err != nil {
-		return Share{}, "", err
+// RegenerateShare gives owner's share id a new secret and ends every session of the old one.
+func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share, error) {
+	box, err := s.shareBox(owner, id)
+	if err != nil {
+		return Share{}, err
 	}
 	secret := auth.SecretPrefix + randomHex(shareSecretBytes)
-	if err := s.store.setShareSecret(ctx, id, hashHex(secret)); err != nil {
-		return Share{}, "", err
+	if err := s.store.setShareSecret(ctx, id, hashHex(secret), s.seal.seal(secret, shareData(id, box))); err != nil {
+		return Share{}, err
 	}
 	s.mu.Lock()
 	rec, ok := s.shares[id]
 	if !ok {
 		s.mu.Unlock()
-		return Share{}, "", ErrNotFound
+		return Share{}, ErrNotFound
 	}
 	delete(s.shareSecrets, rec.secretSHA256)
-	rec.secretSHA256 = hashHex(secret)
+	rec.secret, rec.secretSHA256 = secret, hashHex(secret)
 	s.shareSecrets[rec.secretSHA256] = id
 	rec.cutStreams()
 	view := s.view(rec)
 	s.mu.Unlock()
 	s.ended(ctx, view)
-	return view, secret, nil
+	return view, nil
 }
 
 // RevokeShare ends owner's share id and every session of it.
 func (s *Service) RevokeShare(ctx context.Context, owner, id string) error {
-	if err := s.owns(owner, id); err != nil {
+	if _, err := s.shareBox(owner, id); err != nil {
 		return err
 	}
 	if err := s.store.revokeShare(ctx, id); err != nil {
@@ -184,6 +190,15 @@ func (s *Service) loadShares(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	for _, rec := range recs {
+		if rec.secretSealed == nil {
+			continue
+		}
+		if rec.secret, err = s.seal.open(rec.secretSealed, shareData(rec.id, rec.box)); err != nil {
+			log.WithFunc("users.Service.loadShares").Warnf(ctx, "share %s keeps no link: %v", rec.id, err)
+		}
+		rec.secretSealed = nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, rec := range recs {
@@ -192,14 +207,15 @@ func (s *Service) loadShares(ctx context.Context) error {
 	return nil
 }
 
-// owns checks that id is a live share of owner.
-func (s *Service) owns(owner, id string) error {
+// shareBox returns the box of owner's live share id.
+func (s *Service) shareBox(owner, id string) (string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if rec, ok := s.shares[id]; !ok || rec.owner != owner {
-		return ErrNotFound
+	rec, ok := s.shares[id]
+	if !ok || rec.owner != owner {
+		return "", ErrNotFound
 	}
-	return nil
+	return rec.box, nil
 }
 
 // putShare indexes rec and arms its expiry; the caller holds s.mu.
@@ -207,7 +223,15 @@ func (s *Service) putShare(rec *shareRecord) {
 	rec.cut, rec.moded = make(chan struct{}), make(chan struct{})
 	s.shares[rec.id] = rec
 	s.shareSecrets[rec.secretSHA256] = rec.id
-	rec.timer = time.AfterFunc(time.Until(rec.expiresAt), func() { s.endShare(context.Background(), rec.id) })
+	rec.timer = time.AfterFunc(time.Until(rec.expiresAt), func() { s.expireShare(context.Background(), rec.id) })
+}
+
+// expireShare forgets the secret of share id in its row, then ends the share.
+func (s *Service) expireShare(ctx context.Context, id string) {
+	if err := s.store.clearShareSecret(ctx, id); err != nil {
+		log.WithFunc("users.Service.expireShare").Warnf(ctx, "clear the secret of expired share %s: %v", id, err)
+	}
+	s.endShare(ctx, id)
 }
 
 // endShare drops share id from the index, cuts its streams and runs the end hooks.
@@ -256,7 +280,7 @@ func (s *Service) ended(ctx context.Context, sh Share) {
 
 // view is rec as its owner sees it; the caller holds s.mu.
 func (s *Service) view(rec *shareRecord) Share {
-	sh := Share{ID: rec.id, Owner: rec.owner, Box: rec.box, Write: rec.write, ExpiresAt: rec.expiresAt, CreatedAt: rec.createdAt}
+	sh := Share{ID: rec.id, Owner: rec.owner, Box: rec.box, Write: rec.write, Secret: rec.secret, ExpiresAt: rec.expiresAt, CreatedAt: rec.createdAt}
 	for _, id := range rec.userIDs {
 		sh.Users = append(sh.Users, ShareUser{ID: id, Name: s.byID[id].Name})
 	}
@@ -272,7 +296,9 @@ type shareRecord struct {
 	write        bool
 	expiresAt    time.Time
 	createdAt    time.Time
+	secret       string
 	secretSHA256 string
+	secretSealed []byte // the row's, until loadShares opens it
 	cut          chan struct{}
 	moded        chan struct{}
 	timer        *time.Timer

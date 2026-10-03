@@ -6,8 +6,8 @@ option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;cont
 
 // Shares is served by cocoonbox-api for a box's owner, who authenticates with
 // `authorization: Bearer <user token>`. A box has at most one live share. The
-// share secret is returned only by Create and Regenerate; the api keeps its
-// SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+// api keeps the share secret sealed and returns it to the owner in every
+// Share. The link is `<endpoint>/cb/s/#<secret>`.
 service Shares {
   // Create shares a box of the caller; ALREADY_EXISTS while the box has a live share.
   rpc Create(CreateShareRequest) returns (ShareSecret);
@@ -29,6 +29,8 @@ message Share {
   bool write = 4;
   int64 expires_at_ms = 5;
   int64 created_at_ms = 6;
+  // `cbs_` and 32 hex digits; empty for a share created before the api kept secrets.
+  string secret = 7;
 }
 
 message ShareUser {
@@ -42,7 +44,7 @@ message ShareRef {
 
 message ShareSecret {
   Share share = 1;
-  // `cbs_` and 32 hex digits; shown once.
+  // The same as share.secret.
   string secret = 2;
 }
 

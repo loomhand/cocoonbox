@@ -1,8 +1,7 @@
 import CocoonBoxKit
 import SwiftUI
 
-// ShareSheet creates and manages the box's share link. The secret is shown
-// only right after Create or Regenerate; the api keeps nothing but its hash.
+// ShareSheet creates and manages the box's share link; the api returns the link to the owner only.
 struct ShareSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -102,12 +101,13 @@ private struct LiveShareView: View {
         if let setup = model.shareSetup {
             ShareSnippets(setup: setup)
         } else {
-            Text("The link is shown once. Regenerate makes a new one and ends the old link's sessions.")
+            Text("This share was created before links were kept. Regenerate to get a link; it ends the old link's sessions.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
         HStack {
             Button("Regenerate link…") { confirmRegenerate = true }
+                .help("Replace the link and end the old link's sessions")
             Button("Revoke…", role: .destructive) { confirmRevoke = true }
             Spacer()
         }
@@ -115,7 +115,7 @@ private struct LiveShareView: View {
             Button("Regenerate") { Task { await model.regenerateShare() } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The old link stops working and its sessions end at once.")
+            Text("This replaces the link and ends the old link's sessions at once.")
         }
         .alert("Revoke the share?", isPresented: $confirmRevoke) {
             Button("Revoke", role: .destructive) { Task { await model.revokeShare() } }
@@ -131,7 +131,7 @@ private struct ShareSnippets: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SnippetRow(title: "Link", caption: "Opens the live view in a browser, view only. Copy it now; it is not shown again.", setup: setup, snippet: .link)
+            SnippetRow(title: "Link", caption: "Opens the live view in a browser, view only.", setup: setup, snippet: .link)
             SnippetRow(title: "Claude Code", caption: setup.text(.claudeCode).contains(ShareSetup.guestHeader)
                        ? "The guest runs it with their own token in COCOONBOX_TOKEN." : "The guest runs it once in Terminal.",
                        setup: setup, snippet: .claudeCode)

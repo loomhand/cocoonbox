@@ -25,11 +25,29 @@ func TestCreateSharesOnlyTheCallersBox(t *testing.T) {
 		t.Errorf("Create on bob's box: %v", err)
 	}
 	got, err := srv.Create(alice, &controlv1.CreateShareRequest{BoxId: boxes.BoxID("alice"), TtlSeconds: 600, UserNames: []string{"bob"}, Write: true})
-	if err != nil || got.GetSecret() != "cbs_x" || got.GetShare().GetUsers()[0].GetName() != "bob" {
+	if err != nil || got.GetSecret() != "cbs_x" || got.GetShare().GetSecret() != "cbs_x" || got.GetShare().GetUsers()[0].GetName() != "bob" {
 		t.Fatalf("Create = %v, %v", got, err)
 	}
 	if store.created.Owner != "alice" || store.created.TTL != 10*time.Minute || !store.created.Write {
 		t.Errorf("store got %+v", store.created)
+	}
+}
+
+func TestListGivesTheLinkToItsOwnerOnly(t *testing.T) {
+	srv := New(&fakeStore{})
+	if _, err := srv.List(t.Context(), &controlv1.ListSharesRequest{}); status.Code(err) != codes.Unauthenticated {
+		t.Errorf("List without a user: %v", err)
+	}
+	got, err := srv.List(auth.WithUser(t.Context(), "alice"), &controlv1.ListSharesRequest{})
+	if err != nil || len(got.GetShares()) != 1 || got.GetShares()[0].GetSecret() != "cbs_x" {
+		t.Errorf("alice's List = %v, %v", got, err)
+	}
+	if got, err := srv.List(auth.WithUser(t.Context(), "bob"), &controlv1.ListSharesRequest{}); err != nil || len(got.GetShares()) != 0 {
+		t.Errorf("bob's List = %v, %v", got, err)
+	}
+	regenerated, err := srv.Regenerate(auth.WithUser(t.Context(), "alice"), &controlv1.ShareRef{ShareId: "sh-1"})
+	if err != nil || regenerated.GetSecret() != "cbs_y" || regenerated.GetShare().GetSecret() != "cbs_y" {
+		t.Errorf("Regenerate = %v, %v", regenerated, err)
 	}
 }
 
@@ -48,21 +66,26 @@ type fakeStore struct {
 	err     error
 }
 
-func (f *fakeStore) CreateShare(_ context.Context, ns users.NewShare) (users.Share, string, error) {
+func (f *fakeStore) CreateShare(_ context.Context, ns users.NewShare) (users.Share, error) {
 	f.created = ns
-	return users.Share{ID: "sh-1", Owner: ns.Owner, Box: ns.Box, Users: []users.ShareUser{{ID: "u-bob", Name: "bob"}}, Write: ns.Write}, "cbs_x", f.err
+	return users.Share{ID: "sh-1", Owner: ns.Owner, Box: ns.Box, Users: []users.ShareUser{{ID: "u-bob", Name: "bob"}}, Write: ns.Write, Secret: "cbs_x"}, f.err
 }
 
 func (f *fakeStore) HasBox(owner, id string) bool { return id == boxes.BoxID(owner) }
 
-func (f *fakeStore) Shares(string) []users.Share { return nil }
+func (f *fakeStore) Shares(owner string) []users.Share {
+	if owner != "alice" {
+		return nil
+	}
+	return []users.Share{{ID: "sh-1", Owner: owner, Box: boxes.BoxID(owner), Secret: "cbs_x"}}
+}
 
 func (f *fakeStore) SetShareWrite(_ context.Context, _, id string, write bool) (users.Share, error) {
 	return users.Share{ID: id, Write: write}, f.err
 }
 
-func (f *fakeStore) RegenerateShare(_ context.Context, _, id string) (users.Share, string, error) {
-	return users.Share{ID: id}, "cbs_y", f.err
+func (f *fakeStore) RegenerateShare(_ context.Context, _, id string) (users.Share, error) {
+	return users.Share{ID: id, Secret: "cbs_y"}, f.err
 }
 
 func (f *fakeStore) RevokeShare(context.Context, string, string) error { return f.err }

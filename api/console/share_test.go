@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"golang.org/x/net/websocket"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
@@ -38,13 +40,26 @@ func TestOwnerManagesTheShareOfTheirBox(t *testing.T) {
 	if code := env.do(t, http.MethodPatch, "api/shares/"+created.Share.ID, env.login(t, "qa2"), `{"write":false}`).Code; code != http.StatusNotFound {
 		t.Errorf("a guest switching write = %d, want 404", code)
 	}
+	if list := env.listShares(t, qa1); len(list) != 1 || list[0].Secret != created.Secret {
+		t.Errorf("the owner's list misses the link: %d shares", len(list))
+	}
+	if list := env.do(t, http.MethodGet, "api/shares", env.login(t, "qa2"), "").Body.String(); strings.Contains(list, created.Secret) || strings.TrimSpace(list) != "[]" {
+		t.Error("a guest's list holds the share or its secret")
+	}
 	resp = env.do(t, http.MethodPost, "api/shares/"+created.Share.ID+"/regenerate", qa1, "{}")
 	if resp.Code != http.StatusOK || strings.Contains(resp.Body.String(), created.Secret) {
 		t.Errorf("regenerate = %d", resp.Code)
 	}
-	list := env.do(t, http.MethodGet, "api/shares", qa1, "").Body.String()
-	if strings.Contains(list, auth.SecretPrefix) || !strings.Contains(list, created.Share.ID) {
-		t.Errorf("the list holds a secret or misses the share: %s", list)
+	authn := auth.New(env.users, env.users)
+	if _, err := authn.Admit(created.Secret, box, env.qa2.ID); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("the old secret after regenerate: %v, want PermissionDenied", err)
+	}
+	list := env.listShares(t, qa1)
+	if len(list) != 1 || list[0].Secret == created.Secret || !strings.HasPrefix(list[0].Secret, auth.SecretPrefix) {
+		t.Fatal("the owner's list keeps the old link or has none")
+	}
+	if _, err := authn.Admit(list[0].Secret, box, env.qa2.ID); err != nil {
+		t.Errorf("the listed link after regenerate: %v", err)
 	}
 	if code := env.do(t, http.MethodDelete, "api/shares/"+created.Share.ID, qa1, "{}").Code; code != http.StatusNoContent {
 		t.Errorf("revoke = %d", code)
@@ -159,6 +174,16 @@ func (e *shareEnv) createShare(t *testing.T, session, body string) (out struct {
 	}
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil || !strings.HasPrefix(out.Secret, auth.SecretPrefix) {
 		t.Fatalf("create share: %v", err)
+	}
+	return out
+}
+
+func (e *shareEnv) listShares(t *testing.T, session string) []share {
+	t.Helper()
+	resp := e.do(t, http.MethodGet, "api/shares", session, "")
+	var out []share
+	if err := json.Unmarshal(resp.Body.Bytes(), &out); resp.Code != http.StatusOK || err != nil {
+		t.Fatalf("list shares = %d, %v", resp.Code, err)
 	}
 	return out
 }

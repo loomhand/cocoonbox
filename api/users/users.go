@@ -229,7 +229,7 @@ func (s *Service) Run(ctx context.Context, interval time.Duration) {
 func (s *Service) Reconcile(ctx context.Context) error {
 	var errs []error
 	for _, r := range s.records() {
-		token, err := s.seal.open(r.tenantToken, r.ID, columnTenant)
+		token, err := s.seal.open(r.tenantToken, userData(r.ID, columnTenant))
 		if err == nil {
 			err = s.tenants.Put(ctx, r.ID, token, r.claimCap())
 		}
@@ -321,10 +321,10 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		MaxBoxesCap: defaultBoxes,
 		CreatedAt:   time.Now(),
 		gwAKID:      akID,
-		gwKey:       s.seal.seal(key, id, columnGWKey),
-		tenantToken: s.seal.seal(tenantToken, id, columnTenant),
+		gwKey:       s.seal.seal(key, userData(id, columnGWKey)),
+		tenantToken: s.seal.seal(tenantToken, userData(id, columnTenant)),
 		stateKeyID:  stateKey.ID,
-		stateKey:    s.seal.seal(string(stateKey.Secret), id, columnStateKey),
+		stateKey:    s.seal.seal(string(stateKey.Secret), userData(id, columnStateKey)),
 	}
 	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond)}
 	if nu.Admin {
@@ -556,7 +556,7 @@ func (s *Service) Tenant(id string) (string, error) {
 	if err != nil || !s.tenantClaims {
 		return "", err
 	}
-	return s.seal.open(r.tenantToken, id, columnTenant)
+	return s.seal.open(r.tenantToken, userData(id, columnTenant))
 }
 
 // GWKey returns user id's gw key.
@@ -565,7 +565,7 @@ func (s *Service) GWKey(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return s.seal.open(r.gwKey, id, columnGWKey)
+	return s.seal.open(r.gwKey, userData(id, columnGWKey))
 }
 
 // StateKey returns user id's state key.
@@ -577,7 +577,7 @@ func (s *Service) StateKey(_ context.Context, id string) (keyring.Key, error) {
 	if r.stateKeyID == "" {
 		return keyring.Key{}, fmt.Errorf("user %s has no state key", id)
 	}
-	secret, err := s.seal.open(r.stateKey, id, columnStateKey)
+	secret, err := s.seal.open(r.stateKey, userData(id, columnStateKey))
 	if err != nil {
 		return keyring.Key{}, err
 	}
@@ -603,7 +603,7 @@ func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) err
 		}
 		return nil
 	}
-	r.stateKeyID, r.stateKey = k.ID, s.seal.seal(string(k.Secret), id, columnStateKey)
+	r.stateKeyID, r.stateKey = k.ID, s.seal.seal(string(k.Secret), userData(id, columnStateKey))
 	if err := s.store.setStateKey(ctx, r); err != nil {
 		return err
 	}

@@ -38,6 +38,9 @@ public nonisolated struct Cocoonbox_Control_V1_Share: Sendable {
 
   public var createdAtMs: Int64 = 0
 
+  /// `cbs_` and 32 hex digits; empty for a share created before the api kept secrets.
+  public var secret: String = String()
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -83,7 +86,7 @@ public nonisolated struct Cocoonbox_Control_V1_ShareSecret: Sendable {
   /// Clears the value of `share`. Subsequent reads from it will return its default value.
   public mutating func clearShare() {self._share = nil}
 
-  /// `cbs_` and 32 hex digits; shown once.
+  /// The same as share.secret.
   public var secret: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
@@ -165,7 +168,7 @@ fileprivate nonisolated let _protobuf_package = "cocoonbox.control.v1"
 
 nonisolated extension Cocoonbox_Control_V1_Share: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Share"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}box_id\0\u{1}users\0\u{1}write\0\u{3}expires_at_ms\0\u{3}created_at_ms\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{3}box_id\0\u{1}users\0\u{1}write\0\u{3}expires_at_ms\0\u{3}created_at_ms\0\u{1}secret\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -179,6 +182,7 @@ nonisolated extension Cocoonbox_Control_V1_Share: SwiftProtobuf.Message, SwiftPr
       case 4: try { try decoder.decodeSingularBoolField(value: &self.write) }()
       case 5: try { try decoder.decodeSingularInt64Field(value: &self.expiresAtMs) }()
       case 6: try { try decoder.decodeSingularInt64Field(value: &self.createdAtMs) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.secret) }()
       default: break
       }
     }
@@ -203,6 +207,9 @@ nonisolated extension Cocoonbox_Control_V1_Share: SwiftProtobuf.Message, SwiftPr
     if self.createdAtMs != 0 {
       try visitor.visitSingularInt64Field(value: self.createdAtMs, fieldNumber: 6)
     }
+    if !self.secret.isEmpty {
+      try visitor.visitSingularStringField(value: self.secret, fieldNumber: 7)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -213,6 +220,7 @@ nonisolated extension Cocoonbox_Control_V1_Share: SwiftProtobuf.Message, SwiftPr
     if lhs.write != rhs.write {return false}
     if lhs.expiresAtMs != rhs.expiresAtMs {return false}
     if lhs.createdAtMs != rhs.createdAtMs {return false}
+    if lhs.secret != rhs.secret {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

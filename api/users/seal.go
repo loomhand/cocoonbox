@@ -11,7 +11,7 @@ import (
 
 const masterKeySize = 32
 
-// sealer encrypts each user's backing keys with AES-256-GCM under the master key; the additional data binds a value to its row and column.
+// sealer encrypts each user's backing keys and each share's secret with AES-256-GCM under the master key; the additional data binds a value to its row and column.
 type sealer struct {
 	aead cipher.AEAD
 }
@@ -35,24 +35,28 @@ func newSealer(path string) (*sealer, error) {
 	return &sealer{aead: aead}, nil
 }
 
-func (s *sealer) seal(plain, id, column string) []byte {
+func (s *sealer) seal(plain string, ad []byte) []byte {
 	nonce := make([]byte, s.aead.NonceSize(), s.aead.NonceSize()+len(plain)+s.aead.Overhead())
 	_, _ = rand.Read(nonce)
-	return s.aead.Seal(nonce, nonce, []byte(plain), additionalData(id, column))
+	return s.aead.Seal(nonce, nonce, []byte(plain), ad)
 }
 
-func (s *sealer) open(sealed []byte, id, column string) (string, error) {
+func (s *sealer) open(sealed, ad []byte) (string, error) {
 	if len(sealed) < s.aead.NonceSize() {
 		return "", errors.New("sealed value is truncated")
 	}
 	n := s.aead.NonceSize()
-	plain, err := s.aead.Open(nil, sealed[:n], sealed[n:], additionalData(id, column))
+	plain, err := s.aead.Open(nil, sealed[:n], sealed[n:], ad)
 	if err != nil {
-		return "", fmt.Errorf("open %s of user %s: %w", column, id, err)
+		return "", fmt.Errorf("open %s: %w", ad, err)
 	}
 	return string(plain), nil
 }
 
-func additionalData(id, column string) []byte {
+func userData(id, column string) []byte {
 	return []byte("users|" + id + "|" + column)
+}
+
+func shareData(id, box string) []byte {
+	return []byte("shares|" + id + "|" + box + "|secret")
 }

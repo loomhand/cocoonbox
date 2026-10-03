@@ -18,10 +18,10 @@ import (
 // Store keeps the boxes and their shares; users.Service is the production one.
 type Store interface {
 	HasBox(owner, id string) bool
-	CreateShare(ctx context.Context, ns users.NewShare) (users.Share, string, error)
+	CreateShare(ctx context.Context, ns users.NewShare) (users.Share, error)
 	Shares(owner string) []users.Share
 	SetShareWrite(ctx context.Context, owner, id string, write bool) (users.Share, error)
-	RegenerateShare(ctx context.Context, owner, id string) (users.Share, string, error)
+	RegenerateShare(ctx context.Context, owner, id string) (users.Share, error)
 	RevokeShare(ctx context.Context, owner, id string) error
 }
 
@@ -45,7 +45,7 @@ func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) 
 	if !s.store.HasBox(user, req.GetBoxId()) {
 		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
-	sh, secret, err := s.store.CreateShare(ctx, users.NewShare{
+	sh, err := s.store.CreateShare(ctx, users.NewShare{
 		Owner: user, Box: req.GetBoxId(), TTL: time.Duration(req.GetTtlSeconds()) * time.Second,
 		UserNames: req.GetUserNames(), Write: req.GetWrite(),
 	})
@@ -54,7 +54,7 @@ func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) 
 	}
 	log.WithFunc("shares.Server.Create").Infof(ctx, "user %s shared box %s as %s: %d named users, write %t, until %s",
 		user, sh.Box, sh.ID, len(sh.Users), sh.Write, sh.ExpiresAt.UTC().Format(time.RFC3339))
-	return &controlv1.ShareSecret{Share: toShare(sh), Secret: secret}, nil
+	return &controlv1.ShareSecret{Share: toShare(sh), Secret: sh.Secret}, nil
 }
 
 func (s *Server) List(ctx context.Context, _ *controlv1.ListSharesRequest) (*controlv1.ListSharesResponse, error) {
@@ -87,12 +87,12 @@ func (s *Server) Regenerate(ctx context.Context, ref *controlv1.ShareRef) (*cont
 	if err != nil {
 		return nil, err
 	}
-	sh, secret, err := s.store.RegenerateShare(ctx, user, ref.GetShareId())
+	sh, err := s.store.RegenerateShare(ctx, user, ref.GetShareId())
 	if err != nil {
 		return nil, storeError(ctx, err, "regenerate share")
 	}
 	log.WithFunc("shares.Server.Regenerate").Infof(ctx, "user %s regenerated share %s", user, sh.ID)
-	return &controlv1.ShareSecret{Share: toShare(sh), Secret: secret}, nil
+	return &controlv1.ShareSecret{Share: toShare(sh), Secret: sh.Secret}, nil
 }
 
 func (s *Server) Revoke(ctx context.Context, ref *controlv1.ShareRef) (*controlv1.RevokeShareResponse, error) {
@@ -115,7 +115,7 @@ func caller(ctx context.Context) (string, error) {
 }
 
 func toShare(sh users.Share) *controlv1.Share {
-	out := &controlv1.Share{Id: sh.ID, BoxId: sh.Box, Write: sh.Write, ExpiresAtMs: sh.ExpiresAt.UnixMilli(), CreatedAtMs: sh.CreatedAt.UnixMilli()}
+	out := &controlv1.Share{Id: sh.ID, BoxId: sh.Box, Write: sh.Write, Secret: sh.Secret, ExpiresAtMs: sh.ExpiresAt.UnixMilli(), CreatedAtMs: sh.CreatedAt.UnixMilli()}
 	for _, u := range sh.Users {
 		out.Users = append(out.Users, &controlv1.ShareUser{Id: u.ID, Name: u.Name})
 	}

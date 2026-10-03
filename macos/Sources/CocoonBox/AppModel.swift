@@ -67,8 +67,6 @@ final class AppModel {
     // localCalls is each local agent's last box-tool call per box id.
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
-    // shareSecret is the secret of the last Create or Regenerate, kept only in memory and only for that share.
-    var shareSecret: String?
     @ObservationIgnored var computerActions = 0
     @ObservationIgnored private var loadedTranscripts: Set<String> = []
     @ObservationIgnored private var restoredLocal = false
@@ -318,6 +316,12 @@ final class AppModel {
         return true
     }
 
+    // shareSecret is nil for a share created before the api kept secrets.
+    var shareSecret: String? {
+        guard let secret = share?.secret, !secret.isEmpty else { return nil }
+        return secret
+    }
+
     var shareSetup: ShareSetup? {
         guard let box, let share, let shareSecret, let endpoint = Endpoint(url: endpointURL) else { return nil }
         return ShareSetup(endpoint: endpoint, boxID: box.id, secret: shareSecret, named: !share.users.isEmpty)
@@ -341,9 +345,7 @@ final class AppModel {
     func loadShare() async {
         guard let connection, let box else { return }
         do {
-            let live = try await connection.listShares().first { $0.boxID == box.id }
-            if live?.id != share?.id { shareSecret = nil }
-            share = live
+            share = try await connection.listShares().first { $0.boxID == box.id }
         } catch {
             report("list shares", error)
         }
@@ -354,7 +356,6 @@ final class AppModel {
         do {
             let created = try await connection.createShare(boxID: box.id, ttlSeconds: ttlSeconds, userNames: userNames, write: write)
             share = created.share
-            shareSecret = created.secret
             markShare("created")
         } catch {
             report("share", error)
@@ -377,7 +378,6 @@ final class AppModel {
         do {
             let fresh = try await connection.regenerateShare(shareID: current.id)
             share = fresh.share
-            shareSecret = fresh.secret
             markShare("regenerated")
         } catch {
             report("regenerate share", error)
@@ -389,7 +389,6 @@ final class AppModel {
         do {
             try await connection.revokeShare(shareID: current.id)
             share = nil
-            shareSecret = nil
             markShare("revoked")
         } catch {
             report("revoke share", error)
@@ -458,7 +457,6 @@ final class AppModel {
         boxes = []
         selectedBoxID = nil
         share = nil
-        shareSecret = nil
         showSignIn = true
     }
 
@@ -544,7 +542,6 @@ final class AppModel {
         loadedTranscripts = []
         hello = nil
         share = nil
-        shareSecret = nil
         selectedBoxID = id
         selectedAgentID = selectedLocal.map(Self.selectionID)
         Perf.mark("box_select", "\(id) \(box?.name ?? "-") \(box?.state ?? .unspecified)")

@@ -107,9 +107,9 @@ func TestRenameAndRemoveBox(t *testing.T) {
 		t.Fatalf("RenameBox = %+v, %v", b, err)
 	}
 
-	kept, keptSecret, _ := svc.CreateShare(t.Context(), NewShare{Owner: u.ID, Box: firstBoxID(u.ID)})
-	gone, goneSecret, _ := svc.CreateShare(t.Context(), NewShare{Owner: u.ID, Box: test.ID})
-	live, _ := svc.ShareBySecretSHA256(sum(goneSecret))
+	kept, _ := svc.CreateShare(t.Context(), NewShare{Owner: u.ID, Box: firstBoxID(u.ID)})
+	gone, _ := svc.CreateShare(t.Context(), NewShare{Owner: u.ID, Box: test.ID})
+	live, _ := svc.ShareBySecretSHA256(sum(gone.Secret))
 	var ended []string
 	svc.OnShareEnd(func(_ context.Context, sh Share) { ended = append(ended, sh.ID) })
 	if err := svc.RemoveBox(t.Context(), other.ID, test.ID); !errors.Is(err, ErrNotFound) {
@@ -121,15 +121,15 @@ func TestRenameAndRemoveBox(t *testing.T) {
 	if svc.HasBox(u.ID, test.ID) || !closed(live.Cut) || !slices.Equal(ended, []string{gone.ID}) {
 		t.Errorf("after RemoveBox: has %t, cut %t, ended %v", svc.HasBox(u.ID, test.ID), closed(live.Cut), ended)
 	}
-	if _, ok := svc.ShareBySecretSHA256(sum(goneSecret)); ok {
+	if _, ok := svc.ShareBySecretSHA256(sum(gone.Secret)); ok {
 		t.Error("the removed box's share still admits")
 	}
-	if _, ok := svc.ShareBySecretSHA256(sum(keptSecret)); !ok {
+	if _, ok := svc.ShareBySecretSHA256(sum(kept.Secret)); !ok {
 		t.Errorf("share %s of the other box ended", kept.ID)
 	}
-	var revoked bool
-	if err := query(t, dsn, "SELECT revoked_at IS NOT NULL FROM shares WHERE id = $1", gone.ID).Scan(&revoked); err != nil || !revoked {
-		t.Errorf("share row revoked = %t, %v", revoked, err)
+	var revoked, sealed bool
+	if err := query(t, dsn, "SELECT revoked_at IS NOT NULL, secret_sealed IS NOT NULL FROM shares WHERE id = $1", gone.ID).Scan(&revoked, &sealed); err != nil || !revoked || sealed {
+		t.Errorf("share row revoked = %t, keeps its secret = %t, %v", revoked, sealed, err)
 	}
 	reopened := openTestService(t, dsn, gw, tenants)
 	if got := reopened.Boxes(u.ID); len(got) != 1 || got[0].ID != firstBoxID(u.ID) {

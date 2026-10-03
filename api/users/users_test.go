@@ -384,16 +384,21 @@ func newTestService(t *testing.T) (*Service, *fakeGW, *fakeTenants, string) {
 
 func openTestService(t *testing.T, dsn string, gw *fakeGW, tenants *fakeTenants) *Service {
 	t.Helper()
-	keyFile := filepath.Join(t.TempDir(), "master.key")
-	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", masterKeySize)), 0o600); err != nil {
-		t.Fatalf("setup: %v", err)
-	}
-	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: keyFile, GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
+	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: masterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(svc.Close)
 	return svc
+}
+
+func masterKeyFile(t *testing.T) string {
+	t.Helper()
+	keyFile := filepath.Join(t.TempDir(), "master.key")
+	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", masterKeySize)), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	return keyFile
 }
 
 func freshDatabase(t *testing.T) string {

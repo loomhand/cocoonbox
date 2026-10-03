@@ -192,7 +192,7 @@ func (s *store) removeBox(ctx context.Context, owner, id string) error {
 		if tag.RowsAffected() == 0 {
 			return ErrNotFound
 		}
-		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now() WHERE box = $1 AND revoked_at IS NULL", id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now(), secret_sealed = NULL WHERE box = $1 AND revoked_at IS NULL", id); err != nil {
 			return fmt.Errorf("revoke the box's share: %w", err)
 		}
 		return nil
@@ -266,15 +266,16 @@ func (s *store) removeSessions(ctx context.Context, user string) error {
 	return s.exec(ctx, "DELETE FROM sessions WHERE user_id = $1", user)
 }
 
-// insertShare stores rec as box's live share; an expired share left unrevoked gives way to it.
-func (s *store) insertShare(ctx context.Context, rec *shareRecord) error {
+// insertShare stores rec as box's live share with its sealed secret; an expired share left unrevoked gives way to it.
+func (s *store) insertShare(ctx context.Context, rec *shareRecord, sealed []byte) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now() WHERE box = $1 AND revoked_at IS NULL AND expires_at <= now()", rec.box); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now(), secret_sealed = NULL WHERE box = $1 AND revoked_at IS NULL AND expires_at <= now()",
+			rec.box); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO shares (id, box, owner, secret_sha256, user_ids, write, expires_at, created_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-			rec.id, rec.box, rec.owner, rec.secretSHA256, rec.userIDs, rec.write, rec.expiresAt, rec.createdAt)
+		_, err := tx.Exec(ctx, `INSERT INTO shares (id, box, owner, secret_sha256, secret_sealed, user_ids, write, expires_at, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			rec.id, rec.box, rec.owner, rec.secretSHA256, sealed, rec.userIDs, rec.write, rec.expiresAt, rec.createdAt)
 		return err
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
@@ -286,15 +287,19 @@ func (s *store) insertShare(ctx context.Context, rec *shareRecord) error {
 	return nil
 }
 
+// liveShares returns the live shares, after it forgets the secrets of the shares that ended while no api ran.
 func (s *store) liveShares(ctx context.Context) ([]*shareRecord, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, box, owner, secret_sha256, user_ids, write, expires_at, created_at
+	if _, err := s.pool.Exec(ctx, "UPDATE shares SET secret_sealed = NULL WHERE secret_sealed IS NOT NULL AND (revoked_at IS NOT NULL OR expires_at <= now())"); err != nil {
+		return nil, fmt.Errorf("clear ended share secrets: %w", err)
+	}
+	rows, err := s.pool.Query(ctx, `SELECT id, box, owner, secret_sha256, secret_sealed, user_ids, write, expires_at, created_at
 		FROM shares WHERE revoked_at IS NULL AND expires_at > now()`)
 	if err != nil {
 		return nil, fmt.Errorf("list shares: %w", err)
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (*shareRecord, error) {
 		rec := &shareRecord{}
-		err := row.Scan(&rec.id, &rec.box, &rec.owner, &rec.secretSHA256, &rec.userIDs, &rec.write, &rec.expiresAt, &rec.createdAt)
+		err := row.Scan(&rec.id, &rec.box, &rec.owner, &rec.secretSHA256, &rec.secretSealed, &rec.userIDs, &rec.write, &rec.expiresAt, &rec.createdAt)
 		return rec, err
 	})
 }
@@ -303,12 +308,16 @@ func (s *store) setShareWrite(ctx context.Context, id string, write bool) error 
 	return s.execShare(ctx, "UPDATE shares SET write = $2 WHERE id = $1 AND revoked_at IS NULL", id, write)
 }
 
-func (s *store) setShareSecret(ctx context.Context, id, sha string) error {
-	return s.execShare(ctx, "UPDATE shares SET secret_sha256 = $2 WHERE id = $1 AND revoked_at IS NULL", id, sha)
+func (s *store) setShareSecret(ctx context.Context, id, sha string, sealed []byte) error {
+	return s.execShare(ctx, "UPDATE shares SET secret_sha256 = $2, secret_sealed = $3 WHERE id = $1 AND revoked_at IS NULL", id, sha, sealed)
 }
 
 func (s *store) revokeShare(ctx context.Context, id string) error {
-	return s.execShare(ctx, "UPDATE shares SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL", id)
+	return s.execShare(ctx, "UPDATE shares SET revoked_at = now(), secret_sealed = NULL WHERE id = $1 AND revoked_at IS NULL", id)
+}
+
+func (s *store) clearShareSecret(ctx context.Context, id string) error {
+	return s.exec(ctx, "UPDATE shares SET secret_sealed = NULL WHERE id = $1", id)
 }
 
 // execShare runs an update of one live share; a share that is gone is ErrNotFound.

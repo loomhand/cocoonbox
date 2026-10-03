@@ -179,8 +179,9 @@ async function loadShares(boxes) {
     cell(row, new Date(sh.expires_at_ms).toLocaleString());
     const actions = cell(row, "");
     actions.className = "actions";
+    if (sh.secret) actions.appendChild(button("Show link", async () => showLink({ share: sh, secret: sh.secret })));
     actions.appendChild(button("Regenerate link", async () => {
-      if (!confirm("Regenerate the link? The old link and every session on it stop at once.")) return;
+      if (!confirm("Replace the link and end the old link's sessions? The old link stops at once.")) return;
       showLink(await api("POST", "shares/" + encodeURIComponent(sh.id) + "/regenerate"));
       await load();
     }));

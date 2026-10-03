@@ -651,9 +651,8 @@ actor MockWorld {
                 $0.name = name
             })
         }
-        share = created
         sharesCreated += 1
-        return secret(for: created)
+        return issue(created)
     }
 
     func listShares() -> [Share] {
@@ -670,7 +669,7 @@ actor MockWorld {
     func regenerateShare(id: String) throws -> Cocoonbox_Control_V1_ShareSecret {
         guard let live = share, live.id == id else { throw RPCError(code: .notFound, message: "share not found") }
         endSessions(share: id, reason: "the share link was regenerated")
-        return secret(for: live)
+        return issue(live)
     }
 
     func revokeShare(id: String) throws {
@@ -697,10 +696,14 @@ actor MockWorld {
         }
     }
 
-    private func secret(for share: Share) -> Cocoonbox_Control_V1_ShareSecret {
-        .with {
-            $0.share = share
-            $0.secret = "cbs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    // issue gives the share a new secret and keeps it, so List returns the link as the api does.
+    private func issue(_ live: Share) -> Cocoonbox_Control_V1_ShareSecret {
+        var issued = live
+        issued.secret = "cbs_" + UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        share = issued
+        return .with {
+            $0.share = issued
+            $0.secret = issued.secret
         }
     }
 

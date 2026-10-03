@@ -26,10 +26,12 @@ type Share struct {
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	BoxId string                 `protobuf:"bytes,2,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
 	// Empty: anyone with the link.
-	Users         []*ShareUser `protobuf:"bytes,3,rep,name=users,proto3" json:"users,omitempty"`
-	Write         bool         `protobuf:"varint,4,opt,name=write,proto3" json:"write,omitempty"`
-	ExpiresAtMs   int64        `protobuf:"varint,5,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
-	CreatedAtMs   int64        `protobuf:"varint,6,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
+	Users       []*ShareUser `protobuf:"bytes,3,rep,name=users,proto3" json:"users,omitempty"`
+	Write       bool         `protobuf:"varint,4,opt,name=write,proto3" json:"write,omitempty"`
+	ExpiresAtMs int64        `protobuf:"varint,5,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
+	CreatedAtMs int64        `protobuf:"varint,6,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
+	// `cbs_` and 32 hex digits; empty for a share created before the api kept secrets.
+	Secret        string `protobuf:"bytes,7,opt,name=secret,proto3" json:"secret,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -104,6 +106,13 @@ func (x *Share) GetCreatedAtMs() int64 {
 		return x.CreatedAtMs
 	}
 	return 0
+}
+
+func (x *Share) GetSecret() string {
+	if x != nil {
+		return x.Secret
+	}
+	return ""
 }
 
 type ShareUser struct {
@@ -205,7 +214,7 @@ func (x *ShareRef) GetShareId() string {
 type ShareSecret struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Share *Share                 `protobuf:"bytes,1,opt,name=share,proto3" json:"share,omitempty"`
-	// `cbs_` and 32 hex digits; shown once.
+	// The same as share.secret.
 	Secret        string `protobuf:"bytes,2,opt,name=secret,proto3" json:"secret,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -497,14 +506,15 @@ var File_cocoonbox_control_v1_shares_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_shares_proto_rawDesc = "" +
 	"\n" +
-	"!cocoonbox/control/v1/shares.proto\x12\x14cocoonbox.control.v1\"\xc3\x01\n" +
+	"!cocoonbox/control/v1/shares.proto\x12\x14cocoonbox.control.v1\"\xdb\x01\n" +
 	"\x05Share\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06box_id\x18\x02 \x01(\tR\x05boxId\x125\n" +
 	"\x05users\x18\x03 \x03(\v2\x1f.cocoonbox.control.v1.ShareUserR\x05users\x12\x14\n" +
 	"\x05write\x18\x04 \x01(\bR\x05write\x12\"\n" +
 	"\rexpires_at_ms\x18\x05 \x01(\x03R\vexpiresAtMs\x12\"\n" +
-	"\rcreated_at_ms\x18\x06 \x01(\x03R\vcreatedAtMs\"/\n" +
+	"\rcreated_at_ms\x18\x06 \x01(\x03R\vcreatedAtMs\x12\x16\n" +
+	"\x06secret\x18\a \x01(\tR\x06secret\"/\n" +
 	"\tShareUser\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\"%\n" +

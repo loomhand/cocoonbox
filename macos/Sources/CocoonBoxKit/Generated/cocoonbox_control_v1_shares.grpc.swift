@@ -122,8 +122,8 @@ extension Cocoonbox_Control_V1_Shares {
     /// >
     /// > Shares is served by cocoonbox-api for a box's owner, who authenticates with
     /// > `authorization: Bearer <user token>`. A box has at most one live share. The
-    /// > share secret is returned only by Create and Regenerate; the api keeps its
-    /// > SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+    /// > api keeps the share secret sealed and returns it to the owner in every
+    /// > Share. The link is `<endpoint>/cb/s/#<secret>`.
     public protocol StreamingServiceProtocol: GRPCCore.RegistrableRPCService {
         /// Handle the "Create" method.
         ///
@@ -228,8 +228,8 @@ extension Cocoonbox_Control_V1_Shares {
     /// >
     /// > Shares is served by cocoonbox-api for a box's owner, who authenticates with
     /// > `authorization: Bearer <user token>`. A box has at most one live share. The
-    /// > share secret is returned only by Create and Regenerate; the api keeps its
-    /// > SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+    /// > api keeps the share secret sealed and returns it to the owner in every
+    /// > Share. The link is `<endpoint>/cb/s/#<secret>`.
     public protocol ServiceProtocol: Cocoonbox_Control_V1_Shares.StreamingServiceProtocol {
         /// Handle the "Create" method.
         ///
@@ -332,8 +332,8 @@ extension Cocoonbox_Control_V1_Shares {
     /// >
     /// > Shares is served by cocoonbox-api for a box's owner, who authenticates with
     /// > `authorization: Bearer <user token>`. A box has at most one live share. The
-    /// > share secret is returned only by Create and Regenerate; the api keeps its
-    /// > SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+    /// > api keeps the share secret sealed and returns it to the owner in every
+    /// > Share. The link is `<endpoint>/cb/s/#<secret>`.
     public protocol SimpleServiceProtocol: Cocoonbox_Control_V1_Shares.ServiceProtocol {
         /// Handle the "Create" method.
         ///
@@ -630,8 +630,8 @@ extension Cocoonbox_Control_V1_Shares {
     /// >
     /// > Shares is served by cocoonbox-api for a box's owner, who authenticates with
     /// > `authorization: Bearer <user token>`. A box has at most one live share. The
-    /// > share secret is returned only by Create and Regenerate; the api keeps its
-    /// > SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+    /// > api keeps the share secret sealed and returns it to the owner in every
+    /// > Share. The link is `<endpoint>/cb/s/#<secret>`.
     public protocol ClientProtocol: Sendable {
         /// Call the "Create" method.
         ///
@@ -759,8 +759,8 @@ extension Cocoonbox_Control_V1_Shares {
     /// >
     /// > Shares is served by cocoonbox-api for a box's owner, who authenticates with
     /// > `authorization: Bearer <user token>`. A box has at most one live share. The
-    /// > share secret is returned only by Create and Regenerate; the api keeps its
-    /// > SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+    /// > api keeps the share secret sealed and returns it to the owner in every
+    /// > Share. The link is `<endpoint>/cb/s/#<secret>`.
     public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {
         private let client: GRPCCore.GRPCClient<Transport>
 

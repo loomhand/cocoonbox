@@ -32,8 +32,8 @@ const (
 //
 // Shares is served by cocoonbox-api for a box's owner, who authenticates with
 // `authorization: Bearer <user token>`. A box has at most one live share. The
-// share secret is returned only by Create and Regenerate; the api keeps its
-// SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+// api keeps the share secret sealed and returns it to the owner in every
+// Share. The link is `<endpoint>/cb/s/#<secret>`.
 type SharesClient interface {
 	// Create shares a box of the caller; ALREADY_EXISTS while the box has a live share.
 	Create(ctx context.Context, in *CreateShareRequest, opts ...grpc.CallOption) (*ShareSecret, error)
@@ -111,8 +111,8 @@ func (c *sharesClient) Revoke(ctx context.Context, in *ShareRef, opts ...grpc.Ca
 //
 // Shares is served by cocoonbox-api for a box's owner, who authenticates with
 // `authorization: Bearer <user token>`. A box has at most one live share. The
-// share secret is returned only by Create and Regenerate; the api keeps its
-// SHA-256. The link is `<endpoint>/cb/s/#<secret>`.
+// api keeps the share secret sealed and returns it to the owner in every
+// Share. The link is `<endpoint>/cb/s/#<secret>`.
 type SharesServer interface {
 	// Create shares a box of the caller; ALREADY_EXISTS while the box has a live share.
 	Create(context.Context, *CreateShareRequest) (*ShareSecret, error)
