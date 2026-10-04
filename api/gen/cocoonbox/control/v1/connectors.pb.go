@@ -304,6 +304,8 @@ type Connector struct {
 	// Only when ListConnectorsRequest.with_tools is set.
 	Tools         []*ConnectorTool `protobuf:"bytes,8,rep,name=tools,proto3" json:"tools,omitempty"`
 	ConnectedAtMs int64            `protobuf:"varint,9,opt,name=connected_at_ms,json=connectedAtMs,proto3" json:"connected_at_ms,omitempty"`
+	// Why the tools could not be listed, such as the MCP server's refusal; empty otherwise.
+	ToolsError    string `protobuf:"bytes,10,opt,name=tools_error,json=toolsError,proto3" json:"tools_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -399,6 +401,13 @@ func (x *Connector) GetConnectedAtMs() int64 {
 		return x.ConnectedAtMs
 	}
 	return 0
+}
+
+func (x *Connector) GetToolsError() string {
+	if x != nil {
+		return x.ToolsError
+	}
+	return ""
 }
 
 type ConnectorTool struct {
@@ -1161,7 +1170,7 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"installUrl\"\x10\n" +
 	"\x0eCatalogRequest\"O\n" +
 	"\x0fCatalogResponse\x12<\n" +
-	"\aentries\x18\x01 \x03(\v2\".cocoonbox.control.v1.CatalogEntryR\aentries\"\x89\x02\n" +
+	"\aentries\x18\x01 \x03(\v2\".cocoonbox.control.v1.CatalogEntryR\aentries\"\xaa\x02\n" +
 	"\tConnector\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x12\n" +
@@ -1171,7 +1180,10 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\x06scopes\x18\x06 \x03(\tR\x06scopes\x12\x17\n" +
 	"\amcp_url\x18\a \x01(\tR\x06mcpUrl\x129\n" +
 	"\x05tools\x18\b \x03(\v2#.cocoonbox.control.v1.ConnectorToolR\x05tools\x12&\n" +
-	"\x0fconnected_at_ms\x18\t \x01(\x03R\rconnectedAtMs\"\x8c\x02\n" +
+	"\x0fconnected_at_ms\x18\t \x01(\x03R\rconnectedAtMs\x12\x1f\n" +
+	"\vtools_error\x18\n" +
+	" \x01(\tR\n" +
+	"toolsError\"\x8c\x02\n" +
 	"\rConnectorTool\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +

@@ -76,6 +76,8 @@ message Connector {
   // Only when ListConnectorsRequest.with_tools is set.
   repeated ConnectorTool tools = 8;
   int64 connected_at_ms = 9;
+  // Why the tools could not be listed, such as the MCP server's refusal; empty otherwise.
+  string tools_error = 10;
 }
 
 message ConnectorTool {
