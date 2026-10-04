@@ -5,15 +5,14 @@ import (
 	"embed"
 	"errors"
 	"fmt"
-	"io/fs"
-	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/CMGS/cocoonbox/api/migrate"
 )
 
 const (
@@ -38,63 +37,14 @@ func openStore(ctx context.Context, dsn string) (*store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
-	s := &store{pool: pool}
-	if err := s.migrate(ctx); err != nil {
+	if err := migrate.Apply(ctx, pool, migrations, "schema_migrations", migrationLock); err != nil {
 		pool.Close()
 		return nil, err
 	}
-	return s, nil
+	return &store{pool: pool}, nil
 }
 
 func (s *store) close() { s.pool.Close() }
-
-// migrate applies the embedded migrations not yet recorded, one replica at a time.
-func (s *store) migrate(ctx context.Context) error {
-	conn, err := s.pool.Acquire(ctx)
-	if err != nil {
-		return fmt.Errorf("connect database: %w", err)
-	}
-	defer conn.Release()
-	if _, err = conn.Exec(ctx, "SELECT pg_advisory_lock($1)", migrationLock); err != nil {
-		return fmt.Errorf("lock migrations: %w", err)
-	}
-	defer func() { _, _ = conn.Exec(context.WithoutCancel(ctx), "SELECT pg_advisory_unlock($1)", migrationLock) }()
-	if _, err = conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS schema_migrations (version integer PRIMARY KEY)"); err != nil {
-		return fmt.Errorf("create schema_migrations: %w", err)
-	}
-	names, err := fs.Glob(migrations, "migrations/*.sql")
-	if err != nil {
-		return err
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		version, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(name, "migrations/"), "_", 2)[0])
-		if err != nil {
-			return fmt.Errorf("migration %s: name must start with its number", name)
-		}
-		var applied bool
-		if err = conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE version = $1)", version).Scan(&applied); err != nil {
-			return fmt.Errorf("read schema_migrations: %w", err)
-		}
-		if applied {
-			continue
-		}
-		sql, err := migrations.ReadFile(name)
-		if err != nil {
-			return err
-		}
-		if err := pgx.BeginFunc(ctx, conn, func(tx pgx.Tx) error {
-			if _, err := tx.Exec(ctx, string(sql)); err != nil {
-				return err
-			}
-			_, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", version)
-			return err
-		}); err != nil {
-			return fmt.Errorf("apply migration %s: %w", name, err)
-		}
-	}
-	return nil
-}
 
 func (s *store) all(ctx context.Context) ([]record, error) {
 	rows, err := s.pool.Query(ctx, "SELECT "+recordColumns+" FROM users ORDER BY name")
