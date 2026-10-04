@@ -24,19 +24,22 @@ CHROME_WARMUP = ("(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user t
                  "--no-first-run --user-data-dir=/tmp/cb-warmup-chrome --dump-dom about:blank > /dev/null 2>&1; "
                  "rm -rf /tmp/cb-warmup-chrome; true; }")
 CHROME_WARMUP_FROM = 15
+INJECT_FROM = 23
 
 if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
     sys.exit(__doc__)
-egress = {"allow": [{"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"},
-                    {"host": GATEWAY, "ports": [STATE_PORT]},
-                    {"host": "*"}]}
+gw = {"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"}
+rest = [{"host": GATEWAY, "ports": [STATE_PORT]}, {"host": "*"}]
+egress = {"allow": [gw, *rest]}
+inject_egress = {"allow": [gw, {"host": "*", "intercept": "inject"}, *rest]}
 pools = []
 for arg in sys.argv[1:]:
     template, warm = arg.rsplit("=", 1)
     version = re.fullmatch(r"cbdesk:v(\d+)", template)
-    warmup = CHROME_WARMUP if version and int(version[1]) >= CHROME_WARMUP_FROM else WARMUP
+    n = int(version[1]) if version else 0
+    warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
     pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
-                  "warmup": ["bash", "-c", warmup], "egress": egress})
+                  "warmup": ["bash", "-c", warmup], "egress": inject_egress if n >= INJECT_FROM else egress})
 conf = {
     "listen": LISTEN,
     "advertise_addr": LISTEN,
