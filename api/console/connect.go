@@ -42,6 +42,7 @@ type connector struct {
 	MCPURL      string        `json:"mcp_url"`
 	ConnectedAt int64         `json:"connected_at_ms"`
 	Tools       []connectTool `json:"tools"`
+	ToolsError  string        `json:"tools_error,omitempty"`
 }
 
 type catalogEntry struct {
@@ -248,7 +249,7 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 func toConnector(c *controlv1.Connector) connector {
 	out := connector{
 		ID: c.GetId(), Kind: c.GetKind(), Name: c.GetName(), Account: c.GetAccount(), Status: c.GetStatus(), Scopes: c.GetScopes(),
-		MCPURL: c.GetMcpUrl(), ConnectedAt: c.GetConnectedAtMs(), Tools: []connectTool{},
+		MCPURL: c.GetMcpUrl(), ConnectedAt: c.GetConnectedAtMs(), Tools: []connectTool{}, ToolsError: c.GetToolsError(),
 	}
 	for _, t := range c.GetTools() {
 		out.Tools = append(out.Tools, connectTool{

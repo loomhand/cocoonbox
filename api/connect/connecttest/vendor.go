@@ -46,6 +46,8 @@ type Vendor struct {
 	SSE bool
 	// Delay holds each refresh, so concurrent refreshes overlap.
 	Delay time.Duration
+	// Refusal answers tools/list with this HTTP 403 body, as a server that does not admit the account.
+	Refusal string
 
 	mu        sync.Mutex
 	codes     map[string]codeGrant
@@ -257,6 +259,10 @@ func (v *Vendor) serveMCP(w http.ResponseWriter, r *http.Request, auth string) {
 		w.Header().Set("Mcp-Session-Id", "s-"+token())
 		result = map[string]any{"protocolVersion": "2025-11-25", "capabilities": map[string]any{"tools": map[string]any{}}, "serverInfo": map[string]any{"name": "mock"}}
 	case "tools/list":
+		if v.Refusal != "" {
+			http.Error(w, v.Refusal, http.StatusForbidden)
+			return
+		}
 		result = map[string]any{"tools": []any{
 			map[string]any{"name": "list_items", "description": "List items.", "inputSchema": map[string]any{"type": "object"}, "annotations": map[string]any{"readOnlyHint": true}},
 			map[string]any{"name": "create_item", "description": "Create an item.", "inputSchema": map[string]any{"type": "object"}},

@@ -218,6 +218,7 @@ func (s *Service) connector(ctx context.Context, g *grant, withTools bool) *cont
 	tools, err := s.tools(ctx, g)
 	if err != nil {
 		log.WithFunc("connect.Service.connector").Warnf(ctx, "list the tools of %s for %s: %v", g.connector, g.user, err)
+		out.ToolsError = shorten(err.Error(), maxErrorExcerpt)
 		return out
 	}
 	for _, t := range tools {

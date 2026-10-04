@@ -125,6 +125,22 @@ func TestClientMetadataDocumentReplacesRegistration(t *testing.T) {
 	}
 }
 
+func TestAToolsRefusalReachesTheConnector(t *testing.T) {
+	env := newEnv(t)
+	env.vendor.Refusal = `{"error": "the account is not enrolled in the preview"}`
+	env.connect(t)
+	list, err := env.svc.List(auth.WithUser(t.Context(), alice), &controlv1.ListConnectorsRequest{WithTools: true})
+	if err != nil || len(list.GetConnectors()) != 1 {
+		t.Fatalf("List = %v, %v", list, err)
+	}
+	if got := list.GetConnectors()[0].GetToolsError(); got != `the MCP server answered HTTP 403: {"error": "the account is not enrolled in the preview"}` {
+		t.Errorf("tools error = %q", got)
+	}
+	if g := env.grant(t); g.status != statusActive {
+		t.Errorf("status = %s", g.status)
+	}
+}
+
 func TestModeBServesAskToolsAsDestructiveWithoutAGate(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)

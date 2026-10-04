@@ -80,7 +80,7 @@ function toolsTable(c) {
     });
     cell(row, "").appendChild(select);
   }
-  if (!c.tools.length) cell(body.insertRow(), c.status === "active" ? "No tools listed: the server did not answer." : "Reconnect to list the tools.");
+  if (!c.tools.length) cell(body.insertRow(), c.status !== "active" ? "Reconnect to list the tools." : c.tools_error ? "No tools: " + c.tools_error : "The server lists no tools.");
   return table;
 }
 

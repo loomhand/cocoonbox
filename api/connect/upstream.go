@@ -25,6 +25,7 @@ const (
 	headerProtocol   = "MCP-Protocol-Version"
 	maxUpstreamBody  = 8 << 20
 	maxToolPages     = 20
+	maxErrorExcerpt  = 300
 	clientName       = "cocoonbox-connect"
 	eventStreamMedia = "text/event-stream"
 )
@@ -69,9 +70,12 @@ func (e *rpcError) code() int {
 
 type statusError struct {
 	status int
+	body   string
 }
 
-func (e *statusError) Error() string { return "the MCP server answered HTTP " + strconv.Itoa(e.status) }
+func (e *statusError) Error() string {
+	return strings.TrimSuffix("the MCP server answered HTTP "+strconv.Itoa(e.status)+": "+e.body, ": ")
+}
 
 type exchange struct {
 	status    int
@@ -186,8 +190,9 @@ func (u *upstream) send(ctx context.Context, session, version string, msg rpcReq
 	case resp.StatusCode == http.StatusNotFound && session != "":
 		return nil, "", ex, errSessionGone
 	case resp.StatusCode/100 != 2:
+		excerpt, _ := io.ReadAll(io.LimitReader(counted, maxErrorExcerpt))
 		_, _ = io.Copy(io.Discard, counted)
-		return nil, "", ex, &statusError{status: resp.StatusCode}
+		return nil, "", ex, &statusError{status: resp.StatusCode, body: strings.Join(strings.Fields(string(excerpt)), " ")}
 	case msg.ID == 0:
 		_, _ = io.Copy(io.Discard, counted)
 		return nil, "", ex, nil
