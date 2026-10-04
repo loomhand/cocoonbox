@@ -1,0 +1,288 @@
+package connect
+
+import (
+	"bytes"
+	"cmp"
+	"crypto/rand"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/projecteru2/core/log"
+)
+
+const (
+	// MCPPath is the mode B door, next to the control MCP on the edge's MCP listener.
+	MCPPath = "/cocoonbox.mcp/connect"
+
+	fallbackVersion = "2025-11-25"
+	maxRequestBody  = 1 << 20
+	keepalive       = 25 * time.Second
+	sessionTTL      = 24 * time.Hour
+
+	codeParse          = -32700
+	codeInvalidRequest = -32600
+	codeMethodNotFound = -32601
+	codeInvalidParams  = -32602
+	codeInternal       = -32603
+)
+
+var (
+	protocolVersions = []string{"2025-11-25", "2025-06-18"}
+	listChanged      = []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n")
+)
+
+// Authenticator maps an Authorization header value to its user.
+type Authenticator interface {
+	Authenticate(header string) (string, error)
+}
+
+type session struct {
+	client string
+	at     time.Time
+}
+
+type response struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id,omitzero"`
+	Result  any            `json:"result,omitzero"`
+	Error   *rpcError      `json:"error,omitzero"`
+}
+
+// Door serves the connector tools of the bearer's user over MCP Streamable HTTP for one door.
+type Door struct {
+	svc   *Service
+	authn Authenticator
+	door  string
+
+	mu      sync.Mutex
+	clients map[string]session
+}
+
+func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	start := time.Now()
+	user, err := d.authn.Authenticate(r.Header.Get("Authorization"))
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	switch r.Method {
+	case http.MethodPost:
+	case http.MethodGet:
+		if !strings.Contains(r.Header.Get("Accept"), eventStreamMedia) {
+			http.Error(w, "accept text/event-stream", http.StatusNotAcceptable)
+			return
+		}
+		d.stream(w, r, user)
+		return
+	case http.MethodDelete:
+		d.mu.Lock()
+		delete(d.clients, r.Header.Get(headerSession))
+		d.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+		return
+	default:
+		w.Header().Set("Allow", "GET, POST, DELETE")
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, response{JSONRPC: jsonRPCVersion, Error: &rpcError{Code: codeParse, Message: fmt.Sprintf("read body: %v", err)}})
+		return
+	}
+	var req struct {
+		ID     jsontext.Value `json:"id"`
+		Method string         `json:"method"`
+		Params jsontext.Value `json:"params"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, response{JSONRPC: jsonRPCVersion, Error: &rpcError{Code: codeInvalidRequest, Message: "expected one JSON-RPC message"}})
+		return
+	}
+	if len(req.ID) == 0 {
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	c := caller{user: user, door: d.door, name: d.door + ":" + d.client(r.Header.Get(headerSession))}
+	var (
+		call struct {
+			Name      string         `json:"name"`
+			Arguments jsontext.Value `json:"arguments"`
+			Meta      struct {
+				ApprovalID string `json:"cocoonbox/approval_id"`
+			} `json:"_meta"`
+		}
+		result any
+		rpcErr *rpcError
+	)
+	defer func() {
+		log.WithFunc("connect.Door.ServeHTTP").Infof(r.Context(), "%s %s %s user=%s code=%d in %s",
+			d.door, req.Method, cmp.Or(call.Name, "-"), user, rpcErr.code(), time.Since(start).Round(time.Millisecond))
+	}()
+	switch req.Method {
+	case methodInitialize:
+		result = d.initialize(w, req.Params)
+	case "ping":
+		result = struct{}{}
+	case "tools/list":
+		tools, err := d.svc.doorTools(r.Context(), c)
+		if err != nil {
+			rpcErr = internalError(r, err)
+			break
+		}
+		result = map[string]any{"tools": tools}
+	case "tools/call":
+		if err := json.Unmarshal(req.Params, &call); err != nil || call.Name == "" {
+			rpcErr = &rpcError{Code: codeInvalidParams, Message: "invalid tools/call params"}
+			break
+		}
+		out, err := d.svc.doorCall(r.Context(), c, call.Name, call.Arguments, call.Meta.ApprovalID)
+		if errors.As(err, &rpcErr) {
+			break
+		}
+		if err != nil {
+			rpcErr = internalError(r, err)
+			break
+		}
+		result = out
+	default:
+		rpcErr = &rpcError{Code: codeMethodNotFound, Message: "method not found: " + req.Method}
+	}
+	resp := response{JSONRPC: jsonRPCVersion, ID: req.ID, Result: result}
+	if rpcErr != nil {
+		resp.Result, resp.Error = nil, rpcErr
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (d *Door) initialize(w http.ResponseWriter, params jsontext.Value) map[string]any {
+	var req struct {
+		ProtocolVersion string `json:"protocolVersion"`
+		ClientInfo      struct {
+			Name string `json:"name"`
+		} `json:"clientInfo"`
+	}
+	_ = json.Unmarshal(params, &req)
+	id := rand.Text()
+	now := time.Now()
+	d.mu.Lock()
+	for k, v := range d.clients {
+		if now.Sub(v.at) > sessionTTL {
+			delete(d.clients, k)
+		}
+	}
+	d.clients[id] = session{client: cmp.Or(req.ClientInfo.Name, "unknown"), at: now}
+	d.mu.Unlock()
+	w.Header().Set(headerSession, id)
+	version := fallbackVersion
+	if slices.Contains(protocolVersions, req.ProtocolVersion) {
+		version = req.ProtocolVersion
+	}
+	return map[string]any{
+		"protocolVersion": version,
+		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": true}},
+		"serverInfo":      implementation{Name: clientName, Version: "1"},
+	}
+}
+
+func (d *Door) client(id string) string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if s, ok := d.clients[id]; ok {
+		return s.client
+	}
+	return "unknown"
+}
+
+func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
+	changes, stop := d.svc.watchers.add(user)
+	defer stop()
+	w.Header().Set("Content-Type", eventStreamMedia)
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	rc := http.NewResponseController(w)
+	_ = rc.Flush()
+	tick := time.Tick(keepalive)
+	for {
+		var msg []byte
+		select {
+		case <-r.Context().Done():
+			return
+		case <-changes:
+			msg = listChanged
+		case <-tick:
+			msg = []byte(": keepalive\n\n")
+		}
+		if _, err := w.Write(msg); err != nil || rc.Flush() != nil {
+			return
+		}
+	}
+}
+
+// NewDoor serves the tools for door, authenticating with authn.
+func (s *Service) NewDoor(authn Authenticator, door string) *Door {
+	return &Door{svc: s, authn: authn, door: door, clients: map[string]session{}}
+}
+
+type watchers struct {
+	mu     sync.Mutex
+	byUser map[string]map[chan struct{}]struct{}
+}
+
+func newWatchers() *watchers {
+	return &watchers{byUser: map[string]map[chan struct{}]struct{}{}}
+}
+
+func (w *watchers) add(user string) (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.byUser[user] == nil {
+		w.byUser[user] = map[chan struct{}]struct{}{}
+	}
+	w.byUser[user][ch] = struct{}{}
+	return ch, func() {
+		w.mu.Lock()
+		defer w.mu.Unlock()
+		delete(w.byUser[user], ch)
+		if len(w.byUser[user]) == 0 {
+			delete(w.byUser, user)
+		}
+	}
+}
+
+func (w *watchers) notify(user string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for ch := range w.byUser[user] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func internalError(r *http.Request, err error) *rpcError {
+	log.WithFunc("connect.internalError").Errorf(r.Context(), err, "%s %s", r.Method, r.URL.Path)
+	return &rpcError{Code: codeInternal, Message: "internal error"}
+}
+
+func writeJSON(w http.ResponseWriter, httpStatus int, body any) {
+	var buf bytes.Buffer
+	if err := json.MarshalWrite(&buf, body); err != nil {
+		httpStatus = http.StatusInternalServerError
+		buf.Reset()
+		buf.WriteString(`{"jsonrpc":"2.0","error":{"code":-32603,"message":"encode response"}}`)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(httpStatus)
+	_, _ = w.Write(buf.Bytes())
+}
