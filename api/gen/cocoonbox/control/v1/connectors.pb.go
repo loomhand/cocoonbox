@@ -137,7 +137,11 @@ type CatalogEntry struct {
 	// False when the api has no OAuth client for the vendor.
 	Available bool `protobuf:"varint,4,opt,name=available,proto3" json:"available,omitempty"`
 	// Where the user picks the repositories of the GitHub App; empty otherwise.
-	InstallUrl    string `protobuf:"bytes,5,opt,name=install_url,json=installUrl,proto3" json:"install_url,omitempty"`
+	InstallUrl string `protobuf:"bytes,5,opt,name=install_url,json=installUrl,proto3" json:"install_url,omitempty"`
+	// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection (M5.2).
+	GrantOnly bool `protobuf:"varint,6,opt,name=grant_only,json=grantOnly,proto3" json:"grant_only,omitempty"`
+	// The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
+	Checkable     bool `protobuf:"varint,7,opt,name=checkable,proto3" json:"checkable,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -205,6 +209,20 @@ func (x *CatalogEntry) GetInstallUrl() string {
 		return x.InstallUrl
 	}
 	return ""
+}
+
+func (x *CatalogEntry) GetGrantOnly() bool {
+	if x != nil {
+		return x.GrantOnly
+	}
+	return false
+}
+
+func (x *CatalogEntry) GetCheckable() bool {
+	if x != nil {
+		return x.Checkable
+	}
+	return false
 }
 
 type CatalogRequest struct {
@@ -1160,14 +1178,17 @@ var File_cocoonbox_control_v1_connectors_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\n" +
-	"%cocoonbox/control/v1/connectors.proto\x12\x14cocoonbox.control.v1\"\x93\x01\n" +
+	"%cocoonbox/control/v1/connectors.proto\x12\x14cocoonbox.control.v1\"\xd0\x01\n" +
 	"\fCatalogEntry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1c\n" +
 	"\tavailable\x18\x04 \x01(\bR\tavailable\x12\x1f\n" +
 	"\vinstall_url\x18\x05 \x01(\tR\n" +
-	"installUrl\"\x10\n" +
+	"installUrl\x12\x1d\n" +
+	"\n" +
+	"grant_only\x18\x06 \x01(\bR\tgrantOnly\x12\x1c\n" +
+	"\tcheckable\x18\a \x01(\bR\tcheckable\"\x10\n" +
 	"\x0eCatalogRequest\"O\n" +
 	"\x0fCatalogResponse\x12<\n" +
 	"\aentries\x18\x01 \x03(\v2\".cocoonbox.control.v1.CatalogEntryR\aentries\"\xaa\x02\n" +

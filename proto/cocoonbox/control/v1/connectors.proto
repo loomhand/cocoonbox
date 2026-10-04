@@ -52,6 +52,10 @@ message CatalogEntry {
   bool available = 4;
   // Where the user picks the repositories of the GitHub App; empty otherwise.
   string install_url = 5;
+  // The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection (M5.2).
+  bool grant_only = 6;
+  // The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
+  bool checkable = 7;
 }
 
 message CatalogRequest {}
