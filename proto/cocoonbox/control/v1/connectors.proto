@@ -1,0 +1,164 @@
+syntax = "proto3";
+
+package cocoonbox.control.v1;
+
+option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
+
+// Connectors is served by cocoonbox-api for the caller's own external accounts
+// (design §16), with `authorization: Bearer <user token>`. The api holds every
+// grant; no message carries a token, a refresh token or an API key.
+service Connectors {
+  // Catalog lists the connectors the api offers.
+  rpc Catalog(CatalogRequest) returns (CatalogResponse);
+  // List returns the caller's connected accounts.
+  rpc List(ListConnectorsRequest) returns (ListConnectorsResponse);
+  // Begin returns the console page that connects the account. The console
+  // binds the flow to its own session, so the app opens the URL in the browser.
+  rpc Begin(BeginConnectRequest) returns (BeginConnectResponse);
+  // Disconnect revokes the grant at the vendor where the vendor offers a
+  // revoke call, then deletes it; its tools leave every MCP session.
+  rpc Disconnect(ConnectorRef) returns (DisconnectResponse);
+  // SetPolicy sets one tool's policy; POLICY_UNSPECIFIED returns it to the default.
+  rpc SetPolicy(SetPolicyRequest) returns (Connector);
+  // Approve answers an approval-required call from a box (§16.5).
+  rpc Approve(ApproveRequest) returns (ApproveResponse);
+  // Activity returns the caller's audit records, newest first.
+  rpc Activity(ActivityRequest) returns (ActivityResponse);
+}
+
+enum Policy {
+  // The default: allow for a tool with readOnlyHint, ask for every other tool.
+  POLICY_UNSPECIFIED = 0;
+  POLICY_ALLOW = 1;
+  POLICY_ASK = 2;
+  POLICY_OFF = 3;
+}
+
+enum ApprovalDecision {
+  APPROVAL_DECISION_UNSPECIFIED = 0;
+  // Allows the one call with the same arguments within 10 minutes.
+  APPROVAL_DECISION_ONCE = 1;
+  // Allows the call once and sets the tool's policy to POLICY_ALLOW.
+  APPROVAL_DECISION_ALWAYS = 2;
+  APPROVAL_DECISION_DENY = 3;
+}
+
+message CatalogEntry {
+  // `github`, `google-calendar`, `notion`, `linear`, or `custom`.
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  // False when the api has no OAuth client for the vendor.
+  bool available = 4;
+  // Where the user picks the repositories of the GitHub App; empty otherwise.
+  string install_url = 5;
+}
+
+message CatalogRequest {}
+
+message CatalogResponse {
+  repeated CatalogEntry entries = 1;
+}
+
+message Connector {
+  // The catalog id, or the name the user gave a custom connector. Tool names
+  // start with it: `<id>_<tool>`.
+  string id = 1;
+  // The catalog entry: `custom` for a custom connector.
+  string kind = 2;
+  string name = 3;
+  // The vendor account, such as a GitHub login or an email address; empty when the vendor names none.
+  string account = 4;
+  // `active`, or `needs_reconnect` after the vendor refused the grant.
+  string status = 5;
+  repeated string scopes = 6;
+  string mcp_url = 7;
+  // Only when ListConnectorsRequest.with_tools is set.
+  repeated ConnectorTool tools = 8;
+  int64 connected_at_ms = 9;
+}
+
+message ConnectorTool {
+  // The upstream name; the MCP doors serve it as `<connector id>_<name>`.
+  string name = 1;
+  string title = 2;
+  string description = 3;
+  bool read_only = 4;
+  bool destructive = 5;
+  // The user's choice; POLICY_UNSPECIFIED is the default.
+  Policy policy = 6;
+  // The policy the broker applies.
+  Policy effective = 7;
+}
+
+message ListConnectorsRequest {
+  // Lists each connector's tools from its MCP server.
+  bool with_tools = 1;
+}
+
+message ListConnectorsResponse {
+  repeated Connector connectors = 1;
+}
+
+message BeginConnectRequest {
+  string connector_id = 1;
+}
+
+message BeginConnectResponse {
+  // `<endpoint>/cb/connect?connect=<connector id>`.
+  string url = 1;
+}
+
+message ConnectorRef {
+  string connector_id = 1;
+}
+
+message DisconnectResponse {
+  // False when the vendor has no revoke call or refused it; the grant is deleted either way.
+  bool revoked = 1;
+}
+
+message SetPolicyRequest {
+  string connector_id = 1;
+  // The upstream tool name.
+  string tool = 2;
+  Policy policy = 3;
+}
+
+message ApproveRequest {
+  string approval_id = 1;
+  ApprovalDecision decision = 2;
+}
+
+message ApproveResponse {}
+
+message ActivityRequest {
+  // Empty for every connector.
+  string connector_id = 1;
+  // 0 selects 50; at most 500.
+  int32 limit = 2;
+}
+
+message ActivityResponse {
+  repeated ActivityEntry entries = 1;
+}
+
+message ActivityEntry {
+  int64 at_ms = 1;
+  string connector_id = 2;
+  string tool = 3;
+  // `mcp` (mode B), `box` (mode A), or `console` and `app` for a disconnect.
+  string door = 4;
+  string caller = 5;
+  // `allow`, `approved`, `denied`, `off`, `approval_required`, `needs_reconnect` or `disconnect`.
+  string decision = 6;
+  // The upstream HTTP status, 0 when no request was sent or no answer came.
+  int32 upstream_status = 7;
+  int64 latency_ms = 8;
+  int64 request_bytes = 9;
+  int64 response_bytes = 10;
+  // Hex SHA-256 of the canonical JSON of the arguments; never the arguments.
+  string args_hash = 11;
+  // `ok`, `error` or `outcome_unknown`.
+  string outcome = 12;
+}
