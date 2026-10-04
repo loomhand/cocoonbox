@@ -140,9 +140,6 @@ func main() {
 		httpMux.Handle(connect.MCPPath, broker.NewDoor(authn, connect.DoorMCP))
 		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
 		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)
-		if cfg.Connect.BoxListen != "" {
-			go serveBoxDoor(ctx, cfg.Connect.BoxListen, broker.NewDoor(authn, connect.DoorBox))
-		}
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -225,20 +222,6 @@ func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Servic
 	}
 	log.WithFunc("main.openConnect").Infof(ctx, "connect on %s", cfg.Connect.PublicURL)
 	return broker, nil
-}
-
-// serveBoxDoor serves the Connect box door on addr until ctx ends.
-func serveBoxDoor(ctx context.Context, addr string, door http.Handler) {
-	logger := log.WithFunc("main.serveBoxDoor")
-	srv := &http.Server{Addr: addr, Handler: door, ReadHeaderTimeout: readHeaderTimeout}
-	go func() {
-		<-ctx.Done()
-		_ = srv.Close()
-	}()
-	logger.Infof(ctx, "serving the connect box door on %s", addr)
-	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Fatalf(ctx, err, "serve the connect box door on %s", addr)
-	}
 }
 
 // openUsers opens the users table with gw and sandboxd as the holders of each user's keys.

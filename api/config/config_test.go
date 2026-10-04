@@ -60,7 +60,6 @@ func TestLoadRejects(t *testing.T) {
 		{name: "gc batch over the S3 limit", body: required + "state:\n  gc:\n    delete_batch: 1001\n", want: "state.gc.delete_batch must be in 1..1000"},
 		{name: "connect over http", body: required + "connect:\n  public_url: http://cb.example\n", want: "connect.public_url must be an https origin"},
 		{name: "connect with a path", body: required + "connect:\n  public_url: https://cb.example/x\n", want: "connect.public_url must be an https origin"},
-		{name: "public box door", body: required + "connect:\n  box_listen: 0.0.0.0:18202\n", want: "connect.box_listen must be a loopback address"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

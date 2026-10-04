@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
-	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -119,8 +117,6 @@ type Accounts struct {
 type Connect struct {
 	// PublicURL is the api's public https origin; empty turns Connect off.
 	PublicURL string `json:"public_url"`
-	// BoxListen serves the box door (mode A) on this loopback address with user-token auth until the per-machine key lands; empty turns it off.
-	BoxListen string `json:"box_listen"`
 }
 
 // Config is the on-disk configuration of cocoonbox-api.
@@ -250,18 +246,10 @@ func (c *Config) validate() error {
 	if u, err := url.Parse(c.Connect.PublicURL); c.Connect.PublicURL != "" && (err != nil || u.Scheme != "https" || u.Host == "" || strings.Trim(u.Path, "/") != "") {
 		errs = append(errs, fmt.Errorf("connect.public_url must be an https origin, got %q", c.Connect.PublicURL))
 	}
-	if host, _, err := net.SplitHostPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || !isLoopback(host)) {
-		errs = append(errs, fmt.Errorf("connect.box_listen must be a loopback address, got %q", c.Connect.BoxListen))
-	}
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
 	return errors.Join(errs...)
-}
-
-func isLoopback(host string) bool {
-	ip, err := netip.ParseAddr(host)
-	return err == nil && ip.IsLoopback()
 }
 
 func readToken(path, what string) (string, error) {
