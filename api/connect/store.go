@@ -45,6 +45,7 @@ type flow struct {
 	kind          string
 	mcpURL        string
 	stateSHA256   string
+	nonceSHA256   string
 	sessionSHA256 string
 	sealed        []byte
 	expiresAt     time.Time
@@ -200,21 +201,21 @@ func (s *store) insertFlow(ctx context.Context, f *flow) error {
 	if _, err := s.pool.Exec(ctx, "DELETE FROM connect_flows WHERE expires_at < now()"); err != nil {
 		return fmt.Errorf("purge flows: %w", err)
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO connect_flows (id, user_id, connector, kind, mcp_url, state_sha256, session_sha256, sealed, expires_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-		f.id, f.user, f.connector, f.kind, f.mcpURL, f.stateSHA256, f.sessionSHA256, f.sealed, f.expiresAt)
+	_, err := s.pool.Exec(ctx, `INSERT INTO connect_flows (id, user_id, connector, kind, mcp_url, state_sha256, nonce_sha256, session_sha256, sealed, expires_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		f.id, f.user, f.connector, f.kind, f.mcpURL, f.stateSHA256, f.nonceSHA256, f.sessionSHA256, f.sealed, f.expiresAt)
 	if err != nil {
 		return fmt.Errorf("store flow: %w", err)
 	}
 	return nil
 }
 
-// takeFlow deletes and returns the live flow of state that user's session started; a flow is taken once.
-func (s *store) takeFlow(ctx context.Context, user, stateSHA256, sessionSHA256 string) (*flow, error) {
-	f := &flow{user: user, stateSHA256: stateSHA256, sessionSHA256: sessionSHA256}
-	err := s.pool.QueryRow(ctx, `DELETE FROM connect_flows WHERE state_sha256 = $1 AND user_id = $2 AND session_sha256 = $3
-		RETURNING id, connector, kind, mcp_url, sealed, expires_at`, stateSHA256, user, sessionSHA256).
-		Scan(&f.id, &f.connector, &f.kind, &f.mcpURL, &f.sealed, &f.expiresAt)
+// takeFlow deletes and returns the unexpired flow of state whose nonce matches; a flow is taken once.
+func (s *store) takeFlow(ctx context.Context, stateSHA256, nonceSHA256 string) (*flow, error) {
+	f := &flow{stateSHA256: stateSHA256, nonceSHA256: nonceSHA256}
+	err := s.pool.QueryRow(ctx, `DELETE FROM connect_flows WHERE state_sha256 = $1 AND nonce_sha256 = $2
+		RETURNING id, user_id, connector, kind, mcp_url, session_sha256, sealed, expires_at`, stateSHA256, nonceSHA256).
+		Scan(&f.id, &f.user, &f.connector, &f.kind, &f.mcpURL, &f.sessionSHA256, &f.sealed, &f.expiresAt)
 	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !time.Now().Before(f.expiresAt)) {
 		return nil, errNoFlow
 	}

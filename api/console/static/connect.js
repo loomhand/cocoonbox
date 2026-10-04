@@ -100,6 +100,12 @@ function card(entry, c) {
     state.textContent = c.status === "active" ? "Connected" + who + "." : "Needs a reconnect" + who + ": the vendor no longer accepts the grant.";
     state.className = c.status === "active" ? "ok" : "warn";
     if (c.kind !== "custom") actions.appendChild(button("Reconnect", () => begin(entry.id)));
+    if (entry.checkable && c.status === "active") {
+      actions.appendChild(button("Check", async () => {
+        const out = await api("POST", "connect/" + encodeURIComponent(c.id) + "/check");
+        notice(entry.name + " accepts the grant" + (out.account ? " as " + out.account : "") + ".");
+      }));
+    }
     actions.appendChild(button("Disconnect", async () => {
       if (!confirm("Disconnect " + (c.account || c.id) + "? CocoonBox revokes the grant at the vendor where it can, and the tools leave your agents.")) return;
       const out = await api("DELETE", "connect/" + encodeURIComponent(c.id));
@@ -113,7 +119,8 @@ function card(entry, c) {
     actions.appendChild(a);
   }
   div.append(state, actions);
-  if (c) div.appendChild(toolsTable(c));
+  if (c && entry.grant_only) div.appendChild(el("p", "No tools: used by programs in your box.", "muted"));
+  else if (c) div.appendChild(toolsTable(c));
   return div;
 }
 

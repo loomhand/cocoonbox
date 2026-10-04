@@ -66,6 +66,7 @@ func New() *Vendor {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", v.mcp)
 	mux.HandleFunc("/keyed", v.keyed)
+	mux.HandleFunc("GET /userinfo", v.userinfo)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", v.resourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", v.serverMetadata)
 	mux.HandleFunc("POST /register", v.register)
@@ -226,6 +227,17 @@ func (v *Vendor) mcp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.serveMCP(w, r, auth)
+}
+
+func (v *Vendor) userinfo(w http.ResponseWriter, r *http.Request) {
+	v.mu.Lock()
+	ok := v.access[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
+	v.mu.Unlock()
+	if !ok {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"login": "mock-user"})
 }
 
 func (v *Vendor) keyed(w http.ResponseWriter, r *http.Request) {

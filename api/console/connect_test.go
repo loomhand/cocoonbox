@@ -13,7 +13,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/users"
 )
 
-func TestTheCallbackCompletesOnlyForTheSessionThatBegan(t *testing.T) {
+func TestTheCallbackCompletesOnlyWithTheFlowsNonce(t *testing.T) {
 	env, vendor := newConnectEnv(t)
 	root := env.login(t, "root")
 	if _, err := env.users.Create(t.Context(), users.NewUser{Name: "bob", Password: password}); err != nil {
@@ -21,32 +21,33 @@ func TestTheCallbackCompletesOnlyForTheSessionThatBegan(t *testing.T) {
 	}
 	bob := env.login(t, "bob")
 
-	cookie, code, state := env.begin(t, root, vendor)
-	if cookie.Value != root || cookie.Path != connect.Prefix || cookie.SameSite != http.SameSiteLaxMode || !cookie.HttpOnly || !cookie.Secure || cookie.MaxAge != 600 {
+	cookie, code, state := env.begin(t, root, "mock", vendor)
+	if len(cookie.Value) != 43 || cookie.Value == root || cookie.Path != connect.Prefix || cookie.SameSite != http.SameSiteLaxMode ||
+		!cookie.HttpOnly || !cookie.Secure || cookie.MaxAge != 600 {
 		t.Errorf("connect cookie = %+v", cookie)
 	}
-	if loc := env.callback(t, "", state, code); !strings.Contains(loc, "error=") {
-		t.Errorf("callback without a cookie -> %s", loc)
+	bobCookie, _, bobState := env.begin(t, bob, "bobs", vendor)
+	for name, nonce := range map[string]string{"no cookie": "", "a wrong nonce": strings.Repeat("x", 43), "bob's nonce": bobCookie.Value, "root's session": root} {
+		if loc := env.callback(t, nonce, state, code); !strings.Contains(loc, "error=") {
+			t.Errorf("callback with %s -> %s", name, loc)
+		}
 	}
-	if loc := env.callback(t, bob, state, code); !strings.Contains(loc, "error=") {
-		t.Errorf("callback with bob's cookie -> %s", loc)
+	if loc := env.callback(t, cookie.Value, bobState, code); !strings.Contains(loc, "error=") {
+		t.Errorf("callback of bob's flow in root's browser -> %s", loc)
 	}
-	if loc := env.callback(t, root, state, code); loc != connect.ConsolePath+"?connected=mock" {
+	if loc := env.callback(t, cookie.Value, state, code); loc != connect.ConsolePath+"?connected=mock" {
 		t.Fatalf("callback -> %s", loc)
 	}
-	if loc := env.callback(t, root, state, code); !strings.Contains(loc, "error=") {
+	if loc := env.callback(t, cookie.Value, state, code); !strings.Contains(loc, "error=") {
 		t.Errorf("replayed state -> %s", loc)
 	}
 
-	_, code, state = env.begin(t, root, vendor)
-	if err := exec(env.dsn, "UPDATE connect_flows SET expires_at = now() - interval '1 second'"); err != nil {
+	cookie, code, state = env.begin(t, root, "mock", vendor)
+	if err := exec(env.dsn, "UPDATE connect_flows SET expires_at = now() - interval '1 second' WHERE connector = 'mock'"); err != nil {
 		t.Fatalf("expire: %v", err)
 	}
-	if loc := env.callback(t, root, state, code); !strings.Contains(loc, "error=") {
+	if loc := env.callback(t, cookie.Value, state, code); !strings.Contains(loc, "error=") {
 		t.Errorf("expired state -> %s", loc)
-	}
-	if loc := env.callback(t, "", "", ""); !strings.Contains(loc, "error=") {
-		t.Errorf("bare callback -> %s", loc)
 	}
 	req := httptest.NewRequest(http.MethodGet, connect.CallbackPath+"?installation_id=1&setup_action=install&code=x", nil)
 	rec := httptest.NewRecorder()
@@ -71,11 +72,27 @@ func TestTheCallbackCompletesOnlyForTheSessionThatBegan(t *testing.T) {
 	}
 }
 
+func TestASignOutBetweenBeginAndCallbackRefusesTheCallback(t *testing.T) {
+	env, vendor := newConnectEnv(t)
+	root := env.login(t, "root")
+	cookie, code, state := env.begin(t, root, "mock", vendor)
+	if resp := env.do(t, http.MethodPost, "api/logout", root, "{}"); resp.Code != http.StatusNoContent {
+		t.Fatalf("logout = %d", resp.Code)
+	}
+	if loc := env.callback(t, cookie.Value, state, code); !strings.Contains(loc, "error=") {
+		t.Errorf("callback after the sign-out -> %s", loc)
+	}
+	root = env.login(t, "root")
+	if resp := env.do(t, http.MethodGet, "api/connect", root, ""); !strings.Contains(resp.Body.String(), `"connectors":[]`) {
+		t.Errorf("connectors after a refused callback: %s", resp.Body)
+	}
+}
+
 func TestTheConnectPageSetsPoliciesAndDisconnects(t *testing.T) {
 	env, vendor := newConnectEnv(t)
 	root := env.login(t, "root")
-	_, code, state := env.begin(t, root, vendor)
-	env.callback(t, root, state, code)
+	cookie, code, state := env.begin(t, root, "mock", vendor)
+	env.callback(t, cookie.Value, state, code)
 
 	rec := httptest.NewRecorder()
 	env.srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, connect.ConsolePath, nil))
@@ -107,7 +124,7 @@ func newConnectEnv(t *testing.T) (*env, *connecttest.Vendor) {
 	e := newEnv(t)
 	vendor := connecttest.New()
 	t.Cleanup(vendor.Close)
-	broker, err := connect.Open(t.Context(), connect.Options{DSN: e.dsn, Keys: e.users, PublicURL: "https://cb.example", AllowPrivate: true})
+	broker, err := connect.Open(t.Context(), connect.Options{DSN: e.dsn, Keys: e.users, Sessions: e.users, PublicURL: "https://cb.example", AllowPrivate: true})
 	if err != nil {
 		t.Fatalf("connect.Open: %v", err)
 	}
@@ -116,10 +133,10 @@ func newConnectEnv(t *testing.T) (*env, *connecttest.Vendor) {
 	return e, vendor
 }
 
-// begin starts connecting the vendor as custom connector mock and consents; it returns the connect cookie, the code and the state.
-func (e *env) begin(t *testing.T, session string, vendor *connecttest.Vendor) (*http.Cookie, string, string) {
+// begin starts connecting the vendor as custom connector name and consents; it returns the connect cookie, the code and the state.
+func (e *env) begin(t *testing.T, session, name string, vendor *connecttest.Vendor) (*http.Cookie, string, string) {
 	t.Helper()
-	resp := e.do(t, http.MethodPost, "api/connect/custom/begin", session, `{"name":"mock","url":"`+vendor.MCPURL()+`"}`)
+	resp := e.do(t, http.MethodPost, "api/connect/custom/begin", session, `{"name":"`+name+`","url":"`+vendor.MCPURL()+`"}`)
 	var out struct {
 		URL string `json:"url"`
 	}
@@ -139,12 +156,12 @@ func (e *env) begin(t *testing.T, session string, vendor *connecttest.Vendor) (*
 	return nil, "", ""
 }
 
-// callback delivers the vendor's redirect with session in the connect cookie and returns where it sends the browser.
-func (e *env) callback(t *testing.T, session, state, code string) string {
+// callback delivers the vendor's redirect with nonce in the connect cookie and returns where it sends the browser.
+func (e *env) callback(t *testing.T, nonce, state, code string) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, connect.CallbackPath+"?"+url.Values{"state": {state}, "code": {code}}.Encode(), nil)
-	if session != "" {
-		req.AddCookie(&http.Cookie{Name: connectCookie, Value: session})
+	if nonce != "" {
+		req.AddCookie(&http.Cookie{Name: connectCookie, Value: nonce})
 	}
 	rec := httptest.NewRecorder()
 	e.srv.ConnectCallback(rec, req)

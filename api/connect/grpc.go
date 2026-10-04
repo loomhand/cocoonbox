@@ -3,6 +3,7 @@ package connect
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/url"
 
 	"github.com/projecteru2/core/log"
@@ -37,7 +38,10 @@ type PendingApproval struct {
 func (s *Service) Catalog(context.Context, *controlv1.CatalogRequest) (*controlv1.CatalogResponse, error) {
 	out := &controlv1.CatalogResponse{}
 	for _, e := range s.catalog {
-		out.Entries = append(out.Entries, &controlv1.CatalogEntry{Id: e.id, Name: e.name, Description: e.description, Available: e.available(), InstallUrl: e.installURL})
+		out.Entries = append(out.Entries, &controlv1.CatalogEntry{
+			Id: e.id, Name: e.name, Description: e.description, Available: e.available(), InstallUrl: e.installURL,
+			GrantOnly: e.auth != authCustom && e.mcpURL == "", Checkable: e.userInfoURL != "",
+		})
 	}
 	return out, nil
 }
@@ -190,6 +194,41 @@ func (s *Service) Pending(ctx context.Context, user string) ([]PendingApproval, 
 	return out, nil
 }
 
+// Check reads user's account of connector from the vendor's user endpoint, refreshing the grant when it is near expiry,
+// and once more after a 401.
+func (s *Service) Check(ctx context.Context, user, connector string) (string, error) {
+	g, err := s.store.grant(ctx, user, connector)
+	if err != nil {
+		return "", grantStatus(err)
+	}
+	e := s.entry(g.kind)
+	if e == nil || e.userInfoURL == "" || g.status != statusActive {
+		return "", status.Errorf(codes.FailedPrecondition, "%s cannot be checked; reconnect it if it needs a reconnect", connector)
+	}
+	sec, err := s.secrets(ctx, g)
+	if err != nil {
+		return "", err
+	}
+	access, err := s.access(ctx, g, sec.AccessToken, false)
+	if err != nil {
+		return "", checkStatus(err)
+	}
+	label, code := s.accountLabel(ctx, e, access)
+	if code == http.StatusUnauthorized && sec.RefreshToken != "" {
+		if access, err = s.access(ctx, g, access, true); err != nil {
+			return "", checkStatus(err)
+		}
+		label, code = s.accountLabel(ctx, e, access)
+	}
+	switch {
+	case code == http.StatusUnauthorized:
+		return "", checkStatus(s.lose(ctx, g))
+	case code != http.StatusOK:
+		return "", status.Errorf(codes.Unavailable, "%s answered %d", e.name, code)
+	}
+	return label, nil
+}
+
 // revokeAtVendor refreshes an expiring GitHub token first, since GitHub revokes by a live access token.
 func (s *Service) revokeAtVendor(ctx context.Context, g *grant, sec *secrets) (bool, error) {
 	if sec.APIKey != "" {
@@ -241,6 +280,13 @@ func callerID(ctx context.Context) (string, error) {
 func grantStatus(err error) error {
 	if errors.Is(err, errNoGrant) {
 		return status.Error(codes.NotFound, err.Error())
+	}
+	return err
+}
+
+func checkStatus(err error) error {
+	if errors.Is(err, errReconnect) {
+		return status.Error(codes.FailedPrecondition, "the vendor no longer accepts the grant; reconnect it")
 	}
 	return err
 }

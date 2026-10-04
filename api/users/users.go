@@ -502,15 +502,24 @@ func (s *Service) NewSession(ctx context.Context, id string) (string, error) {
 
 // Session returns the enabled user of the session with secret.
 func (s *Service) Session(ctx context.Context, secret string) (User, error) {
-	id, err := s.store.session(ctx, hashHex(secret))
+	id, err := s.SessionUser(ctx, hashHex(secret))
 	if err != nil {
 		return User{}, err
 	}
+	return s.Get(id)
+}
+
+// SessionUser returns the id of the enabled user of the live session whose secret hashes to sum.
+func (s *Service) SessionUser(ctx context.Context, sum string) (string, error) {
+	id, err := s.store.session(ctx, sum)
+	if err != nil {
+		return "", err
+	}
 	u, err := s.Get(id)
 	if err == nil && u.Disabled {
-		return User{}, ErrNotFound
+		return "", ErrNotFound
 	}
-	return u, err
+	return u.ID, err
 }
 
 // EndSession ends the session with secret.

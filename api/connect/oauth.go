@@ -288,29 +288,30 @@ func (s *Service) revoke(ctx context.Context, kind revokeKind, c client, sec sec
 	return true, nil
 }
 
-func (s *Service) accountLabel(ctx context.Context, e *entry, accessToken string) string {
+// accountLabel reads the account's name from the vendor's user endpoint, with the endpoint's HTTP status.
+func (s *Service) accountLabel(ctx context.Context, e *entry, accessToken string) (string, int) {
 	if e.userInfoURL == "" {
-		return ""
+		return "", 0
 	}
 	ctx, cancel := context.WithTimeout(ctx, tokenTimeout)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.userInfoURL, nil)
 	if err != nil {
-		return ""
+		return "", 0
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 	status, body, err := s.send(req)
 	if err != nil || status != http.StatusOK {
-		return ""
+		return "", status
 	}
 	var fields map[string]jsontext.Value
 	if json.Unmarshal(body, &fields) != nil {
-		return ""
+		return "", status
 	}
 	var label string
 	_ = json.Unmarshal(fields[e.userInfoName], &label)
-	return label
+	return label, status
 }
 
 func (s *Service) send(req *http.Request) (int, []byte, error) {

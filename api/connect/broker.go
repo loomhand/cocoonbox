@@ -83,7 +83,7 @@ func (s *Service) doorTools(ctx context.Context, c caller) ([]map[string]jsontex
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(listFanout)
 	for i, g := range grants {
-		if g.status != statusActive {
+		if g.status != statusActive || g.mcpURL == "" {
 			continue
 		}
 		eg.Go(func() error {
@@ -202,6 +202,9 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 }
 
 func (s *Service) tools(ctx context.Context, g *grant) ([]tool, error) {
+	if g.mcpURL == "" {
+		return nil, nil
+	}
 	c := s.conn(g.id)
 	c.mu.Lock()
 	cached, at := c.tools, c.toolsAt

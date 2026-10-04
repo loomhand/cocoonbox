@@ -24,6 +24,14 @@ type authKind string
 
 type revokeKind string
 
+// injection is how a grant that serves no tools will reach programs in the box: sandboxd overwrites header on
+// requests to hosts with template, whose {token} is the access token (M5.2).
+type injection struct {
+	hosts    []string
+	header   string
+	template string
+}
+
 type entry struct {
 	id          string
 	name        string
@@ -39,6 +47,7 @@ type entry struct {
 	userInfoName string
 	revoke       revokeKind
 	installURL   string
+	inject       *injection
 }
 
 func (e *entry) available() bool {
@@ -63,8 +72,8 @@ func newCatalog(github, google Credentials) []*entry {
 	return []*entry{
 		gh,
 		{
-			id: "google-calendar", name: "Google Calendar", description: "Your Google Calendar events. Needs Google's Workspace MCP preview for the account.",
-			mcpURL: "https://calendarmcp.googleapis.com/mcp/v1", auth: authOAuth,
+			id: "google-calendar", name: "Google Calendar", description: "Your Google Calendar events, for programs in your box. It serves no tools to agents yet.",
+			auth: authOAuth, inject: &injection{hosts: []string{"www.googleapis.com"}, header: "Authorization", template: "Bearer {token}"},
 			client: client{ //nolint:gosec // the secret comes from the environment
 				ID: google.ClientID, Secret: google.ClientSecret, TokenURL: "https://oauth2.googleapis.com/token",
 				RevokeURL: "https://oauth2.googleapis.com/revoke",

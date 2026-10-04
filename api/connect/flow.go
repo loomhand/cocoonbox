@@ -16,6 +16,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Started is a sign-in in progress: the vendor's authorization URL and the nonce its browser must return with.
+type Started struct {
+	URL       string
+	Connector string
+	Nonce     string
+}
+
 // StartRequest begins connecting an account for the console session whose secret hashes to SessionSHA256.
 type StartRequest struct {
 	User          string
@@ -28,27 +35,27 @@ type StartRequest struct {
 	Key    string
 }
 
-// Start returns the vendor's authorization URL, empty when a custom key connected at once, and the connector id.
-func (s *Service) Start(ctx context.Context, req StartRequest) (string, string, error) {
+// Start stores a pending authorization; a custom connector with a key connects at once and returns no URL.
+func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error) {
 	e := s.entry(req.Connector)
 	switch {
 	case e == nil:
-		return "", "", status.Errorf(codes.InvalidArgument, "unknown connector %q", req.Connector)
+		return nil, status.Errorf(codes.InvalidArgument, "unknown connector %q", req.Connector)
 	case !e.available():
-		return "", "", status.Errorf(codes.FailedPrecondition, "%s is not set up on this server", e.name)
+		return nil, status.Errorf(codes.FailedPrecondition, "%s is not set up on this server", e.name)
 	}
 	connector, mcpURL := e.id, e.mcpURL
 	if e.auth == authCustom {
 		var err error
 		if connector, mcpURL, err = s.customTarget(req); err != nil {
-			return "", "", err
+			return nil, err
 		}
 		if req.Key != "" {
-			return "", connector, s.connectKey(ctx, req.User, connector, mcpURL, cmp.Or(req.Header, "Authorization"), req.Key)
+			return &Started{Connector: connector}, s.connectKey(ctx, req.User, connector, mcpURL, cmp.Or(req.Header, "Authorization"), req.Key)
 		}
 	}
 	verifier, challenge := pkce()
-	state := randomToken(32)
+	state, nonce := randomToken(32), randomToken(32)
 	fs := flowSecrets{Verifier: verifier}
 	q := url.Values{
 		"response_type":         {responseCode},
@@ -67,7 +74,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (string, string, 
 		auth, err := s.discover(discoverCtx, mcpURL)
 		cancel()
 		if err != nil {
-			return "", "", status.Errorf(codes.FailedPrecondition, "sign-in to %s: %v", mcpURL, err)
+			return nil, status.Errorf(codes.FailedPrecondition, "sign-in to %s: %v", mcpURL, err)
 		}
 		authorizeURL, fs.Client, fs.Scopes = auth.authorizeURL, auth.client, auth.scopes
 		q.Set("client_id", auth.client.ID)
@@ -78,33 +85,38 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (string, string, 
 	}
 	target, err := url.Parse(authorizeURL)
 	if err != nil {
-		return "", "", status.Errorf(codes.FailedPrecondition, "authorization endpoint %q: %v", authorizeURL, err)
+		return nil, status.Errorf(codes.FailedPrecondition, "authorization endpoint %q: %v", authorizeURL, err)
 	}
 	merged := target.Query()
 	maps.Copy(merged, q)
 	target.RawQuery = merged.Encode()
 	f := &flow{
 		id: "cf_" + randomHex(idBytes), user: req.User, connector: connector, kind: e.id, mcpURL: mcpURL,
-		stateSHA256: hashHex(state), sessionSHA256: req.SessionSHA256, expiresAt: time.Now().Add(flowTTL),
+		stateSHA256: hashHex(state), nonceSHA256: hashHex(nonce), sessionSHA256: req.SessionSHA256, expiresAt: time.Now().Add(flowTTL),
 	}
 	if f.sealed, err = s.seal.seal(ctx, f.user, fs, flowData(f.id, f.user, f.connector)); err != nil {
-		return "", "", err
+		return nil, err
 	}
 	if err := s.store.insertFlow(ctx, f); err != nil {
-		return "", "", err
+		return nil, err
 	}
 	log.WithFunc("connect.Service.Start").Infof(ctx, "user %s began connecting %s (flow %s)", req.User, connector, f.id)
-	return target.String(), connector, nil
+	return &Started{URL: target.String(), Connector: connector, Nonce: nonce}, nil
 }
 
-// Complete exchanges code for the flow of state that user's console session began, and returns the connector id.
-func (s *Service) Complete(ctx context.Context, user, sessionSHA256, state, code string) (string, error) {
-	f, err := s.store.takeFlow(ctx, user, hashHex(state), sessionSHA256)
+// Complete exchanges code for the flow of state whose browser holds nonce, while the console session that began it
+// is live, and returns the connector id.
+func (s *Service) Complete(ctx context.Context, nonce, state, code string) (string, error) {
+	f, err := s.store.takeFlow(ctx, hashHex(state), hashHex(nonce))
 	if errors.Is(err, errNoFlow) {
 		return "", status.Error(codes.PermissionDenied, err.Error())
 	}
 	if err != nil {
 		return "", err
+	}
+	user := f.user
+	if live, sessErr := s.sessions.SessionUser(ctx, f.sessionSHA256); sessErr != nil || live != user {
+		return "", status.Error(codes.PermissionDenied, "the console session that began the sign-in ended; sign in and start again")
 	}
 	var fs flowSecrets
 	if err = s.seal.open(ctx, user, f.sealed, flowData(f.id, f.user, f.connector), &fs); err != nil {
@@ -124,10 +136,8 @@ func (s *Service) Complete(ctx context.Context, user, sessionSHA256, state, code
 	if err != nil {
 		return "", status.Errorf(codes.FailedPrecondition, "%s refused the sign-in: %v", e.name, err)
 	}
-	g := &grant{
-		user: user, connector: f.connector, kind: f.kind, mcpURL: f.mcpURL, account: s.accountLabel(ctx, e, t.AccessToken),
-		scopes: fs.Scopes, expiresAt: expiry(t.ExpiresIn),
-	}
+	account, _ := s.accountLabel(ctx, e, t.AccessToken)
+	g := &grant{user: user, connector: f.connector, kind: f.kind, mcpURL: f.mcpURL, account: account, scopes: fs.Scopes, expiresAt: expiry(t.ExpiresIn)}
 	if t.Scope != "" {
 		g.scopes = strings.FieldsFunc(t.Scope, func(r rune) bool { return r == ' ' || r == ',' })
 	}

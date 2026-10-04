@@ -84,11 +84,17 @@ var (
 	toolNamePattern  = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
 )
 
+// Sessions resolves the hash of a console session secret to the enabled user of that live session.
+type Sessions interface {
+	SessionUser(ctx context.Context, sessionSHA256 string) (string, error)
+}
+
 // Options configures the broker.
 type Options struct {
 	DSN string
 	// Keys gives each user's state key; grants are sealed under a key derived from it.
-	Keys keyring.Keyring
+	Keys     keyring.Keyring
+	Sessions Sessions
 	// PublicURL is the api's public origin, such as https://box.example.com.
 	PublicURL string
 	GitHub    Credentials
@@ -103,6 +109,7 @@ type Service struct {
 
 	store        *store
 	seal         *sealer
+	sessions     Sessions
 	catalog      []*entry
 	publicURL    string
 	http         *http.Client
@@ -123,6 +130,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	return &Service{
 		store:        st,
 		seal:         &sealer{keys: opts.Keys},
+		sessions:     opts.Sessions,
 		catalog:      newCatalog(opts.GitHub, opts.Google),
 		publicURL:    opts.PublicURL,
 		http:         newHTTPClient(opts.AllowPrivate),

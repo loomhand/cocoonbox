@@ -213,6 +213,7 @@ func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Servic
 	broker, err := connect.Open(ctx, connect.Options{
 		DSN:       dsn,
 		Keys:      accounts,
+		Sessions:  accounts,
 		PublicURL: cfg.Connect.PublicURL,
 		GitHub:    connect.Credentials{ClientID: os.Getenv("GITHUB_APP_CLIENT_ID"), ClientSecret: os.Getenv("GITHUB_APP_CLIENT_SECRET"), Slug: os.Getenv("GITHUB_APP_SLUG")},
 		Google:    connect.Credentials{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET")},

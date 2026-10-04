@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -28,6 +29,7 @@ const (
 	alice       = "u-alice"
 	bob         = "u-bob"
 	aliceSess   = "alice-session-sha"
+	bobSess     = "bob-session-sha"
 	publicURL   = "https://cb.example"
 	mockName    = "mock"
 	createItem  = mockName + "_create_item"
@@ -45,31 +47,33 @@ var (
 	modeA = caller{user: alice, door: DoorBox, name: "box:test"}
 )
 
-func TestSignInWithMCPAuthorizationBindsTheFlowToItsSession(t *testing.T) {
+func TestSignInCompletesOnlyWithItsNonceWhileItsSessionIsLive(t *testing.T) {
 	env := newEnv(t)
-	authorize, id, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: mockName, URL: env.vendor.MCPURL()})
-	if err != nil || id != mockName {
-		t.Fatalf("Start = %q, %q, %v", authorize, id, err)
+	started := env.start(t, alice, mockName)
+	q := mustQuery(t, started.URL)
+	if started.Connector != mockName || len(started.Nonce) != 43 || q.Get("code_challenge_method") != "S256" || len(q.Get("code_challenge")) != 43 ||
+		q.Get("redirect_uri") != callbackURL || q.Get("resource") != env.vendor.MCPURL() || !strings.HasPrefix(q.Get("client_id"), "dcr-") ||
+		q.Get("scope") != "items:read items:write" {
+		t.Fatalf("Start = %+v, query %v", started, q)
 	}
-	q := mustQuery(t, authorize)
-	if q.Get("code_challenge_method") != "S256" || len(q.Get("code_challenge")) != 43 || q.Get("redirect_uri") != callbackURL ||
-		q.Get("resource") != env.vendor.MCPURL() || !strings.HasPrefix(q.Get("client_id"), "dcr-") || q.Get("scope") != "items:read items:write" {
-		t.Fatalf("authorize query = %v", q)
-	}
-	code, state, err := env.vendor.Consent(authorize)
+	code, state, err := env.vendor.Consent(started.URL)
 	if err != nil || code == "" {
 		t.Fatalf("consent: %q %v", code, err)
 	}
-	if _, err := env.svc.Complete(t.Context(), alice, "another-session", state, code); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Complete from another session: %v", err)
+	bobs := env.start(t, bob, "bobs")
+	_, bobState, _ := env.vendor.Consent(bobs.URL)
+	for name, nonce := range map[string]string{"no nonce": "", "a wrong nonce": randomToken(32), "another user's nonce": bobs.Nonce} {
+		if _, err := env.svc.Complete(t.Context(), nonce, state, code); status.Code(err) != codes.PermissionDenied {
+			t.Errorf("Complete with %s: %v", name, err)
+		}
 	}
-	if _, err := env.svc.Complete(t.Context(), bob, aliceSess, state, code); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Complete as another user: %v", err)
+	if _, err := env.svc.Complete(t.Context(), started.Nonce, bobState, code); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("Complete of another user's flow: %v", err)
 	}
-	if got, err := env.svc.Complete(t.Context(), alice, aliceSess, state, code); err != nil || got != mockName {
+	if got, err := env.svc.Complete(t.Context(), started.Nonce, state, code); err != nil || got != mockName {
 		t.Fatalf("Complete = %q, %v", got, err)
 	}
-	if _, err := env.svc.Complete(t.Context(), alice, aliceSess, state, code); status.Code(err) != codes.PermissionDenied {
+	if _, err := env.svc.Complete(t.Context(), started.Nonce, state, code); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("replayed state: %v", err)
 	}
 	list, err := env.svc.List(auth.WithUser(t.Context(), alice), &controlv1.ListConnectorsRequest{WithTools: true})
@@ -84,17 +88,31 @@ func TestSignInWithMCPAuthorizationBindsTheFlowToItsSession(t *testing.T) {
 	if strings.Contains(c.String(), "at-") || strings.Contains(c.String(), "rt-") {
 		t.Errorf("List carries a token: %v", c)
 	}
+	var stored int
+	if err := env.row(t, "SELECT count(*) FROM connect_flows WHERE nonce_sha256 = '"+hashHex(bobs.Nonce)+"'").Scan(&stored); err != nil || stored != 1 {
+		t.Errorf("bob's flow = %d, %v; refusals must not take it", stored, err)
+	}
+}
+
+func TestASessionEndedBeforeTheCallbackRefusesIt(t *testing.T) {
+	env := newEnv(t)
+	started := env.start(t, alice, mockName)
+	code, state, _ := env.vendor.Consent(started.URL)
+	env.sessions.end(aliceSess)
+	if _, err := env.svc.Complete(t.Context(), started.Nonce, state, code); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("Complete after the session ended: %v", err)
+	}
+	if _, err := env.svc.store.grant(t.Context(), alice, mockName); !errors.Is(err, errNoGrant) {
+		t.Errorf("grant after a refused callback: %v", err)
+	}
 }
 
 func TestAnExpiredFlowIsRefused(t *testing.T) {
 	env := newEnv(t)
-	authorize, _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: mockName, URL: env.vendor.MCPURL()})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	code, state, _ := env.vendor.Consent(authorize)
+	started := env.start(t, alice, mockName)
+	code, state, _ := env.vendor.Consent(started.URL)
 	env.exec(t, "UPDATE connect_flows SET expires_at = now() - interval '1 second'")
-	if _, err := env.svc.Complete(t.Context(), alice, aliceSess, state, code); status.Code(err) != codes.PermissionDenied {
+	if _, err := env.svc.Complete(t.Context(), started.Nonce, state, code); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("expired flow: %v", err)
 	}
 }
@@ -102,15 +120,12 @@ func TestAnExpiredFlowIsRefused(t *testing.T) {
 func TestClientMetadataDocumentReplacesRegistration(t *testing.T) {
 	env := newEnv(t)
 	env.vendor.CIMD = true
-	authorize, _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: mockName, URL: env.vendor.MCPURL()})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	if got := mustQuery(t, authorize).Get("client_id"); got != publicURL+ClientMetadataPath {
+	started := env.start(t, alice, mockName)
+	if got := mustQuery(t, started.URL).Get("client_id"); got != publicURL+ClientMetadataPath {
 		t.Errorf("client_id = %q", got)
 	}
-	code, state, _ := env.vendor.Consent(authorize)
-	if _, err := env.svc.Complete(t.Context(), alice, aliceSess, state, code); err != nil {
+	code, state, _ := env.vendor.Consent(started.URL)
+	if _, err := env.svc.Complete(t.Context(), started.Nonce, state, code); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
 	rec := httptest.NewRecorder()
@@ -137,6 +152,53 @@ func TestAToolsRefusalReachesTheConnector(t *testing.T) {
 		t.Errorf("tools error = %q", got)
 	}
 	if g := env.grant(t); g.status != statusActive {
+		t.Errorf("status = %s", g.status)
+	}
+}
+
+func TestAGrantOnlyConnectorServesNoToolsAndChecksWithRefresh(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	env.svc.catalog = append(env.svc.catalog, &entry{
+		id: "grantonly", name: "Grant only", auth: authOAuth,
+		client:      client{ID: "c", Secret: "s", TokenURL: env.vendor.URL + "/token", Resource: env.vendor.MCPURL()},
+		userInfoURL: env.vendor.URL + "/userinfo", userInfoName: "login",
+	})
+	env.exec(t, "UPDATE connect_grants SET kind = 'grantonly', mcp_url = ''")
+	ctx := auth.WithUser(t.Context(), alice)
+	if tools, _ := env.svc.doorTools(t.Context(), modeB); len(tools) != 0 {
+		t.Errorf("a grant-only connector serves %d tools", len(tools))
+	}
+	list, err := env.svc.List(ctx, &controlv1.ListConnectorsRequest{WithTools: true})
+	if err != nil || len(list.GetConnectors()[0].GetTools()) != 0 || list.GetConnectors()[0].GetToolsError() != "" {
+		t.Errorf("List = %v, %v", list, err)
+	}
+	catalog, _ := env.svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
+	for _, e := range catalog.GetEntries() {
+		if want := e.GetId() == "grantonly" || e.GetId() == "google-calendar"; e.GetGrantOnly() != want {
+			t.Errorf("%s grant_only = %t", e.GetId(), e.GetGrantOnly())
+		}
+	}
+	if account, err := env.svc.Check(t.Context(), alice, mockName); err != nil || account != "mock-user" {
+		t.Fatalf("Check = %q, %v", account, err)
+	}
+	env.exec(t, "UPDATE connect_grants SET token_expires_at = now() - interval '1 minute'")
+	if _, err := env.svc.Check(t.Context(), alice, mockName); err != nil {
+		t.Errorf("Check near expiry: %v", err)
+	}
+	env.vendor.ExpireAccess()
+	if _, err := env.svc.Check(t.Context(), alice, mockName); err != nil {
+		t.Errorf("Check after the vendor dropped the token: %v", err)
+	}
+	if refreshes, _, _ := env.vendor.Snapshot(); refreshes != 2 {
+		t.Errorf("refreshes = %d, want 2", refreshes)
+	}
+	env.vendor.ExpireAccess()
+	env.vendor.RejectRefresh()
+	if _, err := env.svc.Check(t.Context(), alice, mockName); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("Check of a lost grant: %v", err)
+	}
+	if g := env.grant(t); g.status != statusReconnect {
 		t.Errorf("status = %s", g.status)
 	}
 }
@@ -268,7 +330,7 @@ func TestConcurrentCallsShareOneRefreshThatStoresTheRotatedToken(t *testing.T) {
 	if refreshes != 1 || after.RefreshToken == before.RefreshToken || after.AccessToken == before.AccessToken {
 		t.Errorf("refreshes = %d, refresh token rotated %t", refreshes, after.RefreshToken != before.RefreshToken)
 	}
-	other := newService(t, env.dsn)
+	other := newService(t, env.dsn, env.sessions)
 	env.exec(t, "UPDATE connect_grants SET token_expires_at = now() - interval '1 minute'")
 	wg.Go(func() { _, _ = call(context.Background(), env.svc, modeB, listItems, nil, "") })
 	wg.Go(func() { _, _ = call(context.Background(), other, modeB, listItems, nil, "") })
@@ -373,12 +435,12 @@ func TestDisconnectRevokesDeletesAndAnnouncesTheChange(t *testing.T) {
 func TestAKeyConnectorSendsItsHeader(t *testing.T) {
 	env := newEnv(t)
 	req := StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: "keyed", URL: env.vendor.KeyedURL(), Header: "X-Api-Key", Key: "wrong"}
-	if _, _, err := env.svc.Start(t.Context(), req); status.Code(err) != codes.InvalidArgument {
+	if _, err := env.svc.Start(t.Context(), req); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("wrong key: %v", err)
 	}
 	req.Key = connecttest.Key
-	if target, id, err := env.svc.Start(t.Context(), req); err != nil || target != "" || id != "keyed" {
-		t.Fatalf("Start = %q, %q, %v", target, id, err)
+	if started, err := env.svc.Start(t.Context(), req); err != nil || started.URL != "" || started.Nonce != "" || started.Connector != "keyed" {
+		t.Fatalf("Start = %+v, %v", started, err)
 	}
 	if out, err := call(t.Context(), env.svc, modeB, "keyed_list_items", nil, ""); err != nil || out.IsError {
 		t.Errorf("Call = %+v, %v", out, err)
@@ -398,7 +460,7 @@ func TestStartRefusesBadCustomConnectors(t *testing.T) {
 		"header":       {Name: "x", URL: env.vendor.KeyedURL(), Header: "Bad Header", Key: "k"},
 	} {
 		req.User, req.SessionSHA256, req.Connector = alice, aliceSess, kindCustom
-		if _, _, err := env.svc.Start(t.Context(), req); status.Code(err) != codes.InvalidArgument {
+		if _, err := env.svc.Start(t.Context(), req); status.Code(err) != codes.InvalidArgument {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
@@ -407,19 +469,21 @@ func TestStartRefusesBadCustomConnectors(t *testing.T) {
 func TestCatalogClientsBuildTheirAuthorizeURLs(t *testing.T) {
 	env := newEnv(t)
 	env.svc.catalog = newCatalog(Credentials{ClientID: "Iv1.gh", ClientSecret: "s", Slug: "cocoonbox"}, Credentials{ClientID: "g.apps", ClientSecret: "s"})
-	gh, _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "github"})
+	ghStarted, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "github"})
 	if err != nil {
 		t.Fatalf("github: %v", err)
 	}
+	gh := ghStarted.URL
 	q := mustQuery(t, gh)
 	if !strings.HasPrefix(gh, "https://github.com/login/oauth/authorize?") || q.Get("client_id") != "Iv1.gh" || q.Get("redirect_uri") != callbackURL ||
 		q.Get("code_challenge_method") != "S256" || q.Get("state") == "" || q.Has("scope") {
 		t.Errorf("github = %s", gh)
 	}
-	google, _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "google-calendar"})
+	googleStarted, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "google-calendar"})
 	if err != nil {
 		t.Fatalf("google: %v", err)
 	}
+	google := googleStarted.URL
 	q = mustQuery(t, google)
 	if !strings.HasPrefix(google, "https://accounts.google.com/o/oauth2/v2/auth?") || q.Get("client_id") != "g.apps" || q.Get("access_type") != "offline" ||
 		q.Get("scope") != "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events" || q.Get("code_challenge") == "" {
@@ -430,7 +494,7 @@ func TestCatalogClientsBuildTheirAuthorizeURLs(t *testing.T) {
 		t.Errorf("install url = %q", catalog.GetEntries()[0].GetInstallUrl())
 	}
 	env.svc.catalog = newCatalog(Credentials{}, Credentials{})
-	if _, _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "github"}); status.Code(err) != codes.FailedPrecondition {
+	if _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "github"}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("unconfigured github: %v", err)
 	}
 }
@@ -552,9 +616,10 @@ func TestBoxDoorTakesTheApprovalFromMeta(t *testing.T) {
 }
 
 type env struct {
-	svc    *Service
-	vendor *connecttest.Vendor
-	dsn    string
+	svc      *Service
+	vendor   *connecttest.Vendor
+	sessions *fakeSessions
+	dsn      string
 }
 
 func newEnv(t *testing.T) *env {
@@ -562,23 +627,32 @@ func newEnv(t *testing.T) *env {
 	dsn := freshDatabase(t)
 	v := connecttest.New()
 	t.Cleanup(v.Close)
-	return &env{svc: newService(t, dsn), vendor: v, dsn: dsn}
+	sessions := &fakeSessions{live: map[string]string{aliceSess: alice, bobSess: bob}}
+	return &env{svc: newService(t, dsn, sessions), vendor: v, sessions: sessions, dsn: dsn}
 }
 
 // connect connects the vendor's OAuth MCP server as alice's custom connector "mock".
 func (e *env) connect(t *testing.T) {
 	t.Helper()
-	authorize, _, err := e.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: mockName, URL: e.vendor.MCPURL()})
-	if err != nil {
-		t.Fatalf("Start: %v", err)
-	}
-	code, state, err := e.vendor.Consent(authorize)
+	started := e.start(t, alice, mockName)
+	code, state, err := e.vendor.Consent(started.URL)
 	if err != nil {
 		t.Fatalf("consent: %v", err)
 	}
-	if _, err := e.svc.Complete(t.Context(), alice, aliceSess, state, code); err != nil {
+	if _, err := e.svc.Complete(t.Context(), started.Nonce, state, code); err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
+}
+
+// start begins connecting the vendor's OAuth MCP server as user's custom connector name, from the user's session.
+func (e *env) start(t *testing.T, user, name string) *Started {
+	t.Helper()
+	session := map[string]string{alice: aliceSess, bob: bobSess}[user]
+	started, err := e.svc.Start(t.Context(), StartRequest{User: user, SessionSHA256: session, Connector: kindCustom, Name: name, URL: e.vendor.MCPURL()})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	return started
 }
 
 func (e *env) grant(t *testing.T) *grant {
@@ -611,9 +685,9 @@ func (e *env) row(t *testing.T, sql string) pgx.Row {
 	return e.svc.store.pool.QueryRow(t.Context(), sql)
 }
 
-func newService(t *testing.T, dsn string) *Service {
+func newService(t *testing.T, dsn string, sessions Sessions) *Service {
 	t.Helper()
-	svc, err := Open(t.Context(), Options{DSN: dsn, Keys: testKeys, PublicURL: publicURL, AllowPrivate: true})
+	svc, err := Open(t.Context(), Options{DSN: dsn, Keys: testKeys, Sessions: sessions, PublicURL: publicURL, AllowPrivate: true})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -624,6 +698,26 @@ func newService(t *testing.T, dsn string) *Service {
 type keyFunc func(ctx context.Context, user string) (keyring.Key, error)
 
 func (f keyFunc) StateKey(ctx context.Context, user string) (keyring.Key, error) { return f(ctx, user) }
+
+type fakeSessions struct {
+	mu   sync.Mutex
+	live map[string]string
+}
+
+func (f *fakeSessions) SessionUser(_ context.Context, sum string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if user, ok := f.live[sum]; ok {
+		return user, nil
+	}
+	return "", errors.New("no such session")
+}
+
+func (f *fakeSessions) end(sum string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.live, sum)
+}
 
 type fakeAuthn struct{}
 

@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	// connectCookie carries the session to the callback, which the Strict, /cb/-scoped session cookie never reaches.
+	// connectCookie carries a flow's nonce to the callback, which the Strict, /cb/-scoped session cookie never reaches.
 	connectCookie = "cb_connect"
 	connectAge    = 10 * time.Minute
 )
@@ -51,6 +51,8 @@ type catalogEntry struct {
 	Description string `json:"description"`
 	Available   bool   `json:"available"`
 	InstallURL  string `json:"install_url,omitempty"`
+	GrantOnly   bool   `json:"grant_only"`
+	Checkable   bool   `json:"checkable"`
 }
 
 // EnableConnect serves the Connect page and its calls over conn, and the OAuth callback through ConnectCallback.
@@ -63,11 +65,12 @@ func (s *Server) EnableConnect(conn *connect.Service) {
 	s.mux.HandleFunc("POST "+Prefix+"api/connect/{connector}/begin", s.signedIn(s.beginConnect))
 	s.mux.HandleFunc("PUT "+Prefix+"api/connect/{connector}/policy", s.signedIn(s.setConnectPolicy))
 	s.mux.HandleFunc("DELETE "+Prefix+"api/connect/{connector}", s.signedIn(s.disconnect))
+	s.mux.HandleFunc("POST "+Prefix+"api/connect/{connector}/check", s.signedIn(s.checkConnector))
 	s.mux.HandleFunc("GET "+Prefix+"api/connect/activity", s.signedIn(s.connectActivity))
 	s.mux.HandleFunc("POST "+Prefix+"api/connect/approvals/{id}/answer", s.signedIn(s.approve))
 }
 
-// ConnectCallback finishes a sign-in only for the console session that began it.
+// ConnectCallback finishes a sign-in only in the browser that began it, while its console session is live.
 func (s *Server) ConnectCallback(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -84,19 +87,13 @@ func (s *Server) ConnectCallback(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, "error", "This sign-in did not start in this browser. Start it again from this page.")
 		return
 	}
-	u, err := s.users.Session(r.Context(), c.Value)
-	if err != nil {
-		logger.Warnf(r.Context(), "callback with an ended console session from %s", clientAddr(r))
-		redirect(w, r, "error", "Your console session ended. Sign in and start again.")
-		return
-	}
 	if vendorErr := q.Get("error"); vendorErr != "" {
 		redirect(w, r, "error", strings.TrimSuffix("The vendor answered "+vendorErr+": "+q.Get("error_description"), ": "))
 		return
 	}
-	id, err := s.connect.Complete(r.Context(), u.ID, sessionSHA256(c.Value), q.Get("state"), q.Get("code"))
+	id, err := s.connect.Complete(r.Context(), c.Value, q.Get("state"), q.Get("code"))
 	if err != nil {
-		logger.Warnf(r.Context(), "complete a sign-in of %s from %s: %v", u.ID, clientAddr(r), err)
+		logger.Warnf(r.Context(), "complete a sign-in from %s: %v", clientAddr(r), err)
 		message := "Connecting failed; try again."
 		if st, ok := status.FromError(err); ok && st.Code() != codes.Unknown && st.Code() != codes.Internal {
 			message = st.Message()
@@ -129,7 +126,10 @@ func (s *Server) connectState(w http.ResponseWriter, r *http.Request) {
 		Pending    []connect.PendingApproval `json:"pending"`
 	}{Catalog: []catalogEntry{}, Connectors: []connector{}, Pending: pending}
 	for _, e := range catalog.GetEntries() {
-		resp.Catalog = append(resp.Catalog, catalogEntry{ID: e.GetId(), Name: e.GetName(), Description: e.GetDescription(), Available: e.GetAvailable(), InstallURL: e.GetInstallUrl()})
+		resp.Catalog = append(resp.Catalog, catalogEntry{
+			ID: e.GetId(), Name: e.GetName(), Description: e.GetDescription(), Available: e.GetAvailable(), InstallURL: e.GetInstallUrl(),
+			GrantOnly: e.GetGrantOnly(), Checkable: e.GetCheckable(),
+		})
 	}
 	for _, c := range list.GetConnectors() {
 		resp.Connectors = append(resp.Connectors, toConnector(c))
@@ -148,7 +148,7 @@ func (s *Server) beginConnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, _ := r.Cookie(cookieName)
-	target, id, err := s.connect.Start(r.Context(), connect.StartRequest{
+	started, err := s.connect.Start(r.Context(), connect.StartRequest{
 		User: caller(r).ID, SessionSHA256: sessionSHA256(session.Value), Connector: r.PathValue("connector"),
 		Name: req.Name, URL: req.URL, Header: req.Header, Key: req.Key,
 	})
@@ -156,15 +156,15 @@ func (s *Server) beginConnect(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	if target == "" {
-		writeJSON(w, map[string]string{"connected": id})
+	if started.URL == "" {
+		writeJSON(w, map[string]string{"connected": started.Connector})
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: connectCookie, Value: session.Value, Path: connect.Prefix, MaxAge: int(connectAge.Seconds()),
+		Name: connectCookie, Value: started.Nonce, Path: connect.Prefix, MaxAge: int(connectAge.Seconds()),
 		HttpOnly: true, Secure: true, SameSite: http.SameSiteLaxMode,
 	})
-	writeJSON(w, map[string]string{"url": target})
+	writeJSON(w, map[string]string{"url": started.URL})
 }
 
 func (s *Server) setConnectPolicy(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +198,15 @@ func (s *Server) disconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"revoked": revoked})
+}
+
+func (s *Server) checkConnector(w http.ResponseWriter, r *http.Request) {
+	account, err := s.connect.Check(r.Context(), caller(r).ID, r.PathValue("connector"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, map[string]string{"account": account})
 }
 
 func (s *Server) connectActivity(w http.ResponseWriter, r *http.Request) {

@@ -606,6 +606,8 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusForbidden, status.Convert(err).Message())
 	case status.Code(err) == codes.FailedPrecondition:
 		writeError(w, http.StatusConflict, status.Convert(err).Message())
+	case status.Code(err) == codes.Unavailable:
+		writeError(w, http.StatusBadGateway, status.Convert(err).Message())
 	default:
 		log.WithFunc("console.Server.fail").Errorf(r.Context(), err, "%s %s", r.Method, r.URL.Path)
 		writeError(w, http.StatusInternalServerError, "internal error")
