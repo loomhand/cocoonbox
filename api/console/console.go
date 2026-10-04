@@ -23,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/connect"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/users"
@@ -93,6 +94,7 @@ type Server struct {
 	shares  controlv1.SharesServer
 	authn   *auth.Authenticator
 	screens Screens
+	connect *connect.Service
 
 	defaultDailyCap   int64
 	defaultMaxRunning int

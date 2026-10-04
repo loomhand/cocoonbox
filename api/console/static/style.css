@@ -91,3 +91,12 @@ pre {
 
 #notice { padding: 8px 12px; border-radius: 6px; border: 1px solid var(--line); }
 #notice.error { border-color: var(--danger); color: var(--danger); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; min-width: 0; }
+.card.focus { border-color: var(--accent); }
+.card h3 { margin: 4px 0; }
+.card .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.muted { color: var(--muted); font-size: 13px; }
+.ok { color: var(--accent); }
+a { color: var(--accent); }

@@ -22,6 +22,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/config"
+	"github.com/CMGS/cocoonbox/api/connect"
 	"github.com/CMGS/cocoonbox/api/console"
 	"github.com/CMGS/cocoonbox/api/controlmcp"
 	"github.com/CMGS/cocoonbox/api/credential"
@@ -83,6 +84,14 @@ func main() {
 		logger.Error(ctx, err, "reconcile sandboxd tenants and gw caps")
 	}
 	go accounts.Run(ctx, usersInterval)
+	var broker *connect.Service
+	if cfg.Connect.PublicURL != "" {
+		if broker, err = openConnect(ctx, cfg, accounts); err != nil {
+			logger.Fatalf(ctx, err, "open connect")
+		}
+		defer broker.Close()
+		go broker.RunPurge(ctx)
+	}
 	svc := boxes.New(backend, boxes.Defaults{
 		Flavor:       machineFlavor(cfg.Flavor),
 		Flavors:      flavors,
@@ -125,6 +134,16 @@ func main() {
 	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros, cfg.MaxRunningBoxes)
 	web.EnableSharing(shareSvc, authn, proxy)
 	httpMux.Handle(console.Prefix, web)
+	if broker != nil {
+		controlv1.RegisterConnectorsServer(server, broker)
+		web.EnableConnect(broker)
+		httpMux.Handle(connect.MCPPath, broker.NewDoor(authn, connect.DoorMCP))
+		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
+		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)
+		if cfg.Connect.BoxListen != "" {
+			go serveBoxDoor(ctx, cfg.Connect.BoxListen, broker.NewDoor(authn, connect.DoorBox))
+		}
+	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
@@ -185,6 +204,40 @@ func endShare(ctx context.Context, proxy *edge.Proxy, sh users.Share) {
 	defer cancel()
 	if err := proxy.EndShare(ctx, sh.Owner, sh.Box, sh.ID); err != nil {
 		log.WithFunc("main.endShare").Infof(ctx, "end the sessions of share %s in box %s: %s", sh.ID, sh.Box, status.Convert(err).Message())
+	}
+}
+
+// openConnect opens the Connect broker on the users database, sealing grants under each user's state key.
+func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Service) (*connect.Service, error) {
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return nil, err
+	}
+	broker, err := connect.Open(ctx, connect.Options{
+		DSN:       dsn,
+		Keys:      accounts,
+		PublicURL: cfg.Connect.PublicURL,
+		GitHub:    connect.Credentials{ClientID: os.Getenv("GITHUB_APP_CLIENT_ID"), ClientSecret: os.Getenv("GITHUB_APP_CLIENT_SECRET"), Slug: os.Getenv("GITHUB_APP_SLUG")},
+		Google:    connect.Credentials{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET")},
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.WithFunc("main.openConnect").Infof(ctx, "connect on %s", cfg.Connect.PublicURL)
+	return broker, nil
+}
+
+// serveBoxDoor serves the Connect box door on addr until ctx ends.
+func serveBoxDoor(ctx context.Context, addr string, door http.Handler) {
+	logger := log.WithFunc("main.serveBoxDoor")
+	srv := &http.Server{Addr: addr, Handler: door, ReadHeaderTimeout: readHeaderTimeout}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	logger.Infof(ctx, "serving the connect box door on %s", addr)
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Fatalf(ctx, err, "serve the connect box door on %s", addr)
 	}
 }
 

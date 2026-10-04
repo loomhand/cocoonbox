@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -112,6 +115,14 @@ type Accounts struct {
 	DefaultDailyCapMicros int64 `json:"default_daily_cap_micros"`
 }
 
+// Connect configures the Connect broker (design §16); its OAuth clients come from GITHUB_APP_* and GOOGLE_* env vars.
+type Connect struct {
+	// PublicURL is the api's public https origin; empty turns Connect off.
+	PublicURL string `json:"public_url"`
+	// BoxListen serves the box door (mode A) on this loopback address with user-token auth until the per-machine key lands; empty turns it off.
+	BoxListen string `json:"box_listen"`
+}
+
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
 	Sandboxd     Sandboxd `json:"sandboxd"`
@@ -126,8 +137,9 @@ type Config struct {
 	Flavor    Flavor    `json:"flavor"`
 	Flavors   []Flavor  `json:"flavors"`
 	// MaxRunningBoxes bounds how many boxes of one user run at once; Ensure and Create past it fail and name the running box.
-	MaxRunningBoxes int   `json:"max_running_boxes"`
-	State           State `json:"state"`
+	MaxRunningBoxes int     `json:"max_running_boxes"`
+	State           State   `json:"state"`
+	Connect         Connect `json:"connect"`
 }
 
 // Load reads, defaults and validates the file at path.
@@ -194,6 +206,7 @@ func (c *Config) applyDefaults() {
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
 	c.MaxRunningBoxes = cmp.Or(c.MaxRunningBoxes, defaultMaxRunning)
+	c.Connect.PublicURL = strings.TrimSuffix(c.Connect.PublicURL, "/")
 }
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
@@ -234,10 +247,21 @@ func (c *Config) validate() error {
 	if c.MaxRunningBoxes < 1 {
 		errs = append(errs, fmt.Errorf("max_running_boxes must be at least 1, got %d", c.MaxRunningBoxes))
 	}
+	if u, err := url.Parse(c.Connect.PublicURL); c.Connect.PublicURL != "" && (err != nil || u.Scheme != "https" || u.Host == "" || strings.Trim(u.Path, "/") != "") {
+		errs = append(errs, fmt.Errorf("connect.public_url must be an https origin, got %q", c.Connect.PublicURL))
+	}
+	if host, _, err := net.SplitHostPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || !isLoopback(host)) {
+		errs = append(errs, fmt.Errorf("connect.box_listen must be a loopback address, got %q", c.Connect.BoxListen))
+	}
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
 	return errors.Join(errs...)
+}
+
+func isLoopback(host string) bool {
+	ip, err := netip.ParseAddr(host)
+	return err == nil && ip.IsLoopback()
 }
 
 func readToken(path, what string) (string, error) {

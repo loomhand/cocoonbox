@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cocoonbox connections</title>
+<link rel="stylesheet" href="/cb/style.css">
+<script src="/cb/connect.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>cocoonbox · Connections</h1>
+  <span id="whoami"></span>
+  <a href="/cb/">Console</a>
+</header>
+<main>
+  <p id="notice" hidden></p>
+
+  <section id="signed-out" hidden>
+    <h2>Sign in first</h2>
+    <p>Sign in on the <a href="/cb/">console</a>, then come back to this page.</p>
+  </section>
+
+  <section id="connect" hidden>
+    <p>Connected accounts serve their tools to your agents: your own agents through the <code>/cocoonbox.mcp/connect</code> endpoint, and box agents with your approval for every write. CocoonBox keeps the account's keys on the server; no box and no app ever holds them.</p>
+    <div id="pending-block" hidden>
+      <h2>Waiting for your approval</h2>
+      <table><thead><tr><th>Connector</th><th>Call</th><th>Expires</th><th></th></tr></thead><tbody id="pending"></tbody></table>
+    </div>
+    <h2>Accounts</h2>
+    <div id="cards" class="cards"></div>
+    <h2>Custom MCP server</h2>
+    <form id="custom-form">
+      <label>Name <input name="name" required pattern="[a-z][a-z0-9\-]{0,23}" placeholder="mytool"></label>
+      <label>URL <input name="url" type="url" required placeholder="https://example.com/mcp" size="32"></label>
+      <label>Header <input name="header" placeholder="Authorization"></label>
+      <label>Key <input name="key" type="password" autocomplete="off" placeholder="empty: sign in"></label>
+      <button>Connect</button>
+    </form>
+    <h2>Activity</h2>
+    <table><thead><tr><th>When</th><th>Connector</th><th>Tool</th><th>Door</th><th>Decision</th><th>Outcome</th><th>Status</th><th>ms</th></tr></thead><tbody id="activity"></tbody></table>
+  </section>
+</main>
+</body>
+</html>

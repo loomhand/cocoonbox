@@ -323,6 +323,7 @@ func TestRequestsNeedASessionAndJSON(t *testing.T) {
 
 type env struct {
 	srv     *Server
+	dsn     string
 	users   *users.Service
 	boxes   *fakeBoxes
 	gw      *fakeGW
@@ -355,7 +356,7 @@ func newEnv(t *testing.T) *env {
 	if _, err := us.Create(t.Context(), users.NewUser{Name: "root", Password: password, Admin: true}); err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
-	e.users, e.srv = us, New(us, e.boxes, 5_000_000, 1)
+	e.users, e.srv, e.dsn = us, New(us, e.boxes, 5_000_000, 1), u.String()
 	return e
 }
 
