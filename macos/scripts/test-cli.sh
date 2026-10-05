@@ -99,6 +99,35 @@ class Bridge:
 def text(result):
     return " ".join(c.get("text", "") for c in result.get("content", []))
 
+# Connect (mode B): the bridge merges the door's connector tools, routes their
+# calls to it with no box wake, and passes the door's list_changed on.
+import os, urllib.request
+def mock_connect(params):
+    req = urllib.request.Request(os.environ["COCOONBOX_ENDPOINT"] + "/cocoonbox.mcp/connect", data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "mock/connect", "params": params}).encode(),
+                                 headers={"Authorization": "Bearer mock-token", "Content-Type": "application/json"}, method="POST")
+    urllib.request.urlopen(req, timeout=10).read()
+
+mock_connect({"grants": [{"id": "mockhub", "tools": [{"name": "list_issues", "read_only": True}, {"name": "create_issue"}]}]})
+c = Bridge()
+c.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "connect-client", "version": "1"}})
+c.send("notifications/initialized", notify=True)
+tools, _ = c.call("tools/list")
+names = [t["name"] for t in tools["result"]["tools"]]
+check("tools/list merges the connector tools after the box tools", len(names) == 23 and names[-2:] == ["mockhub_list_issues", "mockhub_create_issue"], names)
+result, _ = c.tool("mockhub_list_issues", {"state": "open"})
+check("a connector tool call goes to the Connect door", text(result) == 'mockhub_list_issues ran with {"state":"open"}', result)
+check("and leaves the box hibernated", json.loads(run("status", "--json").stdout)["state"] == "hibernated")
+time.sleep(0.5)
+mock_connect({"grants": []})
+changed, deadline = False, time.time() + 5
+while not changed and time.time() < deadline:
+    time.sleep(0.2)
+    _, seen = c.call("ping")
+    changed = any(m.get("method") == "notifications/tools/list_changed" for m in seen)
+tools, _ = c.call("tools/list")
+check("a disconnect reaches the client as list_changed, and the tools leave", changed and len(tools["result"]["tools"]) == 21, tools)
+c.close()
+
 b = Bridge()
 init, _ = b.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "9"}})
 check("initialize answered by the bridge", init["result"]["serverInfo"]["name"] == "cocoonbox")

@@ -420,6 +420,8 @@ public nonisolated struct Cocoonbox_Agent_V1_ApprovalRequest: Sendable {
   public var summary: String = String()
 
   /// "take_over": the agent hands the screen to the user (login, captcha, payment).
+  /// "connector": a Connect tool call that needs the user's approval; approval_id is the broker's apr_… id,
+  /// which the app answers with Connectors.Approve and then Agents.Respond.
   public var kind: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

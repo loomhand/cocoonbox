@@ -7,10 +7,12 @@ import Foundation
 // `--box`, else the newest running box when the bridge first needs one. It
 // opens one session per box on first use and wakes a box on its first
 // box-tool call unless `wake` is off. With the app's link it reports each
-// box-tool call to the app and takes the default box the app sends. The token
-// stays in memory and in the Authorization header of its requests.
+// box-tool call to the app and takes the default box the app sends. Connector
+// tools come from the Connect door (§16.3) and go back to it, with no box. The
+// token stays in memory and in the Authorization header of its requests.
 public actor Bridge {
     static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
+    static let connectWait = Duration.seconds(3)
 
     private let endpoint: Endpoint
     private let token: String
@@ -27,6 +29,13 @@ public actor Bridge {
     private var pinned: String?
     private var defaultBox: String?
     private var boxTools: [[String: Any]]
+    private var connect: MCPUpstream?
+    private var connectWatch: Task<Void, Never>?
+    private var connectTools: [[String: Any]] = []
+    // listedConnect is the connector list the client last got, nil before its first tools/list.
+    private var listedConnect: [[String: Any]]?
+    // connectFirst ends at the first connector list, which cancels it, or connectWait after the watch starts.
+    private var connectFirst: Task<Void, Never>?
     private var nextID = 1
 
     public init(endpoint: Endpoint, token: String, wake: Bool, box: String? = nil, link: AgentLinkClient? = nil, cache: URL, output: @escaping @Sendable (Data) -> Void) {
@@ -52,12 +61,15 @@ public actor Bridge {
     }
 
     public func shutdown() async {
+        connectWatch?.cancel()
         for upstream in sessions.values {
             await upstream.close()
         }
         await control?.close()
+        await connect?.close()
         sessions = [:]
         control = nil
+        connect = nil
     }
 
     func handle(_ message: [String: Any]) async {
@@ -70,20 +82,25 @@ public actor Bridge {
         switch method {
         case "initialize":
             client = params
+            startConnect()
             reply(id, [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": true]],
                 "serverInfo": ["name": "cocoonbox", "version": "0.1.0"],
-                "instructions": "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the others act on one box, the one their box argument names, else the default box of this session.",
+                "instructions": "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box.",
             ])
         case "ping":
             reply(id, [:])
         case "tools/list":
-            reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox)])
+            await connectReady()
+            listedConnect = connectTools
+            reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox) + connectTools])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             if ToolCatalog.controlNames.contains(name) {
                 await callControl(id, params)
+            } else if await isConnector(name) {
+                await callConnect(id, params)
             } else {
                 await callBox(id, params)
             }
@@ -155,6 +172,81 @@ public actor Bridge {
                 return reply(id, ToolFailure("Could not reach the box: \(error)").result)
             }
         }
+    }
+
+    private func callConnect(_ id: Any, _ params: [String: Any]) async {
+        for attempt in 0..<2 {
+            do {
+                return relay(id, try await call(try await openConnect(), "tools/call", params))
+            } catch MCPUpstream.Failure.sessionExpired where attempt == 0 {
+                connect = nil
+            } catch {
+                return reply(id, ToolFailure("Could not reach CocoonBox Connect: \(error)").result)
+            }
+        }
+    }
+
+    private func isConnector(_ name: String) async -> Bool {
+        if boxTools.contains(where: { $0["name"] as? String == name }) { return false }
+        await connectReady()
+        return connectTools.contains { $0["name"] as? String == name }
+    }
+
+    private func startConnect() {
+        guard connectWatch == nil else { return }
+        connectFirst = Task { try? await pause(Self.connectWait) }
+        connectWatch = Task { await self.watchConnect() }
+    }
+
+    // watchConnect lists the connector tools, then holds the door's stream and
+    // lists them again on each list_changed; it reconnects with backoff. An api
+    // without the door, or one that refuses the token, ends it with no connector tools.
+    private func watchConnect() async {
+        var delay = Duration.seconds(1)
+        while !Task.isCancelled {
+            let started = ContinuousClock.now
+            do {
+                let upstream = try await openConnect()
+                try await listConnect(upstream)
+                try await upstream.listen { message in await self.connectEvent(message) }
+            } catch MCPUpstream.Failure.http(let status) where [401, 403, 404, 405].contains(status) {
+                return loadedConnect()
+            } catch MCPUpstream.Failure.sessionExpired {
+                connect = nil
+            } catch {}
+            loadedConnect()
+            if ContinuousClock.now - started > .seconds(30) { delay = .seconds(1) }
+            try? await pause(delay)
+            delay = min(delay * 2, .seconds(60))
+        }
+    }
+
+    private func connectEvent(_ message: Data) async {
+        guard let object = try? JSONSerialization.jsonObject(with: message) as? [String: Any],
+              object["method"] as? String == "notifications/tools/list_changed", let connect else { return }
+        try? await listConnect(connect)
+    }
+
+    // listConnect takes the door's tools, leaving out a name a control or box tool
+    // has, and tells the client when they differ from what it last listed.
+    private func listConnect(_ upstream: MCPUpstream) async throws {
+        let answer = try await call(upstream, "tools/list", [:])
+        guard let result = answer["result"] as? [String: Any] else { throw ToolFailure("The Connect door refused tools/list.") }
+        let taken = ToolCatalog.controlNames.union(ToolCatalog.boxNames)
+        connectTools = (result["tools"] as? [[String: Any]] ?? []).filter { !taken.contains($0["name"] as? String ?? "") }
+        loadedConnect()
+        if let listedConnect, !ToolCatalog.same(listedConnect, connectTools) {
+            send(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
+        }
+    }
+
+    private func connectReady() async {
+        startConnect()
+        await connectFirst?.value
+    }
+
+    private func loadedConnect() {
+        connectFirst?.cancel()
     }
 
     // target returns the id of the box ref names, or of the default box when ref is empty.
@@ -242,6 +334,14 @@ public actor Bridge {
                 send(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
             }
         }
+        return upstream
+    }
+
+    private func openConnect() async throws -> MCPUpstream {
+        if let connect { return connect }
+        let upstream = try MCPUpstream(endpoint: endpoint, path: "/cocoonbox.mcp/connect", token: token)
+        try await initialize(upstream)
+        connect = upstream
         return upstream
     }
 

@@ -35,32 +35,12 @@ final class MCPUpstream: Sendable {
     // notification). It returns the encoded answer, and hands every other
     // message on the stream to `notify`.
     func post(_ body: Data, id: String?, notify: @Sendable (Data) async -> Void = { _ in }) async throws -> Data? {
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        var request = request("POST", accept: "application/json, text/event-stream", timeout: 600)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-        let session = sessionID.withLock { $0 }
-        if let session { request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id") }
         request.httpBody = body
-        request.timeoutInterval = 600
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-        let http = response as? HTTPURLResponse
-        if let issued = http?.value(forHTTPHeaderField: "Mcp-Session-Id") {
-            sessionID.withLock { $0 = issued }
-        }
-        switch http?.statusCode ?? 0 {
-        case 200:
-            break
-        case 202:
-            return nil
-        case 404 where session != nil:
-            sessionID.withLock { $0 = nil }
-            throw Failure.sessionExpired
-        case let status:
-            throw Failure.http(status)
-        }
-        if http?.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true {
+        let (bytes, http) = try await open(request)
+        if http.statusCode == 202 { return nil }
+        if http.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true {
             for try await line in bytes.lines {
                 guard let data = Self.eventData(line) else { continue }
                 if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], Self.answers(object, id: id) {
@@ -75,6 +55,42 @@ final class MCPUpstream: Sendable {
         for try await byte in bytes { answer.append(byte) }
         if id == nil { return nil }
         return answer.isEmpty ? nil : answer
+    }
+
+    // listen holds the server stream and hands each message on it to `notify` until the stream ends.
+    func listen(_ notify: @Sendable (Data) async -> Void) async throws {
+        let (bytes, _) = try await open(request("GET", accept: "text/event-stream", timeout: 90))
+        for try await line in bytes.lines {
+            if let data = Self.eventData(line) { await notify(data) }
+        }
+    }
+
+    private func request(_ method: String, accept: String, timeout: TimeInterval) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
+        if let session = sessionID.withLock({ $0 }) { request.setValue(session, forHTTPHeaderField: "Mcp-Session-Id") }
+        request.timeoutInterval = timeout
+        return request
+    }
+
+    // open sends request and keeps the session id the server issues; a status other than 200 or 202 throws.
+    private func open(_ request: URLRequest) async throws -> (URLSession.AsyncBytes, HTTPURLResponse) {
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        guard let http = response as? HTTPURLResponse else { throw Failure.http(0) }
+        if let issued = http.value(forHTTPHeaderField: "Mcp-Session-Id") {
+            sessionID.withLock { $0 = issued }
+        }
+        switch http.statusCode {
+        case 200, 202:
+            return (bytes, http)
+        case 404 where request.value(forHTTPHeaderField: "Mcp-Session-Id") != nil:
+            sessionID.withLock { $0 = nil }
+            throw Failure.sessionExpired
+        case let status:
+            throw Failure.http(status)
+        }
     }
 
     // close ends the MCP session, so the box closes the client's session now instead of on idle.

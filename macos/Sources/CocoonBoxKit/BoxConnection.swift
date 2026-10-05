@@ -6,6 +6,7 @@ import Synchronization
 typealias BoxTransport = HTTP2ClientTransport.TransportServices
 typealias BoxesClient = Cocoonbox_Control_V1_Boxes.Client<BoxTransport>
 typealias SharesClient = Cocoonbox_Control_V1_Shares.Client<BoxTransport>
+typealias ConnectorsClient = Cocoonbox_Control_V1_Connectors.Client<BoxTransport>
 typealias AgentsClient = Cocoonbox_Agent_V1_Agents.Client<BoxTransport>
 typealias SessionClient = Cocoonbox_Agent_V1_Session.Client<BoxTransport>
 
@@ -16,6 +17,7 @@ public final class BoxConnection: Sendable {
     public let endpoint: Endpoint
     let boxes: BoxesClient
     let shares: SharesClient
+    let connectors: ConnectorsClient
     let agents: AgentsClient
     let session: SessionClient
 
@@ -43,6 +45,7 @@ public final class BoxConnection: Sendable {
         self.client = client
         self.boxes = BoxesClient(wrapping: client)
         self.shares = SharesClient(wrapping: client)
+        self.connectors = ConnectorsClient(wrapping: client)
         self.agents = AgentsClient(wrapping: client)
         self.session = SessionClient(wrapping: client)
         self.runner = Task { try? await client.runConnections() }
@@ -168,6 +171,25 @@ public final class BoxConnection: Sendable {
 
     public func revokeShare(shareID: String) async throws {
         _ = try await shares.revoke(.with { $0.shareID = shareID })
+    }
+
+    // MARK: Connectors
+
+    public func listConnectors() async throws -> [Cocoonbox_Control_V1_Connector] {
+        try await connectors.list(Cocoonbox_Control_V1_ListConnectorsRequest()).connectors
+    }
+
+    // answerConnector answers a connector approval (design §16.5): the broker
+    // records the decision, then the agent's turn resumes and retries the call.
+    // A deny the broker no longer holds still resumes the turn.
+    public func answerConnector(agentID: String, approvalID: String, decision: Cocoonbox_Control_V1_ApprovalDecision) async throws {
+        do {
+            _ = try await connectors.approve(.with {
+                $0.approvalID = approvalID
+                $0.decision = decision
+            })
+        } catch let error as RPCError where error.code == .notFound && decision == .deny {}
+        try await respond(agentID: agentID, approvalID: approvalID, approve: decision != .deny, text: "")
     }
 
     // MARK: Session

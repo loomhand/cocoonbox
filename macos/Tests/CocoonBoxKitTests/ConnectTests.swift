@@ -1,0 +1,280 @@
+import CocoonBoxBridge
+import CocoonBoxKit
+import Foundation
+import Synchronization
+import Testing
+
+// ConnectTests runs the bridge and the app's approval call against a MockBox of
+// its own, whose mock-only `mock/connect` sets the Connect door's grants and
+// failures (design §16.3, §16.5). The box stays hibernated in the bridge tests.
+@Suite struct ConnectTests {
+    nonisolated(unsafe) static let hub: [String: Any] = ["id": "mockhub", "account": "octo", "tools": [["name": "list_issues", "read_only": true], ["name": "create_issue"]]]
+    static let plain = ToolCatalog.control.compactMap { $0["name"] as? String } + ToolCatalog.boxNames
+
+    @Test func mergesConnectorToolsAndRoutesTheirCalls() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        try await mock.connect(["grants": [Self.hub, ["id": "browser", "tools": [["name": "click"]]]]])
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+
+        let tools = try await client.tools()
+        let names = tools.compactMap { $0["name"] as? String }
+        #expect(names == Self.plain + ["mockhub_list_issues", "mockhub_create_issue"])
+        let create = try #require(tools.first { $0["name"] as? String == "mockhub_create_issue" })
+        #expect((create["inputSchema"] as? [String: Any])?["properties"] == nil)
+        #expect((create["annotations"] as? [String: Any])?["destructiveHint"] as? Bool == true)
+
+        let result = try await client.tool("mockhub_create_issue", ["title": "x"])
+        #expect(Self.text(result) == #"mockhub_create_issue ran with {"title":"x"}"#)
+        let status = try await client.tool("box_status")
+        #expect((status["structuredContent"] as? [String: Any])?["state"] as? String == "hibernated")
+        let log = mock.log()
+        #expect(log.contains("connect rpc=initialize client=bridge-test"))
+        #expect(log.contains("connect rpc=tools/call tool=mockhub_create_issue"))
+        #expect(!log.contains("tool=box_ensure"))
+    }
+
+    @Test func passesListChangedOnWhenTheToolsChange() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        try await mock.connect(["grants": [Self.hub]])
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+        #expect(try await client.tools().count == Self.plain.count + 2)
+        #expect(await until { mock.log().contains("connect stream") })
+
+        try await mock.connect(["grants": [] as [Any]])
+        #expect(await until { client.listChanged == 1 })
+        #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
+
+        try await mock.connect(["grants": [] as [Any]])
+        try await Task.sleep(for: .seconds(1))
+        #expect(client.listChanged == 1)
+    }
+
+    @Test func emptyMergeWithNoGrants() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+        #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
+    }
+
+    @Test func keepsWorkingWhileTheDoorFailsAndRecovers() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        try await mock.connect(["grants": [Self.hub], "fail": 503])
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+        let started = ContinuousClock.now
+        #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
+        #expect(ContinuousClock.now - started < .seconds(3))
+        let status = try await client.tool("box_status")
+        #expect((status["structuredContent"] as? [String: Any])?["state"] as? String == "hibernated")
+
+        try await mock.connect(["grants": [Self.hub]])
+        #expect(await until(seconds: 10) { client.listChanged == 1 })
+        #expect(try await client.tools().count == Self.plain.count + 2)
+    }
+
+    @Test func aHungDoorDelaysOnlyTheFirstList() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        try await mock.connect(["grants": [Self.hub], "hang": true])
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+        let started = ContinuousClock.now
+        #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
+        let waited = ContinuousClock.now - started
+        #expect(waited > .seconds(2) && waited < .seconds(10))
+        let again = ContinuousClock.now
+        #expect(try await client.tools().count == Self.plain.count)
+        #expect(ContinuousClock.now - again < .seconds(2))
+        let status = try await client.tool("box_status")
+        #expect((status["structuredContent"] as? [String: Any])?["state"] as? String == "hibernated")
+    }
+
+    @Test func anApiWithoutTheDoorEndsTheWatch() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        try await mock.connect(["fail": 404])
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+        #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
+        try await mock.connect(["grants": [Self.hub]])
+        try await Task.sleep(for: .seconds(3))
+        #expect(client.listChanged == 0)
+        #expect(mock.log().components(separatedBy: "connect rpc=initialize").count == 1)
+    }
+
+    @Test func approvalAnswersTheBrokerThenResumesTheAgent() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let connection = mock.connection
+        let box = try #require(try await connection.firstBox())
+        _ = try await connection.ensure(boxID: box.id)
+        #expect(await until { (try? await connection.firstBox())?.state == .running })
+        connection.boxID = box.id
+        let agent = try await connection.createAgent(name: "connect")
+
+        for (prompt, decision, outcome) in [("open an issue", .once, "Created issue #42 (once)."), ("another issue", .always, "Created issue #42 (always)."), ("one more issue", .deny, "Denied.")] as [(String, Cocoonbox_Control_V1_ApprovalDecision, String)] {
+            try await connection.send(agentID: agent.id, text: prompt)
+            var approval: Cocoonbox_Agent_V1_ApprovalRequest?
+            #expect(await until {
+                approval = await Self.entries(connection, agent.id).compactMap { entry -> Cocoonbox_Agent_V1_ApprovalRequest? in
+                    if case .approval(let request) = entry.body, !mock.log().contains(request.approvalID) { return request }
+                    return nil
+                }.last
+                return approval != nil
+            })
+            let request = try #require(approval)
+            #expect(request.kind == "connector" && request.approvalID.hasPrefix("apr_") && request.summary.contains("create_issue"))
+            try await connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: decision)
+            #expect(await until { await Self.entries(connection, agent.id).contains { Self.says($0, outcome) } }, "\(prompt)")
+            #expect(mock.log().contains("connectors approve \(request.approvalID) \(decision)"))
+        }
+    }
+
+    static func text(_ result: [String: Any]) -> String {
+        (result["content"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }.joined(separator: " ")
+    }
+
+    static func entries(_ connection: BoxConnection, _ agent: String) async -> [Cocoonbox_Agent_V1_TranscriptEntry] {
+        (try? await connection.transcript(agentID: agent, after: 0, limit: 500).entries) ?? []
+    }
+
+    static func says(_ entry: Cocoonbox_Agent_V1_TranscriptEntry, _ text: String) -> Bool {
+        switch entry.body {
+        case .toolResult(let result): result.text == text
+        case .text(let block): block.text == text
+        default: false
+        }
+    }
+}
+
+private func until(seconds: Double = 5, _ condition: () async -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(seconds)
+    while await !condition(), Date() < deadline {
+        try? await Task.sleep(for: .milliseconds(20))
+    }
+    return await condition()
+}
+
+// MockBoxProcess runs MockBox with its log in a temporary directory, on a random
+// port; it tries another port when that one does not answer, as one in use would not.
+final class MockBoxProcess: @unchecked Sendable {
+    let endpoint: Endpoint
+    let connection: BoxConnection
+    let root: URL
+    private let input: Pipe
+
+    init() async throws {
+        root = try Harness.temporary("connect")
+        let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
+        for _ in 0..<5 {
+            let port = Int.random(in: 56000..<60000)
+            let input = Pipe()
+            let process = Process()
+            // the shell kills MockBox when stop or the test process closes its stdin
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", "\"$0\" --port \(port) --boot-ms 100 >\"$1\" 2>&1 & pid=$!; read _; kill $pid", built.appendingPathComponent("MockBox").path, root.appendingPathComponent("mockbox.log").path]
+            process.environment = Harness.environment.merging(["HOME": root.path]) { $1 }
+            process.standardInput = input
+            try process.run()
+            let endpoint = Endpoint(host: "127.0.0.1", port: port, usesTLS: false)
+            let connection = try BoxConnection(endpoint: endpoint, token: "mock-token")
+            for _ in 0..<100 where (try? await connection.firstBox()) == nil {
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            if (try? await connection.firstBox()) != nil {
+                self.endpoint = endpoint
+                self.connection = connection
+                self.input = input
+                return
+            }
+            connection.close()
+            try? input.fileHandleForWriting.close()
+        }
+        throw Harness.HarnessError(message: "MockBox did not start: \((try? String(contentsOf: root.appendingPathComponent("mockbox.log"), encoding: .utf8)) ?? "")")
+    }
+
+    func stop() {
+        connection.close()
+        try? input.fileHandleForWriting.close()
+    }
+
+    func log() -> String {
+        (try? String(contentsOf: root.appendingPathComponent("mockbox.log"), encoding: .utf8)) ?? ""
+    }
+
+    // connect sets the door through the mock-only method: grants, fail (an HTTP status) and hang.
+    func connect(_ params: [String: Any]) async throws {
+        var request = URLRequest(url: URL(string: endpoint.url + "/cocoonbox.mcp/connect")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer mock-token", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": "mock/connect", "params": params])
+        let (_, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+    }
+}
+
+// BridgeClient plays a local agent: it feeds the bridge newline-delimited
+// JSON-RPC and reads its answers and notifications.
+final class BridgeClient: Sendable {
+    private let input = Pipe()
+    private let output = Lines()
+    private let next = Mutex(1)
+    private let task: Task<Void, Never>
+
+    init(_ mock: MockBoxProcess) async throws {
+        let output = output
+        let bridge = Bridge(endpoint: mock.endpoint, token: "mock-token", wake: true, cache: mock.root.appendingPathComponent("tools.json")) { data in
+            output.state.withLock { $0 += data.split(separator: UInt8(ascii: "\n")).map { Data($0) } }
+        }
+        let reader = input.fileHandleForReading
+        task = Task { await bridge.run(input: reader) }
+        _ = try await call("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": "bridge-test", "version": "1"]])
+        send(["jsonrpc": "2.0", "method": "notifications/initialized"])
+    }
+
+    var listChanged: Int {
+        messages().filter { $0["method"] as? String == "notifications/tools/list_changed" }.count
+    }
+
+    func tools() async throws -> [[String: Any]] {
+        try await call("tools/list")["result"].flatMap { ($0 as? [String: Any])?["tools"] as? [[String: Any]] } ?? []
+    }
+
+    func tool(_ name: String, _ arguments: [String: Any] = [:]) async throws -> [String: Any] {
+        try await call("tools/call", ["name": name, "arguments": arguments])["result"] as? [String: Any] ?? [:]
+    }
+
+    func call(_ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
+        let id = next.withLock { id in defer { id += 1 }; return id }
+        send(["jsonrpc": "2.0", "id": id, "method": method, "params": params])
+        var answer: [String: Any]?
+        _ = await until(seconds: 15) {
+            answer = messages().first { $0["id"] as? Int == id }
+            return answer != nil
+        }
+        return try #require(answer, "no answer to \(method)")
+    }
+
+    func close() {
+        try? input.fileHandleForWriting.close()
+    }
+
+    private final class Lines: Sendable {
+        let state = Mutex<[Data]>([])
+    }
+
+    private func send(_ message: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: message) else { return }
+        input.fileHandleForWriting.write(data + Data("\n".utf8))
+    }
+
+    private func messages() -> [[String: Any]] {
+        output.state.withLock { $0 }.compactMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+    }
+}

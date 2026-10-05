@@ -182,12 +182,15 @@ final class MCPServer: Sendable {
         var line = "mcp \(method) \(path) auth=\(auth) ua=\(headers["user-agent"]?.split(separator: " ").first ?? "-")"
         defer { print(line) }
         let target = path.split(separator: "?").first.map(String.init) ?? ""
-        let boxID = target.hasPrefix(Self.prefix) && target != ControlMCP.path ? String(target.dropFirst(Self.prefix.count)) : ""
-        guard target == ControlMCP.path || !boxID.isEmpty else {
+        let boxID = target.hasPrefix(Self.prefix) && target != ControlMCP.path && target != MockConnect.path ? String(target.dropFirst(Self.prefix.count)) : ""
+        guard target == ControlMCP.path || target == MockConnect.path || !boxID.isEmpty else {
             return HTTPResponse(status: 404, reason: "Not Found")
         }
         guard auth == "ok" else {
             return HTTPResponse(status: 401, reason: "Unauthorized")
+        }
+        if target == MockConnect.path {
+            return await world.connect.handle(method: method, headers: headers, body: body, line: &line)
         }
         if target == ControlMCP.path {
             guard method == "POST" else { return HTTPResponse(status: 405, reason: "Method Not Allowed", headers: ["Allow": "POST"]) }

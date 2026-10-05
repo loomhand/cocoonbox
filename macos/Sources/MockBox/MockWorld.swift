@@ -46,9 +46,11 @@ actor MockWorld {
     private var animateFPS = 0
     private var externalDelay: Duration?
     private let restoreOnWake: Bool
+    nonisolated let connect: MockConnect
 
-    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false, restoreOnWake: Bool = false) {
+    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false, restoreOnWake: Bool = false, connect: MockConnect) {
         self.token = token
+        self.connect = connect
         self.bootDelay = bootDelay
         self.animateFPS = animateFPS
         self.externalDelay = externalDelay
@@ -579,6 +581,38 @@ actor MockWorld {
         }))
     }
 
+    // connectorTask plays a box agent's write through the box door (design §16.5): the
+    // broker asks, the user answers in Connectors.Approve and Agents.Respond, the agent retries.
+    private func connectorTask(agent id: String, turn: String) async {
+        let approval = "apr_\(UUID().uuidString.prefix(8).lowercased())"
+        connect.pend(approval)
+        append(agent: id, turn: turn, role: .assistant, body: .approval(.with {
+            $0.approvalID = approval
+            $0.kind = "connector"
+            $0.summary = "GitHub: create_issue repo=CMGS/cocoonbox title=Mock issue"
+        }))
+        setStatus(agent: id, .waitingForUser)
+        let answer = await withCheckedContinuation { approvals[approval] = $0 }
+        setStatus(agent: id, .running)
+        guard answer.approve else {
+            _ = connect.take(approval)
+            append(agent: id, turn: turn, role: .user, body: .text(.with { $0.text = "Denied." }))
+            return
+        }
+        let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
+        append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
+            $0.callID = call
+            $0.name = "github_create_issue"
+            $0.argumentsJson = #"{"repo":"CMGS/cocoonbox","title":"Mock issue"}"#
+        }))
+        let decision = connect.take(approval)
+        append(agent: id, turn: turn, role: .tool, body: .toolResult(.with {
+            $0.callID = call
+            $0.isError = decision != .once && decision != .always
+            $0.text = $0.isError ? "Refused: not answered yet." : "Created issue #42 (\(decision == .always ? "always" : "once"))."
+        }))
+    }
+
     private func runTurn(agent id: String, turn: String, prompt: String) async {
         let pause = Duration.milliseconds(350)
         try? await Task.sleep(for: pause)
@@ -601,6 +635,8 @@ actor MockWorld {
             append(agent: id, turn: turn, role: .user, body: .text(.with {
                 $0.text = answer.approve ? (answer.text.isEmpty ? "I'm done, continue." : answer.text) : "Denied."
             }))
+        } else if prompt.contains("issue") {
+            await connectorTask(agent: id, turn: turn)
         } else {
             let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
             append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
