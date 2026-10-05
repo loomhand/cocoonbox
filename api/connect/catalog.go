@@ -1,6 +1,9 @@
 package connect
 
-import "net/url"
+import (
+	"encoding/base64"
+	"net/url"
+)
 
 const (
 	authOAuth  authKind = "oauth"
@@ -24,12 +27,17 @@ type authKind string
 
 type revokeKind string
 
-// injection is how a grant that serves no tools will reach programs in the box: sandboxd overwrites header on
-// requests to hosts with template, whose {token} is the access token (M5.2).
+// render turns an access token into the value a header carries.
+type render func(token string) string
+
+// injection is a claim credential a grant puts on its owner's boxes (M5.2): sandboxd writes value(access token) into
+// header on requests to hosts that carry placeholder.
 type injection struct {
-	hosts    []string
-	header   string
-	template string
+	name        string
+	hosts       []string
+	header      string
+	placeholder string
+	value       render
 }
 
 type entry struct {
@@ -47,7 +55,9 @@ type entry struct {
 	userInfoName string
 	revoke       revokeKind
 	installURL   string
-	inject       *injection
+	inject       []injection
+	// flag is the guest-visible switch the image follows while the grant injects.
+	flag string
 }
 
 func (e *entry) available() bool {
@@ -65,6 +75,11 @@ func newCatalog(github, google Credentials) []*entry {
 		authorizeURL: "https://github.com/login/oauth/authorize",
 		userInfoURL:  "https://api.github.com/user", userInfoName: "login",
 		revoke: revokeGitHub,
+		inject: []injection{
+			{name: "GH_GIT", hosts: []string{"github.com"}, header: headerAuthorization, placeholder: "Basic @GH_GIT@", value: gitBasic},
+			{name: "GH_API", hosts: []string{"api.github.com"}, header: headerAuthorization, placeholder: "token @GH_API@", value: prefixed("token ")},
+		},
+		flag: "COCOONBOX_GH_GIT",
 	}
 	if github.Slug != "" {
 		gh.installURL = "https://github.com/apps/" + url.PathEscape(github.Slug) + "/installations/new"
@@ -73,7 +88,11 @@ func newCatalog(github, google Credentials) []*entry {
 		gh,
 		{
 			id: "google-calendar", name: "Google Calendar", description: "Your Google Calendar events, for programs in your box. It serves no tools to agents yet.",
-			auth: authOAuth, inject: &injection{hosts: []string{"www.googleapis.com"}, header: "Authorization", template: "Bearer {token}"},
+			auth: authOAuth,
+			inject: []injection{{
+				name: "GOOGLE_CALENDAR", hosts: []string{"www.googleapis.com"}, header: headerAuthorization,
+				placeholder: "Bearer @GOOGLE_CALENDAR@", value: prefixed("Bearer "),
+			}},
 			client: client{ //nolint:gosec // the secret comes from the environment
 				ID: google.ClientID, Secret: google.ClientSecret, TokenURL: "https://oauth2.googleapis.com/token",
 				RevokeURL: "https://oauth2.googleapis.com/revoke",
@@ -88,4 +107,12 @@ func newCatalog(github, google Credentials) []*entry {
 		{id: "linear", name: "Linear", description: "Issues and projects in your Linear workspace.", mcpURL: "https://mcp.linear.app/mcp", auth: authMCP},
 		{id: kindCustom, name: "Custom MCP server", description: "Any MCP server by URL, with its own sign-in or a key in a header.", auth: authCustom},
 	}
+}
+
+func gitBasic(token string) string {
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte("x-access-token:"+token))
+}
+
+func prefixed(scheme string) render {
+	return func(token string) string { return scheme + token }
 }

@@ -283,19 +283,23 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	claimRunning(t, b)
 	identity := machines.Identity{BoxID: boxID, WakeID: "w1", KeyID: "k1", PublicKey: "pk"}
 
-	if err := b.Deliver(t.Context(), boxID, identity, "sk-box"); err != nil {
+	if err := b.Deliver(t.Context(), boxID, identity, "sk-box", "door-key"); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
-	gw := fake.env()["GW_KEY"]
-	if gw.Value != "Bearer sk-box" || gw.Guest == nil || *gw.Guest {
-		t.Errorf("GW_KEY = %+v, want a host-only Bearer entry", gw)
+	for name, want := range map[string]string{"GW_KEY": "Bearer sk-box", "CB_CONNECT_KEY": "Bearer door-key"} {
+		if v := fake.env()[name]; v.Value != want || v.Guest == nil || *v.Guest {
+			t.Errorf("%s = %+v, want a host-only Bearer entry", name, v)
+		}
+	}
+	if fake.count("patch") != 1 {
+		t.Errorf("env patches = %d, want both keys in one", fake.count("patch"))
 	}
 	exec := fake.lastExec()
 	var file machines.Identity
 	if err := json.Unmarshal([]byte(exec.Env["CB_STDIN"]), &file); err != nil || file != identity || !slices.Equal(exec.Argv, writeIdentity) {
 		t.Errorf("identity exec = %+v (%v)", exec, err)
 	}
-	if err := b.Deliver(t.Context(), boxID, identity, ""); err != nil || fake.count("patch") != 1 {
+	if err := b.Deliver(t.Context(), boxID, identity, "", ""); err != nil || fake.count("patch") != 1 {
 		t.Errorf("Deliver without a gw key: %v, env patches %d", err, fake.count("patch"))
 	}
 	if err := b.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
@@ -319,21 +323,21 @@ func TestDeliverFailures(t *testing.T) {
 	identity := machines.Identity{BoxID: boxID, WakeID: "w1"}
 
 	fake.execExit = 1
-	if err := b.Deliver(t.Context(), boxID, identity, ""); err == nil || !strings.Contains(err.Error(), "exit 1: mkdir failed") {
+	if err := b.Deliver(t.Context(), boxID, identity, "", ""); err == nil || !strings.Contains(err.Error(), "exit 1: mkdir failed") {
 		t.Errorf("Deliver with a failing exec = %v", err)
 	}
 	fake.execExit, fake.execStatus = 0, http.StatusBadGateway
-	if err := b.Deliver(t.Context(), boxID, identity, ""); err == nil || !strings.Contains(err.Error(), "write identity") {
+	if err := b.Deliver(t.Context(), boxID, identity, "", ""); err == nil || !strings.Contains(err.Error(), "write identity") {
 		t.Errorf("Deliver with an unreachable guest = %v", err)
 	}
 	fake.execStatus = 0
 	h, _ := b.Hibernate(t.Context(), boxID)
 	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
 	execs := fake.count("exec")
-	if err := b.Deliver(t.Context(), boxID, identity, ""); !isNotRunning(err, machines.StateHibernated) || fake.count("exec") != execs {
+	if err := b.Deliver(t.Context(), boxID, identity, "", ""); !isNotRunning(err, machines.StateHibernated) || fake.count("exec") != execs {
 		t.Errorf("Deliver to a hibernated box = %v, execs %d -> %d", err, execs, fake.count("exec"))
 	}
-	if err := b.Deliver(t.Context(), "cb-missing", identity, ""); !errors.Is(err, machines.ErrNotFound) {
+	if err := b.Deliver(t.Context(), "cb-missing", identity, "", ""); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("Deliver to an unknown machine = %v", err)
 	}
 }
@@ -366,6 +370,84 @@ func TestSetEgressSetsAndRemovesTheHostOnlyUpstream(t *testing.T) {
 	}
 	if err := b.SetEgress(t.Context(), "cb-missing", ""); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("SetEgress of an unknown machine = %v", err)
+	}
+}
+
+func TestSetCredentialsWritesChangesOnlyAndFlagsOnlyWhileRunning(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	on := machines.Credentials{
+		Secrets: map[string]*machines.Secret{
+			"GH_GIT":          {Value: "Basic x", Hosts: []string{"github.com"}, Header: "Authorization", Placeholder: "Basic @GH_GIT@"},
+			"GOOGLE_CALENDAR": nil,
+		},
+		Flags: map[string]string{"COCOONBOX_GH_GIT": "1"},
+	}
+	off := machines.Credentials{
+		Secrets: map[string]*machines.Secret{"GH_GIT": nil, "GOOGLE_CALENDAR": nil},
+		Flags:   map[string]string{"COCOONBOX_GH_GIT": ""},
+	}
+
+	for range 2 {
+		if err := b.SetCredentials(t.Context(), boxID, on); err != nil {
+			t.Fatalf("SetCredentials: %v", err)
+		}
+	}
+	git, flag := fake.env()["GH_GIT"], fake.env()["COCOONBOX_GH_GIT"]
+	if git.Value != "Basic x" || git.Guest == nil || *git.Guest || git.Inject == nil || !slices.Equal(git.Inject.Hosts, []string{"github.com"}) ||
+		git.Inject.Header != "Authorization" || git.Inject.Placeholder != "Basic @GH_GIT@" {
+		t.Errorf("GH_GIT = %+v (%+v), want a host-only credential for github.com", git, git.Inject)
+	}
+	if flag.Value != "1" || flag.Guest != nil || fake.count("patch") != 1 {
+		t.Errorf("flag = %+v after %d patches, want a guest entry in one patch", flag, fake.count("patch"))
+	}
+	for range 2 {
+		if err := b.SetCredentials(t.Context(), boxID, off); err != nil {
+			t.Fatalf("SetCredentials off: %v", err)
+		}
+	}
+	if len(fake.env()) != 0 || fake.count("patch") != 2 {
+		t.Errorf("env = %+v after %d patches, want empty after one more", fake.env(), fake.count("patch"))
+	}
+
+	h, _ := b.Hibernate(t.Context(), boxID)
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	if err := b.SetCredentials(t.Context(), boxID, on); err != nil {
+		t.Fatalf("SetCredentials while hibernated: %v", err)
+	}
+	if _, ok := fake.env()["COCOONBOX_GH_GIT"]; ok || fake.env()["GH_GIT"].Value != "Basic x" {
+		t.Errorf("env of a hibernated claim = %+v, want the secret without the flag", fake.env())
+	}
+}
+
+func TestSetCredentialsRemembersARefusalUntilTheValueChanges(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	fake.add(&fakeSandbox{
+		row: row{ID: "sb_1", Metadata: map[string]string{"cb_machine": boxID, "cb_owner": owner}}, token: "tok",
+		env: map[string]envVar{"GH_GIT": {Guest: new(false)}},
+	})
+	b := newTestBackend(t, fake)
+	secret := func(v string) machines.Credentials {
+		return machines.Credentials{Secrets: map[string]*machines.Secret{"GH_GIT": {Value: v, Hosts: []string{"github.com"}, Header: "Authorization"}}}
+	}
+
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"GH_GIT": nil}}); err != nil {
+		t.Fatalf("remove a name the claim held before this process: %v", err)
+	}
+	if _, ok := fake.env()["GH_GIT"]; ok {
+		t.Errorf("env = %+v, want GH_GIT removed", fake.env())
+	}
+	fake.patchStatus = http.StatusBadRequest
+	if err := b.SetCredentials(t.Context(), boxID, secret("Basic x")); !errors.Is(err, machines.ErrRefused) {
+		t.Errorf("SetCredentials on a pool that cannot inject = %v, want ErrRefused", err)
+	}
+	if err := b.SetCredentials(t.Context(), boxID, secret("Basic x")); err != nil || fake.count("patch") != 2 {
+		t.Errorf("repeat of the refused value = %v after %d patches, want nil with the value sent once", err, fake.count("patch"))
+	}
+	fake.patchStatus = 0
+	if err := b.SetCredentials(t.Context(), boxID, secret("Basic y")); err != nil || fake.envOf("GH_GIT") != "Basic y" {
+		t.Errorf("SetCredentials with a new value = %v, env %+v", err, fake.env())
 	}
 }
 
@@ -442,18 +524,19 @@ type fakeSandbox struct {
 type fakeSandboxd struct {
 	srv *httptest.Server
 
-	mu         sync.Mutex
-	sandboxes  map[string]*fakeSandbox
-	next       int
-	calls      map[string]int
-	claims     []claimRequest
-	execs      []execRequest
-	relays     []string
-	renews     []string
-	execExit   int32
-	execStatus int
-	agent      string
-	tenants    map[string]tenantRequest
+	mu          sync.Mutex
+	sandboxes   map[string]*fakeSandbox
+	next        int
+	calls       map[string]int
+	claims      []claimRequest
+	execs       []execRequest
+	relays      []string
+	renews      []string
+	execExit    int32
+	execStatus  int
+	patchStatus int
+	agent       string
+	tenants     map[string]tenantRequest
 }
 
 func (f *fakeSandboxd) handler() http.Handler {
@@ -552,6 +635,11 @@ func (f *fakeSandboxd) handler() http.Handler {
 			Env map[string]*envVar `json:"env"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
+		f.calls["patch"]++
+		if f.patchStatus != 0 {
+			writeError(w, f.patchStatus, "refused")
+			return
+		}
 		for k, v := range req.Env {
 			if v == nil {
 				delete(sb.env, k)
@@ -559,7 +647,6 @@ func (f *fakeSandboxd) handler() http.Handler {
 				sb.env[k] = *v
 			}
 		}
-		f.calls["patch"]++
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/ports/{port}", f.sandbox(func(w http.ResponseWriter, r *http.Request, sb *fakeSandbox) {

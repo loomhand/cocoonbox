@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -117,6 +118,8 @@ type Accounts struct {
 type Connect struct {
 	// PublicURL is the api's public https origin; empty turns Connect off.
 	PublicURL string `json:"public_url"`
+	// BoxListen serves the box door (mode A) on this address of the host bridge, such as 10.203.0.1:18091; empty turns it off.
+	BoxListen string `json:"box_listen"`
 }
 
 // Config is the on-disk configuration of cocoonbox-api.
@@ -245,6 +248,9 @@ func (c *Config) validate() error {
 	}
 	if u, err := url.Parse(c.Connect.PublicURL); c.Connect.PublicURL != "" && (err != nil || u.Scheme != "https" || u.Host == "" || strings.Trim(u.Path, "/") != "") {
 		errs = append(errs, fmt.Errorf("connect.public_url must be an https origin, got %q", c.Connect.PublicURL))
+	}
+	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
+		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
 	}
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))

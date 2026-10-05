@@ -4,6 +4,8 @@ package sandboxd
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -245,7 +247,7 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	return nil
 }
 
-func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, gwKey string) error {
+func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, gwKey, connectKey string) error {
 	sandbox, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
@@ -257,10 +259,16 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 	if m.State != machines.StateRunning {
 		return &machines.NotRunningError{State: m.State}
 	}
+	keys := map[string]*envVar{}
 	if gwKey != "" {
-		hostOnly := false
-		if err = b.api.patchEnv(ctx, sandbox, map[string]*envVar{envGWKey: {Value: "Bearer " + gwKey, Guest: &hostOnly}}); err != nil {
-			return fmt.Errorf("install gw key: %w", err)
+		keys[envGWKey] = &envVar{Value: "Bearer " + gwKey, Guest: new(false)}
+	}
+	if connectKey != "" {
+		keys[envConnectKey] = &envVar{Value: "Bearer " + connectKey, Guest: new(false)}
+	}
+	if len(keys) > 0 {
+		if err = b.api.patchEnv(ctx, sandbox, keys); err != nil {
+			return fmt.Errorf("install host keys: %w", err)
 		}
 	}
 	file, err := json.Marshal(identity)
@@ -298,6 +306,71 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 	defer b.mu.Unlock()
 	if e := b.entries[id]; e != nil {
 		e.routed = upstream != ""
+	}
+	return nil
+}
+
+func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Credentials) error {
+	sandbox, err := b.sandboxOf(ctx, id)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	e := b.entries[id]
+	if e == nil {
+		b.mu.Unlock()
+		return machines.ErrNotFound
+	}
+	changes, sums := map[string]*envVar{}, map[string]string{}
+	add := func(name string, v *envVar) {
+		sum := fingerprint(v)
+		if have, ok := e.env[name]; (v == nil && !ok) || (v != nil && ok && have == sum) {
+			return
+		}
+		changes[name], sums[name] = v, sum
+	}
+	for name, sec := range c.Secrets {
+		var v *envVar
+		if sec != nil {
+			v = &envVar{Value: sec.Value, Guest: new(false)}
+			if len(sec.Hosts) > 0 {
+				v.Inject = &inject{Hosts: sec.Hosts, Header: sec.Header, Placeholder: sec.Placeholder}
+			}
+		}
+		add(name, v)
+	}
+	if state, _ := e.state(); state == machines.StateRunning {
+		for name, value := range c.Flags {
+			var v *envVar
+			if value != "" {
+				v = &envVar{Value: value}
+			}
+			add(name, v)
+		}
+	}
+	b.mu.Unlock()
+	if len(changes) == 0 {
+		return nil
+	}
+	err = b.api.patchEnv(ctx, sandbox, changes)
+	if err != nil && !errors.Is(err, machines.ErrRefused) {
+		return fmt.Errorf("set credentials: %w", err)
+	}
+	// A refused write counts as written, so a pool that cannot inject is retried only when the values change.
+	b.mu.Lock()
+	if e.env == nil {
+		e.env = map[string]string{}
+	}
+	for name, sum := range sums {
+		if changes[name] == nil {
+			delete(e.env, name)
+		} else {
+			e.env[name] = sum
+		}
+	}
+	b.mu.Unlock()
+	if err != nil {
+		return fmt.Errorf("set credentials: %w", err)
 	}
 	return nil
 }
@@ -580,4 +653,14 @@ func send(ctx context.Context, out chan<- machines.Machine, m machines.Machine) 
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// fingerprint identifies an env entry without keeping its value; nil has none.
+func fingerprint(v *envVar) string {
+	if v == nil {
+		return ""
+	}
+	raw, _ := json.Marshal(v)
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }

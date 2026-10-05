@@ -259,7 +259,7 @@ func (s *Service) withCredential(ctx context.Context, g *grant, fn func(*upstrea
 	if err != nil {
 		return err
 	}
-	u := &upstream{s: s, url: g.mcpURL, cred: credential{header: "Authorization", value: "Bearer " + access}, conn: s.conn(g.id)}
+	u := &upstream{s: s, url: g.mcpURL, cred: credential{header: headerAuthorization, value: "Bearer " + access}, conn: s.conn(g.id)}
 	if err = fn(u); !errors.Is(err, errUnauthorized) {
 		return err
 	}
@@ -347,7 +347,7 @@ func (s *Service) lose(ctx context.Context, g *grant) error {
 	}
 	log.WithFunc("connect.Service.lose").Warnf(ctx, "grant %s of %s (%s) needs a reconnect: its server refused the credential", g.id, g.user, g.connector)
 	s.dropConn(g.id)
-	s.watchers.notify(g.user)
+	s.changed(ctx, g)
 	return errReconnect
 }
 

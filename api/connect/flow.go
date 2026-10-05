@@ -51,11 +51,11 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 			return nil, err
 		}
 		if req.Key != "" {
-			return &Started{Connector: connector}, s.connectKey(ctx, req.User, connector, mcpURL, cmp.Or(req.Header, "Authorization"), req.Key)
+			return &Started{Connector: connector}, s.connectKey(ctx, req.User, connector, mcpURL, cmp.Or(req.Header, headerAuthorization), req.Key)
 		}
 	}
 	verifier, challenge := pkce()
-	state, nonce := randomToken(32), randomToken(32)
+	state, nonce := randomToken(), randomToken()
 	fs := flowSecrets{Verifier: verifier}
 	q := url.Values{
 		"response_type":         {responseCode},
@@ -151,7 +151,7 @@ func (s *Service) Complete(ctx context.Context, nonce, state, code string) (stri
 		return "", err
 	}
 	s.dropConn(g.id)
-	s.watchers.notify(user)
+	s.changed(ctx, g)
 	log.WithFunc("connect.Service.Complete").Infof(ctx, "user %s connected %s as %q (grant %s, refresh token %t)", user, g.connector, g.account, g.id, t.RefreshToken != "")
 	return g.connector, nil
 }
@@ -177,7 +177,7 @@ func (s *Service) customTarget(req StartRequest) (string, string, error) {
 	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && (u.Scheme != "http" || !s.allowPrivate)) {
 		return "", "", status.Error(codes.InvalidArgument, "a custom connector's URL is an https URL")
 	}
-	if req.Key != "" && (!httpguts.ValidHeaderFieldName(cmp.Or(req.Header, "Authorization")) || !httpguts.ValidHeaderFieldValue(req.Key)) {
+	if req.Key != "" && (!httpguts.ValidHeaderFieldName(cmp.Or(req.Header, headerAuthorization)) || !httpguts.ValidHeaderFieldValue(req.Key)) {
 		return "", "", status.Error(codes.InvalidArgument, "the header name or the key is not valid in an HTTP header")
 	}
 	u.Fragment = ""

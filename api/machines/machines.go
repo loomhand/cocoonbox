@@ -31,6 +31,8 @@ var (
 	ErrNoAddress = errors.New("machine has no address yet")
 	// ErrConflict reports a concurrent change; the caller may retry.
 	ErrConflict = errors.New("concurrent machine change")
+	// ErrRefused reports a request the backend refused as invalid; a retry with the same values fails again.
+	ErrRefused = errors.New("request refused by the backend")
 )
 
 // State is the lifecycle state of a machine.
@@ -88,6 +90,22 @@ type Identity struct {
 	PublicKey string `json:"public_key"`
 }
 
+// Secret is a host-only value; with Hosts, the backend writes it into Header on requests to Hosts that carry Placeholder.
+type Secret struct {
+	Value       string
+	Hosts       []string
+	Header      string
+	Placeholder string
+}
+
+// Credentials are host-only secrets and the guest-visible flags that switch their use on.
+type Credentials struct {
+	// Secrets maps a name to its secret; a nil secret removes the name.
+	Secrets map[string]*Secret
+	// Flags maps a guest-visible name to its value; "" removes the name.
+	Flags map[string]string
+}
+
 // Endpoint reaches a machine's agent; Key names it as host:port and changes when the machine moves.
 type Endpoint struct {
 	Key  string
@@ -125,8 +143,10 @@ type Machines interface {
 	Delete(ctx context.Context, id string) error
 	// SetMeta stores value under key in the machine's Meta.
 	SetMeta(ctx context.Context, id, key, value string) error
-	// Deliver hands the running machine's agent its identity and, when gwKey is set, its gw key.
-	Deliver(ctx context.Context, id string, identity Identity, gwKey string) error
+	// Deliver hands the running machine's agent its identity and installs gwKey and connectKey where set.
+	Deliver(ctx context.Context, id string, identity Identity, gwKey, connectKey string) error
+	// SetCredentials applies c to the machine; flags change only while it runs.
+	SetCredentials(ctx context.Context, id string, c Credentials) error
 	// SetEgress sends the machine's new connections through the proxy at upstream, or direct when upstream is empty.
 	SetEgress(ctx context.Context, id, upstream string) error
 }

@@ -62,7 +62,7 @@ func TestSignInCompletesOnlyWithItsNonceWhileItsSessionIsLive(t *testing.T) {
 	}
 	bobs := env.start(t, bob, "bobs")
 	_, bobState, _ := env.vendor.Consent(bobs.URL)
-	for name, nonce := range map[string]string{"no nonce": "", "a wrong nonce": randomToken(32), "another user's nonce": bobs.Nonce} {
+	for name, nonce := range map[string]string{"no nonce": "", "a wrong nonce": randomToken(), "another user's nonce": bobs.Nonce} {
 		if _, err := env.svc.Complete(t.Context(), nonce, state, code); status.Code(err) != codes.PermissionDenied {
 			t.Errorf("Complete with %s: %v", name, err)
 		}
@@ -612,6 +612,100 @@ func TestBoxDoorTakesTheApprovalFromMeta(t *testing.T) {
 	meta := `,"_meta":{"` + approvalIDMeta + `":"` + approvalID + `"}`
 	if err := json.UnmarshalRead(post(t, srv.URL, "Bearer alice", fmt.Sprintf(body, meta)).Body, &retry); err != nil || retry.Result.IsError || retry.Result.Content[0].Text != "create_item done" {
 		t.Errorf("approved retry = %+v, %v", retry, err)
+	}
+}
+
+func TestBoxDoorTakesOnlyTheCurrentKeyOfAMachine(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	srv := httptest.NewServer(env.svc.NewBoxDoor())
+	t.Cleanup(srv.Close)
+	old, err := env.svc.DoorKey(t.Context(), "cb-m1", alice, "inc1")
+	if err != nil {
+		t.Fatalf("DoorKey: %v", err)
+	}
+	cur, err := env.svc.DoorKey(t.Context(), "cb-m1", alice, "inc2")
+	if err != nil || cur == old {
+		t.Fatalf("DoorKey for the next incarnation = %v, same key %t", err, cur == old)
+	}
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + listItems + `","arguments":{}}}`
+	for header, want := range map[string]int{"Bearer " + old: http.StatusUnauthorized, cur: http.StatusUnauthorized, "Bearer nope": http.StatusUnauthorized, "": http.StatusUnauthorized, "Bearer " + cur: http.StatusOK} {
+		if resp := post(t, srv.URL, header, body); resp.StatusCode != want {
+			t.Errorf("box door with %q = %d, want %d", header, resp.StatusCode, want)
+		}
+	}
+	var caller, user string
+	if err := env.row(t, "SELECT caller, user_id FROM connect_audit ORDER BY id DESC LIMIT 1").Scan(&caller, &user); err != nil || caller != "box:cb-m1" || user != alice {
+		t.Errorf("audit caller = %q of %q, %v, want box:cb-m1 of %s", caller, user, err, alice)
+	}
+	var keys int
+	if err := env.row(t, "SELECT count(*) FROM connect_door_keys WHERE machine_id = 'cb-m1'").Scan(&keys); err != nil || keys != 1 {
+		t.Errorf("door keys of cb-m1 = %d, %v, want 1", keys, err)
+	}
+}
+
+func TestCredentialsInjectAnActiveGrantAndClearTheRest(t *testing.T) {
+	env := newEnv(t)
+	var hooked []string
+	env.svc.OnInjection(func(_ context.Context, user string) { hooked = append(hooked, user) })
+	env.connect(t)
+	if len(hooked) != 0 {
+		t.Errorf("a connector that injects nothing called the hook for %v", hooked)
+	}
+	env.svc.catalog = append(env.svc.catalog, &entry{
+		id: "injecting", name: "Injecting", auth: authOAuth,
+		client: client{ID: "c", Secret: "s", TokenURL: env.vendor.URL + "/token", Resource: env.vendor.MCPURL()},
+		inject: []injection{{name: "MOCK_API", hosts: []string{"api.mock.test"}, header: "Authorization", placeholder: "Bearer @MOCK_API@", value: prefixed("Bearer ")}},
+		flag:   "COCOONBOX_MOCK",
+	})
+	env.exec(t, "UPDATE connect_grants SET kind = 'injecting', mcp_url = ''")
+
+	creds, err := env.svc.Credentials(t.Context(), alice)
+	mock := creds.Secrets["MOCK_API"]
+	if err != nil || mock == nil || mock.Value != "Bearer "+env.secrets(t).AccessToken || mock.Header != "Authorization" ||
+		mock.Placeholder != "Bearer @MOCK_API@" || len(mock.Hosts) != 1 || mock.Hosts[0] != "api.mock.test" || creds.Flags["COCOONBOX_MOCK"] != flagOn {
+		t.Fatalf("Credentials = %+v, %v", creds, err)
+	}
+	for _, name := range []string{"GH_GIT", "GH_API", "GOOGLE_CALENDAR"} {
+		if v, ok := creds.Secrets[name]; !ok || v != nil {
+			t.Errorf("%s = %+v, %t, want a removal", name, v, ok)
+		}
+	}
+	if v, ok := creds.Flags["COCOONBOX_GH_GIT"]; !ok || v != "" {
+		t.Errorf("COCOONBOX_GH_GIT = %q, %t, want a removal", v, ok)
+	}
+
+	env.exec(t, "UPDATE connect_grants SET token_expires_at = now() + interval '1 minute'")
+	if creds, err = env.svc.Credentials(t.Context(), alice); err != nil || creds.Secrets["MOCK_API"].Value != "Bearer "+env.secrets(t).AccessToken || creds.Secrets["MOCK_API"].Value == mock.Value {
+		t.Errorf("Credentials near expiry = %+v, %v, want the refreshed token", creds.Secrets["MOCK_API"], err)
+	}
+	env.exec(t, "UPDATE connect_grants SET token_expires_at = now() - interval '1 minute'")
+	env.vendor.RejectRefresh()
+	if creds, err = env.svc.Credentials(t.Context(), alice); err != nil || creds.Secrets["MOCK_API"] != nil || creds.Flags["COCOONBOX_MOCK"] != "" {
+		t.Errorf("Credentials of a lost grant = %+v, %v, want removals", creds, err)
+	}
+	if _, err := env.svc.Remove(t.Context(), alice, mockName, DoorConsole); err != nil || len(hooked) != 1 || hooked[0] != alice {
+		t.Errorf("Remove = %v, hook calls %v, want one for %s", err, hooked, alice)
+	}
+}
+
+func TestTheCatalogInjectsTheGitHubAndGoogleRecipes(t *testing.T) {
+	want := map[string]string{
+		"GH_GIT":          "Basic eC1hY2Nlc3MtdG9rZW46dDE=",
+		"GH_API":          "token t1",
+		"GOOGLE_CALENDAR": "Bearer t1",
+	}
+	placeholders := map[string]string{"GH_GIT": "Basic @GH_GIT@", "GH_API": "token @GH_API@", "GOOGLE_CALENDAR": "Bearer @GOOGLE_CALENDAR@"}
+	for _, e := range newCatalog(Credentials{}, Credentials{}) {
+		for _, in := range e.inject {
+			if got := in.value("t1"); got != want[in.name] || in.placeholder != placeholders[in.name] || in.header != "Authorization" {
+				t.Errorf("%s of %s = %q with %q, want %q with %q", in.name, e.id, got, in.placeholder, want[in.name], placeholders[in.name])
+			}
+			delete(want, in.name)
+		}
+	}
+	if len(want) != 0 {
+		t.Errorf("catalog lacks %v", want)
 	}
 }
 

@@ -17,6 +17,7 @@ const (
 	envMetaPrefix = "CB_META_"
 	envWakes      = "CB_WAKES"
 	envGWKey      = "GW_KEY"
+	envConnectKey = "CB_CONNECT_KEY"
 	envUpstream   = "EGRESS_UPSTREAM"
 
 	opClaim     = "claim"
@@ -48,7 +49,9 @@ type entry struct {
 	opErr    string
 	revision int64
 
-	meta   map[string]string
+	meta map[string]string
+	// env maps each env name the claim holds to the fingerprint of the entry this process wrote, "" when unknown.
+	env    map[string]string
 	wakes  int
 	routed bool
 	// ready means the agent answered on its port since the claim, a wake or the last restart.
@@ -108,10 +111,12 @@ func (e *entry) machine(disk uint32) machines.Machine {
 	return m
 }
 
-// loadEnv reads the service meta, the wake count and whether an upstream is set from the claim's env entries.
+// loadEnv reads the service meta, the wake count, whether an upstream is set and the names from the claim's env entries.
 func (e *entry) loadEnv(env map[string]envVar) {
 	e.meta = map[string]string{}
+	e.env = map[string]string{}
 	for name, v := range env {
+		e.env[name] = ""
 		if key, ok := strings.CutPrefix(name, envMetaPrefix); ok {
 			e.meta[key] = v.Value
 		}

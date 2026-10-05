@@ -347,9 +347,17 @@ func (r *fakeRegistry) RemoveBox(_ context.Context, owner, id string) error {
 }
 
 type execCall struct {
-	machine  string
-	identity machines.Identity
-	gwKey    string
+	machine    string
+	identity   machines.Identity
+	gwKey      string
+	connectKey string
+}
+
+// credCall is one SetCredentials: the values it set and, on a running machine, its flags.
+type credCall struct {
+	machine string
+	secrets map[string]string
+	flags   map[string]string
 }
 
 // fakeMachines keeps machines in memory; each pushed event reaches exactly one live Watch.
@@ -368,6 +376,7 @@ type fakeMachines struct {
 	execErr   error
 	execs     []execCall
 	egress    []string
+	creds     []credCall
 }
 
 func newFakeMachines() *fakeMachines {
@@ -487,13 +496,33 @@ func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {
 	return nil
 }
 
-func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity, gwKey string) error {
+func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity, gwKey, connectKey string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.execErr != nil {
 		return f.execErr
 	}
-	f.execs = append(f.execs, execCall{machine: id, identity: identity, gwKey: gwKey})
+	f.execs = append(f.execs, execCall{machine: id, identity: identity, gwKey: gwKey, connectKey: connectKey})
+	return nil
+}
+
+func (f *fakeMachines) SetCredentials(_ context.Context, id string, c machines.Credentials) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m, ok := f.machines[id]
+	if !ok {
+		return machines.ErrNotFound
+	}
+	call := credCall{machine: id, secrets: map[string]string{}}
+	for name, sec := range c.Secrets {
+		if sec != nil {
+			call.secrets[name] = sec.Value
+		}
+	}
+	if m.State == machines.StateRunning {
+		call.flags = c.Flags
+	}
+	f.creds = append(f.creds, call)
 	return nil
 }
 
@@ -522,6 +551,12 @@ func (f *fakeMachines) execCalls() []execCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.execs)
+}
+
+func (f *fakeMachines) credCalls() []credCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.creds)
 }
 
 func (f *fakeMachines) egressCalls() []string {

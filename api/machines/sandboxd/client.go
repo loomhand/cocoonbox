@@ -24,7 +24,7 @@ const (
 	maxErrorBody   = 4 << 10
 )
 
-// apiError is a sandboxd error answer; 404 is machines.ErrNotFound and 409 machines.ErrConflict.
+// apiError is a sandboxd error answer; 400 is machines.ErrRefused, 404 machines.ErrNotFound and 409 machines.ErrConflict.
 type apiError struct {
 	status  int
 	message string
@@ -34,6 +34,8 @@ func (e *apiError) Error() string { return fmt.Sprintf("sandboxd %d: %s", e.stat
 
 func (e *apiError) Unwrap() error {
 	switch e.status {
+	case http.StatusBadRequest:
+		return machines.ErrRefused
 	case http.StatusNotFound:
 		return machines.ErrNotFound
 	case http.StatusConflict:
@@ -64,8 +66,15 @@ type row struct {
 }
 
 type envVar struct {
-	Value string `json:"value"`
-	Guest *bool  `json:"guest,omitempty"`
+	Value  string  `json:"value"`
+	Guest  *bool   `json:"guest,omitempty"`
+	Inject *inject `json:"inject,omitempty"`
+}
+
+type inject struct {
+	Hosts       []string `json:"hosts"`
+	Header      string   `json:"header"`
+	Placeholder string   `json:"placeholder,omitempty"`
 }
 
 type claimRequest struct {

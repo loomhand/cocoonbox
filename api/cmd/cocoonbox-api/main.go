@@ -38,11 +38,13 @@ import (
 )
 
 const (
-	provisionInterval = 10 * time.Second
-	usersInterval     = 10 * time.Second
-	shutdownGrace     = 5 * time.Second
-	readHeaderTimeout = 10 * time.Second
-	endShareTimeout   = 10 * time.Second
+	provisionInterval   = 10 * time.Second
+	usersInterval       = 10 * time.Second
+	credentialsInterval = time.Minute
+	injectionTimeout    = time.Minute
+	shutdownGrace       = 5 * time.Second
+	readHeaderTimeout   = 10 * time.Second
+	endShareTimeout     = 10 * time.Second
 )
 
 func main() {
@@ -140,6 +142,7 @@ func main() {
 		httpMux.Handle(connect.MCPPath, broker.NewDoor(authn, connect.DoorMCP))
 		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
 		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)
+		enableBoxConnect(ctx, cfg, svc, broker)
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -193,6 +196,36 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 	go svc.RunProvisioner(ctx, provisionInterval)
 	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, residential exit %q", signer.KeyID(), cfg.Provision.ResidentialUpstream)
 	return signer, nil
+}
+
+// enableBoxConnect gives every box its door key and its owner's credentials, and serves the box door on connect.box_listen.
+func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service) {
+	logger := log.WithFunc("main.enableBoxConnect")
+	svc.EnableConnect(broker)
+	broker.OnInjection(func(ctx context.Context, user string) {
+		go func() {
+			applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), injectionTimeout)
+			defer cancel()
+			if err := svc.ApplyCredentials(applyCtx, user); err != nil {
+				logger.Warnf(applyCtx, "apply the credentials of %s: %v", user, err)
+			}
+		}()
+	})
+	go svc.RunCredentials(ctx, credentialsInterval)
+	if cfg.Connect.BoxListen == "" {
+		return
+	}
+	srv := &http.Server{Addr: cfg.Connect.BoxListen, Handler: broker.NewBoxDoor(), ReadHeaderTimeout: readHeaderTimeout}
+	go func() {
+		<-ctx.Done()
+		_ = srv.Close()
+	}()
+	go func() {
+		logger.Infof(ctx, "serving the connect box door on %s", cfg.Connect.BoxListen)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Fatalf(ctx, err, "serve the connect box door on %s", cfg.Connect.BoxListen)
+		}
+	}()
 }
 
 // endShare closes the box's MCP sessions of a share that ended; a box that is not running has none to close.

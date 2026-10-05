@@ -116,8 +116,19 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 		return "", fmt.Errorf("wake id: %w", err)
 	}
 	identity := machines.Identity{BoxID: boxOfMachine(m.ID), WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey()}
-	if err := s.machines.Deliver(ctx, m.ID, identity, gwKey); err != nil {
+	var connectKey string
+	if s.connect != nil {
+		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)
+		if err != nil {
+			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the box door key: %v", err)
+		}
+		connectKey = key
+	}
+	if err := s.machines.Deliver(ctx, m.ID, identity, gwKey, connectKey); err != nil {
 		return "", err
+	}
+	if s.connect != nil {
+		s.pushCredentials(ctx, m)
 	}
 	if gwKey != "" {
 		if err := s.machines.SetMeta(ctx, m.ID, metaGW, "1"); err != nil {

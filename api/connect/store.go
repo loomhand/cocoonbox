@@ -299,6 +299,33 @@ func (s *store) pending(ctx context.Context, user string) ([]*approval, error) {
 	})
 }
 
+// putDoorKey stores the hash of machine's door key for its incarnation in place of its earlier ones.
+func (s *store) putDoorKey(ctx context.Context, keySHA256, machine, user, incarnation string) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, "DELETE FROM connect_door_keys WHERE machine_id = $1", machine); err != nil {
+			return fmt.Errorf("drop door keys: %w", err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO connect_door_keys (key_sha256, machine_id, user_id, incarnation) VALUES ($1, $2, $3, $4)",
+			keySHA256, machine, user, incarnation); err != nil {
+			return fmt.Errorf("store door key: %w", err)
+		}
+		return nil
+	})
+}
+
+// doorKey returns the user and machine of the door key whose hash is keySHA256.
+func (s *store) doorKey(ctx context.Context, keySHA256 string) (string, string, error) {
+	var user, machine string
+	err := s.pool.QueryRow(ctx, "SELECT user_id, machine_id FROM connect_door_keys WHERE key_sha256 = $1", keySHA256).Scan(&user, &machine)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", errNoDoorKey
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("read door key: %w", err)
+	}
+	return user, machine, nil
+}
+
 func (s *store) audit(ctx context.Context, r *record) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO connect_audit (user_id, connector, tool, door, caller, decision, outcome, upstream_status, latency_ms, req_bytes, resp_bytes, args_sha256)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,

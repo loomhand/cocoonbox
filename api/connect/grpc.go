@@ -173,7 +173,7 @@ func (s *Service) Remove(ctx context.Context, user, connector, door string) (boo
 		return false, err
 	}
 	s.dropConn(g.id)
-	s.watchers.notify(user)
+	s.changed(ctx, g)
 	if err := s.store.audit(ctx, &record{user: user, connector: connector, door: door, caller: door, decision: decisionDisconn, outcome: outcomeOK}); err != nil {
 		logger.Error(ctx, err, "write the audit record")
 	}

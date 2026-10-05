@@ -55,6 +55,7 @@ type Service struct {
 	provision *provisioner
 	exit      *exitPolicy
 	accounts  Accounts
+	connect   Connect
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex
@@ -136,6 +137,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		logger.Infof(ctx, "created machine %s for user %s", m.ID, user)
 		return s.withOperation(ctx, user, box, m, controlv1.Phase_PHASE_CREATING), nil
 	case machines.ActionWoken:
+		s.wakeCredentials(ctx, m)
 		logger.Info(ctx, "waking box")
 		return s.withOperation(ctx, user, box, m, controlv1.Phase_PHASE_WAKING), nil
 	}

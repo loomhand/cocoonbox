@@ -56,6 +56,7 @@ const (
 	grantRefreshToken      = "refresh_token"
 	responseCode           = "code"
 	methodInitialize       = "initialize"
+	headerAuthorization    = "Authorization"
 
 	outcomeOK      = "ok"
 	outcomeError   = "error"
@@ -79,6 +80,7 @@ var (
 	errNoFlow     = errors.New("the sign-in is unknown, finished or expired; start it again")
 	errNoApproval = errors.New("the approval is unknown, answered or expired")
 	errReconnect  = errors.New("the vendor no longer accepts the grant")
+	errNoDoorKey  = errors.New("no box door key")
 
 	connectorPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
 	toolNamePattern  = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
@@ -88,6 +90,9 @@ var (
 type Sessions interface {
 	SessionUser(ctx context.Context, sessionSHA256 string) (string, error)
 }
+
+// InjectionFunc runs after a grant of user that injects into boxes is connected, disconnected or lost.
+type InjectionFunc func(ctx context.Context, user string)
 
 // Options configures the broker.
 type Options struct {
@@ -116,6 +121,7 @@ type Service struct {
 	allowPrivate bool
 	refreshes    singleflight.Group
 	watchers     *watchers
+	onInjection  InjectionFunc
 
 	mu    sync.Mutex
 	conns map[string]*conn
@@ -161,6 +167,11 @@ func (s *Service) RunPurge(ctx context.Context) {
 	}
 }
 
+// OnInjection registers fn, which runs synchronously in the call that changed the grant.
+func (s *Service) OnInjection(fn InjectionFunc) {
+	s.onInjection = fn
+}
+
 func (s *Service) entry(id string) *entry {
 	if i := slices.IndexFunc(s.catalog, func(e *entry) bool { return e.id == id }); i >= 0 {
 		return s.catalog[i]
@@ -183,4 +194,12 @@ func (s *Service) dropConn(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.conns, id)
+}
+
+// changed tells the user's open MCP streams and, for a grant that injects, the user's boxes that g changed.
+func (s *Service) changed(ctx context.Context, g *grant) {
+	s.watchers.notify(g.user)
+	if e := s.entry(g.kind); e != nil && len(e.inject) > 0 && s.onInjection != nil {
+		s.onInjection(ctx, g.user)
+	}
 }

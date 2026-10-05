@@ -34,6 +34,13 @@ func TestLoadDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadTheBoxDoor(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"connect:\n  public_url: https://cb.example/\n  box_listen: 10.203.0.1:18091\n"))
+	if err != nil || cfg.Connect.BoxListen != "10.203.0.1:18091" || cfg.Connect.PublicURL != "https://cb.example" {
+		t.Errorf("Load = %+v, %v", cfg, err)
+	}
+}
+
 func TestLoadRejects(t *testing.T) {
 	tests := []struct {
 		name, body, want string
@@ -60,6 +67,8 @@ func TestLoadRejects(t *testing.T) {
 		{name: "gc batch over the S3 limit", body: required + "state:\n  gc:\n    delete_batch: 1001\n", want: "state.gc.delete_batch must be in 1..1000"},
 		{name: "connect over http", body: required + "connect:\n  public_url: http://cb.example\n", want: "connect.public_url must be an https origin"},
 		{name: "connect with a path", body: required + "connect:\n  public_url: https://cb.example/x\n", want: "connect.public_url must be an https origin"},
+		{name: "box door on every address", body: required + "connect:\n  public_url: https://cb.example\n  box_listen: 0.0.0.0:18091\n", want: "connect.box_listen must be an ip:port of one address"},
+		{name: "box door without connect", body: required + "connect:\n  box_listen: 10.203.0.1:18091\n", want: "connect.box_listen must be an ip:port of one address"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

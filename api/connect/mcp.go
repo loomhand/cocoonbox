@@ -3,6 +3,7 @@ package connect
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/rand"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -44,6 +45,9 @@ type Authenticator interface {
 	Authenticate(header string) (string, error)
 }
 
+// authFunc maps an Authorization header value to its user and, on the box door, the calling machine.
+type authFunc func(ctx context.Context, header string) (string, string, error)
+
 type session struct {
 	client string
 	at     time.Time
@@ -59,7 +63,7 @@ type response struct {
 // Door serves the connector tools of the bearer's user over MCP Streamable HTTP for one door.
 type Door struct {
 	svc   *Service
-	authn Authenticator
+	authn authFunc
 	door  string
 
 	mu      sync.Mutex
@@ -68,7 +72,7 @@ type Door struct {
 
 func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	user, err := d.authn.Authenticate(r.Header.Get("Authorization"))
+	user, machine, err := d.authn(r.Context(), r.Header.Get(headerAuthorization))
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		return
@@ -111,7 +115,7 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	c := caller{user: user, door: d.door, name: d.door + ":" + d.client(r.Header.Get(headerSession))}
+	c := caller{user: user, door: d.door, name: d.door + ":" + cmp.Or(machine, d.client(r.Header.Get(headerSession)))}
 	var (
 		call struct {
 			Name      string         `json:"name"`
@@ -229,7 +233,15 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 
 // NewDoor serves the tools for door, authenticating with authn.
 func (s *Service) NewDoor(authn Authenticator, door string) *Door {
-	return &Door{svc: s, authn: authn, door: door, clients: map[string]session{}}
+	return &Door{svc: s, door: door, clients: map[string]session{}, authn: func(_ context.Context, header string) (string, string, error) {
+		user, err := authn.Authenticate(header)
+		return user, "", err
+	}}
+}
+
+// NewBoxDoor serves the box door, authenticating each call by the door key of its machine.
+func (s *Service) NewBoxDoor() *Door {
+	return &Door{svc: s, door: DoorBox, clients: map[string]session{}, authn: s.boxCaller}
 }
 
 type watchers struct {

@@ -23,6 +23,7 @@ const (
 	authNone        = "none"
 	authSecretBasic = "client_secret_basic"
 	maxMetadataSize = 1 << 20
+	tokenBytes      = 32
 )
 
 var challengeParam = regexp.MustCompile(`([a-zA-Z_]+)="([^"]*)"`)
@@ -299,7 +300,7 @@ func (s *Service) accountLabel(ctx context.Context, e *entry, accessToken string
 	if err != nil {
 		return "", 0
 	}
-	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set(headerAuthorization, "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/json")
 	status, body, err := s.send(req)
 	if err != nil || status != http.StatusOK {
@@ -325,13 +326,13 @@ func (s *Service) send(req *http.Request) (int, []byte, error) {
 }
 
 func pkce() (string, string) {
-	verifier := randomToken(32)
+	verifier := randomToken()
 	sum := sha256.Sum256([]byte(verifier))
 	return verifier, base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
-func randomToken(n int) string {
-	raw := make([]byte, n)
+func randomToken() string {
+	raw := make([]byte, tokenBytes)
 	_, _ = rand.Read(raw)
 	return base64.RawURLEncoding.EncodeToString(raw)
 }
