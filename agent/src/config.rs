@@ -44,6 +44,8 @@ pub struct ServeConfig {
     pub quiesce_wait: Duration,
     pub state_roots: Vec<Root>,
     pub desktop_unit: Option<String>,
+    /// The Connect box door; without it the loop offers no connector tools.
+    pub connect_url: Option<String>,
 }
 
 impl std::fmt::Debug for ServeConfig {
@@ -67,6 +69,7 @@ impl std::fmt::Debug for ServeConfig {
             .field("quiesce_wait", &self.quiesce_wait)
             .field("state_roots", &self.state_roots)
             .field("desktop_unit", &self.desktop_unit)
+            .field("connect_url", &self.connect_url)
             .finish()
     }
 }
@@ -96,6 +99,7 @@ impl ServeConfig {
             quiesce_wait: QUIESCE_WAIT,
             state_roots: crate::state::default_roots(),
             desktop_unit: Some(DESKTOP_UNIT.to_owned()),
+            connect_url: env::var("CONNECT_URL").ok().filter(|v| !v.is_empty()),
         })
     }
 }
@@ -179,6 +183,7 @@ mod tests {
             quiesce_wait: QUIESCE_WAIT,
             state_roots: Vec::new(),
             desktop_unit: None,
+            connect_url: None,
         };
         let shown = format!("{cfg:?}");
         assert!(

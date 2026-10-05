@@ -12,6 +12,7 @@ use tokio_util::task::TaskTracker;
 use tonic::Status;
 
 use crate::config::ServeConfig;
+use crate::connect::{self, Outcome};
 use crate::dispatch::{Caller, Dispatcher, ToolOutput, Tools};
 use crate::journal::Journal;
 use crate::llm::{self, Delta, Message, Model, Part, Request, ToolCall, ToolSpec, Usage};
@@ -43,6 +44,7 @@ pub struct Runtime {
     pub turns: Arc<tokio::sync::RwLock<()>>,
     /// Interrupts the MCP calls of share sessions when a quiesce has waited long enough.
     pub guests: Arc<Preempt>,
+    connect: Option<Arc<connect::Client>>,
     main_tools: Vec<ToolSpec>,
     main_vision_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
@@ -58,6 +60,15 @@ impl Runtime {
         std::fs::create_dir_all(&cfg.state_dir)
             .map_err(|e| format!("create {}: {e}", cfg.state_dir.display()))?;
         let journal = Arc::new(Journal::new(Store::open(&cfg.state_dir.join("agent.db"))?));
+        let stop = CancellationToken::new();
+        let connect = match &cfg.connect_url {
+            Some(url) => {
+                let client = Arc::new(connect::Client::new(url)?);
+                client.watch(stop.clone());
+                Some(client)
+            }
+            None => None,
+        };
         let rt = Arc::new(Self {
             model,
             dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal))),
@@ -67,7 +78,8 @@ impl Runtime {
             computer_tools: tools::computer_tools(),
             computer_prompt: prompts::computer(&cfg.model_computer),
             screen: tokio::sync::Mutex::new(()),
-            stop: CancellationToken::new(),
+            stop,
+            connect,
             tasks: TaskTracker::new(),
             turns: Arc::new(tokio::sync::RwLock::new(())),
             guests: Arc::default(),
@@ -488,11 +500,16 @@ impl Runtime {
         };
         let system = prompts::main(&ctx.model, &self.cfg.model_computer, vision);
         for _ in 0..MAIN_MAX_STEPS {
+            let connectors = match &self.connect {
+                Some(c) => c.tools().await,
+                None => Arc::default(),
+            };
+            let offered: Vec<&ToolSpec> = tools.iter().chain(connectors.iter()).collect();
             let req = Request {
                 model: &ctx.model,
                 system: &system,
                 messages: &messages,
-                tools,
+                tools: &offered,
                 max_tokens: MAIN_MAX_TOKENS,
                 vision,
             };
@@ -555,7 +572,10 @@ impl Runtime {
                     .await
                     .unwrap_or_else(ToolOutput::error)
             }
-            name => return self.dispatcher.execute(&caller, &call.id, name, args).await,
+            name => match self.connect.as_ref().filter(|c| c.serves(name)) {
+                Some(client) => self.connector(ctx, client, name, &args).await?,
+                None => return self.dispatcher.execute(&caller, &call.id, name, args).await,
+            },
         };
         self.dispatcher
             .record_result(&caller, &call.id, &out)
@@ -564,27 +584,9 @@ impl Runtime {
     }
 
     async fn take_over(&self, ctx: &TurnCtx, reason: &str) -> Result<ToolOutput, String> {
-        let approval_id = new_id("ap");
-        let (tx, rx) = oneshot::channel();
-        lock(&ctx.slot.state)
-            .approvals
-            .insert(approval_id.clone(), tx);
-        let block = pb::ApprovalRequest {
-            approval_id,
-            summary: reason.to_owned(),
-            kind: "take_over".to_owned(),
-        };
-        self.record(ctx, Role::Assistant, Body::Approval(block), false)
+        let reply = self
+            .ask(ctx, new_id("ap"), reason.to_owned(), "take_over")
             .await?;
-        self.journal
-            .set_status(&ctx.agent_id, AgentStatus::WaitingForUser)
-            .await;
-        let reply = rx
-            .await
-            .map_err(|_| "the take-over was abandoned".to_owned())?;
-        self.journal
-            .set_status(&ctx.agent_id, AgentStatus::Running)
-            .await;
         let mut text = if reply.approve {
             "The user finished the take-over; continue from the current screen state.".to_owned()
         } else {
@@ -598,6 +600,64 @@ impl Runtime {
             image: None,
             is_error: !reply.approve,
         })
+    }
+
+    /// Runs a connector call; one the broker holds for approval runs again only after the user approves it.
+    async fn connector(
+        &self,
+        ctx: &TurnCtx,
+        client: &connect::Client,
+        name: &str,
+        args: &Value,
+    ) -> Result<ToolOutput, String> {
+        let (id, summary) = match client.call(name, args, None).await {
+            Outcome::Done(out) => return Ok(out),
+            Outcome::Approval { id, summary } => (id, summary),
+        };
+        if !self
+            .ask(ctx, id.clone(), summary, "connector")
+            .await?
+            .approve
+        {
+            return Ok(ToolOutput::error("The user declined the call."));
+        }
+        Ok(match client.call(name, args, Some(&id)).await {
+            Outcome::Done(out) => out,
+            Outcome::Approval { .. } => {
+                ToolOutput::error("Connect asked for another approval; the call did not run.")
+            }
+        })
+    }
+
+    /// Records an approval request under `approval_id` and waits for the user's answer.
+    async fn ask(
+        &self,
+        ctx: &TurnCtx,
+        approval_id: String,
+        summary: String,
+        kind: &str,
+    ) -> Result<Reply, String> {
+        let (tx, rx) = oneshot::channel();
+        lock(&ctx.slot.state)
+            .approvals
+            .insert(approval_id.clone(), tx);
+        let block = pb::ApprovalRequest {
+            approval_id,
+            summary,
+            kind: kind.to_owned(),
+        };
+        self.record(ctx, Role::Assistant, Body::Approval(block), false)
+            .await?;
+        self.journal
+            .set_status(&ctx.agent_id, AgentStatus::WaitingForUser)
+            .await;
+        let reply = rx
+            .await
+            .map_err(|_| format!("the {kind} approval was abandoned"))?;
+        self.journal
+            .set_status(&ctx.agent_id, AgentStatus::Running)
+            .await;
+        Ok(reply)
     }
 
     fn stream_delta(&self, ctx: &TurnCtx, block: &mut Block, kind: Kind, t: &str, subagent: &str) {

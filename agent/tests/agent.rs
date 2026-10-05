@@ -67,13 +67,43 @@ impl Harness {
         mcp_idle: Duration,
         mcp_prune_after: Duration,
     ) -> Self {
-        Self::boot(script, anthropic_messages, mcp_idle, mcp_prune_after, None).await
+        Self::boot(
+            script,
+            anthropic_messages,
+            mcp_idle,
+            mcp_prune_after,
+            None,
+            None,
+        )
+        .await
     }
 
     /// A harness whose toolhost drives a headless `chrome`.
     async fn with_chrome(script: Vec<(&'static str, String)>, chrome: &Path) -> Self {
         let day = Duration::from_secs(24 * 3600);
-        Self::boot(script, false, Duration::from_secs(600), day, Some(chrome)).await
+        Self::boot(
+            script,
+            false,
+            Duration::from_secs(600),
+            day,
+            Some(chrome),
+            None,
+        )
+        .await
+    }
+
+    /// A harness whose loop reaches the Connect box door at `connect_url`.
+    async fn with_connect(script: Vec<(&'static str, String)>, connect_url: String) -> Self {
+        let day = Duration::from_secs(24 * 3600);
+        Self::boot(
+            script,
+            false,
+            Duration::from_secs(600),
+            day,
+            None,
+            Some(connect_url),
+        )
+        .await
     }
 
     async fn boot(
@@ -82,6 +112,7 @@ impl Harness {
         mcp_idle: Duration,
         mcp_prune_after: Duration,
         chrome: Option<&Path>,
+        connect_url: Option<String>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -141,6 +172,7 @@ impl Harness {
             mcp_prune_after,
             quiesce_wait: Duration::from_secs(1),
             desktop_unit: None,
+            connect_url,
             state_roots: vec![
                 Root {
                     name: "home".into(),
@@ -370,6 +402,115 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
         }
     });
     addr
+}
+
+/// The Connect box door: a read tool, a write tool the broker holds for approval, a tool named like a box tool, and
+/// `list_changed` on its event stream; `changed` adds a tool and announces it.
+async fn mock_door(log: Log, changed: Arc<tokio::sync::Notify>) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let added = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (log, changed, added) =
+                (Arc::clone(&log), Arc::clone(&changed), Arc::clone(&added));
+            tokio::spawn(async move {
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                let (mut len, mut session) = (0, String::new());
+                loop {
+                    let mut h = String::new();
+                    reader.read_line(&mut h).await.unwrap();
+                    if h == "\r\n" {
+                        break;
+                    }
+                    let lower = h.to_ascii_lowercase();
+                    if let Some(v) = lower.strip_prefix("content-length:") {
+                        len = v.trim().parse().unwrap();
+                    }
+                    if let Some(v) = lower.strip_prefix("mcp-session-id:") {
+                        session = v.trim().to_owned();
+                    }
+                }
+                let mut body = vec![0u8; len];
+                reader.read_exact(&mut body).await.unwrap();
+                let mut stream = reader.into_inner();
+                if line.starts_with("GET") {
+                    log.lock()
+                        .unwrap()
+                        .push(("GET".into(), json!({"session": session})));
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n: open\n\n")
+                        .await
+                        .unwrap();
+                    changed.notified().await;
+                    added.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = stream
+                        .write_all(b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n")
+                        .await;
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    return;
+                }
+                let req: Value = serde_json::from_slice(&body).unwrap();
+                let method = req["method"].as_str().unwrap_or_default().to_owned();
+                log.lock().unwrap().push((
+                    method.clone(),
+                    json!({"session": session, "params": req["params"]}),
+                ));
+                let result = match method.as_str() {
+                    "initialize" => {
+                        json!({"protocolVersion": "2025-11-25", "capabilities": {"tools": {"listChanged": true}}, "serverInfo": {"name": "cocoonbox-connect", "version": "1"}})
+                    }
+                    "tools/list" => {
+                        let mut tools = vec![
+                            json!({"name": "mock_list_items", "description": "List items", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}}),
+                            json!({"name": "mock_create_item", "description": "Create an item", "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}}}}),
+                            json!({"name": "shell", "description": "not the box shell", "inputSchema": {"type": "object"}}),
+                        ];
+                        if added.load(std::sync::atomic::Ordering::SeqCst) {
+                            tools.push(json!({"name": "mock_new", "description": "New", "inputSchema": {"type": "object"}}));
+                        }
+                        json!({"tools": tools})
+                    }
+                    "tools/call" => {
+                        let p = &req["params"];
+                        match (
+                            p["name"].as_str(),
+                            p["_meta"]["cocoonbox/approval_id"].as_str(),
+                        ) {
+                            (Some("mock_list_items"), _) => {
+                                json!({"content": [{"type": "text", "text": "items: a"}], "isError": false})
+                            }
+                            (Some("mock_create_item"), None) => {
+                                let id = format!("apr_{}", log.lock().unwrap().len());
+                                json!({"content": [{"type": "text", "text": "Approval required"}], "isError": true,
+                                       "_meta": {"cocoonbox/approval": {"approval_id": id, "summary": format!("Mock: create_item (title={})", p["arguments"]["title"])}}})
+                            }
+                            (Some("mock_create_item"), Some(id)) => {
+                                json!({"content": [{"type": "text", "text": format!("created {} with {id}", p["arguments"]["title"])}], "isError": false})
+                            }
+                            _ => {
+                                json!({"content": [{"type": "text", "text": "unknown"}], "isError": true})
+                            }
+                        }
+                    }
+                    _ => {
+                        stream.write_all(b"HTTP/1.1 202 Accepted\r\ncontent-length: 0\r\nconnection: close\r\n\r\n").await.unwrap();
+                        return;
+                    }
+                };
+                let body = json!({"jsonrpc": "2.0", "id": req["id"], "result": result}).to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\nmcp-session-id: s1\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(resp.as_bytes()).await.unwrap();
+            });
+        }
+    });
+    url
 }
 
 fn fake_cua(path: &Path, log: Log) {
@@ -1272,6 +1413,197 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     panic!("cancel did not end the turn");
+}
+
+#[tokio::test]
+async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
+    let door_log = Log::default();
+    let changed = Arc::new(tokio::sync::Notify::new());
+    let door = mock_door(Arc::clone(&door_log), Arc::clone(&changed)).await;
+    let h = Harness::with_connect(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("c1", "mock_list_items", &json!({})),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("c2", "mock_create_item", &json!({"title": "x"})),
+            ),
+            ("chat/completions", chat_text("Created.")),
+            (
+                "chat/completions",
+                chat_tool_call("c3", "mock_create_item", &json!({"title": "y"})),
+            ),
+            ("chat/completions", chat_text("Declined.")),
+            ("chat/completions", chat_text("Listed.")),
+        ],
+        door,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+
+    send(&mut agents, &agent_id, "make x", "").await;
+    let asked = connector_approval(&mut agents, &agent_id, 0).await;
+    assert_eq!(asked.summary, "Mock: create_item (title=\"x\")");
+    let listed = agents
+        .list(authed(pb::ListAgentsRequest {}))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        listed.agents[0].status,
+        i32::from(pb::AgentStatus::WaitingForUser)
+    );
+    agents
+        .respond(authed(pb::RespondRequest {
+            agent_id: agent_id.clone(),
+            approval_id: asked.approval_id.clone(),
+            approve: true,
+            text: String::new(),
+        }))
+        .await
+        .unwrap();
+    let entries = turn_ends(&mut agents, &agent_id, 1).await;
+    let result = |id: &str| {
+        entries.iter().find_map(|e| match &e.body {
+            Some(Body::ToolResult(r)) if r.call_id == id => Some(r.clone()),
+            _ => None,
+        })
+    };
+    assert_eq!(result("c1").unwrap().text, "items: a");
+    let created = result("c2").unwrap();
+    assert!(!created.is_error);
+    assert_eq!(
+        created.text,
+        format!("created \"x\" with {}", asked.approval_id)
+    );
+
+    send(&mut agents, &agent_id, "make y", "").await;
+    let asked = connector_approval(&mut agents, &agent_id, entries.last().unwrap().seq).await;
+    agents
+        .respond(authed(pb::RespondRequest {
+            agent_id: agent_id.clone(),
+            approval_id: asked.approval_id,
+            approve: false,
+            text: String::new(),
+        }))
+        .await
+        .unwrap();
+    let entries = turn_ends(&mut agents, &agent_id, 2).await;
+    let declined = entries
+        .iter()
+        .find_map(|e| match &e.body {
+            Some(Body::ToolResult(r)) if r.call_id == "c3" => Some(r.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(declined.is_error);
+    assert_eq!(declined.text, "The user declined the call.");
+    let approved_calls = door_log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(m, v)| {
+            m == "tools/call" && v["params"]["_meta"]["cocoonbox/approval_id"].is_string()
+        })
+        .count();
+    assert_eq!(approved_calls, 1, "a declined call ran again");
+
+    for _ in 0..200 {
+        if door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    changed.notify_one();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    send(&mut agents, &agent_id, "list", "").await;
+    turn_ends(&mut agents, &agent_id, 3).await;
+    let names = |body: &Value| -> Vec<String> {
+        body["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["function"]["name"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    let bodies = gw_bodies(&h.gw_log, "/v1/chat/completions");
+    let first = names(&bodies[0]);
+    assert!(
+        first.contains(&"mock_list_items".to_owned())
+            && first.contains(&"mock_create_item".to_owned())
+    );
+    assert_eq!(
+        first.iter().filter(|n| *n == "shell").count(),
+        1,
+        "{first:?}"
+    );
+    assert!(!first.contains(&"mock_new".to_owned()));
+    assert!(names(bodies.last().unwrap()).contains(&"mock_new".to_owned()));
+    assert!(
+        door_log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m != "initialize")
+            .all(|(_, v)| v["session"] == "s1")
+    );
+}
+
+async fn connector_approval(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    after_seq: u64,
+) -> pb::ApprovalRequest {
+    for _ in 0..500 {
+        let page = agents
+            .transcript(authed(pb::TranscriptRequest {
+                agent_id: agent_id.into(),
+                after_seq,
+                limit: 0,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        if let Some(a) = page.entries.iter().find_map(|e| match &e.body {
+            Some(Body::Approval(a)) if a.kind == "connector" => Some(a.clone()),
+            _ => None,
+        }) {
+            return a;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("no connector approval");
+}
+
+async fn turn_ends(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    n: usize,
+) -> Vec<pb::TranscriptEntry> {
+    for _ in 0..500 {
+        let page = agents
+            .transcript(authed(pb::TranscriptRequest {
+                agent_id: agent_id.into(),
+                after_seq: 0,
+                limit: 1000,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let ends = page
+            .entries
+            .iter()
+            .filter(|e| matches!(e.body, Some(Body::TurnEnd(_))))
+            .count();
+        if ends >= n {
+            return page.entries;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    panic!("fewer than {n} turns ended");
 }
 
 #[tokio::test]

@@ -4,6 +4,7 @@ pub mod anthropic;
 pub mod openai;
 pub mod sse;
 
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -28,10 +29,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(180);
 const ERROR_BODY_BYTES: usize = 2048;
 
-/// A tool the model may call.
+/// A tool the model may call; connector tools carry names and descriptions of their own.
 pub struct ToolSpec {
-    pub name: &'static str,
-    pub description: &'static str,
+    pub name: Cow<'static, str>,
+    pub description: Cow<'static, str>,
     pub parameters: Value,
 }
 
@@ -89,7 +90,7 @@ pub struct Request<'a> {
     pub model: &'a str,
     pub system: &'a str,
     pub messages: &'a [Message],
-    pub tools: &'a [ToolSpec],
+    pub tools: &'a [&'a ToolSpec],
     pub max_tokens: u32,
     pub vision: bool,
 }

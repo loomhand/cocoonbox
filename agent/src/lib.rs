@@ -3,6 +3,7 @@
 pub mod bus;
 pub mod computer;
 pub mod config;
+pub mod connect;
 pub mod dispatch;
 pub mod exec;
 pub mod identity;

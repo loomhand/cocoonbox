@@ -1,6 +1,7 @@
 //! MCP Streamable HTTP server at `/mcp`: external agents drive the box through the toolhost (mode B).
 //! The owner's sessions run untracked; a share's sessions are agents `mcp:<client>@<share>` with a transcript.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -49,7 +50,7 @@ The user watches the screen live and sees every call.";
 pub struct Mcp {
     rt: Arc<Runtime>,
     gate: Arc<Gate>,
-    tools: Vec<(&'static str, Value)>,
+    tools: Vec<(Cow<'static, str>, Value)>,
     idle: Duration,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -405,7 +406,7 @@ impl Mcp {
         params: &Value,
     ) -> Result<Value, (i64, String)> {
         let name = params["name"].as_str().unwrap_or_default();
-        let Some(&(name, _)) = self.tools.iter().find(|(n, _)| *n == name) else {
+        let Some((name, _)) = self.tools.iter().find(|(n, _)| *n == name) else {
             return Err((-32602, format!("unknown tool: {name}")));
         };
         if !allows(principal, name) {

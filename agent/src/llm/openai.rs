@@ -290,11 +290,12 @@ mod tests {
                 is_error: false,
             },
         ];
-        let tools = [ToolSpec {
-            name: "shell",
-            description: "run",
+        let shell = ToolSpec {
+            name: "shell".into(),
+            description: "run".into(),
             parameters: json!({"type": "object"}),
-        }];
+        };
+        let tools = [&shell];
         let mut req = Request {
             model: "deepseek/x",
             system: "sys",

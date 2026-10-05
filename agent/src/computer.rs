@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio_util::task::TaskTracker;
 
 use crate::dispatch::{Dispatcher, ToolOutput};
-use crate::llm::{Message, Part, Request, Usage};
+use crate::llm::{Message, Part, Request, ToolSpec, Usage};
 use crate::new_id;
 use crate::runner::{Runtime, TurnCtx};
 
@@ -75,6 +75,7 @@ async fn drive(
     let caller = ctx.caller(SUBAGENT, Some(driver));
     let mut messages = vec![Message::User(vec![Part::Text(task.to_owned())])];
     let mut report = None;
+    let tools: Vec<&ToolSpec> = rt.computer_tools.iter().collect();
     for _ in 0..MAX_STEPS {
         // prune in batches so the cached prompt prefix survives most steps
         if image_count(&messages) > PRUNE_AT {
@@ -84,7 +85,7 @@ async fn drive(
             model: &rt.cfg.model_computer,
             system: &rt.computer_prompt,
             messages: &messages,
-            tools: &rt.computer_tools,
+            tools: &tools,
             max_tokens: MAX_TOKENS,
             vision: true,
         };
