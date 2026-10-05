@@ -420,13 +420,6 @@ func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machin
 	return b
 }
 
-func callerUser(ctx context.Context) (string, error) {
-	if user := auth.User(ctx); user != "" {
-		return user, nil
-	}
-	return "", status.Error(codes.Unauthenticated, "unauthenticated")
-}
-
 // ownerOf returns the caller when it owns boxID.
 func (s *Service) ownerOf(ctx context.Context, boxID string) (string, error) {
 	user, err := callerUser(ctx)
@@ -437,6 +430,13 @@ func (s *Service) ownerOf(ctx context.Context, boxID string) (string, error) {
 		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
 	}
 	return user, nil
+}
+
+func callerUser(ctx context.Context) (string, error) {
+	if user := auth.User(ctx); user != "" {
+		return user, nil
+	}
+	return "", status.Error(codes.Unauthenticated, "unauthenticated")
 }
 
 func serviceError(ctx context.Context, logger *log.Fields, err error, action string) error {
