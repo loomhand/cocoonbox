@@ -27,6 +27,15 @@ struct RootView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
+                if !model.reconnect.isEmpty {
+                    Button {
+                        model.openConnections()
+                    } label: {
+                        Label("Reconnect", systemImage: "exclamationmark.arrow.triangle.2.circlepath")
+                            .foregroundStyle(.orange)
+                    }
+                    .help("Reconnect \(model.reconnect.joined(separator: ", ")) in CocoonBox Connect")
+                }
                 Button {
                     model.showConnectAgent = true
                 } label: {

@@ -79,6 +79,7 @@ final class AppModel {
     // localCalls is each local agent's last box-tool call per box id.
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
+    var connectors: [Cocoonbox_Control_V1_Connector] = []
     var capsule = CapsuleBrowser()
     // offloads is the offloads in flight, from the records on this Mac, oldest first.
     var offloads: [OffloadRecord] = []
@@ -119,6 +120,7 @@ final class AppModel {
                 Task {
                     await self.refreshBoxes()
                     await self.refreshOffloads()
+                    await self.refreshConnectors()
                 }
             }
         }
@@ -527,6 +529,7 @@ final class AppModel {
         boxes = []
         selectedBoxID = nil
         share = nil
+        connectors = []
         showSignIn = true
     }
 
@@ -547,6 +550,7 @@ final class AppModel {
                 attempt += 1
             }
             await refreshOffloads()
+            await refreshConnectors()
         }
     }
 
@@ -568,6 +572,22 @@ final class AppModel {
             report("list boxes", error)
             return false
         }
+    }
+
+    // reconnect names the connected accounts whose grant the vendor refused (design §16.4).
+    var reconnect: [String] {
+        connectors.filter { $0.status == "needs_reconnect" }.map(\.name)
+    }
+
+    // refreshConnectors keeps the last list when the call fails: Connect is optional, and an older api lacks it.
+    func refreshConnectors() async {
+        guard let connection, let list = try? await connection.listConnectors() else { return }
+        connectors = list
+    }
+
+    func openConnections() {
+        guard let endpoint = Endpoint(url: endpointURL), let url = URL(string: endpoint.url + "/cb/connect") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // apply takes the box list; without a selection, or when the selected box is gone, it selects the newest running box, else the first.
@@ -1039,6 +1059,19 @@ final class AppModel {
             } catch {
                 answeredApprovals.remove(approval.approvalID)
                 report("respond", error)
+            }
+        }
+    }
+
+    func answerConnector(_ approval: Cocoonbox_Agent_V1_ApprovalRequest, agentID: String, decision: Cocoonbox_Control_V1_ApprovalDecision) {
+        guard let connection else { return }
+        answeredApprovals.insert(approval.approvalID)
+        Task {
+            do {
+                try await connection.answerConnector(agentID: agentID, approvalID: approval.approvalID, decision: decision)
+            } catch {
+                answeredApprovals.remove(approval.approvalID)
+                report("approve", error)
             }
         }
     }

@@ -38,6 +38,7 @@ struct CocoonBoxApp: App {
                     .disabled(model.box == nil)
                 Button("Restore Files…") { model.showTimeCapsule = true }
                     .disabled(model.box == nil)
+                Button(model.reconnect.isEmpty ? "Connections…" : "Connections… (reconnect \(model.reconnect.joined(separator: ", ")))") { model.openConnections() }
                 Button("Install Claude Code Plugin…") { model.installClaudePlugin() }
                 Button("Sign Out") { model.signOut() }
             }

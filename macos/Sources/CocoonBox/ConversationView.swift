@@ -395,8 +395,7 @@ struct ApprovalCard: View {
     var body: some View {
         @Bindable var screen = model.screen
         VStack(alignment: .leading, spacing: 8) {
-            Label(approval.kind == "take_over" ? "The agent hands you the screen" : "Approval needed",
-                  systemImage: approval.kind == "take_over" ? "hand.raised" : "questionmark.circle")
+            Label(title, systemImage: symbol)
                 .font(.callout.bold())
             Text(approval.summary)
             if answered {
@@ -415,6 +414,14 @@ struct ApprovalCard: View {
                         model.respond(to: approval, agentID: agentID, approve: false)
                     }
                 }
+            } else if approval.kind == "connector" {
+                HStack {
+                    Button("Allow once") { model.answerConnector(approval, agentID: agentID, decision: .once) }
+                        .buttonStyle(.borderedProminent)
+                    Button("Always allow") { model.answerConnector(approval, agentID: agentID, decision: .always) }
+                        .help("Allow this tool from now on, for every agent")
+                    Button("Deny", role: .destructive) { model.answerConnector(approval, agentID: agentID, decision: .deny) }
+                }
             } else {
                 HStack {
                     Button("Approve") { model.respond(to: approval, agentID: agentID, approve: true) }
@@ -426,6 +433,22 @@ struct ApprovalCard: View {
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.orange.opacity(answered ? 0.06 : 0.14), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private var title: String {
+        switch approval.kind {
+        case "take_over": "The agent hands you the screen"
+        case "connector": "The agent asks to use a connected account"
+        default: "Approval needed"
+        }
+    }
+
+    private var symbol: String {
+        switch approval.kind {
+        case "take_over": "hand.raised"
+        case "connector": "link"
+        default: "questionmark.circle"
+        }
     }
 }
 
