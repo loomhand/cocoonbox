@@ -76,6 +76,7 @@ for u in system/cocoonbox-agent system/cocoonbox-toolhost system/cocoonbox-sessi
 Environment=http_proxy=$PROXY https_proxy=$PROXY HTTP_PROXY=$PROXY HTTPS_PROXY=$PROXY
 Environment=no_proxy=$NO_PROXY NO_PROXY=$NO_PROXY
 Environment=REQUESTS_CA_BUNDLE=$CA_BUNDLE SSL_CERT_FILE=$CA_BUNDLE NODE_EXTRA_CA_CERTS=$CA_BUNDLE NODE_USE_ENV_PROXY=1
+Environment=GOOGLE_OAUTH_ACCESS_TOKEN=@GOOGLE_CALENDAR@
 EOF
 done
 
@@ -87,7 +88,7 @@ mount -o loop "$B/cow.raw" "$B/m/cow"
 mount -t overlay overlay -o ro,metacopy=on,redirect_dir=follow,lowerdir="$B/m/cow/upper:$lower" "$B/m/base"
 gid=$(awk -F: "\$1==\"cbagent\"{print \$3}" "$B/m/base/etc/group")
 [ -n "$gid" ] || { echo "no cbagent group in the image" >&2; exit 1; }
-printf "GW_BASE_URL=http://10.203.0.1:18090/v1\nGW_API_KEY=unprovisioned\nMODEL_MAIN=deepseek/deepseek-v4.1-flash\nMODEL_COMPUTER=anthropic/claude-sonnet-5\nAGENT_LISTEN=127.0.0.1:7443\n" > "$B/add/etc/cocoonbox/agent.env"
+printf "GW_BASE_URL=http://10.203.0.1:18090/v1\nGW_API_KEY=unprovisioned\nMODEL_MAIN=deepseek/deepseek-v4.1-flash\nMODEL_COMPUTER=anthropic/claude-sonnet-5\nAGENT_LISTEN=127.0.0.1:7443\nCONNECT_URL=http://10.203.0.1:18091/mcp\n" > "$B/add/etc/cocoonbox/agent.env"
 chown 0:"$gid" "$B/add/etc/cocoonbox/agent.env"
 chmod 0640 "$B/add/etc/cocoonbox/agent.env"
 mount -t overlay overlay -o ro,metacopy=on,redirect_dir=follow,lowerdir="$B/add:$B/m/cow/upper:$lower" "$B/m/root"

@@ -8,6 +8,7 @@ BRIDGE=cbc0
 BRIDGE_ADDR=10.203.0.1/24
 BRIDGE_IP=${BRIDGE_ADDR%/*}
 GW_PORT=18090
+CONNECT_PORT=18091
 STATE_PORT=9000
 RES_IF=cbres0
 RES_ADDR=10.203.1.2/32
@@ -22,14 +23,14 @@ up() {
 	ip link set "$RES_IF" up
 
 	iptables -N CB-INPUT 2>/dev/null || iptables -F CB-INPUT
-	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports $STATE_PORT,9001,$GW_PORT,18200,18201 ! -s "$HOST_IP" -j DROP
+	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports $STATE_PORT,9001,$GW_PORT,$CONNECT_PORT,18200,18201 ! -s "$HOST_IP" -j DROP
 	iptables -A CB-INPUT -p tcp --dport $RES_PORT ! -i lo -j DROP
 	iptables -C INPUT -j CB-INPUT 2>/dev/null || iptables -I INPUT 1 -j CB-INPUT
 
-	# host-originated traffic to the bridge gateway (the sandboxd egress proxy) reaches gw and the state store only
+	# host-originated traffic to the bridge gateway (the sandboxd egress proxy) reaches gw, the connect box door and the state store only
 	iptables -N CB-OUTPUT 2>/dev/null || iptables -F CB-OUTPUT
 	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -m multiport --dports "$GW_PORT,$STATE_PORT" -j RETURN
+	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -m multiport --dports "$GW_PORT,$CONNECT_PORT,$STATE_PORT" -j RETURN
 	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -j REJECT --reject-with tcp-reset
 	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -j REJECT
 	iptables -C OUTPUT -j CB-OUTPUT 2>/dev/null || iptables -I OUTPUT 1 -j CB-OUTPUT

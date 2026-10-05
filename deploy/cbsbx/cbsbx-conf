@@ -13,6 +13,7 @@ EGRESS_CA = "/etc/cocoonbox/egress-ca"
 LISTEN = "127.0.0.1:17780"
 GATEWAY = "10.203.0.1"
 GW_PORT = 18090
+CONNECT_PORT = 18091
 STATE_PORT = 9000
 RESIDENTIAL = "10.203.1.2"
 STORAGE = "40G"
@@ -25,13 +26,18 @@ CHROME_WARMUP = ("(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user t
                  "rm -rf /tmp/cb-warmup-chrome; true; }")
 CHROME_WARMUP_FROM = 15
 INJECT_FROM = 23
+CONNECT_FROM = 24
 
 if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
     sys.exit(__doc__)
 gw = {"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"}
+connect = {"host": GATEWAY, "ports": [CONNECT_PORT], "secret": "CB_CONNECT_KEY"}
+inject = {"host": "*", "intercept": "inject"}
 rest = [{"host": GATEWAY, "ports": [STATE_PORT]}, {"host": "*"}]
 egress = {"allow": [gw, *rest]}
-inject_egress = {"allow": [gw, {"host": "*", "intercept": "inject"}, *rest]}
+inject_egress = {"allow": [gw, inject, *rest]}
+# the door key rule precedes the inject rule, since a plain request takes the first rule that matches
+connect_egress = {"allow": [gw, connect, inject, *rest]}
 pools = []
 for arg in sys.argv[1:]:
     template, warm = arg.rsplit("=", 1)
@@ -39,7 +45,8 @@ for arg in sys.argv[1:]:
     n = int(version[1]) if version else 0
     warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
     pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
-                  "warmup": ["bash", "-c", warmup], "egress": inject_egress if n >= INJECT_FROM else egress})
+                  "warmup": ["bash", "-c", warmup],
+                  "egress": connect_egress if n >= CONNECT_FROM else inject_egress if n >= INJECT_FROM else egress})
 conf = {
     "listen": LISTEN,
     "advertise_addr": LISTEN,
@@ -54,10 +61,10 @@ conf = {
     "max_claims": 6,
     "refill_concurrency": 1,
     "audit_log": True,
-    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{STATE_PORT}"],
+    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{STATE_PORT}"],
     "egress_upstream": {"claim_env": "EGRESS_UPSTREAM", "allow": [f"{RESIDENTIAL}/32"]},
     "egress_classes": [{"name": "cbdesk", "egress": egress}],
-    "secrets": [{"name": "GW_KEY", "header": "Authorization"}],
+    "secrets": [{"name": "GW_KEY", "header": "Authorization"}, {"name": "CB_CONNECT_KEY", "header": "Authorization"}],
     "pools": pools,
 }
 if os.path.exists(f"{EGRESS_CA}/root.crt"):

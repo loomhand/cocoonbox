@@ -16,7 +16,7 @@ PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
 	tigervnc-xorg-extension xauth x11-xserver-utils x11-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
-	mousepad nftables sudo libnss-myhostname libnss3-tools rsync git tmux
+	mousepad nftables sudo libnss-myhostname libnss3-tools rsync git gh tmux
 	build-essential ncurses-bin
 	locales fonts-noto-cjk fonts-noto-color-emoji
 )
@@ -81,7 +81,7 @@ install_rootfs() {
 	rm -f /usr/local/lib/cocoonbox/set-agent-env
 	(cd "$SRC/rootfs" && find . -type f ! -path './etc/skel-cocoonbox/*') | while read -r f; do
 		case "$f" in
-		./usr/local/lib/cocoonbox/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
+		./usr/local/lib/cocoonbox/* | ./usr/local/bin/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
 		*) install -D -m 0644 "$SRC/rootfs/$f" "/${f#./}" ;;
 		esac
 	done

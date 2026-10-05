@@ -1,0 +1,7 @@
+#!/bin/sh
+# gh sends the GH_API placeholder to api.github.com only while the claim env sets COCOONBOX_GH_GIT=1
+if [ -z "${GH_TOKEN:-}" ] && [ -e /run/cocoonbox-github.gitconfig ]; then
+	GH_TOKEN=@GH_API@
+	export GH_TOKEN
+fi
+exec /usr/bin/gh "$@"
