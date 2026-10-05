@@ -158,10 +158,7 @@ import Testing
         try await mock.rpc("mock/answer", ["approval_id": request.approvalID])
 
         #expect(try await !connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: .once))
-        try await Task.sleep(for: .milliseconds(500))
-        #expect(try await connection.listAgents().first { $0.id == agent.id }?.status == .waitingForUser)
-        #expect(try await !connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: .deny))
-        #expect(await until { await Self.entries(connection, agent.id).contains { Self.says($0, "Denied.") } })
+        #expect(await until { await Self.entries(connection, agent.id).contains { Self.says($0, "Refused: denied.") } })
     }
 
     static func text(_ result: [String: Any]) -> String {

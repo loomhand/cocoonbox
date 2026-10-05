@@ -608,8 +608,16 @@ actor MockWorld {
         let decision = connect.take(approval)
         append(agent: id, turn: turn, role: .tool, body: .toolResult(.with {
             $0.callID = call
-            $0.isError = decision != .once && decision != .always
-            $0.text = $0.isError ? "Refused: not answered yet." : "Created issue #42 (\(decision == .always ? "always" : "once"))."
+            switch decision {
+            case .once, .always:
+                $0.text = "Created issue #42 (\(decision == .always ? "always" : "once"))."
+            case .deny:
+                $0.isError = true
+                $0.text = "Refused: denied."
+            default:
+                $0.isError = true
+                $0.text = "Refused: not answered yet."
+            }
         }))
     }
 
