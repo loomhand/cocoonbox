@@ -1068,7 +1068,11 @@ final class AppModel {
         answeredApprovals.insert(approval.approvalID)
         Task {
             do {
-                try await connection.answerConnector(agentID: agentID, approvalID: approval.approvalID, decision: decision)
+                guard try await connection.answerConnector(agentID: agentID, approvalID: approval.approvalID, decision: decision) else {
+                    if decision != .deny { answeredApprovals.remove(approval.approvalID) }
+                    lastError = "That approval had expired or was already answered in the console."
+                    return
+                }
             } catch {
                 answeredApprovals.remove(approval.approvalID)
                 report("approve", error)

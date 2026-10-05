@@ -233,7 +233,11 @@ public actor Bridge {
         let answer = try await call(upstream, "tools/list", [:])
         guard let result = answer["result"] as? [String: Any] else { throw ToolFailure("The Connect door refused tools/list.") }
         let taken = ToolCatalog.controlNames.union(ToolCatalog.boxNames)
-        connectTools = (result["tools"] as? [[String: Any]] ?? []).filter { !taken.contains($0["name"] as? String ?? "") }
+        let tools = result["tools"] as? [[String: Any]] ?? []
+        connectTools = tools.filter { !taken.contains($0["name"] as? String ?? "") }
+        for name in tools.compactMap({ $0["name"] as? String }) where taken.contains(name) {
+            FileHandle.standardError.write(Data("cocoonbox: the connector tool \(name) is not served: a cocoonbox tool has that name\n".utf8))
+        }
         loadedConnect()
         if let listedConnect, !ToolCatalog.same(listedConnect, connectTools) {
             send(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])

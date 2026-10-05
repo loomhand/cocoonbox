@@ -7,7 +7,8 @@ import Synchronization
 // user's grants and their tools, the mode B door with its list_changed stream,
 // and connector approvals. The mock-only JSON-RPC method `mock/connect` on the
 // door replaces the grants and sets how the door fails, so tests can change the
-// tools and break the door while the rest of MockBox keeps working.
+// tools and break the door while the rest of MockBox keeps working; `mock/answer`
+// answers an approval as the console does.
 final class MockConnect: Sendable {
     static let path = "/cocoonbox.mcp/connect"
 
@@ -52,6 +53,10 @@ final class MockConnect: Sendable {
             configure(message["params"] as? [String: Any] ?? [:])
             line += " rpc=mock/connect"
             return Self.reply(id, [:])
+        }
+        if rpc == "mock/answer", let id = message["id"], let approval = (message["params"] as? [String: Any])?["approval_id"] as? String {
+            line += " rpc=mock/answer"
+            return answer(approval, .deny) ? Self.reply(id, [:]) : Self.error(id, -32602, "approval \(approval) not pending")
         }
         let (fail, hang) = state.withLock { ($0.failStatus, $0.hang) }
         if hang { try? await pause(.seconds(3600)) }

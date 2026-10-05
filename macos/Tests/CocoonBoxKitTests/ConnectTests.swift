@@ -130,10 +130,38 @@ import Testing
             })
             let request = try #require(approval)
             #expect(request.kind == "connector" && request.approvalID.hasPrefix("apr_") && request.summary.contains("create_issue"))
-            try await connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: decision)
+            #expect(try await connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: decision))
             #expect(await until { await Self.entries(connection, agent.id).contains { Self.says($0, outcome) } }, "\(prompt)")
             #expect(mock.log().contains("connectors approve \(request.approvalID) \(decision)"))
         }
+    }
+
+    @Test func anApprovalAnsweredInTheConsoleTellsTheUser() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let connection = mock.connection
+        let box = try #require(try await connection.firstBox())
+        _ = try await connection.ensure(boxID: box.id)
+        #expect(await until { (try? await connection.firstBox())?.state == .running })
+        connection.boxID = box.id
+        let agent = try await connection.createAgent(name: "console")
+        try await connection.send(agentID: agent.id, text: "open an issue")
+        var approval: Cocoonbox_Agent_V1_ApprovalRequest?
+        #expect(await until {
+            approval = await Self.entries(connection, agent.id).compactMap { entry -> Cocoonbox_Agent_V1_ApprovalRequest? in
+                if case .approval(let request) = entry.body { return request }
+                return nil
+            }.first
+            return approval != nil
+        })
+        let request = try #require(approval)
+        try await mock.rpc("mock/answer", ["approval_id": request.approvalID])
+
+        #expect(try await !connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: .once))
+        try await Task.sleep(for: .milliseconds(500))
+        #expect(try await connection.listAgents().first { $0.id == agent.id }?.status == .waitingForUser)
+        #expect(try await !connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: .deny))
+        #expect(await until { await Self.entries(connection, agent.id).contains { Self.says($0, "Denied.") } })
     }
 
     static func text(_ result: [String: Any]) -> String {
@@ -210,12 +238,17 @@ final class MockBoxProcess: @unchecked Sendable {
 
     // connect sets the door through the mock-only method: grants, fail (an HTTP status) and hang.
     func connect(_ params: [String: Any]) async throws {
+        try await rpc("mock/connect", params)
+    }
+
+    func rpc(_ method: String, _ params: [String: Any]) async throws {
         var request = URLRequest(url: URL(string: endpoint.url + "/cocoonbox.mcp/connect")!)
         request.httpMethod = "POST"
         request.setValue("Bearer mock-token", forHTTPHeaderField: "Authorization")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": "mock/connect", "params": params])
-        let (_, response) = try await URLSession.shared.data(for: request)
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params])
+        let (body, response) = try await URLSession.shared.data(for: request)
         #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        #expect(String(decoding: body, as: UTF8.self).contains(#""result""#))
     }
 }
 

@@ -181,15 +181,20 @@ public final class BoxConnection: Sendable {
 
     // answerConnector answers a connector approval (design §16.5): the broker
     // records the decision, then the agent's turn resumes and retries the call.
-    // A deny the broker no longer holds still resumes the turn.
-    public func answerConnector(agentID: String, approvalID: String, decision: Cocoonbox_Control_V1_ApprovalDecision) async throws {
+    // It returns false when the broker no longer holds the approval (expired, or
+    // answered in the console): a deny then still resumes the turn, an allow does not.
+    public func answerConnector(agentID: String, approvalID: String, decision: Cocoonbox_Control_V1_ApprovalDecision) async throws -> Bool {
         do {
             _ = try await connectors.approve(.with {
                 $0.approvalID = approvalID
                 $0.decision = decision
             })
-        } catch let error as RPCError where error.code == .notFound && decision == .deny {}
+        } catch let error as RPCError where error.code == .notFound {
+            if decision == .deny { try await respond(agentID: agentID, approvalID: approvalID, approve: false, text: "") }
+            return false
+        }
         try await respond(agentID: agentID, approvalID: approvalID, approve: decision != .deny, text: "")
+        return true
     }
 
     // MARK: Session
