@@ -1095,6 +1095,8 @@ type ApprovalRequest struct {
 	ApprovalId string                 `protobuf:"bytes,1,opt,name=approval_id,json=approvalId,proto3" json:"approval_id,omitempty"`
 	Summary    string                 `protobuf:"bytes,2,opt,name=summary,proto3" json:"summary,omitempty"`
 	// "take_over": the agent hands the screen to the user (login, captcha, payment).
+	// "connector": a Connect tool call that needs the user's approval; approval_id is the broker's apr_… id,
+	// which the app answers with Connectors.Approve and then Agents.Respond.
 	Kind          string `protobuf:"bytes,3,opt,name=kind,proto3" json:"kind,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

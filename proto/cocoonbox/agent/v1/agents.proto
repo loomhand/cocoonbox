@@ -147,6 +147,8 @@ message ApprovalRequest {
   string approval_id = 1;
   string summary = 2;
   // "take_over": the agent hands the screen to the user (login, captcha, payment).
+  // "connector": a Connect tool call that needs the user's approval; approval_id is the broker's apr_… id,
+  // which the app answers with Connectors.Approve and then Agents.Respond.
   string kind = 3;
 }
 
