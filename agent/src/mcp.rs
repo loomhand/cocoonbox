@@ -45,7 +45,7 @@ Relative file paths resolve under /workspace, and shell is one persistent bash s
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
-const SCRIPT_INSTRUCTIONS: &str = " For a multi-step desktop flow, script_run runs a script next to the screen; read the resource cocoonbox://script/AGENTS.md first.";
+const SCRIPT_INSTRUCTIONS: &str = " This box has Script. For a multi-step desktop task (open an app, navigate, type, fill, save, repeat), write one script and run it with script_run instead of a chain of computer_act calls: one round trip, a script you can replay with new params, and ground/verify built in. Read cocoonbox://script/AGENTS.md (or read_file /opt/script/AGENTS.md) first. Keep screenshot and computer_act for a single look or a one-off click.";
 const RESOURCES: [Resource; 3] = [
     Resource {
         uri: "cocoonbox://script/AGENTS.md",

@@ -235,7 +235,7 @@ fn script_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("script_run"),
         description: Cow::Borrowed(
-            "Run one script on the desktop: JavaScript or TypeScript that imports @vendor/script-js (synchronous native calls: apps, windows, accessibility tree, keyboard, mouse, screenshots, grounding). Read /opt/script/AGENTS.md first (also the resource cocoonbox://script/AGENTS.md). Pass code, or script: a file in the box. A module that exports main(params) is called with params, and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind: exception|timeout|interrupted, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
+            "The preferred tool for any multi-step desktop task on this box (open an app, navigate, type, fill, save, repeat): write the whole flow as one script instead of many computer_act calls. One round trip, replayable with new params, and ground/verify are built in. Read /opt/script/AGENTS.md first (also the resource cocoonbox://script/AGENTS.md); it has a working save-a-file flow to adapt. A script is JavaScript or TypeScript importing @vendor/script-js (synchronous calls: apps, windows, accessibility tree, keyboard, mouse, screenshots, grounding). Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
         ),
         parameters: json!({
             "type": "object",
