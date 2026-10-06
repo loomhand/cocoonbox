@@ -176,6 +176,7 @@ pub fn remote_tools() -> Vec<ToolSpec> {
         .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
         .collect();
     tools.extend(computer_tools());
+    tools.push(script_tool());
     tools
 }
 
@@ -226,6 +227,26 @@ pub fn computer_tools() -> Vec<ToolSpec> {
             }),
         },
     ]
+}
+
+fn script_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("script_run"),
+        description: Cow::Borrowed(
+            "Run one script on the desktop: JavaScript or TypeScript that imports @vendor/script-js (synchronous native calls: apps, windows, accessibility tree, keyboard, mouse, screenshots, grounding). Read /opt/script/AGENTS.md first (also the resource cocoonbox://script/AGENTS.md). Pass code, or script: a file in the box. A module that exports main(params) is called with params, and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind: exception|timeout|interrupted, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "The script as an ES module"},
+                "script": {"type": "string", "description": "Path of a script file in the box; relative paths resolve under /workspace"},
+                "params": {"type": "object", "description": "Passed to the script's exported main(params)"},
+                "timeout_s": {"type": "integer", "description": "Default 90, max 110; the run is stopped after it"},
+                "screenshot": {"type": "boolean", "description": "Return a screenshot taken after the run, default true"},
+                "max_edge": max_edge()
+            }
+        }),
+    }
 }
 
 fn max_edge() -> serde_json::Value {

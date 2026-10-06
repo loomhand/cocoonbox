@@ -44,7 +44,28 @@ const INSTRUCTIONS: &str = "These tools act on a cloud computer: Ubuntu 24.04 wi
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
+For a multi-step desktop flow, script_run runs a script next to the screen; read the resource cocoonbox://script/AGENTS.md first. \
 The user watches the screen live and sees every call.";
+const RESOURCES: [Resource; 3] = [
+    Resource {
+        uri: "cocoonbox://script/AGENTS.md",
+        path: "/opt/script/AGENTS.md",
+        mime: "text/markdown",
+        description: "How to write, run and replay scripts on this box",
+    },
+    Resource {
+        uri: "cocoonbox://script/index.d.ts",
+        path: "/opt/script/js/index.d.ts",
+        mime: "text/plain",
+        description: "The script-js API, as installed on this box",
+    },
+    Resource {
+        uri: "cocoonbox://script/CLAUDE.md",
+        path: "/opt/script/js/CLAUDE.md",
+        mime: "text/markdown",
+        description: "script-js usage notes, as installed on this box",
+    },
+];
 
 /// MCP sessions of external agents.
 pub struct Mcp {
@@ -284,7 +305,7 @@ impl Mcp {
             .unwrap_or(FALLBACK_PROTOCOL);
         let result = json!({
             "protocolVersion": protocol,
-            "capabilities": {"tools": {"listChanged": session.guest.is_some()}},
+            "capabilities": {"tools": {"listChanged": session.guest.is_some()}, "resources": {}},
             "serverInfo": {"name": "cocoonbox-agent", "version": env!("CB_AGENT_VERSION")},
             "instructions": INSTRUCTIONS,
         });
@@ -352,6 +373,8 @@ impl Mcp {
             ("ping", _) => Ok(json!({})),
             ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
             ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
+            ("resources/list", _) => Ok(list_resources()),
+            ("resources/read", _) => read_resource(&msg["params"]).await,
             ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
         };
@@ -598,6 +621,14 @@ impl Drop for StreamGuard {
     }
 }
 
+/// A file of the box served as an MCP resource.
+struct Resource {
+    uri: &'static str,
+    path: &'static str,
+    mime: &'static str,
+    description: &'static str,
+}
+
 async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) -> Response {
     let principal = match mcp.admit(&headers) {
         Ok(p) => p,
@@ -710,6 +741,30 @@ async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response
         }
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+fn list_resources() -> Value {
+    let resources: Vec<Value> = RESOURCES
+        .iter()
+        .map(|r| {
+            let name = r.uri.rsplit('/').next().unwrap_or(r.uri);
+            json!({"uri": r.uri, "name": name, "mimeType": r.mime, "description": r.description})
+        })
+        .collect();
+    json!({"resources": resources})
+}
+
+async fn read_resource(params: &Value) -> Result<Value, (i64, String)> {
+    let uri = params["uri"].as_str().unwrap_or_default();
+    let Some(r) = RESOURCES.iter().find(|r| r.uri == uri) else {
+        return Err((-32002, format!("resource not found: {uri}")));
+    };
+    let text = tokio::fs::read_to_string(r.path)
+        .await
+        .map_err(|e| (-32002, format!("read {}: {e}", r.path)))?;
+    let mut content = json!({"uri": r.uri, "mimeType": r.mime});
+    content["text"] = text.into();
+    Ok(json!({"contents": [content]}))
 }
 
 /// Whether `principal` may call tool `name`: a read-only share gets only the tools that read.

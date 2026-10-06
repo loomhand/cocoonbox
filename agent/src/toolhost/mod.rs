@@ -6,6 +6,7 @@ pub mod exec;
 pub mod files;
 pub mod rpc;
 pub mod shell;
+pub mod script;
 pub mod state;
 
 use std::collections::HashMap;
@@ -27,9 +28,11 @@ use browser::Browser;
 use cua::Cua;
 use rpc::{Call, Output};
 use shell::Shell;
+use script::Script;
 
 const SOCKET_MODE: u32 = 0o660;
 const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
+const SCRIPT_DIR: &str = "/tmp/cocoonbox-script";
 
 /// Shared tool state for all connections.
 pub struct Host {
@@ -38,6 +41,7 @@ pub struct Host {
     shells: Mutex<HashMap<String, Arc<Mutex<Option<Shell>>>>>,
     browser: Browser,
     cua: Cua,
+    script: Script,
     session_save: PathBuf,
     home: PathBuf,
 }
@@ -55,6 +59,7 @@ impl Host {
                 cfg.cdp_port,
             ),
             cua: Cua::new(cfg.cua_socket.clone()),
+            script: Script::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
         }
@@ -101,6 +106,11 @@ impl Host {
             "computer_state" => self.cua.state(call.args).await,
             "computer_act" => self.cua.act(call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
+            "script_run" => {
+                self.script
+                    .run(&self.cua, &self.workspace, call.args)
+                    .await
+            }
             "screenshot" => {
                 let max_edge = call.args["max_edge"]
                     .as_u64()

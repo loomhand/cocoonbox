@@ -29,6 +29,13 @@ use tonic::transport::Channel;
 use tonic::{Code, Request};
 
 const TOKEN: &str = "edge-token-for-tests";
+const FAKE_SCRIPT: &str = r#"src=$(cat "$CB_SCRIPT_SCRIPT")
+echo "script: warning: OPENROUTER_API_KEY is not set; scripts that hit hosted services will fail to authenticate." >&2
+case "$src" in
+*boom*) echo "[info] Opening app Mousepad" >&2; echo "Error: boom" >&2; exit 1 ;;
+*hang*) sleep 300 & echo $! > grandchild.pid; sleep 300 ;;
+*) echo "ran $1 in $PWD"; printf '{"params":%s}' "$CB_SCRIPT_PARAMS" > "$CB_SCRIPT_RESULT"; printf outline > "$CB_SCRIPT_SNAPSHOT" ;;
+esac"#;
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
 const TARGET_TOOLS: [&str; 7] = [
     "move_cursor",
@@ -127,6 +134,8 @@ impl Harness {
         fake_cua(&cua_socket, Arc::clone(&cua_log));
         let session_save = dir.path().join("session-save");
         write_script(&session_save, "echo saved >> \"$0.log\"");
+        let script_bin = dir.path().join("script");
+        write_script(&script_bin, FAKE_SCRIPT);
         let toolhost_socket = dir.path().join("toolhost.sock");
         let (chrome_bin, cdp_port) = match chrome {
             Some(bin) => {
@@ -150,6 +159,7 @@ impl Harness {
             chrome_profile: dir.path().join("chrome"),
             cdp_port,
             cua_socket,
+            script_bin,
             session_save: session_save.clone(),
             home: home.clone(),
         };
@@ -2653,6 +2663,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
             "read_file",
             "screenshot",
             "shell",
+            "script_run",
             "write_file"
         ]
     );
@@ -2733,7 +2744,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     let discover: Value = discover.json().await.unwrap();
     assert_eq!(discover["error"]["code"], -32601);
     assert_eq!(discover["id"], 8);
-    let unknown_in_session = mcp.rpc("resources/list", json!({})).await;
+    let unknown_in_session = mcp.rpc("prompts/list", json!({})).await;
     assert_eq!(unknown_in_session["error"]["code"], -32601);
 
     let no_session = reqwest::Client::new()
@@ -2766,6 +2777,132 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
         .post(json!({"jsonrpc": "2.0", "id": 10, "method": "tools/list"}))
         .await;
     assert_eq!(gone.status(), 404);
+}
+
+#[tokio::test]
+async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+
+    let ok = mcp
+        .call(
+            "script_run",
+            json!({"code": "export function main(p) { return p }", "params": {"text": "hi"}}),
+        )
+        .await;
+    assert_eq!(ok["isError"], false, "{ok}");
+    let report: Value = serde_json::from_str(ok["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["result"], json!({"params": {"text": "hi"}}));
+    assert_eq!(report["exit_code"], 0);
+    assert_eq!(report["snapshot"], "outline");
+    assert!(
+        report["logs"].as_str().unwrap().starts_with("ran "),
+        "{report}"
+    );
+    assert!(report.get("error").is_none(), "{report}");
+    assert!(
+        !report["stderr"].as_str().unwrap().contains("OPENROUTER"),
+        "{report}"
+    );
+    let shot = PathBuf::from(report["screenshot_path"].as_str().unwrap());
+    assert!(shot.exists(), "{}", shot.display());
+    assert_eq!(ok["content"][1]["type"], "image");
+
+    std::fs::write(h.workspace.join("flow.mjs"), "boom").unwrap();
+    let failed = mcp
+        .call(
+            "script_run",
+            json!({"script": "flow.mjs", "screenshot": false}),
+        )
+        .await;
+    assert_eq!(failed["isError"], true, "{failed}");
+    let report: Value =
+        serde_json::from_str(failed["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        report["error"],
+        json!({"kind": "exception", "message": "Error: boom"})
+    );
+    assert_eq!(report["exit_code"], 1);
+    assert!(report.get("screenshot_path").is_none(), "{report}");
+    assert_eq!(failed["content"].as_array().unwrap().len(), 1);
+
+    let refused = mcp
+        .call("script_run", json!({"code": "1", "script": "flow.mjs"}))
+        .await;
+    assert_eq!(refused["isError"], true, "{refused}");
+    let missing = mcp
+        .call("script_run", json!({"script": "nope.mjs"}))
+        .await;
+    assert!(
+        missing["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("does not exist"),
+        "{missing}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+
+    let started = std::time::Instant::now();
+    let out = mcp
+        .call(
+            "script_run",
+            json!({"code": "hang", "timeout_s": 1, "screenshot": false}),
+        )
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(out["isError"], true, "{out}");
+    let report: Value = serde_json::from_str(out["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["error"]["kind"], "timeout", "{report}");
+    let pid = std::fs::read_to_string(h.workspace.join("grandchild.pid")).unwrap();
+    let proc = PathBuf::from(format!("/proc/{}", pid.trim()));
+    let mut alive = true;
+    for _ in 0..50 {
+        let state = std::fs::read_to_string(proc.join("stat")).unwrap_or_default();
+        alive = !state.is_empty() && !state.contains(") Z ");
+        if !alive {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(!alive, "the script's child survived the timeout");
+}
+
+#[tokio::test]
+async fn mcp_serves_the_script_guide_as_resources() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+
+    let listed = mcp.rpc("resources/list", json!({})).await;
+    let uris: Vec<&str> = listed["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        uris,
+        [
+            "cocoonbox://script/AGENTS.md",
+            "cocoonbox://script/index.d.ts",
+            "cocoonbox://script/CLAUDE.md"
+        ]
+    );
+    let unknown = mcp
+        .rpc(
+            "resources/read",
+            json!({"uri": "cocoonbox://script/nope"}),
+        )
+        .await;
+    assert_eq!(unknown["error"]["code"], -32002, "{unknown}");
 }
 
 #[tokio::test]
@@ -2842,7 +2979,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
     drop(stream);
     assert_eq!(
         McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await).len(),
-        13
+        14
     );
     let shell = mcp
         .call("shell", json!({"command": "echo guest > g.txt"}))
