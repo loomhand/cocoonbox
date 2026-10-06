@@ -113,7 +113,7 @@ c.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clie
 c.send("notifications/initialized", notify=True)
 tools, _ = c.call("tools/list")
 names = [t["name"] for t in tools["result"]["tools"]]
-check("tools/list merges the connector tools after the box tools", len(names) == 24 and names[-2:] == ["mockhub_list_issues", "mockhub_create_issue"], names)
+check("tools/list merges the connector tools after the box tools", len(names) == 23 and names[-2:] == ["mockhub_list_issues", "mockhub_create_issue"], names)
 result, _ = c.tool("mockhub_list_issues", {"state": "open"})
 check("a connector tool call goes to the Connect door", text(result) == 'mockhub_list_issues ran with {"state":"open"}', result)
 check("and leaves the box hibernated", json.loads(run("status", "--json").stdout)["state"] == "hibernated")
@@ -125,7 +125,7 @@ while not changed and time.time() < deadline:
     _, seen = c.call("ping")
     changed = any(m.get("method") == "notifications/tools/list_changed" for m in seen)
 tools, _ = c.call("tools/list")
-check("a disconnect reaches the client as list_changed, and the tools leave", changed and len(tools["result"]["tools"]) == 22, tools)
+check("a disconnect reaches the client as list_changed, and the tools leave", changed and len(tools["result"]["tools"]) == 21, tools)
 c.close()
 
 b = Bridge()
@@ -134,12 +134,12 @@ check("initialize answered by the bridge", init["result"]["serverInfo"]["name"] 
 b.send("notifications/initialized", notify=True)
 tools, _ = b.call("tools/list")
 names = [t["name"] for t in tools["result"]["tools"]]
-check("tools/list while hibernated: 8 control + 14 box tools", len(names) == 22 and "box_ensure" in names and "box_create" in names and "computer_act" in names, names)
+check("tools/list while hibernated: 8 control + 13 box tools", len(names) == 21 and "box_ensure" in names and "box_create" in names and "computer_act" in names, names)
 shell_tool = next(t for t in tools["result"]["tools"] if t["name"] == "shell")
 check("box tools take a box argument", "box" in shell_tool["inputSchema"].get("properties", {}), shell_tool)
 listed, _ = b.call("resources/list")
 uris = [r["uri"] for r in listed["result"]["resources"]]
-check("resources/list while hibernated lists the Script guide", uris == ["cocoonbox://script/AGENTS.md", "cocoonbox://script/index.d.ts", "cocoonbox://script/CLAUDE.md"], listed)
+check("resources/list while hibernated lists none and wakes nothing", uris == [], listed)
 
 result, _ = b.tool("box_status")
 check("box_status via the control MCP", result["structuredContent"]["state"] == "hibernated", result)

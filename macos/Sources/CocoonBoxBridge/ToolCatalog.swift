@@ -23,14 +23,7 @@ public enum ToolCatalog {
     // boxNames are the per-box tools of contracts.md "Remote tools over MCP".
     public static let boxNames = [
         "shell", "read_file", "write_file", "edit_file", "list_dir", "browser_navigate", "browser_snapshot",
-        "browser_click", "browser_type", "browser_read", "computer_state", "computer_act", "screenshot", "script_run",
-    ]
-
-    // resources are the box's Script guide and API, listed without asking a box; a read goes to the default box.
-    nonisolated(unsafe) public static let resources: [[String: Any]] = [
-        resource("AGENTS.md", "text/markdown", "How to write, run and replay scripts on this box"),
-        resource("index.d.ts", "text/plain", "The script-js API, as installed on this box"),
-        resource("CLAUDE.md", "text/markdown", "script-js usage notes, as installed on this box"),
+        "browser_click", "browser_type", "browser_read", "computer_state", "computer_act", "screenshot",
     ]
 
     public static var boxFallback: [[String: Any]] {
@@ -63,10 +56,6 @@ public enum ToolCatalog {
     static func same(_ a: [[String: Any]], _ b: [[String: Any]]) -> Bool {
         let encode = { (tools: [[String: Any]]) in try? JSONSerialization.data(withJSONObject: tools, options: [.sortedKeys]) }
         return encode(a) == encode(b)
-    }
-
-    private static func resource(_ name: String, _ mime: String, _ description: String) -> [String: Any] {
-        ["uri": "cocoonbox://script/\(name)", "name": name, "mimeType": mime, "description": description]
     }
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: Any], required: [String] = []) -> [String: Any] {

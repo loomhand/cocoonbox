@@ -96,7 +96,7 @@ public actor Bridge {
             listedConnect = connectTools
             reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox) + connectTools])
         case "resources/list":
-            reply(id, ["resources": ToolCatalog.resources])
+            await listResources(id)
         case "resources/read":
             await readResource(id, params)
         case "tools/call":
@@ -176,6 +176,15 @@ public actor Bridge {
                 return reply(id, ToolFailure("Could not reach the box: \(error)").result)
             }
         }
+    }
+
+    // listResources lists the resources of the default box when its session is open, else none; it never wakes a box.
+    private func listResources(_ id: Any) async {
+        guard let box = try? await target(nil), let upstream = sessions[box],
+              let result = (try? await call(upstream, "resources/list", [:]))?["result"] as? [String: Any] else {
+            return reply(id, ["resources": [] as [Any]])
+        }
+        reply(id, result)
     }
 
     // readResource reads a resource of the default box, waking it as a box tool does.

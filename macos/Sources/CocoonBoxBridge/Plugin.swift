@@ -77,7 +77,7 @@ public enum Plugin {
     - `box_create` adds a box; `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
     - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser, and `computer_state`, `computer_act` and `screenshot` for its desktop.
     - After a GUI action, take a `screenshot` to confirm it worked.
-    - For a multi-step desktop flow, or one to replay, use the script skill and `script_run`.
+    - On a cbplan box (box_status shows a cbplan image and its tools include `script_run`), use the script skill for a multi-step desktop flow or one to replay.
     - Call `box_save` before the user leaves for a long time. It closes the box's browser during the save.
     - `box_upgrade` restarts running programs and keeps files, logins and agent history; ask the user first, then call it with `confirm: true`.
     - Call `box_hibernate` when the user is done.
