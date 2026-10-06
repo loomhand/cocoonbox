@@ -240,8 +240,7 @@ final class MCPServer: Sendable {
                 "serverInfo": ["name": "cocoonbox-mock", "version": "0.1"],
             ]
         case "tools/list":
-            // a box whose name starts with cbplan serves the cbplan family's extra tool
-            result = ["tools": box.name.hasPrefix("cbplan") ? Self.tools + [Self.tool("script_run", "Run a script on the desktop.", ["code": "string"])] : Self.tools]
+            result = ["tools": box.image.hasPrefix("cbplan:") ? Self.tools + [Self.tool("script_run", "Run a script on the desktop.", ["code": "string"])] : Self.tools]
         case "tools/call":
             guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")

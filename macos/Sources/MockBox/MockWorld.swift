@@ -132,8 +132,9 @@ actor MockWorld {
         return response
     }
 
-    // create adds a box within the quota and starts it, as Boxes.Create does.
-    func create(name: String) throws -> Cocoonbox_Control_V1_EnsureResponse {
+    // create adds a box within the quota and starts it, as Boxes.Create does; image cbplan is the one other family offered.
+    func create(name: String, image: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
+        guard image.isEmpty || image == "cbplan" else { throw RPCError(code: .invalidArgument, message: "image \"\(image)\" is not offered") }
         guard !name.isEmpty, name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }), !name.hasPrefix("cb-") else {
             throw RPCError(code: .invalidArgument, message: "invalid request: a box name is 1 to 32 lowercase letters, digits, - or _")
         }
@@ -144,6 +145,7 @@ actor MockWorld {
         created.id = "cb-mock" + String(format: "%08d", boxes.count)
         created.name = name
         created.state = .starting
+        if image == "cbplan" { created.latestImage = "cbplan:v1" }
         created.image = created.latestImage
         created.lastSavedAtMs = 0
         created.createdAtMs = Self.now()

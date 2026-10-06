@@ -57,8 +57,8 @@ import Testing
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         let cbdesk = try #require(try await mock.connection.firstBox()).id
-        let sim = try await BridgeClient(mock, box: "cbplan1")
-        _ = try await sim.tool("box_create", ["name": "cbplan1"])
+        let sim = try await BridgeClient(mock, box: "sim1")
+        _ = try await sim.tool("box_create", ["name": "sim1", "kind": "script"])
         _ = try await sim.tool("shell", ["command": "true"])
         #expect(try await sim.tools().contains { $0["name"] as? String == "script_run" })
         sim.close()

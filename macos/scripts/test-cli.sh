@@ -327,6 +327,26 @@ result, _ = p.tool("box_list")
 check("box_list after delete", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
 p.close()
 
+# box create: --kind picks the image family; general keeps the default image.
+r = run("box", "create", "k1", "--kind", "gpu")
+check("box create --kind gpu is refused", r.returncode != 0 and "--kind is general or script" in r.stderr, r.stderr)
+r = run("box", "create")
+check("box create without a name prints its usage", r.returncode != 0 and "usage: cocoonbox box create" in r.stderr, r.stderr)
+run("hibernate", "--box", "main", "--yes")
+r = run("box", "create", "sim1", "--kind", "script", "--json")
+created = json.loads(r.stdout or "{}")
+check("box create --kind script runs a cbplan box", created.get("name") == "sim1" and created.get("image") == "cbplan:v1" and created.get("state") == "running", r.stdout + r.stderr)
+k = Bridge()
+k.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "kind-client", "version": "1"}})
+result, _ = k.tool("box_delete", {"box": "sim1", "confirm": True})
+r = run("box", "create", "gen1", "--json")
+created = json.loads(r.stdout or "{}")
+check("box create without --kind keeps the default image", created.get("name") == "gen1" and created.get("image") == json.loads(run("status", "--json", "--box", "main").stdout)["latest_image"], r.stdout + r.stderr)
+result, _ = k.tool("box_delete", {"box": "gen1", "confirm": True})
+result, _ = k.tool("box_list")
+check("box_list after the kind boxes are deleted", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
+k.close()
+
 import os, urllib.request, urllib.error
 def mcp_status(box):
     req = urllib.request.Request(os.environ["COCOONBOX_ENDPOINT"] + "/cocoonbox.mcp/" + box, data=b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
@@ -545,7 +565,7 @@ if shutil.which("claude"):
         check("claude plugin validate --strict " + target, r.returncode == 0 and "Validation passed" in r.stdout, r.stdout + r.stderr)
     setups = [confined("setup", "claude", extra={"CLAUDE_CONFIG_DIR": env["CLAUDE_CONFIG_DIR"]}) for _ in range(2)]
     installed = json.load(open(os.path.join(home, ".claude", "plugins", "installed_plugins.json")))["plugins"].get("cocoonbox@cocoonbox", [])
-    check("setup claude installs the plugin into the given CLAUDE_CONFIG_DIR", setups[0].returncode == 0 and len(installed) == 1 and installed[0]["version"] == "0.4.0", setups[0].stderr + json.dumps(installed))
+    check("setup claude installs the plugin into the given CLAUDE_CONFIG_DIR", setups[0].returncode == 0 and len(installed) == 1 and installed[0]["version"] == "0.5.0", setups[0].stderr + json.dumps(installed))
     check("setup claude again changes nothing and succeeds", setups[1].returncode == 0 and "already installed" in setups[1].stdout + setups[1].stderr and "already at the latest version" in setups[1].stdout + setups[1].stderr, setups[1].stdout + setups[1].stderr)
     service = app_service("setup")
     adopted = confined("setup", "claude", extra={"CLAUDE_CONFIG_DIR": env["CLAUDE_CONFIG_DIR"], "CB_KEYCHAIN_SERVICE": service})

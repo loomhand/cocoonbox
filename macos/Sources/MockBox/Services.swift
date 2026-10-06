@@ -33,7 +33,7 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     }
 
     func create(request: Cocoonbox_Control_V1_CreateBoxRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        try await world.create(name: request.name)
+        try await world.create(name: request.name, image: request.image)
     }
 
     func rename(request: Cocoonbox_Control_V1_RenameBoxRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_Box {

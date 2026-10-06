@@ -8,7 +8,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.4.0"
+    static let version = "0.5.0"
     static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -74,7 +74,7 @@ public enum Plugin {
 
     - Check `box_status` first when the state matters. A box tool wakes a hibernated box by itself; `box_ensure` wakes it on purpose.
     - The user may have several boxes. `box_list` lists them; every other tool takes `box`, a box name or id, and acts on the session's default box without it. Only a limited number of boxes run at once: hibernate one before waking another when a tool says so.
-    - `box_create` adds a box; `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
+    - `box_create` adds a box: kind general (the default) is the standard desktop, kind script a cbplan box with `script_run`. `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
     - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser, and `computer_state`, `computer_act` and `screenshot` for its desktop.
     - After a GUI action, take a `screenshot` to confirm it worked.
     - On a cbplan box (box_status shows a cbplan image and its tools include `script_run`), use the script skill for a multi-step desktop flow or one to replay.

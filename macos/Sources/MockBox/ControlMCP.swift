@@ -14,7 +14,7 @@ final class ControlMCP: Sendable {
         tool("box_list", "List your cocoonbox cloud desktops with their names, states and images.", [:], []),
         tool("box_status", "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.", ["box": box], []),
         tool("box_ensure", "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer.", ["box": box, "wait": ["type": "boolean", "default": true]], []),
-        tool("box_create", "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once.", ["name": ["type": "string"], "wait": ["type": "boolean", "default": true]], ["name"]),
+        tool("box_create", "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once. kind general (the default) is the standard desktop; kind script also has the Script runtime, so that box adds the script_run tool.", ["name": ["type": "string"], "kind": ["type": "string", "enum": ["general", "script"], "default": "general"], "wait": ["type": "boolean", "default": true]], ["name"]),
         tool("box_hibernate", "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.", ["box": box], []),
         tool("box_save", "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.", ["box": box], []),
         tool("box_upgrade", "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.", ["box": box, "confirm": ["type": "boolean"]], ["confirm"]),
@@ -69,7 +69,10 @@ final class ControlMCP: Sendable {
         }
         if name == "box_create" {
             do {
-                let response = try await world.create(name: arguments["name"] as? String ?? "")
+                guard let kind = BoxKind(rawValue: arguments["kind"] as? String ?? "general") else {
+                    return Self.reply(id, Self.failure("kind must be general or script."))
+                }
+                let response = try await world.create(name: arguments["name"] as? String ?? "", image: kind.family)
                 guard arguments["wait"] as? Bool ?? true else {
                     return Self.reply(id, Self.success(["box_id": response.box.id, "name": response.box.name, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
                 }

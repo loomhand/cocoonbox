@@ -15,6 +15,10 @@ usage: cocoonbox <command> [options]
   ensure | save                         wake or save the box, with progress
   hibernate [--yes]                     hibernate the box, with progress
   upgrade [--yes]                       move the box to the latest desktop image
+  box create NAME [--kind general|script] [--json]
+                                        create another box and wait until it runs; general (the default) is
+                                        the standard desktop, script also has the Script runtime, whose
+                                        box tools add script_run
   mcp [--no-wake]                       serve your boxes to a local agent over stdio MCP
   mcp-headers                           print the Authorization header as JSON (Claude Code headersHelper)
   rsh [--box NAME|ID] [-t] [HOST] COMMAND...
@@ -216,6 +220,23 @@ func lifecycle(_ command: String) async {
         default:
             break
         }
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+func boxCommand() async {
+    let kindValue = value(of: "--kind")
+    guard words.first == "create", let name = words.dropFirst().first(where: { $0 != kindValue }) else {
+        fail("usage: cocoonbox box create NAME [--kind general|script]")
+    }
+    guard let kind = BoxKind(rawValue: kindValue ?? BoxKind.general.rawValue) else { fail("--kind is general or script") }
+    let connection = connection()
+    defer { connection.close() }
+    do {
+        let response = try await connection.createBox(name: name, kind: kind)
+        if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
+        printBox(try await connection.listBoxes().first { $0.id == response.box.id }, json: flags.contains("--json"))
     } catch {
         fail(BoxConnection.describe(error))
     }
@@ -848,6 +869,8 @@ case "logout":
     print("signed out")
 case "status", "ensure", "wake", "hibernate", "save", "upgrade":
     await lifecycle(command)
+case "box":
+    await boxCommand()
 case "mcp":
     await serve()
 case "mcp-headers":

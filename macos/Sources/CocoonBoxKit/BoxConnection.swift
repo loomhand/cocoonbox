@@ -76,8 +76,11 @@ public final class BoxConnection: Sendable {
         try await boxes.ensure(.with { $0.boxID = boxID })
     }
 
-    public func createBox(name: String) async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        try await boxes.create(.with { $0.name = name })
+    public func createBox(name: String, kind: BoxKind = .general) async throws -> Cocoonbox_Control_V1_EnsureResponse {
+        try await boxes.create(.with {
+            $0.name = name
+            $0.image = kind.family
+        })
     }
 
     public func renameBox(boxID: String, name: String) async throws -> Cocoonbox_Control_V1_Box {
