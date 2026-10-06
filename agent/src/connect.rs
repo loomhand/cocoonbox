@@ -132,7 +132,7 @@ impl Client {
     }
 
     async fn list(&self) -> Result<Vec<ToolSpec>, String> {
-        let reserved = tools::main_tools(true);
+        let reserved = tools::main_tools(true, true);
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_PAGES {

@@ -18,8 +18,8 @@ pub const READ_ONLY: [&str; 6] = [
     "browser_read",
 ];
 
-/// Tools of the main agent; a vision model also gets a read-only screenshot.
-pub fn main_tools(vision: bool) -> Vec<ToolSpec> {
+/// Tools of the main agent; a vision model also gets a read-only screenshot, a Script box `script_run`.
+pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
     let mut tools = vec![
         ToolSpec {
             name: Cow::Borrowed("shell"),
@@ -166,12 +166,15 @@ pub fn main_tools(vision: bool) -> Vec<ToolSpec> {
             parameters: json!({"type": "object", "properties": {"max_edge": max_edge()}}),
         });
     }
+    if script {
+        tools.push(script_tool());
+    }
     tools
 }
 
 /// Tools served over MCP to external agents; the names are the contract, and `script_run` exists only with `script`.
 pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
-    let mut tools: Vec<ToolSpec> = main_tools(true)
+    let mut tools: Vec<ToolSpec> = main_tools(true, false)
         .into_iter()
         .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
         .collect();

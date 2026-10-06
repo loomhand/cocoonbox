@@ -1,5 +1,8 @@
 //! System prompts for the main agent and the computer subagent.
 
+/// The tool-tier policy of a box with Script, shared by its MCP instructions, its own agent and its guide.
+pub const ROUTING: &str = include_str!("../../image/script/routing.md");
+
 const MAIN: &str = "\
 You are {model}, served through the cocoonbox gateway. If asked which model you are, say exactly \"{model}\".
 
@@ -35,16 +38,22 @@ Loop: observe, act, verify.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
-/// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work.
-pub fn main(model: &str, computer_model: &str, vision: bool) -> String {
+/// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a Script box adds [`ROUTING`].
+pub fn main(model: &str, computer_model: &str, vision: bool, script: bool) -> String {
     let eyes = if vision {
         "You can also call screenshot to look at the screen yourself."
     } else {
         "You cannot see screenshots; rely on its report."
     };
-    MAIN.replace("{model}", model)
+    let mut prompt = MAIN
+        .replace("{model}", model)
         .replace("{computer_model}", computer_model)
-        .replace("{eyes}", eyes)
+        .replace("{eyes}", eyes);
+    if script {
+        prompt.push_str("\n\nThis box has Script.\n\n");
+        prompt.push_str(ROUTING);
+    }
+    prompt
 }
 
 /// Renders the computer subagent's prompt: observe, act, verify on the desktop.
@@ -62,6 +71,7 @@ mod tests {
             "deepseek/deepseek-v4.1-flash",
             "anthropic/claude-sonnet-5",
             false,
+            false,
         );
         assert!(p.starts_with(
             "You are deepseek/deepseek-v4.1-flash, served through the cocoonbox gateway."
@@ -75,7 +85,17 @@ mod tests {
         for vendor in ["Claude", "Anthropic", "GPT", "OpenAI", "Gemini"] {
             assert!(!without_subagent.contains(vendor), "mentions {vendor}");
         }
-        assert!(main("anthropic/claude-sonnet-5", "x", true).contains("call screenshot"));
+        assert!(main("anthropic/claude-sonnet-5", "x", true, false).contains("call screenshot"));
+        assert!(!p.contains("script"), "{p}");
+    }
+
+    #[test]
+    fn main_prompt_on_a_script_box_ends_with_the_routing() {
+        let plain = main("m", "c", false, false);
+        let p = main("m", "c", false, true);
+        assert!(p.starts_with(&plain), "{p}");
+        assert!(p.ends_with(ROUTING), "{p}");
+        assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
     }
 
     #[test]

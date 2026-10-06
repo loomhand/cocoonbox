@@ -1,5 +1,5 @@
 #!/bin/bash
-# Adds the Script runtime of the cbplan family to a provisioned desktop guest; idempotent.
+# Adds the cbplan family's Script runtime and its own cua-driver to a provisioned desktop guest; idempotent.
 # Runs as root inside the guest from an unpacked copy of image/script (see cut.sh -f cbplan).
 set -euo pipefail
 
@@ -12,6 +12,10 @@ CLI_URL="https://registry.npmjs.org/@vendor/script/-/script-${CLI_VERSION}.tgz"
 JS_VERSION=12.1.1
 JS_SHA256=b97e6c29f941170509a178783abad3312db4bb71484ab8bedc9b2335495f80b0
 JS_URL="https://registry.npmjs.org/@vendor/script-js/-/script-js-${JS_VERSION}.tgz"
+CUA_VERSION=0.34.0
+CUA_SHA256=8851c028e5d88a3b779ad2a8d49ed6f4b92aa94de2edf5c2851cee63bcc274c5
+CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
+CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/${CUA_TARBALL}"
 # private release asset; cut.sh brings it in as vendor/, since the cut host holds no token
 NATIVE_RELEASE=v12.1.1-cmgs.3
 NATIVE_SHA256=c4b4d99f00ff7bbb87f4f4b65676c2828bd21a340de70d75a974375e72920088
@@ -55,6 +59,23 @@ install_runtime() {
 	ln -sfn "$js" "$ROOT/js"
 }
 
+install_cua_driver() {
+	log "cua-driver $CUA_VERSION"
+	local dir=/opt/cua-driver/$CUA_VERSION tmp
+	if [ ! -x "$dir/cua-driver" ]; then
+		tmp=$(mktemp -d)
+		fetch "$CUA_URL" "$tmp/$CUA_TARBALL" "$CUA_SHA256"
+		install -d "$dir"
+		tar -xzf "$tmp/$CUA_TARBALL" -C "$dir" --strip-components=1 --no-same-owner
+		rm -rf "$tmp"
+	fi
+	ln -sfn "$dir/cua-driver" /usr/local/bin/cua-driver
+	find /opt/cua-driver -mindepth 1 -maxdepth 1 ! -name "$CUA_VERSION" -exec rm -rf {} +
+	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
+	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
+	systemctl --user -M user@ restart cua-driver.service
+}
+
 install_rootfs() {
 	log "rootfs files"
 	(cd "$SRC/rootfs" && find . -type f) | while read -r f; do
@@ -63,15 +84,20 @@ install_rootfs() {
 		*) install -D -m 0644 "$SRC/rootfs/$f" "/${f#./}" ;;
 		esac
 	done
+	sed -i -e "/^<!-- routing -->\$/{r $SRC/routing.md" -e 'd}' "$ROOT/AGENTS.md"
 }
 
 check() {
 	"$ROOT/node/bin/node" -e "require('$ROOT/js')"
 	runuser -u user -- env HOME=/home/user /usr/local/bin/script --version
 	[ ! -e /home/user/.claude/skills/script ] && [ ! -e /root/.claude/skills/script ]
+	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
+	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
+	[ "$(readlink -f /usr/local/bin/cua-driver)" = "/opt/cua-driver/$CUA_VERSION/cua-driver" ]
 }
 
 install_runtime
+install_cua_driver
 install_rootfs
 check
 log "done"

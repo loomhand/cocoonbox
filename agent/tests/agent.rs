@@ -117,10 +117,10 @@ impl Harness {
     }
 
     /// A harness of a box with the Script runtime (the cbplan family).
-    async fn with_script() -> Self {
+    async fn with_script(script: Vec<(&'static str, String)>) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
-            Vec::new(),
+            script,
             false,
             Duration::from_secs(600),
             day,
@@ -2531,6 +2531,17 @@ async fn vision_main_model_gets_a_screenshot_tool() {
             .unwrap()
             .starts_with("data:image/png;base64,")
     );
+    assert!(
+        !chats[0]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["function"]["name"] == "script_run")
+    );
+    let system = chats[0]["messages"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(!system.contains("Script"), "{system}");
     let cua = h.cua_log.lock().unwrap().clone();
     let names: Vec<&str> = cua.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names, ["get_desktop_state", "end_session"]);
@@ -2854,7 +2865,7 @@ async fn mcp_surface_without_script_matches_the_cbdesk_agent_byte_for_byte() {
 
 #[tokio::test]
 async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
-    let h = Harness::with_script().await;
+    let h = Harness::with_script(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
 
     let ok = mcp
@@ -2917,7 +2928,7 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
 
 #[tokio::test]
 async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
-    let h = Harness::with_script().await;
+    let h = Harness::with_script(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
 
     let started = std::time::Instant::now();
@@ -2951,7 +2962,7 @@ async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
 
 #[tokio::test]
 async fn mcp_serves_the_script_guide_as_resources() {
-    let h = Harness::with_script().await;
+    let h = Harness::with_script(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
 
     let tools = McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await);
@@ -2979,6 +2990,71 @@ async fn mcp_serves_the_script_guide_as_resources() {
         )
         .await;
     assert_eq!(unknown["error"]["code"], -32002, "{unknown}");
+}
+
+#[tokio::test]
+async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routing() {
+    let run = json!({"code": "export function main(p) { return p }", "params": {"n": 1}, "screenshot": false});
+    let h = Harness::with_script(vec![
+        (
+            "chat/completions",
+            chat_tool_call("call_r", "script_run", &run),
+        ),
+        ("chat/completions", chat_text("Saved.")),
+    ])
+    .await;
+    let routing = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../image/script/routing.md"),
+    )
+    .unwrap();
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "save a note in mousepad", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    let offered: Vec<&str> = chats[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert!(offered.contains(&"script_run"), "{offered:?}");
+    assert!(offered.contains(&"delegate_computer"), "{offered:?}");
+    let system = chats[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.ends_with(&routing), "{system}");
+    let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(result["role"], "tool");
+    let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+    assert_eq!(report["result"], json!({"params": {"n": 1}}), "{report}");
+
+    let golden: Value = serde_json::from_slice(
+        &std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/mcp-initialize.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let init: Value = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .header("accept", "application/json, text/event-stream")
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        init["result"]["instructions"].as_str().unwrap(),
+        format!(
+            "{}\n\n{routing}",
+            golden["result"]["instructions"].as_str().unwrap()
+        )
+    );
 }
 
 #[tokio::test]
@@ -3390,18 +3466,21 @@ async fn pixel_double_and_right_clicks_are_desktop_clicks() {
     );
 
     mcp.call("computer_state", json!({})).await;
-    let act = mcp
-        .call(
-            "computer_act",
-            json!({"action": "double_click", "element": 0}),
-        )
-        .await;
-    assert_eq!(act["isError"], false, "{act}");
-    let double = &driver_calls(&h, "double_click")[0];
-    assert_eq!(
-        (&double["element_token"], &double["pid"]),
-        (&json!("tok-0"), &json!(42))
-    );
+    for action in ["double_click", "right_click"] {
+        let act = mcp
+            .call(
+                "computer_act",
+                json!({"action": action, "element": 0, "button": "left"}),
+            )
+            .await;
+        assert_eq!(act["isError"], false, "{act}");
+        let call = &driver_calls(&h, action)[0];
+        assert_eq!(
+            (&call["element_token"], &call["pid"]),
+            (&json!("tok-0"), &json!(42))
+        );
+        assert!(call.get("button").is_none(), "{call}");
+    }
 }
 
 #[tokio::test]

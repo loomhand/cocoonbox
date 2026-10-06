@@ -73,8 +73,8 @@ impl Runtime {
             model,
             dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal))),
             journal,
-            main_tools: tools::main_tools(false),
-            main_vision_tools: tools::main_tools(true),
+            main_tools: tools::main_tools(false, cfg.script),
+            main_vision_tools: tools::main_tools(true, cfg.script),
             computer_tools: tools::computer_tools(),
             computer_prompt: prompts::computer(&cfg.model_computer),
             screen: tokio::sync::Mutex::new(()),
@@ -498,7 +498,12 @@ impl Runtime {
         } else {
             &self.main_tools
         };
-        let system = prompts::main(&ctx.model, &self.cfg.model_computer, vision);
+        let system = prompts::main(
+            &ctx.model,
+            &self.cfg.model_computer,
+            vision,
+            self.cfg.script,
+        );
         for _ in 0..MAIN_MAX_STEPS {
             let connectors = match &self.connect {
                 Some(c) => c.tools().await,

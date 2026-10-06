@@ -23,7 +23,7 @@ use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Princi
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, event, transcript_entry::Body as Entry};
 use crate::runner::Runtime;
-use crate::{new_id, tools};
+use crate::{new_id, prompts, tools};
 
 /// Path of the MCP endpoint on the agent listener.
 pub const PATH: &str = "/mcp";
@@ -45,7 +45,6 @@ Relative file paths resolve under /workspace, and shell is one persistent bash s
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
-const SCRIPT_INSTRUCTIONS: &str = " This box has Script. For a multi-step desktop task (open an app, navigate, type, fill, save, repeat), write one script and run it with script_run instead of a chain of computer_act calls: one round trip, a script you can replay with new params, and ground/verify built in. Read cocoonbox://script/AGENTS.md (or read_file /opt/script/AGENTS.md) first. Keep screenshot and computer_act for a single look or a one-off click.";
 const RESOURCES: [Resource; 3] = [
     Resource {
         uri: "cocoonbox://script/AGENTS.md",
@@ -314,7 +313,7 @@ impl Mcp {
         });
         if self.script {
             result["capabilities"]["resources"] = json!({});
-            result["instructions"] = format!("{INSTRUCTIONS}{SCRIPT_INSTRUCTIONS}").into();
+            result["instructions"] = format!("{INSTRUCTIONS}\n\n{}", prompts::ROUTING).into();
         }
         Ok((session, result))
     }
