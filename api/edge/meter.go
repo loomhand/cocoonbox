@@ -124,6 +124,10 @@ func (c *captureWriter) Unwrap() http.ResponseWriter {
 
 // meteredCalls returns the metered tool calls of a JSON-RPC message or batch.
 func meteredCalls(body []byte) []rpcCall {
+	// without a backslash no name is escaped, so a body without a metered name holds no metered call
+	if !bytes.ContainsRune(body, '\\') && !slices.ContainsFunc(meteredTools, func(t string) bool { return bytes.Contains(body, []byte(t)) }) {
+		return nil
+	}
 	var calls []rpcCall
 	if trimmed := bytes.TrimSpace(body); len(trimmed) > 0 && trimmed[0] == '[' {
 		_ = json.Unmarshal(trimmed, &calls, lenient)

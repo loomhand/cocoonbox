@@ -47,6 +47,22 @@ func TestBoxID(t *testing.T) {
 	}
 }
 
+func TestLatestStaysInTheImageFamily(t *testing.T) {
+	d := Defaults{Image: "cbdesk:v25", RebaseImages: []string{"cbplan:v2", "cbdesk:v24", "cbplan:v1"}}
+	tests := []struct{ image, want string }{
+		{"cbdesk:v22", "cbdesk:v25"},
+		{"cbdesk:v25", "cbdesk:v25"},
+		{"cbplan:v1", "cbplan:v2"},
+		{"other:v1", "cbdesk:v25"},
+		{"", "cbdesk:v25"},
+	}
+	for _, tt := range tests {
+		if got := d.latest(tt.image); got != tt.want {
+			t.Errorf("latest(%q) = %q, want %q", tt.image, got, tt.want)
+		}
+	}
+}
+
 func TestEnsureCreatesBox(t *testing.T) {
 	fake := newFakeMachines()
 	svc := New(fake, testDefaults, newFakeRegistry())

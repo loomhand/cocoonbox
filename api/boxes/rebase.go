@@ -22,13 +22,13 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	image := cmp.Or(req.GetImage(), s.defaults.Image)
-	if image != s.defaults.Image && !slices.Contains(s.defaults.RebaseImages, image) {
-		return nil, status.Errorf(codes.InvalidArgument, "image %q is not a rebase target", image)
-	}
 	m, err := s.runningMachine(ctx, box, user)
 	if err != nil {
 		return nil, err
+	}
+	image := cmp.Or(req.GetImage(), s.defaults.latest(m.Image))
+	if image != s.defaults.Image && !slices.Contains(s.defaults.RebaseImages, image) {
+		return nil, status.Errorf(codes.InvalidArgument, "image %q is not a rebase target", image)
 	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if started {

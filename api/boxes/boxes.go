@@ -32,6 +32,18 @@ type Defaults struct {
 	MaxRunning   int
 }
 
+// latest is the newest image of image's family (the name before ':'): the default image for its family, else the first rebase image of that family.
+func (d Defaults) latest(image string) string {
+	family, _, _ := strings.Cut(image, ":")
+	if def, _, _ := strings.Cut(d.Image, ":"); image == "" || family == def {
+		return d.Image
+	}
+	if i := slices.IndexFunc(d.RebaseImages, func(r string) bool { return strings.HasPrefix(r, family+":") }); i >= 0 {
+		return d.RebaseImages[i]
+	}
+	return d.Image
+}
+
 // Registry keeps each user's boxes and their names; users.Service is the production one.
 type Registry interface {
 	Boxes(owner string) []users.Box
@@ -413,7 +425,7 @@ func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machin
 	if m.State == machines.StateRunning && !s.ready(m) {
 		b.State = controlv1.BoxState_BOX_STATE_STARTING
 	}
-	b.LatestImage = s.defaults.Image
+	b.LatestImage = s.defaults.latest(m.Image)
 	if s.state != nil {
 		b.LastSavedAtMs = s.state.lastSaved(ctx, statePath{user: user, box: box})
 	}

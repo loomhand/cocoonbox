@@ -84,6 +84,12 @@ func TestMCPMetersScriptRunCalls(t *testing.T) {
 			want:  []meterRow{{Tool: "script_run", BytesOut: 62}},
 		},
 		{
+			name:  "an escaped name",
+			body:  `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"simul\u0061ng_run"}}`,
+			reply: `{"id":5,"jsonrpc":"2.0","result":{"isError":false}}`,
+			want:  []meterRow{{Tool: "script_run", OK: true, BytesOut: 51}},
+		},
+		{
 			name:  "another tool",
 			body:  `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"shell"}}`,
 			reply: `{"id":4,"jsonrpc":"2.0","result":{"isError":false}}`,
