@@ -45,6 +45,14 @@ import Testing
         #expect(files.keys.contains(".claude-plugin/marketplace.json") && files.keys.contains(".agents/plugins/marketplace.json"))
     }
 
+    @Test func theScriptSkillCarriesTheBoxRoutingByteForByte() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        let routing = try String(contentsOf: root.appendingPathComponent("image/script/routing.md"), encoding: .utf8)
+        let skill = try #require(Plugin.files(command: "/c")["cocoonbox/skills/script/SKILL.md"])
+        #expect(skill.contains("\n\n\(routing)\n## scripts\n"))
+        #expect(routing.contains("script_run") && routing.hasSuffix("\n"))
+    }
+
     @Test func theOffloadSkillCarriesTheCommandAndTheTemplate() throws {
         let files = Plugin.files(command: "/Users/me/.local/bin/cocoonbox")
         let skill = try #require(files["cocoonbox/skills/cocoonbox-offload/SKILL.md"])

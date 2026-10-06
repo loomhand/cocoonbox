@@ -8,7 +8,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.6.0"
+    static let version = "0.7.0"
     static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -77,7 +77,7 @@ public enum Plugin {
     - `box_create` adds a box: kind general (the default) is the standard desktop, kind script a cbplan box with `script_run`. `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
     - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser, and `computer_state`, `computer_act` and `screenshot` for its desktop.
     - After a GUI action, take a `screenshot` to confirm it worked.
-    - On a cbplan box (box_status shows a cbplan image and its tools include `script_run`), use the script skill for a multi-step desktop flow or one to replay.
+    - On a cbplan box (box_status shows a cbplan image and its tools include `script_run`), use the script skill: it says which tool tier fits each step.
     - Call `box_save` before the user leaves for a long time. It closes the box's browser during the save.
     - `box_upgrade` restarts running programs and keeps files, logins and agent history; ask the user first, then call it with `confirm: true`.
     - Call `box_hibernate` when the user is done.
@@ -85,7 +85,21 @@ public enum Plugin {
 
     """
 
-    // scriptSkill is the Claude Code face of the box's Script guide, /opt/script/AGENTS.md.
+    // routing mirrors image/script/routing.md byte for byte; PluginTests fails on drift.
+    static let routing = """
+    ## Pick the tool tier first
+
+    Take the first tier that can do the job.
+
+    1. **Command.** If a shell command or a file tool can do it, use `shell`, `read_file`, `write_file`, `edit_file` or `list_dir`. Do not open an app to do a command's job. Examples: create, move, search or edit files; install a package; read a log; fetch a URL with curl.
+    2. **One GUI action.** For a single look or one or two GUI actions, use `screenshot`, `computer_state` and `computer_act` (the box's own agent: `delegate_computer`), or the `browser_*` tools for a web page. Examples: see what is on screen; click one button in a dialog; read a heading in the browser.
+    3. **Script.** For GUI work of three or more steps, or work to repeat, write one script and run it with `script_run`: one round trip, replayable with new params, ground and verify built in. Examples: type and save a document in an editor; fill a form several times; the same change in several files through an app. Read `/opt/script/AGENTS.md` (the resource `cocoonbox://script/AGENTS.md`) before the first script. Save a working flow as `/workspace/flows/<name>.mts` and replay it with `script_run {script, params}`.
+
+    Mix tiers in one task: prepare with `shell`, do the GUI part with `script_run`, then check the outcome with `shell` (`ls -l`, `cat`) or a `screenshot`. If a script fails twice at the same step, look with `computer_state`, then fix the script or do that one step with `computer_act`.
+
+    """
+
+    // scriptSkill is the Claude Code face of the box's Script guide, /opt/script/AGENTS.md, led by the tier policy.
     static let scriptSkill = ""
 
     static let scriptNotice = ""
