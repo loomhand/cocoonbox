@@ -13,6 +13,7 @@ import Foundation
 public actor Bridge {
     static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
     static let connectWait = Duration.seconds(3)
+    public static let instructions = "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box."
 
     private let endpoint: Endpoint
     private let token: String
@@ -32,6 +33,8 @@ public actor Bridge {
     private var boxTools: [[String: Any]]
     // boxLists holds the own tools/list of each box opened in this session.
     private var boxLists: [String: [[String: Any]]] = [:]
+    private var boxInstructions: [String: String] = [:]
+    private var listedBox = false
     private var connect: MCPUpstream?
     private var connectWatch: Task<Void, Never>?
     private var connectTools: [[String: Any]] = []
@@ -90,13 +93,14 @@ public actor Bridge {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": true], "resources": [:] as [String: Any]],
                 "serverInfo": ["name": "cocoonbox", "version": "0.1.0"],
-                "instructions": "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box.",
+                "instructions": await instructionsText(),
             ])
         case "ping":
             reply(id, [:])
         case "tools/list":
             await connectReady()
             listedConnect = connectTools
+            listedBox = true
             boxTools = await defaultTools()
             reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox) + connectTools])
         case "resources/list":
@@ -291,7 +295,11 @@ public actor Bridge {
         }
         if let pushed = link?.defaultBox, pushed != pinned {
             pinned = pushed
-            defaultBox = nil
+            defaultBox = try await resolve(pushed)
+            if let box = defaultBox, listedBox, !ToolCatalog.same(toolsOf(box), boxTools) {
+                boxTools = toolsOf(box)
+                send(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
+            }
         }
         if let defaultBox { return defaultBox }
         if let pinned {
@@ -359,12 +367,15 @@ public actor Bridge {
     private func openBox(_ box: String) async throws -> MCPUpstream {
         if let upstream = sessions[box] { return upstream }
         let upstream = try MCPUpstream(endpoint: endpoint, path: "/cocoonbox.mcp/\(box)", token: token)
-        try await initialize(upstream)
+        let instructions = try await initialize(upstream)
         sessions[box] = upstream
+        boxInstructions[box] = instructions
+        try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? Data(instructions.utf8).write(to: cacheFile(box, "instructions.txt"), options: .atomic)
         if let tools = (try? await call(upstream, "tools/list", [:]))?["result"] as? [String: Any], let list = tools["tools"] as? [[String: Any]], !list.isEmpty {
             ToolCatalog.saveBox(list, to: cacheFile(box))
             boxLists[box] = list
-            if box == defaultBox, !ToolCatalog.same(list, boxTools) {
+            if box == defaultBox, listedBox, !ToolCatalog.same(list, boxTools) {
                 boxTools = list
                 send(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
             }
@@ -375,12 +386,27 @@ public actor Bridge {
     // defaultTools are the default box's own tools: its list from this session, else its cached list, else the contract's names.
     private func defaultTools() async -> [[String: Any]] {
         guard let box = try? await target(nil) else { return ToolCatalog.boxFallback }
-        return boxLists[box] ?? ToolCatalog.loadBox(from: cacheFile(box)) ?? ToolCatalog.boxFallback
+        return toolsOf(box)
     }
 
-    // cacheFile keeps one box's tools apart from every other box's, since image families serve different tools.
-    private func cacheFile(_ box: String) -> URL {
-        cache.deletingLastPathComponent().appendingPathComponent("\(cache.deletingPathExtension().lastPathComponent)-\(box).json")
+    private func toolsOf(_ box: String) -> [[String: Any]] {
+        boxLists[box] ?? ToolCatalog.loadBox(from: cacheFile(box)) ?? ToolCatalog.boxFallback
+    }
+
+    private func instructionsText() async -> String {
+        guard let box = try? await target(nil) else { return Self.instructions }
+        let script = { (tools: [[String: Any]]) in tools.contains { $0["name"] as? String == "script_run" } }
+        if sessions[box] == nil, ToolCatalog.loadBox(from: cacheFile(box)).map(script) != false, (try? await status(box))?["state"] as? String == "running" {
+            _ = try? await openBox(box)
+        }
+        let own = boxInstructions[box] ?? (try? String(contentsOf: cacheFile(box, "instructions.txt"), encoding: .utf8)) ?? ""
+        guard script(toolsOf(box)), !own.isEmpty else { return Self.instructions }
+        return "\(Self.instructions) The default box's own instructions follow. \(own)"
+    }
+
+    // cacheFile keeps one box's tools and instructions apart from every other box's, since image families serve different ones.
+    private func cacheFile(_ box: String, _ suffix: String = "json") -> URL {
+        cache.deletingLastPathComponent().appendingPathComponent("\(cache.deletingPathExtension().lastPathComponent)-\(box).\(suffix)")
     }
 
     private func openConnect() async throws -> MCPUpstream {
@@ -400,12 +426,14 @@ public actor Bridge {
     }
 
     // initialize opens an upstream session with the client's own initialize.
-    private func initialize(_ upstream: MCPUpstream) async throws {
+    @discardableResult
+    private func initialize(_ upstream: MCPUpstream) async throws -> String {
         var params = client
         if params.isEmpty { params = ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": "cocoonbox", "version": "0.1.0"]] }
         let answer = try await call(upstream, "initialize", params)
         if answer["error"] != nil { throw ToolFailure("The server refused the session: \(answer["error"] ?? "")") }
         _ = try await upstream.post(Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8), id: nil)
+        return (answer["result"] as? [String: Any])?["instructions"] as? String ?? ""
     }
 
     private func status(_ box: String) async throws -> [String: Any] {

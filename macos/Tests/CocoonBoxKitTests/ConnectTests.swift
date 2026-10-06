@@ -70,6 +70,52 @@ import Testing
         #expect(boxTools.count == 13 && !names.contains("script_run"), "\(names)")
     }
 
+    @Test func aCbplanDefaultBoxAddsItsOwnInstructionsAndACbdeskBoxAddsNone() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let cbdesk = try #require(try await mock.connection.firstBox()).id
+        let desk = try await BridgeClient(mock, box: cbdesk)
+        #expect(desk.instructions == Bridge.instructions, "a cbdesk box's bridge instructions stay the bridge's own")
+        _ = try await desk.tool("box_create", ["name": "sim1", "kind": "script"])
+        desk.close()
+
+        let running = try await BridgeClient(mock, box: "sim1")
+        #expect(running.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbplan box: write one script with script_run for a multi-step task.")
+        _ = try await running.tool("box_hibernate", ["box": "sim1"])
+        running.close()
+        let hibernated = try await BridgeClient(mock, box: "sim1")
+        #expect(hibernated.instructions == running.instructions, "a hibernated cbplan box keeps its cached instructions")
+        hibernated.close()
+
+        let again = try await BridgeClient(mock, box: cbdesk)
+        defer { again.close() }
+        #expect(again.instructions == Bridge.instructions)
+    }
+
+    @Test func anAppSwitchToABoxWithOtherToolsSendsListChanged() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let cbdesk = try #require(try await mock.connection.firstBox()).id
+        let creator = try await BridgeClient(mock)
+        _ = try await creator.tool("box_create", ["name": "sim1", "kind": "script"])
+        _ = try await creator.tool("shell", ["box": "sim1", "command": "true"])
+        creator.close()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("link-\(UUID().uuidString.prefix(8))")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let path = directory.appendingPathComponent("a.sock").path
+        let server = try AgentLinkServer(path: path, queue: DispatchQueue(label: "test"), defaultBox: { _ in nil }) { _, _, _ in }
+        defer { server.close() }
+
+        let client = try await BridgeClient(mock, box: cbdesk, link: try #require(AgentLinkClient(path: path, agent: "agent-1")))
+        defer { client.close() }
+        #expect(try await !client.tools().contains { $0["name"] as? String == "script_run" })
+        server.push(agent: "agent-1", box: "sim1")
+        try await Task.sleep(for: .milliseconds(300))
+        _ = try await client.tool("box_status")
+        #expect(client.listChanged == 1)
+        #expect(try await client.tools().contains { $0["name"] as? String == "script_run" })
+    }
+
     @Test func emptyMergeWithNoGrants() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
@@ -269,20 +315,27 @@ final class MockBoxProcess: @unchecked Sendable {
 // BridgeClient plays a local agent: it feeds the bridge newline-delimited
 // JSON-RPC and reads its answers and notifications.
 final class BridgeClient: Sendable {
+    private let initialized = Mutex("")
     private let input = Pipe()
     private let output = Lines()
     private let next = Mutex(1)
     private let task: Task<Void, Never>
 
-    init(_ mock: MockBoxProcess, box: String? = nil) async throws {
+    init(_ mock: MockBoxProcess, box: String? = nil, link: AgentLinkClient? = nil) async throws {
         let output = output
-        let bridge = Bridge(endpoint: mock.endpoint, token: "mock-token", wake: true, box: box, cache: mock.root.appendingPathComponent("tools.json")) { data in
+        let bridge = Bridge(endpoint: mock.endpoint, token: "mock-token", wake: true, box: box, link: link, cache: mock.root.appendingPathComponent("tools.json")) { data in
             output.state.withLock { $0 += data.split(separator: UInt8(ascii: "\n")).map { Data($0) } }
         }
         let reader = input.fileHandleForReading
         task = Task { await bridge.run(input: reader) }
-        _ = try await call("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": "bridge-test", "version": "1"]])
+        let answer = try await call("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": "bridge-test", "version": "1"]])
+        let text = (answer["result"] as? [String: Any])?["instructions"] as? String ?? ""
+        initialized.withLock { $0 = text }
         send(["jsonrpc": "2.0", "method": "notifications/initialized"])
+    }
+
+    var instructions: String {
+        initialized.withLock { $0 }
     }
 
     var listChanged: Int {

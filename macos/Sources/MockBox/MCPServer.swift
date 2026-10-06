@@ -238,6 +238,7 @@ final class MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "cocoonbox-mock", "version": "0.1"],
+                "instructions": box.image.hasPrefix("cbplan:") ? "Mock cbplan box: write one script with script_run for a multi-step task." : "Mock cbdesk box.",
             ]
         case "tools/list":
             result = ["tools": box.image.hasPrefix("cbplan:") ? Self.tools + [Self.tool("script_run", "Run a script on the desktop.", ["code": "string"])] : Self.tools]
