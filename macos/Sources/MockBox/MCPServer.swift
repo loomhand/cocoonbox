@@ -155,6 +155,7 @@ final class MCPServer: Sendable {
         tool("computer_state", "Describe the desktop.", [:]),
         tool("computer_act", "Click, type or press keys on the desktop.", ["action": "string", "x": "integer", "y": "integer", "text": "string"]),
         tool("screenshot", "Take a PNG screenshot of the desktop.", ["max_edge": "integer"]),
+        tool("script_run", "Run a script on the desktop.", ["code": "string", "script": "string"]),
     ]
 
     private let world: MockWorld

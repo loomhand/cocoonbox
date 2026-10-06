@@ -85,7 +85,7 @@ public actor Bridge {
             startConnect()
             reply(id, [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
-                "capabilities": ["tools": ["listChanged": true]],
+                "capabilities": ["tools": ["listChanged": true], "resources": [:] as [String: Any]],
                 "serverInfo": ["name": "cocoonbox", "version": "0.1.0"],
                 "instructions": "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box.",
             ])
@@ -95,6 +95,10 @@ public actor Bridge {
             await connectReady()
             listedConnect = connectTools
             reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox) + connectTools])
+        case "resources/list":
+            reply(id, ["resources": ToolCatalog.resources])
+        case "resources/read":
+            await readResource(id, params)
         case "tools/call":
             let name = params["name"] as? String ?? ""
             if ToolCatalog.controlNames.contains(name) {
@@ -171,6 +175,19 @@ public actor Bridge {
             } catch {
                 return reply(id, ToolFailure("Could not reach the box: \(error)").result)
             }
+        }
+    }
+
+    // readResource reads a resource of the default box, waking it as a box tool does.
+    private func readResource(_ id: Any, _ params: [String: Any]) async {
+        do {
+            let upstream = try await readyBox(try await target(nil), progress: nil)
+            relay(id, try await call(upstream, "resources/read", params))
+        } catch let failure as ToolFailure {
+            let text = (failure.result["content"] as? [[String: Any]])?.first?["text"] as? String ?? "\(failure.result)"
+            send(["jsonrpc": "2.0", "id": id, "error": ["code": -32603, "message": text]])
+        } catch {
+            send(["jsonrpc": "2.0", "id": id, "error": ["code": -32603, "message": "Could not reach the box: \(error)"]])
         }
     }
 

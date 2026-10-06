@@ -8,7 +8,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.3.0"
+    static let version = "0.4.0"
     static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -39,6 +39,8 @@ public enum Plugin {
             "\(name)/.mcp.json": mcpConfig(command: command),
             "\(name)/skills/cocoonbox/SKILL.md": skill,
             "\(name)/skills/cocoonbox-offload/SKILL.md": offloadSkill(command: command),
+            "\(name)/skills/script/SKILL.md": scriptSkill,
+            "\(name)/skills/script/LICENSE-vendor": scriptNotice,
             "\(name)/commands/status.md": slash("Show the state of my cocoonbox", "Call the cocoonbox tool box_status and tell me the state, the image, whether an upgrade is available and when my files were last saved."),
             "\(name)/commands/wake.md": slash("Wake my cocoonbox", "Call the cocoonbox tool box_ensure and tell me when the box is running."),
             "\(name)/commands/save.md": slash("Save my cocoonbox now", "Call the cocoonbox tool box_save. Tell me it closes the box's browser during the save, and report the result."),
@@ -75,12 +77,18 @@ public enum Plugin {
     - `box_create` adds a box; `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
     - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser, and `computer_state`, `computer_act` and `screenshot` for its desktop.
     - After a GUI action, take a `screenshot` to confirm it worked.
+    - For a multi-step desktop flow, or one to replay, use the script skill and `script_run`.
     - Call `box_save` before the user leaves for a long time. It closes the box's browser during the save.
     - `box_upgrade` restarts running programs and keeps files, logins and agent history; ask the user first, then call it with `confirm: true`.
     - Call `box_hibernate` when the user is done.
     - If `box_hibernate` or `box_ensure` times out, the operation continues on the box; call `box_status` and wait until the state settles.
 
     """
+
+    // scriptSkill is the Claude Code face of the box's Script guide, /opt/script/AGENTS.md.
+    static let scriptSkill = ""
+
+    static let scriptNotice = ""
 
     // offloadSkill drives the local agent's side of an offload (design.md §27); `command` runs every mechanical step.
     static func offloadSkill(command: String) -> String {

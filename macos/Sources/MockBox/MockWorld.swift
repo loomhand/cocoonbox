@@ -884,6 +884,9 @@ actor MockWorld {
             image = screen?.snapshotPNG()
         case let name where name.hasPrefix("browser_"):
             text = "\(name) ok (mock browser)"
+        case "script_run":
+            text = #"{"duration_ms": 1, "exit_code": 0, "logs": "", "result": null, "stderr": ""}"#
+            image = screen?.snapshotPNG()
         default:
             text = "unknown tool \(tool)"
             isError = true
