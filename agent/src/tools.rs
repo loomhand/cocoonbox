@@ -169,14 +169,16 @@ pub fn main_tools(vision: bool) -> Vec<ToolSpec> {
     tools
 }
 
-/// Tools served over MCP to external agents; the names are the contract.
-pub fn remote_tools() -> Vec<ToolSpec> {
+/// Tools served over MCP to external agents; the names are the contract, and `script_run` exists only with `script`.
+pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
     let mut tools: Vec<ToolSpec> = main_tools(true)
         .into_iter()
         .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
         .collect();
     tools.extend(computer_tools());
-    tools.push(script_tool());
+    if script {
+        tools.push(script_tool());
+    }
     tools
 }
 

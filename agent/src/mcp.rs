@@ -44,8 +44,8 @@ const INSTRUCTIONS: &str = "These tools act on a cloud computer: Ubuntu 24.04 wi
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
-For a multi-step desktop flow, script_run runs a script next to the screen; read the resource cocoonbox://script/AGENTS.md first. \
 The user watches the screen live and sees every call.";
+const SCRIPT_INSTRUCTIONS: &str = " For a multi-step desktop flow, script_run runs a script next to the screen; read the resource cocoonbox://script/AGENTS.md first.";
 const RESOURCES: [Resource; 3] = [
     Resource {
         uri: "cocoonbox://script/AGENTS.md",
@@ -72,6 +72,7 @@ pub struct Mcp {
     rt: Arc<Runtime>,
     gate: Arc<Gate>,
     tools: Vec<(Cow<'static, str>, Value)>,
+    script: bool,
     idle: Duration,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -79,7 +80,8 @@ pub struct Mcp {
 impl Mcp {
     /// Creates the server behind `gate`; sessions idle for `idle` are closed.
     pub fn new(rt: Arc<Runtime>, idle: Duration, gate: Arc<Gate>) -> Arc<Self> {
-        let tools = tools::remote_tools()
+        let script = rt.cfg.script;
+        let tools = tools::remote_tools(script)
             .into_iter()
             .map(|t| {
                 let mut tool = json!({"name": t.name, "description": t.description});
@@ -91,6 +93,7 @@ impl Mcp {
             rt,
             gate,
             tools,
+            script,
             idle,
             sessions: Mutex::new(HashMap::new()),
         })
@@ -303,12 +306,16 @@ impl Mcp {
             .find(|p| **p == requested)
             .copied()
             .unwrap_or(FALLBACK_PROTOCOL);
-        let result = json!({
+        let mut result = json!({
             "protocolVersion": protocol,
-            "capabilities": {"tools": {"listChanged": session.guest.is_some()}, "resources": {}},
+            "capabilities": {"tools": {"listChanged": session.guest.is_some()}},
             "serverInfo": {"name": "cocoonbox-agent", "version": env!("CB_AGENT_VERSION")},
             "instructions": INSTRUCTIONS,
         });
+        if self.script {
+            result["capabilities"]["resources"] = json!({});
+            result["instructions"] = format!("{INSTRUCTIONS}{SCRIPT_INSTRUCTIONS}").into();
+        }
         Ok((session, result))
     }
 
@@ -373,8 +380,8 @@ impl Mcp {
             ("ping", _) => Ok(json!({})),
             ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
             ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
-            ("resources/list", _) => Ok(list_resources()),
-            ("resources/read", _) => read_resource(&msg["params"]).await,
+            ("resources/list", _) if self.script => Ok(list_resources()),
+            ("resources/read", _) if self.script => read_resource(&msg["params"]).await,
             ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
         };

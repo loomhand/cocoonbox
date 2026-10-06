@@ -2,7 +2,7 @@
 
 use std::env;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::toolhost::state::Root;
@@ -18,6 +18,7 @@ const REDACTED: &str = "<redacted>";
 const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
 const SCRIPT_BIN: &str = "/usr/local/bin/script";
+const SCRIPT_GUIDE: &str = "/opt/script/AGENTS.md";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
@@ -47,6 +48,8 @@ pub struct ServeConfig {
     pub desktop_unit: Option<String>,
     /// The Connect box door; without it the loop offers no connector tools.
     pub connect_url: Option<String>,
+    /// Whether the box has the Script runtime (the cbplan family), which adds script_run and its guide to MCP.
+    pub script: bool,
 }
 
 impl std::fmt::Debug for ServeConfig {
@@ -71,6 +74,7 @@ impl std::fmt::Debug for ServeConfig {
             .field("state_roots", &self.state_roots)
             .field("desktop_unit", &self.desktop_unit)
             .field("connect_url", &self.connect_url)
+            .field("script", &self.script)
             .finish()
     }
 }
@@ -101,6 +105,7 @@ impl ServeConfig {
             state_roots: crate::state::default_roots(),
             desktop_unit: Some(DESKTOP_UNIT.to_owned()),
             connect_url: env::var("CONNECT_URL").ok().filter(|v| !v.is_empty()),
+            script: Path::new(SCRIPT_GUIDE).exists(),
         })
     }
 }
@@ -187,6 +192,7 @@ mod tests {
             state_roots: Vec::new(),
             desktop_unit: None,
             connect_url: None,
+            script: false,
         };
         let shown = format!("{cfg:?}");
         assert!(

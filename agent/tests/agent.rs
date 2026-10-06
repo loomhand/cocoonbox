@@ -81,6 +81,7 @@ impl Harness {
             mcp_prune_after,
             None,
             None,
+            false,
         )
         .await
     }
@@ -95,6 +96,7 @@ impl Harness {
             day,
             Some(chrome),
             None,
+            false,
         )
         .await
     }
@@ -109,6 +111,22 @@ impl Harness {
             day,
             None,
             Some(connect_url),
+            false,
+        )
+        .await
+    }
+
+    /// A harness of a box with the Script runtime (the cbplan family).
+    async fn with_script() -> Self {
+        let day = Duration::from_secs(24 * 3600);
+        Self::boot(
+            Vec::new(),
+            false,
+            Duration::from_secs(600),
+            day,
+            None,
+            None,
+            true,
         )
         .await
     }
@@ -120,6 +138,7 @@ impl Harness {
         mcp_prune_after: Duration,
         chrome: Option<&Path>,
         connect_url: Option<String>,
+        script: bool,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -183,6 +202,7 @@ impl Harness {
             quiesce_wait: Duration::from_secs(1),
             desktop_unit: None,
             connect_url,
+            script,
             state_roots: vec![
                 Root {
                     name: "home".into(),
@@ -2663,7 +2683,6 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
             "read_file",
             "screenshot",
             "shell",
-            "script_run",
             "write_file"
         ]
     );
@@ -2744,7 +2763,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     let discover: Value = discover.json().await.unwrap();
     assert_eq!(discover["error"]["code"], -32601);
     assert_eq!(discover["id"], 8);
-    let unknown_in_session = mcp.rpc("prompts/list", json!({})).await;
+    let unknown_in_session = mcp.rpc("resources/list", json!({})).await;
     assert_eq!(unknown_in_session["error"]["code"], -32601);
 
     let no_session = reqwest::Client::new()
@@ -2780,8 +2799,62 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
 }
 
 #[tokio::test]
-async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
+async fn mcp_surface_without_script_matches_the_cbdesk_agent_byte_for_byte() {
     let h = Harness::start(Vec::new(), false).await;
+    let http = reqwest::Client::new();
+    let url = format!("{}/mcp", h.endpoint);
+    let post = |body: Value, session: Option<String>| {
+        let mut req = http
+            .post(&url)
+            .header("accept", "application/json, text/event-stream")
+            .header("x-cocoonbox-edge-token", TOKEN)
+            .json(&body);
+        if let Some(s) = session {
+            req = req.header("mcp-session-id", s);
+        }
+        req.send()
+    };
+    let init = post(
+        json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "golden", "version": "1"}}}),
+        None,
+    )
+    .await
+    .unwrap();
+    let session = init.headers()["mcp-session-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut got = vec![("mcp-initialize.json", init.bytes().await.unwrap())];
+    for (file, method) in [
+        ("mcp-tools-list.json", "tools/list"),
+        ("mcp-resources-list.json", "resources/list"),
+    ] {
+        let reply = post(
+            json!({"jsonrpc": "2.0", "id": 1, "method": method}),
+            Some(session.clone()),
+        )
+        .await
+        .unwrap();
+        got.push((file, reply.bytes().await.unwrap()));
+    }
+    for (file, body) in got {
+        let want = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/golden")
+                .join(file),
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&body),
+            String::from_utf8_lossy(&want),
+            "{file} differs from agent 7c3c59a"
+        );
+    }
+}
+
+#[tokio::test]
+async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
+    let h = Harness::with_script().await;
     let mut mcp = McpClient::connect(&h).await;
 
     let ok = mcp
@@ -2844,7 +2917,7 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
 
 #[tokio::test]
 async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::with_script().await;
     let mut mcp = McpClient::connect(&h).await;
 
     let started = std::time::Instant::now();
@@ -2878,8 +2951,11 @@ async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
 
 #[tokio::test]
 async fn mcp_serves_the_script_guide_as_resources() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::with_script().await;
     let mut mcp = McpClient::connect(&h).await;
+
+    let tools = McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await);
+    assert!(tools.contains(&"script_run".to_owned()), "{tools:?}");
 
     let listed = mcp.rpc("resources/list", json!({})).await;
     let uris: Vec<&str> = listed["result"]["resources"]
@@ -2979,7 +3055,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
     drop(stream);
     assert_eq!(
         McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await).len(),
-        14
+        13
     );
     let shell = mcp
         .call("shell", json!({"command": "echo guest > g.txt"}))
