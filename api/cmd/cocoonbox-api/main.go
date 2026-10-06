@@ -132,7 +132,15 @@ func main() {
 
 	httpMux := http.NewServeMux()
 	httpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
-	httpMux.Handle(edge.MCPPrefix, edge.NewMCP(svc, authn, signer))
+	boxMCP := edge.NewMCP(svc, authn, signer)
+	if cfg.CUAMeterFile != "" {
+		var meter *edge.Meter
+		if meter, err = edge.OpenMeter(cfg.CUAMeterFile); err != nil {
+			logger.Fatalf(ctx, err, "open the cua meter")
+		}
+		boxMCP.EnableMeter(meter)
+	}
+	httpMux.Handle(edge.MCPPrefix, boxMCP)
 	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros, cfg.MaxRunningBoxes)
 	web.EnableSharing(shareSvc, authn, proxy)
 	httpMux.Handle(console.Prefix, web)

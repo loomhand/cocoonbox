@@ -69,6 +69,7 @@ func TestLoadRejects(t *testing.T) {
 		{name: "connect with a path", body: required + "connect:\n  public_url: https://cb.example/x\n", want: "connect.public_url must be an https origin"},
 		{name: "box door on every address", body: required + "connect:\n  public_url: https://cb.example\n  box_listen: 0.0.0.0:18091\n", want: "connect.box_listen must be an ip:port of one address"},
 		{name: "box door without connect", body: required + "connect:\n  box_listen: 10.203.0.1:18091\n", want: "connect.box_listen must be an ip:port of one address"},
+		{name: "relative cua meter", body: required + "cua_meter_file: cua-meter.jsonl\n", want: "cua_meter_file must be an absolute path"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

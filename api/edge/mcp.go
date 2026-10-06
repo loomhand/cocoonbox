@@ -1,9 +1,11 @@
 package edge
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -38,9 +40,10 @@ type jsonRPCError struct {
 	} `json:"error"`
 }
 
-// route is where one MCP exchange goes and as whom: the caller for the log, and the grant of a share call.
+// route is where one MCP exchange goes and as whom: the caller for the log, the box owner, and the grant of a share call.
 type route struct {
 	caller string
+	owner  string
 	ep     machines.Endpoint
 	wake   string
 	grant  *auth.Grant
@@ -56,6 +59,7 @@ type MCP struct {
 	resolver Resolver
 	authn    *auth.Authenticator
 	creds    Credentials
+	meter    *Meter
 
 	mu         sync.Mutex
 	transports map[string]*boxTransport
@@ -64,6 +68,11 @@ type MCP struct {
 // NewMCP builds the MCP proxy that authenticates to agents with box credentials from creds.
 func NewMCP(resolver Resolver, authn *auth.Authenticator, creds Credentials) *MCP {
 	return &MCP{resolver: resolver, authn: authn, creds: creds, transports: map[string]*boxTransport{}}
+}
+
+// EnableMeter records every metered tool call of every box in meter.
+func (m *MCP) EnableMeter(meter *Meter) {
+	m.meter = meter
 }
 
 func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -88,13 +97,30 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		go cutOnEnd(ctx, cancel, rt.grant, r.Method == http.MethodGet)
 		r = r.WithContext(ctx)
 	}
+	var calls []rpcCall
+	if m.meter != nil && r.Method == http.MethodPost {
+		body, readErr := io.ReadAll(http.MaxBytesReader(w, r.Body, maxMeteredBody))
+		if readErr != nil {
+			err = status.Error(codes.InvalidArgument, "read request body: "+readErr.Error())
+			writeJSONRPCError(w, err)
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		calls = meteredCalls(body)
+	}
 	proxy := &httputil.ReverseProxy{
 		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, rt, boxID) },
 		Transport:     m.transportFor(boxID, rt.ep),
 		FlushInterval: -1,
 		ErrorHandler:  m.upstreamError,
 	}
-	proxy.ServeHTTP(w, r)
+	if len(calls) == 0 {
+		proxy.ServeHTTP(w, r)
+		return
+	}
+	capture := &captureWriter{ResponseWriter: w}
+	proxy.ServeHTTP(capture, r)
+	m.meter.record(r.Context(), rt, boxID, calls, capture.body.Bytes(), time.Since(start))
 }
 
 // route authorizes one exchange for the bearer's user, or, when no user holds it and it is a share secret, for that share.
@@ -118,6 +144,7 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 		}
 		rt.caller = owner
 	}
+	rt.owner = owner
 	if boxID == "" {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}

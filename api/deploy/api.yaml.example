@@ -35,3 +35,4 @@ accounts:                      # users, console sessions and each user's sealed 
   dsn_file: pg.dsn             # postgres://cocoonbox_api:...@127.0.0.1:5432/cocoonbox
   master_key_file: master.key  # 32 random bytes: head -c 32 /dev/urandom
   default_daily_cap_micros: 5000000  # gw tenant's user_daily_cost_quota_micros, shown on the user page
+cua_meter_file: /var/lib/cocoonbox-api/cua-meter.jsonl   # one JSON line per script_run call through the edge; empty turns it off
