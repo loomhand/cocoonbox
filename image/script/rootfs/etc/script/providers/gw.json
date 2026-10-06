@@ -14,6 +14,10 @@
     },
     "llm": {
       "models": [{ "alias": "gw_verify", "name": "anthropic/claude-sonnet-5" }]
+    },
+    "decisions": {
+      "path": "v1/decisions",
+      "models": [{ "alias": "gw_jev", "name": "typesafe/jev-1.13" }]
     }
   }
 }

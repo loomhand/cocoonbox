@@ -9,16 +9,16 @@ NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x
 CLI_VERSION=6.0.0
 CLI_SHA256=2d1cb26121149772f77dfb8d1a1542c869bda7314aaf87fe23f994d420847db4
 CLI_URL="https://registry.npmjs.org/@vendor/script/-/script-${CLI_VERSION}.tgz"
-JS_VERSION=12.1.1
-JS_SHA256=b97e6c29f941170509a178783abad3312db4bb71484ab8bedc9b2335495f80b0
+JS_VERSION=14.0.0
+JS_SHA256=a15b58671bcec8dc19941cac1b3df27f2be8061bd1af6e64a643856b3e6e45de
 JS_URL="https://registry.npmjs.org/@vendor/script-js/-/script-js-${JS_VERSION}.tgz"
 CUA_VERSION=0.34.0
 CUA_SHA256=8851c028e5d88a3b779ad2a8d49ed6f4b92aa94de2edf5c2851cee63bcc274c5
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
 CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/${CUA_TARBALL}"
 # private release asset; cut.sh brings it in as vendor/, since the cut host holds no token
-NATIVE_RELEASE=v12.1.1-cmgs.3
-NATIVE_SHA256=c4b4d99f00ff7bbb87f4f4b65676c2828bd21a340de70d75a974375e72920088
+NATIVE_RELEASE=v14.0.0-cmgs.1
+NATIVE_SHA256=d63405e94c61eaa8438eff385fa8cc29d9ae23c429d79d353817862a2d2ec109
 NATIVE_URL="https://github.com/vendor/script-js-cmgs/releases/download/${NATIVE_RELEASE}/script-js.linux-x64-gnu.node"
 ROOT=/opt/script
 
@@ -57,6 +57,7 @@ install_runtime() {
 	ln -sfn "$node" "$ROOT/node"
 	ln -sfn "$cli" "$ROOT/cli"
 	ln -sfn "$js" "$ROOT/js"
+	find "$ROOT" -mindepth 1 -maxdepth 1 -name 'js-*' ! -name "js-$NATIVE_RELEASE" -exec rm -rf {} +
 }
 
 install_cua_driver() {
