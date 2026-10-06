@@ -32,6 +32,18 @@ type Defaults struct {
 	MaxRunning   int
 }
 
+// offered resolves ref, an image or the family of one (such as cbplan), to an offered image; empty is the default image.
+func (d Defaults) offered(ref string) (string, bool) {
+	if ref == "" || ref == d.Image || slices.Contains(d.RebaseImages, ref) {
+		return cmp.Or(ref, d.Image), true
+	}
+	if strings.Contains(ref, ":") {
+		return "", false
+	}
+	latest := d.latest(ref + ":")
+	return latest, strings.HasPrefix(latest, ref+":")
+}
+
 // latest is the newest image of image's family (the name before ':'): the default image for its family, else the first rebase image of that family.
 func (d Defaults) latest(image string) string {
 	family, _, _ := strings.Cut(image, ":")

@@ -1,11 +1,9 @@
 package boxes
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc/codes"
@@ -26,9 +24,9 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, err
 	}
-	image := cmp.Or(req.GetImage(), s.defaults.Image)
-	if image != s.defaults.Image && !slices.Contains(s.defaults.RebaseImages, image) {
-		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered", image)
+	image, ok := s.defaults.offered(req.GetImage())
+	if !ok {
+		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered", req.GetImage())
 	}
 	unlock := s.lockStarts(user)
 	defer unlock()

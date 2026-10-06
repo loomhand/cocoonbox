@@ -100,6 +100,38 @@ func TestTheRunningLimitIsPerUser(t *testing.T) {
 	}
 }
 
+func TestCreateResolvesAnImageFamily(t *testing.T) {
+	defaults := testDefaults
+	defaults.Image, defaults.RebaseImages, defaults.MaxRunning = "cbdesk:v25", []string{"cbplan:v1", "cbdesk:v24"}, 9
+	for _, tt := range []struct {
+		image, want string
+		code        codes.Code
+	}{
+		{"", "", codes.OK},
+		{"cbplan", "cbplan:v1", codes.OK},
+		{"cbdesk", "", codes.OK},
+		{"cbdesk:v24", "cbdesk:v24", codes.OK},
+		{"nosuch", "", codes.InvalidArgument},
+		{"cbplan:v9", "", codes.InvalidArgument},
+	} {
+		fake := newFakeMachines()
+		svc := New(fake, defaults, newFakeRegistry())
+		_, err := svc.Create(auth.WithUser(t.Context(), alice), &controlv1.CreateBoxRequest{Name: "kind", Image: tt.image})
+		if status.Code(err) != tt.code {
+			t.Errorf("Create(image %q) = %v, want %s", tt.image, err, tt.code)
+			continue
+		}
+		if err == nil && fake.lastSpec().Image != tt.want {
+			t.Errorf("Create(image %q) spec image = %q, want %q", tt.image, fake.lastSpec().Image, tt.want)
+		}
+	}
+	noSim := testDefaults
+	noSim.Image, noSim.RebaseImages = "cbdesk:v25", []string{"cbdesk:v24"}
+	if _, err := New(newFakeMachines(), noSim, newFakeRegistry()).Create(auth.WithUser(t.Context(), alice), &controlv1.CreateBoxRequest{Name: "kind", Image: "cbplan"}); status.Code(err) != codes.InvalidArgument {
+		t.Errorf("Create(cbplan) with no cbplan image offered = %v, want InvalidArgument", err)
+	}
+}
+
 func TestCreateRefusals(t *testing.T) {
 	fake := newFakeMachines()
 	svc := New(fake, testDefaults, newFakeRegistry())

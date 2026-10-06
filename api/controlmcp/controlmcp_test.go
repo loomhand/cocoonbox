@@ -202,6 +202,26 @@ func TestToolsActOnlyOnCallersBox(t *testing.T) {
 	}
 }
 
+func TestBoxCreateKindPicksTheImageFamily(t *testing.T) {
+	srv, fake := newTestServer(t)
+	for _, tt := range []struct{ args, name, image string }{
+		{`{"name":"plain"}`, "plain", ""},
+		{`{"name":"desk","kind":"general"}`, "desk", ""},
+		{`{"name":"sim","kind":"script"}`, "sim", "cbplan"},
+	} {
+		structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_create","arguments":`+tt.args+`}}`))
+		fake.mu.Lock()
+		got := fake.extra["alice"][len(fake.extra["alice"])-1]
+		fake.mu.Unlock()
+		if got.GetName() != tt.name || got.GetImage() != tt.image {
+			t.Errorf("box_create %s created %v, want image %q", tt.args, got, tt.image)
+		}
+	}
+	if text := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_create","arguments":{"name":"x","kind":"gpu"}}}`)); text != string(errUnknownKind) {
+		t.Errorf("box_create with kind gpu = %q, want %q", text, errUnknownKind)
+	}
+}
+
 func TestBoxArgumentPicksTheBox(t *testing.T) {
 	srv, fake := newTestServer(t)
 	created := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_create","arguments":{"name":"test"}}}`))
@@ -390,7 +410,7 @@ func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest)
 	f.record("Create", user, req.GetName())
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	box := &controlv1.Box{Id: "cb-" + req.GetName(), Name: req.GetName(), State: controlv1.BoxState_BOX_STATE_STARTING}
+	box := &controlv1.Box{Id: "cb-" + req.GetName(), Name: req.GetName(), State: controlv1.BoxState_BOX_STATE_STARTING, Image: req.GetImage()}
 	f.extra[user] = append(f.extra[user], box)
 	return &controlv1.EnsureResponse{Box: box, Operation: f.startLocked(user, "create")}, nil
 }
