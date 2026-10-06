@@ -389,6 +389,27 @@ func TestSaveRefusesUnsafeIDs(t *testing.T) {
 	}
 }
 
+func TestUpgradeWithoutAnImageStaysInTheBoxFamily(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbplan:v1", Revision: 1})
+	st := newFakeStore()
+	defaults := testDefaults
+	defaults.Image, defaults.RebaseImages = "cbdesk:v25", []string{"cbplan:v1", "cbdesk:v24"}
+	svc := New(fake, defaults, newFakeRegistry())
+	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
+	ctx := auth.WithUser(t.Context(), alice)
+	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	if err != nil || box.GetLatestImage() != "cbplan:v1" {
+		t.Fatalf("box = %v, %v, want latest cbplan:v1 so no upgrade is offered", box, err)
+	}
+	if _, err := svc.Rebase(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+	if spec := fake.waitSpec(t, 1); spec.Image != "cbplan:v1" {
+		t.Errorf("upgrade target = %q, want cbplan:v1, not the cbdesk default", spec.Image)
+	}
+}
+
 func TestRebaseRefusesImagesOffTheAllowList(t *testing.T) {
 	env := newStateEnv(t)
 	for _, image := range []string{"vk-cocoonbox-cb-9f86d081884c-0-984b48", "cocoonbox-desktop-v9", "desktop-v1"} {
