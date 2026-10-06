@@ -41,8 +41,9 @@ connect_egress = {"allow": [gw, connect, inject, *rest]}
 pools = []
 for arg in sys.argv[1:]:
     template, warm = arg.rsplit("=", 1)
-    version = re.fullmatch(r"cbdesk:v(\d+)", template)
-    n = int(version[1]) if version else 0
+    version = re.fullmatch(r"(cbdesk|cbplan):v(\d+)", template)
+    # every cbplan template is cut from a template with the newest rules
+    n = 0 if not version else int(version[2]) if version[1] == "cbdesk" else CONNECT_FROM
     warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
     pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
                   "warmup": ["bash", "-c", warmup],

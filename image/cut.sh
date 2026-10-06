@@ -1,30 +1,36 @@
 #!/bin/bash
-# Cuts desktop template cbdesk:<vN> on the cbsbx cocoon root: boot <base template>, provision, seal, stop, export, import.
-# usage: sudo image/cut.sh [-p] [-a <agent binary>] <base template> <vN>   (-p reruns provision.sh; logs every step to ~/ops-audit.md)
+# Cuts desktop template <family>:<vN> on the cbsbx cocoon root: boot <base template>, provision, seal, stop, export, import.
+# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f cbdesk|cbplan] <base template> <vN>
+#   -p reruns provision.sh; -f cbplan adds the Script runtime of image/script; every step goes to ~/ops-audit.md
 set -Eeuo pipefail
 export LC_ALL=C
 
 PROVISION=0
 AGENT=""
-while getopts pa: o; do
+FAMILY=cbdesk
+while getopts pa:f: o; do
 	case $o in
 	p) PROVISION=1 ;;
 	a) AGENT=$OPTARG ;;
+	f) FAMILY=$OPTARG ;;
 	*) exit 2 ;;
 	esac
 done
 shift $((OPTIND - 1))
-BASE=${1:?usage: cut.sh [-p] [-a agent] <base template> <vN>}
-V=${2:?usage: cut.sh [-p] [-a agent] <base template> <vN>}
+BASE=${1:?usage: cut.sh [-p] [-a agent] [-f family] <base template> <vN>}
+V=${2:?usage: cut.sh [-p] [-a agent] [-f family] <base template> <vN>}
 S=/srv/cb/sbx
 COCOON=$S/bin/cocoon-cbsbx
 PROXY=http://127.0.0.1:3128
 NO_PROXY=localhost,127.0.0.1,::1
 EGRESS_PORT=2049
 AUDIT=${AUDIT:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/ops-audit.md}
-TEMPLATE=cbdesk:$V
-VM=cbcut-$V
-TARBALL=$S/build/cocoonbox-desktop-$V.tar.gz
+case $FAMILY in
+cbdesk) VM=cbcut-$V TARBALL=$S/build/cocoonbox-desktop-$V.tar.gz ;;
+cbplan) VM=cbcut-cbplan-$V TARBALL=$S/build/cocoonbox-cbplan-$V.tar.gz ;;
+*) echo "unknown family $FAMILY" >&2; exit 2 ;;
+esac
+TEMPLATE=$FAMILY:$V
 SRC="$(cd "$(dirname "$0")" && pwd)"
 STEP=start
 PROXY_PID=""
@@ -61,18 +67,24 @@ step "boot $BASE as $VM"
 for _ in $(seq 180); do active && break; sleep 1; done
 active
 
-if [ "$PROVISION" = 1 ]; then
-	step "provision"
+if [ "$PROVISION" = 1 ] || [ "$FAMILY" = cbplan ]; then
 	VSOCK=$("$COCOON" vm inspect "$VM" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d[0] if isinstance(d,list) else d)["vsock_socket"])')
 	python3 "$SRC/cut-proxy.py" "${VSOCK}_$EGRESS_PORT" &
 	PROXY_PID=$!
-	parts=(provision.sh rootfs)
-	if [ -d "$SRC/vendor" ]; then parts+=(vendor); fi
-	tar -C "$SRC" -cf - "${parts[@]}" | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
+fi
+if [ "$PROVISION" = 1 ]; then
+	step "provision"
+	tar -C "$SRC" -cf - provision.sh rootfs | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
 	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/provision.sh
 	guest "$VM" -- rm -rf /tmp/cb-image
-	stop_proxy
 fi
+if [ "$FAMILY" = cbplan ]; then
+	step "script"
+	tar -C "$SRC" -cf - script | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
+	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/script/provision.sh
+	guest "$VM" -- rm -rf /tmp/cb-image
+fi
+stop_proxy
 if [ -n "$AGENT" ]; then
 	step "agent $(sha256sum "$AGENT" | cut -c1-16)"
 	guest -i "$VM" -- sh -c 'cat > /tmp/cocoonbox-agent' < "$AGENT"
