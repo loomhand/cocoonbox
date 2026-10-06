@@ -11,6 +11,19 @@ MISE_VERSION=2026.10.0
 MISE_SHA256=6ae3d2bda39cca86713501317edf623b59b75cd8afa2e31c20b1ee6500b4b739
 MISE_TARBALL="mise-v${MISE_VERSION}-linux-x64.tar.gz"
 MISE_URL="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/${MISE_TARBALL}"
+NODE_VERSION=24.21.0
+NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+SCRIPT_CLI_VERSION=6.0.0
+SCRIPT_CLI_SHA256=2d1cb26121149772f77dfb8d1a1542c869bda7314aaf87fe23f994d420847db4
+SCRIPT_CLI_URL="https://registry.npmjs.org/@vendor/script/-/script-${SCRIPT_CLI_VERSION}.tgz"
+SCRIPT_JS_VERSION=12.1.1
+SCRIPT_JS_SHA256=b97e6c29f941170509a178783abad3312db4bb71484ab8bedc9b2335495f80b0
+SCRIPT_JS_URL="https://registry.npmjs.org/@vendor/script-js/-/script-js-${SCRIPT_JS_VERSION}.tgz"
+# private release asset; cut.sh brings it in as vendor/, since the cut host holds no token
+SCRIPT_NATIVE_RELEASE=v12.1.1-cmgs.3
+SCRIPT_NATIVE_SHA256=c4b4d99f00ff7bbb87f4f4b65676c2828bd21a340de70d75a974375e72920088
+SCRIPT_NATIVE_URL="https://github.com/vendor/script-js-cmgs/releases/download/${SCRIPT_NATIVE_RELEASE}/script-js.linux-x64-gnu.node"
 CHROME_URL=https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
@@ -131,6 +144,42 @@ setup_mise() {
 	ln -sfn "$dir/bin/mise" /usr/local/bin/mise
 }
 
+setup_script() {
+	log "script cli $SCRIPT_CLI_VERSION, script-js $SCRIPT_JS_VERSION ($SCRIPT_NATIVE_RELEASE), node $NODE_VERSION"
+	local root=/opt/script native="$SRC/vendor/script-js.linux-x64-gnu.node" tmp
+	local node=$root/node-v$NODE_VERSION cli=$root/cli-$SCRIPT_CLI_VERSION js=$root/js-$SCRIPT_NATIVE_RELEASE
+	tmp=$(mktemp -d)
+	fetch() {
+		curl -fsSL "$1" -o "$tmp/$2"
+		echo "$3  $tmp/$2" | sha256sum -c --quiet -
+	}
+	if [ ! -x "$node/bin/node" ]; then
+		fetch "$NODE_URL" node.tar.xz "$NODE_SHA256"
+		install -d "$node"
+		tar -xJf "$tmp/node.tar.xz" -C "$node" --strip-components=1
+	fi
+	if [ ! -f "$cli/package.json" ]; then
+		fetch "$SCRIPT_CLI_URL" cli.tgz "$SCRIPT_CLI_SHA256"
+		install -d "$cli"
+		tar -xzf "$tmp/cli.tgz" -C "$cli" --strip-components=1 --no-same-owner
+	fi
+	if [ ! -f "$js/script-js.linux-x64-gnu.node" ]; then
+		[ -f "$native" ] || { echo "missing $native: put $SCRIPT_NATIVE_URL there" >&2; exit 1; }
+		echo "$SCRIPT_NATIVE_SHA256  $native" | sha256sum -c --quiet -
+		fetch "$SCRIPT_JS_URL" js.tgz "$SCRIPT_JS_SHA256"
+		install -d "$js"
+		tar -xzf "$tmp/js.tgz" -C "$js" --strip-components=1 --no-same-owner
+		install -m 0755 "$native" "$js/script-js.linux-x64-gnu.node"
+	fi
+	rm -rf "$tmp"
+	ln -sfn "$node" "$root/node"
+	ln -sfn "$cli" "$root/cli"
+	ln -sfn "$js" "$root/js"
+	"$root/node/bin/node" -e "require('$root/js')"
+	runuser -u user -- env HOME=/home/user /usr/local/bin/script --version
+	[ ! -e /home/user/.claude/skills/script ] && [ ! -e /root/.claude/skills/script ]
+}
+
 setup_cocoonbox_dirs() {
 	log "cocoonbox dirs"
 	install -d -m 0755 -o user -g user /workspace
@@ -166,6 +215,7 @@ install_rootfs
 setup_desktop
 setup_cua_driver
 setup_mise
+setup_script
 setup_cocoonbox_dirs
 enable_units
 log "done"

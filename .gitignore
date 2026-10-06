@@ -4,3 +4,4 @@
 /macos/dist/
 .DS_Store
 /api/coverage.out
+/image/vendor/
