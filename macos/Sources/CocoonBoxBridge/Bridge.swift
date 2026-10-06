@@ -28,7 +28,10 @@ public actor Bridge {
     private var ids: [String: String] = [:]
     private var pinned: String?
     private var defaultBox: String?
+    // boxTools are the box tools the client last got: those of the default box.
     private var boxTools: [[String: Any]]
+    // boxLists holds the own tools/list of each box opened in this session.
+    private var boxLists: [String: [[String: Any]]] = [:]
     private var connect: MCPUpstream?
     private var connectWatch: Task<Void, Never>?
     private var connectTools: [[String: Any]] = []
@@ -46,7 +49,7 @@ public actor Bridge {
         self.link = link
         self.cache = cache
         self.output = output
-        boxTools = ToolCatalog.loadBox(from: cache) ?? ToolCatalog.boxFallback
+        boxTools = ToolCatalog.boxFallback
     }
 
     // run serves newline-delimited JSON-RPC from stdin until it closes, then ends the upstream sessions.
@@ -94,6 +97,7 @@ public actor Bridge {
         case "tools/list":
             await connectReady()
             listedConnect = connectTools
+            boxTools = await defaultTools()
             reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox) + connectTools])
         case "resources/list":
             await listResources(id)
@@ -358,13 +362,25 @@ public actor Bridge {
         try await initialize(upstream)
         sessions[box] = upstream
         if let tools = (try? await call(upstream, "tools/list", [:]))?["result"] as? [String: Any], let list = tools["tools"] as? [[String: Any]], !list.isEmpty {
-            ToolCatalog.saveBox(list, to: cache)
-            if !ToolCatalog.same(list, boxTools) {
+            ToolCatalog.saveBox(list, to: cacheFile(box))
+            boxLists[box] = list
+            if box == defaultBox, !ToolCatalog.same(list, boxTools) {
                 boxTools = list
                 send(["jsonrpc": "2.0", "method": "notifications/tools/list_changed"])
             }
         }
         return upstream
+    }
+
+    // defaultTools are the default box's own tools: its list from this session, else its cached list, else the contract's names.
+    private func defaultTools() async -> [[String: Any]] {
+        guard let box = try? await target(nil) else { return ToolCatalog.boxFallback }
+        return boxLists[box] ?? ToolCatalog.loadBox(from: cacheFile(box)) ?? ToolCatalog.boxFallback
+    }
+
+    // cacheFile keeps one box's tools apart from every other box's, since image families serve different tools.
+    private func cacheFile(_ box: String) -> URL {
+        cache.deletingLastPathComponent().appendingPathComponent("\(cache.deletingPathExtension().lastPathComponent)-\(box).json")
     }
 
     private func openConnect() async throws -> MCPUpstream {

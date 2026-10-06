@@ -53,6 +53,23 @@ import Testing
         #expect(client.listChanged == 1)
     }
 
+    @Test func aHibernatedCbdeskBoxNeverListsAnotherBoxsCachedTools() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let cbdesk = try #require(try await mock.connection.firstBox()).id
+        let sim = try await BridgeClient(mock, box: "cbplan1")
+        _ = try await sim.tool("box_create", ["name": "cbplan1"])
+        _ = try await sim.tool("shell", ["command": "true"])
+        #expect(try await sim.tools().contains { $0["name"] as? String == "script_run" })
+        sim.close()
+
+        let desk = try await BridgeClient(mock, box: cbdesk)
+        defer { desk.close() }
+        let names = try await desk.tools().compactMap { $0["name"] as? String }
+        let boxTools = names.filter { ToolCatalog.boxNames.contains($0) || $0 == "script_run" }
+        #expect(boxTools.count == 13 && !names.contains("script_run"), "\(names)")
+    }
+
     @Test func emptyMergeWithNoGrants() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
@@ -257,9 +274,9 @@ final class BridgeClient: Sendable {
     private let next = Mutex(1)
     private let task: Task<Void, Never>
 
-    init(_ mock: MockBoxProcess) async throws {
+    init(_ mock: MockBoxProcess, box: String? = nil) async throws {
         let output = output
-        let bridge = Bridge(endpoint: mock.endpoint, token: "mock-token", wake: true, cache: mock.root.appendingPathComponent("tools.json")) { data in
+        let bridge = Bridge(endpoint: mock.endpoint, token: "mock-token", wake: true, box: box, cache: mock.root.appendingPathComponent("tools.json")) { data in
             output.state.withLock { $0 += data.split(separator: UInt8(ascii: "\n")).map { Data($0) } }
         }
         let reader = input.fileHandleForReading
