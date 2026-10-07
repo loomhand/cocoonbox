@@ -22,6 +22,7 @@ fastcdc = "3"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 hex = "0.4"
 hmac = "0.12"
+image-webp = "0.2"
 jpeg-encoder = "0.7"
 libc = "0.2"
 png = "0.18"
