@@ -8,6 +8,7 @@ use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 const SCRIPT_HINT: &str = "On this box, for complex or repeated desktop work (typing and saving in an app, dialogs, forms, several items), load script_run (ToolSearch) and write one script instead of a chain of computer_act calls. ";
+const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions instead: a list of such actions, run in order with one screenshot at the end; it stops at the first failure.";
 
 /// Remote tools that only read the box: all a read-only share offers.
 pub const READ_ONLY: [&str; 6] = [
@@ -182,7 +183,15 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
     tools.extend(computer_tools());
     if script {
         if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            act.description = Cow::Owned(format!("{SCRIPT_HINT}{}", act.description));
+            act.description = Cow::Owned(format!("{SCRIPT_HINT}{}{LIST_HINT}", act.description));
+            let mut step = act.parameters.clone();
+            if let Some(props) = step["properties"].as_object_mut() {
+                props.remove("max_edge");
+            }
+            act.parameters["properties"]["actions"] = json!({"type": "array", "items": step});
+            if let Some(schema) = act.parameters.as_object_mut() {
+                schema.remove("required");
+            }
         }
         tools.push(script_tool());
     }

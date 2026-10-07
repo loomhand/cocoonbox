@@ -123,6 +123,8 @@ pub struct ToolhostConfig {
     pub script_bin: PathBuf,
     pub session_save: PathBuf,
     pub home: PathBuf,
+    /// Whether the box has the Script runtime (the cbplan family), which settles on a still screen, recompresses screenshots and runs action lists.
+    pub script: bool,
 }
 
 impl ToolhostConfig {
@@ -148,6 +150,7 @@ impl ToolhostConfig {
             script_bin: optional("SCRIPT_BIN", SCRIPT_BIN).into(),
             session_save: SESSION_SAVE.into(),
             home: home.into(),
+            script: Path::new(SCRIPT_GUIDE).exists(),
         })
     }
 }

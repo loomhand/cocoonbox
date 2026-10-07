@@ -59,7 +59,7 @@ impl Host {
                 cfg.chrome_profile.clone(),
                 cfg.cdp_port,
             ),
-            cua: Cua::new(cfg.cua_socket.clone()),
+            cua: Cua::new(cfg.cua_socket.clone(), cfg.script),
             script: Script::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),

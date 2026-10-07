@@ -140,7 +140,10 @@ impl Dispatcher {
         mut args: Value,
     ) -> ToolOutput {
         if name == "computer_act" {
-            self.announce(owner, &args);
+            match args["actions"].as_array() {
+                Some(actions) => actions.iter().for_each(|a| self.announce(owner, a)),
+                None => self.announce(owner, &args),
+            }
         }
         if let Some(label) = driver
             && uses_driver(name)

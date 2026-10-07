@@ -38,6 +38,8 @@ case "$src" in
 *) echo "ran $1 in $PWD"; printf '{"params":%s}' "$CB_SCRIPT_PARAMS" > "$CB_SCRIPT_RESULT"; printf outline > "$CB_SCRIPT_SNAPSHOT" ;;
 esac"#;
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+const THUMB: &str =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=";
 const TARGET_TOOLS: [&str; 7] = [
     "move_cursor",
     "click",
@@ -182,6 +184,7 @@ impl Harness {
             script_bin,
             session_save: session_save.clone(),
             home: home.clone(),
+            script,
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -588,6 +591,9 @@ fn fake_cua(path: &Path, log: Log) {
                     "get_window_state" => json!({
                         "content": [{"type": "text", "text": "tree"}],
                         "structuredContent": {"window_id": 7, "window_bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "elements": [{"element_index": 0, "element_token": "tok-0", "role": "text", "label": "editor", "depth": 0, "frame": {"x": 10, "y": 20, "w": 100, "h": 40}}]}
+                    }),
+                    "get_desktop_state" if req["args"]["max_image_dimension"] == 160 => json!({
+                        "content": [{"type": "image", "mimeType": "image/png", "data": THUMB}]
                     }),
                     "get_desktop_state" => json!({
                         "content": [{"type": "image", "mimeType": "image/png", "data": PNG}],
@@ -3176,6 +3182,60 @@ async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
         );
     }
     assert_eq!(nudged, [false, false, false, true]);
+}
+
+#[tokio::test]
+async fn a_script_box_runs_a_computer_act_list_until_its_first_failure() {
+    let h = Harness::with_script(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let act = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "computer_act")
+        .unwrap();
+    let schema = &act["inputSchema"];
+    assert!(schema.get("required").is_none(), "{act}");
+    assert_eq!(
+        schema["properties"]["actions"]["items"]["required"],
+        json!(["action"])
+    );
+    assert!(
+        schema["properties"]["actions"]["items"]["properties"]
+            .get("max_edge")
+            .is_none()
+    );
+
+    let out = mcp
+        .call(
+            "computer_act",
+            json!({"actions": [
+                {"action": "click", "x": 10, "y": 20},
+                {"action": "click"},
+                {"action": "key", "key": "a"}
+            ]}),
+        )
+        .await;
+    assert_eq!(out["isError"], true, "{out}");
+    assert_eq!(
+        out["content"][0]["text"],
+        "1. click: ✅ click done\n2. click failed: click needs element or x and y\nthe remaining 1 actions did not run"
+    );
+    assert_eq!(out["content"][1]["type"], "image");
+    assert_eq!(out["content"].as_array().unwrap().len(), 2);
+    assert!(driver_calls(&h, "press_key").is_empty());
+    let probes: Vec<String> = driver_calls(&h, "end_session")
+        .iter()
+        .map(|a| a["session"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(probes.len(), 1, "{probes:?}");
+    assert!(probes[0].starts_with("still-"), "{probes:?}");
+    let probed = driver_calls(&h, "get_desktop_state")
+        .iter()
+        .filter(|a| a["session"] == probes[0].as_str())
+        .count();
+    assert!(probed >= 2, "{probed}");
 }
 
 #[tokio::test]
