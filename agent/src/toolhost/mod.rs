@@ -9,6 +9,7 @@ pub mod shell;
 pub mod script;
 pub mod state;
 pub mod timing;
+pub mod xshm;
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;

@@ -8,7 +8,7 @@ use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 const SCRIPT_HINT: &str = "On this box, for complex or repeated desktop work (typing and saving in an app, dialogs, forms, several items), load script_run (ToolSearch) and write one script instead of a chain of computer_act calls. ";
-const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions instead: a list of such actions, run in order with one screenshot at the end; it stops at the first failure.";
+const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
 pub const READ_ONLY: [&str; 6] = [
