@@ -3052,7 +3052,7 @@ async fn mcp_gui_plan_lists_the_saved_flows_within_the_description_cap() {
     std::fs::write(h.workspace.join("flows/INDEX"), index).unwrap();
     let listed = plan(&mcp.rpc("tools/list", json!({})).await);
     assert!(
-        listed.starts_with(&bare) && listed.contains("Saved flows, replay with {flow, params}: mousepad-flow-number-0(font_size, text), mousepad-flow-number-1("),
+        listed.starts_with(&bare) && listed.contains("so prefer one that fits: mousepad-flow-number-0(font_size, text); mousepad-flow-number-1("),
         "{listed}"
     );
     assert!(listed.chars().count() < 2048, "{}", listed.chars().count());

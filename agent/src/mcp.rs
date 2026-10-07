@@ -51,7 +51,7 @@ The user watches the screen live and sees every call.";
 const ALWAYS_LOAD: [&str; 2] = ["script_run", "gui_plan"];
 const NUDGE_STREAK: u32 = 2;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
-const FLOWS: &str = "\nSaved flows, replay with {flow, params}: ";
+const FLOWS: &str = "\nSaved flows: each does a whole task in one call with {flow, params}, so prefer one that fits: ";
 const MAX_DESCRIPTION: usize = 2048;
 const MAX_FLOWS: usize = 30;
 const RESOURCES: [Resource; 3] = [
@@ -829,7 +829,7 @@ fn with_flows(description: &str, index: &str) -> String {
         }
         out.push_str(sep);
         out.push_str(flow.trim());
-        sep = ", ";
+        sep = "; ";
     }
     out
 }
