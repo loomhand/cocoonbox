@@ -26,6 +26,7 @@ const TOGGLES = 'checkbox|switch|togglebutton|menuitemcheckbox'
 const FIELDS = 'textbox|searchbox|spinbutton|slider|combobox'
 const LINE = /^(\s*)- (\S+)(?: "((?:[^"\\]|\\.)*)")?(.*?)\[ref=(\d+)\](?:: "(.*)")?$/
 const MARGIN = 0.25
+const OPS = ['app', 'menu', 'click', 'check', 'set', 'type', 'key', 'wait', 'expect', 'verify', 'close']
 const m = Machine.local()
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const norm = (s: string) => s.toLowerCase().replace(/[_…]|\.\.\.|:$/g, '').replace(/\s+/g, ' ').trim()
@@ -323,7 +324,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const bad: string[] = []
     if (s.value !== undefined) { let v = ''; try { v = snap.node(hit.n.ref).value ?? '' } catch { v = hit.n.value }; if (!norm(v).includes(norm(s.value))) bad.push(`reads "${v}"`) }
     if (s.enabled !== undefined && hit.n.disabled === s.enabled) bad.push(hit.n.disabled ? 'is disabled' : 'is enabled')
-    if (s.on !== undefined) { const c = (await checked(w.pid, hit.n.name)) ?? cropState(snap, hit.n); if (c !== s.on) bad.push(c ? 'is on' : 'is off') }
+    if (s.on !== undefined) { const c = gtkToggle(w.pid, hit.n.name) ?? (await checked(w.pid, hit.n.name)) ?? cropState(snap, hit.n); rec.was = c; if (c !== s.on) bad.push(c ? 'is on' : 'is off') }
     if (bad.length) throw new Surprise(`verify: "${hit.n.name || s.verify}" ${bad.join(', ')}`, seen())
     return
   }
@@ -348,7 +349,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     } else rec.how = 'fp'
     rec.fp = fingerprint(nodes, hit!)
     if (hit!.p !== undefined) rec.jev = [hit!.p, hit!.margin]
-    if (s.on === undefined) { act(snap, hit!.n); await settle(w.title); return }
+    if (s.on === undefined) { act(snap, hit!.n); await settle(w.title); const now = gtkToggle(w.pid, hit!.n.name); if (now !== null) rec.now = now; return }
     const was = gtkToggle(w.pid, hit!.n.name)
     if (was !== null) {
       rec.was = was; rec.state = 'gtk'
@@ -376,10 +377,10 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const [x, y] = m.screenFromMouse().screenshot(true).ground(GroundingModel.byAlias('gw_ground'), `${target} in the "${w.title}" window`)
     tick('ground', t0)
     const under = m.nodeAtPoint(x, y)
-    const what = under ? under.overallDescription : '(nothing)'
+    const what = under?.overallDescription ?? ''
     rec.ground_hit = what.slice(0, 80)
-    if (decide({ element_under_point: what, window_title: w.title }, { is: noul(`Is this element "${target}"?`) }).is.probability < 0.5)
-      throw new Surprise(`no element matches "${target}"; grounding pointed at ${what.slice(0, 80)}`, seen())
+    if (!what.trim() || decide({ element_under_point: what, window_title: w.title }, { is: noul(`Is this element "${target}"?`) }).is.probability < 0.7)
+      throw new Surprise(`no element matches "${target}"${what.trim() ? `; grounding pointed at ${what.slice(0, 80)}` : ''}`, seen())
     t0 = Date.now(); m.moveMouse(x, y, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click); tick('act', t0)
     rec.how = 'ground'; rec.unsaved = true; await settle(w.title); return
   }
@@ -464,8 +465,9 @@ function find(request: string) {
   const opts: Record<string, string | null> = { none: 'none of these flows does it' }
   rows.forEach((r, i) => { opts[`f${i}`] = r })
   const d = decide({ request }, { pick: choice('Which saved GUI flow does this request?', opts) })
-  const k = d.pick.choice as string
-  return { ok: k !== 'none', flow: k === 'none' ? null : rows[+k.slice(1)].replace(/\(.*$/, ''), p: +d.pick.probabilities[k].toFixed(2) }
+  const k = d.pick.choice as string; const p = d.pick.probabilities[k] as number
+  if (k === 'none' || p < 0.8) return { ok: false, flow: null, p: +p.toFixed(2) }
+  return { ok: true, flow: rows[+k.slice(1)].replace(/\(.*$/, ''), p: +p.toFixed(2) }
 }
 
 export async function main(p: { steps?: Step[]; flow?: string; params?: Record<string, string>; save?: string; start?: number; find?: string }) {
@@ -473,15 +475,17 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   if (p.find) return find(p.find)
   const flow = p.flow ? loadFlow(p.flow) : null
   const params = { ...(flow?.params ?? {}), ...(p.params ?? {}) }
-  const plan: Step[] = flow ? flow.steps : p.steps ?? []
+  const plan: Step[] = (flow ? flow.steps : p.steps ?? []).filter((s) => !Object.keys(s).every((k) => ['screenshot', 'timeout_s', 'max_edge'].includes(k)))
   if (!plan.length) return { ok: false, error: 'pass steps, flow or find' }
   const trace: Record<string, unknown>[] = []; const log: Record<string, unknown>[] = []
   for (const w of m.windows()) known.add(w.title)
   const startTitles = new Set(known)
   const recs: Record<string, unknown>[] = []
   let escalate: Record<string, unknown> | null = null; let done = plan.length
+  const bad = plan.findIndex((s) => OPS.filter((k) => k in s).length !== 1)
+  if (bad >= 0) return { ok: false, done: 0, ms: 0, trace, escalate: { step: bad, plan_step: plan[bad], reason: `step ${bad} needs exactly one op of ${OPS.join(', ')}; nothing ran` } }
   for (let i = p.start ?? 0; i < plan.length; i++) {
-    const s = fill(plan[i], params); T = {}; const rec: Record<string, unknown> = { i, op: Object.keys(s).find((k) => !['window', 'role', 'fp', 'seen', 'title', 'on', 'value', 'timeout_ms', 'enabled'].includes(k))! }
+    const s = fill(plan[i], params); T = {}; const rec: Record<string, unknown> = { i, op: OPS.find((k) => k in s) }
     const ts = Date.now()
     try {
       const f = focused()
@@ -492,10 +496,11 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
       escalate = { step: i, plan_step: plan[i], reason: sp.reason, ...sp.seen }; done = i
     }
     rec.ms = Date.now() - ts; log.push({ ...rec, ...T }); recs[i] = rec
-    trace.push({ i, op: rec.op, how: rec.how ?? (rec.noop ? 'noop' : undefined), ms: rec.ms })
+    trace.push({ i, op: rec.op, how: rec.how, ms: rec.ms, ...(rec.was !== undefined ? { was: rec.was ? 'on' : 'off', now: rec.noop || s.verify ? undefined : s.on === false ? 'off' : 'on' } : {}), ...(rec.now !== undefined ? { now: rec.now ? 'on' : 'off' } : {}), ...(rec.noop ? { noop: true } : {}) })
     if (escalate) break
   }
   const last = plan.at(-1)!
+  let opened = false
   if (!escalate) {
     const ts = Date.now(); const was = focused()?.title
     if (last.key || last.type !== undefined || last.click) {
@@ -506,10 +511,11 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     log.push({ i: plan.length, op: 'end', ms: Date.now() - ts, window: f?.title ?? null })
     const left = f && !startTitles.has(f.title) && isDialog(o) && !(last.wait || last.app || (last.window && norm(f.title).includes(norm(last.window))))
     if (f && (isAlert(o) || left)) { escalate = { step: plan.length, reason: `the plan ended with "${f.title || o.split('\n')[0]}" still in front`, ...seen() }; done = plan.length }
+    opened = !!f && !startTitles.has(f.title) && isDialog(o)
   }
   let saved: string | undefined
   const jevs = recs.filter((r) => r?.jev).length
-  const clean = !escalate && (p.start ?? 0) === 0 && !!plan[0].app && recs.every((r) => !r?.unsaved)
+  const clean = !escalate && !opened && (p.start ?? 0) === 0 && !!plan[0].app && recs.every((r) => !r?.unsaved)
   if (clean && flow) {
     const rewrites = recs.filter((r, i) => r?.fp && JSON.stringify(r.fp) !== JSON.stringify(flow.steps[i].fp))
     flow.runs += 1
