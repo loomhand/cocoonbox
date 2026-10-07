@@ -51,8 +51,6 @@ The user watches the screen live and sees every call.";
 const ALWAYS_LOAD: [&str; 2] = ["script_run", "gui_plan"];
 const NUDGE_STREAK: u32 = 2;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
-const FLOWS: &str = "\nSaved flows: each does a whole task in one call with {flow, params}, so prefer one that fits: ";
-const MAX_DESCRIPTION: usize = 2048;
 const MAX_FLOWS: usize = 30;
 const RESOURCES: [Resource; 3] = [
     Resource {
@@ -390,10 +388,23 @@ impl Mcp {
         let method = msg["method"].as_str()?;
         let result = match (method, s) {
             ("ping", _) => Ok(json!({})),
-            ("tools/list", Some(s)) => Ok(self.list_tools(s, principal).await),
+            ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
             ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
             ("resources/list", _) if self.script => Ok(list_resources()),
-            ("resources/read", _) if self.script => read_resource(&msg["params"]).await,
+            ("resources/read", _) if self.script => {
+                let mut flows = String::new();
+                if msg["params"]["uri"] == RESOURCES[0].uri {
+                    let index = self
+                        .rt
+                        .dispatcher
+                        .run("", None, "gui_flows", json!({}))
+                        .await;
+                    if !index.is_error {
+                        flows = index.text;
+                    }
+                }
+                read_resource(&msg["params"], &flows).await
+            }
             ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
         };
@@ -428,28 +439,16 @@ impl Mcp {
     }
 
     /// The tools `principal` may call; a share session remembers the mode it listed, to announce a switch.
-    async fn list_tools(&self, s: &Session, principal: &Principal) -> Value {
+    fn list_tools(&self, s: &Session, principal: &Principal) -> Value {
         if let Principal::Share { write, .. } = principal {
             *lock(&s.listed) = Some(*write);
         }
-        let mut tools: Vec<Value> = self
+        let tools: Vec<&Value> = self
             .tools
             .iter()
             .filter(|(name, _)| allows(principal, name))
-            .map(|(_, tool)| tool.clone())
+            .map(|(_, tool)| tool)
             .collect();
-        if let Some(plan) = tools.iter_mut().find(|t| t["name"] == "gui_plan") {
-            let index = self
-                .rt
-                .dispatcher
-                .run(s.owner(), None, "gui_flows", json!({}))
-                .await;
-            if !index.is_error
-                && let Some(text) = plan["description"].as_str()
-            {
-                plan["description"] = with_flows(text, &index.text).into();
-            }
-        }
         json!({"tools": tools})
     }
 
@@ -802,36 +801,31 @@ fn list_resources() -> Value {
     json!({"resources": resources})
 }
 
-async fn read_resource(params: &Value) -> Result<Value, (i64, String)> {
+/// Reads a resource; the guide gains a "Saved flows" section from `flows`, the flow index, up to [`MAX_FLOWS`] lines.
+async fn read_resource(params: &Value, flows: &str) -> Result<Value, (i64, String)> {
     let uri = params["uri"].as_str().unwrap_or_default();
     let Some(r) = RESOURCES.iter().find(|r| r.uri == uri) else {
         return Err((-32002, format!("resource not found: {uri}")));
     };
-    let text = tokio::fs::read_to_string(r.path)
+    let mut text = tokio::fs::read_to_string(r.path)
         .await
         .map_err(|e| (-32002, format!("read {}: {e}", r.path)))?;
-    let mut content = json!({"uri": r.uri, "mimeType": r.mime});
-    content["text"] = text.into();
-    Ok(json!({"contents": [content]}))
-}
-
-/// `description` with as many saved flow names as fit the client's description cap, up to [`MAX_FLOWS`].
-fn with_flows(description: &str, index: &str) -> String {
-    let mut out = description.to_owned();
-    let mut sep = FLOWS;
-    for flow in index
+    let saved: Vec<&str> = flows
         .lines()
         .filter(|l| !l.trim().is_empty())
         .take(MAX_FLOWS)
-    {
-        if out.chars().count() + sep.chars().count() + flow.chars().count() >= MAX_DESCRIPTION {
-            break;
+        .collect();
+    if !saved.is_empty() {
+        text.push_str("\n## Saved flows\n\nReplay one with `gui_plan {flow, params}`.\n\n");
+        for line in saved {
+            text.push_str("- ");
+            text.push_str(line.trim());
+            text.push('\n');
         }
-        out.push_str(sep);
-        out.push_str(flow.trim());
-        sep = "; ";
     }
-    out
+    let mut content = json!({"uri": r.uri, "mimeType": r.mime});
+    content["text"] = text.into();
+    Ok(json!({"contents": [content]}))
 }
 
 /// Whether `principal` may call tool `name`: a read-only share gets only the tools that read.

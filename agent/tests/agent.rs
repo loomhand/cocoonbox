@@ -3028,7 +3028,7 @@ async fn mcp_serves_the_script_guide_as_resources() {
 }
 
 #[tokio::test]
-async fn mcp_gui_plan_lists_the_saved_flows_within_the_description_cap() {
+async fn mcp_gui_plan_keeps_a_static_description_and_lists_saved_flows_on_request() {
     let h = Harness::with_script(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let plan = |listed: &Value| {
@@ -3043,19 +3043,23 @@ async fn mcp_gui_plan_lists_the_saved_flows_within_the_description_cap() {
             .to_owned()
     };
     let bare = plan(&mcp.rpc("tools/list", json!({})).await);
-    assert!(!bare.contains("Saved flows"), "{bare}");
+    assert!(bare.contains("{flows: true}"), "{bare}");
+    let none = mcp.call("gui_plan", json!({"flows": true})).await;
+    assert_eq!(none["content"][0]["text"], "no saved flows yet", "{none}");
 
     std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
-    let index: String = (0..40)
-        .map(|i| format!("mousepad-flow-number-{i}(font_size, text)\n"))
-        .collect();
-    std::fs::write(h.workspace.join("flows/INDEX"), index).unwrap();
-    let listed = plan(&mcp.rpc("tools/list", json!({})).await);
-    assert!(
-        listed.starts_with(&bare) && listed.contains("so prefer one that fits: mousepad-flow-number-0(font_size, text); mousepad-flow-number-1("),
+    std::fs::write(
+        h.workspace.join("flows/INDEX"),
+        "mousepad-font-size(size): Edit > Preferences, set font size\n",
+    )
+    .unwrap();
+    assert_eq!(plan(&mcp.rpc("tools/list", json!({})).await), bare);
+    let listed = mcp.call("gui_plan", json!({"flows": true})).await;
+    assert_eq!(
+        listed["content"][0]["text"],
+        "mousepad-font-size(size): Edit > Preferences, set font size\n",
         "{listed}"
     );
-    assert!(listed.chars().count() < 2048, "{}", listed.chars().count());
 
     let out = mcp
         .call("gui_plan", json!({"steps": [{"app": "mousepad"}]}))

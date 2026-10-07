@@ -106,6 +106,14 @@ impl Script {
             screenshot,
             max_edge,
         } = serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
+        if params.get("flows") == Some(&Value::Bool(true)) {
+            let index = Self::flows(workspace).await;
+            return Ok(Output::text(if index.trim().is_empty() {
+                "no saved flows yet".to_owned()
+            } else {
+                index
+            }));
+        }
         let id = uuid::Uuid::new_v4().simple().to_string();
         let mut report = self
             .run_script(
