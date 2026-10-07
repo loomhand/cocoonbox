@@ -597,7 +597,10 @@ fn fake_cua(path: &Path, log: Log) {
                     }),
                     "get_desktop_state" => json!({
                         "content": [{"type": "image", "mimeType": "image/png", "data": PNG}],
-                        "structuredContent": {"windows": fake_windows()}
+                        "structuredContent": {
+                            "windows": fake_windows(),
+                            "frame_scale": req["args"]["max_image_dimension"].as_f64().map_or(1.0, |edge| 1280.0 / edge)
+                        }
                     }),
                     "list_windows" => json!({"structuredContent": {"windows": fake_windows()}}),
                     _ => json!({"content": [{"type": "text", "text": format!("✅ {name} done")}]}),
@@ -3236,6 +3239,45 @@ async fn a_script_box_runs_a_computer_act_list_until_its_first_failure() {
         .filter(|a| a["session"] == probes[0].as_str())
         .count();
     assert!(probed >= 2, "{probed}");
+}
+
+#[tokio::test]
+async fn a_script_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
+    let h = Harness::with_script(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let click = json!({"action": "click", "x": 10, "y": 20});
+
+    mcp.call("screenshot", json!({"max_edge": 640})).await;
+    mcp.call("computer_act", click.clone()).await;
+    mcp.call("computer_act", click.clone()).await;
+
+    let log = h.cua_log.lock().unwrap().clone();
+    let session = log
+        .iter()
+        .find(|(n, a)| n == "get_desktop_state" && a["max_image_dimension"] == 640)
+        .map(|(_, a)| a["session"].clone())
+        .unwrap();
+    let mine: Vec<&(String, Value)> = log
+        .iter()
+        .filter(|(_, a)| a["session"] == session)
+        .collect();
+    let clicks: Vec<(f64, f64)> = mine
+        .iter()
+        .filter(|(n, _)| n == "click")
+        .map(|(_, a)| (a["x"].as_f64().unwrap(), a["y"].as_f64().unwrap()))
+        .collect();
+    assert_eq!(clicks, [(20.0, 40.0), (10.0, 20.0)], "{mine:?}");
+    for (i, (name, _)) in mine.iter().enumerate().filter(|(_, (n, _))| n == "click") {
+        let capture = mine[..i]
+            .iter()
+            .rev()
+            .find(|(n, _)| n == "get_desktop_state")
+            .unwrap();
+        assert!(
+            capture.1.get("max_image_dimension").is_none(),
+            "{name} after {capture:?}"
+        );
+    }
 }
 
 #[tokio::test]

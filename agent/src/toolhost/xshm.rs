@@ -6,12 +6,26 @@ use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as _, SK};
 use x11rb::protocol::shm::ConnectionExt as _;
 use x11rb::protocol::xproto::{
-    AtomEnum, ConnectionExt as _, ImageFormat, ImageOrder, MapState, Window,
+    Atom, AtomEnum, ConnectionExt as _, ImageFormat, ImageOrder, MapState, Window,
 };
 use x11rb::rust_connection::RustConnection;
 
 const OVERLAY_NAME: &[u8] = b"Cua.AgentCursorOverlay";
 const THUMB_BLOCK: usize = 8;
+const PANEL_ROWS: usize = 32;
+const DOCK_ROWS: usize = 40;
+
+/// A mapped child of the root: a window frame, or a popup such as a menu.
+#[derive(Clone, PartialEq)]
+pub struct Placement {
+    pub id: Window,
+    pub x: i16,
+    pub y: i16,
+    pub width: u16,
+    pub height: u16,
+    /// Override-redirect: a menu, popup or tooltip rather than a managed window.
+    pub popup: bool,
+}
 
 /// One X connection and one shared segment the size of the root window.
 pub struct Grabber {
@@ -22,6 +36,9 @@ pub struct Grabber {
     seg: u32,
     addr: NonNull<u8>,
     size: usize,
+    net_wm_name: Atom,
+    utf8: Atom,
+    net_active: Atom,
 }
 
 // SAFETY: the segment is private to this Grabber and only read through `&self` after a reply.
@@ -53,6 +70,13 @@ impl Grabber {
             .reply()
             .map_err(|e| format!("MIT-SHM: {e}"))?;
         let seg = conn.generate_id().map_err(|e| format!("X id: {e}"))?;
+        let [net_wm_name, utf8, net_active] =
+            [&b"_NET_WM_NAME"[..], b"UTF8_STRING", b"_NET_ACTIVE_WINDOW"].map(|name| {
+                conn.intern_atom(false, name)
+                    .ok()
+                    .and_then(|c| c.reply().ok())
+                    .map_or(u32::from(AtomEnum::NONE), |r| r.atom)
+            });
         let size = usize::from(width) * usize::from(height) * 4;
         // SAFETY: a plain syscall that creates a private segment of `size` bytes.
         let id = unsafe { libc::shmget(libc::IPC_PRIVATE, size, libc::IPC_CREAT | 0o600) };
@@ -78,6 +102,9 @@ impl Grabber {
             seg,
             addr,
             size,
+            net_wm_name,
+            utf8,
+            net_active,
         };
         attached?;
         Ok(grabber)
@@ -141,13 +168,13 @@ impl Grabber {
         Ok((u32::from(self.width), u32::from(self.height), rgb))
     }
 
-    /// The root window shrunk eightfold by averaging, as RGB rows.
+    /// The root window shrunk eightfold by averaging, as RGB rows; the panel and dock strips stay black.
     pub fn thumb(&self) -> Result<Vec<u8>, String> {
         let (w, h) = (usize::from(self.width), usize::from(self.height));
         let (tw, th) = (w / THUMB_BLOCK, h / THUMB_BLOCK);
         let bgrx = self.bgrx()?;
         let mut sums = vec![0u32; tw * th * 3];
-        for y in 0..th * THUMB_BLOCK {
+        for y in PANEL_ROWS..(th * THUMB_BLOCK).min(h - DOCK_ROWS) {
             let row = &bgrx[y * w * 4..(y * w + tw * THUMB_BLOCK) * 4];
             let base = y / THUMB_BLOCK * tw * 3;
             for (x, p) in row.as_chunks::<4>().0.iter().enumerate() {
@@ -162,6 +189,98 @@ impl Grabber {
             .iter()
             .map(|s| u8::try_from(s / n).unwrap_or(u8::MAX))
             .collect())
+    }
+
+    /// The mapped children of the root with their geometry: frames, menus and popups.
+    pub fn mapped(&self) -> Result<Vec<Placement>, String> {
+        let tree = self
+            .conn
+            .query_tree(self.root)
+            .map_err(|e| format!("query tree: {e}"))?
+            .reply()
+            .map_err(|e| format!("query tree: {e}"))?;
+        let cookies = tree
+            .children
+            .iter()
+            .map(|&w| {
+                let attrs = self
+                    .conn
+                    .get_window_attributes(w)
+                    .map_err(|e| format!("attributes: {e}"))?;
+                let geometry = self
+                    .conn
+                    .get_geometry(w)
+                    .map_err(|e| format!("geometry: {e}"))?;
+                Ok((w, attrs, geometry))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut mapped = Vec::new();
+        for (id, attrs, geometry) in cookies {
+            let (Ok(attrs), Ok(g)) = (attrs.reply(), geometry.reply()) else {
+                continue;
+            };
+            if attrs.map_state == MapState::VIEWABLE {
+                mapped.push(Placement {
+                    id,
+                    x: g.x,
+                    y: g.y,
+                    width: g.width,
+                    height: g.height,
+                    popup: attrs.override_redirect,
+                });
+            }
+        }
+        Ok(mapped)
+    }
+
+    /// The title of window `w`, or of the client inside it when `w` is a window manager frame.
+    pub fn title(&self, w: Window) -> String {
+        let own = self.name(w);
+        if !own.is_empty() {
+            return own;
+        }
+        let children = self
+            .conn
+            .query_tree(w)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|t| t.children)
+            .unwrap_or_default();
+        children
+            .iter()
+            .map(|&c| self.name(c))
+            .find(|n| !n.is_empty())
+            .unwrap_or_default()
+    }
+
+    /// The window `_NET_ACTIVE_WINDOW` names, the one with keyboard focus.
+    pub fn active(&self) -> Option<Window> {
+        let reply = self
+            .conn
+            .get_property(false, self.root, self.net_active, AtomEnum::WINDOW, 0, 1)
+            .ok()?
+            .reply()
+            .ok()?;
+        reply.value32()?.next().filter(|w| *w != 0)
+    }
+
+    fn name(&self, w: Window) -> String {
+        for (atom, kind) in [
+            (self.net_wm_name, self.utf8),
+            (u32::from(AtomEnum::WM_NAME), u32::from(AtomEnum::STRING)),
+        ] {
+            let value = self
+                .conn
+                .get_property(false, w, atom, kind, 0, 64)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map(|r| r.value)
+                .unwrap_or_default();
+            if !value.is_empty() {
+                return String::from_utf8_lossy(&value).into_owned();
+            }
+        }
+        String::new()
     }
 
     fn bgrx(&self) -> Result<&[u8], String> {
