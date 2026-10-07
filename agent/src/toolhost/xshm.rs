@@ -206,6 +206,11 @@ impl Grabber {
             .collect())
     }
 
+    /// Columns of a [`Grabber::thumb`] row.
+    pub fn thumb_columns(&self) -> usize {
+        usize::from(self.width) / THUMB_BLOCK
+    }
+
     /// The root window shrunk eightfold by averaging, as RGB rows; the panel and dock strips stay black.
     pub fn thumb(&self) -> Result<Vec<u8>, String> {
         let (w, h) = (usize::from(self.width), usize::from(self.height));
