@@ -8,7 +8,10 @@ use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 const SCRIPT_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
-const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
+const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one observation at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
+
+const ACT_VIEW: &str = "Perform one input action, then observe the screen. Target an element by id from the latest elements view, or x,y in pixels of the 1280x800 screen. By default the result is the elements view plus a small preview screenshot: the on-screen accessible elements of the open menu or the frontmost window, one per line as [id] role \"name\" = \"value\" (center x,y) and states (checked, selected, closed, disabled), plus lines naming windows that opened or closed. Act on an element with element: id; it needs no coordinates. The preview is 640 pixels wide, half the screen, but x,y and every center stay screen pixels. Pass max_edge 1280 for a full-size screenshot, or view \"elements\" for text only.";
+const STATE_VIEW: &str = "The visible windows (pid, window_id), the elements view of the open menu, the frontmost window or the given pid, and a 640-pixel preview of the 1280x800 screen (max_edge 1280 for full size, view \"elements\" for none); x,y and centers are always screen pixels. With query, only matching elements, off-screen ones too.";
 
 /// Remote tools that only read the box: all a read-only share offers.
 pub const READ_ONLY: [&str; 6] = [
@@ -183,17 +186,29 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
     tools.extend(computer_tools());
     if script {
         if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            act.description = Cow::Owned(format!("{SCRIPT_HINT}{}{LIST_HINT}", act.description));
+            act.description = Cow::Owned(format!("{SCRIPT_HINT}{ACT_VIEW}{LIST_HINT}"));
+            act.parameters["properties"]["element"]["description"] =
+                json!("Element id from the latest elements view");
             let mut step = act.parameters.clone();
             if let Some(props) = step["properties"].as_object_mut() {
                 props.remove("max_edge");
             }
             act.parameters["properties"]["actions"] = json!({"type": "array", "items": step});
+            act.parameters["properties"]["view"] = view();
             if let Some(schema) = act.parameters.as_object_mut() {
                 schema.remove("required");
             }
         }
+        if let Some(state) = tools.iter_mut().find(|t| t.name == "computer_state") {
+            state.description = Cow::Borrowed(STATE_VIEW);
+            state.parameters["properties"]["view"] = view();
+        }
         tools.extend([script_tool(), gui_plan_tool()]);
+        for t in &mut tools {
+            if t.parameters["properties"].get("max_edge").is_some() {
+                t.parameters["properties"]["max_edge"] = json!({"type": "integer", "description": "Scale the screenshot so its long edge is at most this many pixels; x,y stay pixels of the 1280x800 screen"});
+            }
+        }
     }
     tools
 }
@@ -292,6 +307,10 @@ A passing plan that starts with an app step is saved as a flow: name it with sav
             }
         }),
     }
+}
+
+fn view() -> serde_json::Value {
+    json!({"type": "string", "enum": ["elements", "screenshot", "both"], "description": "What comes back: the elements view, a screenshot, or both (default)"})
 }
 
 fn max_edge() -> serde_json::Value {

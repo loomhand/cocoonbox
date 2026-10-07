@@ -23,6 +23,7 @@ const THUMB_BLOCK: usize = 8;
 const PANEL_ROWS: usize = 32;
 const DOCK_ROWS: usize = 40;
 const ALL_MASTERS: u16 = 1;
+const POPUP_MIN: u16 = 20;
 
 /// A mapped child of the root: a window frame, or a popup such as a menu.
 #[derive(Clone, PartialEq)]
@@ -66,6 +67,9 @@ pub struct Grabber {
     /// Whether a root child belongs to the desktop shell (panel, dock, desktop), by window id.
     shell: Mutex<HashMap<Window, bool>>,
     net_wm_pid: Atom,
+    net_wm_type: Atom,
+    /// Window types of tooltips, notifications and drag icons: popups nobody acts on.
+    passive: [Atom; 3],
 }
 
 // SAFETY: the segment is private to this Grabber and only read through `&self` after a reply.
@@ -98,11 +102,24 @@ impl Grabber {
             .map_err(|e| format!("MIT-SHM: {e}"))?;
         let seg = conn.generate_id().map_err(|e| format!("X id: {e}"))?;
         let _ = conn.xinput_xi_query_version(2, 2).map(|c| c.reply());
-        let [net_wm_name, utf8, net_active, net_wm_pid] = [
+        let [
+            net_wm_name,
+            utf8,
+            net_active,
+            net_wm_pid,
+            net_wm_type,
+            tooltip,
+            notification,
+            dnd,
+        ] = [
             &b"_NET_WM_NAME"[..],
             b"UTF8_STRING",
             b"_NET_ACTIVE_WINDOW",
             b"_NET_WM_PID",
+            b"_NET_WM_WINDOW_TYPE",
+            b"_NET_WM_WINDOW_TYPE_TOOLTIP",
+            b"_NET_WM_WINDOW_TYPE_NOTIFICATION",
+            b"_NET_WM_WINDOW_TYPE_DND",
         ]
         .map(|name| {
             conn.intern_atom(false, name)
@@ -140,6 +157,8 @@ impl Grabber {
             net_active,
             shell: Mutex::new(HashMap::new()),
             net_wm_pid,
+            net_wm_type,
+            passive: [tooltip, notification, dnd],
         };
         attached?;
         Ok(grabber)
@@ -195,6 +214,33 @@ impl Grabber {
             }
         }
         Ok(false)
+    }
+
+    /// The size of the root window.
+    pub fn size(&self) -> (u16, u16) {
+        (self.width, self.height)
+    }
+
+    /// The topmost mapped menu, combo list or other popup as `(pid, window)`; tooltips and slivers do not count.
+    pub fn popup(&self) -> Result<Option<(u32, Window)>, String> {
+        for p in self.children(true)?.into_iter().rev() {
+            if !p.popup || !p.drawn || p.width < POPUP_MIN || p.height < POPUP_MIN {
+                continue;
+            }
+            let kind = self
+                .conn
+                .get_property(false, p.id, self.net_wm_type, AtomEnum::ATOM, 0, 1)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .and_then(|r| r.value32().and_then(|mut v| v.next()));
+            if kind.is_some_and(|k| self.passive.contains(&k)) {
+                continue;
+            }
+            if let Some(pid) = self.pid(p.id) {
+                return Ok(Some((pid, p.id)));
+            }
+        }
+        Ok(None)
     }
 
     /// The root window as `(width, height, RGB rows)`.

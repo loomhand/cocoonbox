@@ -3264,7 +3264,7 @@ async fn a_script_box_runs_a_computer_act_list_until_its_first_failure() {
     let out = mcp
         .call(
             "computer_act",
-            json!({"actions": [
+            json!({"view": "screenshot", "actions": [
                 {"action": "click", "x": 10, "y": 20},
                 {"action": "click"},
                 {"action": "key", "key": "a"}
@@ -3293,7 +3293,63 @@ async fn a_script_box_runs_a_computer_act_list_until_its_first_failure() {
 }
 
 #[tokio::test]
-async fn a_script_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
+async fn a_script_box_observes_through_the_elements_view_and_a_preview_unless_the_call_picks_one()
+{
+    let h = Harness::with_script(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
+
+    let out = mcp
+        .call("computer_act", json!({"action": "key", "key": "a"}))
+        .await;
+    assert_eq!(out["isError"], false, "{out}");
+    assert!(
+        text(&out).ends_with("Elements of Mousepad \"Untitled\" (pid 42), [id] role \"name\" = \"value\" (center x,y) state:\n[0] text \"editor\" (60,40)\n"),
+        "{out}"
+    );
+    assert_eq!(out["content"][1]["type"], "image");
+    let previews: Vec<Value> = driver_calls(&h, "get_desktop_state")
+        .into_iter()
+        .filter(|a| a["max_image_dimension"] == 640)
+        .collect();
+    assert_eq!(previews.len(), 1, "{previews:?}");
+    let clicked = mcp
+        .call("computer_act", json!({"action": "click", "element": 0}))
+        .await;
+    assert_eq!(clicked["isError"], false, "{clicked}");
+    assert_eq!(driver_calls(&h, "click")[0]["element_token"], "tok-0");
+    let shot = mcp
+        .call(
+            "computer_act",
+            json!({"action": "key", "key": "a", "view": "screenshot"}),
+        )
+        .await;
+    assert!(!text(&shot).contains("Elements of"), "{shot}");
+    assert_eq!(shot["content"][1]["type"], "image");
+    let bare = mcp
+        .call(
+            "computer_act",
+            json!({"action": "key", "key": "a", "view": "elements"}),
+        )
+        .await;
+    assert!(
+        text(&bare).contains("[0] text \"editor\" (60,40)"),
+        "{bare}"
+    );
+
+    let state = mcp.call("computer_state", json!({})).await;
+    assert!(
+        text(&state).starts_with("Windows (frontmost first):"),
+        "{state}"
+    );
+    assert!(
+        text(&state).contains("[0] text \"editor\" (60,40)"),
+        "{state}"
+    );
+}
+
+#[tokio::test]
+async fn a_script_box_sends_clicks_in_screen_pixels_after_a_scaled_screenshot() {
     let h = Harness::with_script(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let click = json!({"action": "click", "x": 10, "y": 20});
@@ -3317,7 +3373,7 @@ async fn a_script_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
         .filter(|(n, _)| n == "click")
         .map(|(_, a)| (a["x"].as_f64().unwrap(), a["y"].as_f64().unwrap()))
         .collect();
-    assert_eq!(clicks, [(20.0, 40.0), (10.0, 20.0)], "{mine:?}");
+    assert_eq!(clicks, [(10.0, 20.0), (10.0, 20.0)], "{mine:?}");
     for (i, (name, _)) in mine.iter().enumerate().filter(|(_, (n, _))| n == "click") {
         let capture = mine[..i]
             .iter()
