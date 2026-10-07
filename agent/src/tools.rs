@@ -169,12 +169,11 @@ pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
     }
     if script {
         tools.push(script_tool());
-        tools.push(route_tool());
     }
     tools
 }
 
-/// Tools served over MCP to external agents; the names are the contract, and `script_run`, `cua_route` and the `computer_act` hint exist only with `script`.
+/// Tools served over MCP to external agents; the names are the contract, and `script_run` and the `computer_act` hint exist only with `script`.
 pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
     let mut tools: Vec<ToolSpec> = main_tools(true, false)
         .into_iter()
@@ -186,7 +185,6 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
             act.description = Cow::Owned(format!("{SCRIPT_HINT}{}", act.description));
         }
         tools.push(script_tool());
-        tools.push(route_tool());
     }
     tools
 }
@@ -256,20 +254,6 @@ fn script_tool() -> ToolSpec {
                 "screenshot": {"type": "boolean", "description": "Return a screenshot taken after the run, default true"},
                 "max_edge": max_edge()
             }
-        }),
-    }
-}
-
-fn route_tool() -> ToolSpec {
-    ToolSpec {
-        name: Cow::Borrowed("cua_route"),
-        description: Cow::Borrowed(
-            "Ask the box's fast router (about 0.2 s) which tool tier fits a task: command, cua, browser, script or jev. Call it first when unsure which tier to use. Returns JSON {tier, probabilities, confidence, uncertain, meaning, tiers}; when uncertain is true, decide yourself.",
-        ),
-        parameters: json!({
-            "type": "object",
-            "properties": {"task": {"type": "string", "description": "The user's request, as written"}},
-            "required": ["task"]
         }),
     }
 }

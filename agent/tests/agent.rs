@@ -29,7 +29,8 @@ use tonic::transport::Channel;
 use tonic::{Code, Request};
 
 const TOKEN: &str = "edge-token-for-tests";
-const FAKE_SCRIPT: &str = r#"src=$(cat "$CB_SCRIPT_SCRIPT")
+const FAKE_SCRIPT: &str = r#"case "$2" in *release.mjs) cat "$2" >> released.log; exit 0 ;; esac
+src=$(cat "$CB_SCRIPT_SCRIPT")
 echo "script: warning: OPENROUTER_API_KEY is not set; scripts that hit hosted services will fail to authenticate." >&2
 case "$src" in
 *boom*) echo "[info] Opening app Mousepad" >&2; echo "Error: boom" >&2; exit 1 ;;
@@ -2896,6 +2897,8 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
     let shot = PathBuf::from(report["screenshot_path"].as_str().unwrap());
     assert!(shot.exists(), "{}", shot.display());
     assert_eq!(ok["content"][1]["type"], "image");
+    let released = h.workspace.join("released.log");
+    assert!(!released.exists(), "a successful run released input");
 
     std::fs::write(h.workspace.join("flow.mjs"), "boom").unwrap();
     let failed = mcp
@@ -2914,6 +2917,12 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
     assert_eq!(report["exit_code"], 1);
     assert!(report.get("screenshot_path").is_none(), "{report}");
     assert_eq!(failed["content"].as_array().unwrap().len(), 1);
+    let release = std::fs::read_to_string(&released).unwrap();
+    assert!(
+        release.contains("m.keyRaw(code, Direction.Release)")
+            && release.contains("m.mouseButton(button, Direction.Release)"),
+        "{release}"
+    );
 
     let refused = mcp
         .call("script_run", json!({"code": "1", "script": "flow.mjs"}))
@@ -2951,6 +2960,7 @@ async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
     assert_eq!(out["isError"], true, "{out}");
     let report: Value = serde_json::from_str(out["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(report["error"]["kind"], "timeout", "{report}");
+    assert!(h.workspace.join("released.log").exists());
     let pid = std::fs::read_to_string(h.workspace.join("grandchild.pid")).unwrap();
     let proc = PathBuf::from(format!("/proc/{}", pid.trim()));
     let mut alive = true;
@@ -3036,6 +3046,7 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
         .collect();
     assert_eq!(offered[0], "script_run", "{offered:?}");
     assert!(offered.contains(&"delegate_computer"), "{offered:?}");
+    assert!(!offered.contains(&"cua_route"), "{offered:?}");
     let system = chats[0]["messages"][0]["content"].as_str().unwrap();
     assert!(system.ends_with(&routing), "{system}");
     let asked = gw_bodies(&h.gw_log, "decisions");
@@ -3094,42 +3105,20 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
 }
 
 #[tokio::test]
-async fn cua_route_reports_the_tier_and_marks_a_weak_or_failed_route_uncertain() {
-    let h = Harness::with_script(vec![
-        ("decisions", decision("browser", 0.97)),
-        ("decisions", decision("cua", 0.55)),
-    ])
-    .await;
+async fn a_script_box_serves_no_cua_route_over_mcp() {
+    let h = Harness::with_script(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let tools = McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await);
-    assert!(tools.contains(&"cua_route".to_owned()), "{tools:?}");
-    let mut reports = Vec::new();
-    for task in ["read the page title", "turn on word wrap", "no script left"] {
-        let out = mcp.call("cua_route", json!({"task": task})).await;
-        assert_eq!(out["isError"], false, "{out}");
-        reports.push(
-            serde_json::from_str::<Value>(out["content"][0]["text"].as_str().unwrap()).unwrap(),
-        );
-    }
-    assert_eq!(
-        (&reports[0]["tier"], &reports[0]["uncertain"]),
-        (&json!("browser"), &json!(false))
-    );
-    assert!(
-        reports[0]["meaning"]
-            .as_str()
-            .unwrap()
-            .contains("browser_*")
-    );
-    assert_eq!(reports[0]["tiers"].as_object().unwrap().len(), 5);
-    assert_eq!(
-        (&reports[1]["tier"], &reports[1]["uncertain"]),
-        (&json!("cua"), &json!(true))
-    );
-    assert_eq!(reports[2]["uncertain"], true);
-    assert!(reports[2]["error"].is_string(), "{}", reports[2]);
-    let asked = gw_bodies(&h.gw_log, "decisions");
-    assert_eq!(asked[1]["state"]["task"], "turn on word wrap");
+    assert!(tools.contains(&"script_run".to_owned()), "{tools:?}");
+    assert!(!tools.contains(&"cua_route".to_owned()), "{tools:?}");
+    let refused = mcp
+        .rpc(
+            "tools/call",
+            json!({"name": "cua_route", "arguments": {"task": "x"}}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], -32602, "{refused}");
+    assert!(gw_bodies(&h.gw_log, "decisions").is_empty());
 }
 
 #[tokio::test]
@@ -3172,6 +3161,21 @@ async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
         );
     }
     assert_eq!(nudged, [false, true, false, false, true]);
+
+    let launch = json!({"action": "launch_app", "app": "mousepad"});
+    let click = json!({"action": "click", "x": 10, "y": 10});
+    let mut nudged = Vec::new();
+    mcp.call("list_dir", json!({})).await;
+    for args in [&launch, &click, &launch, &click] {
+        let out = mcp.call("computer_act", args.clone()).await;
+        nudged.push(
+            out["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("GUI steps in a row"),
+        );
+    }
+    assert_eq!(nudged, [false, false, false, true]);
 }
 
 #[tokio::test]

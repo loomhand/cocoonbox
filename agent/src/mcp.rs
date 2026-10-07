@@ -459,15 +459,6 @@ impl Mcp {
             v @ Value::Object(_) => v.clone(),
             _ => return Err((-32602, "arguments must be an object".to_owned())),
         };
-        if let (Some(router), "cua_route") = (&self.rt.router, name.as_ref()) {
-            s.gui_streak(name);
-            let task = requested["task"].as_str().unwrap_or_default();
-            let mut part = json!({"type": "text"});
-            part["text"] = router.route(task).await.report().to_string().into();
-            let mut result = json!({"isError": false});
-            result["content"] = Value::Array(vec![part]);
-            return Ok(result);
-        }
         if let Principal::Share { write: false, .. } = principal {
             requested["workspace_only"] = true.into();
         }
@@ -476,6 +467,7 @@ impl Mcp {
             d.used |= uses_driver(name);
             d.label.clone()
         };
+        let launch = requested["action"] == "launch_app";
         let retry = uses_driver(name).then(|| requested.clone());
         let _in_flight = self.rt.turns.read().await;
         let mut out = self.run(s, &label, name, requested).await?;
@@ -485,7 +477,7 @@ impl Mcp {
         }
         lock(&s.driver).last_seen = Instant::now();
         let mut text = out.text;
-        if self.script && s.gui_streak(name) {
+        if self.script && s.gui_streak(name, launch) {
             text.push_str(NUDGE);
         }
         let mut content = vec![json!({"type": "text"})];
@@ -579,7 +571,7 @@ struct Session {
     listed: Mutex<Option<bool>>,
     /// Wakes the session's server stream to send `notifications/tools/list_changed`.
     changed: Notify,
-    /// Consecutive `computer_act` calls since the last other tool call.
+    /// Consecutive `computer_act` calls other than `launch_app` since the last other tool call.
     streak: AtomicU32,
 }
 
@@ -601,13 +593,13 @@ impl Session {
         }
     }
 
-    /// Counts a call of `name` into the `computer_act` streak; true on the call that reaches [`NUDGE_STREAK`].
-    fn gui_streak(&self, name: &str) -> bool {
+    /// Counts a call of `name` into the `computer_act` streak, which a `launch_app` leaves as is; true on the call that reaches [`NUDGE_STREAK`].
+    fn gui_streak(&self, name: &str, launch: bool) -> bool {
         if name != "computer_act" {
             self.streak.store(0, Ordering::Relaxed);
             return false;
         }
-        self.streak.fetch_add(1, Ordering::Relaxed) + 1 == NUDGE_STREAK
+        !launch && self.streak.fetch_add(1, Ordering::Relaxed) + 1 == NUDGE_STREAK
     }
 
     /// Announces a tool list change when a share's write mode differs from the one the client listed in.

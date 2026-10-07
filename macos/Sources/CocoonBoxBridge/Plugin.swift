@@ -8,7 +8,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.11.0"
+    static let version = "0.12.0"
     static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -95,7 +95,7 @@ public enum Plugin {
     1. Command: `shell` and the file tools. Do not open an app to do a command's job.
     2. One look or a couple of clicks, such as toggling one menu option: `screenshot`, `computer_state`, `computer_act` (in the box's own agent: `delegate_computer`). A web page, also a form filled several times: the `browser_*` tools.
 
-    If a script fails twice at one step, look with `computer_state`, then fix the script or do that step with `computer_act`. For a borderline task, `cua_route` gives a quick second opinion.
+    If a script fails twice at one step, look with `computer_state`, then fix the script or do that step with `computer_act`.
 
     """
 

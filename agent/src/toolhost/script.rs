@@ -23,6 +23,7 @@ use crate::sys;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_TIMEOUT: Duration = Duration::from_secs(110);
 const TERM_GRACE: Duration = Duration::from_secs(2);
+const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RESULT_BYTES: u64 = 256 << 10;
 const KEPT_SHOTS: usize = 20;
 const ERROR_LINES: usize = 12;
@@ -37,6 +38,12 @@ if (typeof mod.main === 'function') {
   writeFileSync(env.CB_SCRIPT_RESULT, JSON.stringify(value ?? null) ?? 'null')
 }
 if (globalThis.$snapshot !== undefined) writeFileSync(env.CB_SCRIPT_SNAPSHOT, String(globalThis.$snapshot))
+"#;
+// X keycodes of Control, Shift, Alt and Super, left and right
+const RELEASE: &str = r#"import { Button, Direction, Machine } from '@vendor/script-js'
+const m = Machine.local()
+for (const code of [37, 105, 50, 62, 64, 108, 133, 134]) m.keyRaw(code, Direction.Release)
+for (const button of [Button.Left, Button.Middle, Button.Right]) m.mouseButton(button, Direction.Release)
 "#;
 
 /// Runs scripts with the `script` CLI at `bin`, one scratch directory per run under `dir`.
@@ -79,6 +86,16 @@ impl Script {
         let report = self
             .execute(script, &params, workspace, &run_dir, timeout)
             .await;
+        if report.as_ref().is_ok_and(|r| r.get("error").is_some()) {
+            let started = Instant::now();
+            match self.release(workspace, &run_dir).await {
+                Ok(()) => eprintln!(
+                    "script: released held input after a failed run in {} ms",
+                    started.elapsed().as_millis()
+                ),
+                Err(e) => eprintln!("script: release held input after a failed run: {e}"),
+            }
+        }
         let _ = tokio::fs::remove_dir_all(&run_dir).await;
         let mut report = report?;
         let mut out = Output::default();
@@ -203,6 +220,30 @@ impl Script {
             report["snapshot"] = String::from_utf8_lossy(&snapshot).into_owned().into();
         }
         Ok(report)
+    }
+
+    /// Releases the modifier keys and mouse buttons a failed run may have left held in the X server.
+    async fn release(&self, workspace: &Path, run_dir: &Path) -> Result<(), String> {
+        let script = run_dir.join("release.mjs");
+        files::write_bytes(&script, RELEASE.as_bytes()).await?;
+        let mut child = Command::new(&self.bin)
+            .arg("run")
+            .arg(&script)
+            .current_dir(workspace)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| format!("start {}: {e}", self.bin.display()))?;
+        let status = tokio::time::timeout(RELEASE_TIMEOUT, child.wait())
+            .await
+            .map_err(|_| format!("no exit in {}s", RELEASE_TIMEOUT.as_secs()))?
+            .map_err(|e| format!("wait for script: {e}"))?;
+        if !status.success() {
+            return Err(format!("script {status}"));
+        }
+        Ok(())
     }
 
     async fn screenshot(

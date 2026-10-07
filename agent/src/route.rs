@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const ROUTE: &str = include_str!("../../image/script/route.json");
 const TASK: &str = "\"__TASK__\"";
@@ -60,7 +60,6 @@ impl Router {
             Ok(route) => route,
             Err(e) => Route {
                 tier: String::new(),
-                probabilities: Value::Null,
                 confidence: 0.0,
                 error: Some(e),
             },
@@ -87,9 +86,9 @@ impl Router {
             let text: String = text.chars().take(ERROR_BODY_CHARS).collect();
             return Err(format!("gw decisions returned {status}: {text}"));
         }
-        let mut reply: Value =
+        let reply: Value =
             serde_json::from_str(&text).map_err(|e| format!("decode decisions reply: {e}"))?;
-        let answer = &mut reply["answers"]["tier"];
+        let answer = &reply["answers"]["tier"];
         let tier = answer["choice"]
             .as_str()
             .filter(|t| meaning(t).is_some())
@@ -98,7 +97,6 @@ impl Router {
         Ok(Route {
             tier,
             confidence: answer["confidence"].as_f64().unwrap_or(0.0),
-            probabilities: answer["probabilities"].take(),
             error: None,
         })
     }
@@ -108,7 +106,6 @@ impl Router {
 #[derive(Debug)]
 pub struct Route {
     pub tier: String,
-    pub probabilities: Value,
     pub confidence: f64,
     pub error: Option<String>,
 }
@@ -117,26 +114,6 @@ impl Route {
     /// Whether the route is confident enough to follow.
     pub fn confident(&self) -> bool {
         self.error.is_none() && self.confidence >= CONFIDENT
-    }
-
-    /// The route as the JSON a `cua_route` caller gets.
-    pub fn report(self) -> Value {
-        let mut out = json!({
-            "confidence": self.confidence,
-            "uncertain": !self.confident(),
-            "meaning": meaning(&self.tier),
-        });
-        out["tier"] = self.tier.into();
-        out["probabilities"] = self.probabilities;
-        out["tiers"] = TIERS
-            .iter()
-            .map(|(t, m)| ((*t).to_owned(), Value::from(*m)))
-            .collect::<serde_json::Map<_, _>>()
-            .into();
-        if let Some(e) = self.error {
-            out["error"] = e.into();
-        }
-        out
     }
 }
 
@@ -178,16 +155,22 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_route_is_uncertain_and_says_why() {
-        let r = Route {
-            tier: String::new(),
-            probabilities: Value::Null,
-            confidence: 0.0,
+    fn a_failed_or_weak_route_is_not_confident() {
+        let failed = Route {
+            tier: "script".into(),
+            confidence: 0.99,
             error: Some("gw decisions returned 429".into()),
         };
-        let report = r.report();
-        assert_eq!(report["uncertain"], true);
-        assert_eq!(report["error"], "gw decisions returned 429");
-        assert_eq!(report["tiers"].as_object().unwrap().len(), 5);
+        let weak = Route {
+            tier: "cua".into(),
+            confidence: 0.55,
+            error: None,
+        };
+        let strong = Route {
+            tier: "browser".into(),
+            confidence: CONFIDENT,
+            error: None,
+        };
+        assert!(!failed.confident() && !weak.confident() && strong.confident());
     }
 }
