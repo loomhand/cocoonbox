@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
-const SCRIPT_HINT: &str = " On this box, complex or repeated GUI work (typing and saving in an app, dialogs, forms, several items) goes to script_run as one script, not a chain of computer_act calls.";
+const SCRIPT_HINT: &str = "On this box, for complex or repeated desktop work (typing and saving in an app, dialogs, forms, several items), load script_run (ToolSearch) and write one script instead of a chain of computer_act calls. ";
 
 /// Remote tools that only read the box: all a read-only share offers.
 pub const READ_ONLY: [&str; 6] = [
@@ -183,7 +183,7 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
     tools.extend(computer_tools());
     if script {
         if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            act.description = Cow::Owned(format!("{}{SCRIPT_HINT}", act.description));
+            act.description = Cow::Owned(format!("{SCRIPT_HINT}{}", act.description));
         }
         tools.push(script_tool());
         tools.push(route_tool());

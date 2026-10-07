@@ -241,7 +241,7 @@ final class MCPServer: Sendable {
                 "instructions": box.image.hasPrefix("cbplan:") ? "Mock cbplan box: write one script with script_run for a multi-step task." : "Mock cbdesk box.",
             ]
         case "tools/list":
-            result = ["tools": box.image.hasPrefix("cbplan:") ? Self.tools + [Self.tool("script_run", "Run a script on the desktop.", ["code": "string"])] : Self.tools]
+            result = ["tools": box.image.hasPrefix("cbplan:") ? Self.tools + [Self.tool("script_run", "Run a script on the desktop.", ["code": "string"]).merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 }] : Self.tools]
         case "tools/call":
             guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")

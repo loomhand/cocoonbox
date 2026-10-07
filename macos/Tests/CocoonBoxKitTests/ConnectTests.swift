@@ -60,7 +60,8 @@ import Testing
         let sim = try await BridgeClient(mock, box: "sim1")
         _ = try await sim.tool("box_create", ["name": "sim1", "kind": "script"])
         _ = try await sim.tool("shell", ["command": "true"])
-        #expect(try await sim.tools().contains { $0["name"] as? String == "script_run" })
+        let live = try await sim.tools().first { $0["name"] as? String == "script_run" }
+        #expect((live?["_meta"] as? [String: Any])?["anthropic/alwaysLoad"] as? Bool == true, "the bridge forwards script_run's _meta")
         sim.close()
 
         let desk = try await BridgeClient(mock, box: cbdesk)
@@ -85,6 +86,8 @@ import Testing
         running.close()
         let hibernated = try await BridgeClient(mock, box: "sim1")
         #expect(hibernated.instructions == running.instructions, "a hibernated cbplan box keeps its cached instructions")
+        let cached = try await hibernated.tools().first { $0["name"] as? String == "script_run" }
+        #expect((cached?["_meta"] as? [String: Any])?["anthropic/alwaysLoad"] as? Bool == true, "the cached list keeps script_run's _meta")
         hibernated.close()
 
         let again = try await BridgeClient(mock, box: cbdesk)

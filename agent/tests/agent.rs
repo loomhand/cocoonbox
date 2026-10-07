@@ -2970,8 +2970,15 @@ async fn mcp_serves_the_script_guide_as_resources() {
     let h = Harness::with_script(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
 
-    let tools = McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await);
-    assert!(tools.contains(&"script_run".to_owned()), "{tools:?}");
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    for tool in listed["result"]["tools"].as_array().unwrap() {
+        let always = tool["_meta"]["anthropic/alwaysLoad"] == true;
+        assert_eq!(always, tool["name"] == "script_run", "{tool}");
+        assert!(
+            tool["description"].as_str().unwrap().chars().count() < 2048,
+            "{tool}"
+        );
+    }
 
     let listed = mcp.rpc("resources/list", json!({})).await;
     let uris: Vec<&str> = listed["result"]["resources"]
@@ -3066,12 +3073,23 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
         .json()
         .await
         .unwrap();
-    assert_eq!(
-        init["result"]["instructions"].as_str().unwrap(),
-        format!(
-            "{}\n\n{routing}",
-            golden["result"]["instructions"].as_str().unwrap()
-        )
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.ends_with(&format!("\n\n{routing}")),
+        "{instructions}"
+    );
+    assert_ne!(
+        instructions.lines().next(),
+        golden["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .next()
+    );
+    assert!(
+        instructions.chars().count() <= 1450,
+        "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",
+        instructions.chars().count()
     );
 }
 
@@ -3134,7 +3152,7 @@ async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
     );
     let press = json!({"action": "key", "key": "a"});
     let mut nudged = Vec::new();
-    for _ in 0..5 {
+    for _ in 0..3 {
         let out = mcp.call("computer_act", press.clone()).await;
         nudged.push(
             out["content"][0]["text"]
@@ -3144,7 +3162,7 @@ async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
         );
     }
     mcp.call("list_dir", json!({})).await;
-    for _ in 0..4 {
+    for _ in 0..2 {
         let out = mcp.call("computer_act", press.clone()).await;
         nudged.push(
             out["content"][0]["text"]
@@ -3153,10 +3171,7 @@ async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
                 .contains("GUI steps in a row"),
         );
     }
-    assert_eq!(
-        nudged,
-        [false, false, false, true, false, false, false, false, true]
-    );
+    assert_eq!(nudged, [false, true, false, false, true]);
 }
 
 #[tokio::test]

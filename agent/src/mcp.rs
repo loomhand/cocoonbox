@@ -45,8 +45,12 @@ Relative file paths resolve under /workspace, and shell is one persistent bash s
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
-const NUDGE_STREAK: u32 = 4;
-const NUDGE: &str = "\n\n4 GUI steps in a row: for work like this, script_run with one script is faster and replayable (see cocoonbox://script/AGENTS.md).";
+const SCRIPT_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
+Relative file paths resolve under /workspace, and shell is one persistent bash session. \
+The user watches the screen live and sees every call.";
+const ALWAYS_LOAD: &str = "script_run";
+const NUDGE_STREAK: u32 = 2;
+const NUDGE: &str = "\n\n2 GUI steps in a row: for desktop work like this, load script_run (ToolSearch) and write one script; it is faster and replayable (see cocoonbox://script/AGENTS.md).";
 const RESOURCES: [Resource; 3] = [
     Resource {
         uri: "cocoonbox://script/AGENTS.md",
@@ -87,6 +91,9 @@ impl Mcp {
             .map(|t| {
                 let mut tool = json!({"name": t.name, "description": t.description});
                 tool["inputSchema"] = t.parameters;
+                if t.name == ALWAYS_LOAD {
+                    tool["_meta"] = json!({"anthropic/alwaysLoad": true});
+                }
                 (t.name, tool)
             })
             .collect();
@@ -316,7 +323,7 @@ impl Mcp {
         });
         if self.script {
             result["capabilities"]["resources"] = json!({});
-            result["instructions"] = format!("{INSTRUCTIONS}\n\n{}", prompts::ROUTING).into();
+            result["instructions"] = format!("{SCRIPT_HEAD}\n\n{}", prompts::ROUTING).into();
         }
         Ok((session, result))
     }
