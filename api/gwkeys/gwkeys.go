@@ -17,7 +17,7 @@ import (
 const (
 	tenant          = "cocoonbox-boxes"
 	product         = "cocoonbox"
-	qps             = 4
+	qps             = 40
 	dailyTokens     = 5_000_000
 	tokensPerMinute = 200_000
 
