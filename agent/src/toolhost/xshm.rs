@@ -7,8 +7,10 @@ use std::sync::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as _, SK};
 use x11rb::protocol::shm::ConnectionExt as _;
+use x11rb::protocol::xinput::{ConnectionExt as _, DeviceType};
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ConnectionExt as _, ImageFormat, ImageOrder, MapState, Window,
+    Atom, AtomEnum, ConnectionExt as _, EventMask, GrabMode, GrabStatus, ImageFormat, ImageOrder,
+    MapState, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 
@@ -18,6 +20,7 @@ const OVERLAY_NAME: &[u8] = b"Cua.AgentCursorOverlay";
 const THUMB_BLOCK: usize = 8;
 const PANEL_ROWS: usize = 32;
 const DOCK_ROWS: usize = 40;
+const ALL_MASTERS: u16 = 1;
 
 /// A mapped child of the root: a window frame, or a popup such as a menu.
 #[derive(Clone, PartialEq)]
@@ -29,6 +32,21 @@ pub struct Placement {
     pub height: u16,
     /// Override-redirect: a menu, popup or tooltip rather than a managed window.
     pub popup: bool,
+    /// InputOutput: drawn on the screen, unlike an InputOnly window.
+    pub drawn: bool,
+}
+
+impl Placement {
+    fn contains(&self, x: i32, y: i32) -> bool {
+        let (left, top) = (i32::from(self.x), i32::from(self.y));
+        (left..left + i32::from(self.width)).contains(&x)
+            && (top..top + i32::from(self.height)).contains(&y)
+    }
+
+    /// Whether the screen rectangle `[x, y, w, h]` lies inside this window.
+    pub fn holds(&self, [x, y, w, h]: [i32; 4]) -> bool {
+        self.contains(x, y) && self.contains(x + w - 1, y + h - 1)
+    }
 }
 
 /// One X connection and one shared segment the size of the root window.
@@ -45,6 +63,7 @@ pub struct Grabber {
     net_active: Atom,
     /// Whether a root child belongs to the desktop shell (panel, dock, desktop), by window id.
     shell: Mutex<HashMap<Window, bool>>,
+    net_wm_pid: Atom,
 }
 
 // SAFETY: the segment is private to this Grabber and only read through `&self` after a reply.
@@ -76,13 +95,19 @@ impl Grabber {
             .reply()
             .map_err(|e| format!("MIT-SHM: {e}"))?;
         let seg = conn.generate_id().map_err(|e| format!("X id: {e}"))?;
-        let [net_wm_name, utf8, net_active] =
-            [&b"_NET_WM_NAME"[..], b"UTF8_STRING", b"_NET_ACTIVE_WINDOW"].map(|name| {
-                conn.intern_atom(false, name)
-                    .ok()
-                    .and_then(|c| c.reply().ok())
-                    .map_or(u32::from(AtomEnum::NONE), |r| r.atom)
-            });
+        let _ = conn.xinput_xi_query_version(2, 2).map(|c| c.reply());
+        let [net_wm_name, utf8, net_active, net_wm_pid] = [
+            &b"_NET_WM_NAME"[..],
+            b"UTF8_STRING",
+            b"_NET_ACTIVE_WINDOW",
+            b"_NET_WM_PID",
+        ]
+        .map(|name| {
+            conn.intern_atom(false, name)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map_or(u32::from(AtomEnum::NONE), |r| r.atom)
+        });
         let size = usize::from(width) * usize::from(height) * 4;
         // SAFETY: a plain syscall that creates a private segment of `size` bytes.
         let id = unsafe { libc::shmget(libc::IPC_PRIVATE, size, libc::IPC_CREAT | 0o600) };
@@ -112,6 +137,7 @@ impl Grabber {
             utf8,
             net_active,
             shell: Mutex::new(HashMap::new()),
+            net_wm_pid,
         };
         attached?;
         Ok(grabber)
@@ -165,21 +191,26 @@ impl Grabber {
 
     /// The root window as `(width, height, RGB rows)`.
     pub fn rgb(&self) -> Result<(u32, u32, Vec<u8>), String> {
-        let rgb = self
-            .bgrx()?
+        let rgb = self.region([0, 0, self.width.into(), self.height.into()])?;
+        Ok((u32::from(self.width), u32::from(self.height), rgb))
+    }
+
+    /// RGB rows of the screen rectangle `[x, y, w, h]`, which lies inside the screen.
+    pub fn region(&self, rect: [i32; 4]) -> Result<Vec<u8>, String> {
+        Ok(self
+            .image(rect)?
             .as_chunks::<4>()
             .0
             .iter()
             .flat_map(|p| [p[2], p[1], p[0]])
-            .collect();
-        Ok((u32::from(self.width), u32::from(self.height), rgb))
+            .collect())
     }
 
     /// The root window shrunk eightfold by averaging, as RGB rows; the panel and dock strips stay black.
     pub fn thumb(&self) -> Result<Vec<u8>, String> {
         let (w, h) = (usize::from(self.width), usize::from(self.height));
         let (tw, th) = (w / THUMB_BLOCK, h / THUMB_BLOCK);
-        let bgrx = self.bgrx()?;
+        let bgrx = self.image([0, 0, self.width.into(), self.height.into()])?;
         let mut sums = vec![0u32; tw * th * 3];
         for y in PANEL_ROWS..(th * THUMB_BLOCK).min(h - DOCK_ROWS) {
             let row = &bgrx[y * w * 4..(y * w + tw * THUMB_BLOCK) * 4];
@@ -200,6 +231,11 @@ impl Grabber {
 
     /// The mapped children of the root with their geometry: frames, menus and popups, without the desktop shell.
     pub fn mapped(&self) -> Result<Vec<Placement>, String> {
+        self.children(false)
+    }
+
+    /// The mapped children of the root with their geometry; the desktop shell's only with `shell`.
+    fn children(&self, shell: bool) -> Result<Vec<Placement>, String> {
         let tree = self
             .conn
             .query_tree(self.root)
@@ -226,7 +262,7 @@ impl Grabber {
             let (Ok(attrs), Ok(g)) = (attrs.reply(), geometry.reply()) else {
                 continue;
             };
-            if attrs.map_state == MapState::VIEWABLE && !self.is_shell(id) {
+            if attrs.map_state == MapState::VIEWABLE && (shell || !self.is_shell(id)) {
                 mapped.push(Placement {
                     id,
                     x: g.x,
@@ -234,6 +270,7 @@ impl Grabber {
                     width: g.width,
                     height: g.height,
                     popup: attrs.override_redirect,
+                    drawn: attrs.class == WindowClass::INPUT_OUTPUT,
                 });
             }
         }
@@ -311,6 +348,144 @@ impl Grabber {
             .unwrap_or_default()
     }
 
+    /// Whether keys sent to the focused window reach `window` of `pid`: it is the active window and holds
+    /// the input focus, no popup of another client is on the screen, the keyboard is not grabbed unless
+    /// by a popup of `pid`, and the core keyboard is the only master, since Chrome drops core keyboard
+    /// input while another one exists.
+    pub fn keyboard(&self, window: Window, pid: u32) -> Result<bool, String> {
+        if self.active() != Some(window) || self.masters() != Some(1) {
+            return Ok(false);
+        }
+        let focus = self
+            .conn
+            .get_input_focus()
+            .map_err(|e| format!("input focus: {e}"))?
+            .reply()
+            .map_err(|e| format!("input focus: {e}"))?
+            .focus;
+        if !self.inside(focus, window)? {
+            return Ok(false);
+        }
+        let (width, height) = (i32::from(self.width), i32::from(self.height));
+        let popups: Vec<Option<u32>> = self
+            .children(true)?
+            .iter()
+            .filter(|p| p.popup && p.drawn)
+            .filter(|p| {
+                let (x, y) = (i32::from(p.x), i32::from(p.y));
+                x < width && y < height && x + i32::from(p.width) > 0 && y + i32::from(p.height) > 0
+            })
+            .map(|p| self.pid(p.id))
+            .collect();
+        if popups.iter().any(|p| *p != Some(pid)) {
+            return Ok(false);
+        }
+        Ok(!popups.is_empty() || !self.grabbed(false)?)
+    }
+
+    /// Whether another client holds an active grab of the keyboard, or of the pointer with `pointer`;
+    /// a probe grab of this connection that succeeds is released at once.
+    pub fn grabbed(&self, pointer: bool) -> Result<bool, String> {
+        let (async_, now) = (GrabMode::ASYNC, x11rb::CURRENT_TIME);
+        let status = if pointer {
+            let mask = EventMask::NO_EVENT;
+            self.conn
+                .grab_pointer(false, self.root, mask, async_, async_, 0u32, 0u32, now)
+                .map_err(|e| format!("grab pointer: {e}"))?
+                .reply()
+                .map_err(|e| format!("grab pointer: {e}"))?
+                .status
+        } else {
+            self.conn
+                .grab_keyboard(false, self.root, now, async_, async_)
+                .map_err(|e| format!("grab keyboard: {e}"))?
+                .reply()
+                .map_err(|e| format!("grab keyboard: {e}"))?
+                .status
+        };
+        if status == GrabStatus::SUCCESS {
+            let released = if pointer {
+                self.conn.ungrab_pointer(now)
+            } else {
+                self.conn.ungrab_keyboard(now)
+            };
+            released.map_err(|e| format!("ungrab: {e}"))?;
+            self.conn.flush().map_err(|e| format!("ungrab: {e}"))?;
+        }
+        Ok(status != GrabStatus::SUCCESS)
+    }
+
+    /// The number of master keyboards.
+    fn masters(&self) -> Option<usize> {
+        let reply = self
+            .conn
+            .xinput_xi_query_device(ALL_MASTERS)
+            .ok()?
+            .reply()
+            .ok()?;
+        Some(
+            reply
+                .infos
+                .iter()
+                .filter(|d| d.type_ == DeviceType::MASTER_KEYBOARD)
+                .count(),
+        )
+    }
+
+    /// The top drawn child of the root at the screen point `(x, y)`.
+    pub fn top_at(&self, x: i32, y: i32) -> Result<Option<Placement>, String> {
+        Ok(self
+            .children(true)?
+            .into_iter()
+            .rev()
+            .find(|p| p.drawn && p.contains(x, y)))
+    }
+
+    /// The child of the root that holds window `w`: its window manager frame, or `w` itself.
+    pub fn top_level(&self, mut w: Window) -> Result<Window, String> {
+        loop {
+            let parent = self.parent(w)?;
+            if parent == self.root || parent == x11rb::NONE {
+                return Ok(w);
+            }
+            w = parent;
+        }
+    }
+
+    /// The `_NET_WM_PID` of window `w`.
+    pub fn pid(&self, w: Window) -> Option<u32> {
+        let reply = self
+            .conn
+            .get_property(false, w, self.net_wm_pid, AtomEnum::CARDINAL, 0, 1)
+            .ok()?
+            .reply()
+            .ok()?;
+        reply.value32()?.next()
+    }
+
+    /// Whether `w` is `ancestor` or lies inside it; false for no window and for the pointer root.
+    fn inside(&self, mut w: Window, ancestor: Window) -> Result<bool, String> {
+        loop {
+            if w == ancestor {
+                return Ok(true);
+            }
+            if w == self.root || w <= 1 {
+                return Ok(false);
+            }
+            w = self.parent(w)?;
+        }
+    }
+
+    fn parent(&self, w: Window) -> Result<Window, String> {
+        Ok(self
+            .conn
+            .query_tree(w)
+            .map_err(|e| format!("query tree: {e}"))?
+            .reply()
+            .map_err(|e| format!("query tree: {e}"))?
+            .parent)
+    }
+
     fn name(&self, w: Window) -> String {
         for (atom, kind) in [
             (self.net_wm_name, self.utf8),
@@ -330,15 +505,17 @@ impl Grabber {
         String::new()
     }
 
-    fn bgrx(&self) -> Result<&[u8], String> {
-        let (w, h) = (self.width, self.height);
+    fn image(&self, [x, y, w, h]: [i32; 4]) -> Result<&[u8], String> {
+        let narrow = |v: i32| i16::try_from(v).map_err(|_| format!("rectangle {x},{y} {w}x{h}"));
+        let wide = |v: i32| u16::try_from(v).map_err(|_| format!("rectangle {x},{y} {w}x{h}"));
+        let (rx, ry, rw, rh) = (narrow(x)?, narrow(y)?, wide(w)?, wide(h)?);
         self.conn
             .shm_get_image(
                 self.root,
-                0,
-                0,
-                w,
-                h,
+                rx,
+                ry,
+                rw,
+                rh,
                 !0,
                 ImageFormat::Z_PIXMAP.into(),
                 self.seg,
@@ -347,8 +524,12 @@ impl Grabber {
             .map_err(|e| format!("shm get image: {e}"))?
             .reply()
             .map_err(|e| format!("shm get image: {e}"))?;
-        // SAFETY: the reply means the server finished writing; the segment spans `size` bytes for the life of `self`.
-        Ok(unsafe { std::slice::from_raw_parts(self.addr.as_ptr(), self.size) })
+        let len = usize::from(rw) * usize::from(rh) * 4;
+        if len > self.size {
+            return Err(format!("rectangle {x},{y} {w}x{h} exceeds the screen"));
+        }
+        // SAFETY: the reply means the server finished writing `len` bytes; the segment spans `size` bytes for the life of `self`.
+        Ok(unsafe { std::slice::from_raw_parts(self.addr.as_ptr(), len) })
     }
 }
 
