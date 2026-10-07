@@ -84,6 +84,7 @@ type chunkIndex struct {
 type head struct {
 	Latest    string `json:"latest"`
 	SavedAtMs int64  `json:"saved_at_ms"`
+	Image     string `json:"image,omitempty"`
 }
 
 // statePath places a box's objects in the store: chunks and their index per user, snapshots per box.
@@ -130,8 +131,8 @@ func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *st
 	}
 }
 
-// save snapshots the state of the agent at ep and uploads the chunks the user's store lacks.
-func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+// save snapshots the state of the agent at ep, a machine of image, and uploads the chunks the user's store lacks.
+func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint, image string, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	unlock := l.lock(p.box)
 	defer unlock()
 	// The GC sweep takes this lock exclusively, so no save is between its index read and its commit.
@@ -162,7 +163,7 @@ func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint
 	if err != nil {
 		return nil, err
 	}
-	if err := l.commit(ctx, p, key.ID, rec, base); err != nil {
+	if err := l.commit(ctx, p, key.ID, rec, base, image); err != nil {
 		return nil, err
 	}
 	return rec, nil
@@ -333,7 +334,7 @@ func (l *stateLayer) lastSaved(ctx context.Context, p statePath) int64 {
 }
 
 // commit adds the uploaded chunks to the index, then writes the snapshot record (a delta against base when set), the timeline and the head, so a crash leaves the previous head valid.
-func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, base *snapshotRecord) error {
+func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, base *snapshotRecord, image string) error {
 	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks) }); err != nil {
 		return err
 	}
@@ -343,7 +344,7 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 	if err := l.retry(ctx, func() error { return l.addToTimeline(ctx, p, rec.timelineEntry) }); err != nil {
 		return err
 	}
-	h := head{Latest: rec.ID, SavedAtMs: rec.SavedAtMs}
+	h := head{Latest: rec.ID, SavedAtMs: rec.SavedAtMs, Image: image}
 	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.head(), h) }); err != nil {
 		return err
 	}
