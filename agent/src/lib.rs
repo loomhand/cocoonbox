@@ -12,6 +12,7 @@ pub mod llm;
 pub mod mcp;
 pub mod offload;
 pub mod prompts;
+pub mod route;
 pub mod runner;
 pub mod screen;
 pub mod server;

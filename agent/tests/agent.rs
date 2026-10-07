@@ -341,6 +341,10 @@ fn chat_tool_call(id: &str, name: &str, args: &Value) -> String {
     ]) + "data: [DONE]\n\n"
 }
 
+fn decision(tier: &str, confidence: f64) -> String {
+    json!({"answers": {"tier": {"type": "choice", "choice": tier, "confidence": confidence, "probabilities": {tier: confidence}}}, "usage": {"cost": 0.00004}}).to_string()
+}
+
 fn chat_text(text: &str) -> String {
     sse(&[
         json!({"choices":[{"delta":{"content":text},"finish_reason":"stop"}]}),
@@ -2542,6 +2546,7 @@ async fn vision_main_model_gets_a_screenshot_tool() {
         .as_str()
         .unwrap();
     assert!(!system.contains("Script"), "{system}");
+    assert!(gw_bodies(&h.gw_log, "decisions").is_empty());
     let cua = h.cua_log.lock().unwrap().clone();
     let names: Vec<&str> = cua.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(names, ["get_desktop_state", "end_session"]);
@@ -2996,6 +3001,7 @@ async fn mcp_serves_the_script_guide_as_resources() {
 async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routing() {
     let run = json!({"code": "export function main(p) { return p }", "params": {"n": 1}, "screenshot": false});
     let h = Harness::with_script(vec![
+        ("decisions", decision("script", 0.93)),
         (
             "chat/completions",
             chat_tool_call("call_r", "script_run", &run),
@@ -3021,10 +3027,22 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
         .iter()
         .map(|t| t["function"]["name"].as_str().unwrap())
         .collect();
-    assert!(offered.contains(&"script_run"), "{offered:?}");
+    assert_eq!(offered[0], "script_run", "{offered:?}");
     assert!(offered.contains(&"delegate_computer"), "{offered:?}");
     let system = chats[0]["messages"][0]["content"].as_str().unwrap();
     assert!(system.ends_with(&routing), "{system}");
+    let asked = gw_bodies(&h.gw_log, "decisions");
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0]["state"]["task"], "save a note in mousepad");
+    assert_eq!(asked[0]["model"], "typesafe/jev-1.13");
+    let request = &chats[0]["messages"][1]["content"];
+    assert_eq!(
+        request[0]["text"],
+        "Router: this task is tier script (0.93): write one script and run it with script_run."
+    );
+    assert_eq!(request[1]["text"], "save a note in mousepad");
+    assert!(entries.iter().any(|e| e.role == i32::from(pb::Role::System)
+        && matches!(&e.body, Some(Body::Text(t)) if t.text.starts_with("Router: this task is tier script"))));
     let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
     assert_eq!(result["role"], "tool");
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
@@ -3055,6 +3073,45 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
             golden["result"]["instructions"].as_str().unwrap()
         )
     );
+}
+
+#[tokio::test]
+async fn cua_route_reports_the_tier_and_marks_a_weak_or_failed_route_uncertain() {
+    let h = Harness::with_script(vec![
+        ("decisions", decision("browser", 0.97)),
+        ("decisions", decision("cua", 0.55)),
+    ])
+    .await;
+    let mut mcp = McpClient::connect(&h).await;
+    let tools = McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await);
+    assert!(tools.contains(&"cua_route".to_owned()), "{tools:?}");
+    let mut reports = Vec::new();
+    for task in ["read the page title", "turn on word wrap", "no script left"] {
+        let out = mcp.call("cua_route", json!({"task": task})).await;
+        assert_eq!(out["isError"], false, "{out}");
+        reports.push(
+            serde_json::from_str::<Value>(out["content"][0]["text"].as_str().unwrap()).unwrap(),
+        );
+    }
+    assert_eq!(
+        (&reports[0]["tier"], &reports[0]["uncertain"]),
+        (&json!("browser"), &json!(false))
+    );
+    assert!(
+        reports[0]["meaning"]
+            .as_str()
+            .unwrap()
+            .contains("browser_*")
+    );
+    assert_eq!(reports[0]["tiers"].as_object().unwrap().len(), 5);
+    assert_eq!(
+        (&reports[1]["tier"], &reports[1]["uncertain"]),
+        (&json!("cua"), &json!(true))
+    );
+    assert_eq!(reports[2]["uncertain"], true);
+    assert!(reports[2]["error"].is_string(), "{}", reports[2]);
+    let asked = gw_bodies(&h.gw_log, "decisions");
+    assert_eq!(asked[1]["state"]["task"], "turn on word wrap");
 }
 
 #[tokio::test]

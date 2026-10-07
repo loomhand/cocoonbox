@@ -452,6 +452,15 @@ impl Mcp {
             v @ Value::Object(_) => v.clone(),
             _ => return Err((-32602, "arguments must be an object".to_owned())),
         };
+        if let (Some(router), "cua_route") = (&self.rt.router, name.as_ref()) {
+            s.gui_streak(name);
+            let task = requested["task"].as_str().unwrap_or_default();
+            let mut part = json!({"type": "text"});
+            part["text"] = router.route(task).await.report().to_string().into();
+            let mut result = json!({"isError": false});
+            result["content"] = Value::Array(vec![part]);
+            return Ok(result);
+        }
         if let Principal::Share { write: false, .. } = principal {
             requested["workspace_only"] = true.into();
         }

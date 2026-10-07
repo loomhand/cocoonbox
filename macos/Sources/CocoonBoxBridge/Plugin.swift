@@ -8,7 +8,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.9.0"
+    static let version = "0.10.0"
     static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -89,7 +89,7 @@ public enum Plugin {
     static let routing = """
     ## Pick the tool tier first
 
-    Decide for each request, not by habit from the previous one. Take the first tier that fits.
+    Decide for each request, not by habit from the previous one. Take the first tier that fits. If unsure which tier, call `cua_route` first (the box's own agent gets this route at the start of each task); if it says uncertain, decide yourself.
 
     1. **Command.** If a shell command or a file tool can do it, use `shell`, `read_file`, `write_file`, `edit_file` or `list_dir`. Do not open an app to do a command's job. Examples: count, create, move, search or edit files; install a package; read a log; fetch a URL with curl.
     2. **A look, one click, or a web page.** For a single look or one click, use `screenshot`, `computer_state` and `computer_act` (in the box's own agent: `delegate_computer`). For a web page use the `browser_*` tools, also for a form filled several times. Examples: see what is on screen; toggle one menu option; read a page's title; submit a web form for each row of a list.

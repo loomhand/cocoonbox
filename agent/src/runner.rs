@@ -17,8 +17,9 @@ use crate::dispatch::{Caller, Dispatcher, ToolOutput, Tools};
 use crate::journal::Journal;
 use crate::llm::{self, Delta, Message, Model, Part, Request, ToolCall, ToolSpec, Usage};
 use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
+use crate::route::Router;
 use crate::store::Store;
-use crate::{computer, new_id, prompts, tools};
+use crate::{computer, new_id, prompts, route, tools};
 
 const QUEUE_DEPTH: usize = 32;
 const TITLE_CHARS: usize = 24;
@@ -44,6 +45,8 @@ pub struct Runtime {
     pub turns: Arc<tokio::sync::RwLock<()>>,
     /// Interrupts the MCP calls of share sessions when a quiesce has waited long enough.
     pub guests: Arc<Preempt>,
+    /// The tier router of a Script box; `None` elsewhere.
+    pub router: Option<Router>,
     connect: Option<Arc<connect::Client>>,
     main_tools: Vec<ToolSpec>,
     main_vision_tools: Vec<ToolSpec>,
@@ -69,8 +72,13 @@ impl Runtime {
             }
             None => None,
         };
+        let router = cfg
+            .script
+            .then(|| Router::new(&cfg.gw_base_url, &cfg.gw_api_key))
+            .transpose()?;
         let rt = Arc::new(Self {
             model,
+            router,
             dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal))),
             journal,
             main_tools: tools::main_tools(false, cfg.script),
@@ -504,12 +512,19 @@ impl Runtime {
             vision,
             self.cfg.script,
         );
+        let tier = match &self.router {
+            Some(router) => self.front_route(ctx, router, &mut messages).await?,
+            None => None,
+        };
         for _ in 0..MAIN_MAX_STEPS {
             let connectors = match &self.connect {
                 Some(c) => c.tools().await,
                 None => Arc::default(),
             };
-            let offered: Vec<&ToolSpec> = tools.iter().chain(connectors.iter()).collect();
+            let mut offered: Vec<&ToolSpec> = tools.iter().chain(connectors.iter()).collect();
+            if let Some(tier) = tier {
+                offered.sort_by_key(|t| !route::leads(tier, &t.name));
+            }
             let req = Request {
                 model: &ctx.model,
                 system: &system,
@@ -542,6 +557,53 @@ impl Runtime {
         Err(format!(
             "stopped after {MAIN_MAX_STEPS} steps without a final answer"
         ))
+    }
+
+    /// Routes the turn's request; a confident route leads the request with one line and returns its tier.
+    async fn front_route(
+        &self,
+        ctx: &TurnCtx,
+        router: &Router,
+        messages: &mut [Message],
+    ) -> Result<Option<&'static str>, String> {
+        let Some(Message::User(parts)) = messages.last_mut() else {
+            return Ok(None);
+        };
+        let task = parts
+            .iter()
+            .find_map(|p| match p {
+                Part::Text(t) => Some(t.as_str()),
+                Part::Image(_) => None,
+            })
+            .unwrap_or_default();
+        let r = router.route(task).await;
+        let tier = route::TIERS
+            .iter()
+            .find(|(t, _)| r.confident() && *t == r.tier)
+            .map(|(t, _)| *t);
+        let note = match (&r.error, tier) {
+            (Some(e), _) => format!("Router: unavailable ({e}); the model decides."),
+            (None, Some(t)) => format!(
+                "Router: this task is tier {t} ({:.2}): {}.",
+                r.confidence,
+                route::meaning(t).unwrap_or_default()
+            ),
+            (None, None) => format!(
+                "Router: uncertain (best {} at {:.2}); the model decides.",
+                r.tier, r.confidence
+            ),
+        };
+        if tier.is_some() {
+            parts.insert(0, Part::Text(note.clone()));
+        }
+        let block = ctx.blocks.fetch_add(1, Ordering::Relaxed);
+        let body = Body::Text(pb::TextBlock {
+            text: note,
+            block,
+            ..Default::default()
+        });
+        self.record(ctx, Role::System, body, false).await?;
+        Ok(tier)
     }
 
     /// Runs one call of the main model; box tools go through the dispatcher, loop tools run here.
@@ -796,6 +858,7 @@ pub fn history_messages(entries: Vec<TranscriptEntry>) -> Vec<Message> {
     for e in entries {
         let user = e.role == i32::from(Role::User);
         match e.body {
+            Some(Body::Text(_)) if e.role == i32::from(Role::System) => {}
             Some(Body::Text(t)) if user => {
                 close_open(&mut out, &mut open);
                 out.push(Message::User(vec![Part::Text(t.text)]));
