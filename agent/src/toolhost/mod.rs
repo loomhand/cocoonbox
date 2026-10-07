@@ -8,6 +8,7 @@ pub mod rpc;
 pub mod shell;
 pub mod script;
 pub mod state;
+pub mod timing;
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
@@ -131,7 +132,9 @@ impl Host {
             }
             other => Err(format!("unknown tool {other}")),
         };
-        result.unwrap_or_else(Output::error)
+        let out = result.unwrap_or_else(Output::error);
+        timing::note("error", out.is_error);
+        out
     }
 
     async fn shell(&self, agent_id: &str, args: Value) -> Result<String, String> {
@@ -248,8 +251,9 @@ pub async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
         _ => {}
     }
     let mut probe = [0u8; 1];
+    let tool = call.tool.clone();
     let out = tokio::select! {
-        out = host.dispatch(call) => out,
+        out = timing::scope(&tool, host.dispatch(call)) => out,
         _ = rd.read(&mut probe) => return,
     };
     if let Err(e) = rpc::write_frame(&mut wr, &out).await {

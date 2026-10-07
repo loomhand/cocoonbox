@@ -17,6 +17,7 @@ use super::cua::Cua;
 use super::files;
 use super::rpc::Output;
 use super::shell::Capture;
+use super::timing;
 use crate::llm::image_mime;
 use crate::sys;
 
@@ -95,6 +96,7 @@ impl Script {
                 ),
                 Err(e) => eprintln!("script: release held input after a failed run: {e}"),
             }
+            timing::mark("release");
         }
         let _ = tokio::fs::remove_dir_all(&run_dir).await;
         let mut report = report?;
@@ -141,6 +143,7 @@ impl Script {
         let (result_path, snapshot_path) =
             (run_dir.join("result.json"), run_dir.join("snapshot.txt"));
         let started = Instant::now();
+        timing::mark("prepare");
         let mut child = Command::new(&self.bin)
             .arg("run")
             .arg(&entry)
@@ -156,6 +159,7 @@ impl Script {
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| format!("start {}: {e}", self.bin.display()))?;
+        timing::mark("spawn");
         let mut guard = RunGuard {
             pgid: child.id(),
             armed: true,
@@ -188,6 +192,7 @@ impl Script {
             }
         };
         guard.armed = false;
+        timing::mark("run");
         let stderr = errs
             .render()
             .lines()

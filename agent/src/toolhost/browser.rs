@@ -17,6 +17,8 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use zeroize::Zeroizing;
 
+use super::timing;
+
 const LAUNCH_WAIT: Duration = Duration::from_secs(20);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -264,6 +266,7 @@ impl Browser {
         );
         let mut window = slot.lock().await;
         let mut cdp = self.connect(&mut window).await?;
+        timing::mark("connect");
         if let Some(t) = window.as_ref() {
             t.ws_url.clone_into(&mut *self.last.lock().await);
         }
@@ -276,10 +279,12 @@ impl Browser {
                     format!("https://{}", a.url)
                 };
                 let nav = cdp.call("Page.navigate", json!({"url": url})).await?;
+                timing::mark("navigate");
                 if let Some(err) = nav["errorText"].as_str().filter(|e| !e.is_empty()) {
                     return Err(format!("navigate {url}: {err}"));
                 }
                 cdp.wait_loaded().await;
+                timing::mark("load");
                 cdp.snapshot().await
             }
             "browser_snapshot" => cdp.snapshot().await,
@@ -748,7 +753,10 @@ impl Cdp {
 
     async fn snapshot(&mut self) -> Result<String, String> {
         let v = self.eval(SNAPSHOT_JS).await?;
-        Ok(v.as_str().unwrap_or_default().to_owned())
+        let snapshot = v.as_str().unwrap_or_default().to_owned();
+        timing::mark("snapshot");
+        timing::note("snapshot_bytes", snapshot.len());
+        Ok(snapshot)
     }
 }
 
