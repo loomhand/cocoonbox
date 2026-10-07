@@ -17,7 +17,7 @@ type Fp = { role: string; name: string; parent: string; nth: number; label?: str
 type Node = { ref: number; depth: number; role: string; name: string; value: string; disabled: boolean; parent: number; keys: string }
 type Hit = { n: Node; i: number; how: string; p?: number; margin?: number }
 type Flow = { name: string; params: Record<string, string>; steps: Step[]; idempotent: boolean; runs: number; saved_at: string; rewrites: number }
-type Chain = { at: number; window: string | null; name?: string; params: Record<string, string>; steps: Step[]; dirty: boolean }
+type Chain = { at: number; window: string | null; pid: number | null; name?: string; named?: boolean; params: Record<string, string>; steps: Step[]; dirty: boolean }
 
 const FLOWS = '/workspace/flows'
 const LOG = `${FLOWS}/.runs.jsonl`
@@ -307,9 +307,17 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const t0 = Date.now(); press(s.key); tick('act', t0); return
   }
   if (s.wait) { const w = await windowFor(s.wait, s.timeout_ms ?? 5000, s.seen); rec.seen = w.title; return }
+  if (s.close) {
+    // close shuts a dialog: the named window, else the focused dialog, else a dialog of the focused app; never an app's main window unless named
+    const t0 = Date.now(); let w = s.window ? await windowFor(s.window, 3000, s.seen) : focused()
+    if (w && !s.window && !isDialog(outline(w))) w = m.windows().find((x) => x.pid === w!.pid && x.title !== w!.title && isDialog(outline(x))) ?? null
+    if (!w) { rec.noop = true; tick('act', t0); return }
+    rec.seen = w.title; w.focus(); press('Escape'); await settle(w.title)
+    if (m.windows().some((x) => x.title === w!.title && x.pid === w!.pid)) w.close()
+    tick('act', t0); return
+  }
   const w = await windowFor(s.window, 3000, s.seen)
   rec.seen = w.title
-  if (s.close) { const t0 = Date.now(); press('Escape'); await settle(w.title); if (focused()?.title === w.title) w.close(); tick('act', t0); return }
   let t0 = Date.now(); const snap = snapOf(w); const nodes = parse(snap); tick('snap', t0)
   if (s.expect) {
     const d = decide({ window_title: w.title, contents: snap.print({ maxChars: 60 }).slice(0, 4000) }, { ok: noul(s.expect) })
@@ -478,7 +486,8 @@ function find(request: string) {
   rows.forEach((r, i) => { opts[`f${i}`] = r })
   const d = decide({ request }, { pick: choice('Which saved GUI flow does this request?', opts) })
   const k = d.pick.choice as string; const p = d.pick.probabilities[k] as number
-  if (k === 'none' || p < 0.8) return { ok: false, flow: null, p: +p.toFixed(2) }
+  const next = Object.values(d.pick.probabilities as Record<string, number>).sort((a, b) => b - a)[1] ?? 0
+  if (k === 'none' || p < 0.6 || p - next < MARGIN) return { ok: false, flow: null, p: +p.toFixed(2) }
   return { ok: true, flow: rows[+k.slice(1)].replace(/\(.*$/, ''), p: +p.toFixed(2) }
 }
 
@@ -494,6 +503,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   for (const w of m.windows()) known.add(w.title)
   const startTitles = new Set(known)
   const startWindow = focused()?.title ?? null
+  const startPid = focused()?.pid ?? null
   const recs: Record<string, unknown>[] = []
   let escalate: Record<string, unknown> | null = null; let done = plan.length
   const bad = plan.findIndex((s) => OPS.filter((k) => k in s).length !== 1)
@@ -546,22 +556,28 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     const ran = plan.slice(p.start ?? 0, done).map((s, k) => { const r = recs[(p.start ?? 0) + k]; const o: Step = { ...s }; if (r?.fp) o.fp = r.fp as Fp; if (r?.seen && !s.app) o.seen = r.seen as string; return o })
     const dirty = recs.some((r) => r?.unsaved)
     let chain: Chain | null = null
-    if (plan[0].app && !(p.start ?? 0)) chain = { at: Date.now(), window: null, params: { ...(p.params ?? {}) }, steps: ran, dirty }
+    if (plan[0].app && !(p.start ?? 0)) chain = { at: Date.now(), window: null, pid: null, params: { ...(p.params ?? {}) }, steps: ran, dirty }
     else {
       let prev: Chain | null = null
       try { prev = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
-      if (prev && Date.now() - prev.at < CHAIN_AGE && prev.window === startWindow) chain = { ...prev, at: Date.now(), params: { ...prev.params, ...(p.params ?? {}) }, steps: [...prev.steps, ...ran], dirty: prev.dirty || dirty }
+      if (prev && Date.now() - prev.at < CHAIN_AGE && (prev.window === startWindow || (prev.pid !== null && prev.pid === startPid))) chain = { ...prev, at: Date.now(), params: { ...prev.params, ...(p.params ?? {}) }, steps: [...prev.steps, ...ran], dirty: prev.dirty || dirty }
     }
     if (chain) {
-      if (p.save) chain.name = slug(p.save)
-      if (settled && !chain.dirty && chain.steps.some((s) => !s.app)) {
+      if (p.save) { chain.name = slug(p.save); chain.named = true }
+      const changes = chain.steps.some((s) => s.check || s.set || s.type !== undefined || (s.menu && s.on !== undefined))
+      if ((settled || (!escalate && changes)) && !chain.dirty && chain.steps.some((s) => !s.app)) {
         const tpl = templated(chain.steps, chain.params)
-        const targets = chain.steps.filter((s) => s.menu || s.check || s.set || s.click).slice(-2).map((s) => (s.menu ?? s.check ?? s.set ?? s.click)!.split('>').at(-1))
-        chain.name ??= slug([chain.steps[0].app, ...targets].filter(Boolean).join(' ')) || undefined
+        const keys: Record<string, string> = { 'ctrl+n': 'new', 'ctrl+s': 'save', 'ctrl+shift+s': 'save as', 'ctrl+o': 'open' }
+        const targets = chain.steps.filter((s) => s.menu || s.check || s.set || s.click || keys[s.key?.toLowerCase() ?? '']).slice(-2).map((s) => s.key ? keys[s.key.toLowerCase()] : (s.menu ?? s.check ?? s.set ?? s.click)!.split('>').at(-1))
+        const auto = slug([chain.steps[0].app, ...targets].filter(Boolean).map((x) => x!.split(' ').slice(0, 3).join(' ')).join(' ')) || undefined
+        if (!chain.named && auto && chain.name && auto !== chain.name) git('rm', '-q', '--ignore-unmatch', `${chain.name}.json`)
+        if (!chain.named) chain.name = auto
         const idempotent = chain.steps.every((s) => s.type === undefined && (!s.key || /^(esc|escape|tab|shift\+tab)$/i.test(s.key)))
         if (chain.name) { saveFlow({ name: chain.name, params: tpl.params, steps: tpl.steps, idempotent, runs: 1, saved_at: new Date().toISOString(), rewrites: 0 }, `saved from ${chain.steps.length} passing steps`); saved = chain.name }
       }
-      chain.window = focused()?.title ?? null
+      const end = focused()
+      chain.window = end?.title ?? null
+      if (end && !/^(Desktop|xfce4-panel)$/.test(end.title)) chain.pid = end.pid
       try { mkdirSync(FLOWS, { recursive: true }); writeFileSync(PENDING, JSON.stringify(chain)) } catch {}
     }
   }
