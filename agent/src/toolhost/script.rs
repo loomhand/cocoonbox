@@ -1,4 +1,4 @@
-//! `script_run`: one stateless script run with the image's `script` CLI as `user`.
+//! `script_run`: one stateless script run with the image's `script` CLI as `user`; `gui_plan` runs the image's plan executor that way.
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
@@ -30,6 +30,8 @@ const KEPT_SHOTS: usize = 20;
 const ERROR_LINES: usize = 12;
 const APP_SCOPE: &str = "/app.slice/script-app-";
 const NOISE: &str = "script: warning: OPENROUTER_API_KEY is not set";
+const GUI_PLAN: &str = "/opt/script/lib/gui_plan.mts";
+const FLOW_INDEX: &str = "flows/INDEX";
 const ENTRY: &str = r#"import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 const env = process.env
@@ -74,32 +76,11 @@ impl Script {
             (None, Some(path)) => Script::File(files::resolve(workspace, &path)),
             _ => return Err("pass exactly one of code or script".to_owned()),
         };
-        let timeout = timeout_s
-            .map_or(DEFAULT_TIMEOUT, Duration::from_secs)
-            .clamp(Duration::from_secs(1), MAX_TIMEOUT);
         let id = uuid::Uuid::new_v4().simple().to_string();
-        let run_dir = self.dir.join(&id);
-        tokio::fs::create_dir_all(&run_dir)
-            .await
-            .map_err(|e| format!("create {}: {e}", run_dir.display()))?;
-        let _ = tokio::fs::set_permissions(&self.dir, std::fs::Permissions::from_mode(0o700)).await;
         let params = Value::Object(params.unwrap_or_default()).to_string();
-        let report = self
-            .execute(script, &params, workspace, &run_dir, timeout)
-            .await;
-        if report.as_ref().is_ok_and(|r| r.get("error").is_some()) {
-            let started = Instant::now();
-            match self.release(workspace, &run_dir).await {
-                Ok(()) => eprintln!(
-                    "script: released held input after a failed run in {} ms",
-                    started.elapsed().as_millis()
-                ),
-                Err(e) => eprintln!("script: release held input after a failed run: {e}"),
-            }
-            timing::mark("release");
-        }
-        let _ = tokio::fs::remove_dir_all(&run_dir).await;
-        let mut report = report?;
+        let mut report = self
+            .run_script(script, &params, workspace, timeout_of(timeout_s), &id)
+            .await?;
         let mut out = Output::default();
         if screenshot {
             match self.screenshot(cua, max_edge, &id).await {
@@ -115,6 +96,78 @@ impl Script {
         out.text =
             serde_json::to_string_pretty(&report).map_err(|e| format!("encode report: {e}"))?;
         Ok(out)
+    }
+
+    /// Runs the plan executor and reports its result as compact JSON, with a screenshot only after an escalation or on request.
+    pub async fn plan(&self, cua: &Cua, workspace: &Path, args: Value) -> Result<Output, String> {
+        let PlanArgs {
+            params,
+            timeout_s,
+            screenshot,
+            max_edge,
+        } = serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let mut report = self
+            .run_script(
+                Script::File(PathBuf::from(GUI_PLAN)),
+                &Value::Object(params).to_string(),
+                workspace,
+                timeout_of(timeout_s),
+                &id,
+            )
+            .await?;
+        let mut out = Output::default();
+        let body = match report.get_mut("error") {
+            Some(error) => {
+                out.is_error = true;
+                json!({"error": error.take()})
+            }
+            None => report["result"].take(),
+        };
+        if screenshot.unwrap_or(body["ok"] != true) {
+            out.image_b64 = cua.screenshot_once(max_edge).await?;
+        }
+        out.text = body.to_string();
+        Ok(out)
+    }
+
+    /// The saved flows' catalog, one `name(params)` line each, newest first; empty before the first save.
+    pub async fn flows(workspace: &Path) -> String {
+        tokio::fs::read_to_string(workspace.join(FLOW_INDEX))
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Runs one script in its own scratch directory, releasing held input after a failure.
+    async fn run_script(
+        &self,
+        script: Script,
+        params: &str,
+        workspace: &Path,
+        timeout: Duration,
+        id: &str,
+    ) -> Result<Value, String> {
+        let run_dir = self.dir.join(id);
+        tokio::fs::create_dir_all(&run_dir)
+            .await
+            .map_err(|e| format!("create {}: {e}", run_dir.display()))?;
+        let _ = tokio::fs::set_permissions(&self.dir, std::fs::Permissions::from_mode(0o700)).await;
+        let report = self
+            .execute(script, params, workspace, &run_dir, timeout)
+            .await;
+        if report.as_ref().is_ok_and(|r| r.get("error").is_some()) {
+            let started = Instant::now();
+            match self.release(workspace, &run_dir).await {
+                Ok(()) => eprintln!(
+                    "script: released held input after a failed run in {} ms",
+                    started.elapsed().as_millis()
+                ),
+                Err(e) => eprintln!("script: release held input after a failed run: {e}"),
+            }
+            timing::mark("release");
+        }
+        let _ = tokio::fs::remove_dir_all(&run_dir).await;
+        report
     }
 
     async fn execute(
@@ -291,6 +344,18 @@ struct RunArgs {
     max_edge: Option<u32>,
 }
 
+#[derive(Deserialize)]
+struct PlanArgs {
+    #[serde(flatten)]
+    params: Map<String, Value>,
+    #[serde(default)]
+    timeout_s: Option<u64>,
+    #[serde(default)]
+    screenshot: Option<bool>,
+    #[serde(default)]
+    max_edge: Option<u32>,
+}
+
 enum Script {
     Code(String),
     File(PathBuf),
@@ -320,6 +385,12 @@ impl Drop for RunGuard {
 
 fn default_screenshot() -> bool {
     true
+}
+
+fn timeout_of(timeout_s: Option<u64>) -> Duration {
+    timeout_s
+        .map_or(DEFAULT_TIMEOUT, Duration::from_secs)
+        .clamp(Duration::from_secs(1), MAX_TIMEOUT)
 }
 
 async fn drain(mut r: impl AsyncRead + Unpin, capture: &mut Capture) {

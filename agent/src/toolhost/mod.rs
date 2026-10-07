@@ -113,6 +113,12 @@ impl Host {
                     .run(&self.cua, &self.workspace, call.args)
                     .await
             }
+            "gui_plan" => {
+                self.script
+                    .plan(&self.cua, &self.workspace, call.args)
+                    .await
+            }
+            "gui_flows" => Ok(Output::text(Script::flows(&self.workspace).await)),
             "screenshot" => {
                 let max_edge = call.args["max_edge"]
                     .as_u64()

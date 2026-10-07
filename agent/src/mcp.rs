@@ -48,9 +48,12 @@ The user watches the screen live and sees every call.";
 const SCRIPT_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 The user watches the screen live and sees every call.";
-const ALWAYS_LOAD: &str = "script_run";
+const ALWAYS_LOAD: [&str; 2] = ["script_run", "gui_plan"];
 const NUDGE_STREAK: u32 = 2;
-const NUDGE: &str = "\n\n2 GUI steps in a row: for desktop work like this, load script_run (ToolSearch) and write one script; it is faster and replayable (see cocoonbox://script/AGENTS.md).";
+const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
+const FLOWS: &str = "\nSaved flows, replay with {flow, params}: ";
+const MAX_DESCRIPTION: usize = 2048;
+const MAX_FLOWS: usize = 30;
 const RESOURCES: [Resource; 3] = [
     Resource {
         uri: "cocoonbox://script/AGENTS.md",
@@ -91,7 +94,7 @@ impl Mcp {
             .map(|t| {
                 let mut tool = json!({"name": t.name, "description": t.description});
                 tool["inputSchema"] = t.parameters;
-                if t.name == ALWAYS_LOAD {
+                if ALWAYS_LOAD.contains(&t.name.as_ref()) {
                     tool["_meta"] = json!({"anthropic/alwaysLoad": true});
                 }
                 (t.name, tool)
@@ -387,7 +390,7 @@ impl Mcp {
         let method = msg["method"].as_str()?;
         let result = match (method, s) {
             ("ping", _) => Ok(json!({})),
-            ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
+            ("tools/list", Some(s)) => Ok(self.list_tools(s, principal).await),
             ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
             ("resources/list", _) if self.script => Ok(list_resources()),
             ("resources/read", _) if self.script => read_resource(&msg["params"]).await,
@@ -425,16 +428,28 @@ impl Mcp {
     }
 
     /// The tools `principal` may call; a share session remembers the mode it listed, to announce a switch.
-    fn list_tools(&self, s: &Session, principal: &Principal) -> Value {
+    async fn list_tools(&self, s: &Session, principal: &Principal) -> Value {
         if let Principal::Share { write, .. } = principal {
             *lock(&s.listed) = Some(*write);
         }
-        let tools: Vec<&Value> = self
+        let mut tools: Vec<Value> = self
             .tools
             .iter()
             .filter(|(name, _)| allows(principal, name))
-            .map(|(_, tool)| tool)
+            .map(|(_, tool)| tool.clone())
             .collect();
+        if let Some(plan) = tools.iter_mut().find(|t| t["name"] == "gui_plan") {
+            let index = self
+                .rt
+                .dispatcher
+                .run(s.owner(), None, "gui_flows", json!({}))
+                .await;
+            if !index.is_error
+                && let Some(text) = plan["description"].as_str()
+            {
+                plan["description"] = with_flows(text, &index.text).into();
+            }
+        }
         json!({"tools": tools})
     }
 
@@ -798,6 +813,25 @@ async fn read_resource(params: &Value) -> Result<Value, (i64, String)> {
     let mut content = json!({"uri": r.uri, "mimeType": r.mime});
     content["text"] = text.into();
     Ok(json!({"contents": [content]}))
+}
+
+/// `description` with as many saved flow names as fit the client's description cap, up to [`MAX_FLOWS`].
+fn with_flows(description: &str, index: &str) -> String {
+    let mut out = description.to_owned();
+    let mut sep = FLOWS;
+    for flow in index
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(MAX_FLOWS)
+    {
+        if out.chars().count() + sep.chars().count() + flow.chars().count() >= MAX_DESCRIPTION {
+            break;
+        }
+        out.push_str(sep);
+        out.push_str(flow.trim());
+        sep = ", ";
+    }
+    out
 }
 
 /// Whether `principal` may call tool `name`: a read-only share gets only the tools that read.

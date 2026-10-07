@@ -2992,7 +2992,11 @@ async fn mcp_serves_the_script_guide_as_resources() {
     let listed = mcp.rpc("tools/list", json!({})).await;
     for tool in listed["result"]["tools"].as_array().unwrap() {
         let always = tool["_meta"]["anthropic/alwaysLoad"] == true;
-        assert_eq!(always, tool["name"] == "script_run", "{tool}");
+        assert_eq!(
+            always,
+            tool["name"] == "script_run" || tool["name"] == "gui_plan",
+            "{tool}"
+        );
         assert!(
             tool["description"].as_str().unwrap().chars().count() < 2048,
             "{tool}"
@@ -3021,6 +3025,49 @@ async fn mcp_serves_the_script_guide_as_resources() {
         )
         .await;
     assert_eq!(unknown["error"]["code"], -32002, "{unknown}");
+}
+
+#[tokio::test]
+async fn mcp_gui_plan_lists_the_saved_flows_within_the_description_cap() {
+    let h = Harness::with_script(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let plan = |listed: &Value| {
+        listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "gui_plan")
+            .unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let bare = plan(&mcp.rpc("tools/list", json!({})).await);
+    assert!(!bare.contains("Saved flows"), "{bare}");
+
+    std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
+    let index: String = (0..40)
+        .map(|i| format!("mousepad-flow-number-{i}(font_size, text)\n"))
+        .collect();
+    std::fs::write(h.workspace.join("flows/INDEX"), index).unwrap();
+    let listed = plan(&mcp.rpc("tools/list", json!({})).await);
+    assert!(
+        listed.starts_with(&bare) && listed.contains("Saved flows, replay with {flow, params}: mousepad-flow-number-0(font_size, text), mousepad-flow-number-1("),
+        "{listed}"
+    );
+    assert!(listed.chars().count() < 2048, "{}", listed.chars().count());
+
+    let out = mcp
+        .call("gui_plan", json!({"steps": [{"app": "mousepad"}]}))
+        .await;
+    assert_eq!(out["isError"], true, "{out}");
+    assert!(
+        out["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("/opt/script/lib/gui_plan.mts does not exist"),
+        "{out}"
+    );
 }
 
 #[tokio::test]

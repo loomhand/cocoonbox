@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
-const SCRIPT_HINT: &str = "On this box, for complex or repeated desktop work (typing and saving in an app, dialogs, forms, several items), load script_run (ToolSearch) and write one script instead of a chain of computer_act calls. ";
+const SCRIPT_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -169,7 +169,7 @@ pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
         });
     }
     if script {
-        tools.push(script_tool());
+        tools.extend([script_tool(), gui_plan_tool()]);
     }
     tools
 }
@@ -193,7 +193,7 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
                 schema.remove("required");
             }
         }
-        tools.push(script_tool());
+        tools.extend([script_tool(), gui_plan_tool()]);
     }
     tools
 }
@@ -262,6 +262,32 @@ fn script_tool() -> ToolSpec {
                 "timeout_s": {"type": "integer", "description": "Default 90, max 110; the run is stopped after it"},
                 "screenshot": {"type": "boolean", "description": "Return a screenshot taken after the run, default true"},
                 "max_edge": max_edge()
+            }
+        }),
+    }
+}
+
+fn gui_plan_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("gui_plan"),
+        description: Cow::Borrowed(
+            "Run a desktop-app GUI plan in ONE call: the box runs each step on the accessibility tree (0.1-0.5 s), checks it, and stops at the first surprise. Use it for GUI work in desktop apps (menus, toggles, dialogs, Preferences, Save As, settings). Write the whole plan at once, without looking first.\n\
+One op per step; optional window: title text of the window the step acts in (waited for):\n\
+{app: \"mousepad\"} focus or launch; {menu: \"Edit > Preferences\"} (an approximate path is fine); {menu: \"Document > Word Wrap\", on: true} set a menu toggle (read first, never toggled twice); {click: \"Save\"}; {check: \"Show line numbers\", on: false} a check box or switch; {set: \"font size\", value: \"14\"} a text, spin or combo field; {type: \"text\"}; {key: \"ctrl+s\"}; {wait: \"Save As\"} a window title; {verify: \"Name\", value: \"x\"} (or on, enabled); {close: true} close the focused dialog.\n\
+Returns {ok: true, trace} or {ok: false, escalate: {step, reason, window, outline}}. Trust ok: true: each step was verified, so add no checks or screenshots. On escalate, handle the reason, then call again with only the remaining steps. Close the dialogs you open. A path for a file dialog may end in \\n to submit it. Name targets by their visible label.\n\
+A passing plan that starts with an app step is saved as a flow: name it with save: \"app-action\" and write values a later request changes as {{name}} with params: {name: value}. Replay a flow with {flow: \"name\", params: {...}}: one call, no model. screenshot: true adds a screenshot (default: only on escalate).",
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "steps": {"type": "array", "items": {"type": "object"}, "description": "The plan, one op per step"},
+                "flow": {"type": "string", "description": "Replay this saved flow instead of steps"},
+                "params": {"type": "object", "description": "Values for the {{name}} slots"},
+                "save": {"type": "string", "description": "Flow name for this plan, like mousepad-font-size"},
+                "start": {"type": "integer", "description": "First step to run, default 0"},
+                "find": {"type": "string", "description": "A request: returns the saved flow that does it"},
+                "screenshot": {"type": "boolean"},
+                "timeout_s": {"type": "integer", "description": "Default 90, max 110"}
             }
         }),
     }
