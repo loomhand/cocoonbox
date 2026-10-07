@@ -3100,7 +3100,7 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
         .iter()
         .map(|t| t["function"]["name"].as_str().unwrap())
         .collect();
-    assert_eq!(offered[0], "script_run", "{offered:?}");
+    assert_eq!(offered[..2], ["gui_plan", "script_run"], "{offered:?}");
     assert!(offered.contains(&"delegate_computer"), "{offered:?}");
     assert!(!offered.contains(&"cua_route"), "{offered:?}");
     let system = chats[0]["messages"][0]["content"].as_str().unwrap();
@@ -3112,7 +3112,7 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
     let request = &chats[0]["messages"][1]["content"];
     assert_eq!(
         request[0]["text"],
-        "Router: this task is tier script (0.93): write one script and run it with script_run."
+        "Router: this task is tier script (0.93): run desktop-app GUI work as one gui_plan call with the whole plan, or write one script and run it with script_run for loops and logic."
     );
     assert_eq!(request[1]["text"], "save a note in mousepad");
     assert!(entries.iter().any(|e| e.role == i32::from(pb::Role::System)

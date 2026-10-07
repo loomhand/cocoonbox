@@ -25,7 +25,7 @@ pub const TIERS: [(&str, &str); 5] = [
     ),
     (
         "script",
-        "write one script and run it with script_run",
+        "run desktop-app GUI work as one gui_plan call with the whole plan, or write one script and run it with script_run for loops and logic",
     ),
     (
         "jev",
@@ -126,7 +126,7 @@ pub fn leads(tier: &str, tool: &str) -> bool {
         ),
         "cua" => matches!(tool, "delegate_computer" | "screenshot"),
         "browser" => tool.starts_with("browser_"),
-        "script" => tool == "script_run",
+        "script" => matches!(tool, "gui_plan" | "script_run"),
         _ => false,
     }
 }

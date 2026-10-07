@@ -169,7 +169,7 @@ pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
         });
     }
     if script {
-        tools.extend([script_tool(), gui_plan_tool()]);
+        tools.extend([gui_plan_tool(), script_tool()]);
     }
     tools
 }
