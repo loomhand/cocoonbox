@@ -3318,6 +3318,18 @@ async fn a_script_box_observes_through_the_elements_view_and_a_preview_unless_th
         .await;
     assert_eq!(clicked["isError"], false, "{clicked}");
     assert_eq!(driver_calls(&h, "click")[0]["element_token"], "tok-0");
+    for (action, element) in [("triple_click", json!(0)), ("left_click", json!(0))] {
+        let out = mcp
+            .call(
+                "computer_act",
+                json!({"action": action, "element": element}),
+            )
+            .await;
+        assert_eq!(out["isError"], false, "{action}: {out}");
+    }
+    let clicks = driver_calls(&h, "click");
+    assert_eq!(clicks[1]["count"], 3, "{clicks:?}");
+    assert!(clicks[2].get("count").is_none(), "{clicks:?}");
     let shot = mcp
         .call(
             "computer_act",

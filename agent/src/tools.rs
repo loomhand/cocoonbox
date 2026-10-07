@@ -189,6 +189,9 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
             act.description = Cow::Owned(format!("{SCRIPT_HINT}{ACT_VIEW}{LIST_HINT}"));
             act.parameters["properties"]["element"]["description"] =
                 json!("Element id from the latest elements view");
+            if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
+                actions.insert(3, "triple_click".into());
+            }
             let mut step = act.parameters.clone();
             if let Some(props) = step["properties"].as_object_mut() {
                 props.remove("max_edge");
