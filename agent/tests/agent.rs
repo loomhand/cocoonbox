@@ -3400,6 +3400,29 @@ async fn a_script_box_sends_clicks_in_screen_pixels_after_a_scaled_screenshot() 
 }
 
 #[tokio::test]
+async fn a_script_box_takes_triple_click_and_left_click_as_clicks() {
+    let h = Harness::with_script(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    for action in ["triple_click", "left_click"] {
+        let out = mcp
+            .call("computer_act", json!({"action": action, "x": 10, "y": 20}))
+            .await;
+        assert_eq!(out["isError"], false, "{action}: {out}");
+    }
+    let clicks = driver_calls(&h, "click");
+    assert_eq!(clicks.len(), 2, "{clicks:?}");
+    assert_eq!(clicks[0]["count"], 3, "{clicks:?}");
+    assert!(clicks[1].get("count").is_none(), "{clicks:?}");
+    for c in &clicks {
+        assert_eq!(
+            (c["x"].as_f64(), c["y"].as_f64()),
+            (Some(10.0), Some(20.0)),
+            "{c}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn a_cbdesk_box_never_nudges_a_computer_act_streak() {
     let h = Harness::start(Vec::new(), false).await;
     let mut mcp = McpClient::connect(&h).await;
