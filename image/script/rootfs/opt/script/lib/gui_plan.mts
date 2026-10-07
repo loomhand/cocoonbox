@@ -38,6 +38,7 @@ const session = `gp-${process.pid}`
 let jev: DecisionModel | null = null
 let busNames: string[] | null = null
 const known = new Set<string>()
+let lastSeen = ''
 let T: Record<string, number> = {}
 const tick = (k: string, t0: number) => { T[k] = (T[k] ?? 0) + Date.now() - t0 }
 
@@ -139,7 +140,11 @@ function gtkToggle(pid: number, label: string): boolean | null {
 async function windowFor(want: string | undefined, ms = 3000, saw?: string) {
   const t0 = Date.now()
   let w = focused()
-  if (!want) { tick('wait', t0); if (!w) throw new Surprise('no focused window'); return w }
+  if (!want) {
+    // an untitled focused window that is no alert (a completion popup) leaves the step in the window the plan was in
+    if (w && !w.title.trim() && lastSeen && !isAlert(outline(w))) w = m.windows().find((x) => x.title === lastSeen && x.pid === w!.pid) ?? w
+    tick('wait', t0); if (!w) throw new Surprise('no focused window'); return w
+  }
   const end = Date.now() + ms; let asked: string | null = null
   for (;;) {
     w = focused()
@@ -251,9 +256,10 @@ async function settle(before: string | undefined) {
 // a typed line that ends in a newline submits a file chooser: Return until it closes, since the first one may only close the completion popup
 async function submit(w: NonNullable<ReturnType<typeof focused>>) {
   const t0 = Date.now()
-  for (let i = 0; i < 3 && focused()?.title === w.title; i++) {
+  const open = () => m.windows().some((x) => x.title === w.title && x.pid === w.pid)
+  for (let i = 0; i < 3 && open(); i++) {
     press('Return')
-    for (let k = 0; k < 15 && focused()?.title === w.title; k++) await sleep(40)
+    for (let k = 0; k < 15 && open(); k++) await sleep(40)
   }
   tick('submit', t0)
 }
@@ -292,7 +298,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
       for (const end = Date.now() + 8000; !(w = has()); await sleep(50)) if (Date.now() > end) throw new Surprise(`app "${s.app}" has no window`, seen())
       tick('launch', t0)
     }
-    w.focus(); known.add(w.title); rec.window = w.title; await windowFor(w.title); return
+    w.focus(); known.add(w.title); rec.window = lastSeen = w.title; await windowFor(w.title); return
   }
   if (s.type !== undefined) {
     const t0 = Date.now(); const w = focused()
@@ -306,7 +312,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     if (/^(enter|return)$/i.test(s.key) && w && outline(w).includes('File Chooser Widget')) { rec.submit = true; await submit(w); return }
     const t0 = Date.now(); press(s.key); tick('act', t0); return
   }
-  if (s.wait) { const w = await windowFor(s.wait, s.timeout_ms ?? 5000, s.seen); rec.seen = w.title; return }
+  if (s.wait) { const w = await windowFor(s.wait, s.timeout_ms ?? 5000, s.seen); rec.seen = lastSeen = w.title; return }
   if (s.close) {
     // close shuts a dialog: the named window, else the focused dialog, else a dialog of the focused app; never an app's main window unless named
     const t0 = Date.now(); let w = s.window ? await windowFor(s.window, 3000, s.seen) : focused()
@@ -317,7 +323,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     tick('act', t0); return
   }
   const w = await windowFor(s.window, 3000, s.seen)
-  rec.seen = w.title
+  rec.seen = w.title; if (w.title.trim()) lastSeen = w.title
   let t0 = Date.now(); const snap = snapOf(w); const nodes = parse(snap); tick('snap', t0)
   if (s.expect) {
     const d = decide({ window_title: w.title, contents: snap.print({ maxChars: 60 }).slice(0, 4000) }, { ok: noul(s.expect) })
@@ -329,7 +335,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     return
   }
   if (s.verify) {
-    const hit = resolve(snap, nodes, s.verify, s.role, undefined, 0.7, s.fp)
+    const hit = resolve(snap, nodes, s.verify, s.role ?? (s.value !== undefined ? FIELDS : s.on !== undefined ? `${TOGGLES}|menuitem` : undefined), undefined, 0.7, s.fp)
     if (!hit) { if (s.on === false || s.enabled === false) return; throw new Surprise(`verify: no element matches "${s.verify}"`, seen()) }
     rec.how = hit.how; rec.fp = fingerprint(nodes, hit)
     const bad: string[] = []
@@ -504,6 +510,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   const startTitles = new Set(known)
   const startWindow = focused()?.title ?? null
   const startPid = focused()?.pid ?? null
+  const startAlert = !focused()?.title.trim() && isAlert(outline())
   const recs: Record<string, unknown>[] = []
   let escalate: Record<string, unknown> | null = null; let done = plan.length
   const bad = plan.findIndex((s) => OPS.filter((k) => k in s).length !== 1)
@@ -513,7 +520,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     const ts = Date.now()
     try {
       const f = focused()
-      if (f && !known.has(f.title) && !(s.window && norm(f.title).includes(norm(s.window))) && isAlert(outline(f))) throw new Surprise(`alert "${f.title}" is in front`, seen())
+      if (f && (!known.has(f.title) || !f.title.trim()) && !(i === (p.start ?? 0) && startAlert) && !(s.window && norm(f.title).includes(norm(s.window))) && isAlert(outline(f))) throw new Surprise(`alert "${f.title}" is in front`, seen())
       await run(s, rec)
     } catch (e) {
       const sp = e instanceof Surprise ? e : new Surprise(String((e as Error).message ?? e), seen())
@@ -527,7 +534,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   let opened = false
   if (!escalate) {
     const ts = Date.now(); const was = focused()?.title
-    if (last.key || last.type !== undefined || last.click) {
+    if ((last.key || last.type !== undefined || last.click) && !recs.at(-1)?.submit) {
       for (let i = 0; i < 12 && focused()?.title === was; i++) await sleep(40)
       await sleep(80)
     }
