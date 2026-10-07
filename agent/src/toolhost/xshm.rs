@@ -323,8 +323,8 @@ impl Grabber {
         })
     }
 
-    /// The WM_CLASS class of `w`, or of the client inside it when `w` is a window manager frame.
-    fn class(&self, w: Window) -> String {
+    /// The WM_CLASS class of `w`, such as `Google-chrome`, or of the client inside it when `w` is a window manager frame.
+    pub fn class(&self, w: Window) -> String {
         let children = self
             .conn
             .query_tree(w)
