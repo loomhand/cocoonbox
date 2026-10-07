@@ -19,7 +19,7 @@ const (
 	product         = "cocoonbox"
 	qps             = 40
 	dailyTokens     = 5_000_000
-	tokensPerMinute = 200_000
+	tokensPerMinute = 2_400_000
 
 	keysPath   = "/admin/keys"
 	usagePath  = "/admin/usage/users"
