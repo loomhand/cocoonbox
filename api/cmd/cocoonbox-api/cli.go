@@ -77,10 +77,18 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		if u.HasToken {
 			return errors.New("the user has an API token and may own a box: delete it in the console, which releases its boxes")
 		}
+		st, storeErr := newStore(cfg)
+		if storeErr != nil {
+			return storeErr
+		}
+		removed, stateErr := boxes.DeleteState(ctx, st, u.ID)
+		if stateErr != nil {
+			return fmt.Errorf("delete state of %s: %w", u.Name, stateErr)
+		}
 		if err = accounts.Delete(ctx, u.ID); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(stdout, "deleted user %s\n", u.Name)
+		_, err = fmt.Fprintf(stdout, "deleted user %s and %d state objects\n", u.Name, removed)
 		return err
 	}
 	if !*fromStdin {

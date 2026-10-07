@@ -53,13 +53,14 @@ var (
 	static embed.FS
 )
 
-// Boxes lists, creates, renames and deletes a user's boxes, and releases them when the user is deleted.
+// Boxes lists, creates, renames and deletes a user's boxes, and releases them and deletes their saved state when the user is deleted.
 type Boxes interface {
 	List(ctx context.Context, req *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error)
 	Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error)
 	Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (*controlv1.Box, error)
 	Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error)
 	Release(ctx context.Context, user string) error
+	DeleteState(ctx context.Context, user string) error
 }
 
 // Screens bridges a share's viewer to its box's screen, view-only.
@@ -426,6 +427,10 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.boxes.Release(r.Context(), id); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if err := s.boxes.DeleteState(r.Context(), id); err != nil {
 		s.fail(w, r, err)
 		return
 	}

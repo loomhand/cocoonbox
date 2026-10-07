@@ -290,6 +290,9 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	if env.boxes.released != u.ID {
 		t.Errorf("released %q, want %q", env.boxes.released, u.ID)
 	}
+	if env.boxes.stateGone != u.ID {
+		t.Errorf("state deleted for %q, want %q", env.boxes.stateGone, u.ID)
+	}
 	if _, ok := env.tenants.tenants[u.ID]; ok {
 		t.Error("tenant kept")
 	}
@@ -388,6 +391,7 @@ type fakeBoxes struct {
 	list      []*controlv1.Box
 	listedFor string
 	released  string
+	stateGone string
 	onRelease func()
 	calls     []string
 }
@@ -420,6 +424,11 @@ func (f *fakeBoxes) Release(_ context.Context, user string) error {
 		f.onRelease()
 	}
 	f.released = user
+	return nil
+}
+
+func (f *fakeBoxes) DeleteState(_ context.Context, user string) error {
+	f.stateGone = user
 	return nil
 }
 
