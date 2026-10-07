@@ -5,6 +5,8 @@ use std::ptr::NonNull;
 use std::sync::Mutex;
 
 use x11rb::connection::Connection;
+use x11rb::errors::ReplyError;
+use x11rb::protocol::ErrorKind;
 use x11rb::protocol::shape::{ConnectionExt as _, SK};
 use x11rb::protocol::shm::ConnectionExt as _;
 use x11rb::protocol::xinput::{ConnectionExt as _, DeviceType};
@@ -163,7 +165,9 @@ impl Grabber {
             })
             .collect::<Result<Vec<_>, String>>()?;
         for (w, name) in names {
-            let name = name.reply().map_err(|e| format!("get WM_NAME: {e}"))?;
+            let Some(name) = alive(name.reply(), "get WM_NAME")? else {
+                continue;
+            };
             if !name.value.starts_with(OVERLAY_NAME) {
                 continue;
             }
@@ -171,8 +175,10 @@ impl Grabber {
                 .conn
                 .get_window_attributes(w)
                 .map_err(|e| format!("window attributes: {e}"))?
-                .reply()
-                .map_err(|e| format!("window attributes: {e}"))?;
+                .reply();
+            let Some(attrs) = alive(attrs, "window attributes")? else {
+                continue;
+            };
             if attrs.map_state != MapState::VIEWABLE {
                 continue;
             }
@@ -180,8 +186,10 @@ impl Grabber {
                 .conn
                 .shape_get_rectangles(w, SK::BOUNDING)
                 .map_err(|e| format!("shape: {e}"))?
-                .reply()
-                .map_err(|e| format!("shape: {e}"))?;
+                .reply();
+            let Some(shape) = alive(shape, "shape")? else {
+                continue;
+            };
             if shape.rectangles.iter().any(|r| r.width > 0 && r.height > 0) {
                 return Ok(true);
             }
@@ -481,14 +489,14 @@ impl Grabber {
         }
     }
 
+    /// The parent of `w`; none once `w` is gone.
     fn parent(&self, w: Window) -> Result<Window, String> {
-        Ok(self
+        let tree = self
             .conn
             .query_tree(w)
             .map_err(|e| format!("query tree: {e}"))?
-            .reply()
-            .map_err(|e| format!("query tree: {e}"))?
-            .parent)
+            .reply();
+        Ok(alive(tree, "query tree")?.map_or(x11rb::NONE, |t| t.parent))
     }
 
     fn name(&self, w: Window) -> String {
@@ -538,11 +546,54 @@ impl Grabber {
     }
 }
 
+/// The reply to a request about a window; `None` when the window closed after it was listed (BadWindow).
+fn alive<T>(reply: Result<T, ReplyError>, what: &str) -> Result<Option<T>, String> {
+    match reply {
+        Ok(v) => Ok(Some(v)),
+        Err(ReplyError::X11Error(e)) if e.error_kind == ErrorKind::Window => Ok(None),
+        Err(e) => Err(format!("{what}: {e}")),
+    }
+}
+
 impl Drop for Grabber {
     fn drop(&mut self) {
         let _ = self.conn.shm_detach(self.seg);
         let _ = self.conn.flush();
         // SAFETY: `addr` came from shmat and is not used after this.
         unsafe { libc::shmdt(self.addr.as_ptr().cast()) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use x11rb::x11_utils::X11Error;
+
+    use super::*;
+
+    fn x11_error(error_kind: ErrorKind) -> ReplyError {
+        ReplyError::X11Error(X11Error {
+            error_kind,
+            error_code: 3,
+            sequence: 37,
+            bad_value: 25_165_899,
+            minor_opcode: 0,
+            major_opcode: 20,
+            extension_name: None,
+            request_name: Some("GetProperty"),
+        })
+    }
+
+    #[test]
+    fn a_window_gone_before_its_reply_is_skipped_and_other_errors_are_not() {
+        assert_eq!(alive(Ok(7), "get WM_NAME"), Ok(Some(7)));
+        assert_eq!(
+            alive::<u8>(Err(x11_error(ErrorKind::Window)), "get WM_NAME"),
+            Ok(None)
+        );
+        let other = alive::<u8>(Err(x11_error(ErrorKind::Match)), "get WM_NAME");
+        assert!(
+            matches!(&other, Err(e) if e.starts_with("get WM_NAME: ")),
+            "{other:?}"
+        );
     }
 }

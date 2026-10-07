@@ -60,6 +60,10 @@ function parse(snap: AccessibilitySnapshot): Node[] {
 }
 
 const focused = () => m.focusedWindow()
+// a window that closed after it was listed answers X11 BadWindow to a pid read; its pid is then null
+function pidOf(w: { pid: number }): number | null {
+  try { return w.pid } catch (e) { if (/error_kind: Window\b/.test(String(e))) return null; throw e }
+}
 // a window AT-SPI cannot map (an untitled alert) falls back to the newest same-titled child of the focused app
 function snapOf(w: NonNullable<ReturnType<typeof focused>>) {
   try { return AccessibilitySnapshot.fromWindow(w) } catch (e) {
@@ -142,7 +146,7 @@ async function windowFor(want: string | undefined, ms = 3000, saw?: string) {
   let w = focused()
   if (!want) {
     // an untitled focused window that is no alert (a completion popup) leaves the step in the window the plan was in
-    if (w && !w.title.trim() && lastSeen && !isAlert(outline(w))) w = m.windows().find((x) => x.title === lastSeen && x.pid === w!.pid) ?? w
+    if (w && !w.title.trim() && lastSeen && !isAlert(outline(w))) w = m.windows().find((x) => x.title === lastSeen && pidOf(x) === pidOf(w!)) ?? w
     tick('wait', t0); if (!w) throw new Surprise('no focused window'); return w
   }
   const end = Date.now() + ms; let asked: string | null = null
@@ -256,7 +260,8 @@ async function settle(before: string | undefined) {
 // a typed line that ends in a newline submits a file chooser: Return until it closes, since the first one may only close the completion popup
 async function submit(w: NonNullable<ReturnType<typeof focused>>) {
   const t0 = Date.now()
-  const open = () => m.windows().some((x) => x.title === w.title && x.pid === w.pid)
+  const [title, pid] = [w.title, pidOf(w)]
+  const open = () => pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)
   for (let i = 0; i < 3 && open(); i++) {
     press('Return')
     for (let k = 0; k < 15 && open(); k++) await sleep(40)
@@ -316,10 +321,10 @@ async function run(s: Step, rec: Record<string, unknown>) {
   if (s.close) {
     // close shuts a dialog: the named window, else the focused dialog, else a dialog of the focused app; never an app's main window unless named
     const t0 = Date.now(); let w = s.window ? await windowFor(s.window, 3000, s.seen) : focused()
-    if (w && !s.window && !isDialog(outline(w))) w = m.windows().find((x) => x.pid === w!.pid && x.title !== w!.title && isDialog(outline(x))) ?? null
+    if (w && !s.window && !isDialog(outline(w))) w = m.windows().find((x) => pidOf(x) === pidOf(w!) && x.title !== w!.title && isDialog(outline(x))) ?? null
     if (!w) { rec.noop = true; tick('act', t0); return }
-    rec.seen = w.title; w.focus(); press('Escape'); await settle(w.title)
-    if (m.windows().some((x) => x.title === w!.title && x.pid === w!.pid)) w.close()
+    const [title, pid] = [w.title, pidOf(w)]; rec.seen = title; w.focus(); press('Escape'); await settle(w.title)
+    if (pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)) w.close()
     tick('act', t0); return
   }
   const w = await windowFor(s.window, 3000, s.seen)
@@ -366,7 +371,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     } else rec.how = 'fp'
     rec.fp = fingerprint(nodes, hit!)
     if (hit!.p !== undefined) rec.jev = [hit!.p, hit!.margin]
-    if (s.on === undefined) { act(snap, hit!.n); await settle(w.title); const now = gtkToggle(w.pid, hit!.n.name); if (now !== null) rec.now = now; return }
+    if (s.on === undefined) { const pid = pidOf(w); act(snap, hit!.n); await settle(w.title); const now = pid === null ? null : gtkToggle(pid, hit!.n.name); if (now !== null) rec.now = now; return }
     const was = gtkToggle(w.pid, hit!.n.name)
     if (was !== null) {
       rec.was = was; rec.state = 'gtk'
@@ -509,7 +514,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   for (const w of m.windows()) known.add(w.title)
   const startTitles = new Set(known)
   const startWindow = focused()?.title ?? null
-  const startPid = focused()?.pid ?? null
+  const start = focused(); const startPid = start ? pidOf(start) : null
   const startAlert = !focused()?.title.trim() && isAlert(outline())
   const recs: Record<string, unknown>[] = []
   let escalate: Record<string, unknown> | null = null; let done = plan.length
@@ -584,7 +589,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
       }
       const end = focused()
       chain.window = end?.title ?? null
-      if (end && !/^(Desktop|xfce4-panel)$/.test(end.title)) chain.pid = end.pid
+      if (end && !/^(Desktop|xfce4-panel)$/.test(end.title)) chain.pid = pidOf(end)
       try { mkdirSync(FLOWS, { recursive: true }); writeFileSync(PENDING, JSON.stringify(chain)) } catch {}
     }
   }
