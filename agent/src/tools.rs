@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
+const SCRIPT_HINT: &str = " On this box, complex or repeated GUI work (typing and saving in an app, dialogs, forms, several items) goes to script_run as one script, not a chain of computer_act calls.";
 
 /// Remote tools that only read the box: all a read-only share offers.
 pub const READ_ONLY: [&str; 6] = [
@@ -172,7 +173,7 @@ pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
     tools
 }
 
-/// Tools served over MCP to external agents; the names are the contract, and `script_run` exists only with `script`.
+/// Tools served over MCP to external agents; the names are the contract, and `script_run` and the `computer_act` hint exist only with `script`.
 pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
     let mut tools: Vec<ToolSpec> = main_tools(true, false)
         .into_iter()
@@ -180,6 +181,9 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
         .collect();
     tools.extend(computer_tools());
     if script {
+        if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
+            act.description = Cow::Owned(format!("{}{SCRIPT_HINT}", act.description));
+        }
         tools.push(script_tool());
     }
     tools

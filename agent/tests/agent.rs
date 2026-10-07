@@ -3058,6 +3058,70 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
 }
 
 #[tokio::test]
+async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
+    let h = Harness::with_script(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let act = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "computer_act")
+        .unwrap();
+    assert!(
+        act["description"]
+            .as_str()
+            .unwrap()
+            .contains("script_run"),
+        "{act}"
+    );
+    let press = json!({"action": "key", "key": "a"});
+    let mut nudged = Vec::new();
+    for _ in 0..5 {
+        let out = mcp.call("computer_act", press.clone()).await;
+        nudged.push(
+            out["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("GUI steps in a row"),
+        );
+    }
+    mcp.call("list_dir", json!({})).await;
+    for _ in 0..4 {
+        let out = mcp.call("computer_act", press.clone()).await;
+        nudged.push(
+            out["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("GUI steps in a row"),
+        );
+    }
+    assert_eq!(
+        nudged,
+        [false, false, false, true, false, false, false, false, true]
+    );
+}
+
+#[tokio::test]
+async fn a_cbdesk_box_never_nudges_a_computer_act_streak() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+    for _ in 0..5 {
+        let out = mcp
+            .call("computer_act", json!({"action": "key", "key": "a"}))
+            .await;
+        assert_eq!(out["isError"], false, "{out}");
+        assert!(
+            !out["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("script"),
+            "{out}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
     let h = Harness::start(Vec::new(), false).await;
     let edge = Edge::provision(&h);

@@ -45,6 +45,8 @@ Relative file paths resolve under /workspace, and shell is one persistent bash s
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
+const NUDGE_STREAK: u32 = 4;
+const NUDGE: &str = "\n\n4 GUI steps in a row: for work like this, script_run with one script is faster and replayable (see cocoonbox://script/AGENTS.md).";
 const RESOURCES: [Resource; 3] = [
     Resource {
         uri: "cocoonbox://script/AGENTS.md",
@@ -289,6 +291,7 @@ impl Mcp {
             driver: Mutex::new(Driver::default()),
             listed: Mutex::new(None),
             changed: Notify::new(),
+            streak: AtomicU32::new(0),
         });
         if let Some(r) = &session.record {
             let note = format!("MCP session opened by {client} {version}");
@@ -465,7 +468,12 @@ impl Mcp {
             out = self.run(s, &label, name, args).await?;
         }
         lock(&s.driver).last_seen = Instant::now();
-        let mut content = vec![json!({"type": "text", "text": out.text})];
+        let mut text = out.text;
+        if self.script && s.gui_streak(name) {
+            text.push_str(NUDGE);
+        }
+        let mut content = vec![json!({"type": "text"})];
+        content[0]["text"] = text.into();
         if let Some(img) = &out.image {
             let mut part = json!({"type": "image", "mimeType": image_mime(img)});
             part["data"] = b64(img).into();
@@ -555,6 +563,8 @@ struct Session {
     listed: Mutex<Option<bool>>,
     /// Wakes the session's server stream to send `notifications/tools/list_changed`.
     changed: Notify,
+    /// Consecutive `computer_act` calls since the last other tool call.
+    streak: AtomicU32,
 }
 
 impl Session {
@@ -573,6 +583,15 @@ impl Session {
             (Principal::Share { id, user, .. }, Some(g)) => *id == g.share && *user == g.user,
             _ => false,
         }
+    }
+
+    /// Counts a call of `name` into the `computer_act` streak; true on the call that reaches [`NUDGE_STREAK`].
+    fn gui_streak(&self, name: &str) -> bool {
+        if name != "computer_act" {
+            self.streak.store(0, Ordering::Relaxed);
+            return false;
+        }
+        self.streak.fetch_add(1, Ordering::Relaxed) + 1 == NUDGE_STREAK
     }
 
     /// Announces a tool list change when a share's write mode differs from the one the client listed in.
