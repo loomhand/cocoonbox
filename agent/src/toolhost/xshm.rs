@@ -1,6 +1,8 @@
 //! Desktop capture over MIT-SHM: the root window of the display read into one shared segment.
 
+use std::collections::HashMap;
 use std::ptr::NonNull;
+use std::sync::Mutex;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::shape::{ConnectionExt as _, SK};
@@ -9,6 +11,8 @@ use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt as _, ImageFormat, ImageOrder, MapState, Window,
 };
 use x11rb::rust_connection::RustConnection;
+
+use super::cua::SHELL_APPS;
 
 const OVERLAY_NAME: &[u8] = b"Cua.AgentCursorOverlay";
 const THUMB_BLOCK: usize = 8;
@@ -39,6 +43,8 @@ pub struct Grabber {
     net_wm_name: Atom,
     utf8: Atom,
     net_active: Atom,
+    /// Whether a root child belongs to the desktop shell (panel, dock, desktop), by window id.
+    shell: Mutex<HashMap<Window, bool>>,
 }
 
 // SAFETY: the segment is private to this Grabber and only read through `&self` after a reply.
@@ -105,6 +111,7 @@ impl Grabber {
             net_wm_name,
             utf8,
             net_active,
+            shell: Mutex::new(HashMap::new()),
         };
         attached?;
         Ok(grabber)
@@ -191,7 +198,7 @@ impl Grabber {
             .collect())
     }
 
-    /// The mapped children of the root with their geometry: frames, menus and popups.
+    /// The mapped children of the root with their geometry: frames, menus and popups, without the desktop shell.
     pub fn mapped(&self) -> Result<Vec<Placement>, String> {
         let tree = self
             .conn
@@ -219,7 +226,7 @@ impl Grabber {
             let (Ok(attrs), Ok(g)) = (attrs.reply(), geometry.reply()) else {
                 continue;
             };
-            if attrs.map_state == MapState::VIEWABLE {
+            if attrs.map_state == MapState::VIEWABLE && !self.is_shell(id) {
                 mapped.push(Placement {
                     id,
                     x: g.x,
@@ -230,6 +237,10 @@ impl Grabber {
                 });
             }
         }
+        self.shell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|w, _| tree.children.contains(w));
         Ok(mapped)
     }
 
@@ -262,6 +273,42 @@ impl Grabber {
             .reply()
             .ok()?;
         reply.value32()?.next().filter(|w| *w != 0)
+    }
+
+    fn is_shell(&self, w: Window) -> bool {
+        let mut known = self
+            .shell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *known.entry(w).or_insert_with(|| {
+            let class = self.class(w);
+            SHELL_APPS.contains(&class.as_str())
+        })
+    }
+
+    /// The WM_CLASS class of `w`, or of the client inside it when `w` is a window manager frame.
+    fn class(&self, w: Window) -> String {
+        let children = self
+            .conn
+            .query_tree(w)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|t| t.children)
+            .unwrap_or_default();
+        std::iter::once(w)
+            .chain(children)
+            .find_map(|c| {
+                let value = self
+                    .conn
+                    .get_property(false, c, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 64)
+                    .ok()?
+                    .reply()
+                    .ok()?
+                    .value;
+                let class = value.split(|b| *b == 0).nth(1)?;
+                (!class.is_empty()).then(|| String::from_utf8_lossy(class).into_owned())
+            })
+            .unwrap_or_default()
     }
 
     fn name(&self, w: Window) -> String {
