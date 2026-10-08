@@ -489,9 +489,7 @@ impl Browser {
             return "no window".to_owned();
         };
         if let Ok(mut cdp) = self.browser().await {
-            let _ = cdp
-                .call("Target.closeTarget", json!({"targetId": t.id}))
-                .await;
+            cdp.close_window(&t.id).await;
         }
         "closed".to_owned()
     }
@@ -532,9 +530,7 @@ impl Browser {
         let mut cdp = self.browser().await?;
         for w in windows {
             if let Some(t) = w.lock().await.take() {
-                let _ = cdp
-                    .call("Target.closeTarget", json!({"targetId": t.id}))
-                    .await;
+                cdp.close_window(&t.id).await;
             }
         }
         let _ = cdp.call("Browser.close", json!({})).await;
@@ -751,12 +747,74 @@ impl Cdp {
         Ok(())
     }
 
+    /// Closes the agent window of page `id` with every tab the agent opened from it.
+    async fn close_window(&mut self, id: &str) {
+        let Ok(infos) = self.call("Target.getTargets", json!({})).await else {
+            return;
+        };
+        let mut pages = Vec::new();
+        for info in infos["targetInfos"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|i| i["type"] == "page")
+        {
+            let window = self
+                .call(
+                    "Browser.getWindowForTarget",
+                    json!({"targetId": info["targetId"]}),
+                )
+                .await
+                .ok()
+                .and_then(|w| w["windowId"].as_i64());
+            pages.push((info, window));
+        }
+        for t in window_tabs(id, &pages) {
+            let _ = self
+                .call("Target.closeTarget", json!({"targetId": t}))
+                .await;
+        }
+    }
+
     async fn snapshot(&mut self) -> Result<String, String> {
         let v = self.eval(SNAPSHOT_JS).await?;
         let snapshot = v.as_str().unwrap_or_default().to_owned();
         timing::mark("snapshot");
         timing::note("snapshot_bytes", snapshot.len());
         Ok(snapshot)
+    }
+}
+
+/// Page `id`, the tabs in its window, and the pages opened from any of them, transitively.
+fn window_tabs<'a>(id: &'a str, pages: &[(&'a Value, Option<i64>)]) -> Vec<&'a str> {
+    let target = |info: &'a Value| info["targetId"].as_str().unwrap_or_default();
+    let window = pages
+        .iter()
+        .find(|(info, _)| target(info) == id)
+        .and_then(|(_, w)| *w);
+    let mut owned = vec![id];
+    owned.extend(
+        pages
+            .iter()
+            .filter(|(info, w)| window.is_some() && *w == window && target(info) != id)
+            .map(|(info, _)| target(info)),
+    );
+    loop {
+        let opened: Vec<&str> = pages
+            .iter()
+            .map(|(info, _)| *info)
+            .filter(|info| !owned.contains(&target(info)))
+            .filter(|info| {
+                ["openerId", "openerFrameId"]
+                    .iter()
+                    .any(|k| info[*k].as_str().is_some_and(|o| owned.contains(&o)))
+            })
+            .map(target)
+            .collect();
+        if opened.is_empty() {
+            return owned;
+        }
+        owned.extend(opened);
     }
 }
 
@@ -990,6 +1048,25 @@ mod tests {
             chrome_page_title("_NET_WM_NAME(UTF8_STRING) = \"*notes.txt - Mousepad\""),
             None
         );
+    }
+
+    #[test]
+    fn window_tabs_are_the_agent_window_and_every_page_opened_from_it() {
+        let pages = [
+            json!({"targetId": "agent"}),
+            json!({"targetId": "user"}),
+            json!({"targetId": "sametab"}),
+            json!({"targetId": "blank", "openerFrameId": "agent"}),
+            json!({"targetId": "popup", "openerId": "blank"}),
+            json!({"targetId": "usertab", "openerId": "user"}),
+        ];
+        let windows = [Some(1), Some(2), Some(1), Some(3), Some(4), Some(2)];
+        let pages: Vec<_> = pages.iter().zip(windows).collect();
+        assert_eq!(
+            window_tabs("agent", &pages),
+            ["agent", "sametab", "blank", "popup"]
+        );
+        assert_eq!(window_tabs("gone", &pages), ["gone"]);
     }
 
     #[test]
