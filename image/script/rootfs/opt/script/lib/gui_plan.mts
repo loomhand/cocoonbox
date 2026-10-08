@@ -350,7 +350,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     // close shuts a dialog: the named window, else the focused dialog, else a dialog of the focused app; never an app's main window unless named
     const t0 = Date.now(); let w = s.window ? await windowFor(s.window, 3000, s.seen) : focused()
     const o = w && !s.window ? outline(w) : ''
-    if (w && blocked(o)) { rec.seen = w.title; rec.how = 'wm'; w.close(); await settle(w.title); tick('act', t0); return }
+    if (w && blocked(o) && m.windows().some((x) => pidOf(x) === pidOf(w!) && x.title !== w!.title)) { rec.seen = w.title; rec.how = 'wm'; w.close(); await settle(w.title); tick('act', t0); return }
     if (w && !s.window && !isDialog(o)) w = m.windows().find((x) => pidOf(x) === pidOf(w!) && x.title !== w!.title && isDialog(outline(x))) ?? null
     if (!w) { rec.noop = true; tick('act', t0); return }
     const [title, pid] = [w.title, pidOf(w)]; rec.seen = title; w.focus(); press('Escape'); await settle(w.title)
