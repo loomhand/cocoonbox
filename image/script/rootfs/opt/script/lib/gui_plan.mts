@@ -82,6 +82,7 @@ function seen() {
   return { window: w?.title ?? null, windows: m.windows().map((x) => x.title).filter((t) => !/^(Desktop|xfce4-panel)$/.test(t)), outline: outline(w) }
 }
 const blocked = (o: string) => /AT-SPI peer \S+ is not responding/.test(o)
+const unanswered = (title: string) => `"${title}" answers no accessibility calls (a dialog opened by an accessibility action blocks its app, and a key would deadlock it): close it with {close: true}, then reopen it by its keyboard shortcut`
 const isAlert = (o: string) => /^- alert/.test(o)
 const isDialog = (o: string) => /^- (alert|dialog|file chooser)/.test(o)
 
@@ -330,15 +331,18 @@ async function run(s: Step, rec: Record<string, unknown>) {
     w.focus(); known.add(w.title); rec.window = lastSeen = w.title; await windowFor(w.title); return
   }
   if (s.type !== undefined) {
-    const t0 = Date.now(); const w = focused()
-    const sub = s.type.endsWith('\n') && w && outline(w).includes('File Chooser Widget')
+    const t0 = Date.now(); const w = focused(); const o = s.type.endsWith('\n') && w ? outline(w) : ''
+    if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
+    const sub = o.includes('File Chooser Widget')
     m.typeText(sub ? s.type.slice(0, -1) : s.type); tick('act', t0)
     if (sub) { rec.submit = true; await submit(w!) }
     return
   }
   if (s.key) {
     const w = focused()
-    if (/^(enter|return)$/i.test(s.key) && w && outline(w).includes('File Chooser Widget')) { rec.submit = true; await submit(w); return }
+    const o = /^(enter|return)$/i.test(s.key) && w ? outline(w) : ''
+    if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
+    if (o.includes('File Chooser Widget')) { rec.submit = true; await submit(w!); return }
     const t0 = Date.now(); press(s.key); tick('act', t0); return
   }
   if (s.wait) { const w = await windowFor(s.wait, s.timeout_ms ?? 5000, s.seen); rec.seen = lastSeen = w.title; return }
@@ -357,7 +361,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
   rec.seen = w.title; if (w.title.trim()) lastSeen = w.title
   let t0 = Date.now(); let snap: AccessibilitySnapshot
   try { snap = snapOf(w) } catch (e) {
-    if (blocked(String(e))) throw new Surprise(`"${w.title}" answers no accessibility calls (a dialog opened by an accessibility action blocks its app, and a key would deadlock it): close it with {close: true}, then reopen it by its keyboard shortcut`, seen())
+    if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen())
     throw e
   }
   const nodes = parse(snap); tick('snap', t0)
