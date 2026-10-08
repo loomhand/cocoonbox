@@ -247,7 +247,9 @@ function press(combo: string) {
 function act(snap: AccessibilitySnapshot, n: Node) {
   const t0 = Date.now()
   try {
-    const ways = [() => snap.activate(n.ref), () => { const [x, y] = snap.clickablePoint(n.ref, true); m.moveMouse(x, y, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click) }]
+    // a button's AT-SPI action runs its handler inside the a11y bridge's dispatch too, so a shown control takes a pointer click first
+    const ways = [() => { const [x, y] = snap.clickablePoint(n.ref, true); m.moveMouse(x, y, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click) }, () => snap.activate(n.ref)]
+    if (n.role.startsWith('menu')) ways.reverse()
     if (n.role === 'tab' || n.role === 'option' || n.role === 'radio') ways.unshift(() => snap.select(n.ref))
     for (const [k, f] of ways.entries()) { try { f(); return } catch (e) { if (k === ways.length - 1) throw e } }
   } finally { tick('act', t0) }
