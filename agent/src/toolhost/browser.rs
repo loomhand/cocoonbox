@@ -5,7 +5,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -28,6 +28,7 @@ const RUNNING_MARKER: &str = "cocoonbox-was-running";
 const XPROP: &str = "xprop";
 const XPROP_WAIT: Duration = Duration::from_secs(2);
 const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
+const MAX_WINDOWS: usize = 8;
 
 const SNAPSHOT_JS: &str = r#"(() => {
   const MAX = 300;
@@ -216,7 +217,7 @@ pub struct Browser {
     http: reqwest::Client,
     life: RwLock<()>,
     starting: Mutex<()>,
-    windows: Mutex<HashMap<String, Arc<Mutex<Option<Target>>>>>,
+    windows: Mutex<HashMap<String, Slot>>,
     last: Mutex<String>,
 }
 
@@ -257,13 +258,10 @@ impl Browser {
             "browser_end" => return Ok(self.end(agent_id).await),
             _ => {}
         }
-        let slot = Arc::clone(
-            self.windows
-                .lock()
-                .await
-                .entry(agent_id.to_owned())
-                .or_default(),
-        );
+        let (slot, evicted) = self.slot(agent_id).await;
+        if let Some(evicted) = evicted {
+            self.shut(evicted).await;
+        }
         let mut window = slot.lock().await;
         let mut cdp = self.connect(&mut window).await?;
         timing::mark("connect");
@@ -480,18 +478,42 @@ impl Browser {
         Ok(cdp)
     }
 
+    /// The window of `agent_id`, and past `MAX_WINDOWS` agents the slot of the least recently used other one, taken out to close.
+    async fn slot(&self, agent_id: &str) -> (Arc<Mutex<Option<Target>>>, Option<Slot>) {
+        let mut windows = self.windows.lock().await;
+        let slot = windows.entry(agent_id.to_owned()).or_insert_with(|| Slot {
+            window: Arc::default(),
+            used: Instant::now(),
+        });
+        slot.used = Instant::now();
+        let window = Arc::clone(&slot.window);
+        if windows.len() <= MAX_WINDOWS {
+            return (window, None);
+        }
+        let oldest = windows
+            .iter()
+            .filter(|(id, _)| *id != agent_id)
+            .min_by_key(|(_, s)| s.used)
+            .map(|(id, _)| id.clone());
+        (window, oldest.and_then(|id| windows.remove(&id)))
+    }
+
     /// Closes the window of `agent_id`; Chrome is not started for it.
     async fn end(&self, agent_id: &str) -> String {
         let Some(slot) = self.windows.lock().await.remove(agent_id) else {
             return "no window".to_owned();
         };
-        let Some(t) = slot.lock().await.take() else {
-            return "no window".to_owned();
+        self.shut(slot).await.to_owned()
+    }
+
+    async fn shut(&self, slot: Slot) -> &'static str {
+        let Some(t) = slot.window.lock().await.take() else {
+            return "no window";
         };
         if let Ok(mut cdp) = self.browser().await {
             cdp.close_window(&t.id).await;
         }
-        "closed".to_owned()
+        "closed"
     }
 
     async fn running(&self) -> Result<(), String> {
@@ -522,7 +544,13 @@ impl Browser {
     /// Agent windows close first, so the restored session holds only the user's.
     async fn close(&self) -> Result<String, String> {
         let marker = self.profile.join(RUNNING_MARKER);
-        let windows: Vec<_> = self.windows.lock().await.drain().map(|(_, w)| w).collect();
+        let windows: Vec<_> = self
+            .windows
+            .lock()
+            .await
+            .drain()
+            .map(|(_, s)| s.window)
+            .collect();
         if self.targets().await.is_err() {
             let _ = tokio::fs::remove_file(&marker).await;
             return Ok("not running".to_owned());
@@ -608,6 +636,11 @@ impl Browser {
             LAUNCH_WAIT.as_secs()
         ))
     }
+}
+
+struct Slot {
+    window: Arc<Mutex<Option<Target>>>,
+    used: Instant,
 }
 
 #[derive(Deserialize)]
@@ -1085,6 +1118,22 @@ mod tests {
             chrome_page_title("_NET_WM_NAME(UTF8_STRING) = \"*notes.txt - Mousepad\""),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn past_the_window_cap_a_new_agent_evicts_the_least_recently_used_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        for i in 0..MAX_WINDOWS {
+            assert!(b.slot(&format!("a{i}")).await.1.is_none());
+        }
+        assert!(b.slot("a0").await.1.is_none());
+        let (_, evicted) = b.slot("new").await;
+        assert!(evicted.is_some());
+        let windows = b.windows.lock().await;
+        assert_eq!(windows.len(), MAX_WINDOWS);
+        assert!(windows.contains_key("a0") && windows.contains_key("new"));
+        assert!(!windows.contains_key("a1"));
     }
 
     #[test]
