@@ -49,8 +49,6 @@ const SCRIPT_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 wit
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 The user watches the screen live and sees every call.";
 const ALWAYS_LOAD: [&str; 2] = ["script_run", "gui_plan"];
-const DEFAULT_VIEW: &str = "both";
-const PREVIEW_EDGE: u32 = 640;
 const NUDGE_STREAK: u32 = 2;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
 const MAX_FLOWS: usize = 30;
@@ -478,9 +476,6 @@ impl Mcp {
         if let Principal::Share { write: false, .. } = principal {
             requested["workspace_only"] = true.into();
         }
-        if self.script {
-            default_view(name, &mut requested);
-        }
         let label = {
             let mut d = lock(&s.driver);
             d.used |= uses_driver(name);
@@ -628,19 +623,6 @@ impl Session {
         {
             self.changed.notify_one();
         }
-    }
-}
-
-/// On cbplan, computer_* observe through the elements view and a small preview unless the call picks otherwise.
-fn default_view(name: &str, args: &mut Value) {
-    if !matches!(name, "computer_act" | "computer_state") {
-        return;
-    }
-    if args.get("view").is_none() {
-        args["view"] = DEFAULT_VIEW.into();
-    }
-    if args.get("max_edge").is_none() {
-        args["max_edge"] = PREVIEW_EDGE.into();
     }
 }
 

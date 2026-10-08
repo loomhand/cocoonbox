@@ -4,7 +4,6 @@ pub mod browser;
 pub mod cua;
 pub mod exec;
 pub mod files;
-pub mod gmenu;
 pub mod rpc;
 pub mod shell;
 pub mod script;
