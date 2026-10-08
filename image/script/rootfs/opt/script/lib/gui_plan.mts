@@ -40,6 +40,7 @@ let busNames: string[] | null = null
 const known = new Set<string>()
 let lastSeen = ''
 let T: Record<string, number> = {}
+let screen: { left: number; top: number; right: number; bottom: number } | null = null
 const tick = (k: string, t0: number) => { T[k] = (T[k] ?? 0) + Date.now() - t0 }
 
 class Surprise extends Error {
@@ -245,11 +246,18 @@ function press(combo: string) {
   for (const k of keys.slice(0, -1).reverse()) m.key(k, Direction.Release)
 }
 
+// a point the pointer can reach: a dialog taller than the screen reports controls below its edge
+function reach(x: number, y: number) {
+  screen ??= m.mainScreen().boundingBox()
+  if (x < screen.left || y < screen.top || x >= screen.right || y >= screen.bottom) throw new Error(`(${x}, ${y}) is off screen`)
+  return [x, y]
+}
+
 function act(snap: AccessibilitySnapshot, n: Node) {
   const t0 = Date.now()
   try {
     // a button's AT-SPI action runs its handler inside the a11y bridge's dispatch too, so a shown control takes a pointer click first
-    const ways = [() => { const [x, y] = snap.clickablePoint(n.ref, true); m.moveMouse(x, y, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click) }, () => snap.activate(n.ref)]
+    const ways = [() => { const [x, y] = reach(...snap.clickablePoint(n.ref, true)); m.moveMouse(x, y, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click) }, () => snap.activate(n.ref)]
     if (n.role.startsWith('menu')) ways.reverse()
     if (n.role === 'tab' || n.role === 'option' || n.role === 'radio') ways.unshift(() => snap.select(n.ref))
     for (const [k, f] of ways.entries()) { try { f(); return } catch (e) { if (k === ways.length - 1) throw e } }
@@ -265,7 +273,7 @@ async function choose(snap: AccessibilitySnapshot, nodes: Node[], n: Node, rec: 
     if (key && mods.every(Boolean) && (mods.some((x) => x !== 'shift') || /^F\d+$/.test(key))) {
       try { press([...mods, key].join('+')); rec.via = 'shortcut'; return } catch {}
     }
-    const shown = () => { try { const b = snap.boundingBox(n.ref); return b.left >= 0 && b.top >= 0 && b.width > 0 ? b : null } catch { return null } }
+    const shown = () => { try { const b = snap.boundingBox(n.ref); reach(b.left + b.width / 2, b.top + b.height / 2); return b.width > 0 ? b : null } catch { return null } }
     let b = shown()
     if (!b) {
       const chain: Node[] = []
