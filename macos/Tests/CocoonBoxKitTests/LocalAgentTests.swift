@@ -69,4 +69,11 @@ import Testing
         #expect(server["command"] as? String == target.bridge)
         #expect(server["env"] as? [String: String] == ["COCOONBOX_TOKEN": "${env:COCOONBOX_TOKEN}"])
     }
+
+    @Test func cursorDisablesTheCocoonboxClaudePlugin() throws {
+        let launch = LocalAgentKind.cursor.launch(executable: "cursor-agent", target: target)
+        let settings = try #require(launch.files[".claude/settings.json"])
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(settings.utf8)) as? [String: Any])
+        #expect(root["enabledPlugins"] as? [String: Bool] == ["cocoonbox@cocoonbox": false])
+    }
 }

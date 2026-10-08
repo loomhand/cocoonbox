@@ -85,6 +85,7 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
             files[".cursor/mcp.json"] = Self.json(["mcpServers": [server: ["command": target.bridge, "args": target.arguments, "env": Dictionary(uniqueKeysWithValues: variables.map { ($0, "${env:\($0)}") })]]])
             files[".cursor/cli.json"] = #"{"permissions":{"allow":["Mcp(*\#(server):*)"],"deny":[]}}"#
             files[".cursor/rules/cocoonbox.mdc"] = "---\ndescription: cocoonbox\nalwaysApply: true\n---\n\(Self.instructions)\n"
+            files[".claude/settings.json"] = Self.json(["enabledPlugins": ["\(server)@\(server)": false]])
         }
         return LocalAgentLaunch(arguments: arguments, environment: environment, files: files)
     }
