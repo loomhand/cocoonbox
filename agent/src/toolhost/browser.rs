@@ -219,7 +219,8 @@ pub struct Browser {
     port: u16,
     http: reqwest::Client,
     life: RwLock<()>,
-    starting: Mutex<()>,
+    /// Held while Chrome starts; true once this toolhost has looked for agent windows an earlier one left.
+    start: Mutex<bool>,
     windows: Mutex<HashMap<String, Slot>>,
     last: Mutex<String>,
 }
@@ -233,7 +234,7 @@ impl Browser {
             port,
             http: reqwest::Client::new(),
             life: RwLock::new(()),
-            starting: Mutex::new(()),
+            start: Mutex::new(false),
             windows: Mutex::new(HashMap::new()),
             last: Mutex::new(String::new()),
         }
@@ -521,10 +522,19 @@ impl Browser {
     }
 
     async fn running(&self) -> Result<(), String> {
-        let _starting = self.starting.lock().await;
-        if self.targets().await.is_err() {
+        let mut swept = self.start.lock().await;
+        let launched = self.targets().await.is_err();
+        if launched {
             self.launch().await?;
         }
+        if (launched || !*swept)
+            && tokio::fs::remove_file(self.profile.join(AGENT_MARKER))
+                .await
+                .is_ok()
+        {
+            self.close_restored().await;
+        }
+        *swept = true;
         Ok(())
     }
 
@@ -628,12 +638,6 @@ impl Browser {
         let deadline = tokio::time::Instant::now() + LAUNCH_WAIT;
         while tokio::time::Instant::now() < deadline {
             if self.targets().await.is_ok() {
-                if tokio::fs::remove_file(self.profile.join(AGENT_MARKER))
-                    .await
-                    .is_ok()
-                {
-                    self.close_restored().await;
-                }
                 return Ok(());
             }
             if let Ok(Some(status)) = chrome.try_wait() {
@@ -651,7 +655,7 @@ impl Browser {
         ))
     }
 
-    /// Closes the agent windows Chrome restored from a run that ended with them open, known by their first history entry.
+    /// Closes the agent windows a run that ended with them open left in Chrome, known by their first history entry.
     async fn close_restored(&self) {
         let Ok(targets) = self.targets().await else {
             return;
@@ -1115,6 +1119,24 @@ mod tests {
             "running"
         );
         assert!(!marker.exists());
+    }
+
+    #[tokio::test]
+    async fn a_chrome_already_running_is_swept_only_at_its_first_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(AGENT_MARKER);
+        std::fs::write(&marker, b"").unwrap();
+        let port = slow_chrome(Duration::ZERO).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        for swept in [true, false] {
+            assert_eq!(
+                b.run("state", "browser_start", json!({})).await.unwrap(),
+                "running"
+            );
+            assert_eq!(!marker.exists(), swept);
+            std::fs::write(&marker, b"").unwrap();
+        }
     }
 
     #[tokio::test]
