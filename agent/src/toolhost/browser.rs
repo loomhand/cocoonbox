@@ -21,6 +21,7 @@ use super::timing;
 
 const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
+const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
 const READ_CHARS: usize = 20_000;
@@ -849,10 +850,26 @@ impl Cdp {
         let mut closing: Vec<&str> = ids.iter().flat_map(|id| window_tabs(id, &pages)).collect();
         closing.sort_unstable();
         closing.dedup();
-        for t in closing {
+        for t in &closing {
             let _ = self
                 .call("Target.closeTarget", json!({"targetId": t}))
                 .await;
+        }
+        // closeTarget returns before the tab is gone, and a Browser.close meanwhile saves it in the session
+        let deadline = tokio::time::Instant::now() + CLOSE_WAIT;
+        while tokio::time::Instant::now() < deadline {
+            let Ok(infos) = self.call("Target.getTargets", json!({})).await else {
+                return;
+            };
+            let open = infos["targetInfos"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|i| i["targetId"].as_str().is_some_and(|t| closing.contains(&t)));
+            if !open {
+                return;
+            }
+            tokio::time::sleep(POLL).await;
         }
     }
 
