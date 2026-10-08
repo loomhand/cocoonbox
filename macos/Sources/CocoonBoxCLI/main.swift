@@ -298,16 +298,22 @@ func serve() async {
         endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"), box: value(of: "--box"), link: link,
         cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { output.write($0) }
     )
-    // a client that stops the bridge with SIGTERM still gets its sessions closed
-    signal(SIGTERM, SIG_IGN)
-    let terminate = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
-    terminate.setEventHandler {
-        Task {
-            await bridge.shutdown()
-            exit(0)
+    // a client that stops the bridge with SIGINT or SIGTERM still gets its sessions closed; Claude Code sends SIGINT, then SIGKILL 0.5 s later
+    let stopping = Mutex(false)
+    let stops = [SIGINT, SIGTERM].map { number in
+        signal(number, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+        source.setEventHandler {
+            if stopping.withLock({ again in defer { again = true }; return again }) { return }
+            Task {
+                await bridge.shutdown()
+                exit(0)
+            }
         }
+        return source
     }
-    terminate.resume()
+    stops.forEach { $0.resume() }
+    defer { stops.forEach { $0.cancel() } }
     await bridge.run()
 }
 
