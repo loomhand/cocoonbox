@@ -14,6 +14,8 @@ public actor Bridge {
     static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
     static let connectWait = Duration.seconds(3)
     public static let instructions = "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box."
+    public static let codexInstructions = "These tools run on the user's cocoonbox cloud desktop (Ubuntu 24.04, XFCE, 1280x800), not on this Mac. GUI work in a desktop app goes to gui_plan; commands go to shell."
+    static let codexClient = "codex-mcp-client"
 
     private let endpoint: Endpoint
     private let token: String
@@ -401,6 +403,7 @@ public actor Bridge {
         }
         let own = boxInstructions[box] ?? (try? String(contentsOf: cacheFile(box, "instructions.txt"), encoding: .utf8)) ?? ""
         guard script(toolsOf(box)), !own.isEmpty else { return Self.instructions }
+        if (client["clientInfo"] as? [String: Any])?["name"] as? String == Self.codexClient { return Self.codexInstructions }
         return "\(Self.instructions) The default box's own instructions follow. \(own)"
     }
 

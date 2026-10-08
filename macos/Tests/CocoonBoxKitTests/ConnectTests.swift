@@ -95,6 +95,19 @@ import Testing
         #expect(again.instructions == Bridge.instructions)
     }
 
+    @Test func codexGetsOneLineOnACbplanBoxAndTheBridgeTextOnACbdeskBox() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let cbdesk = try #require(try await mock.connection.firstBox()).id
+        let desk = try await BridgeClient(mock, box: cbdesk, client: "codex-mcp-client")
+        #expect(desk.instructions == Bridge.instructions)
+        _ = try await desk.tool("box_create", ["name": "sim1", "kind": "script"])
+        desk.close()
+        let sim = try await BridgeClient(mock, box: "sim1", client: "codex-mcp-client")
+        defer { sim.close() }
+        #expect(sim.instructions == Bridge.codexInstructions)
+    }
+
     @Test func anAppSwitchToABoxWithOtherToolsSendsListChanged() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
@@ -324,14 +337,14 @@ final class BridgeClient: Sendable {
     private let next = Mutex(1)
     private let task: Task<Void, Never>
 
-    init(_ mock: MockBoxProcess, box: String? = nil, link: AgentLinkClient? = nil) async throws {
+    init(_ mock: MockBoxProcess, box: String? = nil, link: AgentLinkClient? = nil, client: String = "bridge-test") async throws {
         let output = output
         let bridge = Bridge(endpoint: mock.endpoint, token: "mock-token", wake: true, box: box, link: link, cache: mock.root.appendingPathComponent("tools.json")) { data in
             output.state.withLock { $0 += data.split(separator: UInt8(ascii: "\n")).map { Data($0) } }
         }
         let reader = input.fileHandleForReading
         task = Task { await bridge.run(input: reader) }
-        let answer = try await call("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": "bridge-test", "version": "1"]])
+        let answer = try await call("initialize", ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": client, "version": "1"]])
         let text = (answer["result"] as? [String: Any])?["instructions"] as? String ?? ""
         initialized.withLock { $0 = text }
         send(["jsonrpc": "2.0", "method": "notifications/initialized"])
