@@ -14,7 +14,7 @@ type Step = {
   timeout_ms?: number; enabled?: boolean; fp?: Fp; seen?: string
 }
 type Fp = { role: string; name: string; parent: string; nth: number; label?: string }
-type Node = { ref: number; depth: number; role: string; name: string; value: string; disabled: boolean; parent: number; keys: string }
+type Node = { ref: number; depth: number; role: string; name: string; value: string; disabled: boolean; parent: number; keys: string; accel: string }
 type Hit = { n: Node; i: number; how: string; p?: number; margin?: number }
 type Flow = { name: string; params: Record<string, string>; steps: Step[]; idempotent: boolean; runs: number; saved_at: string; rewrites: number }
 type Chain = { at: number; window: string | null; pid: number | null; name?: string; named?: boolean; params: Record<string, string>; steps: Step[]; dirty: boolean }
@@ -53,7 +53,7 @@ function parse(snap: AccessibilitySnapshot): Node[] {
   for (const l of snap.print({ maxChars: 80 }).split('\n')) {
     const g = LINE.exec(l); if (!g) continue
     const depth = g[1].length / 2; stack.length = depth
-    out.push({ ref: +g[5], depth, role: g[2], name: (g[3] ?? '').replace(/\\"/g, '"').trim(), value: g[6] ?? '', disabled: g[4].includes('[disabled]'), parent: depth ? stack[depth - 1] : -1, keys: /\[(<[^\]]*)\]/.exec(g[4])?.[1] ?? '' })
+    out.push({ ref: +g[5], depth, role: g[2], name: (g[3] ?? '').replace(/\\"/g, '"').trim(), value: g[6] ?? '', disabled: g[4].includes('[disabled]'), parent: depth ? stack[depth - 1] : -1, keys: /\[(<[^\]]*)\]/.exec(g[4])?.[1] ?? '', accel: /\[[^\]<;]*;[^\];]*;([^\];]*)\]/.exec(g[4])?.[1] ?? '' })
     stack[depth] = out.length - 1
   }
   return out
@@ -81,6 +81,7 @@ function seen() {
   const w = focused()
   return { window: w?.title ?? null, windows: m.windows().map((x) => x.title).filter((t) => !/^(Desktop|xfce4-panel)$/.test(t)), outline: outline(w) }
 }
+const blocked = (o: string) => /AT-SPI peer \S+ is not responding/.test(o)
 const isAlert = (o: string) => /^- alert/.test(o)
 const isDialog = (o: string) => /^- (alert|dialog|file chooser)/.test(o)
 
@@ -251,6 +252,28 @@ function act(snap: AccessibilitySnapshot, n: Node) {
   } finally { tick('act', t0) }
 }
 
+// an AT-SPI action on a menu entry runs its handler inside the a11y bridge's D-Bus dispatch: a modal dialog it opens answers no AT-SPI call, and the first key deadlocks the app
+async function choose(snap: AccessibilitySnapshot, nodes: Node[], n: Node, rec: Record<string, unknown>) {
+  const t0 = Date.now()
+  try {
+    const mods = (n.accel.match(/<\w+>/g) ?? []).map((x) => ({ '<Primary>': 'ctrl', '<Control>': 'ctrl', '<Shift>': 'shift', '<Alt>': 'alt' } as Record<string, string>)[x])
+    const key = n.accel.replace(/<\w+>/g, '')
+    if (key && mods.every(Boolean) && (mods.some((x) => x !== 'shift') || /^F\d+$/.test(key))) {
+      try { press([...mods, key].join('+')); rec.via = 'shortcut'; return } catch {}
+    }
+    const shown = () => { try { const b = snap.boundingBox(n.ref); return b.left >= 0 && b.top >= 0 && b.width > 0 ? b : null } catch { return null } }
+    let b = shown()
+    if (!b) {
+      const chain: Node[] = []
+      for (let q = n.parent; q >= 0 && nodes[q].role === 'menu'; q = nodes[q].parent) chain.unshift(nodes[q])
+      for (const q of chain) snap.activate(q.ref)
+      for (let i = 0; i < 10 && !(b = shown()); i++) await sleep(30)
+    }
+    if (b) { m.moveMouse(b.left + b.width / 2, b.top + b.height / 2, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click); rec.via = 'click'; return }
+    snap.activate(n.ref); rec.via = 'action'
+  } finally { tick('act', t0) }
+}
+
 async function settle(before: string | undefined) {
   const t0 = Date.now()
   for (let i = 0; i < 6 && focused()?.title === before; i++) await sleep(25)
@@ -267,6 +290,7 @@ async function submit(w: NonNullable<ReturnType<typeof focused>>) {
     for (let k = 0; k < 15 && open(); k++) await sleep(40)
   }
   tick('submit', t0)
+  if (open() && focused()?.title === title) throw new Surprise(`"${title}" is still open after Return`, seen())
 }
 
 async function setState(s: Step, w: NonNullable<ReturnType<typeof focused>>, snap: AccessibilitySnapshot, hit: Hit, rec: Record<string, unknown>) {
@@ -321,7 +345,9 @@ async function run(s: Step, rec: Record<string, unknown>) {
   if (s.close) {
     // close shuts a dialog: the named window, else the focused dialog, else a dialog of the focused app; never an app's main window unless named
     const t0 = Date.now(); let w = s.window ? await windowFor(s.window, 3000, s.seen) : focused()
-    if (w && !s.window && !isDialog(outline(w))) w = m.windows().find((x) => pidOf(x) === pidOf(w!) && x.title !== w!.title && isDialog(outline(x))) ?? null
+    const o = w && !s.window ? outline(w) : ''
+    if (w && blocked(o)) { rec.seen = w.title; rec.how = 'wm'; w.close(); await settle(w.title); tick('act', t0); return }
+    if (w && !s.window && !isDialog(o)) w = m.windows().find((x) => pidOf(x) === pidOf(w!) && x.title !== w!.title && isDialog(outline(x))) ?? null
     if (!w) { rec.noop = true; tick('act', t0); return }
     const [title, pid] = [w.title, pidOf(w)]; rec.seen = title; w.focus(); press('Escape'); await settle(w.title)
     if (pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)) w.close()
@@ -329,7 +355,12 @@ async function run(s: Step, rec: Record<string, unknown>) {
   }
   const w = await windowFor(s.window, 3000, s.seen)
   rec.seen = w.title; if (w.title.trim()) lastSeen = w.title
-  let t0 = Date.now(); const snap = snapOf(w); const nodes = parse(snap); tick('snap', t0)
+  let t0 = Date.now(); let snap: AccessibilitySnapshot
+  try { snap = snapOf(w) } catch (e) {
+    if (blocked(String(e))) throw new Surprise(`"${w.title}" answers no accessibility calls (a dialog opened by an accessibility action blocks its app, and a key would deadlock it): close it with {close: true}, then reopen it by its keyboard shortcut`, seen())
+    throw e
+  }
+  const nodes = parse(snap); tick('snap', t0)
   if (s.expect) {
     const d = decide({ window_title: w.title, contents: snap.print({ maxChars: 60 }).slice(0, 4000) }, { ok: noul(s.expect) })
     rec.p = +d.ok.probability.toFixed(2)
@@ -371,7 +402,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     } else rec.how = 'fp'
     rec.fp = fingerprint(nodes, hit!)
     if (hit!.p !== undefined) rec.jev = [hit!.p, hit!.margin]
-    if (s.on === undefined) { const pid = pidOf(w); act(snap, hit!.n); await settle(w.title); const now = pid === null ? null : gtkToggle(pid, hit!.n.name); if (now !== null) rec.now = now; return }
+    if (s.on === undefined) { const pid = pidOf(w); await choose(snap, nodes, hit!.n, rec); await settle(w.title); const now = pid === null ? null : gtkToggle(pid, hit!.n.name); if (now !== null) rec.now = now; return }
     const was = gtkToggle(w.pid, hit!.n.name)
     if (was !== null) {
       rec.was = was; rec.state = 'gtk'
