@@ -29,6 +29,7 @@ const TOGGLES = 'checkbox|switch|togglebutton|menuitemcheckbox'
 const FIELDS = 'textbox|searchbox|spinbutton|slider|combobox'
 const LINE = /^(\s*)- (\S+)(?: "((?:[^"\\]|\\.)*)")?(.*?)\[ref=(\d+)\](?:: "(.*)")?$/
 const MARGIN = 0.25
+const HOLDERS = /^at-spi\.role\.(page|filler|panel|scroll|viewport|layered|frame|dialog|window)\b/
 const OPS = ['app', 'menu', 'click', 'check', 'set', 'type', 'key', 'wait', 'expect', 'verify', 'close']
 const m = Machine.local()
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -253,11 +254,19 @@ function reach(x: number, y: number) {
   return [x, y]
 }
 
+// the element's center when a hit-test there finds the element or a container that answers for its children (a GTK notebook page)
+function point(snap: AccessibilitySnapshot, n: Node) {
+  const b = snap.boundingBox(n.ref); const [x, y] = reach(b.left + b.width / 2, b.top + b.height / 2)
+  const at = m.nodeAtPoint(x, y)?.overallDescription ?? ''
+  if (!(n.name && norm(at.split(' under ')[0]).includes(norm(n.name))) && !HOLDERS.test(at)) throw new Error(`(${x}, ${y}) hits ${at.slice(0, 60)}`)
+  return [x, y]
+}
+
 function act(snap: AccessibilitySnapshot, n: Node) {
   const t0 = Date.now()
   try {
     // a button's AT-SPI action runs its handler inside the a11y bridge's dispatch too, so a shown control takes a pointer click first
-    const ways = [() => { const [x, y] = reach(...snap.clickablePoint(n.ref, true)); m.moveMouse(x, y, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click) }, () => snap.activate(n.ref)]
+    const ways = [() => { const [x, y] = point(snap, n); m.moveMouse(x, y, Coordinate.Abs); m.mouseButton(Button.Left, Direction.Click) }, () => snap.activate(n.ref)]
     if (n.role.startsWith('menu')) ways.reverse()
     if (n.role === 'tab' || n.role === 'option' || n.role === 'radio') ways.unshift(() => snap.select(n.ref))
     for (const [k, f] of ways.entries()) { try { f(); return } catch (e) { if (k === ways.length - 1) throw e } }
