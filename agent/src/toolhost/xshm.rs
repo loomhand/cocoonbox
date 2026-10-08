@@ -350,6 +350,42 @@ impl Grabber {
         })
     }
 
+    pub fn dialog(&self, w: Window) -> bool {
+        let atom = |name: &[u8]| {
+            self.conn
+                .intern_atom(false, name)
+                .ok()
+                .and_then(|c| c.reply().ok())
+                .map_or(u32::from(AtomEnum::NONE), |r| r.atom)
+        };
+        let (kind, dialog) = (
+            atom(b"_NET_WM_WINDOW_TYPE"),
+            atom(b"_NET_WM_WINDOW_TYPE_DIALOG"),
+        );
+        let children = self
+            .conn
+            .query_tree(w)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|t| t.children)
+            .unwrap_or_default();
+        std::iter::once(w).chain(children).any(|c| {
+            let get = |property: u32, kind: u32| {
+                self.conn
+                    .get_property(false, c, property, kind, 0, 16)
+                    .ok()
+                    .and_then(|r| r.reply().ok())
+            };
+            let transient = get(AtomEnum::WM_TRANSIENT_FOR.into(), AtomEnum::WINDOW.into())
+                .and_then(|r| r.value32().and_then(|mut v| v.next()))
+                .is_some_and(|v| v != 0);
+            let typed = get(kind, AtomEnum::ATOM.into())
+                .and_then(|r| r.value32().map(|v| v.collect::<Vec<_>>()))
+                .is_some_and(|v| v.contains(&dialog));
+            transient || typed
+        })
+    }
+
     /// The WM_CLASS class of `w`, such as `Google-chrome`, or of the client inside it when `w` is a window manager frame.
     pub fn class(&self, w: Window) -> String {
         let children = self
