@@ -45,6 +45,7 @@ import Testing
 
     @Test func claudeRunsTheBridgeForTheBox() throws {
         let launch = LocalAgentKind.claudeCode.launch(executable: "claude", target: target)
+        #expect(launch.arguments.contains("--strict-mcp-config"))
         let config = try #require(launch.arguments.firstIndex(of: "--mcp-config").map { launch.arguments[$0 + 1] })
         let root = try #require(try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
         let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])

@@ -71,7 +71,7 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
         switch self {
         case .claudeCode:
             let config = Self.json(["mcpServers": [server: ["type": "stdio", "command": target.bridge, "args": target.arguments, "env": Dictionary(uniqueKeysWithValues: variables.map { ($0, "${\($0)}") })]]])
-            arguments = [path, "--mcp-config", config, "--append-system-prompt", Self.instructions, "--allowedTools", "mcp__\(server)"]
+            arguments = [path, "--strict-mcp-config", "--mcp-config", config, "--append-system-prompt", Self.instructions, "--allowedTools", "mcp__\(server)"]
                 + (session.map { resume ? ["--resume", $0] : ["--session-id", $0] } ?? [])
         case .codex:
             arguments = [path] + (resume ? session.map { ["resume", $0] } ?? [] : []) + [
