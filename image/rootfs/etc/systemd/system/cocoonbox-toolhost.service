@@ -17,6 +17,7 @@ ExecStart=/usr/local/bin/cocoonbox-agent toolhost
 Restart=always
 RestartSec=2s
 TimeoutStopSec=5s
+KillMode=mixed
 
 [Install]
 WantedBy=graphical.target

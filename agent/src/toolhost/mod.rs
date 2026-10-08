@@ -229,17 +229,25 @@ impl Host {
     }
 }
 
-/// Runs the toolhost until the process is stopped.
+/// Runs the toolhost until SIGTERM or SIGINT, which closes Chrome with its agent windows first.
 pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
     let listener = bind(&cfg.socket, &cfg.socket_group)?;
     eprintln!("toolhost listening on {}", cfg.socket.display());
     let host = Arc::new(Host::new(&cfg));
+    let stop = crate::server::shutdown_signal();
+    tokio::pin!(stop);
     loop {
-        let (stream, _) = listener
-            .accept()
-            .await
-            .map_err(|e| format!("accept: {e}"))?;
-        tokio::spawn(serve_conn(Arc::clone(&host), stream));
+        tokio::select! {
+            () = &mut stop => {
+                let closed = host.browser.run("toolhost", "browser_close", Value::Null).await;
+                eprintln!("toolhost stopping: browser_close: {closed:?}");
+                return Ok(());
+            }
+            accepted = listener.accept() => {
+                let (stream, _) = accepted.map_err(|e| format!("accept: {e}"))?;
+                tokio::spawn(serve_conn(Arc::clone(&host), stream));
+            }
+        }
     }
 }
 
