@@ -20,6 +20,9 @@ use super::cua::SHELL_APPS;
 
 const OVERLAY_NAME: &[u8] = b"Cua.AgentCursorOverlay";
 const THUMB_BLOCK: usize = 8;
+const BLOCK: usize = 16;
+const HASH_MUL: u64 = 0x9e37_79b9_7f4a_7c15;
+const RGB_BYTES: u64 = 0x00ff_ffff_00ff_ffff;
 const PANEL_ROWS: usize = 32;
 const DOCK_ROWS: usize = 40;
 const ALL_MASTERS: u16 = 1;
@@ -214,11 +217,6 @@ impl Grabber {
             .collect())
     }
 
-    /// Columns of a [`Grabber::thumb`] row.
-    pub fn thumb_columns(&self) -> usize {
-        usize::from(self.width) / THUMB_BLOCK
-    }
-
     /// The root window shrunk eightfold by averaging, as RGB rows; the panel and dock strips stay black.
     pub fn thumb(&self) -> Result<Vec<u8>, String> {
         let (w, h) = (usize::from(self.width), usize::from(self.height));
@@ -240,6 +238,22 @@ impl Grabber {
             .iter()
             .map(|s| u8::try_from(s / n).unwrap_or(u8::MAX))
             .collect())
+    }
+
+    /// The root window as one hash per 16-pixel square, row-major; the panel and dock strips hash as empty.
+    pub fn blocks(&self) -> Result<Vec<u64>, String> {
+        let (width, height) = self.size();
+        Ok(block_hashes(self.pixels()?, width, height))
+    }
+
+    /// The root window as BGRX rows, valid until the next grab.
+    pub fn pixels(&self) -> Result<&[u8], String> {
+        self.image([0, 0, self.width.into(), self.height.into()])
+    }
+
+    /// The root window's width and height.
+    pub fn size(&self) -> (usize, usize) {
+        (usize::from(self.width), usize::from(self.height))
     }
 
     /// The mapped children of the root with their geometry: frames, menus and popups, without the desktop shell.
@@ -546,6 +560,53 @@ impl Grabber {
     }
 }
 
+/// One hash per 16-pixel square of the BGRX rows `bgrx`, `width` pixels wide, so any changed pixel
+/// changes its square's hash; the padding byte and the panel and dock rows do not count.
+pub fn block_hashes(bgrx: &[u8], width: usize, height: usize) -> Vec<u64> {
+    let columns = width.div_ceil(BLOCK);
+    let mut hashes = vec![0u64; columns * height.div_ceil(BLOCK)];
+    for y in PANEL_ROWS..height.saturating_sub(DOCK_ROWS) {
+        let base = y / BLOCK * columns;
+        let row = &bgrx[y * width * 4..(y + 1) * width * 4];
+        for (h, piece) in hashes[base..base + columns]
+            .iter_mut()
+            .zip(row.chunks(BLOCK * 4))
+        {
+            let (words, rest) = piece.as_chunks::<8>();
+            for w in words {
+                *h = mix(*h, u64::from_le_bytes(*w) & RGB_BYTES);
+            }
+            if let Some(p) = rest.first_chunk::<4>() {
+                *h = mix(*h, u64::from(u32::from_le_bytes(*p)) & RGB_BYTES);
+            }
+        }
+    }
+    hashes
+}
+
+/// Whether a pixel of block `block` (see [`block_hashes`]) of the BGRX frames `a` and `b`, `width` by
+/// `height`, differs by more than `step` in a colour channel; frames of different sizes always do.
+pub fn visible(a: &[u8], b: &[u8], width: usize, height: usize, block: usize, step: u8) -> bool {
+    if a.len() != b.len() || a.len() < width * height * 4 {
+        return true;
+    }
+    let columns = width.div_ceil(BLOCK);
+    let (x0, y0) = (block % columns * BLOCK, block / columns * BLOCK);
+    let x1 = (x0 + BLOCK).min(width);
+    (y0.max(PANEL_ROWS)..(y0 + BLOCK).min(height.saturating_sub(DOCK_ROWS))).any(|y| {
+        let (start, end) = ((y * width + x0) * 4, (y * width + x1) * 4);
+        a[start..end]
+            .iter()
+            .zip(&b[start..end])
+            .enumerate()
+            .any(|(k, (p, q))| k % 4 != 3 && p.abs_diff(*q) > step)
+    })
+}
+
+fn mix(h: u64, word: u64) -> u64 {
+    (h ^ word).wrapping_mul(HASH_MUL).rotate_left(29)
+}
+
 /// The reply to a request about a window; `None` when the window closed after it was listed (BadWindow).
 fn alive<T>(reply: Result<T, ReplyError>, what: &str) -> Result<Option<T>, String> {
     match reply {
@@ -581,6 +642,41 @@ mod tests {
             extension_name: None,
             request_name: Some("GetProperty"),
         })
+    }
+
+    #[test]
+    fn one_changed_pixel_changes_only_its_block_and_padding_and_strips_do_not_count() {
+        let (w, h) = (40, 120);
+        let frame = vec![200u8; w * h * 4];
+        let base = block_hashes(&frame, w, h);
+        assert_eq!(base.len(), 3 * 8);
+        let mut one = frame.clone();
+        one[(50 * w + 33) * 4 + 1] = 199;
+        let changed: Vec<usize> = (0..base.len())
+            .filter(|&i| block_hashes(&one, w, h)[i] != base[i])
+            .collect();
+        assert_eq!(changed, [3 * 3 + 2]);
+        let mut padding = frame.clone();
+        padding[(50 * w + 3) * 4 + 3] = 0;
+        padding[(10 * w + 3) * 4] = 0;
+        padding[((h - 1) * w + 3) * 4] = 0;
+        assert_eq!(block_hashes(&padding, w, h), base);
+    }
+
+    #[test]
+    fn a_block_differs_visibly_only_past_the_step_in_a_colour_channel() {
+        let (w, h) = (40, 120);
+        let frame = vec![200u8; w * h * 4];
+        let mut faint = frame.clone();
+        faint[(50 * w + 33) * 4 + 1] = 180;
+        faint[(50 * w + 3) * 4 + 3] = 0;
+        assert!(!visible(&frame, &faint, w, h, 3 * 3 + 2, 24));
+        assert!(!visible(&frame, &faint, w, h, 3 * 3, 24));
+        let mut seen = faint.clone();
+        seen[(50 * w + 33) * 4 + 2] = 150;
+        assert!(visible(&frame, &seen, w, h, 3 * 3 + 2, 24));
+        assert!(!visible(&frame, &seen, w, h, 3 * 3 + 1, 24));
+        assert!(visible(&frame, &seen[4..], w, h, 0, 24));
     }
 
     #[test]
