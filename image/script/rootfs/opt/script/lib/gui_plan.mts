@@ -162,6 +162,7 @@ async function windowFor(want: string | undefined, ms = 3000, saw?: string) {
     if (w && !known.has(w.title) && w.title !== asked && Date.now() - t0 > 250) {
       asked = w.title
       const o = outline(w)
+      if (blocked(o)) { tick('wait', t0); throw new Surprise(unanswered(w.title), seen()) }
       if (isAlert(o)) { tick('wait', t0); throw new Surprise(`alert "${w.title}" opened instead of "${want}"`, seen()) }
       const d = decide({ window_title: w.title, contents: o.slice(0, 800) }, { is: noul(`The plan expects the "${want}" window in front next. Is this window that one, and not a confirmation, error or other unexpected dialog?`) })
       if (d.is.probability >= 0.7) break
@@ -354,6 +355,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const o = w && !s.window ? outline(w) : ''
     if (w && blocked(o) && m.windows().some((x) => pidOf(x) === pidOf(w!) && x.title !== w!.title)) { rec.seen = w.title; rec.how = 'wm'; w.close(); await settle(w.title); tick('act', t0); return }
     if (w && !s.window && !isDialog(o)) w = m.windows().find((x) => pidOf(x) === pidOf(w!) && x.title !== w!.title && isDialog(outline(x))) ?? null
+    if (w && blocked(o)) throw new Surprise(unanswered(w.title), seen())
     if (!w) { rec.noop = true; tick('act', t0); return }
     const [title, pid] = [w.title, pidOf(w)]; rec.seen = title; w.focus(); press('Escape'); await settle(w.title)
     if (pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)) w.close()
@@ -381,7 +383,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     if (!hit) { if (s.on === false || s.enabled === false) return; throw new Surprise(`verify: no element matches "${s.verify}"`, seen()) }
     rec.how = hit.how; rec.fp = fingerprint(nodes, hit)
     const bad: string[] = []
-    if (s.value !== undefined) { let v = ''; try { v = snap.node(hit.n.ref).value ?? '' } catch { v = hit.n.value }; if (!norm(v).includes(norm(s.value))) bad.push(`reads "${v}"`) }
+    if (s.value !== undefined) { let v = ''; try { v = snap.node(hit.n.ref).value ?? '' } catch (e) { if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen()); v = hit.n.value }; if (!norm(v).includes(norm(s.value))) bad.push(`reads "${v}"`) }
     if (s.enabled !== undefined && hit.n.disabled === s.enabled) bad.push(hit.n.disabled ? 'is disabled' : 'is enabled')
     if (s.on !== undefined) { const c = gtkToggle(w.pid, hit.n.name) ?? (await checked(w.pid, hit.n.name)) ?? cropState(snap, hit.n); rec.was = c; if (c !== s.on) bad.push(c ? 'is on' : 'is off') }
     if (bad.length) throw new Surprise(`verify: "${hit.n.name || s.verify}" ${bad.join(', ')}`, seen())
@@ -461,7 +463,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
   snap.setFocus(hit.n.ref); press('ctrl+a'); m.typeText(value); if (hit.n.role === 'spinbutton' || hit.n.role === 'slider') { press('tab'); press('shift+tab') }
   tick('act', t0)
   t0 = Date.now(); let got: string | undefined
-  for (let i = 0; i < 10; i++) { try { got = snap.node(hit.n.ref).value } catch { got = undefined }; if (same(got)) break; await sleep(40) }
+  for (let i = 0; i < 10; i++) { try { got = snap.node(hit.n.ref).value } catch (e) { if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen()); got = undefined }; if (same(got)) break; await sleep(40) }
   tick('verify', t0); rec.value = got
   if (!same(got)) throw new Surprise(`"${target}" reads "${got}" after set`, seen())
   if (s.value!.endsWith('\n')) { rec.submit = true; await submit(w) }
@@ -562,7 +564,9 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     const ts = Date.now()
     try {
       const f = focused()
-      if (f && (!known.has(f.title) || !f.title.trim()) && !(i === (p.start ?? 0) && startAlert) && !(s.window && norm(f.title).includes(norm(s.window))) && isAlert(outline(f))) throw new Surprise(`alert "${f.title}" is in front`, seen())
+      const o = f && (!known.has(f.title) || !f.title.trim()) && !(i === (p.start ?? 0) && startAlert) && !(s.window && norm(f.title).includes(norm(s.window))) ? outline(f) : ''
+      if (blocked(o)) throw new Surprise(unanswered(f!.title), seen())
+      if (isAlert(o)) throw new Surprise(`alert "${f!.title}" is in front`, seen())
       await run(s, rec)
     } catch (e) {
       const sp = e instanceof Surprise ? e : new Surprise(String((e as Error).message ?? e), seen())
@@ -583,7 +587,8 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     const f = focused(); const o = f ? outline(f) : ''
     log.push({ i: plan.length, op: 'end', ms: Date.now() - ts, window: f?.title ?? null })
     const left = f && !startTitles.has(f.title) && isDialog(o) && !(last.wait || last.app || (last.window && norm(f.title).includes(norm(last.window))))
-    if (f && (isAlert(o) || left)) { escalate = { step: plan.length, reason: `the plan ended with "${f.title || o.split('\n')[0]}" still in front`, ...seen() }; done = plan.length }
+    if (f && blocked(o) && recs.at(-1)?.how !== 'wm') { escalate = { step: plan.length, reason: unanswered(f.title), ...seen() }; done = plan.length }
+    else if (f && (isAlert(o) || left)) { escalate = { step: plan.length, reason: `the plan ended with "${f.title || o.split('\n')[0]}" still in front`, ...seen() }; done = plan.length }
     opened = !!f && !startTitles.has(f.title) && isDialog(o)
   }
   let saved: string | undefined
