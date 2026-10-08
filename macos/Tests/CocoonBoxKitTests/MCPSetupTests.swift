@@ -45,6 +45,13 @@ import Testing
         #expect(files.keys.contains(".claude-plugin/marketplace.json") && files.keys.contains(".agents/plugins/marketplace.json"))
     }
 
+    @Test func theCodexManifestWaitsForTheBridge() throws {
+        let text = try #require(Plugin.files(command: "/c")["cocoonbox/.codex-plugin/plugin.json"])
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        let server = try #require((root["mcpServers"] as? [String: Any])?["cocoonbox"] as? [String: Any])
+        #expect(server["command"] as? String == "/c" && server["args"] as? [String] == ["mcp"] && server["required"] as? Bool == true)
+    }
+
     @Test func theScriptSkillCarriesTheBoxRoutingByteForByte() throws {
         let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         let routing = try String(contentsOf: root.appendingPathComponent("image/script/routing.md"), encoding: .utf8)

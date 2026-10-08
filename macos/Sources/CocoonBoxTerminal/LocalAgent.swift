@@ -78,6 +78,7 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
                 "-c", "mcp_servers.\(server).command=\(toml(target.bridge))",
                 "-c", "mcp_servers.\(server).args=[\(target.arguments.map(toml).joined(separator: ", "))]",
                 "-c", "mcp_servers.\(server).env_vars=[\(variables.map(toml).joined(separator: ", "))]",
+                "-c", "mcp_servers.\(server).required=true",
                 "-c", "developer_instructions=\(toml(Self.instructions))",
             ]
         case .cursor:

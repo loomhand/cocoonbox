@@ -565,7 +565,7 @@ if shutil.which("claude"):
         check("claude plugin validate --strict " + target, r.returncode == 0 and "Validation passed" in r.stdout, r.stdout + r.stderr)
     setups = [confined("setup", "claude", extra={"CLAUDE_CONFIG_DIR": env["CLAUDE_CONFIG_DIR"]}) for _ in range(2)]
     installed = json.load(open(os.path.join(home, ".claude", "plugins", "installed_plugins.json")))["plugins"].get("cocoonbox@cocoonbox", [])
-    check("setup claude installs the plugin into the given CLAUDE_CONFIG_DIR", setups[0].returncode == 0 and len(installed) == 1 and installed[0]["version"] == "0.11.0", setups[0].stderr + json.dumps(installed))
+    check("setup claude installs the plugin into the given CLAUDE_CONFIG_DIR", setups[0].returncode == 0 and len(installed) == 1 and installed[0]["version"] == "0.14.0", setups[0].stderr + json.dumps(installed))
     check("setup claude again changes nothing and succeeds", setups[1].returncode == 0 and "already installed" in setups[1].stdout + setups[1].stderr and "already at the latest version" in setups[1].stdout + setups[1].stderr, setups[1].stdout + setups[1].stderr)
     service = app_service("setup")
     adopted = confined("setup", "claude", extra={"CLAUDE_CONFIG_DIR": env["CLAUDE_CONFIG_DIR"], "CB_KEYCHAIN_SERVICE": service})

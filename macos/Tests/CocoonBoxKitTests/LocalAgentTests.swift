@@ -60,6 +60,7 @@ import Testing
         #expect(launch.arguments.contains(#"mcp_servers.cocoonbox.command="/Applications/CocoonBox.app/Contents/Helpers/cocoonbox""#))
         #expect(launch.arguments.contains(#"mcp_servers.cocoonbox.args=["mcp", "--box", "cb-9f86d081884c", "--endpoint", "https://box.example.com"]"#))
         #expect(launch.arguments.contains(#"mcp_servers.cocoonbox.env_vars=["COCOONBOX_TOKEN"]"#))
+        #expect(launch.arguments.contains("mcp_servers.cocoonbox.required=true"))
     }
 
     @Test func cursorConfigIsValidJSON() throws {
