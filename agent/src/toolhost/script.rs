@@ -32,6 +32,7 @@ const APP_SCOPE: &str = "/app.slice/script-app-";
 const NOISE: &str = "script: warning: OPENROUTER_API_KEY is not set";
 const GUI_PLAN: &str = "/opt/script/lib/gui_plan.mts";
 const FLOW_INDEX: &str = "flows/INDEX";
+const GAMES_PATH: &str = ":/usr/local/games:/usr/games";
 const ENTRY: &str = r#"import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 const env = process.env
@@ -205,10 +206,12 @@ impl Script {
             (run_dir.join("result.json"), run_dir.join("snapshot.txt"));
         let started = Instant::now();
         timing::mark("prepare");
+        let path = std::env::var("PATH").unwrap_or_default() + GAMES_PATH;
         let mut child = Command::new(&self.bin)
             .arg("run")
             .arg(&entry)
             .current_dir(workspace)
+            .env("PATH", path)
             .env("CB_SCRIPT_SCRIPT", &script)
             .env("CB_SCRIPT_PARAMS", params)
             .env("CB_SCRIPT_RESULT", &result_path)
