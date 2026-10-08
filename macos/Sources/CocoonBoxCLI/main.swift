@@ -298,9 +298,9 @@ func serve() async {
         endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"), box: value(of: "--box"), link: link,
         cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { output.write($0) }
     )
-    // a client that stops the bridge with SIGINT or SIGTERM still gets its sessions closed; Claude Code sends SIGINT, then SIGKILL 0.5 s later
+    // a client that stops the bridge with SIGINT, SIGTERM or SIGHUP still gets its sessions closed; Claude Code sends SIGINT, then SIGKILL 0.5 s later
     let stopping = Mutex(false)
-    let stops = [SIGINT, SIGTERM].map { number in
+    let stops = [SIGINT, SIGTERM, SIGHUP].map { number in
         signal(number, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
         source.setEventHandler {
