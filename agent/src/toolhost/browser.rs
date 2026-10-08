@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 
 use super::timing;
 
-const LAUNCH_WAIT: Duration = Duration::from_secs(20);
+const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
@@ -565,8 +565,9 @@ impl Browser {
             .map_err(|e| format!("decode {url}: {e}"))
     }
 
+    /// Starts Chrome and waits for its CDP while it lives; a session restore blocks CDP until every window is back.
     async fn launch(&self) -> Result<(), String> {
-        Command::new(&self.bin)
+        let mut chrome = Command::new(&self.bin)
             .arg(format!("--remote-debugging-port={}", self.port))
             .arg("--remote-debugging-address=127.0.0.1")
             .arg(format!("--user-data-dir={}", self.profile.display()))
@@ -592,6 +593,12 @@ impl Browser {
         while tokio::time::Instant::now() < deadline {
             if self.targets().await.is_ok() {
                 return Ok(());
+            }
+            if let Ok(Some(status)) = chrome.try_wait() {
+                return Err(format!(
+                    "chrome exited with {status} before exposing CDP on port {}",
+                    self.port
+                ));
             }
             tokio::time::sleep(POLL).await;
         }
@@ -1002,7 +1009,15 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(RUNNING_MARKER), b"").unwrap();
         let port = slow_chrome(Duration::from_millis(800)).await;
-        let b = std::sync::Arc::new(Browser::new("true".into(), dir.path().into(), port));
+        let chrome = dir.path().join("chrome");
+        std::fs::write(&chrome, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::set_permissions(&chrome, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let b = std::sync::Arc::new(Browser::new(
+            chrome.display().to_string(),
+            dir.path().into(),
+            port,
+        ));
         let start = {
             let b = std::sync::Arc::clone(&b);
             tokio::spawn(async move {
@@ -1022,6 +1037,28 @@ mod tests {
             asked.elapsed()
         );
         assert_eq!(start.await.unwrap().unwrap(), "running");
+    }
+
+    #[tokio::test]
+    async fn a_chrome_that_exits_before_its_cdp_fails_the_start_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let b = Browser::new("false".into(), dir.path().into(), port);
+        let asked = tokio::time::Instant::now();
+        let err = b.run("a", "browser_start", json!({})).await.unwrap_err();
+        assert!(
+            err.starts_with("chrome exited with exit status: 1"),
+            "{err}"
+        );
+        assert!(
+            asked.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            asked.elapsed()
+        );
     }
 
     #[test]
