@@ -87,6 +87,12 @@ const blocked = (o: string) => /AT-SPI peer \S+ is not responding/.test(o)
 const unanswered = (title: string) => `"${title}" answers no accessibility calls (a dialog opened by an accessibility action blocks its app, and a key would deadlock it): close it with {close: true}, then reopen it by its keyboard shortcut`
 const isAlert = (o: string) => /^- alert/.test(o)
 const isDialog = (o: string) => /^- (alert|dialog|file chooser)/.test(o)
+// a dialog AT-SPI maps before its children answers with its root alone; read it again until the children show
+async function filled(w: NonNullable<ReturnType<typeof focused>>) {
+  let o = outline(w)
+  for (let i = 0; i < 20 && isDialog(o) && !o.trim().includes('\n'); i++) { await sleep(50); o = outline(w) }
+  return o
+}
 
 function decide(state: unknown, q: Record<string, any>) {
   const t0 = Date.now(); jev ??= DecisionModel.byAlias('gw_jev')
@@ -351,7 +357,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     w.focus(); known.add(w.title); rec.window = lastSeen = w.title; await windowFor(w.title); return
   }
   if (s.type !== undefined) {
-    const t0 = Date.now(); const w = focused(); const o = s.type.endsWith('\n') && w ? outline(w) : ''
+    const t0 = Date.now(); const w = focused(); const o = s.type.endsWith('\n') && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
     const sub = o.includes('File Chooser Widget')
     m.typeText(sub ? s.type.slice(0, -1) : s.type); tick('act', t0)
@@ -360,7 +366,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
   }
   if (s.key) {
     const w = focused()
-    const o = /^(enter|return)$/i.test(s.key) && w ? outline(w) : ''
+    const o = /^(enter|return)$/i.test(s.key) && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
     if (o.includes('File Chooser Widget')) { rec.submit = true; await submit(w!); return }
     const t0 = Date.now(); press(s.key); tick('act', t0); return
