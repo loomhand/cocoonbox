@@ -360,7 +360,9 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const t0 = Date.now(); const w = focused(); const o = s.type.endsWith('\n') && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
     const sub = o.includes('File Chooser Widget')
-    m.typeText(sub ? s.type.slice(0, -1) : s.type); tick('act', t0)
+    // typeText sends "\n" as Linefeed, which GTK text views ignore: a line break goes as Return
+    for (const [i, part] of (sub ? s.type.slice(0, -1) : s.type).split(/\r?\n/).entries()) { if (i) press('Return'); if (part) m.typeText(part) }
+    tick('act', t0)
     if (sub) { rec.submit = true; await submit(w!) }
     return
   }
