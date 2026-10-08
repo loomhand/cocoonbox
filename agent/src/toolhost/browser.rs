@@ -25,6 +25,8 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
 const READ_CHARS: usize = 20_000;
 const RUNNING_MARKER: &str = "cocoonbox-was-running";
+const AGENT_MARKER: &str = "cocoonbox-agent-windows";
+const AGENT_PAGE: &str = "about:blank#cocoonbox-agent";
 const XPROP: &str = "xprop";
 const XPROP_WAIT: Duration = Duration::from_secs(2);
 const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
@@ -463,9 +465,10 @@ impl Browser {
             .await?
             .call(
                 "Target.createTarget",
-                json!({"url": "about:blank", "newWindow": true, "background": true}),
+                json!({"url": AGENT_PAGE, "newWindow": true, "background": true}),
             )
             .await?;
+        let _ = tokio::fs::write(self.profile.join(AGENT_MARKER), b"").await;
         let id = created["targetId"].as_str().unwrap_or_default();
         let t = self
             .targets()
@@ -511,7 +514,7 @@ impl Browser {
             return "no window";
         };
         if let Ok(mut cdp) = self.browser().await {
-            cdp.close_window(&t.id).await;
+            cdp.close_windows(&[&t.id]).await;
         }
         "closed"
     }
@@ -555,12 +558,16 @@ impl Browser {
             let _ = tokio::fs::remove_file(&marker).await;
             return Ok("not running".to_owned());
         }
-        let mut cdp = self.browser().await?;
+        let mut ids = Vec::new();
         for w in windows {
             if let Some(t) = w.lock().await.take() {
-                cdp.close_window(&t.id).await;
+                ids.push(t.id);
             }
         }
+        let mut cdp = self.browser().await?;
+        cdp.close_windows(&ids.iter().map(String::as_str).collect::<Vec<_>>())
+            .await;
+        let _ = tokio::fs::remove_file(self.profile.join(AGENT_MARKER)).await;
         let _ = cdp.call("Browser.close", json!({})).await;
         // the CDP port closes before the profile is flushed; SingletonLock goes last on a clean exit
         let lock = self.profile.join("SingletonLock");
@@ -620,6 +627,12 @@ impl Browser {
         let deadline = tokio::time::Instant::now() + LAUNCH_WAIT;
         while tokio::time::Instant::now() < deadline {
             if self.targets().await.is_ok() {
+                if tokio::fs::remove_file(self.profile.join(AGENT_MARKER))
+                    .await
+                    .is_ok()
+                {
+                    self.close_restored().await;
+                }
                 return Ok(());
             }
             if let Ok(Some(status)) = chrome.try_wait() {
@@ -635,6 +648,27 @@ impl Browser {
             self.port,
             LAUNCH_WAIT.as_secs()
         ))
+    }
+
+    /// Closes the agent windows Chrome restored from a run that ended with them open, known by their first history entry.
+    async fn close_restored(&self) {
+        let Ok(targets) = self.targets().await else {
+            return;
+        };
+        let mut restored = Vec::new();
+        for t in targets.iter().filter(|t| t.is_tab()) {
+            if let Ok(mut cdp) = Cdp::open(&t.ws_url).await
+                && let Ok(history) = cdp.call("Page.getNavigationHistory", json!({})).await
+                && history["entries"][0]["url"] == AGENT_PAGE
+            {
+                restored.push(t.id.as_str());
+            }
+        }
+        if !restored.is_empty()
+            && let Ok(mut cdp) = self.browser().await
+        {
+            cdp.close_windows(&restored).await;
+        }
     }
 }
 
@@ -787,8 +821,11 @@ impl Cdp {
         Ok(())
     }
 
-    /// Closes the agent window of page `id` with every tab the agent opened from it.
-    async fn close_window(&mut self, id: &str) {
+    /// Closes the agent windows of pages `ids` with every tab the agents opened from them.
+    async fn close_windows(&mut self, ids: &[&str]) {
+        if ids.is_empty() {
+            return;
+        }
         let Ok(infos) = self.call("Target.getTargets", json!({})).await else {
             return;
         };
@@ -809,7 +846,10 @@ impl Cdp {
                 .and_then(|w| w["windowId"].as_i64());
             pages.push((info, window));
         }
-        for t in window_tabs(id, &pages) {
+        let mut closing: Vec<&str> = ids.iter().flat_map(|id| window_tabs(id, &pages)).collect();
+        closing.sort_unstable();
+        closing.dedup();
+        for t in closing {
             let _ = self
                 .call("Target.closeTarget", json!({"targetId": t}))
                 .await;
@@ -1037,17 +1077,36 @@ mod tests {
         port
     }
 
+    /// A stand-in Chrome binary in `dir` that lives 5 s.
+    fn alive_chrome(dir: &std::path::Path) -> String {
+        let chrome = dir.join("chrome");
+        std::fs::write(&chrome, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::set_permissions(&chrome, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        chrome.display().to_string()
+    }
+
+    #[tokio::test]
+    async fn a_start_after_agent_windows_were_left_open_scans_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join(AGENT_MARKER);
+        std::fs::write(&marker, b"").unwrap();
+        let port = slow_chrome(Duration::from_millis(300)).await;
+        let b = Browser::new(alive_chrome(dir.path()), dir.path().into(), port);
+        assert_eq!(
+            b.run("state", "browser_start", json!({})).await.unwrap(),
+            "running"
+        );
+        assert!(!marker.exists());
+    }
+
     #[tokio::test]
     async fn a_browser_tool_waits_for_a_start_in_flight() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(RUNNING_MARKER), b"").unwrap();
         let port = slow_chrome(Duration::from_millis(800)).await;
-        let chrome = dir.path().join("chrome");
-        std::fs::write(&chrome, "#!/bin/sh\nsleep 5\n").unwrap();
-        std::fs::set_permissions(&chrome, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
         let b = std::sync::Arc::new(Browser::new(
-            chrome.display().to_string(),
+            alive_chrome(dir.path()),
             dir.path().into(),
             port,
         ));
