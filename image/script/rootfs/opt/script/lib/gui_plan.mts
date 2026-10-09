@@ -372,7 +372,8 @@ async function run(s: Step, rec: Record<string, unknown>) {
     // typeText sends "\n" as Linefeed, which GTK text views ignore: a line break goes as Return
     for (const [i, part] of (sub ? s.type.slice(0, -1) : s.type).split(/\r?\n/).entries()) { if (i) press('Return'); if (part) m.typeText(part) }
     tick('act', t0)
-    if (sub) { rec.submit = true; await submit(w!) } else if (isDialog(o) && await closed(w!)) rec.submit = true
+    const v = s.type.endsWith('\n') && !sub ? focused() : null
+    if (sub) { rec.submit = true; await submit(w!) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v)) rec.submit = true
     return
   }
   if (s.key) {
