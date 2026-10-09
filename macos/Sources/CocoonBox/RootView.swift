@@ -182,8 +182,11 @@ struct SidebarView: View {
                         .tag(AppModel.selectionID(session))
                         .simultaneousGesture(TapGesture(count: 2).onEnded { startRename(session) })
                     }
+                    ForEach(model.failedLocal, id: \.id) { record in
+                        FailedLocalAgentRow(record: record)
+                    }
                 } header: {
-                    if !model.localAgents.isEmpty {
+                    if !model.localAgents.isEmpty || !model.failedLocal.isEmpty {
                         Text("On this Mac")
                     }
                 }
@@ -331,6 +334,30 @@ struct ShareSessionRow: View {
 
 // LocalAgentRow is a local agent with the boxes it acted on in the last
 // minute, on a line kept when empty so the row height stays fixed.
+// FailedLocalAgentRow is a local agent the app could not reopen, kept with its reason until the user removes it.
+struct FailedLocalAgentRow: View {
+    @Environment(AppModel.self) private var model
+    let record: LocalAgentRecord
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(record.displayName).lineLimit(1)
+                Text("Could not reopen: \(record.failure ?? "unknown")")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .help(record.failure ?? "")
+            }
+        }
+        .contextMenu {
+            Button("Remove") { model.removeFailedLocal(record) }
+        }
+    }
+}
+
 struct LocalAgentRow: View {
     @Environment(AppModel.self) private var model
     let session: LocalAgentSession

@@ -17,6 +17,8 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
     public var until: Date?
     public var title: String?
     public var name: String?
+    // failure is why the last reopen failed; the record stays so a later launch retries it.
+    public var failure: String?
 
     public init(kind: LocalAgentKind, boxID: String, sessionID: String? = nil, workspace: String, startedAt: Date = Date()) {
         self.kind = kind
@@ -162,6 +164,26 @@ public enum LocalAgentStore {
     public static func load(from url: URL = defaultURL) -> [LocalAgentRecord] {
         guard let data = try? Data(contentsOf: url) else { return [] }
         return (try? decoder.decode([LocalAgentRecord].self, from: data)) ?? []
+    }
+
+    // reopen starts every record; one that does not start comes back with its failure, so the session file keeps it.
+    public static func reopen<Session>(
+        _ records: [LocalAgentRecord],
+        isolation: isolated (any Actor)? = #isolation,
+        start: (LocalAgentRecord) async throws -> Session
+    ) async -> (opened: [Session], failed: [LocalAgentRecord]) {
+        var opened: [Session] = []
+        var failed: [LocalAgentRecord] = []
+        for var record in records {
+            record.failure = nil
+            do {
+                opened.append(try await start(record))
+            } catch {
+                record.failure = "\(error)"
+                failed.append(record)
+            }
+        }
+        return (opened, failed)
     }
 
     public static func save(_ records: [LocalAgentRecord], to url: URL = defaultURL) throws {

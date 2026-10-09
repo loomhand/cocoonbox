@@ -128,6 +128,25 @@ import Testing
         #expect(kind.autoName(fromTitle: title) == name)
     }
 
+    @Test func aRecordThatFailsToReopenStaysInTheFileWithItsReason() async throws {
+        let url = try temporaryHome().appendingPathComponent("local-agents.json")
+        let codex = LocalAgentRecord(kind: .codex, boxID: "cb-1", sessionID: "s-1", workspace: workspace, startedAt: Date(timeIntervalSince1970: 1_790_000_000.125))
+        let claude = LocalAgentRecord(kind: .claudeCode, boxID: "cb-1", sessionID: "s-2", workspace: workspace, startedAt: Date(timeIntervalSince1970: 1_790_000_000.125))
+        let (opened, failed) = await LocalAgentStore.reopen([codex, claude]) { record in
+            guard record.kind == .codex else { throw LocalAgentError.notInstalled(record.kind) }
+            return record.id
+        }
+        #expect(opened == [codex.id])
+        #expect(failed.map(\.id) == [claude.id])
+        #expect(failed.first?.failure == "Claude Code is not installed: `claude` is not on your login shell's PATH")
+
+        try LocalAgentStore.save(failed, to: url)
+        let loaded = LocalAgentStore.load(from: url)
+        #expect(loaded == failed)
+        let (retried, still) = await LocalAgentStore.reopen(loaded) { $0 }
+        #expect(retried.map(\.id) == [claude.id] && retried.first?.failure == nil && still.isEmpty)
+    }
+
     private func temporaryHome() throws -> URL {
         let home = FileManager.default.temporaryDirectory.appendingPathComponent("local-agent-record-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)

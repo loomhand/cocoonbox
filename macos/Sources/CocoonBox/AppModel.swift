@@ -76,6 +76,8 @@ final class AppModel {
     var busy = false
     var answeredApprovals: Set<String> = []
     var localAgents: [LocalAgentSession] = []
+    // failedLocal is the local agents that did not reopen; the session file keeps them until the user removes them.
+    var failedLocal: [LocalAgentRecord] = []
     // localCalls is each local agent's last box-tool call per box id.
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
@@ -243,26 +245,37 @@ final class AppModel {
     }
 
     // restoreLocal reopens, once per launch, every local agent the session file
-    // keeps; one whose default box is gone takes the selected box.
+    // keeps; one whose default box is gone takes the selected box. One that
+    // fails to reopen stays in the file and in failedLocal, with its reason.
     private func restoreLocal() {
-        guard !restoredLocal, let box, localTarget(box.id) != nil else { return }
+        guard !restoredLocal, let box, let base = localTarget(box.id) else { return }
         restoredLocal = true
-        let records = pendingLocal
-        pendingLocal = []
+        let records = pendingLocal.map { record in
+            var record = record
+            if !boxes.contains(where: { $0.id == record.boxID }) { record.boxID = box.id }
+            return record
+        }
         Task {
-            var sessions: [LocalAgentSession] = []
-            for var record in records {
-                if !boxes.contains(where: { $0.id == record.boxID }) { record.boxID = box.id }
-                guard let target = localTarget(record.boxID) else { continue }
-                do {
-                    sessions.append(try await LocalAgentSession.start(record.kind, target: target, boxID: record.boxID, restoring: record))
-                    Perf.mark("local_agent", "reopened \(record.kind.rawValue)")
-                } catch {
-                    report("reopen local agent", error)
-                }
+            let (sessions, failed) = await LocalAgentStore.reopen(records) { record in
+                let target = MCPTarget(bridge: base.bridge, box: record.boxID, endpoint: base.endpoint, token: base.token, socket: base.socket)
+                let session = try await LocalAgentSession.start(record.kind, target: target, boxID: record.boxID, restoring: record)
+                Perf.mark("local_agent", "reopened \(record.kind.rawValue)")
+                return session
             }
+            for record in failed {
+                Perf.mark("local_agent", "reopen failed \(record.kind.rawValue)")
+                lastError = "reopen local agent: \(record.failure ?? "")"
+            }
+            pendingLocal = []
+            failedLocal = failed
             add(sessions)
         }
+    }
+
+    // removeFailedLocal drops a local agent that did not reopen from the session file.
+    func removeFailedLocal(_ record: LocalAgentRecord) {
+        failedLocal.removeAll { $0.id == record.id }
+        persistLocal()
     }
 
     private func add(_ sessions: [LocalAgentSession]) {
@@ -295,7 +308,7 @@ final class AppModel {
     func persistLocal() {
         localAgents.forEach { $0.settle() }
         do {
-            try LocalAgentStore.save(localAgents.map(\.record) + pendingLocal)
+            try LocalAgentStore.save(localAgents.map(\.record) + failedLocal + pendingLocal)
         } catch {
             report("save local agents", error)
         }
