@@ -23,6 +23,7 @@ export CB_KEYCHAIN_SERVICE=me.cmgs.cocoonbox.test
 export COCOONBOX_CACHE_DIR="$work/cache"
 export COCOONBOX_CONFIG_DIR="$work/config"
 export HOME="$work/home"
+export CFFIXED_USER_HOME="$work/home"
 export CB_KEYCHAIN_FILE="$work/test.keychain-db"
 mkdir -p "$HOME" "$work/workspace"
 security create-keychain -p test "$CB_KEYCHAIN_FILE"

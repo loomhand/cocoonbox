@@ -6,4 +6,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/toolchain.sh
 for product in CocoonBoxKitTests MockBox cocoonbox-cli; do swift build --product "$product"; done
-DYLD_FRAMEWORK_PATH=/Library/Developer/CommandLineTools/Library/Developer/Frameworks .build/debug/CocoonBoxKitTests "$@"
+home="$(mktemp -d)"
+trap 'rm -rf "$home"' EXIT
+CFFIXED_USER_HOME="$home" DYLD_FRAMEWORK_PATH=/Library/Developer/CommandLineTools/Library/Developer/Frameworks .build/debug/CocoonBoxKitTests "$@"
