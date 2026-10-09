@@ -11,7 +11,7 @@ import {
 type Step = {
   app?: string; title?: string; menu?: string; click?: string; check?: string; on?: boolean; set?: string; value?: string
   type?: string; key?: string; wait?: string; expect?: string; verify?: string; close?: boolean; role?: string; window?: string
-  timeout_ms?: number; enabled?: boolean; fp?: Fp; seen?: string
+  timeout_ms?: number; enabled?: boolean; fp?: Fp; seen?: string; blank?: Fp
 }
 type Fp = { role: string; name: string; parent: string; nth: number; label?: string }
 type Node = { ref: number; depth: number; role: string; name: string; value: string; disabled: boolean; parent: number; keys: string; accel: string }
@@ -40,6 +40,9 @@ let jev: DecisionModel | null = null
 let busNames: string[] | null = null
 const known = new Set<string>()
 let lastSeen = ''
+let recording = false
+let found = false
+let typed = false
 let T: Record<string, number> = {}
 let screen: { left: number; top: number; right: number; bottom: number } | null = null
 const tick = (k: string, t0: number) => { T[k] = (T[k] ?? 0) + Date.now() - t0 }
@@ -328,6 +331,30 @@ async function closed(title: string, pid: number | null) {
   tick('settle', t0); return !open()
 }
 
+// the shown field a plan's first typing filled from empty, so a replay can check it is still empty before it types; window and tab names are no part of it
+function shownFields(snap: AccessibilitySnapshot, nodes: Node[], fp: Pick<Fp, 'role' | 'name' | 'label'>) {
+  return candidates(nodes, fp.role).filter(({ n, i }) => n.name === fp.name && (sibling(nodes, i) ?? '') === (fp.label ?? '') && (() => { try { return snap.node(n.ref).isVisible !== false } catch { return false } })())
+}
+function typedInto(w: NonNullable<ReturnType<typeof focused>>, text: string): Fp | undefined {
+  const t0 = Date.now(); const squash = (v: string) => v.replace(/\s+/g, '')
+  try {
+    const snap = snapOf(w); const nodes = parse(snap)
+    const hit = candidates(nodes, 'textbox|searchbox').find(({ n }) => { try { return snap.node(n.ref).isVisible !== false && squash(snap.node(n.ref).value ?? '') === squash(text) } catch { return false } })
+    if (!hit) return undefined
+    const fp: Fp = { role: hit.n.role, name: hit.n.name, parent: '', nth: 0 }
+    const label = sibling(nodes, hit.i); if (label) fp.label = label
+    fp.nth = shownFields(snap, nodes, fp).findIndex((x) => x.i === hit.i)
+    return fp
+  } catch { return undefined } finally { tick('blank', t0) }
+}
+function holdsText(w: NonNullable<ReturnType<typeof focused>>, fp: Fp) {
+  const t0 = Date.now()
+  try {
+    const snap = snapOf(w); const same = shownFields(snap, parse(snap), fp); const hit = same.length === 1 ? same[0] : same[fp.nth]
+    return !!hit && !!(snap.node(hit.n.ref).value ?? '').trim()
+  } catch { return false } finally { tick('blank', t0) }
+}
+
 async function setState(s: Step, w: NonNullable<ReturnType<typeof focused>>, snap: AccessibilitySnapshot, hit: Hit, rec: Record<string, unknown>) {
   const on = s.on ?? true
   let was = await checked(w.pid, hit.n.name)
@@ -362,7 +389,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
       for (const end = Date.now() + 8000; !(w = has()); await sleep(50)) if (Date.now() > end) throw new Surprise(`app "${s.app}" has no window`, seen())
       tick('launch', t0)
     }
-    w.focus(); known.add(w.title); rec.window = lastSeen = w.title; await windowFor(w.title); return
+    found = !launched; w.focus(); known.add(w.title); rec.window = lastSeen = w.title; await windowFor(w.title); return
   }
   if (s.type !== undefined) {
     const t0 = Date.now(); const w = focused(); const nl = s.type.endsWith('\n')
@@ -370,11 +397,14 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const o = (nl || dialog) && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
     const chooser = o.includes('File Chooser Widget'); const sub = chooser && nl
+    const first = !typed; typed = true
+    if (s.blank && found && w && holdsText(w, s.blank)) throw new Surprise(`"${w.title}" already holds text where this flow typed into an empty field, and typing would add to it: open a new document (for example {key: "ctrl+n"}) or empty the field, then replay the flow`, seen())
     // GTK preselects the name up to its last dot: a bare name keeps the extension, a path or a name with its own extension replaces the whole field
     if (chooser && /\/|\.[a-z][a-z0-9]{0,7}\n?$/i.test(s.type)) { press('home'); press('shift+end') }
     // typeText sends "\n" as Linefeed, which GTK text views ignore: a line break goes as Return
     for (const [i, part] of (sub ? s.type.slice(0, -1) : s.type).split(/\r?\n/).entries()) { if (i) press('Return'); if (part) m.typeText(part) }
     tick('act', t0)
+    if (recording && first && !chooser && w) rec.blank = typedInto(w, s.type)
     const v = nl && !sub ? focused() : null
     if (sub) { rec.submit = true; await submit(w!) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v.title, pidOf(v))) rec.submit = true
     if (dialog && w) {
@@ -581,7 +611,7 @@ function summary(steps: Step[]) {
 }
 
 const idempotent = (steps: Step[]) => steps.every((s) => s.type === undefined && (!s.key || /^(esc|escape|tab|shift\+tab)$/i.test(s.key)))
-const bare = (s: Step, p: Record<string, string>) => JSON.stringify(Object.entries(fill(s, p)).filter(([k]) => k !== 'fp' && k !== 'seen').sort())
+const bare = (s: Step, p: Record<string, string>) => JSON.stringify(Object.entries(fill(s, p)).filter(([k]) => k !== 'fp' && k !== 'seen' && k !== 'blank').sort())
 
 // a chain becomes the flow it names, or one named after its app and last targets
 function store(chain: Chain) {
@@ -641,6 +671,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   const params = { ...(flow?.params ?? {}), ...(p.params ?? {}) }
   const plan: Step[] = (flow ? flow.steps : p.steps ?? []).filter((s) => !Object.keys(s).every((k) => ['screenshot', 'timeout_s', 'max_edge'].includes(k)))
   if (!plan.length) return { ok: false, error: 'pass steps, flow or find' }
+  recording = !flow && !!plan[0].app && !p.start
   // a plan sent again only to save it, while the window it left is still in front, would type again: it is saved from the last run instead
   if (p.save && !flow && !p.start && !idempotent(plan)) {
     let c: Chain | null = null
@@ -708,7 +739,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     }
   } else {
     // a task done over several calls is one chain: it starts at a call whose first step is an app, and later calls extend it from the window it left
-    const ran = plan.slice(p.start ?? 0, done).map((s, k) => { const r = recs[(p.start ?? 0) + k]; const o: Step = { ...s }; if (r?.fp) o.fp = r.fp as Fp; if (r?.seen && !s.app) o.seen = r.seen as string; return o })
+    const ran = plan.slice(p.start ?? 0, done).map((s, k) => { const r = recs[(p.start ?? 0) + k]; const o: Step = { ...s }; if (r?.fp) o.fp = r.fp as Fp; if (r?.seen && !s.app) o.seen = r.seen as string; if (r?.blank) o.blank = r.blank as Fp; return o })
     const dirty = recs.some((r) => r?.unsaved)
     let chain: Chain | null = null; let prev: Chain | null = null
     try { prev = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
