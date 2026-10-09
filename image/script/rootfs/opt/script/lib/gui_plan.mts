@@ -321,9 +321,8 @@ async function submit(w: NonNullable<ReturnType<typeof focused>>) {
   if (open() && focused()?.title === title) throw new Surprise(`"${title}" is still open after Return`, seen())
 }
 
-async function closed(w: NonNullable<ReturnType<typeof focused>>) {
+async function closed(title: string, pid: number | null) {
   const t0 = Date.now()
-  const [title, pid] = [w.title, pidOf(w)]
   const open = () => pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)
   for (let k = 0; k < 25 && open(); k++) await sleep(40)
   tick('settle', t0); return !open()
@@ -374,7 +373,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     for (const [i, part] of (sub ? s.type.slice(0, -1) : s.type).split(/\r?\n/).entries()) { if (i) press('Return'); if (part) m.typeText(part) }
     tick('act', t0)
     const v = s.type.endsWith('\n') && !sub ? focused() : null
-    if (sub) { rec.submit = true; await submit(w!) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v)) rec.submit = true
+    if (sub) { rec.submit = true; await submit(w!) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v.title, pidOf(v))) rec.submit = true
     if (!s.type.includes('\n') && w && m.windows().some((x) => x.title !== w.title && pidOf(x) === pidOf(w))) {
       const want = s.type.slice(0, 30).replace(/"/g, '\\"'); let after = ''
       for (let k = 0; k < 5; k++) { after = outline(w); if (!isDialog(after) || after.split('\n').some((l) => /^\s*- (textbox|searchbox|combobox|spinbutton)\b.*: ".*/.test(l) && l.includes(want))) return; await sleep(40) }
@@ -388,7 +387,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
     if (o.includes('File Chooser Widget')) { rec.submit = true; await submit(w!); return }
     const t0 = Date.now(); press(s.key); tick('act', t0)
-    if (isDialog(o) && await closed(w!)) rec.submit = true
+    if (isDialog(o) && await closed(w!.title, pidOf(w!))) rec.submit = true
     return
   }
   if (s.wait) { const w = await windowFor(s.wait, s.timeout_ms ?? 5000, s.seen); rec.seen = lastSeen = w.title; return }
@@ -402,7 +401,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     if (!w) { rec.noop = true; tick('act', t0); return }
     const [title, pid] = [w.title, pidOf(w)]; rec.seen = title; w.focus(); press('Escape'); await settle(w.title)
     if (pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)) w.close()
-    tick('act', t0); return
+    tick('act', t0); await closed(title, pid); return
   }
   const w = await windowFor(s.window, 3000, s.seen)
   rec.seen = w.title; if (w.title.trim()) lastSeen = w.title
