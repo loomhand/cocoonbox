@@ -9,17 +9,15 @@ NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x
 CLI_VERSION=6.0.0
 CLI_SHA256=2d1cb26121149772f77dfb8d1a1542c869bda7314aaf87fe23f994d420847db4
 CLI_URL="https://registry.npmjs.org/@vendor/script/-/script-${CLI_VERSION}.tgz"
-JS_VERSION=14.0.0
-JS_SHA256=a15b58671bcec8dc19941cac1b3df27f2be8061bd1af6e64a643856b3e6e45de
-JS_URL="https://registry.npmjs.org/@vendor/script-js/-/script-js-${JS_VERSION}.tgz"
+# private release asset built by build-native.sh from script-js-cmgs; cut.sh brings it in as vendor/, since the cut host holds no token
+JS_RELEASE=v14.0.0-cmgs.2
+JS_SHA256=7966bb6d7382d47ffaad575bdf93e56ad6f8c2a60dca62cd6ab11b7da07468f5
+JS_ARTIFACT=script-js-be39ddf-linux-x64.tgz
+JS_URL="https://github.com/vendor/script-js-cmgs/releases/download/${JS_RELEASE}/${JS_ARTIFACT}"
 # CMGS/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh brings it in as vendor/
 CUA_VERSION=0.34.0-cmgs.2
 CUA_SHA256=08cde2f87c945602eaeed762929c3d3b3938e7cc1b864c5014014dc9871bb8f0
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
-# private release asset; cut.sh brings it in as vendor/, since the cut host holds no token
-NATIVE_RELEASE=v14.0.0-cmgs.1
-NATIVE_SHA256=d63405e94c61eaa8438eff385fa8cc29d9ae23c429d79d353817862a2d2ec109
-NATIVE_URL="https://github.com/vendor/script-js-cmgs/releases/download/${NATIVE_RELEASE}/script-js.linux-x64-gnu.node"
 ROOT=/opt/script
 PRESS="require('$ROOT/lib/press.cjs')(module.exports)"
 TYPING="require('$ROOT/lib/typing.cjs')(module.exports)"
@@ -34,8 +32,8 @@ fetch() {
 }
 
 install_runtime() {
-	log "cli $CLI_VERSION, script-js $JS_VERSION ($NATIVE_RELEASE), node $NODE_VERSION"
-	local node=$ROOT/node-v$NODE_VERSION cli=$ROOT/cli-$CLI_VERSION js=$ROOT/js-$NATIVE_RELEASE native="$SRC/vendor/script-js.linux-x64-gnu.node" tmp
+	log "cli $CLI_VERSION, script-js $JS_RELEASE, node $NODE_VERSION"
+	local node=$ROOT/node-v$NODE_VERSION cli=$ROOT/cli-$CLI_VERSION js=$ROOT/js-$JS_RELEASE artifact="$SRC/vendor/$JS_ARTIFACT" tmp
 	tmp=$(mktemp -d)
 	if [ ! -x "$node/bin/node" ]; then
 		fetch "$NODE_URL" "$tmp/node.tar.xz" "$NODE_SHA256"
@@ -48,18 +46,16 @@ install_runtime() {
 		tar -xzf "$tmp/cli.tgz" -C "$cli" --strip-components=1 --no-same-owner
 	fi
 	if [ ! -f "$js/script-js.linux-x64-gnu.node" ]; then
-		[ -f "$native" ] || { echo "missing $native: put $NATIVE_URL there" >&2; exit 1; }
-		echo "$NATIVE_SHA256  $native" | sha256sum -c --quiet -
-		fetch "$JS_URL" "$tmp/js.tgz" "$JS_SHA256"
+		[ -f "$artifact" ] || { echo "missing $artifact: put $JS_URL there" >&2; exit 1; }
+		echo "$JS_SHA256  $artifact" | sha256sum -c --quiet -
 		install -d "$js"
-		tar -xzf "$tmp/js.tgz" -C "$js" --strip-components=1 --no-same-owner
-		install -m 0755 "$native" "$js/script-js.linux-x64-gnu.node"
+		tar -xzf "$artifact" -C "$js" --strip-components=1 --no-same-owner
 	fi
 	rm -rf "$tmp"
 	ln -sfn "$node" "$ROOT/node"
 	ln -sfn "$cli" "$ROOT/cli"
 	ln -sfn "$js" "$ROOT/js"
-	find "$ROOT" -mindepth 1 -maxdepth 1 -name 'js-*' ! -name "js-$NATIVE_RELEASE" -exec rm -rf {} +
+	find "$ROOT" -mindepth 1 -maxdepth 1 -name 'js-*' ! -name "js-$JS_RELEASE" -exec rm -rf {} +
 }
 
 install_cua_driver() {
