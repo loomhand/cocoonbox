@@ -12,10 +12,10 @@ CLI_URL="https://registry.npmjs.org/@vendor/script/-/script-${CLI_VERSION}.tgz"
 JS_VERSION=14.0.0
 JS_SHA256=a15b58671bcec8dc19941cac1b3df27f2be8061bd1af6e64a643856b3e6e45de
 JS_URL="https://registry.npmjs.org/@vendor/script-js/-/script-js-${JS_VERSION}.tgz"
-CUA_VERSION=0.34.0
-CUA_SHA256=8851c028e5d88a3b779ad2a8d49ed6f4b92aa94de2edf5c2851cee63bcc274c5
+# CMGS/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh brings it in as vendor/
+CUA_VERSION=0.34.0-cmgs.2
+CUA_SHA256=08cde2f87c945602eaeed762929c3d3b3938e7cc1b864c5014014dc9871bb8f0
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
-CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/${CUA_TARBALL}"
 # private release asset; cut.sh brings it in as vendor/, since the cut host holds no token
 NATIVE_RELEASE=v14.0.0-cmgs.1
 NATIVE_SHA256=d63405e94c61eaa8438eff385fa8cc29d9ae23c429d79d353817862a2d2ec109
@@ -64,13 +64,12 @@ install_runtime() {
 
 install_cua_driver() {
 	log "cua-driver $CUA_VERSION"
-	local dir=/opt/cua-driver/$CUA_VERSION tmp
+	local dir=/opt/cua-driver/$CUA_VERSION tarball="$SRC/vendor/$CUA_TARBALL"
 	if [ ! -x "$dir/cua-driver" ]; then
-		tmp=$(mktemp -d)
-		fetch "$CUA_URL" "$tmp/$CUA_TARBALL" "$CUA_SHA256"
+		[ -f "$tarball" ] || { echo "missing $tarball: build it with image/script/cua-driver.sh image/script/vendor" >&2; exit 1; }
+		echo "$CUA_SHA256  $tarball" | sha256sum -c --quiet -
 		install -d "$dir"
-		tar -xzf "$tmp/$CUA_TARBALL" -C "$dir" --strip-components=1 --no-same-owner
-		rm -rf "$tmp"
+		tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
 	fi
 	ln -sfn "$dir/cua-driver" /usr/local/bin/cua-driver
 	find /opt/cua-driver -mindepth 1 -maxdepth 1 ! -name "$CUA_VERSION" -exec rm -rf {} +
