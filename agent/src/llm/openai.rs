@@ -159,6 +159,9 @@ pub fn body(req: &Request<'_>) -> Value {
                 })
             })
             .collect();
+        if req.forbid_calls {
+            body["tool_choice"] = "none".into();
+        }
     }
     body
 }
@@ -303,6 +306,7 @@ mod tests {
             tools: &tools,
             max_tokens: 100,
             vision: false,
+            forbid_calls: false,
         };
         let text_body = body(&req);
         let msgs = text_body["messages"].as_array().unwrap();
@@ -310,7 +314,13 @@ mod tests {
         assert_eq!(msgs[2]["tool_calls"][0]["function"]["name"], "shell");
         assert!(msgs[3]["content"].as_str().unwrap().contains("omitted"));
         assert_eq!(text_body["tools"][0]["function"]["name"], "shell");
+        assert!(text_body.get("tool_choice").is_none());
         assert!(!text_body.to_string().contains("cache_control"));
+        req.forbid_calls = true;
+        let report_body = body(&req);
+        assert_eq!(report_body["tool_choice"], "none");
+        assert_eq!(report_body["tools"], text_body["tools"]);
+        req.forbid_calls = false;
         req.vision = true;
         req.model = "anthropic/claude-sonnet-5";
         let vision_body = body(&req);

@@ -74,9 +74,9 @@ async fn drive(
 ) -> Result<ToolOutput, String> {
     let caller = ctx.caller(SUBAGENT, Some(driver));
     let mut messages = vec![Message::User(vec![Part::Text(task.to_owned())])];
-    let mut report = None;
     let tools: Vec<&ToolSpec> = rt.computer_tools.iter().collect();
-    for _ in 0..MAX_STEPS {
+    let mut steps = 0;
+    let report = loop {
         // prune in batches so the cached prompt prefix survives most steps
         if image_count(&messages) > PRUNE_AT {
             prune_images(&mut messages, KEEP_IMAGES);
@@ -88,12 +88,16 @@ async fn drive(
             tools: &tools,
             max_tokens: MAX_TOKENS,
             vision: true,
+            forbid_calls: false,
         };
+        if steps == MAX_STEPS {
+            break Err(rt.cap_report(ctx, &req, MAX_STEPS, SUBAGENT, usage).await);
+        }
+        steps += 1;
         let step = rt.step(ctx, &req, SUBAGENT).await?;
         usage.add(step.usage);
         if step.calls.is_empty() {
-            report = Some(step.text);
-            break;
+            break Ok(step.text);
         }
         let mut results = Vec::with_capacity(step.calls.len());
         for call in &step.calls {
@@ -124,15 +128,21 @@ async fn drive(
             calls: step.calls,
         });
         messages.extend(results);
-    }
+    };
     let shot = rt.dispatcher.capture(&ctx.agent_id, driver).await;
     let (text, is_error) = match report {
-        Some(r) if !r.trim().is_empty() => (r, false),
-        Some(_) => (
+        Ok(r) if !r.trim().is_empty() => (r, false),
+        Ok(_) => (
             "The computer subagent finished without a report.".to_owned(),
             false,
         ),
-        None => (
+        Err(Some(r)) => (
+            format!(
+                "The computer subagent stopped at its {MAX_STEPS}-step cap. Its progress report: {r}"
+            ),
+            true,
+        ),
+        Err(None) => (
             format!(
                 "The computer subagent stopped after {MAX_STEPS} steps; the task may be incomplete."
             ),

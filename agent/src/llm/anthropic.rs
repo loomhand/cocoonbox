@@ -148,6 +148,9 @@ pub fn body(req: &Request<'_>) -> Value {
             .iter()
             .map(|t| json!({"name": t.name, "description": t.description, "input_schema": t.parameters}))
             .collect();
+        if req.forbid_calls {
+            body["tool_choice"] = json!({"type": "none"});
+        }
     }
     body
 }
@@ -197,7 +200,7 @@ mod tests {
     use bytes::Bytes;
 
     use super::*;
-    use crate::llm::ToolCall;
+    use crate::llm::{ToolCall, ToolSpec};
 
     #[test]
     fn parses_stream_with_tool_use_and_usage() {
@@ -298,6 +301,7 @@ mod tests {
             tools: &[],
             max_tokens: 50,
             vision: true,
+            forbid_calls: false,
         };
         let b = body(&req);
         let msgs = b["messages"].as_array().unwrap();
@@ -310,5 +314,19 @@ mod tests {
         assert_eq!(results[1]["is_error"], true);
         assert_eq!(results[1]["cache_control"]["type"], "ephemeral");
         assert_eq!(b["system"][0]["text"], "sys");
+        assert!(b.get("tool_choice").is_none());
+        let shell = ToolSpec {
+            name: "shell".into(),
+            description: "run".into(),
+            parameters: json!({"type": "object"}),
+        };
+        let tools = [&shell];
+        let report = body(&Request {
+            tools: &tools,
+            forbid_calls: true,
+            ..req
+        });
+        assert_eq!(report["tool_choice"], json!({"type": "none"}));
+        assert_eq!(report["tools"][0]["name"], "shell");
     }
 }

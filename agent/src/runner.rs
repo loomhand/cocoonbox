@@ -24,7 +24,9 @@ use crate::{computer, flows, new_id, prompts, route, tools};
 const QUEUE_DEPTH: usize = 32;
 const TITLE_CHARS: usize = 24;
 const MAIN_MAX_STEPS: usize = 40;
+const SCRIPT_MAX_STEPS: usize = 150;
 const MAIN_MAX_TOKENS: u32 = 4096;
+const REPORT_MAX_TOKENS: u32 = 1024;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
 const SHUTTING_DOWN: &str = "interrupted: the agent is shutting down";
 
@@ -400,6 +402,36 @@ impl Runtime {
         })
     }
 
+    /// Asks for a progress report with tool calls forbidden once a loop has used all `cap` steps of `req`; `None` when none came.
+    pub async fn cap_report(
+        &self,
+        ctx: &TurnCtx,
+        req: &Request<'_>,
+        cap: usize,
+        subagent: &str,
+        usage: &mut Usage,
+    ) -> Option<String> {
+        let mut messages = req.messages.to_vec();
+        messages.push(Message::User(vec![Part::Text(prompts::cap_report(cap))]));
+        let req = Request {
+            messages: &messages,
+            max_tokens: REPORT_MAX_TOKENS,
+            forbid_calls: true,
+            ..*req
+        };
+        match self.step(ctx, &req, subagent).await {
+            Ok(step) => {
+                usage.add(step.usage);
+                let report = step.text.trim();
+                (!report.is_empty()).then(|| report.to_owned())
+            }
+            Err(e) => {
+                eprintln!("progress report of turn {}: {e}", ctx.turn_id);
+                None
+            }
+        }
+    }
+
     /// Persists an entry of the current turn and publishes it.
     pub async fn record(
         &self,
@@ -528,7 +560,13 @@ impl Runtime {
             Some(router) => self.front_route(ctx, router, &mut messages).await?,
             None => None,
         };
-        for _ in 0..MAIN_MAX_STEPS {
+        let cap = if self.cfg.script {
+            SCRIPT_MAX_STEPS
+        } else {
+            MAIN_MAX_STEPS
+        };
+        let mut steps = 0;
+        loop {
             let connectors = match &self.connect {
                 Some(c) => c.tools().await,
                 None => Arc::default(),
@@ -544,7 +582,17 @@ impl Runtime {
                 tools: &offered,
                 max_tokens: MAIN_MAX_TOKENS,
                 vision,
+                forbid_calls: false,
             };
+            if steps == cap {
+                return Err(match self.cap_report(ctx, &req, cap, "", usage).await {
+                    Some(_) => format!(
+                        "stopped at the {cap}-step cap; the last reply reports the progress"
+                    ),
+                    None => format!("stopped after {cap} steps without a final answer"),
+                });
+            }
+            steps += 1;
             let step = self.step(ctx, &req, "").await?;
             usage.add(step.usage);
             if step.calls.is_empty() {
@@ -566,9 +614,6 @@ impl Runtime {
             });
             messages.extend(results);
         }
-        Err(format!(
-            "stopped after {MAIN_MAX_STEPS} steps without a final answer"
-        ))
     }
 
     /// Routes the turn's request; a confident route leads the request with one line and returns its tier.

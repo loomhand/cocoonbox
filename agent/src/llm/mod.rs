@@ -93,6 +93,8 @@ pub struct Request<'a> {
     pub tools: &'a [&'a ToolSpec],
     pub max_tokens: u32,
     pub vision: bool,
+    /// Offers `tools` but forbids calling them, so the cached prompt prefix still matches.
+    pub forbid_calls: bool,
 }
 
 /// Token usage of one or more requests.

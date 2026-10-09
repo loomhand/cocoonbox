@@ -1338,6 +1338,109 @@ async fn run_delegate(messages_wire: bool) {
 }
 
 #[tokio::test]
+async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
+    for (script, cap) in [(false, 40), (true, 150)] {
+        let mut script: Vec<(&'static str, String)> = (0..cap)
+            .map(|n| {
+                (
+                    "chat/completions",
+                    chat_tool_call(&format!("c{n}"), "list_dir", &json!({})),
+                )
+            })
+            .collect();
+        script.push(("chat/completions", chat_text("Done: a. Left: b. Stuck: c.")));
+        let h = if script {
+            Harness::with_script(script).await
+        } else {
+            Harness::start(script, false).await
+        };
+        let mut agents = h.agents().await;
+        let agent_id = create_agent(&mut agents).await;
+        send(&mut agents, &agent_id, "list forever", "").await;
+        let entries = wait_turn_end(&mut agents, &agent_id).await;
+        let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+            panic!("no turn end");
+        };
+        assert!(!end.ok);
+        assert_eq!(
+            end.error,
+            format!("stopped at the {cap}-step cap; the last reply reports the progress")
+        );
+        assert_eq!(end.usage.unwrap().output_tokens, cap * 10 + 5);
+        let last_text = entries.iter().rev().find_map(|e| match &e.body {
+            Some(Body::Text(t)) if e.role == i32::from(pb::Role::Assistant) => {
+                Some(t.text.as_str())
+            }
+            _ => None,
+        });
+        assert_eq!(last_text, Some("Done: a. Left: b. Stuck: c."));
+        let chats = gw_bodies(&h.gw_log, "chat/completions");
+        assert_eq!(chats.len(), cap as usize + 1);
+        let (report, before) = (&chats[cap as usize], &chats[cap as usize - 1]);
+        assert_eq!(report["tool_choice"], "none");
+        assert!(before.get("tool_choice").is_none());
+        assert_eq!(report["tools"], before["tools"]);
+        assert_eq!(report["max_tokens"], 1024);
+        let ask = report["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(ask["role"], "user");
+        assert!(
+            ask["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("all {cap} steps, and tools are off")),
+            "{ask}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
+    let mut script = vec![(
+        "chat/completions",
+        chat_tool_call(
+            "call_d",
+            "delegate_computer",
+            &json!({"task": "look forever"}),
+        ),
+    )];
+    script.extend((0..30).map(|n| {
+        (
+            "chat/completions",
+            chat_tool_call(&format!("s{n}"), "computer_state", &json!({})),
+        )
+    }));
+    script.push((
+        "chat/completions",
+        chat_text("Opened the editor; the save dialog never came up."),
+    ));
+    script.push(("chat/completions", chat_text("Done.")));
+    let h = Harness::start(script, false).await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "look", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let delegate = entries
+        .iter()
+        .find_map(|e| match &e.body {
+            Some(Body::ToolResult(r)) if r.call_id == "call_d" => Some(r),
+            _ => None,
+        })
+        .unwrap();
+    assert!(delegate.is_error);
+    assert!(
+        delegate.text.starts_with("The computer subagent stopped at its 30-step cap. Its progress report: Opened the editor; the save dialog never came up."),
+        "{}",
+        delegate.text
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    assert_eq!(chats[31]["tool_choice"], "none");
+    assert_eq!(chats[31]["model"], "anthropic/claude-sonnet-5");
+}
+
+#[tokio::test]
 async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     let h = Harness::start(
         vec![

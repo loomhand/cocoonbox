@@ -38,6 +38,8 @@ Loop: observe, act, verify.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
+const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
+
 /// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a Script box adds [`ROUTING`].
 pub fn main(model: &str, computer_model: &str, vision: bool, script: bool) -> String {
     let eyes = if vision {
@@ -59,6 +61,11 @@ pub fn main(model: &str, computer_model: &str, vision: bool, script: bool) -> St
 /// Renders the computer subagent's prompt: observe, act, verify on the desktop.
 pub fn computer(model: &str) -> String {
     COMPUTER.replace("{model}", model)
+}
+
+/// Renders the request for a progress report once a loop has used all `cap` steps.
+pub fn cap_report(cap: usize) -> String {
+    CAP_REPORT.replace("{cap}", &cap.to_string())
 }
 
 #[cfg(test)]
@@ -96,6 +103,14 @@ mod tests {
         assert!(p.starts_with(&plain), "{p}");
         assert!(p.ends_with(ROUTING), "{p}");
         assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
+    }
+
+    #[test]
+    fn cap_report_names_the_cap() {
+        assert_eq!(
+            cap_report(40),
+            "Stop here: you have used all 40 steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck."
+        );
     }
 
     #[test]
