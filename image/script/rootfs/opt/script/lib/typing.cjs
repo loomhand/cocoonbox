@@ -5,7 +5,8 @@
 const { execFileSync } = require('node:child_process')
 
 const DRAIN_MS = 150
-const LAYOUT = /^[a-z0-9 ]*$/
+const READ_AT = 8
+const US_FIRST = new Set("abcdefghijklmnopqrstuvwxyz0123456789`-=[]\\;',./ \t\n\r\b\x1b\x7f")
 const CONTROL = { '\b': 0xff08, '\t': 0xff09, '\n': 0xff0a, '\v': 0xff0b, '\r': 0xff0d, '\x1b': 0xff1b, '\x7f': 0xffff }
 
 module.exports = (sl) => {
@@ -33,8 +34,16 @@ module.exports = (sl) => {
   }
 
   proto.typeText = function (text) {
-    if (LAYOUT.test(text)) return typeText.call(this, text)
-    keymap ??= read()
+    // until a run binds READ_AT characters it cannot reach the spares the toolhost leaves free, so it counts by the us layout
+    if (!keymap) {
+      const fresh = new Set([...text].filter((c) => !US_FIRST.has(c) && !bound.has(c)))
+      if (bound.size + fresh.size < READ_AT) {
+        for (const c of fresh) bound.add(c)
+        return typeText.call(this, text)
+      }
+      keymap = read()
+      for (const c of bound) if (keymap.first.has(keysym(c))) bound.delete(c)
+    }
     let from = 0
     let at = 0
     for (const c of text) {
