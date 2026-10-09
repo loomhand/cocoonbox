@@ -195,7 +195,7 @@ func TestRejectsCallers(t *testing.T) {
 	}{
 		{name: "no token", md: []string{HeaderBox, boxes.BoxID("alice")}, want: codes.Unauthenticated},
 		{name: "bad token", md: []string{auth.HeaderAuthorization, "Bearer wrong", HeaderBox, boxes.BoxID("alice")}, want: codes.Unauthenticated},
-		{name: "someone else's box", md: []string{auth.HeaderAuthorization, "Bearer " + aliceToken, HeaderBox, boxes.BoxID("bob")}, want: codes.PermissionDenied},
+		{name: "someone else's box", md: []string{auth.HeaderAuthorization, "Bearer " + aliceToken, HeaderBox, boxes.BoxID("bob")}, want: codes.NotFound},
 		{name: "no box", md: []string{auth.HeaderAuthorization, "Bearer " + aliceToken}, want: codes.InvalidArgument},
 	}
 	for _, tt := range tests {
@@ -348,7 +348,7 @@ type fakeResolver struct {
 
 func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.Endpoint, string, error) {
 	if boxID != boxes.BoxID(user) {
-		return machines.Endpoint{}, "", status.Error(codes.PermissionDenied, "box belongs to another user")
+		return machines.Endpoint{}, "", boxes.ErrNoBox
 	}
 	ep := machines.TCPEndpoint(r.addr)
 	if r.opaque {

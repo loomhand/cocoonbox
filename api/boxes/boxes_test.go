@@ -202,14 +202,18 @@ func TestOwnership(t *testing.T) {
 	svc := New(fake, testDefaults, newFakeRegistry())
 	bob := auth.WithUser(t.Context(), "bob")
 
-	if _, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Get other's box: %v, want PermissionDenied", err)
+	if _, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Errorf("Get other's box: %v, want NotFound", err)
 	}
-	if _, err := svc.Hibernate(bob, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Hibernate other's box: %v, want PermissionDenied", err)
+	if _, err := svc.Hibernate(bob, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Errorf("Hibernate other's box: %v, want NotFound", err)
 	}
-	if _, _, err := svc.Resolve(bob, "bob", aliceBox); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Resolve other's box: %v, want PermissionDenied", err)
+	if _, _, err := svc.Resolve(bob, "bob", aliceBox); status.Code(err) != codes.NotFound {
+		t.Errorf("Resolve other's box: %v, want NotFound", err)
+	}
+	_, _, foreign := svc.Resolve(bob, "bob", aliceBox)
+	if _, _, unknown := svc.Resolve(bob, "bob", "cb-000000000000"); status.Convert(unknown).Proto().String() != status.Convert(foreign).Proto().String() {
+		t.Errorf("Resolve of an unknown box = %v, want the same answer as another user's box (%v)", unknown, foreign)
 	}
 	if list, err := svc.List(bob, &controlv1.ListBoxesRequest{}); err != nil || len(list.GetBoxes()) != 1 || list.GetBoxes()[0].GetId() != BoxID("bob") {
 		t.Errorf("List for bob = %v, %v, want only bob's box", list, err)
@@ -274,7 +278,7 @@ func TestResolve(t *testing.T) {
 		message string
 	}{
 		{name: "running", want: codes.OK},
-		{name: "machine vanished", addrErr: machines.ErrNotFound, want: codes.NotFound, message: "box not found"},
+		{name: "machine vanished", addrErr: machines.ErrNotFound, want: codes.NotFound, message: "no such box for this user (it may have been deleted)"},
 		{name: "hibernated", addrErr: &machines.NotRunningError{State: machines.StateHibernated}, want: codes.Unavailable, message: "box is BOX_STATE_HIBERNATED"},
 		{name: "no address", addrErr: machines.ErrNoAddress, want: codes.Unavailable, message: "box has no address yet"},
 	}

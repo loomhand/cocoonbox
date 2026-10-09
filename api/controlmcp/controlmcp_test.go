@@ -463,7 +463,7 @@ func (f *fakeBoxes) operate(ctx context.Context, method, box string) (*controlv1
 	user := auth.User(ctx)
 	f.record(method, user, box)
 	if box != boxes.BoxID(user) && !slices.ContainsFunc(f.extra[user], func(b *controlv1.Box) bool { return b.GetId() == box }) {
-		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
+		return nil, boxes.ErrNoBox
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()

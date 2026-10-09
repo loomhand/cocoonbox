@@ -77,8 +77,8 @@ func TestSaveStateRefusals(t *testing.T) {
 	if _, err := svc.SaveState(ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("SaveState on a hibernated box: %v, want FailedPrecondition", err)
 	}
-	if _, err := svc.SaveState(auth.WithUser(t.Context(), "bob"), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("SaveState on another user's box: %v, want PermissionDenied", err)
+	if _, err := svc.SaveState(auth.WithUser(t.Context(), "bob"), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Errorf("SaveState on another user's box: %v, want NotFound", err)
 	}
 	if _, err := svc.Rebase(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("Rebase on a hibernated box: %v, want FailedPrecondition", err)

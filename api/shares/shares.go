@@ -11,6 +11,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/boxes"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/users"
 )
@@ -43,7 +44,7 @@ func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) 
 		return nil, err
 	}
 	if !s.store.HasBox(user, req.GetBoxId()) {
-		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
+		return nil, boxes.ErrNoBox
 	}
 	sh, err := s.store.CreateShare(ctx, users.NewShare{
 		Owner: user, Box: req.GetBoxId(), TTL: time.Duration(req.GetTtlSeconds()) * time.Second,

@@ -161,8 +161,8 @@ func TestCreateRefusals(t *testing.T) {
 	if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "four"}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("Create past the quota = %v, want FailedPrecondition", err)
 	}
-	if _, err := svc.Ensure(auth.WithUser(t.Context(), "bob"), &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Ensure of alice's box by bob = %v, want PermissionDenied", err)
+	if _, err := svc.Ensure(auth.WithUser(t.Context(), "bob"), &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Errorf("Ensure of alice's box by bob = %v, want NotFound", err)
 	}
 	if _, err := svc.Rename(ctx, &controlv1.RenameBoxRequest{BoxId: aliceBox, Name: "two"}); status.Code(err) != codes.AlreadyExists {
 		t.Errorf("Rename onto a taken name = %v, want AlreadyExists", err)
@@ -209,8 +209,8 @@ func TestDeleteSavesThenRemovesEveryMachineOfTheBox(t *testing.T) {
 	if !env.store.has(alice + "/boxes/" + aliceBox + "/head.json") {
 		t.Error("the deleted box's saved state is gone")
 	}
-	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Ensure of the deleted box = %v, want PermissionDenied", err)
+	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Errorf("Ensure of the deleted box = %v, want NotFound", err)
 	}
 	if list, _ := env.svc.List(env.ctx, &controlv1.ListBoxesRequest{}); len(list.GetBoxes()) != 0 {
 		t.Errorf("List after delete = %v", list)
@@ -234,8 +234,8 @@ func TestDeleteOfAHibernatedBoxSkipsTheSave(t *testing.T) {
 
 func TestDeleteRefusals(t *testing.T) {
 	env := newStateEnv(t)
-	if _, err := env.svc.Delete(auth.WithUser(t.Context(), "bob"), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("Delete by bob = %v, want PermissionDenied", err)
+	if _, err := env.svc.Delete(auth.WithUser(t.Context(), "bob"), &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Errorf("Delete by bob = %v, want NotFound", err)
 	}
 	gate := make(chan struct{})
 	env.agent.onUpload = func(machines.Endpoint) { <-gate }

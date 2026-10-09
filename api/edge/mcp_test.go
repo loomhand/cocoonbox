@@ -177,7 +177,7 @@ func TestMCPRejects(t *testing.T) {
 	}{
 		{name: "no token", box: boxes.BoxID("alice"), want: http.StatusUnauthorized, message: "missing bearer token"},
 		{name: "bad token", authorization: "Bearer wrong", box: boxes.BoxID("alice"), want: http.StatusUnauthorized, message: "invalid bearer token"},
-		{name: "someone else's box", authorization: "Bearer " + aliceToken, box: boxes.BoxID("bob"), want: http.StatusForbidden, message: "box belongs to another user"},
+		{name: "someone else's box", authorization: "Bearer " + aliceToken, box: boxes.BoxID("bob"), want: http.StatusNotFound, message: "no such box for this user (it may have been deleted)"},
 		{name: "no box id", authorization: "Bearer " + aliceToken, want: http.StatusBadRequest, message: "box id is required: /cocoonbox.mcp/<box id>"},
 		{
 			name: "box not running", authorization: "Bearer " + aliceToken, box: boxes.BoxID("alice"),

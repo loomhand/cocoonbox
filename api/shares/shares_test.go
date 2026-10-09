@@ -21,7 +21,7 @@ func TestCreateSharesOnlyTheCallersBox(t *testing.T) {
 	if _, err := srv.Create(t.Context(), &controlv1.CreateShareRequest{BoxId: boxes.BoxID("alice")}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Create without a user: %v", err)
 	}
-	if _, err := srv.Create(alice, &controlv1.CreateShareRequest{BoxId: boxes.BoxID("bob")}); status.Code(err) != codes.PermissionDenied {
+	if _, err := srv.Create(alice, &controlv1.CreateShareRequest{BoxId: boxes.BoxID("bob")}); status.Code(err) != codes.NotFound {
 		t.Errorf("Create on bob's box: %v", err)
 	}
 	got, err := srv.Create(alice, &controlv1.CreateShareRequest{BoxId: boxes.BoxID("alice"), TtlSeconds: 600, UserNames: []string{"bob"}, Write: true})

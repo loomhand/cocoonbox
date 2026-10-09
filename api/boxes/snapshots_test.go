@@ -53,8 +53,8 @@ func TestListSnapshotsNewestFirst(t *testing.T) {
 		}
 	}
 	other := auth.WithUser(t.Context(), "mallory")
-	if _, err := env.svc.ListSnapshots(other, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("another user's ListSnapshots = %v, want PermissionDenied", err)
+	if _, err := env.svc.ListSnapshots(other, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+		t.Errorf("another user's ListSnapshots = %v, want NotFound", err)
 	}
 }
 
@@ -178,8 +178,8 @@ func TestRestorePathsRefusals(t *testing.T) {
 	if _, err := restore(env.ctx, snapshotID(99), "/workspace"); status.Code(err) != codes.NotFound {
 		t.Errorf("unknown snapshot: %v, want NotFound", err)
 	}
-	if _, err := restore(auth.WithUser(t.Context(), "mallory"), id, "/workspace"); status.Code(err) != codes.PermissionDenied {
-		t.Errorf("another user: %v, want PermissionDenied", err)
+	if _, err := restore(auth.WithUser(t.Context(), "mallory"), id, "/workspace"); status.Code(err) != codes.NotFound {
+		t.Errorf("another user: %v, want NotFound", err)
 	}
 
 	op, err := restore(env.ctx, id, "/workspace/missing")

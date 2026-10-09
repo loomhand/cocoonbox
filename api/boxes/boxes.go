@@ -22,6 +22,9 @@ import (
 	"github.com/CMGS/cocoonbox/api/users"
 )
 
+// ErrNoBox answers every box id the caller does not own alike: another user's, a deleted one, an unknown one.
+var ErrNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+
 // Defaults size new boxes, name the image they start from, list the other flavors Ensure and images Rebase accept,
 // and bound how many boxes of one user run at once.
 type Defaults struct {
@@ -107,7 +110,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 			return nil, err
 		}
 	} else if !s.registry.HasBox(user, box) {
-		return nil, status.Error(codes.PermissionDenied, "box belongs to another user")
+		return nil, ErrNoBox
 	}
 	if s.deleting(box) {
 		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")
@@ -269,7 +272,7 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.Endpoint, string, error) {
 	var none machines.Endpoint
 	if !s.registry.HasBox(user, boxID) {
-		return none, "", status.Error(codes.PermissionDenied, "box belongs to another user")
+		return none, "", ErrNoBox
 	}
 	cur, err := s.current(ctx, user, boxID)
 	var ep machines.Endpoint
@@ -284,7 +287,7 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 	case err == nil:
 		return ep, wakeOf(cur), nil
 	case errors.Is(err, machines.ErrNotFound):
-		return none, "", status.Error(codes.NotFound, "box not found")
+		return none, "", ErrNoBox
 	case errors.As(err, &notRunning):
 		return none, "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
 	case errors.Is(err, machines.ErrNoAddress):
@@ -451,7 +454,7 @@ func (s *Service) ownerOf(ctx context.Context, boxID string) (string, error) {
 		return "", err
 	}
 	if !s.registry.HasBox(user, boxID) {
-		return "", status.Error(codes.PermissionDenied, "box belongs to another user")
+		return "", ErrNoBox
 	}
 	return user, nil
 }
@@ -466,7 +469,7 @@ func callerUser(ctx context.Context) (string, error) {
 func serviceError(ctx context.Context, logger *log.Fields, err error, action string) error {
 	switch {
 	case errors.Is(err, machines.ErrNotFound):
-		return status.Error(codes.NotFound, "box not found")
+		return ErrNoBox
 	case errors.Is(err, machines.ErrDeleting):
 		return status.Error(codes.FailedPrecondition, "box is being deleted")
 	case errors.Is(err, machines.ErrConflict):

@@ -148,7 +148,7 @@ func registryError(ctx context.Context, err error, action string) error {
 	case errors.Is(err, users.ErrQuota):
 		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.Is(err, users.ErrNotFound):
-		return status.Error(codes.NotFound, "box not found")
+		return ErrNoBox
 	default:
 		log.WithFunc("boxes.registryError").Error(ctx, err, action)
 		return status.Errorf(codes.Unavailable, "%s failed", action)

@@ -23,8 +23,8 @@ func TestOwnerManagesTheShareOfTheirBox(t *testing.T) {
 	env := newShareEnv(t)
 	qa1 := env.login(t, "qa1")
 	box := boxes.BoxID(env.owner.ID)
-	if code := env.do(t, http.MethodPost, "api/shares", qa1, `{"box_id":"`+boxes.BoxID("root")+`"}`).Code; code != http.StatusForbidden {
-		t.Errorf("sharing another user's box = %d, want 403", code)
+	if code := env.do(t, http.MethodPost, "api/shares", qa1, `{"box_id":"`+boxes.BoxID("root")+`"}`).Code; code != http.StatusNotFound {
+		t.Errorf("sharing another user's box = %d, want 404", code)
 	}
 	created := env.createShare(t, qa1, `{"box_id":"`+box+`","user_names":["qa2"],"ttl_seconds":3600}`)
 	if created.Share.Box != box || len(created.Share.Users) != 1 || created.Share.Users[0] != "qa2" || created.Share.Write {

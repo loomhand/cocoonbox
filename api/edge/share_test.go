@@ -107,8 +107,8 @@ func TestUserTokenWinsOverTheSharePrefix(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+shareLikeToken)
 	resp = env.do(t, req)
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("dave's token on alice's box = %d, want 403 as dave, not admitted as the share", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("dave's token on alice's box = %d, want 404 as dave, not admitted as the share", resp.StatusCode)
 	}
 }
 
