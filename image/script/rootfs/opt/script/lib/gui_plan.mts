@@ -375,6 +375,11 @@ async function run(s: Step, rec: Record<string, unknown>) {
     tick('act', t0)
     const v = s.type.endsWith('\n') && !sub ? focused() : null
     if (sub) { rec.submit = true; await submit(w!) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v)) rec.submit = true
+    if (!s.type.includes('\n') && w && m.windows().some((x) => x.title !== w.title && pidOf(x) === pidOf(w))) {
+      const want = s.type.slice(0, 30).replace(/"/g, '\\"'); let after = ''
+      for (let k = 0; k < 5; k++) { after = outline(w); if (!isDialog(after) || after.split('\n').some((l) => /^\s*- (textbox|searchbox|combobox|spinbutton)\b.*: ".*/.test(l) && l.includes(want))) return; await sleep(40) }
+      throw new Surprise(`"${s.type}" reached no text field of "${w.title}" (Tab can land on a button): fill the field with {set: label, value}`, seen())
+    }
     return
   }
   if (s.key) {
