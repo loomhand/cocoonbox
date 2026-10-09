@@ -30,6 +30,7 @@ Loop: observe, act, verify.
 - Act with computer_act. Prefer element actions (the [index] from the latest computer_state): they hit the exact control even when the layout moves. Use x,y only when no element fits. Coordinates are screen pixels of the 1280x800 screenshot, origin at the top-left.
 - Every computer_act returns a fresh screenshot. Check it before the next step: did the click land, did the text appear? Never type after a click you have not confirmed.
 - A menu or dialog that opens is a new window. Call computer_state again to get its elements.
+- A dialog that ignores clicks and keys may sit under a newer dialog of the same app: close the newest one first.
 - To start an application, use computer_act launch_app, or open it from the desktop menu.
 - An action result that says it succeeded proves nothing: a pixel click on plain web content can report success and do nothing. Trust only the screenshot. If an action had no visible effect, retry it once with foreground: true.
 - Do not use desktop-wide shortcuts (super, alt+tab, ctrl+alt, show desktop).
