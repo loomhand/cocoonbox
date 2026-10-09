@@ -23,6 +23,8 @@ public final class BoxConnection: Sendable {
 
     private let client: GRPCClient<BoxTransport>
     private let auth: AuthInterceptor
+    // names is the name of every box id this connection has seen, so retarget can follow a deleted box's name.
+    private let names = Mutex<[String: String]>([:])
     private let runner: Task<Void, Never>
 
     public init(endpoint: Endpoint, token: String) throws {
@@ -51,9 +53,36 @@ public final class BoxConnection: Sendable {
         self.runner = Task { try? await client.runConnections() }
     }
 
+    // boxID is the box of every agent call; setting an id whose name is unknown lists the boxes once to learn it.
     public var boxID: String? {
         get { auth.boxID.withLock { $0 } }
-        set { auth.boxID.withLock { $0 = newValue } }
+        set {
+            auth.boxID.withLock { $0 = newValue }
+            if let newValue, names.withLock({ $0[newValue] }) == nil {
+                Task { _ = try? await self.listBoxes() }
+            }
+        }
+    }
+
+    // retarget follows boxID after the edge stopped resolving it: it keeps an id the user still has,
+    // moves to the box that now has the deleted box's name, and throws BoxGone when no box has it.
+    @discardableResult
+    public func retarget() async throws -> String {
+        guard let held = boxID else { throw BoxGone(name: "") }
+        let name = names.withLock { $0[held] }
+        let list = try await listBoxes()
+        if list.contains(where: { $0.id == held }) { return held }
+        guard let name, let renewed = list.first(where: { $0.name == name }) else { throw BoxGone(name: name ?? held) }
+        return auth.boxID.withLock { box in
+            if box == held { box = renewed.id }
+            return box ?? renewed.id
+        }
+    }
+
+    // isStale says whether error may mean the held box id names no box of the user's: NotFound, or PermissionDenied from an older api.
+    public static func isStale(_ error: any Error) -> Bool {
+        guard let rpc = error as? RPCError else { return false }
+        return rpc.code == .notFound || rpc.code == .permissionDenied
     }
 
     public func close() {
@@ -68,26 +97,37 @@ public final class BoxConnection: Sendable {
 
     // listBoxes returns the user's boxes, oldest first.
     public func listBoxes() async throws -> [Cocoonbox_Control_V1_Box] {
-        try await boxes.list(Cocoonbox_Control_V1_ListBoxesRequest()).boxes
+        let list = try await boxes.list(Cocoonbox_Control_V1_ListBoxesRequest()).boxes
+        names.withLock { names in
+            for box in list { names[box.id] = box.name }
+        }
+        return list
     }
 
     // ensure wakes or creates boxID, or the user's first box when it is empty.
     public func ensure(boxID: String = "") async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        try await boxes.ensure(.with { $0.boxID = boxID })
+        try seen(await boxes.ensure(.with { $0.boxID = boxID }))
     }
 
     public func createBox(name: String, kind: BoxKind = .general) async throws -> Cocoonbox_Control_V1_EnsureResponse {
-        try await boxes.create(.with {
+        try seen(await boxes.create(.with {
             $0.name = name
             $0.image = kind.family
-        })
+        }))
     }
 
     public func renameBox(boxID: String, name: String) async throws -> Cocoonbox_Control_V1_Box {
-        try await boxes.rename(.with {
+        let box = try await boxes.rename(.with {
             $0.boxID = boxID
             $0.name = name
         })
+        names.withLock { $0[box.id] = box.name }
+        return box
+    }
+
+    private func seen(_ response: Cocoonbox_Control_V1_EnsureResponse) -> Cocoonbox_Control_V1_EnsureResponse {
+        names.withLock { $0[response.box.id] = response.box.name }
+        return response
     }
 
     public func deleteBox(boxID: String) async throws -> Cocoonbox_Control_V1_Operation {
@@ -353,6 +393,31 @@ public final class BoxConnection: Sendable {
         default:
             return describe(error)
         }
+    }
+}
+
+// BoxGone is a held box that was deleted, with no box under its name to follow; name is the id when its name is unknown.
+public struct BoxGone: Error, CustomStringConvertible {
+    public let name: String
+
+    public init(name: String) {
+        self.name = name
+    }
+
+    public var description: String {
+        if name.isEmpty { return "no box is selected" }
+        return name.hasPrefix("cb-") ? "you have no box \(name)" : "the box \(name) was deleted"
+    }
+}
+
+extension Cocoonbox_Control_V1_Box {
+    // renewed maps each box of old that list lacks to the box of list with its name: a box deleted and created again.
+    public static func renewed(from old: [Self], in list: [Self]) -> [String: Self] {
+        var renewed: [String: Self] = [:]
+        for box in old where !list.contains(where: { $0.id == box.id }) {
+            if let again = list.first(where: { $0.name == box.name }) { renewed[box.id] = again }
+        }
+        return renewed
     }
 }
 

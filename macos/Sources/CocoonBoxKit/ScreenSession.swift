@@ -56,6 +56,7 @@ public final class ScreenSession: Sendable {
     private let pipe = RFBPipe()
     private let tracedChunks: Int
     private let counters = Mutex(Stats())
+    private let failure = Mutex<(any Error)?>(nil)
 
     public init(transport: any ScreenTransport, configuration: RFBClient.Configuration, tracedChunks: Int = 8) {
         self.transport = transport
@@ -68,8 +69,16 @@ public final class ScreenSession: Sendable {
     }
 
     // run returns when either the stream or the RFB session ends, with the
-    // error that ended it.
+    // error that ended it: the transport's when the transport failed.
     public func run(_ events: @escaping @Sendable (RFBEvent) -> Void) async throws {
+        do {
+            try await stream(events)
+        } catch {
+            throw failure.withLock { $0 } ?? error
+        }
+    }
+
+    private func stream(_ events: @escaping @Sendable (RFBEvent) -> Void) async throws {
         let (outbound, forward) = AsyncStream<Data>.makeStream()
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask { [self] in
@@ -87,6 +96,7 @@ public final class ScreenSession: Sendable {
                     }
                     pipe.finish()
                 } catch {
+                    failure.withLock { $0 = error }
                     pipe.finish(throwing: .transport("\(error)"))
                     throw error
                 }

@@ -30,6 +30,7 @@ final class ScreenController {
     }
 
     @ObservationIgnored let container = LiveScreenContainer()
+    @ObservationIgnored var onBoxChange: ((String?) -> Void)?
     @ObservationIgnored private var screen: LiveScreen?
     @ObservationIgnored private var connection: BoxConnection?
     @ObservationIgnored private var copiedAt: Date?
@@ -49,6 +50,7 @@ final class ScreenController {
         if screen == nil, let live = LiveScreen(options: Self.options) {
             live.onStatus = { [weak self] in self?.apply($0) }
             live.onClipboard = { [weak self] in self?.received($0) }
+            live.onBoxChange = { [weak self] in self?.onBoxChange?($0) }
             container.controller = self
             container.install(live)
             screen = live

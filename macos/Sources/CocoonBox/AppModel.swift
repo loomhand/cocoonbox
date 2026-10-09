@@ -107,6 +107,7 @@ final class AppModel {
     init() {
         endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"] ?? Endpoint.defaultURL
         listen()
+        screen.onBoxChange = { [weak self] _ in self?.followBoxChange() }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.persistLocal()
@@ -574,6 +575,17 @@ final class AppModel {
         }
     }
 
+    // followBoxChange refreshes the list after the screen left a deleted box, and again until a box created
+    // again under its name has started: another client created it, so no operation of this app reports it.
+    private func followBoxChange() {
+        Task {
+            for attempt in 0..<60 {
+                guard await refreshBoxes(), box?.state == .starting else { return }
+                try? await pause(Backoff().delay(attempt: attempt))
+            }
+        }
+    }
+
     // reconnect names the connected accounts whose grant the vendor refused (design §16.4).
     var reconnect: [String] {
         connectors.filter { $0.status == "needs_reconnect" }.map(\.name)
@@ -590,13 +602,18 @@ final class AppModel {
         NSWorkspace.shared.open(url)
     }
 
-    // apply takes the box list; without a selection, or when the selected box is gone, it selects the newest running box, else the first.
+    // apply takes the box list; without a selection, or when the selected box is gone, it selects the box created again
+    // under its name, else the newest running box, else the first. Local agents follow their default box the same way.
     private func apply(boxes list: [Box]) {
         defer { restoreLocal() }
         let wasRunning = boxRunning
+        let renewed = Box.renewed(from: boxes, in: list)
         boxes = list
+        for session in localAgents {
+            if let again = renewed[session.record.boxID] { setDefaultBox(session, to: again) }
+        }
         guard box == nil else { return followSelected(wasRunning: wasRunning) }
-        if let pick = list.last(where: { $0.state == .running }) ?? list.first {
+        if let pick = selectedBoxID.flatMap({ renewed[$0] }) ?? list.last(where: { $0.state == .running }) ?? list.first {
             selectBox(pick.id)
         } else {
             stopAgentSide()

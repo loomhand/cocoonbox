@@ -29,6 +29,8 @@ public actor Bridge {
     private var opening: [String: Task<MCPUpstream, any Error>] = [:]
     // ids maps every box name and id of the user to the box id.
     private var ids: [String: String] = [:]
+    // names keeps the name of every box id ever listed, so a deleted box's name stays known.
+    private var names: [String: String] = [:]
     private var pinned: String?
     private var defaultBox: String?
     // boxTools are the box tools the client last got: those of the default box.
@@ -168,24 +170,51 @@ public actor Bridge {
         } catch {
             return reply(id, ToolFailure("Could not reach cocoonbox: \(error)").result)
         }
-        link?.report(box: box)
-        for attempt in 0..<2 {
+        do {
+            relay(id, try await callOn(box, params, progress))
+        } catch let refusal where Self.refuses(refusal) {
             do {
-                let upstream = try await readyBox(box, progress: progress)
-                let answer = try await call(upstream, "tools/call", params)
-                return relay(id, answer)
-            } catch MCPUpstream.Failure.sessionExpired where attempt == 0 {
-                sessions[box] = nil
-            } catch MCPUpstream.Failure.http(let status) where attempt == 0 && (status == 502 || status == 503) {
-                sessions[box] = nil
-            } catch MCPUpstream.Failure.http(403) {
-                return reply(id, ToolFailure("cocoonbox refused box \(box): it is not one of your boxes.").result)
-            } catch let failure as ToolFailure {
-                return reply(id, failure.result)
+                let next = try await follow(box, explicit: ref?.hasPrefix("cb-") == true)
+                guard next != box else { return reply(id, Self.result(of: refusal, box: box)) }
+                relay(id, try await callOn(next, params, progress))
             } catch {
-                return reply(id, ToolFailure("Could not reach the box: \(error)").result)
+                reply(id, Self.result(of: error, box: box))
             }
+        } catch {
+            reply(id, Self.result(of: error, box: box))
         }
+    }
+
+    // callOn sends one box-tool call to box, on a new session once when the old one expired or the edge lost the agent.
+    private func callOn(_ box: String, _ params: [String: Any], _ progress: Any?) async throws -> [String: Any] {
+        link?.report(box: box)
+        var retried = false
+        while true {
+            do {
+                return try await call(try await readyBox(box, progress: progress), "tools/call", params)
+            } catch MCPUpstream.Failure.sessionExpired where !retried {
+                sessions[box] = nil
+            } catch MCPUpstream.Failure.http(let status) where !retried && (status == 502 || status == 503) {
+                sessions[box] = nil
+            }
+            retried = true
+        }
+    }
+
+    // follow checks box against a fresh list after the edge refused it: it keeps a box the user has or one it never listed,
+    // moves a deleted default box to the box created again under its name, and refuses an id the call named, giving the new one.
+    private func follow(_ box: String, explicit: Bool) async throws -> String {
+        let list = try await listBoxes()
+        guard let name = names[box], !list.contains(where: { $0["box_id"] as? String == box }) else { return box }
+        sessions[box] = nil
+        boxLists[box] = nil
+        boxInstructions[box] = nil
+        try? FileManager.default.removeItem(at: cacheFile(box))
+        try? FileManager.default.removeItem(at: cacheFile(box, "instructions.txt"))
+        guard let next = ids[name] else { throw BoxGone(name: name) }
+        if explicit { throw ToolFailure("The box \(box) was deleted; the box named \(name) is now \(next).") }
+        if defaultBox == box { defaultBox = next }
+        return next
     }
 
     // listResources lists the resources of the default box when its session is open, else none; it never wakes a box.
@@ -333,7 +362,10 @@ public actor Bridge {
         for entry in list {
             guard let box = entry["box_id"] as? String else { continue }
             ids[box] = box
-            if let name = entry["name"] as? String, !name.isEmpty { ids[name] = box }
+            if let name = entry["name"] as? String, !name.isEmpty {
+                ids[name] = box
+                names[box] = name
+            }
         }
         return list
     }
@@ -483,6 +515,25 @@ public actor Bridge {
     private func send(_ message: [String: Any]) {
         guard let data = try? JSONSerialization.data(withJSONObject: message, options: [.withoutEscapingSlashes]) else { return }
         output(data + Data("\n".utf8))
+    }
+}
+
+extension Bridge {
+    // refuses says whether error may be the edge refusing a box id: a 403 or 404, or a box_status that names no box.
+    static func refuses(_ error: any Error) -> Bool {
+        switch error {
+        case is ToolFailure, MCPUpstream.Failure.http(403), MCPUpstream.Failure.http(404): true
+        default: false
+        }
+    }
+
+    static func result(of error: any Error, box: String) -> [String: Any] {
+        switch error {
+        case let failure as ToolFailure: failure.result
+        case let gone as BoxGone: ToolFailure("The box \(gone.name) was deleted; box_list lists your boxes.").result
+        case MCPUpstream.Failure.http(403), MCPUpstream.Failure.http(404): ToolFailure("cocoonbox has no box \(box) for you; it may have been deleted. box_list lists your boxes.").result
+        default: ToolFailure("Could not reach the box: \(error)").result
+        }
     }
 }
 
