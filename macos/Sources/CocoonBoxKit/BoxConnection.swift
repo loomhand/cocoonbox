@@ -6,6 +6,7 @@ import Synchronization
 typealias BoxTransport = HTTP2ClientTransport.TransportServices
 typealias BoxesClient = Cocoonbox_Control_V1_Boxes.Client<BoxTransport>
 typealias SharesClient = Cocoonbox_Control_V1_Shares.Client<BoxTransport>
+typealias FlowsClient = Cocoonbox_Control_V1_Flows.Client<BoxTransport>
 typealias ConnectorsClient = Cocoonbox_Control_V1_Connectors.Client<BoxTransport>
 typealias AgentsClient = Cocoonbox_Agent_V1_Agents.Client<BoxTransport>
 typealias SessionClient = Cocoonbox_Agent_V1_Session.Client<BoxTransport>
@@ -17,6 +18,7 @@ public final class BoxConnection: Sendable {
     public let endpoint: Endpoint
     let boxes: BoxesClient
     let shares: SharesClient
+    let flows: FlowsClient
     let connectors: ConnectorsClient
     let agents: AgentsClient
     let session: SessionClient
@@ -47,6 +49,7 @@ public final class BoxConnection: Sendable {
         self.client = client
         self.boxes = BoxesClient(wrapping: client)
         self.shares = SharesClient(wrapping: client)
+        self.flows = FlowsClient(wrapping: client)
         self.connectors = ConnectorsClient(wrapping: client)
         self.agents = AgentsClient(wrapping: client)
         self.session = SessionClient(wrapping: client)
@@ -214,6 +217,26 @@ public final class BoxConnection: Sendable {
 
     public func revokeShare(shareID: String) async throws {
         _ = try await shares.revoke(.with { $0.shareID = shareID })
+    }
+
+    // MARK: Flows
+
+    // listFlows returns the user's flow library without contents, newest first.
+    public func listFlows() async throws -> Cocoonbox_Control_V1_ListFlowsResponse {
+        try await flows.list(Cocoonbox_Control_V1_ListFlowsRequest())
+    }
+
+    // exportFlows returns the named flows with their contents; no names exports every flow.
+    public func exportFlows(names: [String]) async throws -> [Cocoonbox_Control_V1_Flow] {
+        try await flows.export(.with { $0.names = names }).flows
+    }
+
+    public func importFlows(_ items: [Cocoonbox_Control_V1_Flow]) async throws -> [Cocoonbox_Control_V1_Flow] {
+        try await flows.save(.with { $0.flows = items }).flows
+    }
+
+    public func deleteFlows(names: [String]) async throws -> [String] {
+        try await flows.delete(.with { $0.names = names }).deleted
     }
 
     // MARK: Connectors

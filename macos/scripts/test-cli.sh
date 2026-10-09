@@ -5,7 +5,8 @@
 # tools and their refusals, --no-wake, the headers helper, several boxes:
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
-# and git over it (MockBox runs Exec commands on this Mac in a test workspace). Nothing touches
+# and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
+# export, import and rm. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -206,6 +207,48 @@ n.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clie
 result, _ = n.tool("list_dir", {"path": "/"})
 check("--no-wake refuses with a hint", result.get("isError") and "box_ensure" in text(result), result)
 n.close()
+
+flowwork = os.path.join(os.path.dirname(mocklog), "flows")
+os.makedirs(flowwork)
+r = run("flows")
+check("flows lists an empty library", r.returncode == 0 and r.stdout.strip() == "no saved flows", r.stdout + r.stderr)
+seed = os.path.join(flowwork, "seed.json")
+with open(seed, "w") as f:
+    json.dump({"version": 1, "flows": [
+        {"name": "mousepad-save-fruit.json", "content": '{"name":"mousepad-save-fruit","steps":[]}', "image": "cbplan:v17"},
+        {"name": "save-note.mts", "content": "export function main() {}\n"},
+    ]}, f)
+r = run("flows", "import", seed, "--json")
+stored = json.loads(r.stdout)["flows"] if r.returncode == 0 else []
+check("flows import stores each flow with its image", [(x["name"], x["rev"], x["image"]) for x in stored] == [("mousepad-save-fruit.json", 1, "cbplan:v17"), ("save-note.mts", 2, "")], r.stdout + r.stderr)
+r = run("flows", "import", seed)
+check("importing the same content keeps the revs", r.returncode == 0 and "imported mousepad-save-fruit.json as rev 1" in r.stdout, r.stdout + r.stderr)
+r = run("flows", "list", "--json")
+listed = json.loads(r.stdout)
+check("flows list --json: newest first, no content", [x["name"] for x in listed["flows"]] == ["save-note.mts", "mousepad-save-fruit.json"] and "content" not in listed["flows"][0], r.stdout)
+out = os.path.join(flowwork, "out.json")
+r = run("flows", "export", "mousepad-save-fruit.json", "-o", out)
+exported = json.load(open(out)) if r.returncode == 0 else {}
+check("flows export -o writes the named flow with its content", exported.get("version") == 1 and [x["name"] for x in exported["flows"]] == ["mousepad-save-fruit.json"] and exported["flows"][0]["content"] == '{"name":"mousepad-save-fruit","steps":[]}' and "exported 1 flows" in r.stderr, r.stdout + r.stderr)
+r = run("flows", "export")
+check("flows export without names prints every flow", r.returncode == 0 and len(json.loads(r.stdout)["flows"]) == 2, r.stdout + r.stderr)
+r = run("flows", "rm", "mousepad-save-fruit.json")
+check("flows rm deletes it", r.returncode == 0 and r.stdout.strip() == "deleted mousepad-save-fruit.json", r.stdout + r.stderr)
+r = run("flows", "rm", "mousepad-save-fruit.json")
+check("flows rm of a missing flow fails, naming it", r.returncode == 1 and "no mousepad-save-fruit.json" in r.stderr, r.stderr)
+r = run("flows", "export", "mousepad-save-fruit.json")
+check("flows export of a missing flow fails", r.returncode == 1 and "not found" in r.stderr, r.stderr)
+r = subprocess.run([cli, "flows", "import", "-"], input=open(out).read(), capture_output=True, text=True, timeout=60)
+check("flows import - reads the export from stdin and brings the flow back", r.returncode == 0 and "imported mousepad-save-fruit.json as rev 4" in r.stdout, r.stdout + r.stderr)
+bad = os.path.join(flowwork, "bad.json")
+with open(bad, "w") as f:
+    json.dump({"version": 1, "flows": [{"name": "../escape.json", "content": "{}"}]}, f)
+r = run("flows", "import", bad)
+check("flows import refuses a bad name", r.returncode == 1 and "escape" in r.stderr, r.stderr)
+with open(bad, "w") as f:
+    f.write("not json")
+r = run("flows", "import", bad)
+check("flows import refuses a file that is no export", r.returncode == 1 and "is no cocoonbox flows export" in r.stderr, r.stderr)
 
 headers = run("mcp-headers")
 check("mcp-headers prints the Authorization header", json.loads(headers.stdout) == {"Authorization": "Bearer mock-token"}, headers.stdout)

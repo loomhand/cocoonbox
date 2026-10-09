@@ -19,6 +19,10 @@ usage: cocoonbox <command> [options]
                                         create another box and wait until it runs; general (the default) is
                                         the standard desktop, script also has the Script runtime, whose
                                         box tools add script_run
+  flows [list] [--json]                 list your saved flows: every cbplan box of yours syncs them
+  flows export [NAME...] [-o FILE]      write flows (default: all) as JSON to FILE, else stdout
+  flows import FILE|- [--json]          add the flows of an export to your library; the last write wins
+  flows rm NAME...                      delete flows from your library and from your boxes' unchanged copies
   mcp [--no-wake]                       serve your boxes to a local agent over stdio MCP
   mcp-headers                           print the Authorization header as JSON (Claude Code headersHelper)
   rsh [--box NAME|ID] [-t] [HOST] COMMAND...
@@ -237,6 +241,86 @@ func boxCommand() async {
         let response = try await connection.createBox(name: name, kind: kind)
         if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
         printBox(try await connection.listBoxes().first { $0.id == response.box.id }, json: flags.contains("--json"))
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+// MARK: flows
+
+let flowsUsage = "usage: cocoonbox flows [list [--json] | export [NAME...] [-o FILE] | import FILE|- [--json] | rm NAME...]"
+
+func flowObject(_ flow: Cocoonbox_Control_V1_Flow, content: Bool) -> [String: Any] {
+    var object: [String: Any] = [
+        "name": flow.name, "sha256": flow.sha256, "rev": flow.rev, "size": flow.size, "saved_at_ms": flow.savedAtMs,
+        "box_id": flow.boxID, "image": flow.image,
+    ]
+    if content { object["content"] = String(decoding: flow.content, as: UTF8.self) }
+    return object
+}
+
+func printJSON(_ object: Any) {
+    let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
+    print(String(decoding: data, as: UTF8.self))
+}
+
+// readExport turns an export file (or stdin for -) into flows to import: name, content and image of each.
+func readExport(_ path: String) throws -> [Cocoonbox_Control_V1_Flow] {
+    let data = path == "-" ? FileHandle.standardInput.readDataToEndOfFile() : try Data(contentsOf: URL(fileURLWithPath: path))
+    guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any], object["version"] as? Int == 1,
+          let items = object["flows"] as? [[String: Any]] else { fail("\(path) is no cocoonbox flows export (version 1)") }
+    return items.enumerated().map { index, item in
+        guard let name = item["name"] as? String, let content = item["content"] as? String else {
+            fail("flow \(index) of \(path) has no name or content")
+        }
+        return .with {
+            $0.name = name
+            $0.content = Data(content.utf8)
+            $0.image = item["image"] as? String ?? ""
+        }
+    }
+}
+
+func flowsCommand() async {
+    let out = value(of: "-o")
+    let verb = words.first ?? "list"
+    let names = Array(words.dropFirst()).filter { $0 != "-o" && $0 != out }
+    let connection = connection()
+    defer { connection.close() }
+    do {
+        switch verb {
+        case "list":
+            let library = try await connection.listFlows()
+            if flags.contains("--json") { return printJSON(["rev": library.rev, "flows": library.flows.map { flowObject($0, content: false) }]) }
+            if library.flows.isEmpty { return print("no saved flows") }
+            for flow in library.flows {
+                let saved = Date(timeIntervalSince1970: Double(flow.savedAtMs) / 1000).formatted(.iso8601)
+                let origin = flow.boxID.isEmpty ? "imported" : flow.boxID
+                print("\(flow.name)  rev \(flow.rev)  \(flow.size) bytes  \(saved)  \(origin)  \(flow.image.isEmpty ? "-" : flow.image)")
+            }
+        case "export":
+            let flows = try await connection.exportFlows(names: names)
+            let object: [String: Any] = [
+                "version": 1, "exported_at_ms": Int64(Date().timeIntervalSince1970 * 1000), "flows": flows.map { flowObject($0, content: true) },
+            ]
+            let data = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
+            guard let out else { return print(String(decoding: data, as: UTF8.self)) }
+            try data.write(to: URL(fileURLWithPath: out), options: .atomic)
+            FileHandle.standardError.write(Data("exported \(flows.count) flows to \(out)\n".utf8))
+        case "import":
+            guard let path = names.first else { fail(flowsUsage) }
+            let stored = try await connection.importFlows(try readExport(path))
+            if flags.contains("--json") { return printJSON(["flows": stored.map { flowObject($0, content: false) }]) }
+            stored.forEach { print("imported \($0.name) as rev \($0.rev)") }
+        case "rm":
+            guard !names.isEmpty else { fail(flowsUsage) }
+            let deleted = try await connection.deleteFlows(names: names)
+            deleted.forEach { print("deleted \($0)") }
+            let missing = names.filter { !deleted.contains($0) }
+            if !missing.isEmpty { fail("your library has no \(missing.joined(separator: ", "))") }
+        default:
+            fail(flowsUsage)
+        }
     } catch {
         fail(BoxConnection.describe(error))
     }
@@ -877,6 +961,8 @@ case "status", "ensure", "wake", "hibernate", "save", "upgrade":
     await lifecycle(command)
 case "box":
     await boxCommand()
+case "flows":
+    await flowsCommand()
 case "mcp":
     await serve()
 case "mcp-headers":
