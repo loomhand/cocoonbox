@@ -16,7 +16,7 @@ PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
 	tigervnc-xorg-extension xauth x11-xserver-utils x11-utils xinput
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
-	mousepad nftables sudo libnss-myhostname libnss3-tools rsync git gh tmux
+	gnome-themes-extra-data mousepad nftables sudo libnss-myhostname libnss3-tools rsync git gh tmux
 	build-essential ncurses-bin
 	locales fonts-noto-cjk fonts-noto-color-emoji
 )
@@ -94,6 +94,7 @@ setup_desktop() {
 	install -d -o user -g user "$cfg" "$cfg/xfce4" "$cfg/xfce4/xfconf" "$xfconf" "$cfg/systemd" "$cfg/systemd/user" "$cfg/systemd/user/default.target.wants"
 	install -m 0644 -o user -g user "$SRC"/rootfs/etc/skel-cocoonbox/.config/xfce4/xfconf/xfce-perchannel-xml/*.xml "$xfconf/"
 	[ -f "$xfconf/xfce4-panel.xml" ] || install -m 0644 -o user -g user /etc/xdg/xfce4/panel/default.xml "$xfconf/xfce4-panel.xml"
+	sed -i 's|name="ThemeName" type="string" value="Greybird"|name="ThemeName" type="string" value="Adwaita"|' /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
 	ln -sfn /etc/systemd/user/cua-driver.service "$cfg/systemd/user/default.target.wants/cua-driver.service"
 	chown -h user:user "$cfg/systemd/user/default.target.wants/cua-driver.service"
 	dconf update
