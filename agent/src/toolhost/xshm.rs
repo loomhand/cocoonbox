@@ -12,9 +12,10 @@ use x11rb::protocol::shm::ConnectionExt as _;
 use x11rb::protocol::xinput::{ConnectionExt as _, DeviceType};
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt as _, EventMask, GrabMode, GrabStatus, ImageFormat, ImageOrder,
-    MapState, Window, WindowClass,
+    Keycode, MapState, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 use super::cua::SHELL_APPS;
 
@@ -478,6 +479,45 @@ impl Grabber {
         Ok(status != GrabStatus::SUCCESS)
     }
 
+    /// The keycodes without a keysym: the spares that input injectors bind characters outside the layout to.
+    pub fn spare_keycodes(&self) -> Result<Vec<Keycode>, String> {
+        let (keysyms, per, min) = self.keymap()?;
+        Ok(empty_keycodes(&keysyms, per, min))
+    }
+
+    /// Unbinds the keycodes of `spare` that have keysyms now and returns how many.
+    pub fn unbind(&self, spare: &[Keycode]) -> Result<usize, String> {
+        let (keysyms, per, min) = self.keymap()?;
+        let empty = empty_keycodes(&keysyms, per, min);
+        let none = vec![0; usize::from(per)];
+        let mut unbound = 0;
+        for &k in spare.iter().filter(|k| !empty.contains(k)) {
+            self.conn
+                .change_keyboard_mapping(1, k, per, &none)
+                .map_err(|e| format!("unbind keycode {k}: {e}"))?;
+            unbound += 1;
+        }
+        if unbound > 0 {
+            self.conn
+                .sync()
+                .map_err(|e| format!("unbind keycodes: {e}"))?;
+        }
+        Ok(unbound)
+    }
+
+    /// The core keymap: its keysyms, keysyms per keycode and first keycode.
+    fn keymap(&self) -> Result<(Vec<u32>, u8, Keycode), String> {
+        let setup = self.conn.setup();
+        let (min, max) = (setup.min_keycode, setup.max_keycode);
+        let map = self
+            .conn
+            .get_keyboard_mapping(min, max - min + 1)
+            .map_err(|e| format!("keyboard mapping: {e}"))?
+            .reply()
+            .map_err(|e| format!("keyboard mapping: {e}"))?;
+        Ok((map.keysyms, map.keysyms_per_keycode, min))
+    }
+
     /// The number of master keyboards.
     fn masters(&self) -> Option<usize> {
         let reply = self
@@ -639,6 +679,16 @@ pub fn visible(a: &[u8], b: &[u8], width: usize, height: usize, block: usize, st
     })
 }
 
+/// The keycodes from `min` whose `per` keysyms in `keysyms` are all NoSymbol.
+fn empty_keycodes(keysyms: &[u32], per: u8, min: Keycode) -> Vec<Keycode> {
+    keysyms
+        .chunks(usize::from(per).max(1))
+        .zip(min..=Keycode::MAX)
+        .filter(|(syms, _)| syms.iter().all(|&s| s == 0))
+        .map(|(_, k)| k)
+        .collect()
+}
+
 fn mix(h: u64, word: u64) -> u64 {
     (h ^ word).wrapping_mul(HASH_MUL).rotate_left(29)
 }
@@ -713,6 +763,13 @@ mod tests {
         assert!(visible(&frame, &seen, w, h, 3 * 3 + 2, 24));
         assert!(!visible(&frame, &seen, w, h, 3 * 3 + 1, 24));
         assert!(visible(&frame, &seen[4..], w, h, 0, 24));
+    }
+
+    #[test]
+    fn empty_keycodes_are_those_with_every_keysym_nosymbol() {
+        let keysyms = [0, 0, 0xff1b, 0, 0x0100_4e2d, 0x0100_4e2d, 0, 0];
+        assert_eq!(empty_keycodes(&keysyms, 2, 8), [8, 11]);
+        assert_eq!(empty_keycodes(&[0; 4], 2, 254), [254, 255]);
     }
 
     #[test]

@@ -80,7 +80,7 @@ impl Script {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let params = Value::Object(params.unwrap_or_default()).to_string();
         let mut report = self
-            .run_script(script, &params, workspace, timeout_of(timeout_s), &id)
+            .run_script(cua, script, &params, workspace, timeout_of(timeout_s), &id)
             .await?;
         let mut out = Output::default();
         if screenshot {
@@ -118,6 +118,7 @@ impl Script {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let mut report = self
             .run_script(
+                cua,
                 Script::File(PathBuf::from(GUI_PLAN)),
                 &Value::Object(params).to_string(),
                 workspace,
@@ -165,9 +166,10 @@ impl Script {
             .unwrap_or_default()
     }
 
-    /// Runs one script in its own scratch directory, releasing held input after a failure.
+    /// Runs one script in its own scratch directory, giving the spare keycodes back before it and releasing held input after a failure.
     async fn run_script(
         &self,
+        cua: &Cua,
         script: Script,
         params: &str,
         workspace: &Path,
@@ -179,10 +181,13 @@ impl Script {
             .await
             .map_err(|e| format!("create {}: {e}", run_dir.display()))?;
         let _ = tokio::fs::set_permissions(&self.dir, std::fs::Permissions::from_mode(0o700)).await;
-        let report = self
-            .execute(script, params, workspace, &run_dir, timeout)
-            .await;
+        let report = {
+            let _live = cua.script_live().await;
+            self.execute(script, params, workspace, &run_dir, timeout)
+                .await
+        };
         if report.as_ref().is_ok_and(|r| r.get("error").is_some()) {
+            cua.reclaim_keycodes().await;
             let started = Instant::now();
             match self.release(workspace, &run_dir).await {
                 Ok(()) => eprintln!(
