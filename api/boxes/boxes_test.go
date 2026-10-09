@@ -150,6 +150,7 @@ func TestOperationFails(t *testing.T) {
 	}{
 		{name: "machine failed", event: machines.Machine{ID: aliceBox, State: machines.StateFailed, Reason: "push http://10.90.0.4:5000/x: refused", Detail: "vm=failed"}, detail: "machine failed to start"},
 		{name: "machine gone", event: machines.Machine{ID: aliceBox, State: machines.StateGone}, detail: "box was deleted"},
+		{name: "node at capacity", event: machines.Machine{ID: aliceBox, State: machines.StateFailed, Reason: machines.ErrCapacity.Error()}, detail: machines.ErrCapacity.Error()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

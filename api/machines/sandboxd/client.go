@@ -24,7 +24,7 @@ const (
 	maxErrorBody   = 4 << 10
 )
 
-// apiError is a sandboxd error answer; 400 is machines.ErrRefused, 404 machines.ErrNotFound and 409 machines.ErrConflict.
+// apiError is a sandboxd error answer; 400 is machines.ErrRefused, 404 machines.ErrNotFound, 409 machines.ErrConflict and 429 machines.ErrCapacity.
 type apiError struct {
 	status  int
 	message string
@@ -40,6 +40,8 @@ func (e *apiError) Unwrap() error {
 		return machines.ErrNotFound
 	case http.StatusConflict:
 		return machines.ErrConflict
+	case http.StatusTooManyRequests:
+		return machines.ErrCapacity
 	default:
 		return nil
 	}

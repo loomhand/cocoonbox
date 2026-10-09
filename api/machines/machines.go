@@ -32,7 +32,8 @@ var (
 	// ErrConflict reports a concurrent change; the caller may retry.
 	ErrConflict = errors.New("concurrent machine change")
 	// ErrRefused reports a request the backend refused as invalid; a retry with the same values fails again.
-	ErrRefused = errors.New("request refused by the backend")
+	ErrRefused  = errors.New("request refused by the backend")
+	ErrCapacity = errors.New("node at capacity, try again shortly")
 )
 
 // State is the lifecycle state of a machine.

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -91,7 +92,10 @@ func toBox(box string, m machines.Machine) *controlv1.Box {
 
 func toObservation(m machines.Machine, phase controlv1.Phase) observation {
 	obs := observation{state: boxStates[m.State], detail: progressWords(m)}
-	if m.State == machines.StateFailed {
+	switch {
+	case atCapacity(m):
+		obs.reason = machines.ErrCapacity.Error()
+	case m.State == machines.StateFailed:
 		obs.reason = cmp.Or(failureWords[phase], "machine failed")
 	}
 	return obs
@@ -105,10 +109,24 @@ func progressWords(m machines.Machine) string {
 }
 
 func failureReason(m machines.Machine) string {
-	if m.State == machines.StateFailed {
+	switch {
+	case atCapacity(m):
+		return machines.ErrCapacity.Error()
+	case m.State == machines.StateFailed:
 		return "machine failed"
 	}
 	return ""
+}
+
+func atCapacity(m machines.Machine) bool {
+	return m.State == machines.StateFailed && m.Reason == machines.ErrCapacity.Error()
+}
+
+func startFailure(err error) string {
+	if errors.Is(err, machines.ErrCapacity) {
+		return machines.ErrCapacity.Error()
+	}
+	return "new machine did not start"
 }
 
 func toFlavor(f machines.Flavor) *controlv1.Flavor {

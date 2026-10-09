@@ -480,6 +480,32 @@ func TestDeleteReleasesTheClaim(t *testing.T) {
 	t.Error("watch ended without StateGone")
 }
 
+func TestAClaimRefusedForCapacityFailsAndDeleteForgetsIt(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	fake.refusals = 1
+	b := newTestBackend(t, fake)
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID + "-r1", Owner: owner, Flavor: xlarge})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if failed := waitState(t, b, m.ID, m.Revision, machines.StateFailed); failed.Reason != machines.ErrCapacity.Error() {
+		t.Errorf("refused claim reason = %q, want %q", failed.Reason, machines.ErrCapacity)
+	}
+
+	if err := b.Delete(t.Context(), m.ID); err != nil {
+		t.Errorf("Delete of the refused claim = %v, want nil", err)
+	}
+	if ms, _ := b.List(t.Context(), owner); len(ms) != 0 {
+		t.Errorf("List after Delete = %+v, want no machine", ms)
+	}
+	if fake.count("release") != 0 {
+		t.Errorf("releases = %d, want 0 for a claim that never existed", fake.count("release"))
+	}
+	if got := claimRunning(t, b); got.ID != boxID {
+		t.Errorf("claim after the refusal = %+v", got)
+	}
+}
+
 func TestWatchReportsAMetaChange(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -535,6 +561,7 @@ type fakeSandboxd struct {
 	execExit    int32
 	execStatus  int
 	patchStatus int
+	refusals    int
 	agent       string
 	tenants     map[string]tenantRequest
 }
@@ -549,6 +576,12 @@ func (f *fakeSandboxd) handler() http.Handler {
 		if !ok {
 			f.mu.Unlock()
 			writeError(w, http.StatusUnauthorized, "bad token")
+			return
+		}
+		if f.refusals > 0 {
+			f.refusals--
+			f.mu.Unlock()
+			writeError(w, http.StatusTooManyRequests, "node claim quota reached: 12 live claims, cap 12")
 			return
 		}
 		f.next++

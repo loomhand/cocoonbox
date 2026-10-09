@@ -215,7 +215,17 @@ func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, erro
 }
 
 func (b *Backend) Delete(ctx context.Context, id string) error {
+	b.mu.Lock()
+	e := b.entries[id]
+	unclaimed := e != nil && e.row == nil && e.op == ""
+	if unclaimed {
+		delete(b.entries, id)
+	}
+	b.mu.Unlock()
 	sandbox, err := b.sandboxOf(ctx, id)
+	if unclaimed && errors.Is(err, machines.ErrNotFound) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -389,7 +399,10 @@ func (b *Backend) startLocked(e *entry, op string, fn func(context.Context) erro
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		e.op = ""
-		if err != nil {
+		switch {
+		case errors.Is(err, machines.ErrCapacity):
+			e.opErr = machines.ErrCapacity.Error()
+		case err != nil:
 			e.opErr = op + " failed"
 		}
 	}()

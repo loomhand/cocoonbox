@@ -76,7 +76,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	if err != nil {
 		logger.Error(op.ctx, err, "start rebase machine")
 		s.discard(op, created.ID)
-		op.fail("new machine did not start")
+		op.fail(startFailure(err))
 		return
 	}
 	booted := time.Since(start)
@@ -112,6 +112,9 @@ func (s *Service) waitRunning(op *operation, m machines.Machine) (machines.Machi
 		case machines.StateRunning:
 			return cur, nil
 		case machines.StateFailed:
+			if atCapacity(cur) {
+				return machines.Machine{}, fmt.Errorf("machine %s: %w", m.ID, machines.ErrCapacity)
+			}
 			return machines.Machine{}, fmt.Errorf("machine %s failed: %s", m.ID, cur.Reason)
 		case machines.StateGone:
 			return machines.Machine{}, fmt.Errorf("machine %s was deleted", m.ID)

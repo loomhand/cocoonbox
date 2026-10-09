@@ -40,7 +40,7 @@ func (s *Service) runRestore(op *operation, user string, m machines.Machine, sav
 	if err != nil {
 		logger.Error(op.ctx, err, "start machine for restore")
 		s.discard(op, m.ID)
-		op.fail("new machine did not start")
+		op.fail(startFailure(err))
 		return
 	}
 	booted := time.Since(start)
