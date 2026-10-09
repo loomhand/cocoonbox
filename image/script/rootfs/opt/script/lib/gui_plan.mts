@@ -1,5 +1,5 @@
 // gui_plan.mts: run a GUI plan in the box without a model turn per step, save a passing plan as a flow, replay flows.
-// params: {steps, params?, save?, start?} | {flow, params?, start?} | {find} | {reindex}; result: {ok, done, ms, trace, saved?, escalate?}
+// params: {steps, params?, save?, start?} | {save} | {flow, params?, start?} | {find} | {reindex}; result: {ok, done, ms, trace, saved?, escalate?}
 import { execFileSync, spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
@@ -17,7 +17,7 @@ type Fp = { role: string; name: string; parent: string; nth: number; label?: str
 type Node = { ref: number; depth: number; role: string; name: string; value: string; disabled: boolean; parent: number; keys: string; accel: string }
 type Hit = { n: Node; i: number; how: string; p?: number; margin?: number }
 type Flow = { name: string; params: Record<string, string>; steps: Step[]; idempotent: boolean; runs: number; saved_at: string; rewrites: number }
-type Chain = { at: number; window: string | null; pid: number | null; name?: string; named?: boolean; params: Record<string, string>; steps: Step[]; dirty: boolean }
+type Chain = { at: number; window: string | null; pid: number | null; name?: string; named?: boolean; params: Record<string, string>; steps: Step[]; dirty: boolean; saved?: boolean; escalated?: boolean }
 
 const FLOWS = '/workspace/flows'
 const LOG = `${FLOWS}/.runs.jsonl`
@@ -580,6 +580,37 @@ function summary(steps: Step[]) {
   return text.length > 100 ? `${text.slice(0, 99)}…` : text
 }
 
+// a chain becomes the flow it names, or one named after its app and last targets
+function store(chain: Chain) {
+  const tpl = templated(chain.steps, chain.params)
+  const keys: Record<string, string> = { 'ctrl+n': 'new', 'ctrl+s': 'save', 'ctrl+shift+s': 'save as', 'ctrl+o': 'open' }
+  const targets = chain.steps.filter((s) => s.menu || s.check || s.set || s.click || keys[s.key?.toLowerCase() ?? '']).slice(-2).map((s) => s.key ? keys[s.key.toLowerCase()] : (s.menu ?? s.check ?? s.set ?? s.click)!.split('>').at(-1))
+  const auto = slug([chain.steps[0].app, ...targets].filter(Boolean).map((x) => x!.split(' ').slice(0, 3).join(' ')).join(' ')) || undefined
+  if (!chain.named && auto && chain.name && auto !== chain.name) git('rm', '-q', '--ignore-unmatch', `${chain.name}.json`)
+  if (!chain.named) chain.name = auto
+  const idempotent = chain.steps.every((s) => s.type === undefined && (!s.key || /^(esc|escape|tab|shift\+tab)$/i.test(s.key)))
+  if (chain.name) saveFlow({ name: chain.name, params: tpl.params, steps: tpl.steps, idempotent, runs: 1, saved_at: new Date().toISOString(), rewrites: 0 }, `saved from ${chain.steps.length} passing steps`)
+  return chain.name
+}
+
+// {save} alone saves the last plan without running it again; after an escalation, its passed steps while their window is still in front
+function promote(name: string) {
+  let c: Chain | null = null
+  try { c = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
+  if (!c || Date.now() - c.at >= CHAIN_AGE || !(c.saved || c.escalated) || c.dirty || !c.steps.some((s) => !s.app) || !slug(name))
+    return { ok: false, reason: 'nothing to save: the last gui_plan run of the last 10 minutes must start at an app step, pass, and click no target found by vision' }
+  if (c.escalated) {
+    const f = focused(); const o = f ? outline(f) : ''
+    if (!f || f.title !== c.window || blocked(o) || isDialog(o)) return { ok: false, reason: `the last plan stopped at a surprise and "${f?.title ?? 'no window'}" is in front: continue it with gui_plan from the failing step, and the passing run is saved` }
+  }
+  const old = c.saved ? c.name : undefined
+  c.name = slug(name); c.named = true
+  if (old && old !== c.name) git('rm', '-q', '--ignore-unmatch', `${old}.json`)
+  store(c); c.saved = true; c.escalated = false
+  try { writeFileSync(PENDING, JSON.stringify(c)) } catch {}
+  return { ok: true, saved: c.name, params: templated(c.steps, c.params).params }
+}
+
 function loadFlow(name: string): Flow {
   const path = `${FLOWS}/${slug(name)}.json`
   if (!existsSync(path)) throw new Surprise(`no saved flow "${name}"; saved: ${existsSync(INDEX) ? readFileSync(INDEX, 'utf8').trim().split('\n').join(', ') : 'none'}`)
@@ -602,6 +633,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   const t0 = Date.now()
   if (p.reindex) { repo(); writeIndex(); git('add', '-A'); git('commit', '-q', '-m', 'sync from the flow library'); return { ok: true } }
   if (p.find) return find(p.find)
+  if (p.save && !p.steps?.length && !p.flow) return promote(p.save)
   let flow: Flow | null = null
   try { if (p.flow) flow = loadFlow(p.flow) } catch (e) { return { ok: false, done: 0, ms: 0, escalate: { reason: (e as Error).message } } }
   const params = { ...(flow?.params ?? {}), ...(p.params ?? {}) }
@@ -667,31 +699,20 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     // a task done over several calls is one chain: it starts at a call whose first step is an app, and later calls extend it from the window it left
     const ran = plan.slice(p.start ?? 0, done).map((s, k) => { const r = recs[(p.start ?? 0) + k]; const o: Step = { ...s }; if (r?.fp) o.fp = r.fp as Fp; if (r?.seen && !s.app) o.seen = r.seen as string; return o })
     const dirty = recs.some((r) => r?.unsaved)
-    let chain: Chain | null = null
+    let chain: Chain | null = null; let prev: Chain | null = null
+    try { prev = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
     if (plan[0].app && !(p.start ?? 0)) chain = { at: Date.now(), window: null, pid: null, params: { ...(p.params ?? {}) }, steps: ran, dirty }
-    else {
-      let prev: Chain | null = null
-      try { prev = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
-      if (prev && Date.now() - prev.at < CHAIN_AGE && (prev.window === startWindow || (prev.pid !== null && prev.pid === startPid))) chain = { ...prev, at: Date.now(), params: { ...prev.params, ...(p.params ?? {}) }, steps: [...prev.steps, ...ran], dirty: prev.dirty || dirty }
-    }
+    else if (prev && Date.now() - prev.at < CHAIN_AGE && (prev.window === startWindow || (prev.pid !== null && prev.pid === startPid))) chain = { ...prev, at: Date.now(), params: { ...prev.params, ...(p.params ?? {}) }, steps: [...prev.steps, ...ran], dirty: prev.dirty || dirty }
     if (chain) {
       if (p.save) { chain.name = slug(p.save); chain.named = true }
       const changes = chain.steps.some((s) => s.check || s.set || s.type !== undefined || (s.menu && s.on !== undefined))
-      if ((settled || (!escalate && changes)) && !chain.dirty && chain.steps.some((s) => !s.app)) {
-        const tpl = templated(chain.steps, chain.params)
-        const keys: Record<string, string> = { 'ctrl+n': 'new', 'ctrl+s': 'save', 'ctrl+shift+s': 'save as', 'ctrl+o': 'open' }
-        const targets = chain.steps.filter((s) => s.menu || s.check || s.set || s.click || keys[s.key?.toLowerCase() ?? '']).slice(-2).map((s) => s.key ? keys[s.key.toLowerCase()] : (s.menu ?? s.check ?? s.set ?? s.click)!.split('>').at(-1))
-        const auto = slug([chain.steps[0].app, ...targets].filter(Boolean).map((x) => x!.split(' ').slice(0, 3).join(' ')).join(' ')) || undefined
-        if (!chain.named && auto && chain.name && auto !== chain.name) git('rm', '-q', '--ignore-unmatch', `${chain.name}.json`)
-        if (!chain.named) chain.name = auto
-        const idempotent = chain.steps.every((s) => s.type === undefined && (!s.key || /^(esc|escape|tab|shift\+tab)$/i.test(s.key)))
-        if (chain.name) { saveFlow({ name: chain.name, params: tpl.params, steps: tpl.steps, idempotent, runs: 1, saved_at: new Date().toISOString(), rewrites: 0 }, `saved from ${chain.steps.length} passing steps`); saved = chain.name }
-      }
+      chain.escalated = !!escalate; chain.saved = false
+      if ((settled || (!escalate && changes)) && !chain.dirty && chain.steps.some((s) => !s.app)) { saved = store(chain); chain.saved = !!saved }
       const end = focused()
       chain.window = end?.title ?? null
       if (end && !/^(Desktop|xfce4-panel)$/.test(end.title)) chain.pid = pidOf(end)
       try { mkdirSync(FLOWS, { recursive: true }); writeFileSync(PENDING, JSON.stringify(chain)) } catch {}
-    }
+    } else if (prev) try { writeFileSync(PENDING, JSON.stringify({ ...prev, saved: false, escalated: false })) } catch {}
   }
   const ms = Date.now() - t0
   try { mkdirSync(FLOWS, { recursive: true }); appendFileSync(LOG, JSON.stringify({ at: new Date().toISOString(), flow: p.flow ?? null, ok: !escalate, ms, jevs, saved: saved ?? null, steps: log }) + '\n') } catch {}

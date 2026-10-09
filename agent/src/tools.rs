@@ -278,7 +278,7 @@ fn gui_plan_tool() -> ToolSpec {
 One op per step; optional window: title text of the window the step acts in (waited for):\n\
 {app: \"mousepad\"} focus or launch; {menu: \"Edit > Preferences\"} (an approximate path is fine); {menu: \"Document > Word Wrap\", on: true} set a menu toggle (read first, never toggled twice); {click: \"Save\"}; {check: \"Show line numbers\", on: false} a check box or switch; {set: \"font size\", value: \"14\"} a text, spin or combo field; {type: \"text\"}; {key: \"ctrl+s\"}; {wait: \"Save As\"} a window title; {verify: \"Name\", value: \"x\"} (or on, enabled); {close: true} close the focused dialog.\n\
 Returns {ok: true, trace} or {ok: false, escalate: {step, reason, window, outline}}. Trust ok: true: each step was verified, so add no checks or screenshots. On escalate, handle the reason, then call again with only the remaining steps. Close the dialogs you open. A path for a file dialog may end in \\n to submit it. Name targets by their visible label.\n\
-A passing plan that starts with an app step is saved as a flow: name it with save: \"app-action\" and write values a later request changes as {{name}} with params: {name: value}. Replay a flow with {flow: \"name\", params: {...}}: one call, no model. Check saved flows with {flows: true} before planning a task you may have done before. screenshot: true adds a screenshot (default: only on escalate).",
+A passing plan that starts with an app step is saved as a flow: name it with save: \"app-action\" and write values a later request changes as {{name}} with params: {name: value}. To save a plan that already ran, or the steps that passed before an escalation, call {save: \"app-action\"} alone: it does not run them again. Replay a flow with {flow: \"name\", params: {...}}: one call, no model. Check saved flows with {flows: true} before planning a task you may have done before. screenshot: true adds a screenshot (default: only on escalate).",
         ),
         parameters: json!({
             "type": "object",
@@ -286,7 +286,7 @@ A passing plan that starts with an app step is saved as a flow: name it with sav
                 "steps": {"type": "array", "items": {"type": "object"}, "description": "The plan, one op per step"},
                 "flow": {"type": "string", "description": "Replay this saved flow instead of steps"},
                 "params": {"type": "object", "description": "Values for the {{name}} slots"},
-                "save": {"type": "string", "description": "Flow name for this plan, like mousepad-font-size"},
+                "save": {"type": "string", "description": "Flow name for this plan, like mousepad-font-size; without steps, saves the last plan without running it again"},
                 "start": {"type": "integer", "description": "First step to run, default 0"},
                 "find": {"type": "string", "description": "A request: returns the saved flow that does it"},
                 "flows": {"type": "boolean", "description": "Return the saved flows, one line each, instead of running"},
