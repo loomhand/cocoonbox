@@ -16,9 +16,11 @@ use super::{
     write_atomic,
 };
 
+/// How long `send` waits for the CLI to take its first prompt.
+pub const ACCEPT_WAIT: Duration = Duration::from_secs(30);
+
 const MAX_NAME: usize = 64;
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
-const ACCEPT_WAIT: Duration = Duration::from_secs(30);
 const ACCEPT_POLL: Duration = Duration::from_millis(250);
 const QUIT_WAIT: Duration = Duration::from_secs(10);
 const TERM_WAIT: Duration = Duration::from_secs(2);
@@ -35,6 +37,7 @@ const SNAPSHOT_IDENTITY: [&str; 4] = [
     "-c",
     "user.email=offload@cocoonbox.invalid",
 ];
+const CLAUDE_MANAGED: &str = "/etc/claude-code";
 
 /// The box half of the preflight; on no `block`, takes the copy for the offload id and makes its directory.
 pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
@@ -843,12 +846,47 @@ async fn probe_cli(home: &Path, kind: &str) -> Value {
         Ok(out) => sign_in(out),
         Err(_) => (false, String::new()),
     };
+    let hooks_blocked = match kind {
+        "claude" => hooks_blocked(&claude_settings(home).await).await,
+        _ => None,
+    };
     json!({
         "kind": kind,
         "version": version.unwrap_or_default(),
         "signed_in": signed_in,
         "account": account,
+        "hooks_blocked": hooks_blocked,
     })
+}
+
+/// The Claude Code settings files that can turn hooks off: managed, cached remote-managed, user.
+async fn claude_settings(home: &Path) -> Vec<PathBuf> {
+    let managed = Path::new(CLAUDE_MANAGED);
+    let mut files = vec![managed.join("managed-settings.json")];
+    if let Ok(mut rd) = tokio::fs::read_dir(managed.join("managed-settings.d")).await {
+        while let Ok(Some(e)) = rd.next_entry().await {
+            files.push(e.path());
+        }
+    }
+    files.push(home.join(".claude/remote-settings.json"));
+    files.push(home.join(".claude/settings.json"));
+    files
+}
+
+/// The first of `files` that sets `allowManagedHooksOnly` or `disableAllHooks`, which drop the inbox's hooks.
+async fn hooks_blocked(files: &[PathBuf]) -> Option<PathBuf> {
+    for file in files {
+        let Ok(raw) = tokio::fs::read(file).await else {
+            continue;
+        };
+        let Ok(v) = serde_json::from_slice::<Value>(&raw) else {
+            continue;
+        };
+        if v["allowManagedHooksOnly"] == true || v["disableAllHooks"] == true {
+            return Some(file.clone());
+        }
+    }
+    None
 }
 
 /// Whether a CLI's successful status output says it is signed in, and the account it names:
@@ -1198,6 +1236,22 @@ fn short_spec(spec: &Spec) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn settings_that_drop_non_managed_hooks_are_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let files: Vec<PathBuf> = ["a.json", "b.json", "c.json", "d.json"]
+            .iter()
+            .map(|n| dir.path().join(n))
+            .collect();
+        std::fs::write(&files[1], r#"{"hooks": {}}"#).unwrap();
+        std::fs::write(&files[2], "not json").unwrap();
+        assert_eq!(hooks_blocked(&files).await, None);
+        std::fs::write(&files[3], r#"{"allowManagedHooksOnly": true}"#).unwrap();
+        assert_eq!(hooks_blocked(&files).await, Some(files[3].clone()));
+        std::fs::write(&files[1], r#"{"disableAllHooks": true}"#).unwrap();
+        assert_eq!(hooks_blocked(&files).await, Some(files[1].clone()));
+    }
 
     #[test]
     fn sign_in_reads_json_and_text_status() {

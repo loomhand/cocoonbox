@@ -18,6 +18,7 @@ use tokio_util::sync::CancellationToken;
 
 use super::env::{self, Spec};
 use super::handover::{self, MAX_BODY};
+use super::packer::ACCEPT_WAIT;
 use super::{Copy, Layout, read_index, with_index, write_atomic};
 use crate::journal::Journal;
 use crate::pb::{self, event};
@@ -189,6 +190,7 @@ impl Inbox {
                     *rescan.records.lock().await = load_records(&rescan.layout.state).await;
                     rescan.restart_lost().await;
                 }
+                rescan.idle_without_hooks().await;
             }
         });
         loop {
@@ -278,6 +280,7 @@ impl Inbox {
         }
         let mut body = req.body;
         if req.back {
+            rec.queue.retain(|q| !q.starts_with(handover::BACK));
             let back = handover::back(&rec.repo, &self.layout.state);
             body = if body.trim().is_empty() {
                 back
@@ -434,6 +437,7 @@ impl Inbox {
         rec.reported = false;
         rec.queue.clear();
         rec.started_at_ms = crate::now_ms();
+        rec.prompt_at_ms = rec.started_at_ms;
         if let (Some(spec), Some(report)) = (spec, report) {
             let layout = self.layout.clone();
             let repo = rec.repo.clone();
@@ -616,7 +620,8 @@ impl Inbox {
                 "copy": super::copy_state(index.get(key), rec.status != Status::Stopped),
                 "tmux_alive": alive,
                 "hook_at_ms": rec.hook_at_ms,
-                "transcript_mtime_ms": transcript_mtime(&self.layout.home, rec).await,
+                "hooks_silent": rec.hooks_silent(),
+                "transcript_mtime_ms": newest_transcript(&self.layout.home, rec).await.map_or(0, |t| t.1),
                 "window_activity_ms": activity,
                 "inbox_seq": rec.inbox_seq,
                 "outbox_seq": rec.outbox_seq,
@@ -640,6 +645,17 @@ impl Inbox {
             return Ok(json!({"ok": true}));
         };
         rec.hook_at_ms = crate::now_ms();
+        self.settle(rec, hook, payload).await?;
+        Ok(json!({"ok": true, "status": rec.status}))
+    }
+
+    /// Applies a hook, or the transcript's end of turn, to the session's status.
+    async fn settle(
+        self: &Arc<Self>,
+        rec: &mut Record,
+        hook: &str,
+        payload: &Value,
+    ) -> Result<(), String> {
         let before = rec.status;
         let blocked = if matches!(hook, "Stop" | "StopFailure" | "notify") && !rec.reported {
             blocking_message(payload).await
@@ -669,7 +685,30 @@ impl Inbox {
         if rec.status.deliverable() && !rec.queue.is_empty() {
             self.deliver_later(rec.repo.clone());
         }
-        Ok(json!({"ok": true, "status": rec.status}))
+        Ok(())
+    }
+
+    /// Applies a transcript's end of turn after the last prompt as `Stop` to each claude session whose hooks never ran.
+    async fn idle_without_hooks(self: &Arc<Self>) {
+        let mut recs = self.records.lock().await;
+        for rec in recs.values_mut() {
+            if rec.cli != "claude"
+                || rec.status != Status::Working
+                || rec.hook_at_ms >= rec.started_at_ms
+            {
+                continue;
+            }
+            let Some((path, mtime)) = newest_transcript(&self.layout.home, rec).await else {
+                continue;
+            };
+            if mtime <= rec.prompt_at_ms || !turn_ended(&path).await {
+                continue;
+            }
+            let payload = json!({"transcript_path": path});
+            if let Err(e) = self.settle(rec, "Stop", &payload).await {
+                eprintln!("offload inbox: {}: {e}", rec.tmux());
+            }
+        }
     }
 
     /// Pastes the queue's head once the hook that made the CLI idle has returned.
@@ -716,6 +755,7 @@ impl Inbox {
             .await?;
         rec.status = Status::Working;
         rec.reported = false;
+        rec.prompt_at_ms = crate::now_ms();
         Ok(())
     }
 
@@ -849,11 +889,22 @@ struct Record {
     queue: Vec<String>,
     hook_at_ms: i64,
     started_at_ms: i64,
+    /// The last prompt the inbox gave the CLI.
+    #[serde(default)]
+    prompt_at_ms: i64,
 }
 
 impl Record {
     fn tmux(&self) -> String {
         format!("cb-off-{}-{}", self.repo, self.cli)
+    }
+
+    /// No hook of the claude session arrived within `ACCEPT_WAIT` of its start.
+    fn hooks_silent(&self) -> bool {
+        self.cli == "claude"
+            && self.status != Status::Stopped
+            && self.hook_at_ms < self.started_at_ms
+            && crate::now_ms() - self.started_at_ms > ACCEPT_WAIT.as_millis() as i64
     }
 }
 
@@ -1061,17 +1112,7 @@ async fn blocking_message(payload: &Value) -> Option<String> {
 
 /// The text of the last assistant entry of a Claude Code transcript that has any.
 async fn last_assistant_text(path: &Path) -> Option<String> {
-    let mut f = tokio::fs::File::open(path).await.ok()?;
-    let len = f.metadata().await.ok()?.len();
-    f.seek(std::io::SeekFrom::Start(
-        len.saturating_sub(TRANSCRIPT_TAIL),
-    ))
-    .await
-    .ok()?;
-    let mut raw = Vec::new();
-    f.take(TRANSCRIPT_TAIL).read_to_end(&mut raw).await.ok()?;
-    let tail = String::from_utf8_lossy(&raw);
-    tail.lines().rev().find_map(|line| {
+    transcript_tail(path).await?.lines().rev().find_map(|line| {
         let v: Value = serde_json::from_str(line).ok()?;
         if v["type"] != "assistant" {
             return None;
@@ -1086,8 +1127,38 @@ async fn last_assistant_text(path: &Path) -> Option<String> {
     })
 }
 
-/// The newest mtime of the CLI's transcripts for the session's directory, in unix ms; 0 when none.
-async fn transcript_mtime(home: &Path, rec: &Record) -> i64 {
+/// Whether a Claude Code transcript's last user, assistant or `turn_duration` entry is a `turn_duration`.
+async fn turn_ended(path: &Path) -> bool {
+    let Some(tail) = transcript_tail(path).await else {
+        return false;
+    };
+    tail.lines()
+        .rev()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .find_map(|v| match v["type"].as_str() {
+            Some("user" | "assistant") => Some(false),
+            Some("system") if v["subtype"] == "turn_duration" => Some(true),
+            _ => None,
+        })
+        .unwrap_or(false)
+}
+
+/// The last `TRANSCRIPT_TAIL` bytes of a transcript.
+async fn transcript_tail(path: &Path) -> Option<String> {
+    let mut f = tokio::fs::File::open(path).await.ok()?;
+    let len = f.metadata().await.ok()?.len();
+    f.seek(std::io::SeekFrom::Start(
+        len.saturating_sub(TRANSCRIPT_TAIL),
+    ))
+    .await
+    .ok()?;
+    let mut raw = Vec::new();
+    f.take(TRANSCRIPT_TAIL).read_to_end(&mut raw).await.ok()?;
+    Some(String::from_utf8_lossy(&raw).into_owned())
+}
+
+/// The CLI's newest transcript for the session's directory and its mtime in unix ms.
+async fn newest_transcript(home: &Path, rec: &Record) -> Option<(PathBuf, i64)> {
     let dir = match rec.cli.as_str() {
         "claude" => {
             let name: String = rec
@@ -1103,17 +1174,15 @@ async fn transcript_mtime(home: &Path, rec: &Record) -> i64 {
             for _ in 0..3 {
                 match newest_child(&dir).await {
                     Some(d) => dir = d,
-                    None => return 0,
+                    None => return None,
                 }
             }
             dir
         }
-        _ => return 0,
+        _ => return None,
     };
-    let Ok(mut rd) = tokio::fs::read_dir(&dir).await else {
-        return 0;
-    };
-    let mut newest = 0;
+    let mut rd = tokio::fs::read_dir(&dir).await.ok()?;
+    let mut newest = None;
     while let Ok(Some(e)) = rd.next_entry().await {
         let path = e.path();
         if !path.extension().is_some_and(|x| x == "jsonl") {
@@ -1123,7 +1192,10 @@ async fn transcript_mtime(home: &Path, rec: &Record) -> i64 {
             continue;
         }
         if let Ok(m) = e.metadata().await {
-            newest = newest.max(m.mtime() * 1000 + m.mtime_nsec() / 1_000_000);
+            let mtime = m.mtime() * 1000 + m.mtime_nsec() / 1_000_000;
+            if newest.as_ref().is_none_or(|(_, n)| mtime > *n) {
+                newest = Some((path, mtime));
+            }
         }
     }
     newest
@@ -1277,6 +1349,27 @@ mod tests {
             blocking_message(&payload).await.as_deref(),
             Some("API Error: 400 daily cost budget exhausted")
         );
+    }
+
+    #[tokio::test]
+    async fn a_turn_ends_at_turn_duration_and_not_at_a_pending_tool_use() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        let write = |lines: &[Value]| {
+            let text: String = lines.iter().map(|l| format!("{l}\n")).collect();
+            std::fs::write(&path, text).unwrap();
+        };
+        let prompt = json!({"type": "user", "message": {"content": "go"}});
+        let tool = json!({"type": "assistant", "message": {"content": [{"type": "tool_use"}]}});
+        let done = json!({"type": "system", "subtype": "turn_duration", "durationMs": 1});
+        let after = json!({"type": "file-history-snapshot"});
+        write(&[prompt.clone(), tool.clone()]);
+        assert!(!turn_ended(&path).await);
+        write(&[prompt.clone(), tool.clone(), done.clone(), after]);
+        assert!(turn_ended(&path).await);
+        write(&[prompt.clone(), tool, done, prompt]);
+        assert!(!turn_ended(&path).await);
+        assert!(!turn_ended(&dir.path().join("none.jsonl")).await);
     }
 
     #[test]

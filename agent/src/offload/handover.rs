@@ -21,6 +21,8 @@ pub const HEADINGS: [&str; 10] = [
 ];
 /// Starts a restarted session's first prompt.
 pub const RESTARTED: &str = "You were restarted; continue from this hand-over and the repo.";
+/// Starts every BACK instruction.
+pub const BACK: &str = "BACK: ";
 
 const TEMPLATE: &str = "# Hand-over: <one-line goal>
 
@@ -136,7 +138,7 @@ pub fn back(repo: &str, offload_dir: &Path) -> String {
     let handover = offload_dir.join(repo).join("handover.md");
     let handover = handover.display();
     format!(
-        "BACK: the user is back. Finish or stop the current step and commit everything (the commit \
+        "{BACK}the user is back. Finish or stop the current step and commit everything (the commit \
 message says what is unfinished, if anything). Write your hand-over with the same template to \
 {handover} (\"From: box\"; under \"Environment facts\" list what you installed), run \
 `cocoonbox-agent offload post --back < {handover}`, and end your turn when it prints ready."

@@ -224,6 +224,57 @@ async fn a_busy_send_is_queued_until_the_idle_hook() {
 }
 
 #[tokio::test]
+async fn a_session_whose_hooks_never_run_goes_idle_from_its_transcript_and_takes_one_back() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    for _ in 0..2 {
+        let resp = b
+            .call(json!({"op": "send", "repo": REPO, "body": "", "back": true}))
+            .await;
+        assert_eq!(resp["delivery"], "queued", "{resp}");
+    }
+    let name: String = b
+        .layout
+        .workspace
+        .join("gron")
+        .to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+        .collect();
+    let projects = b.layout.home.join(".claude/projects").join(name);
+    std::fs::create_dir_all(&projects).unwrap();
+    let transcript = projects.join("s.jsonl");
+    let mut lines = [
+        json!({"type": "user", "message": {"content": "FIRST"}}),
+        json!({"type": "assistant", "message": {"content": [{"type": "tool_use"}]}}),
+    ]
+    .map(|l| format!("{l}\n"))
+    .concat();
+    std::fs::write(&transcript, &lines).unwrap();
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert_eq!(b.status().await["status"], "working");
+    lines.push_str(&format!(
+        "{}\n{}\n",
+        json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "done"}]}}),
+        json!({"type": "system", "subtype": "turn_duration"})
+    ));
+    std::fs::write(&transcript, &lines).unwrap();
+    for _ in 0..240 {
+        if b.tmux_log().contains("load-buffer") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let pasted = std::fs::read_to_string(b.fake.join("buffer")).unwrap();
+    assert!(pasted.starts_with(handover::BACK), "{pasted}");
+    assert_eq!(b.status().await["status"], "working");
+    b.call(json!({"op": "event", "repo": REPO, "cli": "claude", "hook": "Stop", "payload": {}}))
+        .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(b.tmux_log().matches("load-buffer").count(), 1);
+}
+
+#[tokio::test]
 async fn post_emits_an_event_with_no_content() {
     let b = TestBox::start(false).await;
     b.start_session("FIRST").await;
