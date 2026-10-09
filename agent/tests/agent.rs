@@ -356,6 +356,14 @@ fn chat_text(text: &str) -> String {
     ]) + "data: [DONE]\n\n"
 }
 
+fn chat_reasoning(text: &str) -> String {
+    sse(&[
+        json!({"choices":[{"delta":{"reasoning_content":text}}]}),
+        json!({"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30}}),
+    ]) + "data: [DONE]\n\n"
+}
+
 fn messages_tool_use(id: &str, name: &str, input: &Value) -> String {
     sse(&[
         json!({"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":1}}}),
@@ -1438,6 +1446,61 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats[31]["tool_choice"], "none");
     assert_eq!(chats[31]["model"], "anthropic/claude-sonnet-5");
+}
+
+#[tokio::test]
+async fn a_reply_without_a_call_or_text_gets_one_continuation() {
+    let h = Harness::start(
+        vec![
+            ("chat/completions", chat_reasoning("plan: list it")),
+            (
+                "chat/completions",
+                chat_tool_call("c1", "list_dir", &json!({})),
+            ),
+            ("chat/completions", chat_reasoning("now answer")),
+            ("chat/completions", chat_text("Listed.")),
+            ("chat/completions", chat_reasoning("one")),
+            ("chat/completions", chat_reasoning("two")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let listed = create_agent(&mut agents).await;
+    send(&mut agents, &listed, "list it", "").await;
+    let entries = wait_turn_end(&mut agents, &listed).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let texts: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match &e.body {
+            Some(Body::Text(t)) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["list it", "Let me check.", "Listed."]);
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    for (empty, next) in [(0, 1), (2, 3)] {
+        let before = chats[empty]["messages"].as_array().unwrap();
+        let after = chats[next]["messages"].as_array().unwrap();
+        assert_eq!(after.len(), before.len() + 1);
+        assert_eq!(after[..before.len()], before[..]);
+        assert_eq!(after[before.len()]["role"], "user");
+        assert_eq!(
+            after[before.len()]["content"][0]["text"],
+            "Continue: call the next tool, or give your final answer."
+        );
+    }
+    let silent = create_agent(&mut agents).await;
+    send(&mut agents, &silent, "say nothing", "").await;
+    let entries = wait_turn_end(&mut agents, &silent).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("no turn end");
+    };
+    assert!(!end.ok);
+    assert_eq!(end.error, "the model returned no answer");
+    assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 6);
 }
 
 #[tokio::test]

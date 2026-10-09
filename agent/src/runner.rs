@@ -29,6 +29,7 @@ const MAIN_MAX_TOKENS: u32 = 4096;
 const REPORT_MAX_TOKENS: u32 = 1024;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
 const SHUTTING_DOWN: &str = "interrupted: the agent is shutting down";
+const NO_ANSWER: &str = "the model returned no answer";
 
 /// Shared state of `serve`: journal, tool dispatcher, model and per-agent queues.
 pub struct Runtime {
@@ -566,6 +567,7 @@ impl Runtime {
             MAIN_MAX_STEPS
         };
         let mut steps = 0;
+        let mut nudged = false;
         loop {
             let connectors = match &self.connect {
                 Some(c) => c.tools().await,
@@ -596,8 +598,19 @@ impl Runtime {
             let step = self.step(ctx, &req, "").await?;
             usage.add(step.usage);
             if step.calls.is_empty() {
-                return Ok(());
+                if !step.text.trim().is_empty() {
+                    return Ok(());
+                }
+                if nudged {
+                    return Err(NO_ANSWER.to_owned());
+                }
+                nudged = true;
+                messages.push(Message::User(vec![Part::Text(
+                    prompts::CONTINUE.to_owned(),
+                )]));
+                continue;
             }
+            nudged = false;
             let mut results = Vec::with_capacity(step.calls.len());
             for call in &step.calls {
                 let out = self.main_tool(ctx, call, usage).await?;

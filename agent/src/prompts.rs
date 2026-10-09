@@ -3,6 +3,9 @@
 /// The tool-tier policy of a box with Script, shared by its MCP instructions, its own agent and its guide.
 pub const ROUTING: &str = include_str!("../../image/script/routing.md");
 
+/// Sent once when a step returns neither a tool call nor visible text.
+pub const CONTINUE: &str = "Continue: call the next tool, or give your final answer.";
+
 const MAIN: &str = "\
 You are {model}, served through the cocoonbox gateway. If asked which model you are, say exactly \"{model}\".
 
