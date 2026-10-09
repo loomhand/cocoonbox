@@ -281,7 +281,7 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)
-	identity := machines.Identity{BoxID: boxID, WakeID: "w1", KeyID: "k1", PublicKey: "pk"}
+	identity := machines.Identity{BoxID: boxID, WakeID: "w1", KeyID: "k1", PublicKey: "pk", Name: "desk_1"}
 
 	if err := b.Deliver(t.Context(), boxID, identity, "sk-box", "door-key"); err != nil {
 		t.Fatalf("Deliver: %v", err)

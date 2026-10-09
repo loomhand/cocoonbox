@@ -1,0 +1,6 @@
+[Unit]
+Description=Set the hostname to the box name
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/cocoonbox/box-hostname

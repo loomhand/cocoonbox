@@ -1,10 +1,12 @@
 #!/bin/sh
-# writes a fresh MIT cookie for display :0, readable only by the desktop user
+# writes a fresh MIT cookie for display :0 under any hostname, readable only by the desktop user
 set -eu
 dir=/run/cocoonbox-x
 install -d -m 0755 -o root -g root "$dir"
 tmp=$(mktemp "$dir/.Xauthority.XXXXXX")
 xauth -q -f "$tmp" add :0 MIT-MAGIC-COOKIE-1 "$(mcookie)"
+wild=$(xauth -q -f "$tmp" nlist | sed 's/^..../ffff/')
+printf '%s\n' "$wild" | xauth -q -f "$tmp" nmerge -
 chown user:user "$tmp"
 chmod 0600 "$tmp"
 mv -f "$tmp" "$dir/Xauthority"

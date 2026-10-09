@@ -17,6 +17,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/credential"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/users"
 )
 
 func TestEnsureProvisionsBeforeRunning(t *testing.T) {
@@ -49,7 +50,7 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 		t.Fatalf("deliveries = %+v, want one with the gw key", execs)
 	}
 	file := execs[0].identity
-	if file.BoxID != aliceBox || file.KeyID != "k1" || file.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(file.WakeID) {
+	if file.BoxID != aliceBox || file.Name != users.FirstBoxName || file.KeyID != "k1" || file.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(file.WakeID) {
 		t.Errorf("identity = %+v", file)
 	}
 	if accounts.calls() != "key "+alice {
@@ -72,6 +73,9 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 
 	if _, wake, err := svc.Resolve(ctx, alice, aliceBox); err != nil || wake != "w-old" {
 		t.Fatalf("Resolve before wake = %q, %v", wake, err)
+	}
+	if _, err := svc.Rename(ctx, &controlv1.RenameBoxRequest{BoxId: aliceBox, Name: "desk_1"}); err != nil {
+		t.Fatalf("Rename: %v", err)
 	}
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm2", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
 	if _, _, err := svc.Resolve(ctx, alice, aliceBox); status.Code(err) != codes.Unavailable || status.Convert(err).Message() != "box is BOX_STATE_STARTING" {
@@ -97,8 +101,8 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 	if accounts.calls() != "" {
 		t.Errorf("wake asked for a gw key again: %q", accounts.calls())
 	}
-	if execs := fake.execCalls(); len(execs) != 1 || execs[0].gwKey != "" || execs[0].identity.WakeID == "w-old" {
-		t.Errorf("deliveries = %+v, want one identity without a gw key", execs)
+	if execs := fake.execCalls(); len(execs) != 1 || execs[0].gwKey != "" || execs[0].identity.WakeID == "w-old" || execs[0].identity.Name != "desk_1" {
+		t.Errorf("deliveries = %+v, want one identity named desk_1 without a gw key", execs)
 	}
 }
 

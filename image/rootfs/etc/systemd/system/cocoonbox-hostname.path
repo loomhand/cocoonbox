@@ -1,0 +1,8 @@
+[Unit]
+Description=Follow a new box identity (claim, wake) with the hostname
+
+[Path]
+PathChanged=/run/cocoonbox-identity/identity
+
+[Install]
+WantedBy=multi-user.target

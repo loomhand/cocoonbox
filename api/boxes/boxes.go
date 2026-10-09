@@ -380,6 +380,15 @@ func (s *Service) flavor(req *controlv1.Flavor) (machines.Flavor, error) {
 	return flavor, nil
 }
 
+func (s *Service) boxName(user, box string) string {
+	for _, rec := range s.registry.Boxes(user) {
+		if rec.ID == box {
+			return rec.Name
+		}
+	}
+	return ""
+}
+
 // lockStarts serializes the requests that may start or delete a machine of user, so two cannot both pass the running limit or race a delete.
 func (s *Service) lockStarts(user string) func() {
 	s.mu.Lock()
@@ -432,11 +441,7 @@ func (s *Service) follow(op *operation, machine string) {
 
 func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machine) *controlv1.Box {
 	b := toBox(box, m)
-	for _, rec := range s.registry.Boxes(user) {
-		if rec.ID == box {
-			b.Name = rec.Name
-		}
-	}
+	b.Name = s.boxName(user, box)
 	if m.State == machines.StateRunning && !s.ready(m) {
 		b.State = controlv1.BoxState_BOX_STATE_STARTING
 	}

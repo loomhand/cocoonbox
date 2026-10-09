@@ -82,12 +82,13 @@ type Machine struct {
 	Routed bool
 }
 
-// Identity tells a box agent which box and wake it serves and which edge key signs its credentials.
+// Identity tells a box agent which box and wake it serves and which edge key signs its credentials; the guest takes Name as its hostname.
 type Identity struct {
 	BoxID     string `json:"box_id"`
 	WakeID    string `json:"wake_id"`
 	KeyID     string `json:"key_id"`
 	PublicKey string `json:"public_key"`
+	Name      string `json:"name,omitempty"`
 }
 
 // Secret is a host-only value; with Hosts, the backend writes it into Header on requests to Hosts that carry Placeholder.

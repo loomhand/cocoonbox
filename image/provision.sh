@@ -147,7 +147,7 @@ enable_units() {
 	systemctl daemon-reload
 	udevadm control --reload
 	udevadm trigger --name-match=uinput
-	systemctl enable --now nftables.service cocoonbox-machine-id.path cocoonbox-egress-ca.path cocoonbox-github-git.path 'run-cocoonbox\x2doffload.mount'
+	systemctl enable --now nftables.service cocoonbox-machine-id.path cocoonbox-hostname.path cocoonbox-egress-ca.path cocoonbox-github-git.path 'run-cocoonbox\x2doffload.mount'
 	systemctl --global enable cocoonbox-offload-inbox.service
 	systemctl enable cocoonbox-github-git.service
 	nft -f /etc/nftables.conf

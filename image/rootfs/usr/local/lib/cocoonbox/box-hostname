@@ -1,0 +1,8 @@
+#!/bin/sh
+# sets the hostname to the box name from the identity file, else to the box id
+set -eu
+identity=$(cat /run/cocoonbox-identity/identity)
+pick() { printf '%s' "$identity" | sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" | tr 'A-Z_' 'a-z-' | tr -cd 'a-z0-9-' | cut -c1-63 | sed 's/^-*//; s/-*$//'; }
+name=$(pick name)
+[ -n "$name" ] || name=$(pick box_id)
+[ -z "$name" ] || [ "$(hostname)" = "$name" ] || hostnamectl hostname "$name"
