@@ -23,6 +23,7 @@ journalctl --vacuum-time=1s >/dev/null
 find /var/log/journal -mindepth 1 -maxdepth 1 -type d ! -name "$(cat /etc/machine-id)" -exec rm -rf {} +
 
 systemctl restart cocoonbox-xorg.service cocoonbox-session.service
+systemctl --user -M user@ reset-failed
 systemctl --user -M user@ restart cua-driver.service cocoonbox-offload-inbox.service
 systemctl reset-failed
 abandoned=$(systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}')
