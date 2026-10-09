@@ -26,25 +26,32 @@ import Testing
         #expect(holder.boxID == recreated)
     }
 
-    @MainActor @Test func liveScreenStopsOnADeletedBox() async throws {
+    @MainActor @Test func liveScreenReportsADeletedBoxAndFollowsItsNameLater() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         let old = try await Self.running(mock.connection, try await mock.connection.createBox(name: "simtest").box.id)
         let holder = try BoxConnection(endpoint: mock.endpoint, token: "mock-token")
         defer { holder.close() }
         holder.boxID = old
-        let screen = try #require(LiveScreen(options: .init()))
+        var options = LiveScreen.Options()
+        options.deletedAfter = .seconds(2)
+        let screen = try #require(LiveScreen(options: options))
         var statuses: [LiveScreen.Status] = []
+        var changes: [String?] = []
         screen.onStatus = { statuses.append($0) }
+        screen.onBoxChange = { changes.append($0) }
         screen.start(holder)
         defer { screen.stop() }
         #expect(await Self.until { statuses.contains(where: \.isConnected) })
 
         try await Self.delete(mock.connection, old)
         #expect(await Self.until(seconds: 10) { statuses.last == .failed("the box simtest was deleted") }, "statuses \(statuses)")
-        let settled = statuses.count
-        try await Task.sleep(for: .seconds(2))
-        #expect(statuses.count == settled, "kept reconnecting: \(statuses)")
+        #expect(await Self.until(seconds: 10) { changes == [nil] }, "changes \(changes)")
+        statuses = []
+        let recreated = try await Self.running(mock.connection, try await mock.connection.createBox(name: "simtest").box.id)
+        #expect(await Self.until(seconds: 15) { statuses.contains(where: \.isConnected) }, "statuses \(statuses)")
+        #expect(changes == [nil, recreated])
+        #expect(holder.boxID == recreated)
     }
 
     @Test func retargetKeepsALiveIdAndFollowsTheName() async throws {
