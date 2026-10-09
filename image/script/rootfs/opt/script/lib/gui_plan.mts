@@ -580,6 +580,9 @@ function summary(steps: Step[]) {
   return text.length > 100 ? `${text.slice(0, 99)}…` : text
 }
 
+const idempotent = (steps: Step[]) => steps.every((s) => s.type === undefined && (!s.key || /^(esc|escape|tab|shift\+tab)$/i.test(s.key)))
+const bare = (s: Step, p: Record<string, string>) => JSON.stringify(Object.entries(fill(s, p)).filter(([k]) => k !== 'fp' && k !== 'seen').sort())
+
 // a chain becomes the flow it names, or one named after its app and last targets
 function store(chain: Chain) {
   const tpl = templated(chain.steps, chain.params)
@@ -588,27 +591,26 @@ function store(chain: Chain) {
   const auto = slug([chain.steps[0].app, ...targets].filter(Boolean).map((x) => x!.split(' ').slice(0, 3).join(' ')).join(' ')) || undefined
   if (!chain.named && auto && chain.name && auto !== chain.name) git('rm', '-q', '--ignore-unmatch', `${chain.name}.json`)
   if (!chain.named) chain.name = auto
-  const idempotent = chain.steps.every((s) => s.type === undefined && (!s.key || /^(esc|escape|tab|shift\+tab)$/i.test(s.key)))
-  if (chain.name) saveFlow({ name: chain.name, params: tpl.params, steps: tpl.steps, idempotent, runs: 1, saved_at: new Date().toISOString(), rewrites: 0 }, `saved from ${chain.steps.length} passing steps`)
+  if (chain.name) saveFlow({ name: chain.name, params: tpl.params, steps: tpl.steps, idempotent: idempotent(chain.steps), runs: 1, saved_at: new Date().toISOString(), rewrites: 0 }, `saved from ${chain.steps.length} passing steps`)
   return chain.name
 }
 
 // {save} alone saves the last plan without running it again; after an escalation, its passed steps while their window is still in front
-function promote(name: string) {
+function promote(name: string, params: Record<string, string> = {}, rerun = false) {
   let c: Chain | null = null
   try { c = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
   if (!c || Date.now() - c.at >= CHAIN_AGE || !(c.saved || c.escalated) || c.dirty || !c.steps.some((s) => !s.app) || !slug(name))
     return { ok: false, reason: 'nothing to save: the last gui_plan run of the last 10 minutes must start at an app step, pass, and click no target found by vision' }
-  if (c.escalated) {
+  if (c.escalated || rerun) {
     const f = focused(); const o = f ? outline(f) : ''
     if (!f || f.title !== c.window || blocked(o) || isDialog(o)) return { ok: false, reason: `the last plan stopped at a surprise and "${f?.title ?? 'no window'}" is in front: continue it with gui_plan from the failing step, and the passing run is saved` }
   }
-  const old = c.saved ? c.name : undefined
-  c.name = slug(name); c.named = true
+  const old = c.saved && !c.named ? c.name : undefined
+  c.name = slug(name); c.named = true; c.params = { ...c.params, ...params }
   if (old && old !== c.name) git('rm', '-q', '--ignore-unmatch', `${old}.json`)
   store(c); c.saved = true; c.escalated = false
   try { writeFileSync(PENDING, JSON.stringify(c)) } catch {}
-  return { ok: true, saved: c.name, params: templated(c.steps, c.params).params }
+  return { ok: true, saved: c.name, params: templated(c.steps, c.params).params, ...(idempotent(c.steps) ? {} : { note: 'a replay of this flow types again' }) }
 }
 
 function loadFlow(name: string): Flow {
@@ -639,6 +641,15 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   const params = { ...(flow?.params ?? {}), ...(p.params ?? {}) }
   const plan: Step[] = (flow ? flow.steps : p.steps ?? []).filter((s) => !Object.keys(s).every((k) => ['screenshot', 'timeout_s', 'max_edge'].includes(k)))
   if (!plan.length) return { ok: false, error: 'pass steps, flow or find' }
+  // a plan sent again only to save it, while the window it left is still in front, would type again: it is saved from the last run instead
+  if (p.save && !flow && !p.start && !idempotent(plan)) {
+    let c: Chain | null = null
+    try { c = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
+    if (c?.steps.length === plan.length && c.steps.every((s, i) => bare(s, c.params) === bare(plan[i], params))) {
+      const r = promote(p.save, p.params, true)
+      if (r.ok) return { ...r, ran: false, why: 'these steps passed in the last plan, so they were saved without running them again; call without save to run them' }
+    }
+  }
   const trace: Record<string, unknown>[] = []; const log: Record<string, unknown>[] = []
   for (const w of m.windows()) known.add(w.title)
   const startTitles = new Set(known)
