@@ -320,6 +320,14 @@ async function submit(w: NonNullable<ReturnType<typeof focused>>) {
   if (open() && focused()?.title === title) throw new Surprise(`"${title}" is still open after Return`, seen())
 }
 
+async function closed(w: NonNullable<ReturnType<typeof focused>>) {
+  const t0 = Date.now()
+  const [title, pid] = [w.title, pidOf(w)]
+  const open = () => pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)
+  for (let k = 0; k < 25 && open(); k++) await sleep(40)
+  tick('settle', t0); return !open()
+}
+
 async function setState(s: Step, w: NonNullable<ReturnType<typeof focused>>, snap: AccessibilitySnapshot, hit: Hit, rec: Record<string, unknown>) {
   const on = s.on ?? true
   let was = await checked(w.pid, hit.n.name)
@@ -363,7 +371,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     // typeText sends "\n" as Linefeed, which GTK text views ignore: a line break goes as Return
     for (const [i, part] of (sub ? s.type.slice(0, -1) : s.type).split(/\r?\n/).entries()) { if (i) press('Return'); if (part) m.typeText(part) }
     tick('act', t0)
-    if (sub) { rec.submit = true; await submit(w!) }
+    if (sub) { rec.submit = true; await submit(w!) } else if (isDialog(o) && await closed(w!)) rec.submit = true
     return
   }
   if (s.key) {
@@ -371,7 +379,9 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const o = /^(enter|return)$/i.test(s.key) && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
     if (o.includes('File Chooser Widget')) { rec.submit = true; await submit(w!); return }
-    const t0 = Date.now(); press(s.key); tick('act', t0); return
+    const t0 = Date.now(); press(s.key); tick('act', t0)
+    if (isDialog(o) && await closed(w!)) rec.submit = true
+    return
   }
   if (s.wait) { const w = await windowFor(s.wait, s.timeout_ms ?? 5000, s.seen); rec.seen = lastSeen = w.title; return }
   if (s.close) {
