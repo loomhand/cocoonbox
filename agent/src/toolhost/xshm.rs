@@ -485,8 +485,8 @@ impl Grabber {
         Ok(empty_keycodes(&keysyms, per, min))
     }
 
-    /// Unbinds the keycodes of `spare` that have keysyms now and returns how many.
-    pub fn unbind(&self, spare: &[Keycode]) -> Result<usize, String> {
+    /// Unbinds the keycodes of `spare` that have keysyms now; returns how many, and how many keycodes are empty after.
+    pub fn unbind(&self, spare: &[Keycode]) -> Result<(usize, usize), String> {
         let (keysyms, per, min) = self.keymap()?;
         let empty = empty_keycodes(&keysyms, per, min);
         let none = vec![0; usize::from(per)];
@@ -502,7 +502,7 @@ impl Grabber {
                 .sync()
                 .map_err(|e| format!("unbind keycodes: {e}"))?;
         }
-        Ok(unbound)
+        Ok((unbound, empty.len() + unbound))
     }
 
     /// The core keymap: its keysyms, keysyms per keycode and first keycode.
