@@ -1270,23 +1270,36 @@ async fn run_delegate(messages_wire: bool) {
         (pressed["pid"].clone(), pressed["window_id"].clone()),
         (json!(42), json!(7))
     );
-    let session = typed["session"].as_str().unwrap().to_owned();
-    assert!(session.starts_with("cu-"), "{session}");
     let cua_calls = h.cua_log.lock().unwrap().clone();
+    let session = cua_calls[0].1["session"].as_str().unwrap().to_owned();
+    assert!(session.starts_with("cu-"), "{session}");
     let names: Vec<&str> = cua_calls.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
         names[..3],
         ["list_windows", "get_window_state", "get_desktop_state"]
     );
+    for input in [&typed, &pressed] {
+        let once = input["session"].as_str().unwrap();
+        assert!(once.starts_with("input-"), "{once}");
+        let calls: Vec<&str> = cua_calls
+            .iter()
+            .filter(|(_, a)| a["session"] == once)
+            .map(|(n, _)| n.as_str())
+            .collect();
+        assert_eq!(calls.last(), Some(&"end_session"), "{cua_calls:?}");
+    }
     assert!(
         cua_calls
             .iter()
-            .all(|(_, a)| a["session"] == session.as_str()),
+            .all(|(_, a)| a["session"] == session.as_str()
+                || a["session"].as_str().unwrap().starts_with("input-")),
         "{cua_calls:?}"
     );
     assert_eq!(
-        cua_calls.last().map(|(n, _)| n.as_str()),
-        Some("end_session")
+        cua_calls
+            .last()
+            .map(|(n, a)| (n.as_str(), a["session"].clone())),
+        Some(("end_session", json!(session)))
     );
 
     let chats = gw_bodies(&h.gw_log, "chat/completions");
