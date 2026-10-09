@@ -393,7 +393,8 @@ impl Mcp {
             ("resources/list", _) if self.script => Ok(list_resources()),
             ("resources/read", _) if self.script => {
                 let mut flows = String::new();
-                if msg["params"]["uri"] == RESOURCES[0].uri {
+                let reads_flows = !matches!(principal, Principal::Share { write: false, .. });
+                if reads_flows && msg["params"]["uri"] == RESOURCES[0].uri {
                     let index = self
                         .rt
                         .dispatcher

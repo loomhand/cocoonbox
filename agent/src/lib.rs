@@ -6,6 +6,7 @@ pub mod config;
 pub mod connect;
 pub mod dispatch;
 pub mod exec;
+pub mod flows;
 pub mod identity;
 pub mod journal;
 pub mod llm;

@@ -4,6 +4,7 @@ pub mod browser;
 pub mod cua;
 pub mod exec;
 pub mod files;
+pub mod flows;
 pub mod rpc;
 pub mod shell;
 pub mod script;
@@ -47,6 +48,8 @@ pub struct Host {
     script: Script,
     session_save: PathBuf,
     home: PathBuf,
+    /// The saved flows of a Script box, which a read-only share does not read.
+    hidden: Option<PathBuf>,
 }
 
 impl Host {
@@ -65,6 +68,7 @@ impl Host {
             script: Script::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
+            hidden: cfg.script.then(|| cfg.workspace.join("flows")),
         }
     }
 
@@ -76,7 +80,7 @@ impl Host {
                 .await
                 .map(Output::text),
             "shell_close" => self.close_shell(&call.agent_id).await.map(Output::text),
-            "read_file" => files::read(&self.workspace, call.args)
+            "read_file" => files::read(&self.workspace, self.hidden.as_deref(), call.args)
                 .await
                 .map(Output::text),
             "write_file" => files::write(&self.workspace, call.args)
@@ -85,7 +89,7 @@ impl Host {
             "edit_file" => files::edit(&self.workspace, call.args)
                 .await
                 .map(Output::text),
-            "list_dir" => files::list(&self.workspace, call.args)
+            "list_dir" => files::list(&self.workspace, self.hidden.as_deref(), call.args)
                 .await
                 .map(Output::text),
             "upload" => self.upload(call.args).await.map(Output::text),
@@ -120,6 +124,17 @@ impl Host {
                     .await
             }
             "gui_flows" => Ok(Output::text(Script::flows(&self.workspace).await)),
+            "flows_scan" => flows::scan(&self.workspace).await.map(Output::text),
+            "flows_read" => flows::read(&self.workspace, call.args)
+                .await
+                .map(Output::text),
+            "flows_write" => flows::write(&self.workspace, call.args)
+                .await
+                .map(Output::text),
+            "flows_remove" => flows::remove(&self.workspace, call.args)
+                .await
+                .map(Output::text),
+            "flows_index" => self.script.reindex(&self.workspace).await,
             "screenshot" => {
                 let max_edge = call.args["max_edge"]
                     .as_u64()

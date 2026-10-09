@@ -140,6 +140,24 @@ impl Script {
         Ok(out)
     }
 
+    /// Rebuilds the flow index with the plan executor after the library sync changed flows.
+    pub async fn reindex(&self, workspace: &Path) -> Result<Output, String> {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let report = self
+            .run_script(
+                Script::File(PathBuf::from(GUI_PLAN)),
+                r#"{"reindex":true}"#,
+                workspace,
+                RELEASE_TIMEOUT,
+                &id,
+            )
+            .await?;
+        if let Some(error) = report.get("error") {
+            return Err(format!("reindex flows: {error}"));
+        }
+        Ok(Output::text(report["result"].to_string()))
+    }
+
     /// The saved flows' catalog, one `name(params)` line each, newest first; empty before the first save.
     pub async fn flows(workspace: &Path) -> String {
         tokio::fs::read_to_string(workspace.join(FLOW_INDEX))

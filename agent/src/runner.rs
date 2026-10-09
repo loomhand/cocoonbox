@@ -19,7 +19,7 @@ use crate::llm::{self, Delta, Message, Model, Part, Request, ToolCall, ToolSpec,
 use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
 use crate::route::Router;
 use crate::store::Store;
-use crate::{computer, new_id, prompts, route, tools};
+use crate::{computer, flows, new_id, prompts, route, tools};
 
 const QUEUE_DEPTH: usize = 32;
 const TITLE_CHARS: usize = 24;
@@ -76,10 +76,22 @@ impl Runtime {
             .script
             .then(|| Router::new(&cfg.gw_base_url, &cfg.gw_api_key))
             .transpose()?;
+        let flows = match &cfg.connect_url {
+            Some(url) if cfg.script => {
+                let sync = Arc::new(flows::Syncer::new(
+                    url,
+                    journal.store.clone(),
+                    Arc::clone(&tools),
+                )?);
+                sync.spawn(stop.clone());
+                Some(sync)
+            }
+            _ => None,
+        };
         let rt = Arc::new(Self {
             model,
             router,
-            dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal))),
+            dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal)).with_flows(flows)),
             journal,
             main_tools: tools::main_tools(false, cfg.script),
             main_vision_tools: tools::main_tools(true, cfg.script),

@@ -3577,6 +3577,50 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
 }
 
 #[tokio::test]
+async fn a_read_share_of_a_script_box_does_not_read_its_saved_flows() {
+    let h = Harness::with_script(Vec::new()).await;
+    let edge = Edge::provision(&h);
+    std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
+    std::fs::write(h.workspace.join("flows/save.json"), "{\"typed\":\"x\"}").unwrap();
+    std::fs::write(h.workspace.join("notes.txt"), "shared\n").unwrap();
+    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
+
+    let mut reader = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read"))).await;
+    for (tool, args) in [
+        ("read_file", json!({"path": "flows/save.json"})),
+        ("list_dir", json!({"path": "flows"})),
+    ] {
+        let out = reader.call(tool, args).await;
+        assert_eq!(out["isError"], true, "{tool}: {out}");
+        assert!(
+            text(&out).contains("does not read saved flows"),
+            "{tool}: {out}"
+        );
+    }
+    let out = reader.call("read_file", json!({"path": "notes.txt"})).await;
+    assert!(text(&out).contains("shared"), "{out}");
+
+    let mut owner = McpClient::connect_as(&h, Some(edge.owner())).await;
+    let out = owner
+        .call("read_file", json!({"path": "flows/save.json"}))
+        .await;
+    assert!(text(&out).contains("typed"), "{out}");
+
+    let desk = Harness::start(Vec::new(), false).await;
+    let edge = Edge::provision(&desk);
+    std::fs::create_dir_all(desk.workspace.join("flows")).unwrap();
+    std::fs::write(desk.workspace.join("flows/save.json"), "{}").unwrap();
+    let mut reader = McpClient::connect_as(&desk, Some(edge.share("share:sh-1:read"))).await;
+    let out = reader
+        .call("read_file", json!({"path": "flows/save.json"}))
+        .await;
+    assert_eq!(
+        out["isError"], false,
+        "a cbdesk read share is unchanged: {out}"
+    );
+}
+
+#[tokio::test]
 async fn a_read_share_reads_files_only_under_the_workspace() {
     let h = Harness::start(Vec::new(), false).await;
     let edge = Edge::provision(&h);

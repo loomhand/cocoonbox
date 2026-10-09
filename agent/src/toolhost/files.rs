@@ -1,6 +1,6 @@
 //! File tools. Relative paths resolve under the workspace; absolute paths are
 //! used as given, so the toolhost's uid (`user`) is the access boundary.
-//! A call with `workspace_only` (a read-only share) reads only beneath the workspace.
+//! A call with `workspace_only` (a read-only share) reads only beneath the workspace, and never in its hidden folder.
 
 use std::fmt::Write as _;
 use std::fs::File;
@@ -62,13 +62,18 @@ pub fn resolve(workspace: &Path, path: &str) -> PathBuf {
 }
 
 /// `read_file`: numbered lines from `offset` (1-based), capped.
-pub async fn read(workspace: &Path, args: serde_json::Value) -> Result<String, String> {
+pub async fn read(
+    workspace: &Path,
+    hidden: Option<&Path>,
+    args: serde_json::Value,
+) -> Result<String, String> {
     let a: ReadArgs = parse(args)?;
     let path = resolve(workspace, &a.path);
     let data = if a.workspace_only {
         let mut data = Vec::new();
         tokio::fs::File::from_std(open_beneath(
             workspace,
+            hidden,
             &path,
             libc::O_RDONLY | libc::O_NONBLOCK,
         )?)
@@ -159,11 +164,15 @@ pub async fn edit(workspace: &Path, args: serde_json::Value) -> Result<String, S
 }
 
 /// `list_dir`: sorted entries with type and size.
-pub async fn list(workspace: &Path, args: serde_json::Value) -> Result<String, String> {
+pub async fn list(
+    workspace: &Path,
+    hidden: Option<&Path>,
+    args: serde_json::Value,
+) -> Result<String, String> {
     let a: ListArgs = parse(args)?;
     let path = resolve(workspace, a.path.as_deref().unwrap_or("."));
     let beneath = if a.workspace_only {
-        Some(open_beneath(workspace, &path, libc::O_DIRECTORY)?)
+        Some(open_beneath(workspace, hidden, &path, libc::O_DIRECTORY)?)
     } else {
         None
     };
@@ -214,8 +223,13 @@ pub async fn write_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
-/// Opens `path` so that it resolves beneath `workspace`, `..` and symlinks included.
-fn open_beneath(workspace: &Path, path: &Path, flags: libc::c_int) -> Result<File, String> {
+/// Opens `path` so that it resolves beneath `workspace` and outside `hidden`, `..` and symlinks included.
+fn open_beneath(
+    workspace: &Path,
+    hidden: Option<&Path>,
+    path: &Path,
+    flags: libc::c_int,
+) -> Result<File, String> {
     let refused = || {
         format!(
             "{} is refused: a read-only share reads files only under {}",
@@ -230,10 +244,20 @@ fn open_beneath(workspace: &Path, path: &Path, flags: libc::c_int) -> Result<Fil
         rel
     };
     let root = File::open(workspace).map_err(|e| format!("open {}: {e}", workspace.display()))?;
-    sys::open_beneath(&root, rel, flags).map_err(|e| match e.raw_os_error() {
+    let file = sys::open_beneath(&root, rel, flags).map_err(|e| match e.raw_os_error() {
         Some(libc::EXDEV) => refused(),
         _ => format!("open {}: {e}", path.display()),
-    })
+    })?;
+    if let Some(hidden) = hidden
+        && std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
+            .is_ok_and(|real| real.starts_with(hidden))
+    {
+        return Err(format!(
+            "{} is refused: a read-only share does not read saved flows",
+            path.display()
+        ));
+    }
+    Ok(file)
 }
 
 fn parse<T: serde::de::DeserializeOwned>(args: serde_json::Value) -> Result<T, String> {
@@ -253,9 +277,13 @@ mod tests {
         write(ws, json!({"path": "a/b.txt", "content": "one\ntwo\ntwo\n"}))
             .await
             .unwrap();
-        let out = read(ws, json!({"path": "a/b.txt", "offset": 2, "limit": 1}))
-            .await
-            .unwrap();
+        let out = read(
+            ws,
+            None,
+            json!({"path": "a/b.txt", "offset": 2, "limit": 1}),
+        )
+        .await
+        .unwrap();
         assert!(out.starts_with("     2\ttwo\n"), "{out}");
         assert!(out.contains("showing lines 2-2 of 3"), "{out}");
         let err = edit(
@@ -281,12 +309,61 @@ mod tests {
             std::fs::read_to_string(ws.join("a/b.txt")).unwrap(),
             "1\n2\n2\n"
         );
-        let listing = list(ws, json!({})).await.unwrap();
+        let listing = list(ws, None, json!({})).await.unwrap();
         assert!(listing.contains("a/\n"), "{listing}");
-        let listing = list(ws, json!({"path": ws.join("a").display().to_string()}))
+        let listing = list(
+            ws,
+            None,
+            json!({"path": ws.join("a").display().to_string()}),
+        )
+        .await
+        .unwrap();
+        assert!(listing.contains("b.txt  (6 bytes)"), "{listing}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_read_only_share_does_not_read_the_hidden_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        let hidden = ws.join("flows");
+        write(ws, json!({"path": "flows/a.json", "content": "{}"}))
             .await
             .unwrap();
-        assert!(listing.contains("b.txt  (6 bytes)"), "{listing}");
+        write(ws, json!({"path": "notes.txt", "content": "hi"}))
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink("flows", ws.join("link")).unwrap();
+        for path in ["flows/a.json", "link/a.json"] {
+            let err = read(
+                ws,
+                Some(&hidden),
+                json!({"path": path, "workspace_only": true}),
+            )
+            .await
+            .unwrap_err();
+            assert!(err.contains("does not read saved flows"), "{err}");
+        }
+        let err = list(
+            ws,
+            Some(&hidden),
+            json!({"path": "flows", "workspace_only": true}),
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("does not read saved flows"), "{err}");
+        let out = read(
+            ws,
+            Some(&hidden),
+            json!({"path": "notes.txt", "workspace_only": true}),
+        )
+        .await
+        .unwrap();
+        assert!(out.contains("hi"), "{out}");
+        let owner = read(ws, Some(&hidden), json!({"path": "flows/a.json"}))
+            .await
+            .unwrap();
+        assert!(owner.contains("{}"), "{owner}");
     }
 
     #[test]

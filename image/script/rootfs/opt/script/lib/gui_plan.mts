@@ -1,5 +1,5 @@
 // gui_plan.mts: run a GUI plan in the box without a model turn per step, save a passing plan as a flow, replay flows.
-// params: {steps, params?, save?, start?} | {flow, params?, start?} | {find}; result: {ok, done, ms, trace, saved?, escalate?}
+// params: {steps, params?, save?, start?} | {flow, params?, start?} | {find} | {reindex}; result: {ok, done, ms, trace, saved?, escalate?}
 import { execFileSync, spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createConnection } from 'node:net'
@@ -528,16 +528,24 @@ function templated(steps: Step[], params: Record<string, string>) {
 
 function git(...args: string[]) { try { execFileSync('git', ['-C', FLOWS, ...args], { stdio: 'ignore', timeout: 5000 }) } catch {} }
 
-function saveFlow(f: Flow, why: string) {
+function repo() {
   mkdirSync(FLOWS, { recursive: true })
   if (!existsSync(`${FLOWS}/.git`)) {
     git('init', '-q'); writeFileSync(`${FLOWS}/.gitignore`, '.runs.jsonl\n.pending.json\n')
     git('config', 'user.name', 'gui_plan'); git('config', 'user.email', 'gui_plan@box')
   }
-  writeFileSync(`${FLOWS}/${f.name}.json`, JSON.stringify(f, null, 1) + '\n')
+}
+
+function writeIndex() {
   const rows = readdirSync(FLOWS).filter((x) => x.endsWith('.json') && !x.startsWith('.')).map((x) => { try { return JSON.parse(readFileSync(`${FLOWS}/${x}`, 'utf8')) as Flow } catch { return null } })
     .filter((x): x is Flow => !!x?.name).sort((a, b) => b.saved_at.localeCompare(a.saved_at))
   writeFileSync(INDEX, rows.map((x) => `${x.name}(${Object.keys(x.params).join(', ')})${x.idempotent ? '' : ' once'}: ${summary(x.steps)}`).join('\n') + '\n')
+}
+
+function saveFlow(f: Flow, why: string) {
+  repo()
+  writeFileSync(`${FLOWS}/${f.name}.json`, JSON.stringify(f, null, 1) + '\n')
+  writeIndex()
   git('add', '-A'); git('commit', '-q', '-m', `${f.name}: ${why}`)
 }
 
@@ -566,8 +574,9 @@ function find(request: string) {
   return { ok: true, flow: rows[+k.slice(1)].replace(/\(.*$/, ''), p: +p.toFixed(2) }
 }
 
-export async function main(p: { steps?: Step[]; flow?: string; params?: Record<string, string>; save?: string; start?: number; find?: string }) {
+export async function main(p: { steps?: Step[]; flow?: string; params?: Record<string, string>; save?: string; start?: number; find?: string; reindex?: boolean }) {
   const t0 = Date.now()
+  if (p.reindex) { repo(); writeIndex(); git('add', '-A'); git('commit', '-q', '-m', 'sync from the flow library'); return { ok: true } }
   if (p.find) return find(p.find)
   let flow: Flow | null = null
   try { if (p.flow) flow = loadFlow(p.flow) } catch (e) { return { ok: false, done: 0, ms: 0, escalate: { reason: (e as Error).message } } }

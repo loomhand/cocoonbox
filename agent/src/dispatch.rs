@@ -7,6 +7,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use bytes::Bytes;
 use serde_json::{Value, json};
 
+use crate::flows::{self, Syncer};
 use crate::journal::Journal;
 use crate::pb::{self, Role, event, transcript_entry::Body};
 use crate::toolhost::rpc::{self, Call};
@@ -72,12 +73,24 @@ pub struct Caller<'a> {
 pub struct Dispatcher {
     tools: Arc<dyn Tools>,
     journal: Arc<Journal>,
+    flows: Option<Arc<Syncer>>,
 }
 
 impl Dispatcher {
     /// Creates a dispatcher over `tools` that writes history to `journal`.
     pub fn new(tools: Arc<dyn Tools>, journal: Arc<Journal>) -> Self {
-        Self { tools, journal }
+        Self {
+            tools,
+            journal,
+            flows: None,
+        }
+    }
+
+    /// Syncs saved flows with the library around the calls that read or write them.
+    #[must_use]
+    pub fn with_flows(mut self, flows: Option<Arc<Syncer>>) -> Self {
+        self.flows = flows;
+        self
     }
 
     /// Records a call and runs it.
@@ -151,7 +164,17 @@ impl Dispatcher {
         {
             obj.insert("session".to_owned(), label.into());
         }
-        self.tools.run(owner, name, args).await
+        let Some(sync) = &self.flows else {
+            return self.tools.run(owner, name, args).await;
+        };
+        if flows::reads(name, &args) {
+            sync.pull().await;
+        }
+        let out = self.tools.run(owner, name, args).await;
+        if flows::writes(name) {
+            sync.kick();
+        }
+        out
     }
 
     /// Records the result of a call.

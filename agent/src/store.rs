@@ -1,5 +1,6 @@
-//! SQLite state: agents, turns, transcript entries and client-nonce dedupe.
+//! SQLite state: agents, turns, transcript entries, client-nonce dedupe and the flow library sync.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -38,6 +39,11 @@ CREATE TABLE IF NOT EXISTS nonces (
     nonce TEXT NOT NULL,
     value TEXT NOT NULL,
     PRIMARY KEY (scope, nonce)
+);
+CREATE TABLE IF NOT EXISTS flow_sync (
+    name TEXT PRIMARY KEY,
+    rev INTEGER NOT NULL,
+    sha256 TEXT NOT NULL
 );
 ";
 
@@ -272,14 +278,49 @@ impl Store {
             .await
     }
 
-    /// Replaces the database contents with the database at `path`.
+    /// Replaces the database contents with the database at `path`, adding the tables an older copy lacks.
     pub async fn restore_from(&self, path: PathBuf) -> Result<(), String> {
         self.call(move |c| {
             c.restore(
                 rusqlite::MAIN_DB,
                 &path,
                 None::<fn(rusqlite::backup::Progress)>,
+            )?;
+            c.execute_batch(SCHEMA)
+        })
+        .await
+    }
+
+    /// The rev and SHA-256 each flow had when this box and the library last agreed on it.
+    pub async fn flow_rows(&self) -> Result<HashMap<String, (u64, String)>, String> {
+        self.call(|c| {
+            let mut stmt = c.prepare("SELECT name, rev, sha256 FROM flow_sync")?;
+            let rows = stmt.query_map([], |r| {
+                Ok((r.get(0)?, (r.get::<_, i64>(1)?.cast_unsigned(), r.get(2)?)))
+            })?;
+            rows.collect()
+        })
+        .await
+    }
+
+    /// Records that this box and the library agree on flow `name` at `rev`.
+    pub async fn set_flow_row(&self, name: String, rev: u64, sha256: String) -> Result<(), String> {
+        self.call(move |c| {
+            c.execute(
+                "INSERT INTO flow_sync (name, rev, sha256) VALUES (?1, ?2, ?3)
+                 ON CONFLICT (name) DO UPDATE SET rev = excluded.rev, sha256 = excluded.sha256",
+                params![name, rev.cast_signed(), sha256],
             )
+            .map(drop)
+        })
+        .await
+    }
+
+    /// Forgets flow `name`, which the library no longer holds.
+    pub async fn drop_flow_row(&self, name: String) -> Result<(), String> {
+        self.call(move |c| {
+            c.execute("DELETE FROM flow_sync WHERE name = ?1", params![name])
+                .map(drop)
         })
         .await
     }
