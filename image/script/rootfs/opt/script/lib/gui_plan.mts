@@ -495,12 +495,14 @@ async function run(s: Step, rec: Record<string, unknown>) {
   if (s.check) { await setState(s, w, snap, hit, rec); return }
   const value = s.value!.endsWith('\n') ? s.value!.slice(0, -1) : s.value!
   const same = (v: string | undefined) => v === undefined || norm(v) === norm(value) || norm(v).includes(norm(value))
-  const lines = (snap.node(hit.n.ref).value ?? '').includes('\n')
+  const f = hit.n.role === 'combobox' ? nodes.find((x) => x.parent === hit.i && x.role === 'textbox') ?? hit.n : hit.n
+  const lines = (snap.node(f.ref).value ?? '').includes('\n')
+  if (hit.how.startsWith('jev') && lines) throw new Surprise(`"${target}" is closest to a multi-line text (${hit.how}), and set would replace all of it: wait for the window with that field, or name it exactly`, seen())
   t0 = Date.now()
-  snap.setFocus(hit.n.ref); if (hit.n.role === 'textbox' && !lines) { press('home'); press('shift+end') } else press('ctrl+a'); m.typeText(value); if (hit.n.role === 'spinbutton' || hit.n.role === 'slider') { press('tab'); press('shift+tab') }
+  snap.setFocus(f.ref); if (f.role === 'textbox' && !lines) { press('home'); press('shift+end') } else press('ctrl+a'); m.typeText(value); if (hit.n.role === 'spinbutton' || hit.n.role === 'slider') { press('tab'); press('shift+tab') }
   tick('act', t0)
   t0 = Date.now(); let got: string | undefined
-  for (let i = 0; i < 10; i++) { try { got = snap.node(hit.n.ref).value } catch (e) { if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen()); got = undefined }; if (same(got)) break; await sleep(40) }
+  for (let i = 0; i < 10; i++) { try { got = snap.node(f.ref).value } catch (e) { if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen()); got = undefined }; if (same(got)) break; await sleep(40) }
   tick('verify', t0); rec.value = got
   if (!same(got)) throw new Surprise(`"${target}" reads "${got}" after set`, seen())
   if (s.value!.endsWith('\n')) { rec.submit = true; await submit(w) }
