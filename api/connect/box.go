@@ -55,6 +55,15 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 	return out, nil
 }
 
+// BoxCaller maps a box door key to its machine's owner and the machine.
+func (s *Service) BoxCaller(ctx context.Context, header string) (string, string, error) {
+	key, ok := strings.CutPrefix(header, "Bearer ")
+	if !ok || key == "" {
+		return "", "", errNoDoorKey
+	}
+	return s.store.doorKey(ctx, hashHex(key))
+}
+
 // injectToken returns the access token of e's active grant, "" when there is none or the vendor no longer accepts it.
 func (s *Service) injectToken(ctx context.Context, e *entry, grants []*grant) (string, error) {
 	i := slices.IndexFunc(grants, func(g *grant) bool { return g.kind == e.id && g.status == statusActive })
@@ -71,13 +80,4 @@ func (s *Service) injectToken(ctx context.Context, e *entry, grants []*grant) (s
 		return "", nil
 	}
 	return token, err
-}
-
-// boxCaller maps a box door key to its machine's owner and the machine.
-func (s *Service) boxCaller(ctx context.Context, header string) (string, string, error) {
-	key, ok := strings.CutPrefix(header, "Bearer ")
-	if !ok || key == "" {
-		return "", "", errNoDoorKey
-	}
-	return s.store.doorKey(ctx, hashHex(key))
 }

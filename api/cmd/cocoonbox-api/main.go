@@ -28,6 +28,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/credential"
 	"github.com/CMGS/cocoonbox/api/dialer"
 	"github.com/CMGS/cocoonbox/api/edge"
+	"github.com/CMGS/cocoonbox/api/flows"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/machines"
@@ -102,12 +103,16 @@ func main() {
 		MaxRunning:   cfg.MaxRunningBoxes,
 	}, accounts)
 	svc.EnableAccounts(accounts)
+	var library *flows.Library
 	if cfg.State.Bucket != "" {
+		var st *s3.S3
+		if st, err = newStore(cfg); err != nil {
+			logger.Fatalf(ctx, err, "open the state store")
+		}
 		agents := dialer.New()
 		defer agents.Close()
-		if err = enableState(ctx, cfg, svc, agents, accounts); err != nil {
-			logger.Fatalf(ctx, err, "enable state layer")
-		}
+		enableState(ctx, cfg, svc, agents, st, accounts)
+		library = flows.NewLibrary(st, accounts)
 	}
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts)
 	if err != nil {
@@ -129,6 +134,9 @@ func main() {
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 	controlv1.RegisterSharesServer(server, shareSvc)
+	if library != nil {
+		controlv1.RegisterFlowsServer(server, flows.NewServer(library))
+	}
 
 	httpMux := http.NewServeMux()
 	httpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
@@ -150,7 +158,7 @@ func main() {
 		httpMux.Handle(connect.MCPPath, broker.NewDoor(authn, connect.DoorMCP))
 		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
 		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)
-		enableBoxConnect(ctx, cfg, svc, broker)
+		enableBoxConnect(ctx, cfg, svc, broker, library)
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -206,8 +214,9 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 	return signer, nil
 }
 
-// enableBoxConnect gives every box its door key and its owner's credentials, and serves the box door on connect.box_listen.
-func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service) {
+// enableBoxConnect gives every box its door key and its owner's credentials, and serves the box door on connect.box_listen,
+// with the flow library when there is one.
+func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service, library *flows.Library) {
 	logger := log.WithFunc("main.enableBoxConnect")
 	svc.EnableConnect(broker)
 	broker.OnInjection(func(ctx context.Context, user string) {
@@ -223,7 +232,18 @@ func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Servic
 	if cfg.Connect.BoxListen == "" {
 		return
 	}
-	srv := &http.Server{Addr: cfg.Connect.BoxListen, Handler: broker.NewBoxDoor(), ReadHeaderTimeout: readHeaderTimeout}
+	door := http.NewServeMux()
+	door.Handle("/", broker.NewBoxDoor())
+	if library != nil {
+		origin := func(ctx context.Context, _, machine string) flows.Origin {
+			box, image := svc.MachineOrigin(ctx, machine)
+			return flows.Origin{BoxID: box, Image: image}
+		}
+		flowsDoor := flows.NewDoor(library, broker.BoxCaller, origin)
+		door.Handle(flows.DoorPath, flowsDoor)
+		door.Handle(flows.DoorPath+"/", flowsDoor)
+	}
+	srv := &http.Server{Addr: cfg.Connect.BoxListen, Handler: door, ReadHeaderTimeout: readHeaderTimeout}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
@@ -317,11 +337,7 @@ func machineFlavor(f config.Flavor) machines.Flavor {
 	return machines.Flavor{VCPUs: f.VCPUs, MemoryMiB: f.MemoryMiB, DiskGiB: f.DiskGiB}
 }
 
-func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer, accounts *users.Service) error {
-	st, err := newStore(cfg)
-	if err != nil {
-		return err
-	}
+func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer, st *s3.S3, accounts *users.Service) {
 	svc.EnableState(agents, st, accounts)
 	svc.EnableDeltas(cfg.State.DeltaUsers)
 	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
@@ -337,7 +353,6 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 		})
 		logger.Infof(ctx, "state gc every %s, dry run %t, users %q", time.Duration(gc.Interval), gc.DryRun, gc.Users)
 	}
-	return nil
 }
 
 func newStore(cfg *config.Config) (*s3.S3, error) {

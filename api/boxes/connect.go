@@ -43,6 +43,15 @@ func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 	return errors.Join(errs...)
 }
 
+// MachineOrigin returns the box a machine serves and the image it runs; the image is empty when the backend cannot say.
+func (s *Service) MachineOrigin(ctx context.Context, machine string) (string, string) {
+	m, err := s.machines.Get(ctx, machine)
+	if err != nil {
+		return boxOfMachine(machine), ""
+	}
+	return boxOfMachine(machine), m.Image
+}
+
 // RunCredentials pushes the credentials of running machines every interval until ctx ends, so a token is refreshed
 // and replaced before it expires.
 func (s *Service) RunCredentials(ctx context.Context, interval time.Duration) {

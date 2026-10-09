@@ -241,7 +241,7 @@ func (s *Service) NewDoor(authn Authenticator, door string) *Door {
 
 // NewBoxDoor serves the box door, authenticating each call by the door key of its machine.
 func (s *Service) NewBoxDoor() *Door {
-	return &Door{svc: s, door: DoorBox, clients: map[string]session{}, authn: s.boxCaller}
+	return &Door{svc: s, door: DoorBox, clients: map[string]session{}, authn: s.BoxCaller}
 }
 
 type watchers struct {
