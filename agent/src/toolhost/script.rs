@@ -142,10 +142,11 @@ impl Script {
     }
 
     /// Rebuilds the flow index with the plan executor after the library sync changed flows.
-    pub async fn reindex(&self, workspace: &Path) -> Result<Output, String> {
+    pub async fn reindex(&self, cua: &Cua, workspace: &Path) -> Result<Output, String> {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let report = self
             .run_script(
+                cua,
                 Script::File(PathBuf::from(GUI_PLAN)),
                 r#"{"reindex":true}"#,
                 workspace,
