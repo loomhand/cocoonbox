@@ -280,12 +280,13 @@ function act(snap: AccessibilitySnapshot, n: Node) {
 }
 
 // an AT-SPI action on a menu entry runs its handler inside the a11y bridge's D-Bus dispatch: a modal dialog it opens answers no AT-SPI call, and the first key deadlocks the app
-async function choose(snap: AccessibilitySnapshot, nodes: Node[], n: Node, rec: Record<string, unknown>) {
+async function choose(snap: AccessibilitySnapshot, nodes: Node[], n: Node, rec: Record<string, unknown>, open = false) {
   const t0 = Date.now()
   try {
     const mods = (n.accel.match(/<\w+>/g) ?? []).map((x) => ({ '<Primary>': 'ctrl', '<Control>': 'ctrl', '<Shift>': 'shift', '<Alt>': 'alt' } as Record<string, string>)[x])
     const key = n.accel.replace(/<\w+>/g, '')
     if (key && mods.every(Boolean) && (mods.some((x) => x !== 'shift') || /^F\d+$/.test(key))) {
+      if (open) for (let q = n.parent; q >= 0 && nodes[q].role === 'menu'; q = nodes[q].parent) press('Escape')
       try { press([...mods, key].join('+')); rec.via = 'shortcut'; return } catch {}
     }
     const shown = () => { try { const b = snap.boundingBox(n.ref); reach(b.left + b.width / 2, b.top + b.height / 2); return b.width > 0 ? b : null } catch { return null } }
@@ -492,6 +493,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
   }
   if (s.click && hit.how.startsWith('jev') && TOGGLES.split('|').includes(hit.n.role))
     throw new Surprise(`"${target}" is closest to ${hit.n.role} "${hit.n.name}" (${hit.how}), and a click would flip it; use {check: "${hit.n.name}", on: ...} for it, or name the element you mean exactly`, seen())
+  if (s.click && hit.n.role === 'menuitem') { await choose(snap, nodes, hit.n, rec, true); await settle(w.title); return }
   if (s.click) { act(snap, hit.n); await settle(w.title); return }
   if (s.check) { await setState(s, w, snap, hit, rec); return }
   const value = s.value!.endsWith('\n') ? s.value!.slice(0, -1) : s.value!
