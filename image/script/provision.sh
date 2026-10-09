@@ -20,7 +20,6 @@ CUA_SHA256=08cde2f87c945602eaeed762929c3d3b3938e7cc1b864c5014014dc9871bb8f0
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
 ROOT=/opt/script
 PRESS="require('$ROOT/lib/press.cjs')(module.exports)"
-TYPING="require('$ROOT/lib/typing.cjs')(module.exports)"
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
@@ -84,13 +83,11 @@ install_rootfs() {
 	done
 	sed -i -e "/^<!-- routing -->\$/{r $SRC/routing.md" -e 'd}' "$ROOT/AGENTS.md"
 	grep -qxF "$PRESS" "$ROOT/js/wrapped.js" || echo "$PRESS" >>"$ROOT/js/wrapped.js"
-	grep -qxF "$TYPING" "$ROOT/js/wrapped.js" || echo "$TYPING" >>"$ROOT/js/wrapped.js"
 }
 
 check() {
 	"$ROOT/node/bin/node" -e "require('$ROOT/js')"
 	[ "$(grep -cxF "$PRESS" "$ROOT/js/wrapped.js")" = 1 ]
-	[ "$(grep -cxF "$TYPING" "$ROOT/js/wrapped.js")" = 1 ]
 	runuser -u user -- env HOME=/home/user /usr/local/bin/script --version
 	[ ! -e /home/user/.claude/skills/script ] && [ ! -e /root/.claude/skills/script ]
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
