@@ -148,7 +148,7 @@ import Testing
         defer { client.close() }
         let started = ContinuousClock.now
         #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
-        #expect(ContinuousClock.now - started < .seconds(3))
+        #expect(ContinuousClock.now - started < .seconds(3) + .seconds(2), "a failing door holds the first list at most connectWait (3 s)")
         let status = try await client.tool("box_status")
         #expect((status["structuredContent"] as? [String: Any])?["state"] as? String == "hibernated")
 
