@@ -30,6 +30,7 @@ const REPORT_MAX_TOKENS: u32 = 1024;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
 const SHUTTING_DOWN: &str = "interrupted: the agent is shutting down";
 const NO_ANSWER: &str = "the model returned no answer";
+const TOOL_MARKUP: &str = "｜DSML｜";
 
 /// Shared state of `serve`: journal, tool dispatcher, model and per-agent queues.
 pub struct Runtime {
@@ -598,7 +599,7 @@ impl Runtime {
             let step = self.step(ctx, &req, "").await?;
             usage.add(step.usage);
             if step.calls.is_empty() {
-                if !step.text.trim().is_empty() {
+                if !step.text.trim().is_empty() && !step.text.contains(TOOL_MARKUP) {
                     return Ok(());
                 }
                 if nudged {
@@ -929,6 +930,7 @@ pub fn history_messages(entries: Vec<TranscriptEntry>) -> Vec<Message> {
         let user = e.role == i32::from(Role::User);
         match e.body {
             Some(Body::Text(_)) if e.role == i32::from(Role::System) => {}
+            Some(Body::Text(t)) if !user && t.text.contains(TOOL_MARKUP) => {}
             Some(Body::Text(t)) if user => {
                 close_open(&mut out, &mut open);
                 out.push(Message::User(vec![Part::Text(t.text)]));
@@ -1084,6 +1086,7 @@ mod tests {
     fn history_groups_steps_and_closes_interrupted_calls() {
         let entries = vec![
             entry(Role::User, text("do it")),
+            entry(Role::Assistant, text("\n<｜DSML｜ invoke name=\"shell\">")),
             entry(Role::Assistant, text("ok")),
             entry(Role::Assistant, call("c1")),
             entry(Role::Assistant, call("c2")),

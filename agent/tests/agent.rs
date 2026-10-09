@@ -1504,6 +1504,65 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
 }
 
 #[tokio::test]
+async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_text("I'll list it first.\n<｜DSML｜ invoke name=\"list_dir\">\n<｜DSML｜ parameter name=\"path\" string=\"true\">/ho"),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("c1", "list_dir", &json!({})),
+            ),
+            (
+                "chat/completions",
+                chat_text("Continuing.</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>"),
+            ),
+            ("chat/completions", chat_text("Listed.")),
+            ("chat/completions", chat_text("I'd invoke list_dir again.")),
+            ("chat/completions", chat_text("\n<｜DSML｜ invoke")),
+            ("chat/completions", chat_text("\n<｜DSML｜ invoke name=\"shell\">\n")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let listed = create_agent(&mut agents).await;
+    send(&mut agents, &listed, "list it", "").await;
+    let entries = wait_turn_end(&mut agents, &listed).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    for (markup, next) in [(0, 1), (2, 3)] {
+        let before = chats[markup]["messages"].as_array().unwrap();
+        let after = chats[next]["messages"].as_array().unwrap();
+        assert_eq!(after.len(), before.len() + 1);
+        assert_eq!(after[..before.len()], before[..]);
+        assert_eq!(
+            after[before.len()]["content"][0]["text"],
+            "Continue: call the next tool, or give your final answer."
+        );
+    }
+    let prose = create_agent(&mut agents).await;
+    send(&mut agents, &prose, "again", "").await;
+    let entries = wait_turn_end(&mut agents, &prose).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
+    let looping = create_agent(&mut agents).await;
+    send(&mut agents, &looping, "run it", "").await;
+    let entries = wait_turn_end(&mut agents, &looping).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("no turn end");
+    };
+    assert_eq!(end.error, "the model returned no answer");
+    assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 7);
+}
+
+#[tokio::test]
 async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     let h = Harness::start(
         vec![
