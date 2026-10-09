@@ -365,16 +365,19 @@ async function run(s: Step, rec: Record<string, unknown>) {
     w.focus(); known.add(w.title); rec.window = lastSeen = w.title; await windowFor(w.title); return
   }
   if (s.type !== undefined) {
-    const t0 = Date.now(); const w = focused(); const o = s.type.endsWith('\n') && w ? await filled(w) : ''
+    const t0 = Date.now(); const w = focused(); const nl = s.type.endsWith('\n')
+    const dialog = !s.type.includes('\n') && !!w && m.windows().some((x) => x.title !== w.title && pidOf(x) === pidOf(w))
+    const o = (nl || dialog) && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
-    const sub = o.includes('File Chooser Widget')
-    if (sub) { press('home'); press('shift+end') }
+    const chooser = o.includes('File Chooser Widget'); const sub = chooser && nl
+    // GTK preselects the name up to its last dot: a bare name keeps the extension, a path or a name with its own extension replaces the whole field
+    if (chooser && /\/|\.[a-z][a-z0-9]{0,7}\n?$/i.test(s.type)) { press('home'); press('shift+end') }
     // typeText sends "\n" as Linefeed, which GTK text views ignore: a line break goes as Return
     for (const [i, part] of (sub ? s.type.slice(0, -1) : s.type).split(/\r?\n/).entries()) { if (i) press('Return'); if (part) m.typeText(part) }
     tick('act', t0)
-    const v = s.type.endsWith('\n') && !sub ? focused() : null
+    const v = nl && !sub ? focused() : null
     if (sub) { rec.submit = true; await submit(w!) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v.title, pidOf(v))) rec.submit = true
-    if (!s.type.includes('\n') && w && m.windows().some((x) => x.title !== w.title && pidOf(x) === pidOf(w))) {
+    if (dialog && w) {
       const want = s.type.slice(0, 30).replace(/"/g, '\\"'); let after = ''
       for (let k = 0; k < 5; k++) { after = outline(w); if (!isDialog(after) || after.split('\n').some((l) => /^\s*- (textbox|searchbox|combobox|spinbutton)\b.*: ".*/.test(l) && l.includes(want))) return; await sleep(40) }
       throw new Surprise(`"${s.type}" reached no text field of "${w.title}" (Tab can land on a button): fill the field with {set: label, value}`, seen())
