@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package cocoonbox.control.v1;
+
+option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
+
+// Flows is served by cocoonbox-api for the caller's own flow library: the
+// GUI flows and scripts that cbplan boxes keep in /workspace/flows
+// and sync through the box door. Callers authenticate with
+// `authorization: Bearer <user token>`; a share secret never reaches it.
+service Flows {
+  // List returns the library without contents, newest first.
+  rpc List(ListFlowsRequest) returns (ListFlowsResponse);
+  // Export returns the named flows with their contents; no names exports every flow.
+  rpc Export(ExportFlowsRequest) returns (ExportFlowsResponse);
+  // Save writes each flow into the library, the last write winning; a flow
+  // whose content equals the stored one keeps its rev. `cocoonbox flows import` calls it.
+  rpc Save(SaveFlowsRequest) returns (SaveFlowsResponse);
+  // Delete removes flows from the library; each box drops its unchanged
+  // copy at its next sync.
+  rpc Delete(DeleteFlowsRequest) returns (DeleteFlowsResponse);
+}
+
+message Flow {
+  // The file name under /workspace/flows, ending in .json or .mts.
+  string name = 1;
+  // UTF-8 text; set only in Export answers and Save requests.
+  bytes content = 2;
+  // The library rev of the flow's last write.
+  uint64 rev = 3;
+  // Hex SHA-256 of the content.
+  string sha256 = 4;
+  uint64 size = 5;
+  int64 saved_at_ms = 6;
+  // The box that wrote it last; empty for a Save.
+  string box_id = 7;
+  // The image that box ran when it wrote, or the image a Save names.
+  string image = 8;
+}
+
+message ListFlowsRequest {}
+
+message ListFlowsResponse {
+  repeated Flow flows = 1;
+  // Grows with every change to the library.
+  uint64 rev = 2;
+}
+
+message ExportFlowsRequest {
+  repeated string names = 1;
+}
+
+message ExportFlowsResponse {
+  repeated Flow flows = 1;
+}
+
+message SaveFlowsRequest {
+  repeated Flow flows = 1;
+}
+
+message SaveFlowsResponse {
+  // The stored flows, without contents.
+  repeated Flow flows = 1;
+}
+
+message DeleteFlowsRequest {
+  repeated string names = 1;
+}
+
+message DeleteFlowsResponse {
+  // The names the library held.
+  repeated string deleted = 1;
+}
