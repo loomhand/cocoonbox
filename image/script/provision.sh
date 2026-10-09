@@ -21,6 +21,7 @@ NATIVE_RELEASE=v14.0.0-cmgs.1
 NATIVE_SHA256=d63405e94c61eaa8438eff385fa8cc29d9ae23c429d79d353817862a2d2ec109
 NATIVE_URL="https://github.com/vendor/script-js-cmgs/releases/download/${NATIVE_RELEASE}/script-js.linux-x64-gnu.node"
 ROOT=/opt/script
+PRESS="require('$ROOT/lib/press.cjs')(module.exports)"
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
@@ -86,10 +87,12 @@ install_rootfs() {
 		esac
 	done
 	sed -i -e "/^<!-- routing -->\$/{r $SRC/routing.md" -e 'd}' "$ROOT/AGENTS.md"
+	grep -qxF "$PRESS" "$ROOT/js/wrapped.js" || echo "$PRESS" >>"$ROOT/js/wrapped.js"
 }
 
 check() {
 	"$ROOT/node/bin/node" -e "require('$ROOT/js')"
+	[ "$(grep -cxF "$PRESS" "$ROOT/js/wrapped.js")" = 1 ]
 	runuser -u user -- env HOME=/home/user /usr/local/bin/script --version
 	[ ! -e /home/user/.claude/skills/script ] && [ ! -e /root/.claude/skills/script ]
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
