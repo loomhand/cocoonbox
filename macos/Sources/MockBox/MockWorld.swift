@@ -21,11 +21,15 @@ actor MockWorld {
     static let maxBoxes = 3
     static let users = ["qa2": "u-qa2000000002", "qa3": "u-qa3000000003"]
     static let shareID = "sh-mock000000"
+    static let noBox = RPCError(code: .notFound, message: "no such box for this user (it may have been deleted)")
 
     let token: String
     let bootDelay: Duration
     // boxes is oldest first, as the api lists them.
     private(set) var boxes: [Box]
+    // deletions counts deleted boxes; a delete ends every screen stream, as removing a machine ends its own.
+    private(set) var deletions = 0
+    private var boxesCreated = 1
     private var operations: [String: [OperationEvent]] = [:]
     private var operationBoxes: [String: String] = [:]
     private var operationWaiters: [String: [UUID: AsyncStream<OperationEvent>.Continuation]] = [:]
@@ -108,7 +112,7 @@ actor MockWorld {
     }
 
     func ensure(_ boxID: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
-        guard let target = box(boxID) else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        guard let target = box(boxID) else { throw MockWorld.noBox }
         var response = Cocoonbox_Control_V1_EnsureResponse()
         if target.state == .running || target.state == .starting {
             response.box = target
@@ -142,7 +146,8 @@ actor MockWorld {
         guard boxes.count < Self.maxBoxes else { throw RPCError(code: .failedPrecondition, message: "quota reached: \(Self.maxBoxes) boxes is the most this user may have") }
         try checkRunning(besides: "")
         var created = boxes[0]
-        created.id = "cb-mock" + String(format: "%08d", boxes.count)
+        created.id = "cb-mock" + String(format: "%08d", boxesCreated)
+        boxesCreated += 1
         created.name = name
         created.state = .starting
         if image == "cbplan" { created.latestImage = "cbplan:v1" }
@@ -159,7 +164,7 @@ actor MockWorld {
     }
 
     func rename(box boxID: String, name: String) throws -> Box {
-        guard let index = boxes.firstIndex(where: { $0.id == boxID }) else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        guard let index = boxes.firstIndex(where: { $0.id == boxID }) else { throw MockWorld.noBox }
         guard !boxes.contains(where: { $0.name == name }) else { throw RPCError(code: .alreadyExists, message: "already exists: a box is already named \"\(name)\"") }
         boxes[index].name = name
         return boxes[index]
@@ -167,7 +172,7 @@ actor MockWorld {
 
     // delete plays Boxes.Delete: a save when the box runs, then the machine and the box go.
     func delete(box boxID: String) throws -> Cocoonbox_Control_V1_Operation {
-        guard let target = box(boxID), target.id == boxID else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        guard let target = box(boxID), target.id == boxID else { throw MockWorld.noBox }
         let id = newOperation(target.id)
         Task {
             if target.state == .running {
@@ -175,6 +180,7 @@ actor MockWorld {
             }
             self.emitOperation(id: id, phase: .deleting, detail: "removing machine \(target.id)", state: target.state)
             self.boxes.removeAll { $0.id == target.id }
+            self.deletions += 1
             self.emitOperation(id: id, phase: .done, detail: "deleted; the saved state of \(target.id) stays in storage", state: .unspecified)
         }
         return operation(id)
@@ -752,7 +758,7 @@ actor MockWorld {
     // MARK: shares
 
     func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Cocoonbox_Control_V1_ShareSecret {
-        guard box(request.boxID)?.id == request.boxID else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        guard box(request.boxID)?.id == request.boxID else { throw MockWorld.noBox }
         if let share, share.expiresAtMs > Self.now() { throw RPCError(code: .alreadyExists, message: "the box already has a live share") }
         guard (0...30 * 86400).contains(request.ttlSeconds) else { throw RPCError(code: .invalidArgument, message: "ttl must be at most 30 days") }
         var created = Share()

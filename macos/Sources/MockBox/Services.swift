@@ -18,7 +18,7 @@ struct AuthCheck: ServerInterceptor {
         if context.descriptor.service.package == "cocoonbox.agent.v1" {
             let box = request.metadata[stringValues: "x-cocoonbox-box"].first(where: { _ in true })
             guard let box, await world.box(box)?.id == box else {
-                throw RPCError(code: .notFound, message: "box \(box ?? "<none>") is not yours")
+                throw MockWorld.noBox
             }
         }
         return try await next(request, context)
@@ -80,7 +80,7 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     }
 
     private func owned(_ boxID: String) async throws -> Cocoonbox_Control_V1_Box {
-        guard let box = await world.box(boxID), box.id == boxID else { throw RPCError(code: .permissionDenied, message: "box belongs to another user") }
+        guard let box = await world.box(boxID), box.id == boxID else { throw MockWorld.noBox }
         return box
     }
 
@@ -244,6 +244,13 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
                         offset = end
                     }
                 }
+            }
+            group.addTask {
+                let deletions = await world.deletions
+                while await world.deletions == deletions {
+                    try await Task.sleep(for: .milliseconds(100))
+                }
+                throw RPCError(code: .unavailable, message: "box agent unreachable")
             }
             group.addTask {
                 var opened = false

@@ -200,7 +200,7 @@ final class MCPServer: Sendable {
             return await control.handle(message, line: &line)
         }
         guard let box = await world.box(boxID), box.id == boxID else {
-            return HTTPResponse(status: 403, reason: "Forbidden")
+            return HTTPResponse(status: 404, reason: "Not Found")
         }
         guard box.state == .running else {
             return HTTPResponse(status: 503, reason: "Service Unavailable")

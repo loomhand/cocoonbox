@@ -376,7 +376,7 @@ def mcp_status(box):
         return urllib.request.urlopen(req, timeout=10).status
     except urllib.error.HTTPError as e:
         return e.code
-check("the edge refuses another user's box id with 403", mcp_status("cb-mock99999999") == 403)
+check("the edge refuses another user's box id with 404", mcp_status("cb-mock99999999") == 404)
 time.sleep(1)
 log = open(mocklog).read()
 check("box tool calls reached each box's own MCP path", "/cocoonbox.mcp/" + test_id + " auth=ok" in log and "rpc=tools/call tool=shell" in log, log[-600:])
