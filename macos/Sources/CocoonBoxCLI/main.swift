@@ -653,9 +653,9 @@ func offload() async {
             let packer = offloader(connection, try await runningBox(connection, value(of: "--box") ?? record?.box))
             if sub == "status" {
                 let sessions = try await packer.status(key)
-                if json { return printJSON(["sessions": sessions.map { ["repo": $0.repo, "name": $0.name, "cli": $0.cli, "offload_id": $0.offloadID, "status": $0.status] }]) }
+                if json { return printJSON(["sessions": sessions.map { ["repo": $0.repo, "name": $0.name, "cli": $0.cli, "offload_id": $0.offloadID, "status": $0.status, "hooks_silent": $0.hooksSilent] }]) }
                 if sessions.isEmpty { return print("no box CLI session") }
-                return sessions.forEach { print("\($0.name) \($0.cli) \($0.status) offload \($0.offloadID) (repo \($0.repo))") }
+                return sessions.forEach { print("\($0.name) \($0.cli) \($0.status) offload \($0.offloadID) (repo \($0.repo))" + ($0.hooksSilent ? "; its hooks do not run, so the status comes from its transcript" : "")) }
             }
             guard let key else { fail("name the repo") }
             if sub == "send" {

@@ -54,6 +54,8 @@ public struct BoxSession: Sendable, Equatable {
     public var status: String
     // activityMs is the newest of the last hook, the transcript's mtime and the tmux window's activity; 0 when none is known.
     public var activityMs: Int64
+    // hooksSilent is true when the CLI's hooks never ran, so the box reads its status from the transcript.
+    public var hooksSilent: Bool
 
     init(_ object: [String: Any]) {
         repo = object["repo"] as? String ?? ""
@@ -62,6 +64,7 @@ public struct BoxSession: Sendable, Equatable {
         offloadID = object["offload_id"] as? String ?? ""
         status = object["status"] as? String ?? ""
         activityMs = ["hook_at_ms", "transcript_mtime_ms", "window_activity_ms"].compactMap { (object[$0] as? NSNumber)?.int64Value }.max() ?? 0
+        hooksSilent = object["hooks_silent"] as? Bool ?? false
     }
 }
 
@@ -103,6 +106,9 @@ public struct BackOutcome: Sendable {
 // the transfer and the way back, over Session.Exec to `cocoonbox-agent
 // offload` in the box and rsync and git over `cocoonbox rsh`.
 public struct Offloader: Sendable {
+    // backWait is how long back waits for the hand-over: one read's longest wait.
+    static let backWait: TimeInterval = 600
+
     public let connection: BoxConnection
     public let box: Cocoonbox_Control_V1_Box
     public let store: OffloadStore
@@ -227,6 +233,9 @@ public struct Offloader: Sendable {
         if findings.contains(where: { $0.check == "size" }) { try? store.confirmSize(key) }
         let cli = begin["cli"] as? [String: Any] ?? [:]
         let account = (cli["account"] as? String).map { $0.isEmpty ? "" : ", signed in as \($0)" } ?? ""
+        if let file = cli["hooks_blocked"] as? String {
+            progress("warning: \(file) turns off the hooks the box reads the CLI's status from; it reads the transcript instead")
+        }
         return OffloadOutcome(record: record, accepted: reply["accepted"] as? Bool ?? false, findings: findings,
                               cli: "\(request.kind.title) \(cli["version"] as? String ?? "")\(account)", timings: timings, sent: sent)
     }
@@ -306,9 +315,11 @@ public struct Offloader: Sendable {
             _ = try await verb(["send", "--repo", key, "--back"] + (interrupt ? ["--interrupt"] : []), input: ExecFrames([.bytes(Data())]))
             progress("asked the box agent for its hand-over; waiting")
         }
+        let deadline = Date().addingTimeInterval(Self.backWait)
         while back == nil {
+            let left = Int(deadline.timeIntervalSinceNow.rounded(.up))
             let status: String
-            (entries, status) = try await read(key, since: since, wait: 600)
+            (entries, status) = try await read(key, since: since, wait: max(left, 1))
             for entry in entries {
                 since = max(since, entry.seq)
                 if entry.offloadID == record.id || entry.offloadID.isEmpty { onEntry(entry) }
@@ -316,6 +327,9 @@ public struct Offloader: Sendable {
             }
             back = entries.last { $0.kind == "back" && $0.offloadID == record.id }
             if back == nil, status == "stopped" { throw OffloadError.failed("the box CLI session stopped without handing the work back") }
+            if back == nil, Date() >= deadline {
+                throw OffloadError.failed("the box agent has not handed the work back after \(Int(Self.backWait / 60)) min (status \(status)); BACK stays queued for its next idle. Run back again later, or back --interrupt to stop its current step")
+            }
         }
         let file = try store.back(key)
         try Data(back!.body.utf8).write(to: file)
