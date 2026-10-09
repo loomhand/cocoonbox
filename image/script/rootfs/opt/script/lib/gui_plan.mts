@@ -368,6 +368,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const t0 = Date.now(); const w = focused(); const o = s.type.endsWith('\n') && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
     const sub = o.includes('File Chooser Widget')
+    if (sub) { press('home'); press('shift+end') }
     // typeText sends "\n" as Linefeed, which GTK text views ignore: a line break goes as Return
     for (const [i, part] of (sub ? s.type.slice(0, -1) : s.type).split(/\r?\n/).entries()) { if (i) press('Return'); if (part) m.typeText(part) }
     tick('act', t0)
@@ -494,8 +495,9 @@ async function run(s: Step, rec: Record<string, unknown>) {
   if (s.check) { await setState(s, w, snap, hit, rec); return }
   const value = s.value!.endsWith('\n') ? s.value!.slice(0, -1) : s.value!
   const same = (v: string | undefined) => v === undefined || norm(v) === norm(value) || norm(v).includes(norm(value))
+  const lines = (snap.node(hit.n.ref).value ?? '').includes('\n')
   t0 = Date.now()
-  snap.setFocus(hit.n.ref); press('ctrl+a'); m.typeText(value); if (hit.n.role === 'spinbutton' || hit.n.role === 'slider') { press('tab'); press('shift+tab') }
+  snap.setFocus(hit.n.ref); if (hit.n.role === 'textbox' && !lines) { press('home'); press('shift+end') } else press('ctrl+a'); m.typeText(value); if (hit.n.role === 'spinbutton' || hit.n.role === 'slider') { press('tab'); press('shift+tab') }
   tick('act', t0)
   t0 = Date.now(); let got: string | undefined
   for (let i = 0; i < 10; i++) { try { got = snap.node(hit.n.ref).value } catch (e) { if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen()); got = undefined }; if (same(got)) break; await sleep(40) }
