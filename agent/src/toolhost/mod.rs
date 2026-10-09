@@ -134,7 +134,7 @@ impl Host {
             "flows_remove" => flows::remove(&self.workspace, call.args)
                 .await
                 .map(Output::text),
-            "flows_index" => self.script.reindex(&self.cua, &self.workspace).await,
+            "flows_index" => self.script.reindex(&self.workspace).await,
             "screenshot" => {
                 let max_edge = call.args["max_edge"]
                     .as_u64()
