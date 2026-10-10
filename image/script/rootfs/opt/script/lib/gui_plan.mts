@@ -374,6 +374,23 @@ function holdsText(w: NonNullable<ReturnType<typeof focused>>, fp: Fp) {
   } catch { return false } finally { tick('blank', t0) }
 }
 
+function documents(w: NonNullable<ReturnType<typeof focused>>) {
+  const t0 = Date.now()
+  try {
+    const d = m.windows().find((x) => x.title !== w.title && pidOf(x) === pidOf(w)); if (!d) return null
+    const s = snapOf(d); const refs = parse(s).filter((n) => n.role === 'textbox').map((n) => n.ref)
+    return () => refs.map((r) => { try { return s.node(r).value ?? '' } catch { return '' } }).join('\n')
+  } catch { return null } finally { tick('verify', t0) }
+}
+async function replaced(snap: AccessibilitySnapshot, nodes: Node[], read: () => string, before: string) {
+  const t0 = Date.now(); let now = read()
+  for (let i = 0; i < 10 && now === before; i++) { await sleep(30); now = read() }
+  const f = nodes.find((n) => n.role === 'textbox'); let find = ''
+  try { find = f ? snap.node(f.ref).value ?? '' : '' } catch {}
+  tick('verify', t0)
+  if (now === before && find && now.includes(find)) throw new Surprise(`Replace All replaced nothing: "${find}" is still in the document`, seen())
+}
+
 async function setState(s: Step, w: NonNullable<ReturnType<typeof focused>>, snap: AccessibilitySnapshot, hit: Hit, rec: Record<string, unknown>) {
   const on = s.on ?? true
   let was = await checked(w.pid, hit.n.name)
@@ -551,7 +568,12 @@ async function run(s: Step, rec: Record<string, unknown>) {
   if (s.click && hit.how !== 'fp' && norm(hit.n.name) !== norm(target) && TOGGLES.split('|').includes(hit.n.role))
     throw new Surprise(`"${target}" is closest to ${hit.n.role} "${hit.n.name}" (${hit.how}), and a click would flip it; use {check: "${hit.n.name}", on: ...} for it, or name the element you mean exactly`, seen())
   if (s.click && hit.n.role === 'menuitem') { await choose(snap, nodes, hit.n, rec, true); await settle(w.title); return }
-  if (s.click) { act(snap, hit.n); await settle(w.title); return }
+  if (s.click) {
+    const read = norm(hit.n.name) === 'replace all' ? documents(w) : null; const before = read?.()
+    act(snap, hit.n)
+    if (read) await replaced(snap, nodes, read, before!); else await settle(w.title)
+    return
+  }
   if (s.check) { await setState(s, w, snap, hit, rec); return }
   const value = s.value!.endsWith('\n') ? s.value!.slice(0, -1) : s.value!
   const same = (v: string | undefined) => v === undefined || norm(v) === norm(value) || norm(v).includes(norm(value))
