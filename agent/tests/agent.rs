@@ -1576,6 +1576,48 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
 }
 
 #[tokio::test]
+async fn an_announcement_without_a_call_gets_the_continuation() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("c1", "list_dir", &json!({})),
+            ),
+            ("chat/completions", chat_text("Continue with step 2.\n\n\n")),
+            ("chat/completions", chat_text("Listed.")),
+            ("chat/completions", chat_text("No response required.")),
+            ("chat/completions", chat_text("</output>")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let listed = create_agent(&mut agents).await;
+    send(&mut agents, &listed, "list it", "").await;
+    let entries = wait_turn_end(&mut agents, &listed).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    let before = chats[1]["messages"].as_array().unwrap();
+    let after = chats[2]["messages"].as_array().unwrap();
+    assert_eq!(after.len(), before.len() + 1);
+    assert_eq!(after[..before.len()], before[..]);
+    assert_eq!(
+        after[before.len()]["content"][0]["text"],
+        "Continue: call the next tool, or give your final answer."
+    );
+    let idle = create_agent(&mut agents).await;
+    send(&mut agents, &idle, "run it", "").await;
+    let entries = wait_turn_end(&mut agents, &idle).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("no turn end");
+    };
+    assert_eq!(end.error, "the model returned no answer");
+    assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
+}
+
+#[tokio::test]
 async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     let h = Harness::start(
         vec![
