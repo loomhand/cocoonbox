@@ -3,3 +3,7 @@ toolkit-accessibility=true
 
 [org/xfce/mousepad/preferences/file]
 session-restore='always'
+
+[org/gtk/settings/file-chooser]
+window-position=(0, 0)
+window-size=(1000, 700)
