@@ -174,6 +174,27 @@ public final class BoxConnection: Sendable {
         })
     }
 
+    // MARK: Wake schedules
+
+    // setWakeSchedule wakes the box, when it is hibernated, a minute before each time of cron in tz and lets it
+    // hibernate again after awakeForSeconds (0 is the api's default) unless a client reached it.
+    public func setWakeSchedule(boxID: String, cron: String, tz: String, awakeForSeconds: UInt32 = 0) async throws -> Cocoonbox_Control_V1_WakeSchedule {
+        try await boxes.setWakeSchedule(.with {
+            $0.boxID = boxID
+            $0.cron = cron
+            $0.tz = tz
+            $0.awakeForS = awakeForSeconds
+        })
+    }
+
+    public func listWakeSchedules() async throws -> [Cocoonbox_Control_V1_WakeSchedule] {
+        try await boxes.listWakeSchedules(Cocoonbox_Control_V1_ListWakeSchedulesRequest()).schedules
+    }
+
+    public func clearWakeSchedule(boxID: String) async throws {
+        _ = try await boxes.clearWakeSchedule(.with { $0.boxID = boxID })
+    }
+
     public func watchOperation(
         _ id: String,
         after offsetKey: String,

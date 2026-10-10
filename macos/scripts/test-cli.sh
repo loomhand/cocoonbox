@@ -6,7 +6,7 @@
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
 # and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm. Nothing touches
+# export, import and rm, and box schedule set, list and clear. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -249,6 +249,25 @@ with open(bad, "w") as f:
     f.write("not json")
 r = run("flows", "import", bad)
 check("flows import refuses a file that is no export", r.returncode == 1 and "is no cocoonbox flows export" in r.stderr, r.stderr)
+
+r = run("box", "schedule", "set", "main", "--cron", "0 9 * * *", "--tz", "Asia/Singapore", "--awake-for", "30m")
+check("box schedule set prints the schedule", r.returncode == 0 and r.stdout.startswith('main cb-mock00000000 "0 9 * * *" Asia/Singapore, awake 30 min, next '), r.stdout + r.stderr)
+r = run("box", "schedule", "list", "--json")
+listed = json.loads(r.stdout)["schedules"] if r.returncode == 0 else []
+check("box schedule list --json", [(x["name"], x["cron"], x["tz"], x["awake_for_s"]) for x in listed] == [("main", "0 9 * * *", "Asia/Singapore", 1800)], r.stdout + r.stderr)
+r = run("box", "schedule", "set", "main", "--cron", "0 9 * * *", "--tz", "Mars/Olympus")
+check("box schedule set with an unknown zone fails with the api's reason", r.returncode == 1 and "must name an IANA zone" in r.stderr, r.stderr)
+r = run("box", "schedule", "set", "main", "--cron", "0 9 * * *", "--tz", "UTC", "--awake-for", "soon")
+check("box schedule set refuses a bad --awake-for", r.returncode == 1 and "--awake-for is a duration" in r.stderr, r.stderr)
+r = run("box", "schedule", "set", "main", "--cron", "0 9 * * *")
+check("box schedule set without --tz prints the usage", r.returncode == 1 and "usage: cocoonbox box schedule" in r.stderr, r.stderr)
+r = run("box", "schedule", "set", "nope", "--cron", "0 9 * * *", "--tz", "UTC")
+check("box schedule set names a missing box", r.returncode == 1 and "you have no box nope" in r.stderr, r.stderr)
+r = run("box", "schedule", "clear", "main")
+check("box schedule clear", r.returncode == 0 and r.stdout.strip() == "cleared the wake schedule of main", r.stdout + r.stderr)
+r = run("box", "schedule", "list")
+check("box schedule list after clear", r.returncode == 0 and r.stdout.strip() == "no wake schedules", r.stdout + r.stderr)
+check("box schedule leaves the box hibernated", json.loads(run("status", "--json").stdout)["state"] == "hibernated")
 
 headers = run("mcp-headers")
 check("mcp-headers prints the Authorization header", json.loads(headers.stdout) == {"Authorization": "Bearer mock-token"}, headers.stdout)

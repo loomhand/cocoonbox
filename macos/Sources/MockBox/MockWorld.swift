@@ -37,6 +37,7 @@ actor MockWorld {
     private var untitled: Set<String> = []
     private var openSessions: Set<String> = []
     private var share: Share?
+    private(set) var wakeSchedules: [Cocoonbox_Control_V1_WakeSchedule] = []
     private var sharesCreated = 0
     private var nonces: [String: String] = [:]
     private var transcripts: [String: [Entry]] = [:]
@@ -307,6 +308,33 @@ actor MockWorld {
             self.emitOperation(id: id, phase: .done, detail: "restored \(paths.count) paths (\(paths.joined(separator: ", "))) into ~/Restored/\(folder)", state: .running)
         }
         return operation(id)
+    }
+
+    // setWakeSchedule keeps the api's checks a client sees: an IANA zone, five cron fields, awake_for in 1 min..1 h
+    // (0 is 15 min) and 3 schedules a user; the next time is an hour ahead, since the mock reads no cron.
+    func setWakeSchedule(box boxID: String, _ request: Cocoonbox_Control_V1_SetWakeScheduleRequest) throws -> Cocoonbox_Control_V1_WakeSchedule {
+        guard TimeZone(identifier: request.tz) != nil else {
+            throw RPCError(code: .invalidArgument, message: "tz \"\(request.tz)\" must name an IANA zone, such as Asia/Singapore")
+        }
+        guard request.cron.split(separator: " ").count == 5 else { throw RPCError(code: .invalidArgument, message: "expected exactly 5 fields") }
+        let awakeFor = request.awakeForS == 0 ? 900 : request.awakeForS
+        guard (60...3600).contains(awakeFor) else { throw RPCError(code: .invalidArgument, message: "awake_for must be in 1m0s..1h0m0s") }
+        let others = wakeSchedules.filter { $0.boxID != boxID }
+        guard others.count < 3 else { throw RPCError(code: .failedPrecondition, message: "quota reached: 3 wake schedules is the most this user may have") }
+        let schedule = Cocoonbox_Control_V1_WakeSchedule.with {
+            $0.boxID = boxID
+            $0.cron = request.cron
+            $0.tz = request.tz
+            $0.awakeForS = awakeFor
+            $0.nextAtMs = Self.now() + 3_600_000
+        }
+        wakeSchedules = others + [schedule]
+        return schedule
+    }
+
+    func clearWakeSchedule(box boxID: String) throws {
+        guard wakeSchedules.contains(where: { $0.boxID == boxID }) else { throw RPCError(code: .notFound, message: "the box has no wake schedule") }
+        wakeSchedules.removeAll { $0.boxID == boxID }
     }
 
     private static let capsuleTree: [String: [String]] = [

@@ -19,6 +19,12 @@ usage: cocoonbox <command> [options]
                                         create another box and wait until it runs; general (the default) is
                                         the standard desktop, script also has the Script runtime, whose
                                         box tools add script_run
+  box schedule set BOX --cron "M H DOM MON DOW" --tz ZONE [--awake-for 15m] [--json]
+                                        wake BOX from hibernation a minute before each time of the cron in
+                                        ZONE, an IANA zone; after --awake-for (1m to 1h) it hibernates again
+                                        unless a client reached it. Timers in the box run the routine.
+  box schedule list [--json]            list the wake schedules of your boxes
+  box schedule clear BOX                remove the wake schedule of BOX
   flows [list] [--json]                 list your saved flows: every cbplan box of yours syncs them
   flows export [NAME...] [-o FILE]      write flows (default: all) as JSON to FILE, else stdout
   flows import FILE|- [--json]          add the flows of an export to your library; the last write wins
@@ -230,6 +236,7 @@ func lifecycle(_ command: String) async {
 }
 
 func boxCommand() async {
+    if words.first == "schedule" { return await scheduleCommand() }
     let kindValue = value(of: "--kind")
     guard words.first == "create", let name = words.dropFirst().first(where: { $0 != kindValue }) else {
         fail("usage: cocoonbox box create NAME [--kind general|script]")
@@ -241,6 +248,71 @@ func boxCommand() async {
         let response = try await connection.createBox(name: name, kind: kind)
         if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
         printBox(try await connection.listBoxes().first { $0.id == response.box.id }, json: flags.contains("--json"))
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+// MARK: wake schedules
+
+let scheduleUsage = "usage: cocoonbox box schedule [set BOX --cron \"M H DOM MON DOW\" --tz ZONE [--awake-for 15m] | list | clear BOX] [--json]"
+
+// seconds reads a duration such as 90s, 15m or 1h.
+func seconds(_ text: String) -> UInt32? {
+    guard let unit = text.last, let factor = ["s": 1, "m": 60, "h": 3600][String(unit)], let count = UInt32(text.dropLast()) else { return nil }
+    return count * UInt32(factor)
+}
+
+func scheduleObject(_ schedule: Cocoonbox_Control_V1_WakeSchedule, name: String) -> [String: Any] {
+    ["box_id": schedule.boxID, "name": name, "cron": schedule.cron, "tz": schedule.tz, "awake_for_s": schedule.awakeForS,
+     "next_at_ms": schedule.nextAtMs, "last_wake_at_ms": schedule.lastWakeAtMs]
+}
+
+func scheduleLine(_ schedule: Cocoonbox_Control_V1_WakeSchedule, name: String) -> String {
+    let zone = TimeZone(identifier: schedule.tz) ?? .current
+    func at(_ ms: Int64) -> String {
+        Date(timeIntervalSince1970: Double(ms) / 1000).formatted(Date.ISO8601FormatStyle(timeZone: zone).year().month().day().time(includingFractionalSeconds: false).timeZone(separator: .omitted))
+    }
+    let awake = schedule.awakeForS % 60 == 0 ? "\(schedule.awakeForS / 60) min" : "\(schedule.awakeForS) s"
+    var line = "\(name) \(schedule.boxID) \"\(schedule.cron)\" \(schedule.tz), awake \(awake), next \(at(schedule.nextAtMs))"
+    if schedule.lastWakeAtMs > 0 { line += ", last wake \(at(schedule.lastWakeAtMs))" }
+    return line
+}
+
+func scheduleCommand() async {
+    let args = positional(after: "schedule")
+    guard let action = args.first, ["set", "list", "clear"].contains(action), action == "list" || args.count == 2 else { fail(scheduleUsage) }
+    let json = flags.contains("--json")
+    let connection = connection()
+    defer { connection.close() }
+    do {
+        let boxes = try await connection.listBoxes()
+        let names = Dictionary(boxes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        func box(_ ref: String) -> Cocoonbox_Control_V1_Box {
+            guard let box = boxes.first(where: { $0.id == ref || $0.name == ref }) else { fail("you have no box \(ref)") }
+            return box
+        }
+        switch action {
+        case "set":
+            let target = box(args[1])
+            guard let cron = value(of: "--cron"), let tz = value(of: "--tz") else { fail(scheduleUsage) }
+            var awakeFor: UInt32 = 0
+            if let text = value(of: "--awake-for") {
+                guard let parsed = seconds(text) else { fail("--awake-for is a duration such as 90s, 15m or 1h") }
+                awakeFor = parsed
+            }
+            let schedule = try await connection.setWakeSchedule(boxID: target.id, cron: cron, tz: tz, awakeForSeconds: awakeFor)
+            json ? printJSON(scheduleObject(schedule, name: target.name)) : print(scheduleLine(schedule, name: target.name))
+        case "clear":
+            let target = box(args[1])
+            try await connection.clearWakeSchedule(boxID: target.id)
+            json ? printJSON(["box_id": target.id, "name": target.name, "cleared": true]) : print("cleared the wake schedule of \(target.name)")
+        default:
+            let schedules = try await connection.listWakeSchedules()
+            if json { return printJSON(["schedules": schedules.map { scheduleObject($0, name: names[$0.boxID] ?? "") }]) }
+            guard !schedules.isEmpty else { return print("no wake schedules") }
+            schedules.forEach { print(scheduleLine($0, name: names[$0.boxID] ?? "")) }
+        }
     } catch {
         fail(BoxConnection.describe(error))
     }
@@ -683,7 +755,7 @@ func positional(after sub: String) -> [String] {
     var rest = arguments.drop { $0 != sub }.dropFirst()[...]
     while let word = rest.first {
         rest = rest.dropFirst()
-        if ["--box", "--dir", "--endpoint", "--wait", "--kind", "--handover"].contains(word) {
+        if ["--box", "--dir", "--endpoint", "--wait", "--kind", "--handover", "--cron", "--tz", "--awake-for"].contains(word) {
             rest = rest.dropFirst()
         } else if !word.hasPrefix("--") {
             words.append(word)

@@ -79,6 +79,20 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         try await world.restorePaths(box: try await owned(request.boxID).id, snapshot: request.snapshotID, paths: request.paths)
     }
 
+    func setWakeSchedule(request: Cocoonbox_Control_V1_SetWakeScheduleRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_WakeSchedule {
+        try await world.setWakeSchedule(box: try await owned(request.boxID).id, request)
+    }
+
+    func listWakeSchedules(request: Cocoonbox_Control_V1_ListWakeSchedulesRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ListWakeSchedulesResponse {
+        let schedules = await world.wakeSchedules
+        return .with { $0.schedules = schedules }
+    }
+
+    func clearWakeSchedule(request: Cocoonbox_Control_V1_BoxRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_ClearWakeScheduleResponse {
+        try await world.clearWakeSchedule(box: try await owned(request.boxID).id)
+        return Cocoonbox_Control_V1_ClearWakeScheduleResponse()
+    }
+
     private func owned(_ boxID: String) async throws -> Cocoonbox_Control_V1_Box {
         guard let box = await world.box(boxID), box.id == boxID else { throw MockWorld.noBox }
         return box
