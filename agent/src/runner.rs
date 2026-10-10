@@ -32,13 +32,16 @@ const SHUTTING_DOWN: &str = "interrupted: the agent is shutting down";
 const NO_ANSWER: &str = "the model returned no answer";
 const TOOL_MARKUP: &str = "｜DSML｜";
 const ANNOUNCE_CHARS: usize = 80;
-const ANNOUNCE_LEADS: [&str; 2] = ["continu", "no response"];
+const NO_RESPONSE: &str = "no response";
+const ANNOUNCE_LEADS: [&str; 2] = ["continu", "继续"];
 const ANNOUNCE_PHRASES: [&str; 4] = [
     "i'll continu",
     "i’ll continu",
     "i will continu",
     "continuing.",
 ];
+const DONE_WORDS: [&str; 5] = ["done", "finished", "completed", "saved", "all"];
+const DONE_MARKS: [&str; 4] = ["完成", "已", "保存", "全部"];
 
 /// Shared state of `serve`: journal, tool dispatcher, model and per-agent queues.
 pub struct Runtime {
@@ -607,11 +610,11 @@ impl Runtime {
             let step = self.step(ctx, &req, "").await?;
             usage.add(step.usage);
             if step.calls.is_empty() {
-                if is_answer(&step.text) {
-                    return Ok(());
-                }
-                if nudged {
-                    return Err(NO_ANSWER.to_owned());
+                match ending(&step.text) {
+                    Ending::Answer => return Ok(()),
+                    Ending::Announcement if nudged => return Ok(()),
+                    _ if nudged => return Err(NO_ANSWER.to_owned()),
+                    _ => {}
                 }
                 nudged = true;
                 messages.push(Message::User(vec![Part::Text(
@@ -1035,8 +1038,15 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
-/// Whether a reply without a tool call is a final answer: not blank, not tool markup, not a bare announcement or closing tag.
-fn is_answer(text: &str) -> bool {
+#[derive(Debug, PartialEq)]
+enum Ending {
+    Answer,
+    Announcement,
+    Empty,
+}
+
+/// Sorts a reply without a tool call: a final answer, a bare announcement of more work, or empty (blank, tool markup, a lone closing tag, "no response").
+fn ending(text: &str) -> Ending {
     let text = text.trim();
     let last = text.lines().last().unwrap_or_default().trim();
     let closing_tag = last
@@ -1044,12 +1054,25 @@ fn is_answer(text: &str) -> bool {
         .and_then(|l| l.strip_suffix('>'))
         .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
     let lower = text.to_lowercase();
-    let announce = !text.contains('\n')
-        && !text.ends_with('?')
-        && text.chars().count() <= ANNOUNCE_CHARS
-        && (ANNOUNCE_LEADS.iter().any(|l| lower.starts_with(l))
-            || ANNOUNCE_PHRASES.iter().any(|p| lower.contains(p)));
-    !text.is_empty() && !text.contains(TOOL_MARKUP) && !closing_tag && !announce
+    let line = !text.contains('\n') && text.chars().count() <= ANNOUNCE_CHARS;
+    if text.is_empty()
+        || text.contains(TOOL_MARKUP)
+        || closing_tag
+        || (line && lower.starts_with(NO_RESPONSE))
+    {
+        return Ending::Empty;
+    }
+    let announces = ANNOUNCE_LEADS.iter().any(|l| lower.starts_with(l))
+        || ANNOUNCE_PHRASES.iter().any(|p| lower.contains(p));
+    let done = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| DONE_WORDS.contains(&w))
+        || DONE_MARKS.iter().any(|m| text.contains(m));
+    if line && !text.ends_with(['?', '？']) && announces && !done {
+        Ending::Announcement
+    } else {
+        Ending::Answer
+    }
 }
 
 /// The first non-blank line of `text`, trimmed and cut to [`TITLE_CHARS`] characters.
@@ -1161,19 +1184,24 @@ mod tests {
     }
 
     #[test]
-    fn is_answer_rejects_announcements_and_closing_tags() {
+    fn ending_sorts_answers_announcements_and_junk() {
         for reply in [
             "Continue with step 136.\n\n\n\n\n\n\n\n\n\n",
+            "I'll continue with the next steps.",
+            "Call 133/400 complete. Continuing.",
+            "继续第 64 步。",
+        ] {
+            assert_eq!(ending(reply), Ending::Announcement, "{reply}");
+        }
+        for reply in [
             "No response required.",
             "No response requested.",
-            "I'll continue with the next steps.",
-            "Step 80 done. Continuing.",
             "</output>",
             "Progress: 144 of 400 calls complete. The next required action is call 145.\n\n9. Optional Next Step:\n   I will continue one call per reply through `echo step 400`, then give the short closing answer.\n</summary>",
             "Continuing.</｜DSML｜ parameter>\n</｜DSML｜ invoke>\n</｜DSML｜ calls>",
             " \n ",
         ] {
-            assert!(!is_answer(reply), "{reply}");
+            assert_eq!(ending(reply), Ending::Empty, "{reply}");
         }
         for reply in [
             "已完成。用 Mousepad 文本编辑器新建文档，输入了三行内容，通过「另存为」保存到桌面为 fruit.txt。文件内容已确认：苹果 3 / 香蕉 5 / 橙子 2。",
@@ -1184,8 +1212,14 @@ mod tests {
             "Should I continue with the remaining 250 calls?",
             "Tell me to continue and I'll resume at step 41.",
             "```html\n<p>hi</p>\n</div>\n```",
+            "Continued and finished all 6 steps.",
+            "Step 80 done. Continuing.",
+            "Continue: the file is saved as notes.txt.",
+            "继续执行后已全部完成。",
+            "我将继续下一步",
+            "是否继续？",
         ] {
-            assert!(is_answer(reply), "{reply}");
+            assert_eq!(ending(reply), Ending::Answer, "{reply}");
         }
     }
 

@@ -1587,6 +1587,11 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
             ("chat/completions", chat_text("Listed.")),
             ("chat/completions", chat_text("No response required.")),
             ("chat/completions", chat_text("</output>")),
+            ("chat/completions", chat_text("Continue with step 3.")),
+            (
+                "chat/completions",
+                chat_text("I'll continue with the next steps."),
+            ),
         ],
         false,
     )
@@ -1615,6 +1620,18 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
     };
     assert_eq!(end.error, "the model returned no answer");
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
+    let repeated = create_agent(&mut agents).await;
+    send(&mut agents, &repeated, "go on", "").await;
+    let entries = wait_turn_end(&mut agents, &repeated).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let last = entries.iter().rev().find_map(|e| match &e.body {
+        Some(Body::Text(t)) => Some(t.text.as_str()),
+        _ => None,
+    });
+    assert_eq!(last, Some("I'll continue with the next steps."));
+    assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 7);
 }
 
 #[tokio::test]
