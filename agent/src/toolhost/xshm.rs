@@ -495,13 +495,11 @@ impl Grabber {
         )
     }
 
-    /// The top drawn child of the root at the screen point `(x, y)`.
+    /// The top drawn child of the root at the screen point `(x, y)`, past a cua-driver cursor overlay, which input passes through.
     pub fn top_at(&self, x: i32, y: i32) -> Result<Option<Placement>, String> {
-        Ok(self
-            .children(true)?
-            .into_iter()
-            .rev()
-            .find(|p| p.drawn && p.contains(x, y)))
+        Ok(self.children(true)?.into_iter().rev().find(|p| {
+            p.drawn && p.contains(x, y) && !self.name(p.id).as_bytes().starts_with(OVERLAY_NAME)
+        }))
     }
 
     /// The child of the root that holds window `w`: its window manager frame, or `w` itself.
