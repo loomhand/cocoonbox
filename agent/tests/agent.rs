@@ -4141,13 +4141,13 @@ async fn pixel_double_and_right_clicks_are_desktop_clicks() {
 }
 
 #[tokio::test]
-async fn non_ascii_text_is_typed_one_character_per_call() {
+async fn non_ascii_text_is_typed_in_calls_of_at_most_eight_distinct_characters() {
     let h = Harness::start(Vec::new(), false).await;
     let mut mcp = McpClient::connect(&h).await;
     let out = mcp
         .call(
             "computer_act",
-            json!({"action": "type", "text": "hi — 你好 🙂"}),
+            json!({"action": "type", "text": "hi — 你好 🙂 一二三四五六七"}),
         )
         .await;
     assert_eq!(out["isError"], false, "{out}");
@@ -4162,7 +4162,7 @@ async fn non_ascii_text_is_typed_one_character_per_call() {
         })
         .collect();
     let texts: Vec<&str> = typed.iter().map(|t| t.0.as_str()).collect();
-    assert_eq!(texts, ["hi ", "—", " ", "你", "好", " ", "🙂"]);
+    assert_eq!(texts, ["hi — 你好 🙂 一二三四", "五六七"]);
     assert!(typed.iter().all(|t| t.1 == 42 && t.2 == 7), "{typed:?}");
     let ascii = mcp
         .call(
@@ -4171,7 +4171,7 @@ async fn non_ascii_text_is_typed_one_character_per_call() {
         )
         .await;
     assert_eq!(ascii["isError"], false);
-    assert_eq!(driver_calls(&h, "type_text").len(), 8);
+    assert_eq!(driver_calls(&h, "type_text").len(), 3);
 }
 
 #[tokio::test]
