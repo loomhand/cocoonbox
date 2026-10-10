@@ -15,8 +15,8 @@ JS_SHA256=cc097f97aeb274f67254eee18ca4c1424a4a930c3370a6473923fff597e9a72a
 JS_ARTIFACT=script-js-3b2fadc-linux-x64.tgz
 JS_URL="https://github.com/vendor/script-js-cmgs/releases/download/${JS_RELEASE}/${JS_ARTIFACT}"
 # CMGS/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh brings it in as vendor/
-CUA_VERSION=0.34.0-cmgs.2
-CUA_SHA256=08cde2f87c945602eaeed762929c3d3b3938e7cc1b864c5014014dc9871bb8f0
+CUA_VERSION=0.34.0-cmgs.4
+CUA_SHA256=bef2d1a30099df7a37f99b261cbe67b0f9c38bd763eb3b3da58baab613f1f864
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
 ROOT=/opt/script
 PRESS="require('$ROOT/lib/press.cjs')(module.exports)"
