@@ -7,8 +7,8 @@ set -euo pipefail
 export LC_ALL=C
 
 REPO=https://github.com/CMGS/cua.git
-COMMIT=${COMMIT:-e08dbbe487f8ec4a7ac066953f0f7569427f8406}
-VERSION=${VERSION:-0.34.0-cmgs.4}
+COMMIT=${COMMIT:-275de4cecfce355aafdbc3de8223930a04c1270c}
+VERSION=${VERSION:-0.34.0-cmgs.5}
 UPSTREAM_SHA256=8851c028e5d88a3b779ad2a8d49ed6f4b92aa94de2edf5c2851cee63bcc274c5
 UPSTREAM_URL=https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.34.0/cua-driver-rs-0.34.0-linux-x86_64.tar.gz
 DEBIAN=sha256:c0a2ad73611131275b0e9a2e7544cfe3725f4268d4085d8c6f61fdd55aef7917

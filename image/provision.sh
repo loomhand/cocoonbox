@@ -4,9 +4,9 @@
 set -euo pipefail
 
 # CMGS/cua cmgs/x11-typing, built by script/cua-driver.sh; cut.sh -p brings it in as vendor/
-CUA_COMMIT=e08dbbe487f8ec4a7ac066953f0f7569427f8406
-CUA_VERSION=0.34.0-cmgs.4
-CUA_SHA256=bef2d1a30099df7a37f99b261cbe67b0f9c38bd763eb3b3da58baab613f1f864
+CUA_COMMIT=275de4cecfce355aafdbc3de8223930a04c1270c
+CUA_VERSION=0.34.0-cmgs.5
+CUA_SHA256=333c5462fd360c59112469e5714373e08cbc8b9184776afa16f744dfdd2f0823
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
 MISE_VERSION=2026.10.0
 MISE_SHA256=6ae3d2bda39cca86713501317edf623b59b75cd8afa2e31c20b1ee6500b4b739
