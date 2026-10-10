@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	"github.com/CMGS/cocoonbox/api/credential"
+	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
@@ -151,9 +152,11 @@ func (s *Service) agentContext(ctx context.Context, m machines.Machine) context.
 	return metadata.AppendToOutgoingContext(ctx, credential.Header, s.provision.signer.Credential(boxOfMachine(m.ID), wake))
 }
 
-// ready reports whether clients may reach m: running, not being restored and, with provisioning on, provisioned for this incarnation.
+// ready reports whether clients may reach m: running, not being restored or parked and, with provisioning on, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
-	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && !s.restoring(boxOfMachine(m.ID))
+	active := s.ops.activeFor(boxOfMachine(m.ID))
+	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") &&
+		(active == nil || (active.phase != controlv1.Phase_PHASE_RESTORING && !active.park))
 }
 
 // provisioner writes each machine's identity file on every boot and its gw key on first boot.

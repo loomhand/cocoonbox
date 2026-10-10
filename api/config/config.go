@@ -22,6 +22,7 @@ const (
 	defaultAgentPort = 7443
 
 	defaultStateInterval = 15 * time.Minute
+	defaultParkAfter     = 24 * time.Hour
 	defaultPresignTTL    = 10 * time.Minute
 	defaultRegion        = "us-east-1"
 	maxDeleteBatch       = 1000
@@ -73,6 +74,8 @@ type State struct {
 	Interval        Duration `json:"interval"`
 	PresignTTL      Duration `json:"presign_ttl"`
 	GC              GC       `json:"gc"`
+	// ParkAfter parks a box hibernated this long: its machine and memory image go, and the next Ensure restores its saved state; "0s" turns parking off.
+	ParkAfter *Duration `json:"park_after"`
 	// DeltaUsers are the user ids whose saves write delta records (design §25.8); empty writes only full ones.
 	DeltaUsers []string `json:"delta_users"`
 }
@@ -228,6 +231,9 @@ func (c *Config) applyDefaults() {
 	c.State.Interval = cmp.Or(c.State.Interval, Duration(defaultStateInterval))
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
+	if c.State.ParkAfter == nil {
+		c.State.ParkAfter = new(Duration(defaultParkAfter))
+	}
 	c.MaxRunningBoxes = cmp.Or(c.MaxRunningBoxes, defaultMaxRunning)
 	c.Wake.MaxSchedules = cmp.Or(c.Wake.MaxSchedules, defaultWakeSchedules)
 	c.Wake.Floor = cmp.Or(c.Wake.Floor, Duration(defaultWakeFloor))
@@ -260,6 +266,9 @@ func (c *Config) validate() error {
 	}
 	if c.State.GC.Interval < 0 || (c.State.GC.Interval > 0 && c.State.Bucket == "") {
 		errs = append(errs, errors.New("state.gc.interval must not be negative and needs state.bucket"))
+	}
+	if *c.State.ParkAfter < 0 {
+		errs = append(errs, fmt.Errorf("state.park_after must not be negative, got %s", time.Duration(*c.State.ParkAfter)))
 	}
 	if c.State.GC.DeleteBatch < 1 || c.State.GC.DeleteBatch > maxDeleteBatch {
 		errs = append(errs, fmt.Errorf("state.gc.delete_batch must be in 1..%d, got %d", maxDeleteBatch, c.State.GC.DeleteBatch))

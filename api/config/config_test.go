@@ -35,6 +35,16 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Wake != (Wake{MaxSchedules: 3, Floor: Duration(time.Hour), MaxAwakeFor: Duration(time.Hour)}) {
 		t.Errorf("wake = %+v, want 3 schedules, a 1h floor and 1h awake at most", cfg.Wake)
 	}
+	if *cfg.State.ParkAfter != Duration(24*time.Hour) {
+		t.Errorf("park after = %s, want 24h", time.Duration(*cfg.State.ParkAfter))
+	}
+}
+
+func TestLoadParkingOff(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"state:\n  park_after: 0s\n"))
+	if err != nil || *cfg.State.ParkAfter != 0 {
+		t.Errorf("Load = %v, %v, want parking off", cfg.State.ParkAfter, err)
+	}
 }
 
 func TestLoadTheBoxDoor(t *testing.T) {
@@ -74,6 +84,7 @@ func TestLoadRejects(t *testing.T) {
 		{name: "box door without connect", body: required + "connect:\n  box_listen: 10.203.0.1:18091\n", want: "connect.box_listen must be an ip:port of one address"},
 		{name: "negative wake floor", body: required + "wake:\n  floor: -1h\n", want: "wake.max_schedules and wake.floor must not be negative"},
 		{name: "wake awake under a minute", body: required + "wake:\n  max_awake_for: 30s\n", want: "wake.max_awake_for must be at least 1m"},
+		{name: "negative park after", body: required + "state:\n  park_after: -1h\n", want: "state.park_after must not be negative"},
 		{name: "relative cua meter", body: required + "cua_meter_file: cua-meter.jsonl\n", want: "cua_meter_file must be an absolute path"},
 	}
 	for _, tt := range tests {

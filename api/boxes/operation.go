@@ -28,9 +28,11 @@ type operation struct {
 	user  string
 	boxID string
 	phase controlv1.Phase
-	gen   int64
-	ctx   context.Context
-	stop  context.CancelFunc
+	// park marks the sweep's save and removal of a hibernated machine, which any client call supersedes.
+	park bool
+	gen  int64
+	ctx  context.Context
+	stop context.CancelFunc
 
 	mu         sync.Mutex
 	events     []*controlv1.OperationEvent
@@ -150,21 +152,26 @@ func newOperations() *operations {
 
 // start returns the running operation of the same phase on boxID, or supersedes whatever runs there with a new one of user whose context derives from base.
 func (r *operations) start(base context.Context, user, boxID string, phase controlv1.Phase, gen int64, timeout time.Duration) (*operation, bool) {
+	return r.begin(base, &operation{user: user, boxID: boxID, phase: phase, gen: gen}, timeout)
+}
+
+// begin returns the running operation of op's phase and kind on its box, or supersedes whatever runs there with op, whose context derives from base.
+func (r *operations) begin(base context.Context, op *operation, timeout time.Duration) (*operation, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sweepLocked()
-	if cur := r.active[boxID]; cur != nil {
-		if _, done := cur.finished(); !done && cur.phase == phase {
+	if cur := r.active[op.boxID]; cur != nil {
+		if _, done := cur.finished(); !done && cur.phase == op.phase && cur.park == op.park {
 			return cur, false
 		}
 	}
-	op := &operation{id: rand.Text(), user: user, boxID: boxID, phase: phase, gen: gen, changed: make(chan struct{})}
+	op.id, op.changed = rand.Text(), make(chan struct{})
 	op.ctx, op.stop = context.WithTimeout(base, timeout)
-	if cur := r.active[boxID]; cur != nil {
+	if cur := r.active[op.boxID]; cur != nil {
 		cur.fail("superseded by operation " + op.id)
 	}
 	r.byID[op.id] = op
-	r.active[boxID] = op
+	r.active[op.boxID] = op
 	return op, true
 }
 

@@ -475,14 +475,15 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 	}
 }
 
-func TestEnsureRestoresAMissingMachineIntoItsImageFamily(t *testing.T) {
+func TestEnsureRestoresAMissingMachineOntoItsImageOrItsFamily(t *testing.T) {
 	tests := []struct {
 		name, image string
 		legacyHead  bool
 		want        string
 	}{
-		{"cbplan box", "cbplan:v6", false, "cbplan:v7"},
-		{"cbdesk box", "cbdesk:v22", false, "cbdesk:v25"},
+		{"cbplan box on an offered image", "cbplan:v6", false, "cbplan:v6"},
+		{"cbplan box on a retired image", "cbplan:v5", false, "cbplan:v7"},
+		{"cbdesk box on a retired image", "cbdesk:v22", false, "cbdesk:v25"},
 		{"head without an image", "cbplan:v6", true, "cbdesk:v25"},
 	}
 	for _, tt := range tests {

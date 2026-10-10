@@ -47,6 +47,14 @@ func (d Defaults) offered(ref string) (string, bool) {
 	return latest, strings.HasPrefix(latest, ref+":")
 }
 
+// kept returns image while it is offered, else the newest image of its family.
+func (d Defaults) kept(image string) string {
+	if offered, ok := d.offered(image); ok {
+		return offered
+	}
+	return d.latest(image)
+}
+
 // latest is the newest image of image's family (the name before ':'): the default image for its family, else the first rebase image of that family.
 func (d Defaults) latest(image string) string {
 	family, _, _ := strings.Cut(image, ":")
@@ -84,6 +92,7 @@ type Service struct {
 	accounts  Accounts
 	connect   Connect
 	wake      *wakeAlarms
+	park      *parking
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex
@@ -132,7 +141,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	}
 	var saved head
 	cur, ok := current[box]
-	if !ok || !holdsMemory(cur) {
+	if !ok || !holdsMemory(cur) || s.parking(box) {
 		if err = s.checkRunning(user, box, current); err != nil {
 			return nil, err
 		}
@@ -152,7 +161,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 			return nil, serviceError(ctx, logger, err, "read saved state")
 		}
 		if saved.Latest != "" {
-			spec.ID, spec.Image = newMachineID(box), s.defaults.latest(saved.Image)
+			spec.ID, spec.Image = newMachineID(box), s.defaults.kept(saved.Image)
 		}
 	}
 	m, action, err := s.machines.Ensure(ctx, spec)
@@ -226,10 +235,12 @@ func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*contro
 	switch {
 	case s.restoring(box):
 		return nil, status.Error(codes.FailedPrecondition, "box is being restored from its saved state")
+	case s.parking(box):
+		return nil, status.Error(codes.FailedPrecondition, "box is being parked")
 	case s.deleting(box):
 		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")
 	}
-	m, err := s.machines.Hibernate(ctx, cur.ID)
+	m, err := s.sleep(ctx, cur.ID)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "hibernate box")
 	}
@@ -348,11 +359,11 @@ func (s *Service) firstBox(ctx context.Context, user string) (string, error) {
 	return b.ID, nil
 }
 
-// checkRunning refuses to start box while other boxes of user hold the user's running limit.
+// checkRunning refuses to start box while other boxes of user hold the user's running limit; a box being parked holds none.
 func (s *Service) checkRunning(user, box string, current map[string]machines.Machine) error {
 	var running []string
 	for id, m := range current {
-		if id != box && holdsMemory(m) {
+		if id != box && holdsMemory(m) && !s.parking(id) {
 			running = append(running, id)
 		}
 	}
