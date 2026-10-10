@@ -530,7 +530,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     tick('enable', t0)
     if (!on) throw new Surprise(`${rec.ref} is disabled`, seen())
   }
-  if (s.click && hit.how.startsWith('jev') && TOGGLES.split('|').includes(hit.n.role))
+  if (s.click && hit.how !== 'fp' && norm(hit.n.name) !== norm(target) && TOGGLES.split('|').includes(hit.n.role))
     throw new Surprise(`"${target}" is closest to ${hit.n.role} "${hit.n.name}" (${hit.how}), and a click would flip it; use {check: "${hit.n.name}", on: ...} for it, or name the element you mean exactly`, seen())
   if (s.click && hit.n.role === 'menuitem') { await choose(snap, nodes, hit.n, rec, true); await settle(w.title); return }
   if (s.click) { act(snap, hit.n); await settle(w.title); return }
