@@ -691,6 +691,9 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   let escalate: Record<string, unknown> | null = null; let done = plan.length
   const bad = plan.findIndex((s) => OPS.filter((k) => k in s).length !== 1)
   if (bad >= 0) return { ok: false, done: 0, ms: 0, trace, escalate: { step: bad, plan_step: plan[bad], reason: `step ${bad} needs exactly one op of ${OPS.join(', ')}; nothing ran` } }
+  const unfilled = (s: Step) => Object.values(s).flatMap((v) => typeof v === 'string' ? [...v.matchAll(/\{\{(\w+)(?::base)?\}\}/g)].map((x) => x[1]) : []).find((n) => params[n] === undefined)
+  const gap = plan.findIndex((s, i) => i >= (p.start ?? 0) && unfilled(s))
+  if (gap >= 0) return { ok: false, done: 0, ms: 0, trace, escalate: { step: gap, plan_step: plan[gap], reason: `no value for {{${unfilled(plan[gap])}}}: pass it in params; nothing ran` } }
   for (let i = p.start ?? 0; i < plan.length; i++) {
     const s = fill(plan[i], params); T = {}; const rec: Record<string, unknown> = { i, op: OPS.find((k) => k in s) }
     const ts = Date.now()
