@@ -1405,6 +1405,279 @@ func (x *RestorePathsRequest) GetPaths() []string {
 	return nil
 }
 
+type WakeSchedule struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	BoxId string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
+	// Five fields: minute, hour, day of month, month, day of week.
+	Cron string `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`
+	// IANA zone name of cron, such as Asia/Singapore.
+	Tz        string `protobuf:"bytes,3,opt,name=tz,proto3" json:"tz,omitempty"`
+	AwakeForS uint32 `protobuf:"varint,4,opt,name=awake_for_s,json=awakeForS,proto3" json:"awake_for_s,omitempty"`
+	// The next time of cron; the wake comes a minute before it.
+	NextAtMs int64 `protobuf:"varint,5,opt,name=next_at_ms,json=nextAtMs,proto3" json:"next_at_ms,omitempty"`
+	// The latest wake of this schedule from hibernation; 0 before the first.
+	LastWakeAtMs  int64 `protobuf:"varint,6,opt,name=last_wake_at_ms,json=lastWakeAtMs,proto3" json:"last_wake_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WakeSchedule) Reset() {
+	*x = WakeSchedule{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WakeSchedule) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WakeSchedule) ProtoMessage() {}
+
+func (x *WakeSchedule) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WakeSchedule.ProtoReflect.Descriptor instead.
+func (*WakeSchedule) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *WakeSchedule) GetBoxId() string {
+	if x != nil {
+		return x.BoxId
+	}
+	return ""
+}
+
+func (x *WakeSchedule) GetCron() string {
+	if x != nil {
+		return x.Cron
+	}
+	return ""
+}
+
+func (x *WakeSchedule) GetTz() string {
+	if x != nil {
+		return x.Tz
+	}
+	return ""
+}
+
+func (x *WakeSchedule) GetAwakeForS() uint32 {
+	if x != nil {
+		return x.AwakeForS
+	}
+	return 0
+}
+
+func (x *WakeSchedule) GetNextAtMs() int64 {
+	if x != nil {
+		return x.NextAtMs
+	}
+	return 0
+}
+
+func (x *WakeSchedule) GetLastWakeAtMs() int64 {
+	if x != nil {
+		return x.LastWakeAtMs
+	}
+	return 0
+}
+
+type SetWakeScheduleRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	BoxId string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
+	Cron  string                 `protobuf:"bytes,2,opt,name=cron,proto3" json:"cron,omitempty"`
+	Tz    string                 `protobuf:"bytes,3,opt,name=tz,proto3" json:"tz,omitempty"`
+	// 0 selects the default, 15 minutes.
+	AwakeForS     uint32 `protobuf:"varint,4,opt,name=awake_for_s,json=awakeForS,proto3" json:"awake_for_s,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetWakeScheduleRequest) Reset() {
+	*x = SetWakeScheduleRequest{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetWakeScheduleRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetWakeScheduleRequest) ProtoMessage() {}
+
+func (x *SetWakeScheduleRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetWakeScheduleRequest.ProtoReflect.Descriptor instead.
+func (*SetWakeScheduleRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *SetWakeScheduleRequest) GetBoxId() string {
+	if x != nil {
+		return x.BoxId
+	}
+	return ""
+}
+
+func (x *SetWakeScheduleRequest) GetCron() string {
+	if x != nil {
+		return x.Cron
+	}
+	return ""
+}
+
+func (x *SetWakeScheduleRequest) GetTz() string {
+	if x != nil {
+		return x.Tz
+	}
+	return ""
+}
+
+func (x *SetWakeScheduleRequest) GetAwakeForS() uint32 {
+	if x != nil {
+		return x.AwakeForS
+	}
+	return 0
+}
+
+type ListWakeSchedulesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWakeSchedulesRequest) Reset() {
+	*x = ListWakeSchedulesRequest{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWakeSchedulesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWakeSchedulesRequest) ProtoMessage() {}
+
+func (x *ListWakeSchedulesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWakeSchedulesRequest.ProtoReflect.Descriptor instead.
+func (*ListWakeSchedulesRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{22}
+}
+
+type ListWakeSchedulesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Schedules     []*WakeSchedule        `protobuf:"bytes,1,rep,name=schedules,proto3" json:"schedules,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListWakeSchedulesResponse) Reset() {
+	*x = ListWakeSchedulesResponse{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListWakeSchedulesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListWakeSchedulesResponse) ProtoMessage() {}
+
+func (x *ListWakeSchedulesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListWakeSchedulesResponse.ProtoReflect.Descriptor instead.
+func (*ListWakeSchedulesResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ListWakeSchedulesResponse) GetSchedules() []*WakeSchedule {
+	if x != nil {
+		return x.Schedules
+	}
+	return nil
+}
+
+type ClearWakeScheduleResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ClearWakeScheduleResponse) Reset() {
+	*x = ClearWakeScheduleResponse{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClearWakeScheduleResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClearWakeScheduleResponse) ProtoMessage() {}
+
+func (x *ClearWakeScheduleResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClearWakeScheduleResponse.ProtoReflect.Descriptor instead.
+func (*ClearWakeScheduleResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{24}
+}
+
 var File_cocoonbox_control_v1_boxes_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
@@ -1495,7 +1768,24 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x1f\n" +
 	"\vsnapshot_id\x18\x02 \x01(\tR\n" +
 	"snapshotId\x12\x14\n" +
-	"\x05paths\x18\x03 \x03(\tR\x05paths*\x9f\x01\n" +
+	"\x05paths\x18\x03 \x03(\tR\x05paths\"\xae\x01\n" +
+	"\fWakeSchedule\x12\x15\n" +
+	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x12\n" +
+	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x0e\n" +
+	"\x02tz\x18\x03 \x01(\tR\x02tz\x12\x1e\n" +
+	"\vawake_for_s\x18\x04 \x01(\rR\tawakeForS\x12\x1c\n" +
+	"\n" +
+	"next_at_ms\x18\x05 \x01(\x03R\bnextAtMs\x12%\n" +
+	"\x0flast_wake_at_ms\x18\x06 \x01(\x03R\flastWakeAtMs\"s\n" +
+	"\x16SetWakeScheduleRequest\x12\x15\n" +
+	"\x06box_id\x18\x01 \x01(\tR\x05boxId\x12\x12\n" +
+	"\x04cron\x18\x02 \x01(\tR\x04cron\x12\x0e\n" +
+	"\x02tz\x18\x03 \x01(\tR\x02tz\x12\x1e\n" +
+	"\vawake_for_s\x18\x04 \x01(\rR\tawakeForS\"\x1a\n" +
+	"\x18ListWakeSchedulesRequest\"]\n" +
+	"\x19ListWakeSchedulesResponse\x12@\n" +
+	"\tschedules\x18\x01 \x03(\v2\".cocoonbox.control.v1.WakeScheduleR\tschedules\"\x1b\n" +
+	"\x19ClearWakeScheduleResponse*\x9f\x01\n" +
 	"\bBoxState\x12\x19\n" +
 	"\x15BOX_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12BOX_STATE_STARTING\x10\x01\x12\x15\n" +
@@ -1519,7 +1809,7 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x16ENTRY_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fENTRY_KIND_FILE\x10\x01\x12\x12\n" +
 	"\x0eENTRY_KIND_DIR\x10\x02\x12\x16\n" +
-	"\x12ENTRY_KIND_SYMLINK\x10\x032\xde\b\n" +
+	"\x12ENTRY_KIND_SYMLINK\x10\x032\x9d\v\n" +
 	"\x05Boxes\x12S\n" +
 	"\x06Ensure\x12#.cocoonbox.control.v1.EnsureRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12V\n" +
 	"\x06Create\x12&.cocoonbox.control.v1.CreateBoxRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12K\n" +
@@ -1533,7 +1823,10 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x06Rebase\x12#.cocoonbox.control.v1.RebaseRequest\x1a\x1f.cocoonbox.control.v1.Operation\x12Z\n" +
 	"\rListSnapshots\x12\x1c.cocoonbox.control.v1.BoxRef\x1a+.cocoonbox.control.v1.ListSnapshotsResponse\x12k\n" +
 	"\x0eBrowseSnapshot\x12+.cocoonbox.control.v1.BrowseSnapshotRequest\x1a,.cocoonbox.control.v1.BrowseSnapshotResponse\x12Z\n" +
-	"\fRestorePaths\x12).cocoonbox.control.v1.RestorePathsRequest\x1a\x1f.cocoonbox.control.v1.OperationBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\fRestorePaths\x12).cocoonbox.control.v1.RestorePathsRequest\x1a\x1f.cocoonbox.control.v1.Operation\x12c\n" +
+	"\x0fSetWakeSchedule\x12,.cocoonbox.control.v1.SetWakeScheduleRequest\x1a\".cocoonbox.control.v1.WakeSchedule\x12t\n" +
+	"\x11ListWakeSchedules\x12..cocoonbox.control.v1.ListWakeSchedulesRequest\x1a/.cocoonbox.control.v1.ListWakeSchedulesResponse\x12b\n" +
+	"\x11ClearWakeSchedule\x12\x1c.cocoonbox.control.v1.BoxRef\x1a/.cocoonbox.control.v1.ClearWakeScheduleResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_boxes_proto_rawDescOnce sync.Once
@@ -1548,31 +1841,36 @@ func file_cocoonbox_control_v1_boxes_proto_rawDescGZIP() []byte {
 }
 
 var file_cocoonbox_control_v1_boxes_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
-	(BoxState)(0),                  // 0: cocoonbox.control.v1.BoxState
-	(Phase)(0),                     // 1: cocoonbox.control.v1.Phase
-	(EntryKind)(0),                 // 2: cocoonbox.control.v1.EntryKind
-	(*BoxRef)(nil),                 // 3: cocoonbox.control.v1.BoxRef
-	(*Flavor)(nil),                 // 4: cocoonbox.control.v1.Flavor
-	(*Box)(nil),                    // 5: cocoonbox.control.v1.Box
-	(*Operation)(nil),              // 6: cocoonbox.control.v1.Operation
-	(*EnsureRequest)(nil),          // 7: cocoonbox.control.v1.EnsureRequest
-	(*CreateBoxRequest)(nil),       // 8: cocoonbox.control.v1.CreateBoxRequest
-	(*RenameBoxRequest)(nil),       // 9: cocoonbox.control.v1.RenameBoxRequest
-	(*EnsureResponse)(nil),         // 10: cocoonbox.control.v1.EnsureResponse
-	(*RebaseRequest)(nil),          // 11: cocoonbox.control.v1.RebaseRequest
-	(*GetBoxRequest)(nil),          // 12: cocoonbox.control.v1.GetBoxRequest
-	(*ListBoxesRequest)(nil),       // 13: cocoonbox.control.v1.ListBoxesRequest
-	(*ListBoxesResponse)(nil),      // 14: cocoonbox.control.v1.ListBoxesResponse
-	(*WatchOperationRequest)(nil),  // 15: cocoonbox.control.v1.WatchOperationRequest
-	(*OperationEvent)(nil),         // 16: cocoonbox.control.v1.OperationEvent
-	(*Snapshot)(nil),               // 17: cocoonbox.control.v1.Snapshot
-	(*ListSnapshotsResponse)(nil),  // 18: cocoonbox.control.v1.ListSnapshotsResponse
-	(*BrowseSnapshotRequest)(nil),  // 19: cocoonbox.control.v1.BrowseSnapshotRequest
-	(*SnapshotEntry)(nil),          // 20: cocoonbox.control.v1.SnapshotEntry
-	(*BrowseSnapshotResponse)(nil), // 21: cocoonbox.control.v1.BrowseSnapshotResponse
-	(*RestorePathsRequest)(nil),    // 22: cocoonbox.control.v1.RestorePathsRequest
+	(BoxState)(0),                     // 0: cocoonbox.control.v1.BoxState
+	(Phase)(0),                        // 1: cocoonbox.control.v1.Phase
+	(EntryKind)(0),                    // 2: cocoonbox.control.v1.EntryKind
+	(*BoxRef)(nil),                    // 3: cocoonbox.control.v1.BoxRef
+	(*Flavor)(nil),                    // 4: cocoonbox.control.v1.Flavor
+	(*Box)(nil),                       // 5: cocoonbox.control.v1.Box
+	(*Operation)(nil),                 // 6: cocoonbox.control.v1.Operation
+	(*EnsureRequest)(nil),             // 7: cocoonbox.control.v1.EnsureRequest
+	(*CreateBoxRequest)(nil),          // 8: cocoonbox.control.v1.CreateBoxRequest
+	(*RenameBoxRequest)(nil),          // 9: cocoonbox.control.v1.RenameBoxRequest
+	(*EnsureResponse)(nil),            // 10: cocoonbox.control.v1.EnsureResponse
+	(*RebaseRequest)(nil),             // 11: cocoonbox.control.v1.RebaseRequest
+	(*GetBoxRequest)(nil),             // 12: cocoonbox.control.v1.GetBoxRequest
+	(*ListBoxesRequest)(nil),          // 13: cocoonbox.control.v1.ListBoxesRequest
+	(*ListBoxesResponse)(nil),         // 14: cocoonbox.control.v1.ListBoxesResponse
+	(*WatchOperationRequest)(nil),     // 15: cocoonbox.control.v1.WatchOperationRequest
+	(*OperationEvent)(nil),            // 16: cocoonbox.control.v1.OperationEvent
+	(*Snapshot)(nil),                  // 17: cocoonbox.control.v1.Snapshot
+	(*ListSnapshotsResponse)(nil),     // 18: cocoonbox.control.v1.ListSnapshotsResponse
+	(*BrowseSnapshotRequest)(nil),     // 19: cocoonbox.control.v1.BrowseSnapshotRequest
+	(*SnapshotEntry)(nil),             // 20: cocoonbox.control.v1.SnapshotEntry
+	(*BrowseSnapshotResponse)(nil),    // 21: cocoonbox.control.v1.BrowseSnapshotResponse
+	(*RestorePathsRequest)(nil),       // 22: cocoonbox.control.v1.RestorePathsRequest
+	(*WakeSchedule)(nil),              // 23: cocoonbox.control.v1.WakeSchedule
+	(*SetWakeScheduleRequest)(nil),    // 24: cocoonbox.control.v1.SetWakeScheduleRequest
+	(*ListWakeSchedulesRequest)(nil),  // 25: cocoonbox.control.v1.ListWakeSchedulesRequest
+	(*ListWakeSchedulesResponse)(nil), // 26: cocoonbox.control.v1.ListWakeSchedulesResponse
+	(*ClearWakeScheduleResponse)(nil), // 27: cocoonbox.control.v1.ClearWakeScheduleResponse
 }
 var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	0,  // 0: cocoonbox.control.v1.Box.state:type_name -> cocoonbox.control.v1.BoxState
@@ -1587,37 +1885,44 @@ var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	17, // 9: cocoonbox.control.v1.ListSnapshotsResponse.snapshots:type_name -> cocoonbox.control.v1.Snapshot
 	2,  // 10: cocoonbox.control.v1.SnapshotEntry.kind:type_name -> cocoonbox.control.v1.EntryKind
 	20, // 11: cocoonbox.control.v1.BrowseSnapshotResponse.entries:type_name -> cocoonbox.control.v1.SnapshotEntry
-	7,  // 12: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
-	8,  // 13: cocoonbox.control.v1.Boxes.Create:input_type -> cocoonbox.control.v1.CreateBoxRequest
-	9,  // 14: cocoonbox.control.v1.Boxes.Rename:input_type -> cocoonbox.control.v1.RenameBoxRequest
-	3,  // 15: cocoonbox.control.v1.Boxes.Delete:input_type -> cocoonbox.control.v1.BoxRef
-	12, // 16: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
-	13, // 17: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
-	3,  // 18: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
-	15, // 19: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
-	3,  // 20: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
-	11, // 21: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
-	3,  // 22: cocoonbox.control.v1.Boxes.ListSnapshots:input_type -> cocoonbox.control.v1.BoxRef
-	19, // 23: cocoonbox.control.v1.Boxes.BrowseSnapshot:input_type -> cocoonbox.control.v1.BrowseSnapshotRequest
-	22, // 24: cocoonbox.control.v1.Boxes.RestorePaths:input_type -> cocoonbox.control.v1.RestorePathsRequest
-	10, // 25: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
-	10, // 26: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
-	5,  // 27: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
-	6,  // 28: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
-	5,  // 29: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
-	14, // 30: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
-	6,  // 31: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
-	16, // 32: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
-	6,  // 33: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
-	6,  // 34: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
-	18, // 35: cocoonbox.control.v1.Boxes.ListSnapshots:output_type -> cocoonbox.control.v1.ListSnapshotsResponse
-	21, // 36: cocoonbox.control.v1.Boxes.BrowseSnapshot:output_type -> cocoonbox.control.v1.BrowseSnapshotResponse
-	6,  // 37: cocoonbox.control.v1.Boxes.RestorePaths:output_type -> cocoonbox.control.v1.Operation
-	25, // [25:38] is the sub-list for method output_type
-	12, // [12:25] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	23, // 12: cocoonbox.control.v1.ListWakeSchedulesResponse.schedules:type_name -> cocoonbox.control.v1.WakeSchedule
+	7,  // 13: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
+	8,  // 14: cocoonbox.control.v1.Boxes.Create:input_type -> cocoonbox.control.v1.CreateBoxRequest
+	9,  // 15: cocoonbox.control.v1.Boxes.Rename:input_type -> cocoonbox.control.v1.RenameBoxRequest
+	3,  // 16: cocoonbox.control.v1.Boxes.Delete:input_type -> cocoonbox.control.v1.BoxRef
+	12, // 17: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
+	13, // 18: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
+	3,  // 19: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
+	15, // 20: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
+	3,  // 21: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
+	11, // 22: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
+	3,  // 23: cocoonbox.control.v1.Boxes.ListSnapshots:input_type -> cocoonbox.control.v1.BoxRef
+	19, // 24: cocoonbox.control.v1.Boxes.BrowseSnapshot:input_type -> cocoonbox.control.v1.BrowseSnapshotRequest
+	22, // 25: cocoonbox.control.v1.Boxes.RestorePaths:input_type -> cocoonbox.control.v1.RestorePathsRequest
+	24, // 26: cocoonbox.control.v1.Boxes.SetWakeSchedule:input_type -> cocoonbox.control.v1.SetWakeScheduleRequest
+	25, // 27: cocoonbox.control.v1.Boxes.ListWakeSchedules:input_type -> cocoonbox.control.v1.ListWakeSchedulesRequest
+	3,  // 28: cocoonbox.control.v1.Boxes.ClearWakeSchedule:input_type -> cocoonbox.control.v1.BoxRef
+	10, // 29: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
+	10, // 30: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
+	5,  // 31: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
+	6,  // 32: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
+	5,  // 33: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
+	14, // 34: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
+	6,  // 35: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
+	16, // 36: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
+	6,  // 37: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
+	6,  // 38: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
+	18, // 39: cocoonbox.control.v1.Boxes.ListSnapshots:output_type -> cocoonbox.control.v1.ListSnapshotsResponse
+	21, // 40: cocoonbox.control.v1.Boxes.BrowseSnapshot:output_type -> cocoonbox.control.v1.BrowseSnapshotResponse
+	6,  // 41: cocoonbox.control.v1.Boxes.RestorePaths:output_type -> cocoonbox.control.v1.Operation
+	23, // 42: cocoonbox.control.v1.Boxes.SetWakeSchedule:output_type -> cocoonbox.control.v1.WakeSchedule
+	26, // 43: cocoonbox.control.v1.Boxes.ListWakeSchedules:output_type -> cocoonbox.control.v1.ListWakeSchedulesResponse
+	27, // 44: cocoonbox.control.v1.Boxes.ClearWakeSchedule:output_type -> cocoonbox.control.v1.ClearWakeScheduleResponse
+	29, // [29:45] is the sub-list for method output_type
+	13, // [13:29] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_control_v1_boxes_proto_init() }
@@ -1632,7 +1937,7 @@ func file_cocoonbox_control_v1_boxes_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_boxes_proto_rawDesc), len(file_cocoonbox_control_v1_boxes_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   20,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

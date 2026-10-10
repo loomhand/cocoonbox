@@ -189,6 +189,45 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "SetWakeSchedule" metadata.
+        public enum SetWakeSchedule: Sendable {
+            /// Request type for "SetWakeSchedule".
+            public typealias Input = Cocoonbox_Control_V1_SetWakeScheduleRequest
+            /// Response type for "SetWakeSchedule".
+            public typealias Output = Cocoonbox_Control_V1_WakeSchedule
+            /// Descriptor for "SetWakeSchedule".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "SetWakeSchedule",
+                type: .unary
+            )
+        }
+        /// Namespace for "ListWakeSchedules" metadata.
+        public enum ListWakeSchedules: Sendable {
+            /// Request type for "ListWakeSchedules".
+            public typealias Input = Cocoonbox_Control_V1_ListWakeSchedulesRequest
+            /// Response type for "ListWakeSchedules".
+            public typealias Output = Cocoonbox_Control_V1_ListWakeSchedulesResponse
+            /// Descriptor for "ListWakeSchedules".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "ListWakeSchedules",
+                type: .unary
+            )
+        }
+        /// Namespace for "ClearWakeSchedule" metadata.
+        public enum ClearWakeSchedule: Sendable {
+            /// Request type for "ClearWakeSchedule".
+            public typealias Input = Cocoonbox_Control_V1_BoxRef
+            /// Response type for "ClearWakeSchedule".
+            public typealias Output = Cocoonbox_Control_V1_ClearWakeScheduleResponse
+            /// Descriptor for "ClearWakeSchedule".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "ClearWakeSchedule",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.control.v1.Boxes" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Ensure.descriptor,
@@ -203,7 +242,10 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
             Rebase.descriptor,
             ListSnapshots.descriptor,
             BrowseSnapshot.descriptor,
-            RestorePaths.descriptor
+            RestorePaths.descriptor,
+            SetWakeSchedule.descriptor,
+            ListWakeSchedules.descriptor,
+            ClearWakeSchedule.descriptor
         ]
     }
 }
@@ -457,6 +499,65 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation>
+
+        /// Handle the "SetWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SetWakeSchedule replaces the box's wake schedule. A minute before each
+        /// > time of cron in tz, the api wakes the box when it is hibernated. After
+        /// > awake_for it hibernates the box again, unless a client reached the box
+        /// > since that wake or an operation runs. The api keeps no routine: the box
+        /// > runs its own timers.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_SetWakeScheduleRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_WakeSchedule` messages.
+        func setWakeSchedule(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_WakeSchedule>
+
+        /// Handle the "ListWakeSchedules" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListWakeSchedules lists the wake schedules of the caller's boxes.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_ListWakeSchedulesRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_ListWakeSchedulesResponse` messages.
+        func listWakeSchedules(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse>
+
+        /// Handle the "ClearWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+        /// > stays up.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_ClearWakeScheduleResponse` messages.
+        func clearWakeSchedule(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>
     }
 
     /// Service protocol for the "cocoonbox.control.v1.Boxes" service.
@@ -694,6 +795,65 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RestorePathsRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>
+
+        /// Handle the "SetWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SetWakeSchedule replaces the box's wake schedule. A minute before each
+        /// > time of cron in tz, the api wakes the box when it is hibernated. After
+        /// > awake_for it hibernates the box again, unless a client reached the box
+        /// > since that wake or an operation runs. The api keeps no routine: the box
+        /// > runs its own timers.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SetWakeScheduleRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_WakeSchedule` message.
+        func setWakeSchedule(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_WakeSchedule>
+
+        /// Handle the "ListWakeSchedules" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListWakeSchedules lists the wake schedules of the caller's boxes.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_ListWakeSchedulesRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_ListWakeSchedulesResponse` message.
+        func listWakeSchedules(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse>
+
+        /// Handle the "ClearWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+        /// > stays up.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_ClearWakeScheduleResponse` message.
+        func clearWakeSchedule(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.control.v1.Boxes" service.
@@ -930,6 +1090,65 @@ extension Cocoonbox_Control_V1_Boxes {
             request: Cocoonbox_Control_V1_RestorePathsRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_Operation
+
+        /// Handle the "SetWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SetWakeSchedule replaces the box's wake schedule. A minute before each
+        /// > time of cron in tz, the api wakes the box when it is hibernated. After
+        /// > awake_for it hibernates the box again, unless a client reached the box
+        /// > since that wake or an operation runs. The api keeps no routine: the box
+        /// > runs its own timers.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_SetWakeScheduleRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_WakeSchedule` to respond with.
+        func setWakeSchedule(
+            request: Cocoonbox_Control_V1_SetWakeScheduleRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_WakeSchedule
+
+        /// Handle the "ListWakeSchedules" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListWakeSchedules lists the wake schedules of the caller's boxes.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_ListWakeSchedulesRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_ListWakeSchedulesResponse` to respond with.
+        func listWakeSchedules(
+            request: Cocoonbox_Control_V1_ListWakeSchedulesRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_ListWakeSchedulesResponse
+
+        /// Handle the "ClearWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+        /// > stays up.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_ClearWakeScheduleResponse` to respond with.
+        func clearWakeSchedule(
+            request: Cocoonbox_Control_V1_BoxRef,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_ClearWakeScheduleResponse
     }
 }
 
@@ -1080,6 +1299,39 @@ extension Cocoonbox_Control_V1_Boxes.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.SetWakeSchedule.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SetWakeScheduleRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_WakeSchedule>(),
+            handler: { request, context in
+                try await self.setWakeSchedule(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.ListWakeSchedules.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ListWakeSchedulesRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ListWakeSchedulesResponse>(),
+            handler: { request, context in
+                try await self.listWakeSchedules(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.ClearWakeSchedule.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BoxRef>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ClearWakeScheduleResponse>(),
+            handler: { request, context in
+                try await self.clearWakeSchedule(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -1223,6 +1475,39 @@ extension Cocoonbox_Control_V1_Boxes.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_Operation> {
         let response = try await self.restorePaths(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func setWakeSchedule(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_WakeSchedule> {
+        let response = try await self.setWakeSchedule(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func listWakeSchedules(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse> {
+        let response = try await self.listWakeSchedules(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func clearWakeSchedule(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse> {
+        let response = try await self.clearWakeSchedule(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -1399,6 +1684,45 @@ extension Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_Operation>(
             message: try await self.restorePaths(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func setWakeSchedule(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_WakeSchedule> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_WakeSchedule>(
+            message: try await self.setWakeSchedule(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func listWakeSchedules(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse>(
+            message: try await self.listWakeSchedules(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func clearWakeSchedule(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>(
+            message: try await self.clearWakeSchedule(
                 request: request.message,
                 context: context
             ),
@@ -1707,6 +2031,80 @@ extension Cocoonbox_Control_V1_Boxes {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_Operation>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_Operation>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SetWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SetWakeSchedule replaces the box's wake schedule. A minute before each
+        /// > time of cron in tz, the api wakes the box when it is hibernated. After
+        /// > awake_for it hibernates the box again, unless a client reached the box
+        /// > since that wake or an operation runs. The api keeps no routine: the box
+        /// > runs its own timers.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SetWakeScheduleRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SetWakeScheduleRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_WakeSchedule` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func setWakeSchedule<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_WakeSchedule>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_WakeSchedule>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ListWakeSchedules" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListWakeSchedules lists the wake schedules of the caller's boxes.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_ListWakeSchedulesRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_ListWakeSchedulesRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ListWakeSchedulesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func listWakeSchedules<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ListWakeSchedulesResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "ClearWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+        /// > stays up.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ClearWakeScheduleResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func clearWakeSchedule<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ClearWakeScheduleResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -2159,6 +2557,113 @@ extension Cocoonbox_Control_V1_Boxes {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "SetWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SetWakeSchedule replaces the box's wake schedule. A minute before each
+        /// > time of cron in tz, the api wakes the box when it is hibernated. After
+        /// > awake_for it hibernates the box again, unless a client reached the box
+        /// > since that wake or an operation runs. The api keeps no routine: the box
+        /// > runs its own timers.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SetWakeScheduleRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SetWakeScheduleRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_WakeSchedule` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func setWakeSchedule<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_WakeSchedule>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_WakeSchedule>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.SetWakeSchedule.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "ListWakeSchedules" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ListWakeSchedules lists the wake schedules of the caller's boxes.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_ListWakeSchedulesRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_ListWakeSchedulesRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ListWakeSchedulesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func listWakeSchedules<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ListWakeSchedulesResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.ListWakeSchedules.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "ClearWakeSchedule" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+        /// > stays up.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_BoxRef` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ClearWakeScheduleResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func clearWakeSchedule<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_BoxRef>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ClearWakeScheduleResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.ClearWakeSchedule.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -2524,6 +3029,98 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RestorePathsRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_Operation>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SetWakeSchedule" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SetWakeSchedule replaces the box's wake schedule. A minute before each
+    /// > time of cron in tz, the api wakes the box when it is hibernated. After
+    /// > awake_for it hibernates the box again, unless a client reached the box
+    /// > since that wake or an operation runs. The api keeps no routine: the box
+    /// > runs its own timers.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_SetWakeScheduleRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setWakeSchedule<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_WakeSchedule>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.setWakeSchedule(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SetWakeScheduleRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_WakeSchedule>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListWakeSchedules" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ListWakeSchedules lists the wake schedules of the caller's boxes.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_ListWakeSchedulesRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listWakeSchedules<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.listWakeSchedules(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ListWakeSchedulesRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ListWakeSchedulesResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ClearWakeSchedule" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+    /// > stays up.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func clearWakeSchedule<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.clearWakeSchedule(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BoxRef>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ClearWakeScheduleResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -2943,6 +3540,110 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             metadata: metadata
         )
         return try await self.restorePaths(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SetWakeSchedule" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SetWakeSchedule replaces the box's wake schedule. A minute before each
+    /// > time of cron in tz, the api wakes the box when it is hibernated. After
+    /// > awake_for it hibernates the box again, unless a client reached the box
+    /// > since that wake or an operation runs. The api keeps no routine: the box
+    /// > runs its own timers.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func setWakeSchedule<Result>(
+        _ message: Cocoonbox_Control_V1_SetWakeScheduleRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_WakeSchedule>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_SetWakeScheduleRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.setWakeSchedule(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ListWakeSchedules" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ListWakeSchedules lists the wake schedules of the caller's boxes.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func listWakeSchedules<Result>(
+        _ message: Cocoonbox_Control_V1_ListWakeSchedulesRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListWakeSchedulesResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_ListWakeSchedulesRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.listWakeSchedules(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "ClearWakeSchedule" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+    /// > stays up.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func clearWakeSchedule<Result>(
+        _ message: Cocoonbox_Control_V1_BoxRef,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_BoxRef>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.clearWakeSchedule(
             request: request,
             options: options,
             onResponse: handleResponse

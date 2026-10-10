@@ -571,6 +571,83 @@ public nonisolated struct Cocoonbox_Control_V1_RestorePathsRequest: Sendable {
   public init() {}
 }
 
+public nonisolated struct Cocoonbox_Control_V1_WakeSchedule: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var boxID: String = String()
+
+  /// Five fields: minute, hour, day of month, month, day of week.
+  public var cron: String = String()
+
+  /// IANA zone name of cron, such as Asia/Singapore.
+  public var tz: String = String()
+
+  public var awakeForS: UInt32 = 0
+
+  /// The next time of cron; the wake comes a minute before it.
+  public var nextAtMs: Int64 = 0
+
+  /// The latest wake of this schedule from hibernation; 0 before the first.
+  public var lastWakeAtMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Control_V1_SetWakeScheduleRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var boxID: String = String()
+
+  public var cron: String = String()
+
+  public var tz: String = String()
+
+  /// 0 selects the default, 15 minutes.
+  public var awakeForS: UInt32 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Control_V1_ListWakeSchedulesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Control_V1_ListWakeSchedulesResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var schedules: [Cocoonbox_Control_V1_WakeSchedule] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Control_V1_ClearWakeScheduleResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "cocoonbox.control.v1"
@@ -1386,6 +1463,174 @@ nonisolated extension Cocoonbox_Control_V1_RestorePathsRequest: SwiftProtobuf.Me
     if lhs.boxID != rhs.boxID {return false}
     if lhs.snapshotID != rhs.snapshotID {return false}
     if lhs.paths != rhs.paths {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_WakeSchedule: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WakeSchedule"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}box_id\0\u{1}cron\0\u{1}tz\0\u{3}awake_for_s\0\u{3}next_at_ms\0\u{3}last_wake_at_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.boxID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.cron) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.tz) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.awakeForS) }()
+      case 5: try { try decoder.decodeSingularInt64Field(value: &self.nextAtMs) }()
+      case 6: try { try decoder.decodeSingularInt64Field(value: &self.lastWakeAtMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.boxID.isEmpty {
+      try visitor.visitSingularStringField(value: self.boxID, fieldNumber: 1)
+    }
+    if !self.cron.isEmpty {
+      try visitor.visitSingularStringField(value: self.cron, fieldNumber: 2)
+    }
+    if !self.tz.isEmpty {
+      try visitor.visitSingularStringField(value: self.tz, fieldNumber: 3)
+    }
+    if self.awakeForS != 0 {
+      try visitor.visitSingularUInt32Field(value: self.awakeForS, fieldNumber: 4)
+    }
+    if self.nextAtMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.nextAtMs, fieldNumber: 5)
+    }
+    if self.lastWakeAtMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.lastWakeAtMs, fieldNumber: 6)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_WakeSchedule, rhs: Cocoonbox_Control_V1_WakeSchedule) -> Bool {
+    if lhs.boxID != rhs.boxID {return false}
+    if lhs.cron != rhs.cron {return false}
+    if lhs.tz != rhs.tz {return false}
+    if lhs.awakeForS != rhs.awakeForS {return false}
+    if lhs.nextAtMs != rhs.nextAtMs {return false}
+    if lhs.lastWakeAtMs != rhs.lastWakeAtMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_SetWakeScheduleRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SetWakeScheduleRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}box_id\0\u{1}cron\0\u{1}tz\0\u{3}awake_for_s\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.boxID) }()
+      case 2: try { try decoder.decodeSingularStringField(value: &self.cron) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.tz) }()
+      case 4: try { try decoder.decodeSingularUInt32Field(value: &self.awakeForS) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.boxID.isEmpty {
+      try visitor.visitSingularStringField(value: self.boxID, fieldNumber: 1)
+    }
+    if !self.cron.isEmpty {
+      try visitor.visitSingularStringField(value: self.cron, fieldNumber: 2)
+    }
+    if !self.tz.isEmpty {
+      try visitor.visitSingularStringField(value: self.tz, fieldNumber: 3)
+    }
+    if self.awakeForS != 0 {
+      try visitor.visitSingularUInt32Field(value: self.awakeForS, fieldNumber: 4)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_SetWakeScheduleRequest, rhs: Cocoonbox_Control_V1_SetWakeScheduleRequest) -> Bool {
+    if lhs.boxID != rhs.boxID {return false}
+    if lhs.cron != rhs.cron {return false}
+    if lhs.tz != rhs.tz {return false}
+    if lhs.awakeForS != rhs.awakeForS {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_ListWakeSchedulesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListWakeSchedulesRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_ListWakeSchedulesRequest, rhs: Cocoonbox_Control_V1_ListWakeSchedulesRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_ListWakeSchedulesResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ListWakeSchedulesResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}schedules\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.schedules) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.schedules.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.schedules, fieldNumber: 1)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_ListWakeSchedulesResponse, rhs: Cocoonbox_Control_V1_ListWakeSchedulesResponse) -> Bool {
+    if lhs.schedules != rhs.schedules {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_ClearWakeScheduleResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ClearWakeScheduleResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_ClearWakeScheduleResponse, rhs: Cocoonbox_Control_V1_ClearWakeScheduleResponse) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

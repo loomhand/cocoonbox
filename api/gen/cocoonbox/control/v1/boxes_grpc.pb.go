@@ -19,19 +19,22 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Boxes_Ensure_FullMethodName         = "/cocoonbox.control.v1.Boxes/Ensure"
-	Boxes_Create_FullMethodName         = "/cocoonbox.control.v1.Boxes/Create"
-	Boxes_Rename_FullMethodName         = "/cocoonbox.control.v1.Boxes/Rename"
-	Boxes_Delete_FullMethodName         = "/cocoonbox.control.v1.Boxes/Delete"
-	Boxes_Get_FullMethodName            = "/cocoonbox.control.v1.Boxes/Get"
-	Boxes_List_FullMethodName           = "/cocoonbox.control.v1.Boxes/List"
-	Boxes_Hibernate_FullMethodName      = "/cocoonbox.control.v1.Boxes/Hibernate"
-	Boxes_WatchOperation_FullMethodName = "/cocoonbox.control.v1.Boxes/WatchOperation"
-	Boxes_SaveState_FullMethodName      = "/cocoonbox.control.v1.Boxes/SaveState"
-	Boxes_Rebase_FullMethodName         = "/cocoonbox.control.v1.Boxes/Rebase"
-	Boxes_ListSnapshots_FullMethodName  = "/cocoonbox.control.v1.Boxes/ListSnapshots"
-	Boxes_BrowseSnapshot_FullMethodName = "/cocoonbox.control.v1.Boxes/BrowseSnapshot"
-	Boxes_RestorePaths_FullMethodName   = "/cocoonbox.control.v1.Boxes/RestorePaths"
+	Boxes_Ensure_FullMethodName            = "/cocoonbox.control.v1.Boxes/Ensure"
+	Boxes_Create_FullMethodName            = "/cocoonbox.control.v1.Boxes/Create"
+	Boxes_Rename_FullMethodName            = "/cocoonbox.control.v1.Boxes/Rename"
+	Boxes_Delete_FullMethodName            = "/cocoonbox.control.v1.Boxes/Delete"
+	Boxes_Get_FullMethodName               = "/cocoonbox.control.v1.Boxes/Get"
+	Boxes_List_FullMethodName              = "/cocoonbox.control.v1.Boxes/List"
+	Boxes_Hibernate_FullMethodName         = "/cocoonbox.control.v1.Boxes/Hibernate"
+	Boxes_WatchOperation_FullMethodName    = "/cocoonbox.control.v1.Boxes/WatchOperation"
+	Boxes_SaveState_FullMethodName         = "/cocoonbox.control.v1.Boxes/SaveState"
+	Boxes_Rebase_FullMethodName            = "/cocoonbox.control.v1.Boxes/Rebase"
+	Boxes_ListSnapshots_FullMethodName     = "/cocoonbox.control.v1.Boxes/ListSnapshots"
+	Boxes_BrowseSnapshot_FullMethodName    = "/cocoonbox.control.v1.Boxes/BrowseSnapshot"
+	Boxes_RestorePaths_FullMethodName      = "/cocoonbox.control.v1.Boxes/RestorePaths"
+	Boxes_SetWakeSchedule_FullMethodName   = "/cocoonbox.control.v1.Boxes/SetWakeSchedule"
+	Boxes_ListWakeSchedules_FullMethodName = "/cocoonbox.control.v1.Boxes/ListWakeSchedules"
+	Boxes_ClearWakeSchedule_FullMethodName = "/cocoonbox.control.v1.Boxes/ClearWakeSchedule"
 )
 
 // BoxesClient is the client API for Boxes service.
@@ -71,6 +74,17 @@ type BoxesClient interface {
 	// ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
 	// Nothing outside that folder changes and nothing restarts.
 	RestorePaths(ctx context.Context, in *RestorePathsRequest, opts ...grpc.CallOption) (*Operation, error)
+	// SetWakeSchedule replaces the box's wake schedule. A minute before each
+	// time of cron in tz, the api wakes the box when it is hibernated. After
+	// awake_for it hibernates the box again, unless a client reached the box
+	// since that wake or an operation runs. The api keeps no routine: the box
+	// runs its own timers.
+	SetWakeSchedule(ctx context.Context, in *SetWakeScheduleRequest, opts ...grpc.CallOption) (*WakeSchedule, error)
+	// ListWakeSchedules lists the wake schedules of the caller's boxes.
+	ListWakeSchedules(ctx context.Context, in *ListWakeSchedulesRequest, opts ...grpc.CallOption) (*ListWakeSchedulesResponse, error)
+	// ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+	// stays up.
+	ClearWakeSchedule(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*ClearWakeScheduleResponse, error)
 }
 
 type boxesClient struct {
@@ -220,6 +234,36 @@ func (c *boxesClient) RestorePaths(ctx context.Context, in *RestorePathsRequest,
 	return out, nil
 }
 
+func (c *boxesClient) SetWakeSchedule(ctx context.Context, in *SetWakeScheduleRequest, opts ...grpc.CallOption) (*WakeSchedule, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WakeSchedule)
+	err := c.cc.Invoke(ctx, Boxes_SetWakeSchedule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) ListWakeSchedules(ctx context.Context, in *ListWakeSchedulesRequest, opts ...grpc.CallOption) (*ListWakeSchedulesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListWakeSchedulesResponse)
+	err := c.cc.Invoke(ctx, Boxes_ListWakeSchedules_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *boxesClient) ClearWakeSchedule(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*ClearWakeScheduleResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ClearWakeScheduleResponse)
+	err := c.cc.Invoke(ctx, Boxes_ClearWakeSchedule_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BoxesServer is the server API for Boxes service.
 // All implementations must embed UnimplementedBoxesServer
 // for forward compatibility.
@@ -257,6 +301,17 @@ type BoxesServer interface {
 	// ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
 	// Nothing outside that folder changes and nothing restarts.
 	RestorePaths(context.Context, *RestorePathsRequest) (*Operation, error)
+	// SetWakeSchedule replaces the box's wake schedule. A minute before each
+	// time of cron in tz, the api wakes the box when it is hibernated. After
+	// awake_for it hibernates the box again, unless a client reached the box
+	// since that wake or an operation runs. The api keeps no routine: the box
+	// runs its own timers.
+	SetWakeSchedule(context.Context, *SetWakeScheduleRequest) (*WakeSchedule, error)
+	// ListWakeSchedules lists the wake schedules of the caller's boxes.
+	ListWakeSchedules(context.Context, *ListWakeSchedulesRequest) (*ListWakeSchedulesResponse, error)
+	// ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+	// stays up.
+	ClearWakeSchedule(context.Context, *BoxRef) (*ClearWakeScheduleResponse, error)
 	mustEmbedUnimplementedBoxesServer()
 }
 
@@ -305,6 +360,15 @@ func (UnimplementedBoxesServer) BrowseSnapshot(context.Context, *BrowseSnapshotR
 }
 func (UnimplementedBoxesServer) RestorePaths(context.Context, *RestorePathsRequest) (*Operation, error) {
 	return nil, status.Error(codes.Unimplemented, "method RestorePaths not implemented")
+}
+func (UnimplementedBoxesServer) SetWakeSchedule(context.Context, *SetWakeScheduleRequest) (*WakeSchedule, error) {
+	return nil, status.Error(codes.Unimplemented, "method SetWakeSchedule not implemented")
+}
+func (UnimplementedBoxesServer) ListWakeSchedules(context.Context, *ListWakeSchedulesRequest) (*ListWakeSchedulesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListWakeSchedules not implemented")
+}
+func (UnimplementedBoxesServer) ClearWakeSchedule(context.Context, *BoxRef) (*ClearWakeScheduleResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ClearWakeSchedule not implemented")
 }
 func (UnimplementedBoxesServer) mustEmbedUnimplementedBoxesServer() {}
 func (UnimplementedBoxesServer) testEmbeddedByValue()               {}
@@ -554,6 +618,60 @@ func _Boxes_RestorePaths_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Boxes_SetWakeSchedule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetWakeScheduleRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).SetWakeSchedule(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_SetWakeSchedule_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).SetWakeSchedule(ctx, req.(*SetWakeScheduleRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_ListWakeSchedules_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListWakeSchedulesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).ListWakeSchedules(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_ListWakeSchedules_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).ListWakeSchedules(ctx, req.(*ListWakeSchedulesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Boxes_ClearWakeSchedule_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(BoxRef)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).ClearWakeSchedule(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_ClearWakeSchedule_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).ClearWakeSchedule(ctx, req.(*BoxRef))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Boxes_ServiceDesc is the grpc.ServiceDesc for Boxes service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -608,6 +726,18 @@ var Boxes_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RestorePaths",
 			Handler:    _Boxes_RestorePaths_Handler,
+		},
+		{
+			MethodName: "SetWakeSchedule",
+			Handler:    _Boxes_SetWakeSchedule_Handler,
+		},
+		{
+			MethodName: "ListWakeSchedules",
+			Handler:    _Boxes_ListWakeSchedules_Handler,
+		},
+		{
+			MethodName: "ClearWakeSchedule",
+			Handler:    _Boxes_ClearWakeSchedule_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

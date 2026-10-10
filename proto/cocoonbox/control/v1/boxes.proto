@@ -37,6 +37,17 @@ service Boxes {
   // ~/Restored/<save time>/ in the running box (PHASE_RESTORING_FILES).
   // Nothing outside that folder changes and nothing restarts.
   rpc RestorePaths(RestorePathsRequest) returns (Operation);
+  // SetWakeSchedule replaces the box's wake schedule. A minute before each
+  // time of cron in tz, the api wakes the box when it is hibernated. After
+  // awake_for it hibernates the box again, unless a client reached the box
+  // since that wake or an operation runs. The api keeps no routine: the box
+  // runs its own timers.
+  rpc SetWakeSchedule(SetWakeScheduleRequest) returns (WakeSchedule);
+  // ListWakeSchedules lists the wake schedules of the caller's boxes.
+  rpc ListWakeSchedules(ListWakeSchedulesRequest) returns (ListWakeSchedulesResponse);
+  // ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
+  // stays up.
+  rpc ClearWakeSchedule(BoxRef) returns (ClearWakeScheduleResponse);
 }
 
 enum BoxState {
@@ -204,3 +215,32 @@ message RestorePathsRequest {
   // Box paths of files or folders, each under /home/user or /workspace.
   repeated string paths = 3;
 }
+
+message WakeSchedule {
+  string box_id = 1;
+  // Five fields: minute, hour, day of month, month, day of week.
+  string cron = 2;
+  // IANA zone name of cron, such as Asia/Singapore.
+  string tz = 3;
+  uint32 awake_for_s = 4;
+  // The next time of cron; the wake comes a minute before it.
+  int64 next_at_ms = 5;
+  // The latest wake of this schedule from hibernation; 0 before the first.
+  int64 last_wake_at_ms = 6;
+}
+
+message SetWakeScheduleRequest {
+  string box_id = 1;
+  string cron = 2;
+  string tz = 3;
+  // 0 selects the default, 15 minutes.
+  uint32 awake_for_s = 4;
+}
+
+message ListWakeSchedulesRequest {}
+
+message ListWakeSchedulesResponse {
+  repeated WakeSchedule schedules = 1;
+}
+
+message ClearWakeScheduleResponse {}
