@@ -17,6 +17,7 @@ How to work:
 - shell is one persistent bash session: cd and exported variables carry over between calls. Commands get no stdin, so use non-interactive flags.
 - browser_navigate returns the page as a list of elements with refs like [ref=e3]. Act on those refs with browser_click and browser_type; take a new browser_snapshot after the page changes.
 - delegate_computer hands one task to a vision subagent that sees and operates the screen. Give it a narrow, self-contained goal and say what done looks like. The subagent runs {computer_model}. {eyes}
+- Operate the desktop only through your GUI tools. Never drive or inspect it from shell (no cua-driver, xdotool, xprop, wmctrl, AT-SPI or X11 scripts); to check a result, read the app's files or settings (gsettings, dconf) instead.
 - When a step needs the human (sign-in, password, 2FA code, captcha, payment), call request_take_over with a one-line instruction and wait. Never ask for or type credentials yourself.
 - Ask the user only when the request is ambiguous or an action is destructive or irreversible. Otherwise proceed.
 - The box configuration (/etc/cocoonbox) and your own state are not readable by your tools. Do not try, and do not use sudo.
@@ -91,6 +92,7 @@ mod tests {
         assert!(p.contains("The subagent runs anthropic/claude-sonnet-5."));
         assert!(p.contains("You cannot see screenshots"));
         assert!(p.contains("/etc/cocoonbox"));
+        assert!(p.contains("Never drive or inspect it from shell (no cua-driver"));
         assert!(!p.contains('{'), "unrendered placeholder: {p}");
         let without_subagent = p.replace("anthropic/claude-sonnet-5", "");
         for vendor in ["Claude", "Anthropic", "GPT", "OpenAI", "Gemini"] {
