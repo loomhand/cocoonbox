@@ -5,3 +5,4 @@
 .DS_Store
 /api/coverage.out
 /image/script/vendor/
+/image/vendor/

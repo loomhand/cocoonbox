@@ -74,7 +74,7 @@ if [ "$PROVISION" = 1 ] || [ "$FAMILY" = cbplan ]; then
 fi
 if [ "$PROVISION" = 1 ]; then
 	step "provision"
-	tar -C "$SRC" -cf - provision.sh rootfs | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
+	tar -C "$SRC" -cf - provision.sh rootfs vendor | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
 	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/provision.sh
 	guest "$VM" -- rm -rf /tmp/cb-image
 fi

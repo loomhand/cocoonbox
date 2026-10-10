@@ -3,10 +3,11 @@
 # Runs as root inside the guest from an unpacked copy of image/ (see cut.sh -p).
 set -euo pipefail
 
-CUA_VERSION=0.30.4
-CUA_SHA256=84445347ceb3039034ce30577b3b7c19a1f0c1f67639423f9da3a71be0418f90
+# CMGS/cua cmgs/x11-typing, built by script/cua-driver.sh; cut.sh -p brings it in as vendor/
+CUA_COMMIT=e08dbbe487f8ec4a7ac066953f0f7569427f8406
+CUA_VERSION=0.34.0-cmgs.4
+CUA_SHA256=bef2d1a30099df7a37f99b261cbe67b0f9c38bd763eb3b3da58baab613f1f864
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
-CUA_URL="https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_VERSION}/${CUA_TARBALL}"
 MISE_VERSION=2026.10.0
 MISE_SHA256=6ae3d2bda39cca86713501317edf623b59b75cd8afa2e31c20b1ee6500b4b739
 MISE_TARBALL="mise-v${MISE_VERSION}-linux-x64.tar.gz"
@@ -104,16 +105,15 @@ setup_desktop() {
 
 setup_cua_driver() {
 	log "cua-driver $CUA_VERSION"
-	local dir=/opt/cua-driver/$CUA_VERSION tmp
+	local dir=/opt/cua-driver/$CUA_VERSION tarball="$SRC/vendor/$CUA_TARBALL"
 	if [ ! -x "$dir/cua-driver" ]; then
-		tmp=$(mktemp -d)
-		curl -fsSL "$CUA_URL" -o "$tmp/$CUA_TARBALL"
-		echo "$CUA_SHA256  $tmp/$CUA_TARBALL" | sha256sum -c --quiet -
+		[ -f "$tarball" ] || { echo "missing $tarball: build it with COMMIT=$CUA_COMMIT VERSION=$CUA_VERSION image/script/cua-driver.sh image/vendor" >&2; exit 1; }
+		echo "$CUA_SHA256  $tarball" | sha256sum -c --quiet -
 		install -d "$dir"
-		tar -xzf "$tmp/$CUA_TARBALL" -C "$dir" --strip-components=1
-		rm -rf "$tmp"
+		tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
 	fi
 	ln -sfn "$dir/cua-driver" /usr/local/bin/cua-driver
+	find /opt/cua-driver -mindepth 1 -maxdepth 1 ! -name "$CUA_VERSION" -exec rm -rf {} +
 	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
 	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
 }
