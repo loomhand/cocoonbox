@@ -43,6 +43,7 @@ let lastSeen = ''
 let recording = false
 let found = false
 let typed = false
+let pressed: { title: string; at: number } | null = null
 let T: Record<string, number> = {}
 let screen: { left: number; top: number; right: number; bottom: number } | null = null
 const tick = (k: string, t0: number) => { T[k] = (T[k] ?? 0) + Date.now() - t0 }
@@ -65,6 +66,11 @@ function parse(snap: AccessibilitySnapshot): Node[] {
 }
 
 const focused = () => m.focusedWindow()
+async function current() {
+  const k = pressed; pressed = null; const t0 = Date.now()
+  while (k && focused()?.title === k.title && Date.now() - k.at < 150) await sleep(10)
+  tick('settle', t0); return focused()
+}
 // a window that closed after it was listed answers X11 BadWindow to a pid read; its pid is then null
 function pidOf(w: { pid: number }): number | null {
   try { return w.pid } catch (e) { if (/error_kind: Window\b/.test(String(e))) return null; throw e }
@@ -156,7 +162,7 @@ function gtkToggle(pid: number, label: string): boolean | null {
 // the window the step acts in: the focused one, after waiting for one that matches `want` (title text, else a jev yes/no)
 async function windowFor(want: string | undefined, ms = 3000, saw?: string) {
   const t0 = Date.now()
-  let w = focused()
+  let w = want ? focused() : await current()
   if (!want) {
     // an untitled focused window that is no alert (a completion popup) leaves the step in the window the plan was in
     if (w && !w.title.trim() && lastSeen && !isAlert(outline(w))) w = m.windows().find((x) => x.title === lastSeen && pidOf(x) === pidOf(w!)) ?? w
@@ -311,8 +317,19 @@ async function settle(before: string | undefined) {
   tick('settle', t0)
 }
 
+async function ready(w: NonNullable<ReturnType<typeof focused>>) {
+  const t0 = Date.now()
+  for (;;) {
+    let nodes: Node[]; try { nodes = parse(snapOf(w)) } catch { break }
+    if (!nodes.filter((n) => n.depth === 1 && n.role === 'button').at(-1)?.disabled || Date.now() - t0 >= 400) break
+    await sleep(20)
+  }
+  tick('ready', t0)
+}
+
 // a typed line that ends in a newline submits a file chooser: Return until it closes, since the first one may only close the completion popup
-async function submit(w: NonNullable<ReturnType<typeof focused>>) {
+async function submit(w: NonNullable<ReturnType<typeof focused>>, chooser = false) {
+  if (chooser) await ready(w)
   const t0 = Date.now()
   const [title, pid] = [w.title, pidOf(w)]
   const open = () => pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)
@@ -394,7 +411,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     found = !launched; w.focus(); known.add(w.title); rec.window = lastSeen = w.title; await windowFor(w.title); return
   }
   if (s.type !== undefined) {
-    const t0 = Date.now(); const w = focused(); const nl = s.type.endsWith('\n')
+    const w = await current(); const t0 = Date.now(); const nl = s.type.endsWith('\n')
     const dialog = !s.type.includes('\n') && !!w && m.windows().some((x) => x.title !== w.title && pidOf(x) === pidOf(w))
     const o = (nl || dialog) && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
@@ -408,7 +425,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     tick('act', t0)
     if (recording && first && !chooser && w) rec.blank = typedInto(w, s.type)
     const v = nl && !sub ? focused() : null
-    if (sub) { rec.submit = true; await submit(w!) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v.title, pidOf(v))) rec.submit = true
+    if (sub) { rec.submit = true; await submit(w!, true) } else if (v && isDialog(v.title === w?.title ? o : outline(v)) && await closed(v.title, pidOf(v))) rec.submit = true
     if (dialog && w) {
       const want = s.type.slice(0, 30).replace(/"/g, '\\"'); let after = ''
       for (let k = 0; k < 5; k++) { after = outline(w); if (!isDialog(after) || after.split('\n').some((l) => /^\s*- (textbox|searchbox|combobox|spinbutton)\b.*: ".*/.test(l) && l.includes(want))) return; await sleep(40) }
@@ -420,8 +437,9 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const w = focused()
     const o = /^(enter|return)$/i.test(s.key) && w ? await filled(w) : ''
     if (blocked(o)) throw new Surprise(unanswered(w!.title), seen())
-    if (o.includes('File Chooser Widget')) { rec.submit = true; await submit(w!); return }
+    if (o.includes('File Chooser Widget')) { rec.submit = true; await submit(w!, true); return }
     const t0 = Date.now(); press(s.key); tick('act', t0)
+    if (w && /\b(ctrl|control|alt)\+|^f\d+$/i.test(s.key)) pressed = { title: w.title, at: Date.now() }
     if (isDialog(o) && await closed(w!.title, pidOf(w!))) rec.submit = true
     return
   }
@@ -547,7 +565,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
   for (let i = 0; i < 10; i++) { try { got = snap.node(f.ref).value } catch (e) { if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen()); got = undefined }; if (same(got)) break; await sleep(40) }
   tick('verify', t0); rec.value = got
   if (!same(got)) throw new Surprise(`"${target}" reads "${got}" after set`, seen())
-  if (s.value!.endsWith('\n')) { rec.submit = true; await submit(w) }
+  if (s.value!.endsWith('\n')) { rec.submit = true; await submit(w, nodes.some((n) => n.name === 'File Chooser Widget')) }
 }
 
 // {{name}} in any string of a step is a param
