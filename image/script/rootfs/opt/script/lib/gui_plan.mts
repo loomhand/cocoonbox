@@ -327,7 +327,9 @@ async function submit(w: NonNullable<ReturnType<typeof focused>>) {
 async function closed(title: string, pid: number | null) {
   const t0 = Date.now()
   const open = () => pid !== null && m.windows().some((x) => x.title === title && pidOf(x) === pid)
+  const landed = () => { const f = focused(); return !!f && f.title !== title && pidOf(f) !== null }
   for (let k = 0; k < 25 && open(); k++) await sleep(40)
+  for (let k = 0; k < 25 && !open() && !landed(); k++) await sleep(20)
   tick('settle', t0); return !open()
 }
 
