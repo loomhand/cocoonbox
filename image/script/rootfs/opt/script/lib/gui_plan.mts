@@ -676,7 +676,8 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
   if (p.save && !flow && !p.start && !idempotent(plan)) {
     let c: Chain | null = null
     try { c = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
-    if (c?.steps.length === plan.length && c.steps.every((s, i) => bare(s, c.params) === bare(plan[i], params))) {
+    const was = c?.steps.filter((s) => !s.close) ?? []; const now = plan.filter((s) => !s.close)
+    if (c && was.length === now.length && was.every((s, i) => bare(s, c.params) === bare(now[i], params))) {
       const r = promote(p.save, p.params, true)
       if (r.ok) return { ...r, ran: false, why: 'these steps passed in the last plan, so they were saved without running them again; call without save to run them' }
     }
