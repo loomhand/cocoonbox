@@ -83,6 +83,7 @@ type Service struct {
 	exit      *exitPolicy
 	accounts  Accounts
 	connect   Connect
+	wake      *wakeAlarms
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex
@@ -111,6 +112,9 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		}
 	} else if !s.registry.HasBox(user, box) {
 		return nil, ErrNoBox
+	}
+	if ctx.Value(alarmCall{}) == nil {
+		s.Reached(box)
 	}
 	if s.deleting(box) {
 		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")

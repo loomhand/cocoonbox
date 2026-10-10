@@ -625,6 +625,12 @@ func (f *fakeMachines) take(ctx context.Context) (machines.Machine, bool, <-chan
 	return m, true, f.pushed
 }
 
+func (f *fakeMachines) state(id string) machines.State {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.machines[id].State
+}
+
 func (f *fakeMachines) lastSpec() machines.Spec {
 	f.mu.Lock()
 	defer f.mu.Unlock()

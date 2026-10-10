@@ -42,6 +42,7 @@ const (
 	provisionInterval   = 10 * time.Second
 	usersInterval       = 10 * time.Second
 	credentialsInterval = time.Minute
+	alarmInterval       = 15 * time.Second
 	injectionTimeout    = time.Minute
 	shutdownGrace       = 5 * time.Second
 	readHeaderTimeout   = 10 * time.Second
@@ -103,6 +104,11 @@ func main() {
 		MaxRunning:   cfg.MaxRunningBoxes,
 	}, accounts)
 	svc.EnableAccounts(accounts)
+	svc.EnableWake(accounts, boxes.WakeLimits{
+		MaxSchedules: cfg.Wake.MaxSchedules,
+		Floor:        time.Duration(cfg.Wake.Floor),
+		MaxAwakeFor:  time.Duration(cfg.Wake.MaxAwakeFor),
+	})
 	var library *flows.Library
 	if cfg.State.Bucket != "" {
 		var st *s3.S3
@@ -189,6 +195,7 @@ func main() {
 		server.GracefulStop()
 		timer.Stop()
 	}()
+	go svc.RunAlarms(ctx, alarmInterval)
 	logger.Infof(ctx, "serving gRPC on %s and MCP and the console on %s for %d users", cfg.Listen, cfg.MCPListen, len(accounts.List()))
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")

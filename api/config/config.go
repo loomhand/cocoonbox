@@ -27,6 +27,10 @@ const (
 	maxDeleteBatch       = 1000
 	defaultMaxRunning    = 1
 
+	defaultWakeSchedules = 3
+	defaultWakeFloor     = time.Hour
+	defaultMaxAwakeFor   = time.Hour
+
 	defaultVCPUs     = 4
 	defaultMemoryMiB = 8192
 	defaultDiskGiB   = 40
@@ -122,6 +126,23 @@ type Connect struct {
 	BoxListen string `json:"box_listen"`
 }
 
+// Wake bounds the scheduled wakes of boxes (design §15.13).
+type Wake struct {
+	// MaxSchedules bounds the wake schedules of one user.
+	MaxSchedules int `json:"max_schedules"`
+	// Floor is the least time between two wakes of one box from hibernation.
+	Floor       Duration `json:"floor"`
+	MaxAwakeFor Duration `json:"max_awake_for"`
+}
+
+func (w Wake) validate() error {
+	if w.MaxSchedules < 0 || w.Floor < 0 || w.MaxAwakeFor < Duration(time.Minute) {
+		return fmt.Errorf("wake.max_schedules and wake.floor must not be negative and wake.max_awake_for must be at least 1m, got %d, %s, %s",
+			w.MaxSchedules, time.Duration(w.Floor), time.Duration(w.MaxAwakeFor))
+	}
+	return nil
+}
+
 // Config is the on-disk configuration of cocoonbox-api.
 type Config struct {
 	Sandboxd     Sandboxd `json:"sandboxd"`
@@ -141,6 +162,7 @@ type Config struct {
 	Connect         Connect `json:"connect"`
 	// CUAMeterFile gets one JSON line per script_run call through the edge; empty turns the meter off.
 	CUAMeterFile string `json:"cua_meter_file"`
+	Wake         Wake   `json:"wake"`
 }
 
 // Load reads, defaults and validates the file at path.
@@ -207,6 +229,9 @@ func (c *Config) applyDefaults() {
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
 	c.MaxRunningBoxes = cmp.Or(c.MaxRunningBoxes, defaultMaxRunning)
+	c.Wake.MaxSchedules = cmp.Or(c.Wake.MaxSchedules, defaultWakeSchedules)
+	c.Wake.Floor = cmp.Or(c.Wake.Floor, Duration(defaultWakeFloor))
+	c.Wake.MaxAwakeFor = cmp.Or(c.Wake.MaxAwakeFor, Duration(defaultMaxAwakeFor))
 	c.Connect.PublicURL = strings.TrimSuffix(c.Connect.PublicURL, "/")
 }
 
@@ -254,7 +279,7 @@ func (c *Config) validate() error {
 	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
 		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
 	}
-	errs = append(errs, absolute("cua_meter_file", c.CUAMeterFile))
+	errs = append(errs, c.Wake.validate(), absolute("cua_meter_file", c.CUAMeterFile))
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}

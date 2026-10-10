@@ -33,7 +33,7 @@ func TestTheMigrationGivesEveryUserItsOldBox(t *testing.T) {
 	}
 	svc, gw, tenants, dsn := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1", ID: "test"})
-	if err := exec(t, dsn, "DROP TABLE boxes; DELETE FROM schema_migrations WHERE version = 4"); err != nil {
+	if err := exec(t, dsn, "DROP TABLE boxes CASCADE; DELETE FROM schema_migrations WHERE version = 4"); err != nil {
 		t.Fatalf("undo migration 4: %v", err)
 	}
 	got := openTestService(t, dsn, gw, tenants).Boxes(u.ID)

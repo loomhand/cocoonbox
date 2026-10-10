@@ -7,8 +7,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -50,6 +52,20 @@ func TestUnaryRewritesHeaders(t *testing.T) {
 	}
 	if got := trailer.Get("x-agent-trailer"); len(got) != 1 || got[0] != "t" {
 		t.Errorf("trailer x-agent-trailer = %v", got)
+	}
+}
+
+func TestAClientCallReachesTheBoxAndEndShareDoesNot(t *testing.T) {
+	env := newProxyEnv(t)
+	_ = env.proxy.EndShare(t.Context(), "alice", boxes.BoxID("alice"), "sh-1")
+	if got := env.resolver.reaches(); len(got) != 0 {
+		t.Fatalf("EndShare reached %v, want nothing", got)
+	}
+	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); err != nil {
+		t.Fatalf("Hello: %v", err)
+	}
+	if got := env.resolver.reaches(); !slices.Equal(got, []string{boxes.BoxID("alice")}) {
+		t.Errorf("reached %v after a Hello, want alice's box", got)
 	}
 }
 
@@ -284,6 +300,7 @@ func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
 type proxyEnv struct {
 	agent    *fakeAgent
 	resolver *fakeResolver
+	proxy    *Proxy
 	conn     *grpc.ClientConn
 	client   agentv1.SessionClient
 }
@@ -319,7 +336,7 @@ func newProxyEnvAt(t *testing.T, agentAddr string) *proxyEnv {
 		t.Fatalf("dial edge: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close() })
-	return &proxyEnv{agent: agent, resolver: resolver, conn: conn, client: agentv1.NewSessionClient(conn)}
+	return &proxyEnv{agent: agent, resolver: resolver, proxy: proxy, conn: conn, client: agentv1.NewSessionClient(conn)}
 }
 
 func (e *proxyEnv) aliceCtx(t *testing.T) context.Context {
@@ -344,6 +361,9 @@ type fakeResolver struct {
 	wake   string
 	err    error
 	opaque bool
+
+	mu      sync.Mutex
+	reached []string
 }
 
 func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.Endpoint, string, error) {
@@ -355,6 +375,18 @@ func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.
 		ep.Key = "box.invalid:1"
 	}
 	return ep, r.wake, r.err
+}
+
+func (r *fakeResolver) Reached(boxID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reached = append(r.reached, boxID)
+}
+
+func (r *fakeResolver) reaches() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.reached)
 }
 
 // fakeCreds issues "cred:<box>:<wake>" and "cred:<box>:<wake>:<principal>".

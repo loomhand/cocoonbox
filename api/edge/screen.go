@@ -30,6 +30,7 @@ func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) 
 	if err != nil {
 		return err
 	}
+	p.resolver.Reached(g.Box)
 	conn, err := p.conn(ctx, g.Box, ep)
 	if err != nil {
 		return err

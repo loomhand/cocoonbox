@@ -148,7 +148,9 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	if boxID == "" {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
-	rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), owner, boxID)
+	if rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), owner, boxID); err == nil {
+		m.resolver.Reached(boxID)
+	}
 	return rt, err
 }
 

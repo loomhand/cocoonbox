@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -50,6 +51,9 @@ func TestMCPPostRoundTrip(t *testing.T) {
 		if got[k] != v {
 			t.Errorf("upstream saw %s = %q, want %q", k, got[k], v)
 		}
+	}
+	if reached := env.resolver.reaches(); !slices.Equal(reached, []string{boxes.BoxID("alice")}) {
+		t.Errorf("reached %v, want alice's box", reached)
 	}
 }
 

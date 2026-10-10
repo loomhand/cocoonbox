@@ -270,6 +270,83 @@ func (s *store) clearShareSecret(ctx context.Context, id string) error {
 	return s.exec(ctx, "UPDATE shares SET secret_sealed = NULL WHERE id = $1", id)
 }
 
+// putWakeSchedule upserts w while its owner has fewer than maxSchedules schedules on other boxes; the owner's row lock orders concurrent puts.
+func (s *store) putWakeSchedule(ctx context.Context, w WakeSchedule, maxSchedules int) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "SELECT id FROM users WHERE id = $1 FOR UPDATE", w.Owner).Scan(new(string)); errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		} else if err != nil {
+			return fmt.Errorf("lock user: %w", err)
+		}
+		var owned bool
+		var others int
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM boxes WHERE id = $1 AND owner = $2),
+			(SELECT count(*) FROM wake_schedules WHERE owner = $2 AND box <> $1)`, w.Box, w.Owner).Scan(&owned, &others); err != nil {
+			return fmt.Errorf("count wake schedules: %w", err)
+		}
+		if !owned {
+			return ErrNotFound
+		}
+		if others >= maxSchedules {
+			return fmt.Errorf("%w: %d wake schedules is the most this user may have", ErrQuota, maxSchedules)
+		}
+		_, err := tx.Exec(ctx, `INSERT INTO wake_schedules (box, owner, cron, tz, awake_for_s, next_at) VALUES ($1, $2, $3, $4, $5, $6)
+			ON CONFLICT (box) DO UPDATE SET cron = excluded.cron, tz = excluded.tz, awake_for_s = excluded.awake_for_s, next_at = excluded.next_at`,
+			w.Box, w.Owner, w.Cron, w.TZ, int(w.AwakeFor/time.Second), w.NextAt)
+		if err != nil {
+			return fmt.Errorf("put wake schedule: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *store) wakeSchedules(ctx context.Context, owner string) ([]WakeSchedule, error) {
+	rows, err := s.pool.Query(ctx, `SELECT w.box, w.owner, w.cron, w.tz, w.awake_for_s, w.next_at, w.last_wake_at, w.sleep_at
+		FROM wake_schedules w JOIN users u ON u.id = w.owner WHERE w.owner = $1 OR ($1 = '' AND NOT u.disabled) ORDER BY w.created_at, w.box`, owner)
+	if err != nil {
+		return nil, fmt.Errorf("list wake schedules: %w", err)
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (WakeSchedule, error) {
+		var w WakeSchedule
+		var awakeFor int
+		var lastWake, sleep *time.Time
+		err := row.Scan(&w.Box, &w.Owner, &w.Cron, &w.TZ, &awakeFor, &w.NextAt, &lastWake, &sleep)
+		w.AwakeFor = time.Duration(awakeFor) * time.Second
+		if lastWake != nil {
+			w.LastWakeAt = *lastWake
+		}
+		if sleep != nil {
+			w.SleepAt = *sleep
+		}
+		return w, err
+	})
+}
+
+func (s *store) removeWakeSchedule(ctx context.Context, owner, box string) error {
+	tag, err := s.pool.Exec(ctx, "DELETE FROM wake_schedules WHERE box = $1 AND owner = $2", box, owner)
+	if err != nil {
+		return fmt.Errorf("delete wake schedule: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// setWakeAlarm updates w's alarm state, ErrNotFound when its schedule changed or went since w was read.
+func (s *store) setWakeAlarm(ctx context.Context, w WakeSchedule) error {
+	tag, err := s.pool.Exec(ctx, `UPDATE wake_schedules SET next_at = $2, last_wake_at = $3, sleep_at = $4
+		WHERE box = $1 AND cron = $5 AND tz = $6 AND awake_for_s = $7`,
+		w.Box, w.NextAt, nullTime(w.LastWakeAt), nullTime(w.SleepAt), w.Cron, w.TZ, int(w.AwakeFor/time.Second))
+	if err != nil {
+		return fmt.Errorf("set wake alarm: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // execShare runs an update of one live share; a share that is gone is ErrNotFound.
 func (s *store) execShare(ctx context.Context, sql string, args ...any) error {
 	tag, err := s.pool.Exec(ctx, sql, args...)
@@ -287,4 +364,11 @@ func (s *store) exec(ctx context.Context, sql string, args ...any) error {
 		return fmt.Errorf("%s: %w", strings.Fields(sql)[0], err)
 	}
 	return nil
+}
+
+func nullTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return new(t)
 }
