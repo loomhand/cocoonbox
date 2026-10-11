@@ -5323,6 +5323,134 @@ async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_m
 }
 
 #[tokio::test]
+async fn a_plan_right_after_a_restore_reads_no_file_the_restore_wrote() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    let names = ["a.txt", "b.txt", "c.txt", "d.bin"];
+    for (i, name) in names.iter().enumerate() {
+        let size = if i == 3 { 3 << 20 } else { 10_000 };
+        std::fs::write(h.workspace.join(name), noise(size, 70 + i as u64)).unwrap();
+    }
+    let db = rusqlite::Connection::open(h.workspace.join("e.db")).unwrap();
+    db.execute_batch("CREATE TABLE t(v); INSERT INTO t VALUES (1);")
+        .unwrap();
+    drop(db);
+    let first = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &first).await;
+    let m1 = manifest_of(&objects, &first.snapshot_id);
+    let known = h
+        .home
+        .parent()
+        .unwrap()
+        .join("state/state/known-chunks.json");
+    std::fs::remove_file(&known).unwrap();
+    std::fs::remove_file(h.workspace.join("a.txt")).unwrap();
+
+    restore(&h, &base, &objects, &first.snapshot_id)
+        .await
+        .unwrap();
+    let index = known_files(&h);
+    for name in names {
+        let f = &index[format!("workspace/{name}")];
+        assert_eq!(f["compare_only"], false, "{name}: {index}");
+        let sizes: Vec<u64> = f["chunks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c[1].as_u64().unwrap())
+            .collect();
+        assert_eq!(
+            sizes.iter().sum::<u64>(),
+            std::fs::metadata(h.workspace.join(name)).unwrap().len(),
+            "{name}: {index}"
+        );
+    }
+    assert_eq!(
+        index["workspace/e.db"]["compare_only"], true,
+        "an SQLite file is always read through its backup: {index}"
+    );
+
+    let mut forged: Value = serde_json::from_slice(&std::fs::read(&known).unwrap()).unwrap();
+    for (i, name) in names.iter().enumerate() {
+        let next = names[(i + 1) % names.len()];
+        forged["files"][format!("workspace/{name}")]["chunks"] =
+            index[format!("workspace/{next}")]["chunks"].clone();
+    }
+    std::fs::write(&known, serde_json::to_vec(&forged).unwrap()).unwrap();
+    let second = plan(&h, pb::Consistency::Quiesced, &first.snapshot_id).await;
+    assert_eq!(second.changed_files, Some(0), "{second:?}");
+    let sent = upload_missing(&h, &base, &objects, &second).await;
+    assert_eq!(sent, 0, "a plan right after a restore uploads nothing");
+    let m2 = manifest_of(&objects, &second.snapshot_id);
+    for (i, name) in names.iter().enumerate() {
+        let next = names[(i + 1) % names.len()];
+        assert_eq!(
+            chunks_of(&m2, name),
+            chunks_of(&m1, next),
+            "{name} was reused unread"
+        );
+    }
+    assert_eq!(chunks_of(&m2, "e.db"), chunks_of(&m1, "e.db"));
+}
+
+#[tokio::test]
+async fn a_plan_after_a_restore_uploads_exactly_the_files_changed_since() {
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects) = fake_store().await;
+    for (name, seed) in [("a.txt", 81), ("b.txt", 82), ("c.txt", 83)] {
+        std::fs::write(h.workspace.join(name), noise(10_000, seed)).unwrap();
+    }
+    let first = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &first).await;
+    restore(&h, &base, &objects, &first.snapshot_id)
+        .await
+        .unwrap();
+
+    std::fs::write(h.workspace.join("a.txt"), noise(10_000, 84)).unwrap();
+    let b = h.workspace.join("b.txt");
+    let mtime = std::fs::metadata(&b).unwrap().modified().unwrap();
+    std::fs::write(&b, noise(10_000, 85)).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&b)
+        .unwrap()
+        .set_modified(mtime)
+        .unwrap();
+    let second = plan(&h, pb::Consistency::Quiesced, &first.snapshot_id).await;
+    assert_eq!(second.changed_files, Some(2), "{second:?}");
+    let missing: HashSet<String> = {
+        let have = objects.lock().unwrap();
+        second
+            .chunks
+            .iter()
+            .filter(|c| !have.contains_key(&c.id))
+            .map(|c| c.id.clone())
+            .collect()
+    };
+    upload_missing(&h, &base, &objects, &second).await;
+    let m2 = manifest_of(&objects, &second.snapshot_id);
+    let changed: HashSet<String> = ["a.txt", "b.txt"]
+        .iter()
+        .flat_map(|n| chunks_of(&m2, n).as_array().unwrap().clone())
+        .map(|c| c.as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(missing, changed);
+    assert_eq!(
+        chunks_of(&m2, "c.txt"),
+        chunks_of(&manifest_of(&objects, &first.snapshot_id), "c.txt")
+    );
+
+    restore(&h, &base, &objects, &second.snapshot_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        std::fs::read(h.workspace.join("a.txt")).unwrap(),
+        noise(10_000, 84)
+    );
+    assert_eq!(std::fs::read(&b).unwrap(), noise(10_000, 85));
+}
+
+#[tokio::test]
 async fn restore_fetches_a_chunk_shared_by_several_files_once() {
     let h = Harness::start(Vec::new(), false).await;
     let (base, objects) = fake_store().await;

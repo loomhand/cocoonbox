@@ -21,7 +21,7 @@ use crate::pb;
 use crate::runner::Preempt;
 use crate::store::Store;
 use crate::toolhost::rpc::{self, Call, FileReader, FileWriter};
-use crate::toolhost::state::{Entry, Excludes, Kind, Listed, Root};
+use crate::toolhost::state::{Entry, Excludes, Kind, Listed, Root, SQLITE_MAGIC};
 use crypto::Keys;
 use manifest::{Blob, FileRecord, Manifest};
 
@@ -304,7 +304,7 @@ impl StateEngine {
             .fill(&opened.keys, targets, opened.gets, reqs, &cache, progress)
             .await;
         let _ = tokio::fs::remove_dir_all(&cache).await;
-        let mut meter = filled?;
+        let mut meter = filled?.meter;
         self.tool(
             "state_apply",
             json!({"dirs": [], "symlinks": links, "modes": modes}),
@@ -435,7 +435,7 @@ impl StateEngine {
                 chunks: &db.chunks,
             });
         }
-        let mut meter = self
+        let mut filled = self
             .fill(keys, targets, queue, reqs, cache, progress)
             .await?;
         for last in finals {
@@ -445,7 +445,10 @@ impl StateEngine {
         let result = self.swap_in(manifest, cache, swaps).await;
         self.resume(quiet, result.is_ok());
         result?;
-        meter.finish(manifest_id).await;
+        if let Err(e) = self.seed_known(manifest, &filled).await {
+            eprintln!("state: seed the reuse cache: {e}");
+        }
+        filled.meter.finish(manifest_id).await;
         Ok(())
     }
 
@@ -459,7 +462,7 @@ impl StateEngine {
         mut reqs: S,
         cache: &Path,
         progress: mpsc::Sender<pb::TransferProgress>,
-    ) -> Result<Meter, StateError>
+    ) -> Result<Filled, StateError>
     where
         S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
     {
@@ -485,7 +488,11 @@ impl StateEngine {
             .filter(|(_, n)| **n > 1)
             .map(|(id, _)| (*id, Arc::default()))
             .collect();
-        let meter = Mutex::new(Meter::new(0, uses.len(), progress));
+        let filled = Mutex::new(Filled {
+            meter: Meter::new(0, uses.len(), progress),
+            sizes: HashMap::new(),
+            sqlite: HashSet::new(),
+        });
         let mut targets: Vec<Option<Target>> = targets.into_iter().map(Some).collect();
         let mut urls: HashMap<String, String> = HashMap::new();
         let gets = Semaphore::new(TRANSFERS);
@@ -522,7 +529,7 @@ impl StateEngine {
                         },
                     })
                     .collect();
-                jobs.push(self.write_target(keys, t.dest, parts, cache, &gets, &meter));
+                jobs.push(self.write_target(keys, t.dest, parts, cache, &gets, &filled));
             }
             if !open && ready.is_empty() && jobs.is_empty() {
                 break;
@@ -541,7 +548,7 @@ impl StateEngine {
             return Err(StateError::Invalid(format!("no url for chunk {missing}")));
         }
         drop(jobs);
-        Ok(meter.into_inner())
+        Ok(filled.into_inner())
     }
 
     async fn write_target(
@@ -551,8 +558,12 @@ impl StateEngine {
         parts: Vec<Part>,
         cache: &Path,
         gets: &Semaphore,
-        meter: &Mutex<Meter>,
+        filled: &Mutex<Filled>,
     ) -> Result<(), String> {
+        let mut key = match &dest {
+            Dest::Staged(_, e) => Some(format!("{}/{}", e.root, e.path)),
+            Dest::Local(_) => None,
+        };
         let mut sink = match dest {
             Dest::Staged(path, e) => {
                 Sink::Remote(self.toolhost.write_file(&path, e.mode, e.mtime_ms).await?)
@@ -564,10 +575,16 @@ impl StateEngine {
             ),
         };
         let mut data = stream::iter(parts)
-            .map(|p| self.part(keys, p, cache, gets, meter))
+            .map(|p| self.part(keys, p, cache, gets, filled))
             .buffered(RESTORE_AHEAD);
         while let Some(d) = data.next().await {
-            sink.send(&d?).await?;
+            let d = d?;
+            if let Some(k) = key.take()
+                && d.starts_with(SQLITE_MAGIC)
+            {
+                filled.lock().await.sqlite.insert(k);
+            }
+            sink.send(&d).await?;
         }
         sink.finish().await
     }
@@ -578,13 +595,13 @@ impl StateEngine {
         part: Part,
         cache: &Path,
         gets: &Semaphore,
-        meter: &Mutex<Meter>,
+        filled: &Mutex<Filled>,
     ) -> Result<Vec<u8>, String> {
         match part {
-            Part::Once { id, url } => self.fetch_chunk(keys, &id, &url, gets, meter).await,
+            Part::Once { id, url } => self.fetch_chunk(keys, &id, &url, gets, filled).await,
             Part::Shared { id, url, cell } => {
                 cell.get_or_try_init(|| async {
-                    let plain = self.fetch_chunk(keys, &id, &url, gets, meter).await?;
+                    let plain = self.fetch_chunk(keys, &id, &url, gets, filled).await?;
                     let path = cache.join(&id);
                     tokio::fs::write(&path, plain)
                         .await
@@ -684,22 +701,7 @@ impl StateEngine {
             sizes: std::sync::Mutex::new(HashMap::new()),
         };
         let settled_ns = (crate::now_ms() - REUSE_AGE_MS) * 1_000_000;
-        let listed = self
-            .roots
-            .iter()
-            .find(|r| r.name == HOME_ROOT)
-            .map(|home| Listed {
-                file: home.path.join(crate::offload::Layout::excludes_rel()),
-                root: WORKSPACE_ROOT.to_owned(),
-            });
-        let walked = self
-            .tool(
-                "state_walk",
-                json!({"roots": self.roots, "excludes": self.excludes, "listed": listed}),
-            )
-            .await?;
-        let entries: Vec<Entry> =
-            serde_json::from_str(&walked).map_err(|e| format!("decode walk: {e}"))?;
+        let entries = self.walk().await?;
         let roots: HashMap<&str, &Path> = self
             .roots
             .iter()
@@ -858,6 +860,63 @@ impl StateEngine {
         Ok((pinned, response))
     }
 
+    async fn walk(&self) -> Result<Vec<Entry>, String> {
+        let listed = self
+            .roots
+            .iter()
+            .find(|r| r.name == HOME_ROOT)
+            .map(|home| Listed {
+                file: home.path.join(crate::offload::Layout::excludes_rel()),
+                root: WORKSPACE_ROOT.to_owned(),
+            });
+        let walked = self
+            .tool(
+                "state_walk",
+                json!({"roots": self.roots, "excludes": self.excludes, "listed": listed}),
+            )
+            .await?;
+        serde_json::from_str(&walked).map_err(|e| format!("decode walk: {e}"))
+    }
+
+    async fn seed_known(&self, manifest: &Manifest, filled: &Filled) -> Result<(), String> {
+        let restored: HashMap<String, &FileRecord> = manifest
+            .files
+            .iter()
+            .filter(|f| f.entry.kind == Kind::File)
+            .map(|f| (format!("{}/{}", f.entry.root, f.entry.path), f))
+            .collect();
+        let mut files = HashMap::new();
+        for e in self.walk().await? {
+            let key = format!("{}/{}", e.root, e.path);
+            let (Some(r), Some(ctime_ns)) = (restored.get(&key), e.ctime_ns) else {
+                continue;
+            };
+            let unchanged = e.size == r.entry.size && e.mtime_ms == r.entry.mtime_ms;
+            let chunks = r
+                .chunks
+                .iter()
+                .map(|id| (id.clone(), filled.sizes.get(id).copied().unwrap_or(0)))
+                .collect();
+            let compare_only = !unchanged || filled.sqlite.contains(&key);
+            files.insert(
+                key,
+                Reuse {
+                    size: e.size,
+                    mtime_ms: e.mtime_ms,
+                    ctime_ns,
+                    chunks,
+                    compare_only,
+                },
+            );
+        }
+        self.save_known(&Known {
+            key_id: manifest.key_id.clone(),
+            chunks: referenced(manifest).into_iter().collect(),
+            files,
+        })
+        .await
+    }
+
     /// Takes the gate; past the wait it interrupts the share calls, since a guest must never hold off the owner.
     async fn quiesce(&self) -> Result<Quiet, StateError> {
         let gate = Arc::clone(&self.pause.turns).write_owned();
@@ -976,7 +1035,7 @@ impl StateEngine {
         id: &str,
         url: &str,
         gets: &Semaphore,
-        meter: &Mutex<Meter>,
+        filled: &Mutex<Filled>,
     ) -> Result<Vec<u8>, String> {
         let sealed = {
             let _slot = gets
@@ -994,7 +1053,9 @@ impl StateEngine {
             tokio::task::spawn_blocking(move || keys.open(&owned, &sealed, u64::from(CHUNK_MAX)))
                 .await
                 .map_err(|e| format!("open task: {e}"))??;
-        meter.lock().await.add(size).await;
+        let mut f = filled.lock().await;
+        f.meter.add(size).await;
+        f.sizes.insert(id.to_owned(), plain.len() as u64);
         Ok(plain)
     }
 
@@ -1030,6 +1091,12 @@ struct Pinned {
     snapshot_id: String,
     spool: PathBuf,
     known: Known,
+}
+
+struct Filled {
+    meter: Meter,
+    sizes: HashMap<String, u64>,
+    sqlite: HashSet<String>,
 }
 
 /// Chunk ids the store held after the last upload under one key, and the files that can reuse theirs.

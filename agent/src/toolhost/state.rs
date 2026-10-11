@@ -12,9 +12,10 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::rpc::{self, Output};
 
+pub const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+
 const READ_BLOCK: usize = 1 << 20;
 const TRASH_PREFIX: &str = ".cb-trash-";
-const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 const PLACE_TRIES: u32 = 100;
 
 /// A tree to walk, named in the manifest.
