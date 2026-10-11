@@ -44,7 +44,7 @@ enum ApprovalDecision {
 }
 
 message CatalogEntry {
-  // `github`, `google-calendar`, `notion`, `linear`, `attio`, `exa`, `context7`, or `custom`.
+  // The connector's id, such as `github`, or `custom` for any MCP server by URL.
   string id = 1;
   string name = 2;
   string description = 3;

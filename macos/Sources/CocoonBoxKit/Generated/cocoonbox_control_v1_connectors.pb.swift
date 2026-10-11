@@ -115,7 +115,7 @@ public nonisolated struct Cocoonbox_Control_V1_CatalogEntry: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// `github`, `google-calendar`, `notion`, `linear`, `attio`, `exa`, `context7`, or `custom`.
+  /// The connector's id, such as `github`, or `custom` for any MCP server by URL.
   public var id: String = String()
 
   public var name: String = String()

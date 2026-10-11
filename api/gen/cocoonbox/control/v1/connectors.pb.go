@@ -130,7 +130,7 @@ func (ApprovalDecision) EnumDescriptor() ([]byte, []int) {
 
 type CatalogEntry struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// `github`, `google-calendar`, `notion`, `linear`, `attio`, `exa`, `context7`, or `custom`.
+	// The connector's id, such as `github`, or `custom` for any MCP server by URL.
 	Id          string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name        string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Description string `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`

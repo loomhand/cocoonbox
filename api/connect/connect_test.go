@@ -505,6 +505,9 @@ func TestServersWithoutASignInConnectAtOnce(t *testing.T) {
 
 func TestTheCatalogOffersPresetServers(t *testing.T) {
 	want := map[string]string{"notion": "mcp", "linear": "mcp", "attio": "mcp", "exa": "none", "context7": "none"}
+	for _, id := range []string{"monday", "atlassian", "airtable", "granola", "webflow", "mintlify", "sentry", "supabase", "cloudflare", "posthog", "stripe", "paypal", "zapier", "composio"} {
+		want[id] = "mcp"
+	}
 	svc := &Service{catalog: newCatalog(Credentials{}, Credentials{})}
 	catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
 	for _, e := range catalog.GetEntries() {
