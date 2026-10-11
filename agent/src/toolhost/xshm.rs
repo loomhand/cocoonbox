@@ -69,6 +69,7 @@ pub struct Grabber {
     /// Whether a root child belongs to the desktop shell (panel, dock, desktop), by window id.
     shell: Mutex<HashMap<Window, bool>>,
     net_wm_pid: Atom,
+    net_wm_check: Atom,
 }
 
 // SAFETY: the segment is private to this Grabber and only read through `&self` after a reply.
@@ -101,11 +102,12 @@ impl Grabber {
             .map_err(|e| format!("MIT-SHM: {e}"))?;
         let seg = conn.generate_id().map_err(|e| format!("X id: {e}"))?;
         let _ = conn.xinput_xi_query_version(2, 2).map(|c| c.reply());
-        let [net_wm_name, utf8, net_active, net_wm_pid] = [
+        let [net_wm_name, utf8, net_active, net_wm_pid, net_wm_check] = [
             &b"_NET_WM_NAME"[..],
             b"UTF8_STRING",
             b"_NET_ACTIVE_WINDOW",
             b"_NET_WM_PID",
+            b"_NET_SUPPORTING_WM_CHECK",
         ]
         .map(|name| {
             conn.intern_atom(false, name)
@@ -143,6 +145,7 @@ impl Grabber {
             net_active,
             shell: Mutex::new(HashMap::new()),
             net_wm_pid,
+            net_wm_check,
         };
         attached?;
         Ok(grabber)
@@ -337,6 +340,29 @@ impl Grabber {
             .reply()
             .ok()?;
         reply.value32()?.next().filter(|w| *w != 0)
+    }
+
+    /// Whether a window manager runs: the root's `_NET_SUPPORTING_WM_CHECK` names a window that exists.
+    pub fn wm(&self) -> Result<bool, String> {
+        let check = self
+            .conn
+            .get_property(false, self.root, self.net_wm_check, AtomEnum::WINDOW, 0, 1)
+            .map_err(|e| format!("get _NET_SUPPORTING_WM_CHECK: {e}"))?
+            .reply()
+            .map_err(|e| format!("get _NET_SUPPORTING_WM_CHECK: {e}"))?;
+        let Some(w) = check
+            .value32()
+            .and_then(|mut v| v.next())
+            .filter(|w| *w != 0)
+        else {
+            return Ok(false);
+        };
+        let attrs = self
+            .conn
+            .get_window_attributes(w)
+            .map_err(|e| format!("window attributes: {e}"))?
+            .reply();
+        Ok(alive(attrs, "window attributes")?.is_some())
     }
 
     fn is_shell(&self, w: Window) -> bool {
