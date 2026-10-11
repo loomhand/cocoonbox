@@ -65,6 +65,9 @@ func (s *Service) provisionStale(ctx context.Context) {
 			_ = s.provisionMachine(ctx, m)
 		}
 	}
+	if s.vault != nil {
+		s.reconcileVault(ctx, ms)
+	}
 }
 
 // provisionMachine provisions m unless its current incarnation already has a wake id.
@@ -131,6 +134,11 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	}
 	if s.connect != nil {
 		s.pushCredentials(ctx, m)
+	}
+	if s.vault != nil {
+		if err := s.pushVault(ctx, m); err != nil {
+			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "push keys: %v", err)
+		}
 	}
 	if gwKey != "" {
 		if err := s.machines.SetMeta(ctx, m.ID, metaGW, "1"); err != nil {

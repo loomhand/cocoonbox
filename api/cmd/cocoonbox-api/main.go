@@ -36,6 +36,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/shares"
 	"github.com/CMGS/cocoonbox/api/store/s3"
 	"github.com/CMGS/cocoonbox/api/users"
+	"github.com/CMGS/cocoonbox/api/vault"
 )
 
 const (
@@ -125,6 +126,11 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
 	}
+	keys, err := openVault(ctx, cfg, svc, accounts)
+	if err != nil {
+		logger.Fatalf(ctx, err, "open the vault")
+	}
+	defer keys.Close()
 	proxy := edge.NewProxy(svc, signer)
 	defer proxy.Close()
 	accounts.OnShareEnd(func(ctx context.Context, sh users.Share) { go endShare(ctx, proxy, sh) })
@@ -141,6 +147,7 @@ func main() {
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 	controlv1.RegisterSharesServer(server, shareSvc)
+	controlv1.RegisterKeysServer(server, keys)
 	if library != nil {
 		controlv1.RegisterFlowsServer(server, flows.NewServer(library))
 	}
@@ -158,6 +165,7 @@ func main() {
 	httpMux.Handle(edge.MCPPrefix, boxMCP)
 	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros, cfg.MaxRunningBoxes)
 	web.EnableSharing(shareSvc, authn, proxy)
+	web.EnableKeys(keys)
 	httpMux.Handle(console.Prefix, web)
 	if broker != nil {
 		controlv1.RegisterConnectorsServer(server, broker)
@@ -262,6 +270,29 @@ func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Servic
 			logger.Fatalf(ctx, err, "serve the connect box door on %s", cfg.Connect.BoxListen)
 		}
 	}()
+}
+
+// openVault opens the key vault on the users database and puts each owner's keys on the owner's boxes, at once on a change.
+func openVault(ctx context.Context, cfg *config.Config, svc *boxes.Service, accounts *users.Service) (*vault.Service, error) {
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return nil, err
+	}
+	keys, err := vault.Open(ctx, vault.Options{DSN: dsn, Keys: accounts})
+	if err != nil {
+		return nil, err
+	}
+	svc.EnableVault(keys)
+	keys.OnChange(func(ctx context.Context, owner string) {
+		go func() {
+			applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), injectionTimeout)
+			defer cancel()
+			if err := svc.ApplyVault(applyCtx, owner); err != nil {
+				log.WithFunc("main.openVault").Warnf(applyCtx, "apply the keys of %s: %v", owner, err)
+			}
+		}()
+	})
+	return keys, nil
 }
 
 // endShare closes the box's MCP sessions of a share that ended; a box that is not running has none to close.

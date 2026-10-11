@@ -96,6 +96,7 @@ type Server struct {
 	authn   *auth.Authenticator
 	screens Screens
 	connect *connect.Service
+	keys    controlv1.KeysServer
 
 	defaultDailyCap   int64
 	defaultMaxRunning int
@@ -609,7 +610,7 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusNotFound, status.Convert(err).Message())
 	case status.Code(err) == codes.PermissionDenied:
 		writeError(w, http.StatusForbidden, status.Convert(err).Message())
-	case status.Code(err) == codes.FailedPrecondition:
+	case status.Code(err) == codes.FailedPrecondition, status.Code(err) == codes.ResourceExhausted:
 		writeError(w, http.StatusConflict, status.Convert(err).Message())
 	case status.Code(err) == codes.Unavailable:
 		writeError(w, http.StatusBadGateway, status.Convert(err).Message())

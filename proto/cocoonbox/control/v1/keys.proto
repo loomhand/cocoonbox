@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package cocoonbox.control.v1;
+
+option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
+
+// Keys is served by cocoonbox-api for the caller's own API keys, with
+// `authorization: Bearer <user token>`. A key's value goes in once and never
+// comes back. Every box of the caller holds the key's name as an env var whose
+// value is a placeholder; the box's egress proxy puts the value in place of
+// the placeholder on requests to the key's hosts only. A write share of a box
+// hands its guests the same use.
+service Keys {
+  // Add stores a key and puts it on every box of the caller; ALREADY_EXISTS
+  // when the name is taken.
+  rpc Add(AddKeyRequest) returns (Key);
+  // List returns the caller's keys, without values.
+  rpc List(ListKeysRequest) returns (ListKeysResponse);
+  // Rotate replaces a key's value; the placeholder stays.
+  rpc Rotate(RotateKeyRequest) returns (Key);
+  // Delete removes a key from the store and from every box. Revoke it at the
+  // vendor too: a program that kept the value in memory can still use it.
+  rpc Delete(KeyRef) returns (DeleteKeyResponse);
+}
+
+message Key {
+  // The env var name in the box.
+  string name = 1;
+  // Exact host names, or `*.` and a registrable domain.
+  repeated string hosts = 2;
+  // The header that carries the value; empty when the query carries it.
+  string header = 3;
+  // How the header carries the value, `{}` standing for it: `Bearer {}`,
+  // `{}`, `token {}`, or `Basic <user>:{}`, which sends base64(<user>:value).
+  string template = 4;
+  // The query parameter that carries the value; empty when a header does.
+  string query = 5;
+  // The env var's value in the box; programs send it where the value goes.
+  string placeholder = 6;
+  // The last 4 characters of a value of 12 or more; empty otherwise.
+  string hint = 7;
+  int64 created_at_ms = 8;
+  int64 updated_at_ms = 9;
+}
+
+message AddKeyRequest {
+  // `^[A-Z_][A-Z0-9_]{0,63}$`, not a name the box itself uses, such as PATH.
+  string name = 1;
+  // 1 to 8.
+  repeated string hosts = 2;
+  // Empty with an empty query selects `Authorization`.
+  string header = 3;
+  // Empty selects `Bearer {}` for Authorization and `{}` for other headers.
+  string template = 4;
+  // Sends the value as this query parameter instead of a header.
+  string query = 5;
+  string value = 6;
+}
+
+message ListKeysRequest {}
+
+message ListKeysResponse {
+  repeated Key keys = 1;
+}
+
+message RotateKeyRequest {
+  string name = 1;
+  string value = 2;
+}
+
+message KeyRef {
+  string name = 1;
+}
+
+message DeleteKeyResponse {}

@@ -94,15 +94,23 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 	}
 }
 
-// wakeCredentials pushes m's secrets while it wakes, without holding up the wake; provisionOnce pushes again after it.
+// wakeCredentials pushes m's secrets and keys while it wakes, without holding up the wake; provisionOnce pushes again after it.
 func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
-	if s.connect == nil {
+	vault := s.vault != nil && s.provision != nil
+	if s.connect == nil && !vault {
 		return
 	}
 	go func() {
 		pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wakePushTimeout)
 		defer cancel()
-		s.pushCredentials(pushCtx, m)
+		if s.connect != nil {
+			s.pushCredentials(pushCtx, m)
+		}
+		if vault {
+			if err := s.syncVault(pushCtx, m.ID); err != nil {
+				log.WithFunc("boxes.Service.wakeCredentials").WithField("machine", m.ID).Warnf(pushCtx, "push keys: %v", err)
+			}
+		}
 	}()
 }
 

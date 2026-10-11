@@ -91,6 +91,7 @@ type Service struct {
 	exit      *exitPolicy
 	accounts  Accounts
 	connect   Connect
+	vault     Vault
 	wake      *wakeAlarms
 	park      *parking
 
