@@ -286,8 +286,20 @@ public final class BoxConnection: Sendable {
 
     // MARK: Connectors
 
-    public func listConnectors() async throws -> [Cocoonbox_Control_V1_Connector] {
-        try await connectors.list(Cocoonbox_Control_V1_ListConnectorsRequest()).connectors
+    // catalog lists the connectors the api offers; `custom` connects any MCP server by URL.
+    public func catalog() async throws -> [Cocoonbox_Control_V1_CatalogEntry] {
+        try await connectors.catalog(Cocoonbox_Control_V1_CatalogRequest()).entries
+    }
+
+    // listConnectors returns the user's connected accounts; withTools lists each one's tools from its MCP server.
+    public func listConnectors(withTools: Bool = false) async throws -> [Cocoonbox_Control_V1_Connector] {
+        try await connectors.list(.with { $0.withTools = withTools }).connectors
+    }
+
+    // disconnect revokes the grant at the vendor where it can and deletes it; it returns whether the vendor revoked it.
+    @discardableResult
+    public func disconnect(connectorID: String) async throws -> Bool {
+        try await connectors.disconnect(.with { $0.connectorID = connectorID }).revoked
     }
 
     // answerConnector answers a connector approval (design §16.5): the broker

@@ -115,7 +115,7 @@ public nonisolated struct Cocoonbox_Control_V1_CatalogEntry: Sendable {
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  /// `github`, `google-calendar`, `notion`, `linear`, or `custom`.
+  /// `github`, `google-calendar`, `notion`, `linear`, `attio`, `exa`, `context7`, or `custom`.
   public var id: String = String()
 
   public var name: String = String()
@@ -133,6 +133,15 @@ public nonisolated struct Cocoonbox_Control_V1_CatalogEntry: Sendable {
 
   /// The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
   public var checkable: Bool = false
+
+  /// The MCP server of the connector; empty for a grant-only connector and for `custom`.
+  public var mcpURL: String = String()
+
+  /// How the user connects: `oauth` with the api's own client, `mcp` by the MCP server's own sign-in, `none` without a sign-in, or `custom`.
+  public var auth: String = String()
+
+  /// An image of the vendor's icon; empty when the catalog names none.
+  public var iconURL: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
@@ -422,7 +431,7 @@ nonisolated extension Cocoonbox_Control_V1_ApprovalDecision: SwiftProtobuf._Prot
 
 nonisolated extension Cocoonbox_Control_V1_CatalogEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".CatalogEntry"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}description\0\u{1}available\0\u{3}install_url\0\u{3}grant_only\0\u{1}checkable\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}name\0\u{1}description\0\u{1}available\0\u{3}install_url\0\u{3}grant_only\0\u{1}checkable\0\u{3}mcp_url\0\u{1}auth\0\u{3}icon_url\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -437,6 +446,9 @@ nonisolated extension Cocoonbox_Control_V1_CatalogEntry: SwiftProtobuf.Message, 
       case 5: try { try decoder.decodeSingularStringField(value: &self.installURL) }()
       case 6: try { try decoder.decodeSingularBoolField(value: &self.grantOnly) }()
       case 7: try { try decoder.decodeSingularBoolField(value: &self.checkable) }()
+      case 8: try { try decoder.decodeSingularStringField(value: &self.mcpURL) }()
+      case 9: try { try decoder.decodeSingularStringField(value: &self.auth) }()
+      case 10: try { try decoder.decodeSingularStringField(value: &self.iconURL) }()
       default: break
       }
     }
@@ -464,6 +476,15 @@ nonisolated extension Cocoonbox_Control_V1_CatalogEntry: SwiftProtobuf.Message, 
     if self.checkable != false {
       try visitor.visitSingularBoolField(value: self.checkable, fieldNumber: 7)
     }
+    if !self.mcpURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.mcpURL, fieldNumber: 8)
+    }
+    if !self.auth.isEmpty {
+      try visitor.visitSingularStringField(value: self.auth, fieldNumber: 9)
+    }
+    if !self.iconURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.iconURL, fieldNumber: 10)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
@@ -475,6 +496,9 @@ nonisolated extension Cocoonbox_Control_V1_CatalogEntry: SwiftProtobuf.Message, 
     if lhs.installURL != rhs.installURL {return false}
     if lhs.grantOnly != rhs.grantOnly {return false}
     if lhs.checkable != rhs.checkable {return false}
+    if lhs.mcpURL != rhs.mcpURL {return false}
+    if lhs.auth != rhs.auth {return false}
+    if lhs.iconURL != rhs.iconURL {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

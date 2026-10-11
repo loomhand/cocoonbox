@@ -180,6 +180,19 @@ import Testing
         #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
     }
 
+    @Test func theKitReadsTheCatalogListsToolsAndDisconnects() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        try await mock.connect(["grants": [Self.hub]])
+        let connection = mock.connection
+        #expect(try await connection.catalog().map(\.id) == ["github", "custom"])
+        #expect(try await connection.listConnectors().map(\.tools.count) == [0])
+        #expect(try await connection.listConnectors(withTools: true).first?.tools.map(\.name) == ["list_issues", "create_issue"])
+        #expect(try await connection.disconnect(connectorID: "mockhub"))
+        #expect(try await connection.listConnectors().isEmpty)
+        await #expect(throws: (any Error).self) { try await connection.disconnect(connectorID: "mockhub") }
+    }
+
     @Test func keepsWorkingWhileTheDoorFailsAndRecovers() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
