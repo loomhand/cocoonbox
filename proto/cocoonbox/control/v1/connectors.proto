@@ -44,7 +44,7 @@ enum ApprovalDecision {
 }
 
 message CatalogEntry {
-  // `github`, `google-calendar`, `notion`, `linear`, or `custom`.
+  // `github`, `google-calendar`, `notion`, `linear`, `attio`, `exa`, `context7`, or `custom`.
   string id = 1;
   string name = 2;
   string description = 3;
@@ -56,6 +56,12 @@ message CatalogEntry {
   bool grant_only = 6;
   // The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
   bool checkable = 7;
+  // The MCP server of the connector; empty for a grant-only connector and for `custom`.
+  string mcp_url = 8;
+  // How the user connects: `oauth` with the api's own client, `mcp` by the MCP server's own sign-in, `none` without a sign-in, or `custom`.
+  string auth = 9;
+  // An image of the vendor's icon; empty when the catalog names none.
+  string icon_url = 10;
 }
 
 message CatalogRequest {}

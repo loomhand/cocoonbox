@@ -9,6 +9,7 @@ const (
 	authOAuth  authKind = "oauth"
 	authMCP    authKind = "mcp"
 	authCustom authKind = "custom"
+	authOpen   authKind = "none"
 
 	revokeGitHub  revokeKind = "github"
 	revokeRFC7009 revokeKind = "rfc7009"
@@ -46,6 +47,7 @@ type entry struct {
 	description string
 	mcpURL      string
 	auth        authKind
+	icon        string
 
 	client       client
 	authorizeURL string
@@ -67,7 +69,7 @@ func (e *entry) available() bool {
 func newCatalog(github, google Credentials) []*entry {
 	gh := &entry{
 		id: "github", name: "GitHub", description: "Issues, pull requests and code in the repositories you pick for the CocoonBox GitHub App.",
-		mcpURL: "https://api.githubcopilot.com/mcp/", auth: authOAuth,
+		mcpURL: "https://api.githubcopilot.com/mcp/", auth: authOAuth, icon: "https://github.githubassets.com/favicons/favicon.svg",
 		client: client{ //nolint:gosec // the secret comes from the environment
 			ID: github.ClientID, Secret: github.ClientSecret, TokenURL: "https://github.com/login/oauth/access_token",
 			RevokeURL: "https://api.github.com/applications/" + url.PathEscape(github.ClientID) + "/grant",
@@ -88,7 +90,7 @@ func newCatalog(github, google Credentials) []*entry {
 		gh,
 		{
 			id: "google-calendar", name: "Google Calendar", description: "Your Google Calendar events, for programs in your box. It serves no tools to agents yet.",
-			auth: authOAuth,
+			auth: authOAuth, icon: "https://calendar.google.com/googlecalendar/images/favicons_2020q4/calendar_31.ico",
 			inject: []injection{{
 				name: "GOOGLE_CALENDAR", hosts: []string{"www.googleapis.com"}, header: headerAuthorization,
 				placeholder: "Bearer @GOOGLE_CALENDAR@", value: prefixed("Bearer "),
@@ -103,9 +105,15 @@ func newCatalog(github, google Credentials) []*entry {
 			userInfoURL:  "https://openidconnect.googleapis.com/v1/userinfo", userInfoName: "email",
 			revoke: revokeRFC7009,
 		},
-		{id: "notion", name: "Notion", description: "Pages and databases in your Notion workspace.", mcpURL: "https://mcp.notion.com/mcp", auth: authMCP},
-		{id: "linear", name: "Linear", description: "Issues and projects in your Linear workspace.", mcpURL: "https://mcp.linear.app/mcp", auth: authMCP},
-		{id: kindCustom, name: "Custom MCP server", description: "Any MCP server by URL, with its own sign-in or a key in a header.", auth: authCustom},
+		{id: "notion", name: "Notion", description: "Pages and databases in your Notion workspace.", mcpURL: "https://mcp.notion.com/mcp", auth: authMCP, icon: "https://www.notion.so/images/favicon.ico"},
+		{id: "linear", name: "Linear", description: "Issues and projects in your Linear workspace.", mcpURL: "https://mcp.linear.app/mcp", auth: authMCP, icon: "https://linear.app/favicon.ico"},
+		{id: "attio", name: "Attio", description: "Records, lists and notes in your Attio workspace.", mcpURL: "https://mcp.attio.com/mcp", auth: authMCP, icon: "https://attio.com/favicon.ico"},
+		{id: "exa", name: "Exa", description: "Web search and page contents from Exa, with no sign-in.", mcpURL: "https://mcp.exa.ai/mcp", auth: authOpen, icon: "https://exa.ai/images/favicon-32x32.png"},
+		{
+			id: "context7", name: "Context7", description: "Current documentation and code examples for libraries, with no sign-in.", mcpURL: "https://mcp.context7.com/mcp",
+			auth: authOpen, icon: "https://context7.com/context7-icon-green.png",
+		},
+		{id: kindCustom, name: "Custom MCP server", description: "Any MCP server by URL, with its own sign-in, a key in a header, or no sign-in.", auth: authCustom},
 	}
 }
 

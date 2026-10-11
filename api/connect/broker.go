@@ -249,7 +249,7 @@ func (s *Service) withCredential(ctx context.Context, g *grant, fn func(*upstrea
 	if err != nil {
 		return err
 	}
-	if sec.APIKey != "" {
+	if sec.AccessToken == "" {
 		if err = fn(&upstream{s: s, url: g.mcpURL, cred: credential{header: sec.Header, value: sec.APIKey}, conn: s.conn(g.id)}); errors.Is(err, errUnauthorized) {
 			return s.lose(ctx, g)
 		}

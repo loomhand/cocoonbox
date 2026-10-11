@@ -185,15 +185,38 @@ async function load() {
   if (!activity.rows.length) cell(activity.insertRow(), "No calls yet.");
 }
 
+function prefill() {
+  const url = params.get("url");
+  if (params.get("connect") !== "custom" || !url) return;
+  let target = null;
+  try {
+    target = new URL(url);
+  } catch {}
+  if (!target || target.protocol !== "https:" || target.username || target.password) {
+    notice("The link's server URL is not an https URL, so the form stays empty.", true);
+    return;
+  }
+  const f = $("custom-form");
+  f.name.value = params.get("name") || "";
+  f.url.value = url;
+  $("custom-confirm-url").textContent = url;
+  $("custom-confirm-host").textContent = target.host;
+  $("custom-confirm").hidden = false;
+  f.scrollIntoView();
+}
+
 $("custom-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
   begin("custom", { name: f.name.value, url: f.url.value, header: f.header.value, key: f.key.value })
-    .then(() => f.reset())
+    .then(() => {
+      f.reset();
+      $("custom-confirm").hidden = true;
+    })
     .catch((e) => notice(e.message, true));
 });
 
 if (params.get("connected")) notice("Connected " + params.get("connected") + ".");
 if (params.get("installed")) notice("GitHub saved your repository choice. Connect GitHub here if it is not connected yet.");
 if (params.get("error")) notice(params.get("error"), true);
-load();
+load().then(prefill);

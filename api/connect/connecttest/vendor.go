@@ -66,6 +66,7 @@ func New() *Vendor {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", v.mcp)
 	mux.HandleFunc("/keyed", v.keyed)
+	mux.HandleFunc("/open", v.open)
 	mux.HandleFunc("GET /userinfo", v.userinfo)
 	mux.HandleFunc("GET /.well-known/oauth-protected-resource/mcp", v.resourceMetadata)
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", v.serverMetadata)
@@ -82,6 +83,9 @@ func (v *Vendor) MCPURL() string { return v.URL + "/mcp" }
 
 // KeyedURL is the MCP endpoint that takes Key in X-Api-Key.
 func (v *Vendor) KeyedURL() string { return v.URL + "/keyed" }
+
+// OpenURL is the MCP endpoint that needs no credential.
+func (v *Vendor) OpenURL() string { return v.URL + "/open" }
 
 // Consent answers an authorization URL the way a user's consent does, and returns the code and state it redirects with.
 func (v *Vendor) Consent(authorizeURL string) (string, string, error) {
@@ -246,6 +250,10 @@ func (v *Vendor) keyed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	v.serveMCP(w, r, "X-Api-Key")
+}
+
+func (v *Vendor) open(w http.ResponseWriter, r *http.Request) {
+	v.serveMCP(w, r, r.Header.Get("Authorization"))
 }
 
 func (v *Vendor) serveMCP(w http.ResponseWriter, r *http.Request, auth string) {

@@ -153,7 +153,10 @@ func (s *Service) challenge(ctx context.Context, mcpURL string) (string, string,
 		return "", "", fmt.Errorf("reach %s: %w", mcpURL, err)
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusUnauthorized {
+	switch {
+	case resp.StatusCode/100 == 2:
+		return "", "", errNoSignIn
+	case resp.StatusCode != http.StatusUnauthorized:
 		return "", "", fmt.Errorf("%s answered %d without a sign-in; connect it with a key instead", mcpURL, resp.StatusCode)
 	}
 	params := map[string]string{}

@@ -81,6 +81,7 @@ var (
 	errNoApproval = errors.New("the approval is unknown, answered or expired")
 	errReconnect  = errors.New("the vendor no longer accepts the grant")
 	errNoDoorKey  = errors.New("no box door key")
+	errNoSignIn   = errors.New("the MCP server needs no sign-in")
 
 	connectorPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,23}$`)
 	toolNamePattern  = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)

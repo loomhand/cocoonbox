@@ -35,7 +35,7 @@ type StartRequest struct {
 	Key    string
 }
 
-// Start stores a pending authorization; a custom connector with a key connects at once and returns no URL.
+// Start stores a pending authorization; a connector without a sign-in, or a custom one with a key, connects at once and returns no URL.
 func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error) {
 	e := s.entry(req.Connector)
 	switch {
@@ -45,14 +45,17 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 		return nil, status.Errorf(codes.FailedPrecondition, "%s is not set up on this server", e.name)
 	}
 	connector, mcpURL := e.id, e.mcpURL
-	if e.auth == authCustom {
+	switch e.auth {
+	case authCustom:
 		var err error
 		if connector, mcpURL, err = s.customTarget(req); err != nil {
 			return nil, err
 		}
 		if req.Key != "" {
-			return &Started{Connector: connector}, s.connectKey(ctx, req.User, connector, mcpURL, cmp.Or(req.Header, headerAuthorization), req.Key)
+			return &Started{Connector: connector}, s.connectDirect(ctx, req.User, connector, e.id, mcpURL, credential{header: cmp.Or(req.Header, headerAuthorization), value: req.Key})
 		}
+	case authOpen:
+		return &Started{Connector: connector}, s.connectDirect(ctx, req.User, connector, e.id, mcpURL, credential{})
 	}
 	verifier, challenge := pkce()
 	state, nonce := randomToken(), randomToken()
@@ -73,6 +76,9 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 		discoverCtx, cancel := context.WithTimeout(ctx, setupTimeout)
 		auth, err := s.discover(discoverCtx, mcpURL)
 		cancel()
+		if errors.Is(err, errNoSignIn) {
+			return &Started{Connector: connector}, s.connectDirect(ctx, req.User, connector, e.id, mcpURL, credential{})
+		}
 		if err != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "sign-in to %s: %v", mcpURL, err)
 		}
@@ -184,25 +190,29 @@ func (s *Service) customTarget(req StartRequest) (string, string, error) {
 	return req.Name, u.String(), nil
 }
 
-// connectKey stores the key only after the server listed its tools with it.
-func (s *Service) connectKey(ctx context.Context, user, connector, mcpURL, header, key string) error {
+// connectDirect stores a grant without a sign-in, with cred or none, only after the server listed its tools with it.
+func (s *Service) connectDirect(ctx context.Context, user, connector, kind, mcpURL string, cred credential) error {
 	ctx, cancel := context.WithTimeout(ctx, setupTimeout)
 	defer cancel()
-	probe := &upstream{s: s, url: mcpURL, cred: credential{header: header, value: key}, conn: &conn{}}
-	if _, err := probe.listTools(ctx); errors.Is(err, errUnauthorized) {
+	probe := &upstream{s: s, url: mcpURL, cred: cred, conn: &conn{}}
+	_, err := probe.listTools(ctx)
+	switch {
+	case errors.Is(err, errUnauthorized) && cred.value == "":
+		return status.Error(codes.FailedPrecondition, "the MCP server asks for a sign-in or a key")
+	case errors.Is(err, errUnauthorized):
 		return status.Error(codes.InvalidArgument, "the MCP server refused the key")
-	} else if err != nil {
+	case err != nil:
 		return status.Errorf(codes.FailedPrecondition, "list the tools of %s: %v", mcpURL, err)
 	}
-	g := &grant{user: user, connector: connector, kind: kindCustom, mcpURL: mcpURL}
-	sec := secrets{APIKey: key, Header: header}
+	g := &grant{user: user, connector: connector, kind: kind, mcpURL: mcpURL}
+	sec := secrets{APIKey: cred.value, Header: cred.header}
 	if err := s.store.putGrant(ctx, g, func(id string) ([]byte, error) {
 		return s.seal.seal(ctx, user, sec, grantData(id, user, connector))
 	}); err != nil {
 		return err
 	}
 	s.dropConn(g.id)
-	s.watchers.notify(user)
-	log.WithFunc("connect.Service.connectKey").Infof(ctx, "user %s connected %s with a key (grant %s)", user, connector, g.id)
+	s.changed(ctx, g)
+	log.WithFunc("connect.Service.connectDirect").Infof(ctx, "user %s connected %s without a sign-in, with a key: %t (grant %s)", user, connector, cred.value != "", g.id)
 	return nil
 }

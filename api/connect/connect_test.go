@@ -1,6 +1,7 @@
 package connect
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -447,6 +448,64 @@ func TestAKeyConnectorSendsItsHeader(t *testing.T) {
 	}
 	if revoked, err := env.svc.Remove(t.Context(), alice, "keyed", DoorConsole); err != nil || revoked {
 		t.Errorf("Remove = %t, %v", revoked, err)
+	}
+}
+
+func TestServersWithoutASignInConnectAtOnce(t *testing.T) {
+	env := newEnv(t)
+	env.svc.catalog = append(env.svc.catalog,
+		&entry{id: "opencat", name: "Open", mcpURL: env.vendor.OpenURL(), auth: authOpen},
+		&entry{id: "closedcat", name: "Closed", mcpURL: env.vendor.MCPURL(), auth: authOpen},
+	)
+	for _, req := range []StartRequest{
+		{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: "open", URL: env.vendor.OpenURL()},
+		{User: alice, SessionSHA256: aliceSess, Connector: "opencat"},
+	} {
+		started, err := env.svc.Start(t.Context(), req)
+		if err != nil || started.URL != "" || started.Nonce != "" || started.Connector != cmp.Or(req.Name, req.Connector) {
+			t.Fatalf("Start %s = %+v, %v", req.Connector, started, err)
+		}
+		if out, err := call(t.Context(), env.svc, modeB, started.Connector+"_create_item", nil, ""); err != nil || out.IsError {
+			t.Errorf("Call on %s = %+v, %v", started.Connector, out, err)
+		}
+	}
+	if _, _, calls := env.vendor.Snapshot(); len(calls) != 2 || calls[0].Auth != "" || calls[1].Auth != "" {
+		t.Errorf("vendor calls = %+v, want two without a credential", calls)
+	}
+	list, err := env.svc.List(auth.WithUser(t.Context(), alice), &controlv1.ListConnectorsRequest{WithTools: true})
+	if err != nil || len(list.GetConnectors()) != 2 || list.GetConnectors()[0].GetKind() != kindCustom || list.GetConnectors()[1].GetKind() != "opencat" ||
+		len(list.GetConnectors()[1].GetTools()) != 2 {
+		t.Fatalf("List = %v, %v", list, err)
+	}
+	if _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "closedcat"}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("an open entry whose server asks for a sign-in: %v", err)
+	}
+	for _, id := range []string{"open", "opencat"} {
+		if revoked, err := env.svc.Remove(t.Context(), alice, id, DoorConsole); err != nil || revoked {
+			t.Errorf("Remove %s = %t, %v", id, revoked, err)
+		}
+	}
+}
+
+func TestTheCatalogOffersPresetServers(t *testing.T) {
+	want := map[string]string{"notion": "mcp", "linear": "mcp", "attio": "mcp", "exa": "none", "context7": "none"}
+	svc := &Service{catalog: newCatalog(Credentials{}, Credentials{})}
+	catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
+	for _, e := range catalog.GetEntries() {
+		if e.GetId() != kindCustom && !strings.HasPrefix(e.GetIconUrl(), "https://") {
+			t.Errorf("%s icon = %q", e.GetId(), e.GetIconUrl())
+		}
+		kind, ok := want[e.GetId()]
+		if !ok {
+			continue
+		}
+		if e.GetAuth() != kind || !strings.HasPrefix(e.GetMcpUrl(), "https://") || !e.GetAvailable() || e.GetGrantOnly() {
+			t.Errorf("%s = %v", e.GetId(), e)
+		}
+		delete(want, e.GetId())
+	}
+	if len(want) != 0 {
+		t.Errorf("catalog lacks %v", want)
 	}
 }
 

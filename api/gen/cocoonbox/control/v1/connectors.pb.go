@@ -130,7 +130,7 @@ func (ApprovalDecision) EnumDescriptor() ([]byte, []int) {
 
 type CatalogEntry struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// `github`, `google-calendar`, `notion`, `linear`, or `custom`.
+	// `github`, `google-calendar`, `notion`, `linear`, `attio`, `exa`, `context7`, or `custom`.
 	Id          string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Name        string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Description string `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
@@ -141,7 +141,13 @@ type CatalogEntry struct {
 	// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection (M5.2).
 	GrantOnly bool `protobuf:"varint,6,opt,name=grant_only,json=grantOnly,proto3" json:"grant_only,omitempty"`
 	// The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
-	Checkable     bool `protobuf:"varint,7,opt,name=checkable,proto3" json:"checkable,omitempty"`
+	Checkable bool `protobuf:"varint,7,opt,name=checkable,proto3" json:"checkable,omitempty"`
+	// The MCP server of the connector; empty for a grant-only connector and for `custom`.
+	McpUrl string `protobuf:"bytes,8,opt,name=mcp_url,json=mcpUrl,proto3" json:"mcp_url,omitempty"`
+	// How the user connects: `oauth` with the api's own client, `mcp` by the MCP server's own sign-in, `none` without a sign-in, or `custom`.
+	Auth string `protobuf:"bytes,9,opt,name=auth,proto3" json:"auth,omitempty"`
+	// An image of the vendor's icon; empty when the catalog names none.
+	IconUrl       string `protobuf:"bytes,10,opt,name=icon_url,json=iconUrl,proto3" json:"icon_url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -223,6 +229,27 @@ func (x *CatalogEntry) GetCheckable() bool {
 		return x.Checkable
 	}
 	return false
+}
+
+func (x *CatalogEntry) GetMcpUrl() string {
+	if x != nil {
+		return x.McpUrl
+	}
+	return ""
+}
+
+func (x *CatalogEntry) GetAuth() string {
+	if x != nil {
+		return x.Auth
+	}
+	return ""
+}
+
+func (x *CatalogEntry) GetIconUrl() string {
+	if x != nil {
+		return x.IconUrl
+	}
+	return ""
 }
 
 type CatalogRequest struct {
@@ -1178,7 +1205,7 @@ var File_cocoonbox_control_v1_connectors_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\n" +
-	"%cocoonbox/control/v1/connectors.proto\x12\x14cocoonbox.control.v1\"\xd0\x01\n" +
+	"%cocoonbox/control/v1/connectors.proto\x12\x14cocoonbox.control.v1\"\x98\x02\n" +
 	"\fCatalogEntry\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -1188,7 +1215,11 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"installUrl\x12\x1d\n" +
 	"\n" +
 	"grant_only\x18\x06 \x01(\bR\tgrantOnly\x12\x1c\n" +
-	"\tcheckable\x18\a \x01(\bR\tcheckable\"\x10\n" +
+	"\tcheckable\x18\a \x01(\bR\tcheckable\x12\x17\n" +
+	"\amcp_url\x18\b \x01(\tR\x06mcpUrl\x12\x12\n" +
+	"\x04auth\x18\t \x01(\tR\x04auth\x12\x19\n" +
+	"\bicon_url\x18\n" +
+	" \x01(\tR\aiconUrl\"\x10\n" +
 	"\x0eCatalogRequest\"O\n" +
 	"\x0fCatalogResponse\x12<\n" +
 	"\aentries\x18\x01 \x03(\v2\".cocoonbox.control.v1.CatalogEntryR\aentries\"\xaa\x02\n" +

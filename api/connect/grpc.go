@@ -40,7 +40,7 @@ func (s *Service) Catalog(context.Context, *controlv1.CatalogRequest) (*controlv
 	for _, e := range s.catalog {
 		out.Entries = append(out.Entries, &controlv1.CatalogEntry{
 			Id: e.id, Name: e.name, Description: e.description, Available: e.available(), InstallUrl: e.installURL,
-			GrantOnly: e.auth != authCustom && e.mcpURL == "", Checkable: e.userInfoURL != "",
+			GrantOnly: e.auth != authCustom && e.mcpURL == "", Checkable: e.userInfoURL != "", McpUrl: e.mcpURL, Auth: string(e.auth), IconUrl: e.icon,
 		})
 	}
 	return out, nil
@@ -231,7 +231,7 @@ func (s *Service) Check(ctx context.Context, user, connector string) (string, er
 
 // revokeAtVendor refreshes an expiring GitHub token first, since GitHub revokes by a live access token.
 func (s *Service) revokeAtVendor(ctx context.Context, g *grant, sec *secrets) (bool, error) {
-	if sec.APIKey != "" {
+	if sec.AccessToken == "" {
 		return false, nil
 	}
 	e := s.entry(g.kind)
