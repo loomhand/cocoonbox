@@ -1,0 +1,8 @@
+[Unit]
+Description=Follow the claim env's COCOONBOX_VAULT into the box's key env vars
+
+[Path]
+PathChanged=/run/silkd.env
+
+[Install]
+WantedBy=multi-user.target

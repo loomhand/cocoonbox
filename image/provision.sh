@@ -87,6 +87,7 @@ install_rootfs() {
 		esac
 	done
 	chmod 0755 /etc/nftables.conf
+	grep -qF cocoonbox-vault.sh /etc/bash.bashrc || printf '. /etc/profile.d/cocoonbox-vault.sh\n' >> /etc/bash.bashrc
 }
 
 setup_desktop() {
@@ -148,9 +149,9 @@ enable_units() {
 	systemctl daemon-reload
 	udevadm control --reload
 	udevadm trigger --name-match=uinput
-	systemctl enable --now nftables.service cocoonbox-machine-id.path cocoonbox-hostname.path cocoonbox-egress-ca.path cocoonbox-github-git.path 'run-cocoonbox\x2doffload.mount'
+	systemctl enable --now nftables.service cocoonbox-machine-id.path cocoonbox-hostname.path cocoonbox-egress-ca.path cocoonbox-github-git.path cocoonbox-vault.path 'run-cocoonbox\x2doffload.mount'
 	systemctl --global enable cocoonbox-offload-inbox.service
-	systemctl enable cocoonbox-github-git.service
+	systemctl enable cocoonbox-github-git.service cocoonbox-vault.service
 	nft -f /etc/nftables.conf
 	systemctl reload systemd-logind
 	systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}' | xargs -r systemctl stop

@@ -1,0 +1,10 @@
+[Unit]
+Description=Render the claim env's COCOONBOX_VAULT into /run/cocoonbox-vault
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/run/silkd.env
+ExecStart=/usr/local/lib/cocoonbox/vault
+
+[Install]
+WantedBy=multi-user.target
