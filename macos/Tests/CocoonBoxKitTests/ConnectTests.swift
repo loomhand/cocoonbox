@@ -95,6 +95,22 @@ import Testing
         #expect(again.instructions == Bridge.instructions)
     }
 
+    @Test func aBoxMovedToAnotherImageGetsItsNewInstructions() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let cbdesk = try #require(try await mock.connection.firstBox()).id
+        let desk = try await BridgeClient(mock, box: cbdesk)
+        _ = try await desk.tool("shell", ["command": "true"])
+        desk.close()
+        #expect(desk.instructions == Bridge.instructions)
+
+        _ = try await mock.connection.rebase(boxID: cbdesk, image: "cbplan:v1")
+        #expect(await until(seconds: 10) { (try? await mock.connection.firstBox())?.image == "cbplan:v1" })
+        let sim = try await BridgeClient(mock, box: cbdesk)
+        defer { sim.close() }
+        #expect(sim.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbplan box: write one script with script_run for a multi-step task.")
+    }
+
     @Test func theBridgeNamesTheUsersKeysWithinTheInstructionsCap() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }

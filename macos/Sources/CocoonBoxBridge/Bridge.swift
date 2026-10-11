@@ -36,6 +36,8 @@ public actor Bridge {
     private var ids: [String: String] = [:]
     // names keeps the name of every box id ever listed, so a deleted box's name stays known.
     private var names: [String: String] = [:]
+    // entries holds each box's entry of the last box_list.
+    private var entries: [String: [String: Any]] = [:]
     private var pinned: String?
     private var defaultBox: String?
     // boxTools are the box tools the client last got: those of the default box.
@@ -132,8 +134,8 @@ public actor Bridge {
 
     // warmUp opens the default box's session right away when that box runs, so the tool list is the box's own.
     private func warmUp() async {
-        guard let box = try? await target(nil), let status = try? await status(box), status["state"] as? String == "running" else { return }
-        _ = try? await openBox(box)
+        guard let box = try? await target(nil), await entry(box)?["state"] as? String == "running" else { return }
+        _ = try? await readyBox(box, progress: nil, running: true)
     }
 
     // callControl forwards a lifecycle tool, naming the default box when the call names none.
@@ -216,6 +218,7 @@ public actor Bridge {
         boxInstructions[box] = nil
         try? FileManager.default.removeItem(at: cacheFile(box))
         try? FileManager.default.removeItem(at: cacheFile(box, "instructions.txt"))
+        try? FileManager.default.removeItem(at: cacheFile(box, "image"))
         guard let next = ids[name] else { throw BoxGone(name: name) }
         if explicit { throw ToolFailure("The box \(box) was deleted; the box named \(name) is now \(next).") }
         if defaultBox == box { defaultBox = next }
@@ -364,9 +367,11 @@ public actor Bridge {
             throw ToolFailure("Could not list your boxes.")
         }
         ids = [:]
+        entries = [:]
         for entry in list {
             guard let box = entry["box_id"] as? String else { continue }
             ids[box] = box
+            entries[box] = entry
             if let name = entry["name"] as? String, !name.isEmpty {
                 ids[name] = box
                 names[box] = name
@@ -376,12 +381,12 @@ public actor Bridge {
     }
 
     // readyBox returns box's session, waking the box first when it is not
-    // running; concurrent callers of one box share one wake.
-    private func readyBox(_ box: String, progress: Any?) async throws -> MCPUpstream {
+    // known to run; concurrent callers of one box share one wake.
+    private func readyBox(_ box: String, progress: Any?, running: Bool = false) async throws -> MCPUpstream {
         if let upstream = sessions[box] { return upstream }
         if let task = opening[box] { return try await task.value }
         let progressToken = Progress(token: progress)
-        let task = Task { try await self.wakeAndOpen(box, progress: progressToken.token) }
+        let task = Task { running ? try await self.openBox(box) : try await self.wakeAndOpen(box, progress: progressToken.token) }
         opening[box] = task
         defer { opening[box] = nil }
         return try await task.value
@@ -411,6 +416,7 @@ public actor Bridge {
         boxInstructions[box] = instructions
         try? FileManager.default.createDirectory(at: cache.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? Data(instructions.utf8).write(to: cacheFile(box, "instructions.txt"), options: .atomic)
+        try? Data((entries[box]?["image"] as? String ?? "").utf8).write(to: cacheFile(box, "image"), options: .atomic)
         if let tools = (try? await call(upstream, "tools/list", [:]))?["result"] as? [String: Any], let list = tools["tools"] as? [[String: Any]], !list.isEmpty {
             ToolCatalog.saveBox(list, to: cacheFile(box))
             boxLists[box] = list
@@ -482,8 +488,9 @@ public actor Bridge {
     private func boxInstructionsText() async -> String {
         guard let box = try? await target(nil) else { return Self.instructions }
         let script = { (tools: [[String: Any]]) in tools.contains { $0["name"] as? String == "script_run" } }
-        if sessions[box] == nil, ToolCatalog.loadBox(from: cacheFile(box)).map(script) != false, (try? await status(box))?["state"] as? String == "running" {
-            _ = try? await openBox(box)
+        if sessions[box] == nil, let entry = await entry(box), entry["state"] as? String == "running",
+           (try? String(contentsOf: cacheFile(box, "image"), encoding: .utf8)) != entry["image"] as? String {
+            _ = try? await readyBox(box, progress: nil, running: true)
         }
         let own = boxInstructions[box] ?? (try? String(contentsOf: cacheFile(box, "instructions.txt"), encoding: .utf8)) ?? ""
         guard script(toolsOf(box)), !own.isEmpty else { return Self.instructions }
@@ -519,8 +526,14 @@ public actor Bridge {
         if params.isEmpty { params = ["protocolVersion": "2025-06-18", "capabilities": [:] as [String: Any], "clientInfo": ["name": "cocoonbox", "version": "0.1.0"]] }
         let answer = try await call(upstream, "initialize", params)
         if answer["error"] != nil { throw ToolFailure("The server refused the session: \(answer["error"] ?? "")") }
-        _ = try await upstream.post(Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8), id: nil)
+        Task { _ = try? await upstream.post(Data(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#.utf8), id: nil) }
         return (answer["result"] as? [String: Any])?["instructions"] as? String ?? ""
+    }
+
+    // entry is box's entry of the last box_list, else its box_status.
+    private func entry(_ box: String) async -> [String: Any]? {
+        if entries[box] == nil { entries[box] = try? await status(box) }
+        return entries[box]
     }
 
     private func status(_ box: String) async throws -> [String: Any] {
