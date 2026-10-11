@@ -2,6 +2,7 @@
 
 use crate::bus::Bus;
 use crate::pb::{AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
+use crate::secrets::SECRETS;
 use crate::store::Store;
 
 /// Store plus event bus: every write is persisted, then published.
@@ -19,15 +20,23 @@ impl Journal {
         }
     }
 
-    /// Persists a transcript entry and publishes it.
+    /// Persists a transcript entry without any registered card value and publishes it.
     pub async fn record(
         &self,
         agent_id: &str,
         turn_id: &str,
         role: Role,
-        body: Body,
+        mut body: Body,
         subagent: bool,
     ) -> Result<(), String> {
+        match &mut body {
+            Body::Text(t) => SECRETS.scrub_prose(&mut t.text),
+            Body::Reasoning(r) => SECRETS.scrub_prose(&mut r.text),
+            Body::ToolCall(c) => SECRETS.scrub_prose(&mut c.arguments_json),
+            Body::Approval(a) => SECRETS.scrub_prose(&mut a.summary),
+            Body::ToolResult(r) => SECRETS.scrub(&mut r.text),
+            Body::TurnEnd(e) => SECRETS.scrub(&mut e.error),
+        }
         let entry = TranscriptEntry {
             agent_id: agent_id.to_owned(),
             turn_id: turn_id.to_owned(),

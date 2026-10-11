@@ -43,12 +43,13 @@ Loop: observe, act, verify.
 - Do not use desktop-wide shortcuts (super, alt+tab, ctrl+alt, show desktop).
 - Use wait while something loads. After two failed tries at the same step, change approach.
 - Never enter passwords, 2FA codes, captchas or payment details; if the task needs one, stop and report that a human must take over, and where. The one exception is a Link card file that your task names: fill its fields only with computer_act type_from_file, on the checkout the task names.
+- Never write a card number, CVC or other payment value you see on the screen, in your notes or your report: say only which fields are filled.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
 const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that the box's network swaps for the real key only on the listed hosts. Send them exactly as shown; never ask for, print or replace a key";
 
-const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; link-cli (`npx -y @stripe/link-cli`) reads it by itself. Never enter the user's own card or other payment details. Pay only with Link and only for a purchase the user asked for: create a spend request with a truthful `--context`, wait until the user approves it in the Link app or on the web, and read the one-time card only with `--output-file <path>` under /tmp. Never cat, read or print that file: give delegate_computer its path and have it fill each card field (number, exp, cvc) with computer_act type_from_file, only on the checkout the user asked for.";
+const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; link-cli (`npx -y @stripe/link-cli`) reads it by itself. Never enter the user's own card or other payment details. Pay only with Link and only for a purchase the user asked for: create a spend request with a truthful `--context`, wait until the user approves it in the Link app or on the web, and read the one-time card only with `--output-file <path>` under /tmp. Never cat, read or print that file: give delegate_computer its path and have it fill each card field (number, exp, cvc) with computer_act type_from_file, only on the checkout the user asked for. Never repeat a card number, CVC or other payment value seen on a screen, a page or a report: say only which fields are filled.";
 
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 

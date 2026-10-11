@@ -39,7 +39,8 @@ pub struct Call {
     pub args: Value,
 }
 
-/// A tool result; `image_b64` carries a screenshot when the tool produced one.
+/// A tool result; `image_b64` carries a screenshot when the tool produced one, and `secrets`
+/// the card fields it typed from a file, as (field, value).
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct Output {
     pub text: String,
@@ -47,6 +48,8 @@ pub struct Output {
     pub is_error: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image_b64: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<(String, String)>,
 }
 
 impl Output {
@@ -63,7 +66,7 @@ impl Output {
         Self {
             text: text.into(),
             is_error: true,
-            image_b64: None,
+            ..Self::default()
         }
     }
 }

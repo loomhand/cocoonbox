@@ -16,6 +16,7 @@ pub mod prompts;
 pub mod route;
 pub mod runner;
 pub mod screen;
+pub mod secrets;
 pub mod server;
 pub mod state;
 pub mod store;

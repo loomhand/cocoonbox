@@ -151,6 +151,7 @@ impl Host {
                     },
                     is_error: false,
                     image_b64,
+                    ..Output::default()
                 })
             }
             other => Err(format!("unknown tool {other}")),

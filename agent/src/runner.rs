@@ -18,6 +18,7 @@ use crate::journal::Journal;
 use crate::llm::{self, Delta, Message, Model, Part, Request, ToolCall, ToolSpec, Usage};
 use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
 use crate::route::Router;
+use crate::secrets::SECRETS;
 use crate::store::Store;
 use crate::{computer, flows, new_id, prompts, route, tools};
 
@@ -715,7 +716,7 @@ impl Runtime {
                 return Ok(out);
             }
         };
-        let out = match call.name.as_str() {
+        let mut out = match call.name.as_str() {
             "delegate_computer" => match args["task"].as_str().filter(|t| !t.is_empty()) {
                 Some(task) => computer::run(self, ctx, task, usage)
                     .await
@@ -735,6 +736,7 @@ impl Runtime {
                 None => return self.dispatcher.execute(&caller, &call.id, name, args).await,
             },
         };
+        SECRETS.scrub_prose(&mut out.text);
         self.dispatcher
             .record_result(&caller, &call.id, &out)
             .await?;

@@ -47,6 +47,7 @@ const SNAPSHOT_JS: &str = r#"(() => {
   const TEXT_TAGS = new Set(['P', 'LI', 'TD', 'TH', 'LABEL', 'DT', 'DD', 'CAPTION',
     'FIGCAPTION', 'BLOCKQUOTE', 'PRE']);
   const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'svg', 'IFRAME']);
+  const CARD = /\bcc-(number|csc|exp)|card.?(number|num|no\b)|cvc|cvv|csc|security.?code/i;
   const clip = (s, n) => {
     s = (s || '').replace(/\s+/g, ' ').trim();
     return s.length > n ? s.slice(0, n - 1) + '…' : s;
@@ -96,6 +97,7 @@ const SNAPSHOT_JS: &str = r#"(() => {
         if (el.checked) line += ' checked';
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
           if (el.type === 'password') line += ' value=<redacted>';
+          else if (el.value && CARD.test([el.autocomplete, el.name, el.id, nameOf(el)].join(' '))) line += ' value="[masked]"';
           else if (el.value) line += ` value="${clip(el.value, 60)}"`;
         }
         const href = el.tagName === 'A' ? el.getAttribute('href') : null;

@@ -40,6 +40,13 @@ go.onclick = () => {
   fetch('/dialog', { method: 'POST', body: `user=${user.value}&pass=${pass.value}` });
 };
 </script>"#;
+const CARD_PAGE: &str = r#"<!doctype html><title>checkout</title>
+<form>
+<input autocomplete="cc-number" placeholder="Number" value="4392027523501133">
+<input name="cvc" placeholder="CVC" value="739">
+<label>Security code <input value="1234"></label>
+<input placeholder="Name on card" value="Ada Lovelace">
+</form>"#;
 
 type Posts = Arc<Mutex<Vec<(String, String)>>>;
 
@@ -134,6 +141,7 @@ async fn site(posts: Posts) -> u16 {
                         posts.lock().unwrap().push((path.to_owned(), body));
                         "<!doctype html><title>signed in</title>signed in"
                     }
+                    (_, "/card") => CARD_PAGE,
                     (_, "/code") => CODE_PAGE,
                     (_, "/dialog") => DIALOG_PAGE,
                     (_, "/search") => SEARCH_PAGE,
@@ -424,4 +432,79 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         logs.len(),
         files_containing(&state, b"").len()
     );
+}
+
+#[tokio::test]
+async fn snapshots_mask_the_values_of_card_fields() {
+    let Some(chrome) = find_chrome() else {
+        assert!(
+            cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
+            "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
+        );
+        eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let wrapper = dir.path().join("chrome");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\nexec \"{}\" --headless=new --use-mock-keychain \"$@\"\n",
+            chrome.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &wrapper,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
+    let _chrome = ChromeGuard(dir.path().join("profile"));
+    let socket = dir.path().join("toolhost.sock");
+    let mut toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
+        .arg("toolhost")
+        .env("HOME", dir.path())
+        .env("TOOLHOST_SOCKET", &socket)
+        .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
+        .env("CB_WORKSPACE", dir.path().join("workspace"))
+        .env("CHROME_BIN", &wrapper)
+        .env("CHROME_PROFILE", dir.path().join("profile"))
+        .env("CDP_PORT", free_port().await.to_string())
+        .env("CUA_DRIVER_SOCKET", dir.path().join("cua.sock"))
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    while !socket.exists() {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let th = Client::new(socket);
+    let site_port = site(Posts::default()).await;
+
+    let snapshot = tool(
+        &th,
+        "browser_navigate",
+        json!({"url": format!("http://127.0.0.1:{site_port}/card")}),
+    )
+    .await;
+    let read = tool(&th, "browser_read", json!({})).await;
+    eprintln!("{snapshot}\n{read}");
+    assert_eq!(
+        snapshot.matches("value=\"[masked]\"").count(),
+        3,
+        "{snapshot}"
+    );
+    assert!(
+        snapshot.contains("textbox \"Name on card\" [ref=e4] value=\"Ada Lovelace\""),
+        "{snapshot}"
+    );
+    let (_, fields) = snapshot.split_once('\n').unwrap();
+    for value in ["4392027523501133", "739", "1234"] {
+        assert!(!fields.contains(value) && !read.contains(value), "{value}");
+    }
+    assert!(read.contains("Security code"), "{read}");
+
+    tool(&th, "browser_close", json!({})).await;
+    toolhost.start_kill().unwrap();
+    toolhost.wait().await.unwrap();
 }

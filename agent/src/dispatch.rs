@@ -10,11 +10,13 @@ use serde_json::{Value, json};
 use crate::flows::{self, Syncer};
 use crate::journal::Journal;
 use crate::pb::{self, Role, event, transcript_entry::Body};
+use crate::secrets::SECRETS;
 use crate::toolhost::rpc::{self, Call};
 
 const DRIVER_TOOLS: [&str; 3] = ["computer_state", "computer_act", "screenshot"];
 
-/// Executes tools on the box; the toolhost RPC client is the production implementation.
+/// Executes tools on the box; the toolhost RPC client is the production implementation, whose
+/// results never hold a card value a tool typed from a file.
 #[tonic::async_trait]
 pub trait Tools: Send + Sync {
     /// Runs tool `name`; `owner` keys per-agent state such as the shell session.
@@ -30,14 +32,20 @@ impl Tools for rpc::Client {
             args,
         };
         match self.call(&call).await {
-            Ok(out) => ToolOutput {
-                image: out
-                    .image_b64
-                    .and_then(|b| B64.decode(b).ok())
-                    .map(Bytes::from),
-                text: out.text,
-                is_error: out.is_error,
-            },
+            Ok(mut out) => {
+                for (field, value) in &out.secrets {
+                    SECRETS.register(field, value);
+                }
+                SECRETS.scrub(&mut out.text);
+                ToolOutput {
+                    image: out
+                        .image_b64
+                        .and_then(|b| B64.decode(b).ok())
+                        .map(Bytes::from),
+                    text: out.text,
+                    is_error: out.is_error,
+                }
+            }
             Err(e) => ToolOutput::error(e),
         }
     }
@@ -355,5 +363,42 @@ mod tests {
             }
         }
         assert_eq!(actions, [("click".to_owned(), 3, 4)]);
+    }
+
+    #[tokio::test]
+    async fn registered_card_values_stay_out_of_the_transcript() {
+        let (_dir, _tools, journal, dispatcher) = setup();
+        let turn = journal.store.open_turn("ag".into()).await.unwrap();
+        SECRETS.register("number", "6011000990139424");
+        let caller = Caller {
+            agent_id: "ag",
+            turn_id: &turn,
+            subagent: "computer",
+            driver: None,
+        };
+        dispatcher
+            .call(
+                &caller,
+                "c1",
+                "computer_act",
+                json!({"action": "type", "text": "6011 0009 9013 9424"}),
+            )
+            .await
+            .unwrap();
+        let text = Body::Text(pb::TextBlock {
+            text: "The Card number field is now filled with 6011000990139424.".into(),
+            ..Default::default()
+        });
+        journal
+            .record("ag", &turn, Role::Assistant, text, true)
+            .await
+            .unwrap();
+        let page = journal.store.transcript("ag".into(), 0, 10).await.unwrap();
+        let all = format!("{:?}", page.entries);
+        assert!(
+            !all.contains("6011000990139424") && !all.contains("6011 0009"),
+            "{all}"
+        );
+        assert_eq!(all.matches("[card number]").count(), 2, "{all}");
     }
 }
