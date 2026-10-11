@@ -32,6 +32,8 @@ const XPROP: &str = "xprop";
 const XPROP_WAIT: Duration = Duration::from_secs(2);
 const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
 const MAX_WINDOWS: usize = 8;
+const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the keyboard focus is in no web page, so it may be in the address bar, a find bar, DevTools or another app; nothing was typed";
+const NOT_A_FIELD: &str = "focus a card field on the checkout page first: the focused element of the page is not a text field; nothing was typed";
 
 const SNAPSHOT_JS: &str = r#"(() => {
   const MAX = 300;
@@ -151,6 +153,20 @@ const FOCUS_JS: &str = r#"((ref, clear) => {
   }
   return true;
 })"#;
+
+const FIELD_JS: &str = r#"(() => {
+  if (!document.hasFocus()) return '';
+  let el = document.activeElement;
+  for (;;) {
+    while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+    if (!el || (el.tagName !== 'IFRAME' && el.tagName !== 'FRAME')) break;
+    if (!el.contentDocument) return 'frame';
+    el = el.contentDocument.activeElement;
+  }
+  if (!el || el.disabled || el.readOnly) return 'other';
+  if (el.isContentEditable || el.tagName === 'TEXTAREA') return 'field';
+  return el.tagName === 'INPUT' && ['text', 'tel', 'number', 'password'].includes(el.type) ? 'field' : 'other';
+})()"#;
 
 const READ_JS: &str = r#"((ref) => {
   const el = ref ? window.__cbRefs && window.__cbRefs.get(ref) : document.body;
@@ -357,6 +373,36 @@ impl Browser {
         let mut cdp = self.attach().await?;
         let origin = cdp.eval("location.origin").await?;
         Ok(origin.as_str().unwrap_or_default().to_owned())
+    }
+
+    /// Succeeds when the keyboard focus is in a text field of an http or https page, or in a frame of one that CDP
+    /// cannot read; Chrome is not started for it.
+    pub async fn page_field(&self) -> Result<(), String> {
+        let _life = self.life.read().await;
+        let targets = self.targets().await.map_err(|_| NO_PAGE_FOCUS.to_owned())?;
+        let mut frame = false;
+        for t in targets.iter().filter(|t| t.is_web()) {
+            let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
+                continue;
+            };
+            match cdp
+                .eval(FIELD_JS)
+                .await
+                .ok()
+                .as_ref()
+                .and_then(Value::as_str)
+            {
+                Some("field") => return Ok(()),
+                Some("other") => return Err(NOT_A_FIELD.to_owned()),
+                Some("frame") => frame = true,
+                _ => {}
+            }
+        }
+        if frame {
+            Ok(())
+        } else {
+            Err(NO_PAGE_FOCUS.to_owned())
+        }
     }
 
     /// Fills the sign-in form of the active tab when its origin equals `origin`; errors never carry a value.
@@ -701,6 +747,11 @@ impl Target {
     fn is_tab(&self) -> bool {
         self.kind == "page" && !self.url.starts_with("devtools://")
     }
+
+    fn is_web(&self) -> bool {
+        matches!(self.kind.as_str(), "page" | "iframe")
+            && (self.url.starts_with("https://") || self.url.starts_with("http://"))
+    }
 }
 
 #[derive(Deserialize)]
@@ -1005,7 +1056,7 @@ fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -1097,6 +1148,42 @@ mod tests {
                     body.len()
                 );
                 let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    /// Serves CDP on the returned port for `targets` of (type, url, value); every script evaluation in a target returns its value.
+    pub(in crate::toolhost) async fn web_chrome(targets: &[(&str, &str, &str)]) -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let mut list = Vec::new();
+        for (i, (kind, url, value)) in targets.iter().enumerate() {
+            let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = ws.local_addr().unwrap();
+            list.push(json!({"id": i.to_string(), "type": kind, "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/{i}")}));
+            let value = (*value).to_owned();
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = ws.accept().await {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        let reply = json!({"id": v["id"], "result": {"result": {"value": value}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                }
+            });
+        }
+        let list = Value::from(list).to_string();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    list.len()
+                );
+                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
             }
         });
         port
@@ -1289,6 +1376,45 @@ mod tests {
             b.origin().await.unwrap_err(),
             "Chrome is not running in the box"
         );
+    }
+
+    #[tokio::test]
+    async fn only_a_focused_text_field_of_a_web_page_takes_a_card_value() {
+        let dir = tempfile::tempdir().unwrap();
+        let page = |value| ("page", "https://shop.test/checkout", value);
+        let frame = |value| ("iframe", "https://js.stripe.test/elements", value);
+        for (targets, want) in [
+            (vec![], NO_PAGE_FOCUS),
+            (vec![page("")], NO_PAGE_FOCUS),
+            (
+                vec![
+                    page(""),
+                    (
+                        "page",
+                        "devtools://devtools/bundled/devtools_app.html",
+                        "field",
+                    ),
+                    ("page", "chrome://newtab/", "field"),
+                    ("browser_ui", "https://omnibox.test/", "field"),
+                ],
+                NO_PAGE_FOCUS,
+            ),
+            (vec![page("field")], ""),
+            (vec![page("other")], NOT_A_FIELD),
+            (vec![page("frame"), frame("field")], ""),
+            (vec![page("frame"), frame("other")], NOT_A_FIELD),
+            (vec![page("frame")], ""),
+        ] {
+            let b = Browser::new(
+                "/nonexistent/chrome".into(),
+                dir.path().into(),
+                web_chrome(&targets).await,
+            );
+            let got = b.page_field().await.err().unwrap_or_default();
+            assert_eq!(got, want, "{targets:?}");
+        }
+        let idle = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        assert_eq!(idle.page_field().await.unwrap_err(), NO_PAGE_FOCUS);
     }
 
     #[tokio::test]
