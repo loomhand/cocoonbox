@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -35,15 +36,15 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Wake != (Wake{MaxSchedules: 3, Floor: Duration(time.Hour), MaxAwakeFor: Duration(time.Hour)}) {
 		t.Errorf("wake = %+v, want 3 schedules, a 1h floor and 1h awake at most", cfg.Wake)
 	}
-	if *cfg.State.ParkAfter != Duration(24*time.Hour) {
-		t.Errorf("park after = %s, want 24h", time.Duration(*cfg.State.ParkAfter))
+	if cfg.State.ParkAfter != 0 || cfg.State.ParkOwners != nil {
+		t.Errorf("park after = %s for %q, want parking off", time.Duration(cfg.State.ParkAfter), cfg.State.ParkOwners)
 	}
 }
 
-func TestLoadParkingOff(t *testing.T) {
-	cfg, err := Load(writeConfig(t, required+"state:\n  park_after: 0s\n"))
-	if err != nil || *cfg.State.ParkAfter != 0 {
-		t.Errorf("Load = %v, %v, want parking off", cfg.State.ParkAfter, err)
+func TestLoadParkingForSomeOwners(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"state:\n  park_after: 30m\n  park_owners: [u-a, u-b]\n"))
+	if err != nil || cfg.State.ParkAfter != Duration(30*time.Minute) || !slices.Equal(cfg.State.ParkOwners, []string{"u-a", "u-b"}) {
+		t.Errorf("Load = %+v, %v, want parking after 30m for u-a and u-b", cfg.State, err)
 	}
 }
 

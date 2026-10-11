@@ -475,16 +475,17 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 	}
 }
 
-func TestEnsureRestoresAMissingMachineOntoItsImageOrItsFamily(t *testing.T) {
+func TestEnsureRestoresAMissingMachineIntoItsImageFamily(t *testing.T) {
 	tests := []struct {
-		name, image string
-		legacyHead  bool
-		want        string
+		name, image        string
+		legacyHead, parked bool
+		want               string
 	}{
-		{"cbplan box on an offered image", "cbplan:v6", false, "cbplan:v6"},
-		{"cbplan box on a retired image", "cbplan:v5", false, "cbplan:v7"},
-		{"cbdesk box on a retired image", "cbdesk:v22", false, "cbdesk:v25"},
-		{"head without an image", "cbplan:v6", true, "cbdesk:v25"},
+		{"cbplan box", "cbplan:v6", false, false, "cbplan:v7"},
+		{"cbdesk box", "cbdesk:v22", false, false, "cbdesk:v25"},
+		{"head without an image", "cbplan:v6", true, false, "cbdesk:v25"},
+		{"parked box on an offered image", "cbplan:v6", false, true, "cbplan:v6"},
+		{"parked box on a retired image", "cbplan:v5", false, true, "cbplan:v7"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -494,8 +495,12 @@ func TestEnsureRestoresAMissingMachineOntoItsImageOrItsFamily(t *testing.T) {
 			env.agent.chunks = []string{hexID("c1")}
 			env.save(t)
 			p := statePath{user: alice, box: aliceBox}
-			if tt.legacyHead {
-				if err := putJSON(t.Context(), env.store, p.head(), head{Latest: snapshotID(1), SavedAtMs: 100}); err != nil {
+			if tt.legacyHead || tt.parked {
+				h := head{Latest: snapshotID(1), SavedAtMs: 100}
+				if tt.parked {
+					h.Image, h.Parked = tt.image, true
+				}
+				if err := putJSON(t.Context(), env.store, p.head(), h); err != nil {
 					t.Fatalf("setup: %v", err)
 				}
 				env.svc.state.heads = map[statePath]head{}
@@ -669,10 +674,10 @@ func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
 	agent.onUpload = func(ep machines.Endpoint) {
 		if ep.Key == "a" {
 			agent.onUpload = nil
-			_, inner = l.save(t.Context(), boxB, machines.Endpoint{Key: "b"}, "", agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+			_, inner = l.save(t.Context(), boxB, machines.Endpoint{Key: "b"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 		}
 	}
-	if _, err := l.save(t.Context(), boxA, machines.Endpoint{Key: "a"}, "", agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
+	if _, err := l.save(t.Context(), boxA, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
 		t.Fatalf("save a: %v; save b during a's upload: %v", err, inner)
 	}
 	var idx chunkIndex
@@ -684,7 +689,7 @@ func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
 			t.Errorf("store lacks %s", key)
 		}
 	}
-	if _, err := l.save(t.Context(), statePath{user: alice, box: "cb-00000000000c"}, machines.Endpoint{Key: "c"}, "", agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+	if _, err := l.save(t.Context(), statePath{user: alice, box: "cb-00000000000c"}, machines.Endpoint{Key: "c"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("save c: %v", err)
 	}
 	if n := len(agent.lastUpload().GetPuts()); n != 0 {

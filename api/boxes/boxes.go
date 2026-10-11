@@ -161,7 +161,10 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 			return nil, serviceError(ctx, logger, err, "read saved state")
 		}
 		if saved.Latest != "" {
-			spec.ID, spec.Image = newMachineID(box), s.defaults.kept(saved.Image)
+			spec.ID, spec.Image = newMachineID(box), s.defaults.latest(saved.Image)
+			if saved.Parked {
+				spec.Image = s.defaults.kept(saved.Image)
+			}
 		}
 	}
 	m, action, err := s.machines.Ensure(ctx, spec)
