@@ -3291,7 +3291,14 @@ async fn mcp_serves_the_script_guide_as_resources() {
         let always = tool["_meta"]["anthropic/alwaysLoad"] == true;
         assert_eq!(
             always,
-            tool["name"] == "script_run" || tool["name"] == "gui_plan",
+            [
+                "script_run",
+                "gui_plan",
+                "shell",
+                "browser_navigate",
+                "browser_read"
+            ]
+            .contains(&tool["name"].as_str().unwrap()),
             "{tool}"
         );
         assert!(
