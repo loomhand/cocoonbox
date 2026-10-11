@@ -4,7 +4,6 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
-EnvironmentFile=-/run/silkd.env
 ExecStart=/usr/local/lib/cocoonbox/vault
 
 [Install]
