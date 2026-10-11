@@ -7,71 +7,44 @@ const CVC: &str = "[card cvc]";
 const CVC_LABELS: [&str; 5] = ["cvc", "cvv", "csc", "security code", "card code"];
 const LABEL_REACH: usize = 48;
 const MIN_PAN: usize = 12;
+const MISREAD_SPAN: usize = 10;
 
 /// The registry of this process; it lives as long as the process and is never persisted.
 pub static SECRETS: Secrets = Secrets::new();
 
-/// Registered card values and their replacements.
+/// Registered card numbers as plain digits, and cvcs.
 pub struct Secrets {
-    values: RwLock<Vec<Secret>>,
+    values: RwLock<Registry>,
 }
 
-struct Secret {
-    value: String,
-    label: &'static str,
-    /// Matches only as a whole number, and in tool output only near a CVC label, since three digits
-    /// also occur there as coordinates.
-    labelled: bool,
+struct Registry {
+    numbers: Vec<String>,
+    cvcs: Vec<String>,
 }
 
 impl Secrets {
     /// An empty registry.
     pub const fn new() -> Self {
         Self {
-            values: RwLock::new(Vec::new()),
+            values: RwLock::new(Registry {
+                numbers: Vec::new(),
+                cvcs: Vec::new(),
+            }),
         }
     }
 
-    /// Registers card `field` typed as `value`: the number as typed, as plain digits and in groups
-    /// split by spaces or dashes, and the cvc; other fields are not secret.
+    /// Registers card `field` typed as `value`: the number and the cvc by their digits; other fields
+    /// are not secret.
     pub fn register(&self, field: &str, value: &str) {
         let digits: String = value.chars().filter(char::is_ascii_digit).collect();
-        let mut add = Vec::new();
-        match field {
-            "number" if digits.len() >= MIN_PAN => {
-                let mut sizes = vec![4; digits.len() / 4];
-                if !digits.len().is_multiple_of(4) {
-                    sizes.push(digits.len() % 4);
-                }
-                let mut layouts = vec![sizes];
-                if digits.len() == 15 {
-                    layouts.push(vec![4, 6, 5]);
-                }
-                for sizes in layouts {
-                    let groups = split(&digits, &sizes);
-                    add.push(groups.join(" "));
-                    add.push(groups.join("-"));
-                }
-                add.push(value.to_owned());
-                add.push(digits);
-            }
-            "cvc" if (3..=4).contains(&digits.len()) => add.push(digits),
-            _ => return,
-        }
-        let (label, labelled) = if field == "cvc" {
-            (CVC, true)
-        } else {
-            (NUMBER, false)
-        };
         let mut values = self.values.write().unwrap_or_else(PoisonError::into_inner);
-        for value in add {
-            if !values.iter().any(|s| s.value == value) {
-                values.push(Secret {
-                    value,
-                    label,
-                    labelled,
-                });
-            }
+        let list = match field {
+            "number" if digits.len() >= MIN_PAN => &mut values.numbers,
+            "cvc" if (3..=4).contains(&digits.len()) => &mut values.cvcs,
+            _ => return,
+        };
+        if !list.contains(&digits) {
+            list.push(digits);
         }
     }
 
@@ -80,22 +53,23 @@ impl Secrets {
         self.replace(text, false);
     }
 
-    /// Like [`Secrets::scrub`] for text a model wrote, where a cvc goes even far from its label.
+    /// Like [`Secrets::scrub`] for text a model wrote, where a cvc goes even far from its label and a
+    /// number also when misread.
     pub fn scrub_prose(&self, text: &mut String) {
         self.replace(text, true);
     }
 
     fn replace(&self, text: &mut String, prose: bool) {
         let values = self.values.read().unwrap_or_else(PoisonError::into_inner);
-        for s in values.iter() {
-            if !text.contains(&s.value) {
-                continue;
+        if !values.numbers.is_empty()
+            && let Some(out) = replace_numbers(text, &values.numbers, prose)
+        {
+            *text = out;
+        }
+        for cvc in &values.cvcs {
+            if text.contains(cvc.as_str()) {
+                *text = replace_whole(text, cvc, CVC, prose);
             }
-            *text = if s.labelled {
-                replace_whole(text, &s.value, s.label, prose)
-            } else {
-                text.replace(&s.value, s.label)
-            };
         }
     }
 }
@@ -106,16 +80,47 @@ impl Default for Secrets {
     }
 }
 
-fn split<'a>(digits: &'a str, sizes: &[usize]) -> Vec<&'a str> {
-    let mut at = 0;
-    sizes
-        .iter()
-        .map(|n| {
-            let group = &digits[at..at + n];
-            at += n;
-            group
-        })
-        .collect()
+/// Replaces each run of digits joined by single spaces, dashes or dots whose digits hold a registered
+/// number or, when `misread`, share a stretch of [`MISREAD_SPAN`] digits with one; `None` when none does.
+fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = String::new();
+    let mut digits = String::new();
+    let (mut last, mut i) = (0, 0);
+    while i < bytes.len() {
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        digits.clear();
+        loop {
+            while let Some(&b) = bytes.get(i).filter(|b| b.is_ascii_digit()) {
+                digits.push(b.into());
+                i += 1;
+            }
+            match bytes.get(i..i + 2) {
+                Some([b' ' | b'-' | b'.', d]) if d.is_ascii_digit() => i += 1,
+                _ => break,
+            }
+        }
+        let hit = digits.len() >= MIN_PAN
+            && numbers.iter().any(|n| {
+                digits.contains(n.as_str())
+                    || misread
+                        && (0..=n.len() - MISREAD_SPAN)
+                            .any(|at| digits.contains(&n[at..at + MISREAD_SPAN]))
+            });
+        if hit {
+            out.push_str(&text[last..start]);
+            out.push_str(NUMBER);
+            last = i;
+        }
+    }
+    (last > 0).then(|| {
+        out.push_str(&text[last..]);
+        out
+    })
 }
 
 /// Replaces `value` where it stands as a whole number, unless `anywhere`, only within reach of a CVC label.
@@ -151,6 +156,7 @@ mod tests {
 
     const PAN: &str = "4392027523501133";
     const AMEX: &str = "371449635398431";
+    const TEST_PAN: &str = "4242424242424242";
 
     fn scrubbed(s: &Secrets, text: &str) -> String {
         let mut text = text.to_owned();
@@ -229,6 +235,65 @@ mod tests {
         s.register("exp", "07/31");
         s.register("billing_address.postal_code", "94107");
         s.register("number", "4242");
-        assert!(s.values.read().unwrap().is_empty());
+        let values = s.values.read().unwrap();
+        assert!(values.numbers.is_empty() && values.cvcs.is_empty());
+    }
+
+    #[test]
+    fn a_number_with_odd_separators_is_replaced() {
+        let s = Secrets::new();
+        s.register("number", TEST_PAN);
+        for text in [
+            "- Card number: 42424242424242 42 (16 digits shown)",
+            "4242 4242 4242 4242",
+            "4242-4242-4242-4242",
+            "4242.4242.4242.4242",
+            "4 2 4 2 4 2 4 2 4 2 4 2 4 2 4 2",
+            "424 2424 24242 4242",
+            "ref 994242424242424242",
+        ] {
+            let out = scrubbed(&s, text);
+            assert!(out.contains(NUMBER) && !out.contains("4242"), "{out}");
+        }
+    }
+
+    #[test]
+    fn a_misread_number_is_replaced_only_in_model_text() {
+        let s = Secrets::new();
+        s.register("number", TEST_PAN);
+        s.register("number", PAN);
+        for text in [
+            "Card number: 4242 4242 4243 4242",
+            "Card number: 424242424242424",
+            "Card number: 4392 0275 2350 1137",
+            "Card number: 7392 0275 2350 1133",
+        ] {
+            let mut prose = text.to_owned();
+            s.scrub_prose(&mut prose);
+            assert_eq!(prose, format!("Card number: {NUMBER}"));
+            assert_eq!(scrubbed(&s, text), text);
+        }
+    }
+
+    #[test]
+    fn ordinary_numbers_stay_with_a_number_registered() {
+        let s = Secrets::new();
+        s.register("number", TEST_PAN);
+        s.register("number", PAN);
+        for kept in [
+            "2026-10-12 19:15:29.123 started",
+            "1791748802356 ms, at 2026-10-12T19:15:29Z",
+            "clicked (424, 242) then (1242, 4242)",
+            "button center=4242 424",
+            "call +1 415-555-0100 or +86 138 0013 8000",
+            "order 112-4567890-1234567 and #424242424",
+            "version 1.2.42.4242, ip 10.203.0.1",
+            "id 43920275 and 23501133",
+        ] {
+            let mut prose = kept.to_owned();
+            s.scrub_prose(&mut prose);
+            assert_eq!(prose, kept);
+            assert_eq!(scrubbed(&s, kept), kept);
+        }
     }
 }
