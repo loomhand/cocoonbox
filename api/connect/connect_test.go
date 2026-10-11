@@ -508,7 +508,7 @@ func TestTheCatalogOffersPresetServers(t *testing.T) {
 	for _, id := range []string{"monday", "atlassian", "airtable", "granola", "webflow", "mintlify", "sentry", "supabase", "cloudflare", "posthog", "stripe", "paypal", "zapier", "composio"} {
 		want[id] = "mcp"
 	}
-	svc := &Service{catalog: newCatalog(Credentials{}, Credentials{})}
+	svc := &Service{catalog: newCatalog(Options{})}
 	catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
 	for _, e := range catalog.GetEntries() {
 		if e.GetId() != kindCustom && !strings.HasPrefix(e.GetIconUrl(), "https://") {
@@ -546,7 +546,7 @@ func TestStartRefusesBadCustomConnectors(t *testing.T) {
 
 func TestCatalogClientsBuildTheirAuthorizeURLs(t *testing.T) {
 	env := newEnv(t)
-	env.svc.catalog = newCatalog(Credentials{ClientID: "Iv1.gh", ClientSecret: "s", Slug: "cocoonbox"}, Credentials{ClientID: "g.apps", ClientSecret: "s"})
+	env.svc.catalog = newCatalog(Options{GitHub: Credentials{ClientID: "Iv1.gh", ClientSecret: "s", Slug: "cocoonbox"}, Google: Credentials{ClientID: "g.apps", ClientSecret: "s"}})
 	ghStarted, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "github"})
 	if err != nil {
 		t.Fatalf("github: %v", err)
@@ -571,9 +571,80 @@ func TestCatalogClientsBuildTheirAuthorizeURLs(t *testing.T) {
 	if catalog.GetEntries()[0].GetInstallUrl() != "https://github.com/apps/cocoonbox/installations/new" {
 		t.Errorf("install url = %q", catalog.GetEntries()[0].GetInstallUrl())
 	}
-	env.svc.catalog = newCatalog(Credentials{}, Credentials{})
+	env.svc.catalog = newCatalog(Options{})
 	if _, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "github"}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("unconfigured github: %v", err)
+	}
+}
+
+func TestAPreregisteredClientSignsInRefreshesAndFollowsItsSecret(t *testing.T) {
+	env := newEnv(t)
+	env.vendor.ClientID, env.vendor.ClientSecret = "hand-id", "hand-secret"
+	hand := &entry{
+		id: "handmade", name: "Handmade", mcpURL: env.vendor.MCPURL(), auth: authMCP,
+		client: client{ID: "hand-id", Secret: "hand-secret"}, preregistered: true, scopes: []string{"items:read"},
+	}
+	env.svc.catalog = append(env.svc.catalog, hand)
+	started, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: hand.id})
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	q := mustQuery(t, started.URL)
+	if !strings.HasPrefix(started.URL, env.vendor.URL+"/authorize?") || q.Get("client_id") != "hand-id" || q.Get("code_challenge_method") != "S256" ||
+		len(q.Get("code_challenge")) != 43 || q.Get("redirect_uri") != callbackURL || q.Get("resource") != env.vendor.MCPURL() || q.Get("scope") != "items:read" ||
+		q.Has("client_secret") {
+		t.Fatalf("authorize url = %s", started.URL)
+	}
+	code, state, err := env.vendor.Consent(started.URL)
+	if err != nil || code == "" {
+		t.Fatalf("consent: %q %v", code, err)
+	}
+	if got, err := env.svc.Complete(t.Context(), started.Nonce, state, code); err != nil || got != hand.id {
+		t.Fatalf("Complete = %q, %v", got, err)
+	}
+	if out, err := call(t.Context(), env.svc, modeB, "handmade_list_items", nil, ""); err != nil || out.IsError {
+		t.Fatalf("Call = %+v, %v", out, err)
+	}
+	env.vendor.ClientSecret, hand.client.Secret = "rotated-secret", "rotated-secret"
+	env.exec(t, "UPDATE connect_grants SET token_expires_at = now() - interval '1 minute'")
+	if out, err := call(t.Context(), env.svc, modeB, "handmade_list_items", nil, ""); err != nil || out.IsError {
+		t.Fatalf("Call after the secret rotated = %+v, %v", out, err)
+	}
+	if refreshes, _, _ := env.vendor.Snapshot(); refreshes != 1 {
+		t.Errorf("refreshes = %d, want 1", refreshes)
+	}
+}
+
+func TestAPreregisteredEntryWithoutItsClientIsHidden(t *testing.T) {
+	ids := func(opts Options) map[string]*controlv1.CatalogEntry {
+		svc := &Service{catalog: newCatalog(opts)}
+		catalog, _ := svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
+		out := map[string]*controlv1.CatalogEntry{}
+		for _, e := range catalog.GetEntries() {
+			out[e.GetId()] = e
+		}
+		return out
+	}
+	for name, opts := range map[string]Options{
+		"no client":    {},
+		"no secret":    {HubSpot: Credentials{ClientID: "h"}, Slack: Credentials{ClientID: "s"}},
+		"no client id": {HubSpot: Credentials{ClientSecret: "h"}, Slack: Credentials{ClientSecret: "s"}},
+	} {
+		got := ids(opts)
+		if got["hubspot"] != nil || got["slack"] != nil || got["github"] == nil || got["notion"] == nil {
+			t.Errorf("%s: catalog = %v", name, got)
+		}
+		svc := &Service{catalog: newCatalog(opts)}
+		if _, err := svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "slack"}); status.Code(err) != codes.FailedPrecondition {
+			t.Errorf("%s: Start slack = %v", name, err)
+		}
+	}
+	got := ids(Options{HubSpot: Credentials{ClientID: "h", ClientSecret: "hs"}, Slack: Credentials{ClientID: "s", ClientSecret: "ss"}})
+	for id, mcpURL := range map[string]string{"hubspot": "https://mcp.hubspot.com", "slack": "https://mcp.slack.com/mcp"} {
+		e := got[id]
+		if e == nil || !e.GetAvailable() || e.GetAuth() != string(authMCP) || e.GetMcpUrl() != mcpURL || !strings.HasPrefix(e.GetIconUrl(), "https://") {
+			t.Errorf("%s = %v", id, e)
+		}
 	}
 }
 
@@ -800,7 +871,7 @@ func TestTheCatalogInjectsTheGitHubAndGoogleRecipes(t *testing.T) {
 		"GOOGLE_CALENDAR": "Bearer t1",
 	}
 	placeholders := map[string]string{"GH_GIT": "Basic @GH_GIT@", "GH_API": "token @GH_API@", "GOOGLE_CALENDAR": "Bearer @GOOGLE_CALENDAR@"}
-	for _, e := range newCatalog(Credentials{}, Credentials{}) {
+	for _, e := range newCatalog(Options{}) {
 		for _, in := range e.inject {
 			if got := in.value("t1"); got != want[in.name] || in.placeholder != placeholders[in.name] || in.header != "Authorization" {
 				t.Errorf("%s of %s = %q with %q, want %q with %q", in.name, e.id, got, in.placeholder, want[in.name], placeholders[in.name])

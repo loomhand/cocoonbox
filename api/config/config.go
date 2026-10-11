@@ -121,7 +121,7 @@ type Accounts struct {
 	DefaultDailyCapMicros int64 `json:"default_daily_cap_micros"`
 }
 
-// Connect configures the Connect broker (design §16); its OAuth clients come from GITHUB_APP_* and GOOGLE_* env vars.
+// Connect configures the Connect broker (design §16); its OAuth clients come from GITHUB_APP_*, GOOGLE_*, HUBSPOT_* and SLACK_* env vars.
 type Connect struct {
 	// PublicURL is the api's public https origin; empty turns Connect off.
 	PublicURL string `json:"public_url"`

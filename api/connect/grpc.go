@@ -38,6 +38,9 @@ type PendingApproval struct {
 func (s *Service) Catalog(context.Context, *controlv1.CatalogRequest) (*controlv1.CatalogResponse, error) {
 	out := &controlv1.CatalogResponse{}
 	for _, e := range s.catalog {
+		if e.preregistered && !e.available() {
+			continue
+		}
 		out.Entries = append(out.Entries, &controlv1.CatalogEntry{
 			Id: e.id, Name: e.name, Description: e.description, Available: e.available(), InstallUrl: e.installURL,
 			GrantOnly: e.auth != authCustom && e.mcpURL == "", Checkable: e.userInfoURL != "", McpUrl: e.mcpURL, Auth: string(e.auth), IconUrl: e.icon,
@@ -265,7 +268,11 @@ func (s *Service) revokeAtVendor(ctx context.Context, g *grant, sec *secrets) (b
 		}
 		return s.revoke(ctx, e.revoke, e.client, *sec)
 	}
-	return s.revoke(ctx, revokeRFC7009, sec.Client, *sec)
+	c, err := s.client(g, *sec)
+	if err != nil {
+		return false, err
+	}
+	return s.revoke(ctx, revokeRFC7009, c, *sec)
 }
 
 func (s *Service) connector(ctx context.Context, g *grant, withTools bool) *controlv1.Connector {

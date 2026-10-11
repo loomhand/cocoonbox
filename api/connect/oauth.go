@@ -78,8 +78,8 @@ type serverMetadata struct {
 	ClientIDMetadataDocument bool     `json:"client_id_metadata_document_supported"`
 }
 
-// discover follows MCP authorization (2025-11-25) and prefers a client metadata document to dynamic registration.
-func (s *Service) discover(ctx context.Context, mcpURL string) (*authorization, error) {
+// discover follows MCP authorization (2025-11-25); its client is preset, else a metadata document, else registered.
+func (s *Service) discover(ctx context.Context, mcpURL string, preset client) (*authorization, error) {
 	target, err := url.Parse(mcpURL)
 	if err != nil {
 		return nil, err
@@ -130,6 +130,8 @@ func (s *Service) discover(ctx context.Context, mcpURL string) (*authorization, 
 		auth.scopes = strings.Fields(scope)
 	}
 	switch {
+	case preset.ID != "":
+		auth.client = preset
 	case as.ClientIDMetadataDocument:
 		auth.client = client{ID: s.publicURL + ClientMetadataPath, AuthMethod: authNone}
 	case as.RegistrationEndpoint != "":

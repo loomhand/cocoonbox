@@ -360,11 +360,14 @@ func (s *Service) secrets(ctx context.Context, g *grant) (*secrets, error) {
 }
 
 func (s *Service) client(g *grant, sec secrets) (client, error) {
-	if e := s.entry(g.kind); e != nil && e.auth == authOAuth {
+	e := s.entry(g.kind)
+	switch {
+	case e != nil && e.auth == authOAuth:
 		return e.client, nil
-	}
-	if sec.Client.ID == "" {
+	case sec.Client.ID == "":
 		return client{}, fmt.Errorf("grant %s holds no client", g.id)
+	case e != nil && e.preregistered:
+		sec.Client.ID, sec.Client.Secret = e.client.ID, e.client.Secret
 	}
 	return sec.Client, nil
 }

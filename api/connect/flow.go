@@ -59,7 +59,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 	}
 	verifier, challenge := pkce()
 	state, nonce := randomToken(), randomToken()
-	fs := flowSecrets{Verifier: verifier}
+	fs := flowSecrets{Verifier: verifier, Scopes: e.scopes}
 	q := url.Values{
 		"response_type":         {responseCode},
 		"redirect_uri":          {s.publicURL + CallbackPath},
@@ -69,12 +69,11 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 	}
 	authorizeURL := e.authorizeURL
 	if e.auth == authOAuth {
-		fs.Scopes = e.scopes
 		q.Set("client_id", e.client.ID)
 		maps.Copy(q, e.params)
 	} else {
 		discoverCtx, cancel := context.WithTimeout(ctx, setupTimeout)
-		auth, err := s.discover(discoverCtx, mcpURL)
+		auth, err := s.discover(discoverCtx, mcpURL, e.client)
 		cancel()
 		if errors.Is(err, errNoSignIn) {
 			return &Started{Connector: connector}, s.connectDirect(ctx, req.User, connector, e.id, mcpURL, credential{})
@@ -82,7 +81,10 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 		if err != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "sign-in to %s: %v", mcpURL, err)
 		}
-		authorizeURL, fs.Client, fs.Scopes = auth.authorizeURL, auth.client, auth.scopes
+		authorizeURL, fs.Client = auth.authorizeURL, auth.client
+		if len(fs.Scopes) == 0 {
+			fs.Scopes = auth.scopes
+		}
 		q.Set("client_id", auth.client.ID)
 		q.Set("resource", auth.client.Resource)
 	}

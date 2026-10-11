@@ -320,6 +320,8 @@ func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Servic
 		PublicURL: cfg.Connect.PublicURL,
 		GitHub:    connect.Credentials{ClientID: os.Getenv("GITHUB_APP_CLIENT_ID"), ClientSecret: os.Getenv("GITHUB_APP_CLIENT_SECRET"), Slug: os.Getenv("GITHUB_APP_SLUG")},
 		Google:    connect.Credentials{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET")},
+		HubSpot:   connect.Credentials{ClientID: os.Getenv("HUBSPOT_CLIENT_ID"), ClientSecret: os.Getenv("HUBSPOT_CLIENT_SECRET")},
+		Slack:     connect.Credentials{ClientID: os.Getenv("SLACK_CLIENT_ID"), ClientSecret: os.Getenv("SLACK_CLIENT_SECRET")},
 	})
 	if err != nil {
 		return nil, err

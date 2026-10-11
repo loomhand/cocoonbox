@@ -105,6 +105,8 @@ type Options struct {
 	PublicURL string
 	GitHub    Credentials
 	Google    Credentials
+	HubSpot   Credentials
+	Slack     Credentials
 	// AllowPrivate lets the broker reach loopback and private addresses; only tests set it.
 	AllowPrivate bool
 }
@@ -138,7 +140,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		store:        st,
 		seal:         &sealer{keys: opts.Keys},
 		sessions:     opts.Sessions,
-		catalog:      newCatalog(opts.GitHub, opts.Google),
+		catalog:      newCatalog(opts),
 		publicURL:    opts.PublicURL,
 		http:         newHTTPClient(opts.AllowPrivate),
 		allowPrivate: opts.AllowPrivate,

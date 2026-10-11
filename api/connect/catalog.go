@@ -17,6 +17,16 @@ const (
 	kindCustom = "custom"
 )
 
+// slackScopes are the user scopes of every tool of Slack's MCP server; the Slack app must list the same.
+var slackScopes = []string{
+	"search:read.public", "search:read.private", "search:read.mpim", "search:read.im", "search:read.files", "search:read.users",
+	"channels:history", "groups:history", "mpim:history", "im:history",
+	"channels:read", "groups:read", "im:read", "mpim:read",
+	"channels:write", "groups:write", "im:write", "mpim:write",
+	"chat:write", "reactions:read", "reactions:write", "files:read", "files:write", "emoji:read",
+	"canvases:read", "canvases:write", "lists:read", "lists:write", "users:read", "users:read.email",
+}
+
 // Credentials is an OAuth client the api registered with a vendor; a GitHub App adds its slug.
 type Credentials struct {
 	ClientID     string
@@ -60,19 +70,21 @@ type entry struct {
 	inject       []injection
 	// flag is the guest-visible switch the image follows while the grant injects.
 	flag string
+	// preregistered marks an MCP server that takes only the api's own client, set up by hand at the vendor.
+	preregistered bool
 }
 
 func (e *entry) available() bool {
-	return e.auth != authOAuth || (e.client.ID != "" && e.client.Secret != "")
+	return (e.auth != authOAuth && !e.preregistered) || (e.client.ID != "" && e.client.Secret != "")
 }
 
-func newCatalog(github, google Credentials) []*entry {
+func newCatalog(opts Options) []*entry {
 	gh := &entry{
 		id: "github", name: "GitHub", description: "Issues, pull requests and code in the repositories you pick for the CocoonBox GitHub App.",
 		mcpURL: "https://api.githubcopilot.com/mcp/", auth: authOAuth, icon: "https://github.githubassets.com/favicons/favicon.svg",
 		client: client{ //nolint:gosec // the secret comes from the environment
-			ID: github.ClientID, Secret: github.ClientSecret, TokenURL: "https://github.com/login/oauth/access_token",
-			RevokeURL: "https://api.github.com/applications/" + url.PathEscape(github.ClientID) + "/grant",
+			ID: opts.GitHub.ClientID, Secret: opts.GitHub.ClientSecret, TokenURL: "https://github.com/login/oauth/access_token",
+			RevokeURL: "https://api.github.com/applications/" + url.PathEscape(opts.GitHub.ClientID) + "/grant",
 		},
 		authorizeURL: "https://github.com/login/oauth/authorize",
 		userInfoURL:  "https://api.github.com/user", userInfoName: "login",
@@ -83,8 +95,8 @@ func newCatalog(github, google Credentials) []*entry {
 		},
 		flag: "COCOONBOX_GH_GIT",
 	}
-	if github.Slug != "" {
-		gh.installURL = "https://github.com/apps/" + url.PathEscape(github.Slug) + "/installations/new"
+	if opts.GitHub.Slug != "" {
+		gh.installURL = "https://github.com/apps/" + url.PathEscape(opts.GitHub.Slug) + "/installations/new"
 	}
 	return []*entry{
 		gh,
@@ -96,7 +108,7 @@ func newCatalog(github, google Credentials) []*entry {
 				placeholder: "Bearer @GOOGLE_CALENDAR@", value: prefixed("Bearer "),
 			}},
 			client: client{ //nolint:gosec // the secret comes from the environment
-				ID: google.ClientID, Secret: google.ClientSecret, TokenURL: "https://oauth2.googleapis.com/token",
+				ID: opts.Google.ClientID, Secret: opts.Google.ClientSecret, TokenURL: "https://oauth2.googleapis.com/token",
 				RevokeURL: "https://oauth2.googleapis.com/revoke",
 			},
 			authorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -122,6 +134,15 @@ func newCatalog(github, google Credentials) []*entry {
 		{id: "paypal", name: "PayPal", description: "Invoices, orders and transactions in your PayPal business account.", mcpURL: "https://mcp.paypal.com/mcp", auth: authMCP, icon: "https://www.paypal.com/favicon.ico"},
 		{id: "zapier", name: "Zapier", description: "The actions you enable in your Zapier MCP server.", mcpURL: "https://mcp.zapier.com/api/mcp/mcp", auth: authMCP, icon: "https://zapier.com/favicon.ico"},
 		{id: "composio", name: "Composio", description: "The apps and tools you connect in Composio.", mcpURL: "https://connect.composio.dev/mcp", auth: authMCP, icon: "https://composio.dev/favicon.ico"},
+		{
+			id: "hubspot", name: "HubSpot", description: "Contacts, companies, deals and tickets in your HubSpot account.", mcpURL: "https://mcp.hubspot.com",
+			auth: authMCP, icon: "https://www.hubspot.com/favicon.ico", client: client{ID: opts.HubSpot.ClientID, Secret: opts.HubSpot.ClientSecret}, preregistered: true,
+		},
+		{
+			id: "slack", name: "Slack", description: "Messages, channels, canvases and people in your Slack workspace.", mcpURL: "https://mcp.slack.com/mcp",
+			auth: authMCP, icon: "https://slack.com/favicon.ico", client: client{ID: opts.Slack.ClientID, Secret: opts.Slack.ClientSecret}, preregistered: true,
+			scopes: slackScopes,
+		},
 		{id: "exa", name: "Exa", description: "Web search and page contents from Exa, with no sign-in.", mcpURL: "https://mcp.exa.ai/mcp", auth: authOpen, icon: "https://exa.ai/images/favicon-32x32.png"},
 		{
 			id: "context7", name: "Context7", description: "Current documentation and code examples for libraries, with no sign-in.", mcpURL: "https://mcp.context7.com/mcp",

@@ -1,5 +1,5 @@
 // Package connecttest serves a mock vendor for Connect tests: an MCP server behind MCP authorization, with
-// dynamic registration or a client metadata document, PKCE, rotating refresh tokens and revocation.
+// dynamic registration, a client metadata document or a client registered by hand, PKCE, rotating refresh tokens and revocation.
 package connecttest
 
 import (
@@ -50,6 +50,9 @@ type Vendor struct {
 	Refusal string
 	// NoResourceMetadata serves no protected resource metadata, as a server of MCP authorization 2025-03-26.
 	NoResourceMetadata bool
+	// ClientID and ClientSecret are a client registered by hand: no registration, and the token endpoint requires the secret.
+	ClientID     string
+	ClientSecret string
 
 	mu        sync.Mutex
 	codes     map[string]codeGrant
@@ -134,7 +137,7 @@ func (v *Vendor) resourceMetadata(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (v *Vendor) serverMetadata(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	md := map[string]any{
 		"issuer":                                v.URL,
 		"authorization_endpoint":                v.URL + "/authorize",
 		"token_endpoint":                        v.URL + "/token",
@@ -142,7 +145,11 @@ func (v *Vendor) serverMetadata(w http.ResponseWriter, _ *http.Request) {
 		"revocation_endpoint":                   v.URL + "/revoke",
 		"code_challenge_methods_supported":      []string{"S256"},
 		"client_id_metadata_document_supported": v.CIMD,
-	})
+	}
+	if v.ClientID != "" {
+		delete(md, "registration_endpoint")
+	}
+	writeJSON(w, http.StatusOK, md)
 }
 
 func (v *Vendor) register(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +170,8 @@ func (v *Vendor) register(w http.ResponseWriter, r *http.Request) {
 func (v *Vendor) authorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	v.mu.Lock()
-	known := v.clients[q.Get("client_id")] || (v.CIMD && strings.HasSuffix(q.Get("client_id"), "/cocoonbox.connect/client.json"))
+	known := v.clients[q.Get("client_id")] || (v.CIMD && strings.HasSuffix(q.Get("client_id"), "/cocoonbox.connect/client.json")) ||
+		(v.ClientID != "" && q.Get("client_id") == v.ClientID)
 	v.mu.Unlock()
 	if !known || q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("resource") != v.MCPURL() {
 		http.Error(w, "bad authorization request", http.StatusBadRequest)
@@ -185,6 +193,10 @@ func (v *Vendor) token(w http.ResponseWriter, r *http.Request) {
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.ClientID != "" && (f.Get("client_id") != v.ClientID || f.Get("client_secret") != v.ClientSecret) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
+		return
+	}
 	switch f.Get("grant_type") {
 	case "authorization_code":
 		g, ok := v.codes[f.Get("code")]
