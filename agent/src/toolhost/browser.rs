@@ -1109,11 +1109,9 @@ pub(super) mod tests {
 
     /// Serves CDP on the returned port only after `delay`; every new window is page 1, whose script evaluations return "Page: slow".
     pub(in crate::toolhost) async fn slow_chrome(delay: Duration) -> u16 {
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = ws.local_addr().unwrap();
         let list = json!([{
@@ -1139,7 +1137,7 @@ pub(super) mod tests {
         });
         tokio::spawn(async move {
             tokio::time::sleep(delay).await;
-            let http = TcpListener::bind(("127.0.0.1", port)).await.unwrap();
+            let http = socket.listen(1024).unwrap();
             while let Ok((mut s, _)) = http.accept().await {
                 let mut buf = [0u8; 1024];
                 let n = s.read(&mut buf).await.unwrap_or(0);
