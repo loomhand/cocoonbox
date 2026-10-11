@@ -563,12 +563,21 @@ impl Runtime {
         } else {
             &self.main_tools
         };
-        let system = prompts::main(
+        let mut system = prompts::main(
             &ctx.model,
             &self.cfg.model_computer,
             vision,
             self.cfg.script,
         );
+        if let Some(keys) = tokio::fs::read_to_string(prompts::KEYS_FILE)
+            .await
+            .ok()
+            .as_deref()
+            .and_then(prompts::keys)
+        {
+            system.push_str("\n\n");
+            system.push_str(&keys);
+        }
         let tier = match &self.router {
             Some(router) => self.front_route(ctx, router, &mut messages).await?,
             None => None,

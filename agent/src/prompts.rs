@@ -3,6 +3,9 @@
 /// The tool-tier policy of a box with Script, shared by its MCP instructions, its own agent and its guide.
 pub const ROUTING: &str = include_str!("../../image/script/routing.md");
 
+/// Where the image lists the box's API keys, one `NAME=placeholder;hosts;how` record per line.
+pub const KEYS_FILE: &str = "/run/cocoonbox-vault/keys";
+
 /// Sent once when a step returns neither a tool call nor visible text.
 pub const CONTINUE: &str = "Continue: call the next tool, or give your final answer.";
 
@@ -43,6 +46,8 @@ Loop: observe, act, verify.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
+const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that the box's network swaps for the real key only on the listed hosts. Send them exactly as shown; never ask for, print or replace a key";
+
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
 /// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a Script box adds [`ROUTING`].
@@ -66,6 +71,33 @@ pub fn main(model: &str, computer_model: &str, vision: bool, script: bool) -> St
 /// Renders the computer subagent's prompt: observe, act, verify on the desktop.
 pub fn computer(model: &str) -> String {
     COMPUTER.replace("{model}", model)
+}
+
+/// Renders the line that names the box's API keys from the records of [`KEYS_FILE`]; None without keys.
+pub fn keys(records: &str) -> Option<String> {
+    let keys: Vec<String> = records
+        .lines()
+        .filter_map(|record| {
+            let mut fields = record.splitn(3, ';');
+            let (name, _) = fields.next()?.split_once('=')?;
+            let hosts = fields.next()?.replace(',', ", ");
+            let how = fields
+                .next()?
+                .replace("%20", " ")
+                .replace("%3B", ";")
+                .replace("%25", "%");
+            let var = format!("${name}");
+            let how = match how.split_once(": Basic ") {
+                Some((header, user)) => {
+                    format!("{header}: Basic base64({})", user.replace("{}", &var))
+                }
+                None if how.starts_with('?') => format!("query {}", how.replace("{}", &var)),
+                None => how.replace("{}", &var),
+            };
+            Some(format!("{name} for {hosts} as {how}"))
+        })
+        .collect();
+    (!keys.is_empty()).then(|| format!("{KEYS_HEAD}: {}.", keys.join("; ")))
 }
 
 /// Renders the request for a progress report once a loop has used all `cap` steps.
@@ -117,6 +149,25 @@ mod tests {
             cap_report(40),
             "Stop here: you have used all 40 steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck."
         );
+    }
+
+    #[test]
+    fn keys_line_names_each_key_its_hosts_and_how_to_send_it() {
+        let records = "ATTIO_API_KEY=cbv_1;api.attio.com,*.attio.com;Authorization:%20Bearer%20{}\n\
+            SERP=cbv_2;serpapi.com;?api_key={}\n\
+            STRIPE=sk_live_cbv_3;api.stripe.com;Authorization:%20Basic%20{}:\n\
+            ODD=cbv_4;a.com;X-Key:%20k%3B%25{}\n\
+            broken\n";
+        assert_eq!(
+            keys(records).unwrap(),
+            format!(
+                "{KEYS_HEAD}: ATTIO_API_KEY for api.attio.com, *.attio.com as Authorization: Bearer $ATTIO_API_KEY; \
+                 SERP for serpapi.com as query ?api_key=$SERP; STRIPE for api.stripe.com as Authorization: Basic base64($STRIPE:); \
+                 ODD for a.com as X-Key: k;%$ODD."
+            )
+        );
+        assert_eq!(keys(""), None);
+        assert_eq!(keys("broken\n"), None);
     }
 
     #[test]

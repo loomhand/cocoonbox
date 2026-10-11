@@ -10,6 +10,8 @@ use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use crate::sys;
 
 const MARK: &str = "__CB_DONE_";
+/// The box's API key exports, sourced before every command so a key added or deleted while the session lives reaches it.
+const VAULT: &str = "/run/cocoonbox-vault/vault.sh";
 const HEAD_BYTES: usize = 10_000;
 const TAIL_BYTES: usize = 20_000;
 const SLACK_BYTES: usize = 64 << 10;
@@ -70,7 +72,7 @@ impl Shell {
         let nonce = uuid::Uuid::new_v4().simple().to_string();
         let marker = format!("\n{MARK}{nonce}:");
         let line = format!(
-            ". '{}' </dev/null\nprintf '\\n{MARK}{nonce}:%s\\n' \"$?\"\n",
+            "[ -r {VAULT} ] && . {VAULT}\n. '{}' </dev/null\nprintf '\\n{MARK}{nonce}:%s\\n' \"$?\"\n",
             self.script.display()
         );
         let mut guard = KillOnDrop {
