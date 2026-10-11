@@ -20,6 +20,7 @@ public actor Bridge {
     public static let maxInstructions = 2048
     static let keysWait = Duration.milliseconds(1500)
     public static let keysHead = "Box shells hold the user's API keys as env vars whose values are placeholders; the box's network swaps in the key only on the listed hosts, so send them as shown and never ask for a key:"
+    public static let linkLine = "The user's Link wallet is connected: you may pay from a box, but only for a purchase the user asked for and only with a one-time card from a Link spend request (link-cli in a box shell, with a truthful --context) that the user approved; read the card only with link-cli's --output-file, never print its number or CVC, and enter it only on that checkout. Never enter the user's own card or other payment details."
 
     private let endpoint: Endpoint
     private let token: String
@@ -434,11 +435,13 @@ public actor Bridge {
     private func instructionsText() async -> String {
         async let keys = listKeys()
         let text = await boxInstructionsText()
-        return Self.withKeys(text, await keys)
+        let (list, link) = await keys
+        return Self.withKeys(text, list, link: link)
     }
 
-    // withKeys names as many of the user's keys as fit under maxInstructions after text.
-    public static func withKeys(_ text: String, _ keys: [Cocoonbox_Control_V1_Key]) -> String {
+    // withKeys adds linkLine when link is set and it fits, then names as many of the user's keys as fit under maxInstructions.
+    public static func withKeys(_ text: String, _ keys: [Cocoonbox_Control_V1_Key], link: Bool = false) -> String {
+        let text = link && text.count + 1 + linkLine.count <= maxInstructions ? "\(text) \(linkLine)" : text
         let entries = keys.map { "\($0.name) for \($0.hosts.joined(separator: ", ")) as \(sentAs($0))" }
         for shown in stride(from: entries.count, through: 1, by: -1) {
             let more = shown < entries.count ? "; \(entries.count - shown) more in `cocoonbox keys ls`" : ""
@@ -457,18 +460,22 @@ public actor Bridge {
         return "\(key.header): \(key.template.replacingOccurrences(of: "{}", with: variable))"
     }
 
-    // listKeys reads the user's keys from the api, or none when it does not answer within keysWait.
-    private func listKeys() async -> [Cocoonbox_Control_V1_Key] {
-        guard let connection = try? BoxConnection(endpoint: endpoint, token: token) else { return [] }
+    // listKeys reads the user's keys and whether a Link grant is active from the api, or neither when it does not answer within keysWait.
+    private func listKeys() async -> ([Cocoonbox_Control_V1_Key], Bool) {
+        guard let connection = try? BoxConnection(endpoint: endpoint, token: token) else { return ([], false) }
         defer { connection.close() }
-        return await withTaskGroup(of: [Cocoonbox_Control_V1_Key]?.self) { group in
-            group.addTask { try? await connection.listKeys() }
+        return await withTaskGroup(of: ([Cocoonbox_Control_V1_Key], Bool)?.self) { group in
+            group.addTask {
+                async let keys = try? connection.listKeys()
+                let link = (try? await connection.listConnectors())?.contains { $0.kind == "link" && $0.status == "active" } ?? false
+                return (await keys ?? [], link)
+            }
             group.addTask {
                 try? await pause(Self.keysWait)
                 return nil
             }
             defer { group.cancelAll() }
-            return await group.next().flatMap { $0 } ?? []
+            return await group.next().flatMap { $0 } ?? ([], false)
         }
     }
 

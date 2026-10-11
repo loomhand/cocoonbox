@@ -42,13 +42,13 @@ Loop: observe, act, verify.
 - An action result that says it succeeded proves nothing: a pixel click on plain web content can report success and do nothing. Trust only the screenshot. If an action had no visible effect, retry it once with foreground: true.
 - Do not use desktop-wide shortcuts (super, alt+tab, ctrl+alt, show desktop).
 - Use wait while something loads. After two failed tries at the same step, change approach.
-- Never enter passwords, 2FA codes, captchas or payment details. If the task needs one, stop and report that a human must take over, and where.
+- Never enter passwords, 2FA codes, captchas or payment details, except a Link one-time card that your task gives you, on the checkout it names. If the task needs one, stop and report that a human must take over, and where.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
 const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that the box's network swaps for the real key only on the listed hosts. Send them exactly as shown; never ask for, print or replace a key";
 
-const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet, which link-cli (`npx -y @stripe/link-cli`) reads by itself; each purchase waits until the user approves it in the Link app. Read card details only with `--output-file <path>`, and never print a card number or CVC.";
+const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; link-cli (`npx -y @stripe/link-cli`) reads it by itself. Never enter the user's own card or other payment details. Pay only with Link and only for a purchase the user asked for: create a spend request with a truthful `--context`, wait until the user approves it in the Link app or on the web, read the one-time card only with `--output-file <path>`, never printing its number or CVC, and enter that card only on the checkout the user asked for.";
 
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 

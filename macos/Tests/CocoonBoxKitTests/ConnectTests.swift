@@ -135,6 +135,20 @@ import Testing
         #expect(Bridge.withKeys(String(repeating: "x", count: 2040), many) == String(repeating: "x", count: 2040))
     }
 
+    @Test func theBridgeAddsTheLinkLineOnlyWithAnActiveLinkGrant() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        try await mock.connect(["grants": [["id": "link", "status": "needs_reconnect"]]])
+        let lost = try await BridgeClient(mock)
+        #expect(lost.instructions == Bridge.instructions)
+        lost.close()
+        try await mock.connect(["grants": [["id": "link"]]])
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+        #expect(client.instructions == Bridge.instructions + " " + Bridge.linkLine)
+        #expect(Bridge.withKeys(String(repeating: "x", count: 2000), [], link: true) == String(repeating: "x", count: 2000))
+    }
+
     @Test func codexGetsOneLineOnACbplanBoxAndTheBridgeTextOnACbdeskBox() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
