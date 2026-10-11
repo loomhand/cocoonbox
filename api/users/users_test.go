@@ -14,10 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/keyring"
@@ -88,11 +90,11 @@ func TestTokensPasswordsAndDisabling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegenerateToken: %v", err)
 	}
-	if id, ok := svc.ByTokenSHA256(sum(first)); !ok || id != u.ID {
+	if id, ok := svc.ByTokenSHA256(t.Context(), sum(first)); !ok || id != u.ID {
 		t.Fatalf("token resolves to %q, %t", id, ok)
 	}
 	second, _ := svc.RegenerateToken(t.Context(), u.ID)
-	if _, ok := svc.ByTokenSHA256(sum(first)); ok {
+	if _, ok := svc.ByTokenSHA256(t.Context(), sum(first)); ok {
 		t.Error("the old token still works after regenerate")
 	}
 	if _, err := svc.Login(t.Context(), "qa1", password); err != nil {
@@ -114,7 +116,7 @@ func TestTokensPasswordsAndDisabling(t *testing.T) {
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: &disabled}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if _, ok := svc.ByTokenSHA256(sum(second)); ok {
+	if _, ok := svc.ByTokenSHA256(t.Context(), sum(second)); ok {
 		t.Error("a disabled user's token still works")
 	}
 	if _, err := svc.Session(t.Context(), secret); !errors.Is(err, ErrNotFound) {
@@ -145,6 +147,48 @@ func TestLoginFindsAUserAnotherProcessAdded(t *testing.T) {
 	}
 	if boxes := svc.Boxes(u.ID); len(boxes) != 1 {
 		t.Errorf("Boxes after Login = %+v, want the first box", boxes)
+	}
+}
+
+func TestATokenAnotherProcessSetWorksAtOnce(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	cli := openTestService(t, dsn, gw, tenants)
+	u, err := cli.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	token := tokenPrefix + randomHex(secretBytes)
+	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(token)); err != nil {
+		t.Fatalf("SetTokenSHA256: %v", err)
+	}
+	if id, ok := svc.ByTokenSHA256(t.Context(), sum(token)); !ok || id != u.ID {
+		t.Fatalf("token resolves to %q, %t, want %s", id, ok, u.ID)
+	}
+	if boxes := svc.Boxes(u.ID); len(boxes) != 1 {
+		t.Errorf("Boxes after the token resolved = %+v, want the first box", boxes)
+	}
+}
+
+func TestUnknownTokensCheckTheTableAtMostOncePerInterval(t *testing.T) {
+	svc, _, _, dsn := newTestService(t)
+	queries := traceQueries(t, svc, dsn)
+	var calls atomic.Int64
+	var wg sync.WaitGroup
+	start := time.Now()
+	for range 8 {
+		wg.Go(func() {
+			for time.Since(start) < 3*tokenMissInterval+tokenMissInterval/2 {
+				calls.Add(1)
+				if _, ok := svc.ByTokenSHA256(t.Context(), sum(randomHex(secretBytes))); ok {
+					t.Error("a garbage token resolved")
+				}
+			}
+		})
+	}
+	wg.Wait()
+	bound := int64(time.Since(start)/tokenMissInterval) + 1
+	if got := queries.n.Load(); got < 1 || got > bound {
+		t.Errorf("%d garbage lookups ran %d queries, want 1..%d", calls.Load(), got, bound)
 	}
 }
 
@@ -193,7 +237,7 @@ func TestDeleteRemovesTenantKeyRowAndSessions(t *testing.T) {
 	if _, ok := tenants.tenants[u.ID]; ok {
 		t.Error("tenant kept")
 	}
-	if _, ok := svc.ByTokenSHA256(sum(token)); ok {
+	if _, ok := svc.ByTokenSHA256(t.Context(), sum(token)); ok {
 		t.Error("the deleted user's token still works")
 	}
 	var sessions int
@@ -364,6 +408,17 @@ func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) err
 	return nil
 }
 
+type queryCounter struct {
+	n atomic.Int64
+}
+
+func (c *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	c.n.Add(1)
+	return ctx
+}
+
+func (c *queryCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
 type tenant struct {
 	token string
 	max   int
@@ -409,6 +464,23 @@ func openTestService(t *testing.T, dsn string, gw *fakeGW, tenants *fakeTenants)
 	}
 	t.Cleanup(svc.Close)
 	return svc
+}
+
+func traceQueries(t *testing.T, svc *Service, dsn string) *queryCounter {
+	t.Helper()
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	counter := &queryCounter{}
+	cfg.ConnConfig.Tracer = counter
+	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("open traced pool: %v", err)
+	}
+	svc.store.pool.Close()
+	svc.store.pool = pool
+	return counter
 }
 
 func masterKeyFile(t *testing.T) string {

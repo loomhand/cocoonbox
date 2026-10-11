@@ -998,7 +998,7 @@ func (f *fakeSessions) end(sum string) {
 
 type fakeAuthn struct{}
 
-func (fakeAuthn) Authenticate(header string) (string, error) {
+func (fakeAuthn) Authenticate(_ context.Context, header string) (string, error) {
 	if header == "Bearer alice" {
 		return alice, nil
 	}

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -34,6 +35,8 @@ const (
 	maxPassword  = 72
 	maxBoxesCap  = 16
 	defaultBoxes = 1
+
+	tokenMissInterval = 100 * time.Millisecond
 
 	columnGWKey    = "gw_key"
 	columnTenant   = "tenant_token"
@@ -121,6 +124,7 @@ type Service struct {
 	tenants      Tenants
 	tenantClaims bool
 	firstBoxID   func(string) string
+	nextMiss     atomic.Int64
 	// dummyHash keeps a sign-in for an unknown name as slow as one for a known name.
 	dummyHash []byte
 
@@ -250,12 +254,15 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// ByTokenSHA256 returns the enabled user whose API token hashes to sum.
-func (s *Service) ByTokenSHA256(sum string) (string, bool) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	id, ok := s.byToken[sum]
-	return id, ok
+// ByTokenSHA256 returns the enabled user whose API token hashes to sum; an index miss checks the table at most once per tokenMissInterval.
+func (s *Service) ByTokenSHA256(ctx context.Context, sum string) (string, bool) {
+	if id, ok := s.indexedToken(sum); ok || !s.allowMiss() {
+		return id, ok
+	}
+	if serves, err := s.store.tokenServes(ctx, sum); err != nil || !serves || s.Load(ctx) != nil {
+		return "", false
+	}
+	return s.indexedToken(sum)
 }
 
 // Get returns user id.
@@ -656,6 +663,18 @@ func (s *Service) record(id string) (record, error) {
 		return record{}, ErrNotFound
 	}
 	return r, nil
+}
+
+func (s *Service) indexedToken(sum string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	id, ok := s.byToken[sum]
+	return id, ok
+}
+
+func (s *Service) allowMiss() bool {
+	now, next := time.Now().UnixNano(), s.nextMiss.Load()
+	return now >= next && s.nextMiss.CompareAndSwap(next, now+int64(tokenMissInterval))
 }
 
 func (s *Service) records() []record {

@@ -126,10 +126,10 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // route authorizes one exchange for the bearer's user, or, when no user holds it and it is a share secret, for that share.
 func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	authorization := r.Header.Get("Authorization")
-	owner, err := m.authn.Authenticate(authorization)
+	owner, err := m.authn.Authenticate(r.Context(), authorization)
 	if secret, ok := auth.ShareSecret(authorization); err != nil && ok && boxID != "" {
 		var guest string
-		if guest, err = m.authn.Guest(r.Header.Get(auth.HeaderGuestToken)); err != nil {
+		if guest, err = m.authn.Guest(r.Context(), r.Header.Get(auth.HeaderGuestToken)); err != nil {
 			return rt, err
 		}
 		var grant auth.Grant

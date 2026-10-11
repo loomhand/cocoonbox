@@ -165,6 +165,12 @@ func (s *store) setToken(ctx context.Context, id, sha string) error {
 	return err
 }
 
+func (s *store) tokenServes(ctx context.Context, sha string) (bool, error) {
+	var serves bool
+	err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM users WHERE token_sha256 = $1 AND NOT disabled)", sha).Scan(&serves)
+	return serves, err
+}
+
 func (s *store) setSettings(ctx context.Context, r record) error {
 	return s.exec(ctx, "UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0) WHERE id = $1",
 		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning)

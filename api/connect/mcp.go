@@ -42,7 +42,7 @@ var (
 
 // Authenticator maps an Authorization header value to its user.
 type Authenticator interface {
-	Authenticate(header string) (string, error)
+	Authenticate(ctx context.Context, header string) (string, error)
 }
 
 // authFunc maps an Authorization header value to its user and, on the box door, the calling machine.
@@ -233,8 +233,8 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 
 // NewDoor serves the tools for door, authenticating with authn.
 func (s *Service) NewDoor(authn Authenticator, door string) *Door {
-	return &Door{svc: s, door: door, clients: map[string]session{}, authn: func(_ context.Context, header string) (string, string, error) {
-		user, err := authn.Authenticate(header)
+	return &Door{svc: s, door: door, clients: map[string]session{}, authn: func(ctx context.Context, header string) (string, string, error) {
+		user, err := authn.Authenticate(ctx, header)
 		return user, "", err
 	}}
 }

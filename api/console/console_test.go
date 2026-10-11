@@ -114,7 +114,7 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 		t.Fatalf("token = %d %s", resp.Code, resp.Body)
 	}
 	sum := sha256.Sum256([]byte(token.Token))
-	if id, ok := env.users.ByTokenSHA256(hex.EncodeToString(sum[:])); !ok || id != created.ID {
+	if id, ok := env.users.ByTokenSHA256(t.Context(), hex.EncodeToString(sum[:])); !ok || id != created.ID {
 		t.Errorf("the generated token resolves to %q, %t", id, ok)
 	}
 
@@ -280,7 +280,7 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	qa1 := env.login(t, "qa1")
 	env.boxes.onRelease = func() {
 		sum := sha256.Sum256([]byte(token))
-		if _, ok := env.users.ByTokenSHA256(hex.EncodeToString(sum[:])); ok {
+		if _, ok := env.users.ByTokenSHA256(t.Context(), hex.EncodeToString(sum[:])); ok {
 			t.Error("the user's token still worked while its boxes were released")
 		}
 	}

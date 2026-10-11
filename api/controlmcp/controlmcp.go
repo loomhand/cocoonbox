@@ -53,7 +53,7 @@ func New(boxes controlv1.BoxesServer, authn *auth.Authenticator) *Server {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	user, err := s.authn.Authenticate(r.Header.Get("Authorization"))
+	user, err := s.authn.Authenticate(r.Context(), r.Header.Get("Authorization"))
 	if err != nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		return

@@ -479,7 +479,7 @@ func first(values []string) string {
 
 type staticUsers map[string]string
 
-func (u staticUsers) ByTokenSHA256(sum string) (string, bool) {
+func (u staticUsers) ByTokenSHA256(_ context.Context, sum string) (string, bool) {
 	id, ok := u[sum]
 	return id, ok
 }
