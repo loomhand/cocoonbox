@@ -75,7 +75,8 @@ type envVar struct {
 
 type inject struct {
 	Hosts       []string `json:"hosts"`
-	Header      string   `json:"header"`
+	Header      string   `json:"header,omitempty"`
+	Query       string   `json:"query,omitempty"`
 	Placeholder string   `json:"placeholder,omitempty"`
 }
 

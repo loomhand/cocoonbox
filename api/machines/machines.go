@@ -92,11 +92,12 @@ type Identity struct {
 	Name      string `json:"name,omitempty"`
 }
 
-// Secret is a host-only value; with Hosts, the backend writes it into Header on requests to Hosts that carry Placeholder.
+// Secret is a host-only value; with Hosts, the backend writes it into Header, or the Query parameter, on requests to Hosts that carry Placeholder.
 type Secret struct {
 	Value       string
 	Hosts       []string
 	Header      string
+	Query       string
 	Placeholder string
 }
 
@@ -106,6 +107,8 @@ type Credentials struct {
 	Secrets map[string]*Secret
 	// Flags maps a guest-visible name to its value; "" removes the name.
 	Flags map[string]string
+	// Prune removes the machine's names that start with it and that Secrets lacks.
+	Prune string
 }
 
 // Endpoint reaches a machine's agent; Key names it as host:port and changes when the machine moves.

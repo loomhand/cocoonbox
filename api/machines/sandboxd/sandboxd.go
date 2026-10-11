@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -344,10 +345,17 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 		if sec != nil {
 			v = &envVar{Value: sec.Value, Guest: new(false)}
 			if len(sec.Hosts) > 0 {
-				v.Inject = &inject{Hosts: sec.Hosts, Header: sec.Header, Placeholder: sec.Placeholder}
+				v.Inject = &inject{Hosts: sec.Hosts, Header: sec.Header, Query: sec.Query, Placeholder: sec.Placeholder}
 			}
 		}
 		add(name, v)
+	}
+	if c.Prune != "" {
+		for name := range e.env {
+			if _, ok := c.Secrets[name]; !ok && strings.HasPrefix(name, c.Prune) {
+				add(name, nil)
+			}
+		}
 	}
 	if state, _ := e.state(); state == machines.StateRunning {
 		for name, value := range c.Flags {

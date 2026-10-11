@@ -451,6 +451,36 @@ func TestSetCredentialsRemembersARefusalUntilTheValueChanges(t *testing.T) {
 	}
 }
 
+func TestSetCredentialsPrunesNamesUnderThePrefixThatSecretsLacks(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	fake.add(&fakeSandbox{
+		row: row{ID: "sb_1", Metadata: map[string]string{"cb_machine": boxID, "cb_owner": owner}}, token: "tok",
+		env: map[string]envVar{"CBV_old": {Guest: new(false)}, "GH_GIT": {Guest: new(false)}},
+	})
+	b := newTestBackend(t, fake)
+	c := machines.Credentials{
+		Secrets: map[string]*machines.Secret{"CBV_new": {Value: "v", Hosts: []string{"serpapi.com"}, Query: "api_key", Placeholder: "ph"}},
+		Prune:   "CBV_",
+	}
+
+	if err := b.SetCredentials(t.Context(), boxID, c); err != nil {
+		t.Fatalf("SetCredentials: %v", err)
+	}
+	env := fake.env()
+	if _, ok := env["CBV_old"]; ok {
+		t.Errorf("env = %+v, want CBV_old pruned", env)
+	}
+	if _, ok := env["GH_GIT"]; !ok {
+		t.Errorf("env = %+v, want GH_GIT kept outside the prefix", env)
+	}
+	if in := env["CBV_new"].Inject; in == nil || in.Query != "api_key" || in.Header != "" || in.Placeholder != "ph" {
+		t.Errorf("CBV_new inject = %+v, want the query parameter api_key", in)
+	}
+	if err := b.SetCredentials(t.Context(), boxID, c); err != nil || fake.count("patch") != 1 {
+		t.Errorf("repeat = %v after %d patches, want no second patch", err, fake.count("patch"))
+	}
+}
+
 func TestDeleteReleasesTheClaim(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
