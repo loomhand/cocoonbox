@@ -48,6 +48,8 @@ Loop: observe, act, verify.
 
 const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that the box's network swaps for the real key only on the listed hosts. Send them exactly as shown; never ask for, print or replace a key";
 
+const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet, which link-cli (`npx -y @stripe/link-cli`) reads by itself; each purchase waits until the user approves it in the Link app. Read card details only with `--output-file <path>`, and never print a card number or CVC.";
+
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
 /// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a Script box adds [`ROUTING`].
@@ -97,7 +99,11 @@ pub fn keys(records: &str) -> Option<String> {
             Some(format!("{name} for {hosts} as {how}"))
         })
         .collect();
-    (!keys.is_empty()).then(|| format!("{KEYS_HEAD}: {}.", keys.join("; ")))
+    let link = keys.iter().any(|k| k.starts_with("LINK_ACCESS_TOKEN "));
+    (!keys.is_empty()).then(|| {
+        let line = format!("{KEYS_HEAD}: {}.", keys.join("; "));
+        if link { line + LINK_RULE } else { line }
+    })
 }
 
 /// Renders the request for a progress report once a loop has used all `cap` steps.
@@ -168,6 +174,20 @@ mod tests {
         );
         assert_eq!(keys(""), None);
         assert_eq!(keys("broken\n"), None);
+        assert!(!keys(records).unwrap().contains("Link"));
+    }
+
+    #[test]
+    fn keys_line_with_link_adds_the_card_rule() {
+        let line =
+            keys("LINK_ACCESS_TOKEN=cbc_link;api.link.com;Authorization:%20Bearer%20{}\n").unwrap();
+        assert_eq!(
+            line,
+            format!(
+                "{KEYS_HEAD}: LINK_ACCESS_TOKEN for api.link.com as Authorization: Bearer $LINK_ACCESS_TOKEN.{LINK_RULE}"
+            )
+        );
+        assert!(line.contains("--output-file"));
     }
 
     #[test]
