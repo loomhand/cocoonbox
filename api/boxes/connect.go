@@ -78,6 +78,11 @@ func (s *Service) PruneDoorKeys(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	logger := log.WithFunc("boxes.Service.PruneDoorKeys")
+	if len(ms) == 0 {
+		logger.Warn(ctx, "the backend lists no machine; keeping every door key")
+		return nil
+	}
 	live := make([]string, 0, len(ms))
 	for _, m := range ms {
 		live = append(live, m.ID)
@@ -86,7 +91,7 @@ func (s *Service) PruneDoorKeys(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.WithFunc("boxes.Service.PruneDoorKeys").Infof(ctx, "pruned %d door keys of gone machines, kept those of %d machines", n, len(live))
+	logger.Infof(ctx, "pruned %d door keys of gone machines, kept those of %d machines", n, len(live))
 	return nil
 }
 

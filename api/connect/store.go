@@ -334,7 +334,7 @@ func (s *store) dropDoorKeys(ctx context.Context, machine string) error {
 }
 
 func (s *store) pruneDoorKeys(ctx context.Context, live []string, cutoff time.Time) (int64, error) {
-	tag, err := s.pool.Exec(ctx, "DELETE FROM connect_door_keys WHERE machine_id <> ALL(coalesce($1::text[], '{}')) AND created_at < $2", live, cutoff)
+	tag, err := s.pool.Exec(ctx, "DELETE FROM connect_door_keys WHERE machine_id <> ALL($1::text[]) AND created_at < $2", live, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune door keys: %w", err)
 	}

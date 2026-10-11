@@ -171,6 +171,19 @@ func TestAParkDropsTheDoorKeyOfTheMachineItRemovesAndTheRestoreGetsANewOne(t *te
 	}
 }
 
+func TestAnEmptyListingPrunesNoDoorKey(t *testing.T) {
+	conn := &fakeConnect{}
+	svc := New(newFakeMachines(), testDefaults, newFakeRegistry())
+	svc.EnableConnect(conn)
+
+	if err := svc.PruneDoorKeys(t.Context()); err != nil {
+		t.Fatalf("PruneDoorKeys: %v", err)
+	}
+	if conn.prunes != 0 {
+		t.Errorf("prunes = %d on an empty listing, want 0", conn.prunes)
+	}
+}
+
 func waitCreds(t *testing.T, fake *fakeMachines, n int) []credCall {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -193,6 +206,7 @@ type fakeConnect struct {
 	reads   []string
 	dropped []string
 	live    []string
+	prunes  int
 }
 
 func (c *fakeConnect) DoorKey(_ context.Context, machine, _, incarnation string) (string, error) {
@@ -213,6 +227,7 @@ func (c *fakeConnect) PruneDoorKeys(_ context.Context, live []string, _ time.Tim
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.live = live
+	c.prunes++
 	return 0, nil
 }
 

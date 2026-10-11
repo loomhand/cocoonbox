@@ -743,8 +743,8 @@ func TestDoorKeysGoWithTheirMachineAndPruneKeepsLiveAndNewerOnes(t *testing.T) {
 	if err := env.row(t, "SELECT string_agg(machine_id, ',' ORDER BY machine_id) FROM connect_door_keys").Scan(&left); err != nil || left != "cb-m2,cb-m4" {
 		t.Errorf("door keys left = %q, %v, want cb-m2,cb-m4", left, err)
 	}
-	if n, err := env.svc.PruneDoorKeys(t.Context(), nil, time.Now()); err != nil || n != 2 {
-		t.Errorf("PruneDoorKeys without machines = %d, %v, want 2", n, err)
+	if n, err := env.svc.PruneDoorKeys(t.Context(), nil, time.Now()); err != nil || n != 0 {
+		t.Errorf("PruneDoorKeys without machines = %d, %v, want 0", n, err)
 	}
 }
 
