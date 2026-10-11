@@ -141,6 +141,22 @@ func TestClientMetadataDocumentReplacesRegistration(t *testing.T) {
 	}
 }
 
+func TestAServerWithoutResourceMetadataSignsInAtItsOrigin(t *testing.T) {
+	env := newEnv(t)
+	env.vendor.NoResourceMetadata = true
+	started := env.start(t, alice, mockName)
+	if q := mustQuery(t, started.URL); q.Get("resource") != env.vendor.MCPURL() || !strings.HasPrefix(q.Get("client_id"), "dcr-") || q.Has("scope") {
+		t.Fatalf("Start = %+v, query %v", started, q)
+	}
+	code, state, _ := env.vendor.Consent(started.URL)
+	if _, err := env.svc.Complete(t.Context(), started.Nonce, state, code); err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+	if out, err := call(t.Context(), env.svc, modeB, listItems, nil, ""); err != nil || out.IsError {
+		t.Errorf("Call = %+v, %v", out, err)
+	}
+}
+
 func TestAToolsRefusalReachesTheConnector(t *testing.T) {
 	env := newEnv(t)
 	env.vendor.Refusal = `{"error": "the account is not enrolled in the preview"}`

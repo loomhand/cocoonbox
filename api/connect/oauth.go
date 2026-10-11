@@ -93,8 +93,12 @@ func (s *Service) discover(ctx context.Context, mcpURL string) (*authorization, 
 		candidates = []string{metadataURL}
 	}
 	var prm resourceMetadata
-	if err = s.firstMetadata(ctx, candidates, &prm); err != nil {
+	if err = s.firstMetadata(ctx, candidates, &prm); err != nil && metadataURL != "" {
 		return nil, fmt.Errorf("protected resource metadata of %s: %w", mcpURL, err)
+	}
+	if err != nil {
+		// A server of MCP authorization 2025-03-26 has no resource metadata; its origin is the authorization server.
+		prm.AuthorizationServers = []string{target.Scheme + "://" + target.Host}
 	}
 	if len(prm.AuthorizationServers) == 0 {
 		return nil, fmt.Errorf("%s names no authorization server", mcpURL)

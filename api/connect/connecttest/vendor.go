@@ -48,6 +48,8 @@ type Vendor struct {
 	Delay time.Duration
 	// Refusal answers tools/list with this HTTP 403 body, as a server that does not admit the account.
 	Refusal string
+	// NoResourceMetadata serves no protected resource metadata, as a server of MCP authorization 2025-03-26.
+	NoResourceMetadata bool
 
 	mu        sync.Mutex
 	codes     map[string]codeGrant
@@ -124,6 +126,10 @@ func (v *Vendor) Snapshot() (refreshes int, revoked []string, calls []Call) {
 }
 
 func (v *Vendor) resourceMetadata(w http.ResponseWriter, _ *http.Request) {
+	if v.NoResourceMetadata {
+		http.NotFound(w, nil)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"resource": v.MCPURL(), "authorization_servers": []string{v.URL}, "scopes_supported": []string{"items:read", "items:write"}})
 }
 
@@ -226,7 +232,11 @@ func (v *Vendor) mcp(w http.ResponseWriter, r *http.Request) {
 	ok := v.access[strings.TrimPrefix(auth, "Bearer ")]
 	v.mu.Unlock()
 	if !ok {
-		w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+v.URL+`/.well-known/oauth-protected-resource/mcp", scope="items:read items:write"`)
+		challenge := `Bearer resource_metadata="` + v.URL + `/.well-known/oauth-protected-resource/mcp", scope="items:read items:write"`
+		if v.NoResourceMetadata {
+			challenge = `Bearer realm="OAuth"`
+		}
+		w.Header().Set("WWW-Authenticate", challenge)
 		w.WriteHeader(http.StatusUnauthorized)
 		return
 	}
