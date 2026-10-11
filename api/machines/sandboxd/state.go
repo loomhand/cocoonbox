@@ -48,6 +48,7 @@ type entry struct {
 	op       string
 	opErr    string
 	revision int64
+	changed  chan struct{}
 
 	meta map[string]string
 	// env maps each env name the claim holds to the fingerprint of the entry this process wrote, "" when unknown.
@@ -77,6 +78,13 @@ func (e *entry) state() (machines.State, string) {
 		return machines.StateStarting, ""
 	default:
 		return machines.StateRunning, ""
+	}
+}
+
+func (e *entry) notifyLocked() {
+	if e.changed != nil {
+		close(e.changed)
+		e.changed = nil
 	}
 }
 

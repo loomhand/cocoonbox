@@ -557,6 +557,34 @@ func TestWatchReportsAMetaChange(t *testing.T) {
 	t.Error("watch sent nothing after the meta changed")
 }
 
+func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	watch := b.Watch(ctx, boxID, 0)
+	if m := <-watch; m.State != machines.StateRunning {
+		t.Fatalf("first watch state = %+v", m)
+	}
+	start := time.Now()
+	if _, err := b.Hibernate(t.Context(), boxID); err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	if m := <-watch; m.State != machines.StateHibernated {
+		t.Fatalf("watch state after Hibernate = %+v", m)
+	}
+	if err := b.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	if m := <-watch; m.Meta["wake"] != "inc|w1" {
+		t.Fatalf("watch after SetMeta = %+v", m)
+	}
+	if took := time.Since(start); took >= watchInterval/2 {
+		t.Errorf("watch took %s to send the op end and the meta change, want under %s", took, watchInterval/2)
+	}
+}
+
 func TestRenewExtendsEveryLeaseButArchivedOnes(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	fake.add(&fakeSandbox{row: row{ID: "sb_a", Metadata: map[string]string{"cb_machine": "cb-a", "cb_owner": owner}}})

@@ -171,6 +171,7 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 		defer ticker.Stop()
 		seen, last := false, ""
 		for {
+			changed := b.changes(id)
 			m, err := b.lookup(ctx, id)
 			switch {
 			case errors.Is(err, machines.ErrNotFound) && seen:
@@ -190,6 +191,7 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 			}
 			select {
 			case <-ticker.C:
+			case <-changed:
 			case <-ctx.Done():
 				return
 			}
@@ -254,6 +256,7 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	defer b.mu.Unlock()
 	if e := b.entries[id]; e != nil {
 		e.meta[key] = value
+		e.notifyLocked()
 	}
 	return nil
 }
@@ -407,6 +410,7 @@ func (b *Backend) startLocked(e *entry, op string, fn func(context.Context) erro
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		e.op = ""
+		e.notifyLocked()
 		switch {
 		case errors.Is(err, machines.ErrCapacity):
 			e.opErr = machines.ErrCapacity.Error()
@@ -506,6 +510,19 @@ func (b *Backend) cached(id string) (machines.Machine, error) {
 		return machines.Machine{}, machines.ErrNotFound
 	}
 	return e.machine(b.opts.DiskGiB), nil
+}
+
+func (b *Backend) changes(id string) <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.entries[id]
+	if e == nil {
+		return nil
+	}
+	if e.changed == nil {
+		e.changed = make(chan struct{})
+	}
+	return e.changed
 }
 
 func (b *Backend) sandboxOf(ctx context.Context, id string) (string, error) {
