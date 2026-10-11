@@ -151,6 +151,27 @@ import Testing
         #expect(Bridge.withKeys(String(repeating: "x", count: 2040), many) == String(repeating: "x", count: 2040))
     }
 
+    @Test func aCbplanBoxNamesTheKeysAndLinkInShellsDescription() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        _ = try await mock.connection.addKey(.with {
+            $0.name = "ATTIO_API_KEY"
+            $0.hosts = ["api.attio.com"]
+            $0.value = "synthetic-0123456789"
+        })
+        try await mock.connect(["grants": [["id": "link"]]])
+        let desk = try await BridgeClient(mock)
+        let shell = { (client: BridgeClient) in try await client.tools().first { $0["name"] as? String == "shell" }?["description"] as? String }
+        #expect(try await shell(desk)?.contains(Bridge.keysHead) == false)
+        _ = try await desk.tool("box_create", ["name": "sim1", "kind": "script"])
+        desk.close()
+
+        let sim = try await BridgeClient(mock, box: "sim1")
+        defer { sim.close() }
+        #expect(sim.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbplan box: write one script with script_run for a multi-step task.")
+        #expect(try await shell(sim) == "Run a shell command on the box. " + Bridge.linkLine + " " + Bridge.keysHead + " ATTIO_API_KEY for api.attio.com as Authorization: Bearer $ATTIO_API_KEY.")
+    }
+
     @Test func theBridgeAddsTheLinkLineOnlyWithAnActiveLinkGrant() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }

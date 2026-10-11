@@ -156,6 +156,9 @@ final class MCPServer: Sendable {
         tool("computer_act", "Click, type or press keys on the desktop.", ["action": "string", "x": "integer", "y": "integer", "text": "string"]),
         tool("screenshot", "Take a PNG screenshot of the desktop.", ["max_edge": "integer"]),
     ]
+    nonisolated(unsafe) static let scriptTools: [[String: Any]] = (tools + [tool("script_run", "Run a script on the desktop.", ["code": "string"])]).map { tool in
+        ["shell", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
+    }
 
     private let world: MockWorld
     private let token: String
@@ -241,7 +244,7 @@ final class MCPServer: Sendable {
                 "instructions": box.image.hasPrefix("cbplan:") ? "Mock cbplan box: write one script with script_run for a multi-step task." : "Mock cbdesk box.",
             ]
         case "tools/list":
-            result = ["tools": box.image.hasPrefix("cbplan:") ? Self.tools + [Self.tool("script_run", "Run a script on the desktop.", ["code": "string"]).merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 }] : Self.tools]
+            result = ["tools": box.image.hasPrefix("cbplan:") ? Self.scriptTools : Self.tools]
         case "tools/call":
             guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")

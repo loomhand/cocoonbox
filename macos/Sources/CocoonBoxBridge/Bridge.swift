@@ -16,7 +16,7 @@ public actor Bridge {
     public static let instructions = "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box."
     public static let codexInstructions = "These tools run on the user's cocoonbox cloud desktop (Ubuntu 24.04, XFCE, 1280x800), not on this Mac. GUI work in a desktop app goes to gui_plan; commands go to shell."
     static let codexClient = "codex-mcp-client"
-    // maxInstructions is Claude Code's cap on a server's instructions.
+    // maxInstructions is Claude Code's cap on a server's instructions and on a tool's description.
     public static let maxInstructions = 2048
     static let keysWait = Duration.milliseconds(1500)
     public static let keysHead = "Box shells hold the user's API keys as env vars whose values are placeholders; the box's network swaps in the key only on the listed hosts, so send them as shown and never ask for a key:"
@@ -45,6 +45,7 @@ public actor Bridge {
     // boxLists holds the own tools/list of each box opened in this session.
     private var boxLists: [String: [[String: Any]]] = [:]
     private var boxInstructions: [String: String] = [:]
+    private var shellKeys: (keys: [Cocoonbox_Control_V1_Key], link: Bool)?
     private var listedBox = false
     private var connect: MCPUpstream?
     private var connectWatch: Task<Void, Never>?
@@ -113,7 +114,7 @@ public actor Bridge {
             listedConnect = connectTools
             listedBox = true
             boxTools = await defaultTools()
-            reply(id, ["tools": ToolCatalog.control + boxTools.map(ToolCatalog.withBox) + connectTools])
+            reply(id, ["tools": ToolCatalog.control + boxTools.map { withShellKeys(ToolCatalog.withBox($0)) } + connectTools])
         case "resources/list":
             await listResources(id)
         case "resources/read":
@@ -442,7 +443,21 @@ public actor Bridge {
         async let keys = listKeys()
         let text = await boxInstructionsText()
         let (list, link) = await keys
-        return Self.withKeys(text, list, link: link)
+        guard let box = try? await target(nil), Self.loadsAtStart(toolsOf(box), "shell") else { return Self.withKeys(text, list, link: link) }
+        shellKeys = (list, link)
+        return text
+    }
+
+    private func withShellKeys(_ tool: [String: Any]) -> [String: Any] {
+        guard let shellKeys, tool["name"] as? String == "shell" else { return tool }
+        var tool = tool
+        tool["description"] = Self.withKeys(tool["description"] as? String ?? "", shellKeys.keys, link: shellKeys.link)
+        return tool
+    }
+
+    static func loadsAtStart(_ tools: [[String: Any]], _ name: String) -> Bool {
+        let tool = tools.first { $0["name"] as? String == name }
+        return (tool?["_meta"] as? [String: Any])?["anthropic/alwaysLoad"] as? Bool == true
     }
 
     // withKeys adds linkLine when link is set and it fits, then names as many of the user's keys as fit under maxInstructions.
