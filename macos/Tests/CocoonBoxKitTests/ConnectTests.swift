@@ -371,7 +371,7 @@ private func until(seconds: Double = 5, _ condition: () async -> Bool) async -> 
 }
 
 // MockBoxProcess runs MockBox with its log in a temporary directory, on a random
-// port; it tries another port when that one does not answer, as one in use would not.
+// port; it tries another port when MockBox cannot listen on that one.
 final class MockBoxProcess: @unchecked Sendable {
     let endpoint: Endpoint
     let connection: BoxConnection
@@ -380,32 +380,8 @@ final class MockBoxProcess: @unchecked Sendable {
 
     init() async throws {
         root = try Harness.temporary("connect")
-        let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
-        for _ in 0..<5 {
-            let port = Int.random(in: 56000..<60000)
-            let input = Pipe()
-            let process = Process()
-            // the shell kills MockBox when stop or the test process closes its stdin
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", "\"$0\" --port \(port) --boot-ms 100 >\"$1\" 2>&1 & pid=$!; read _; kill $pid", built.appendingPathComponent("MockBox").path, root.appendingPathComponent("mockbox.log").path]
-            process.environment = Harness.environment.merging(["HOME": root.path]) { $1 }
-            process.standardInput = input
-            try process.run()
-            let endpoint = Endpoint(host: "127.0.0.1", port: port, usesTLS: false)
-            let connection = try BoxConnection(endpoint: endpoint, token: "mock-token")
-            for _ in 0..<100 where (try? await connection.firstBox()) == nil {
-                try await Task.sleep(for: .milliseconds(50))
-            }
-            if (try? await connection.firstBox()) != nil {
-                self.endpoint = endpoint
-                self.connection = connection
-                self.input = input
-                return
-            }
-            connection.close()
-            try? input.fileHandleForWriting.close()
-        }
-        throw Harness.HarnessError(message: "MockBox did not start: \((try? String(contentsOf: root.appendingPathComponent("mockbox.log"), encoding: .utf8)) ?? "")")
+        (endpoint, input) = try await Harness.mockBox(["--boot-ms", "100"], log: root.appendingPathComponent("mockbox.log"), environment: Harness.environment.merging(["HOME": root.path]) { $1 })
+        connection = try BoxConnection(endpoint: endpoint, token: "mock-token")
     }
 
     func stop() {

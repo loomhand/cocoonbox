@@ -41,7 +41,12 @@ let server = GRPCServer(
 try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { try await server.serve() }
     guard let grpc = try await transport.listeningAddress.ipv4 else { throw CancellationError() }
-    try FrontDoor(grpcPort: UInt16(grpc.port), mcp: MCPServer(world: world, token: token)).start(port: UInt16(port))
+    do {
+        try await FrontDoor(grpcPort: UInt16(grpc.port), mcp: MCPServer(world: world, token: token)).start(port: UInt16(port))
+    } catch {
+        print("mockbox cannot listen on http://127.0.0.1:\(port): \(error)")
+        exit(1)
+    }
     print("mockbox listening on http://127.0.0.1:\(port) token=\(token) box=\(boxID) mcp=/cocoonbox.mcp/\(boxID)")
     try await group.next()
 }

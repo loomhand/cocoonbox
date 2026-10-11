@@ -351,7 +351,7 @@ final class Harness: @unchecked Sendable {
     let connection: BoxConnection
     let cli: String
     let endpoint: Endpoint
-    private let mock: Process
+    private let input: Pipe
 
     static func shared() async throws -> Harness {
         let task = lock.withLock {
@@ -373,15 +373,8 @@ final class Harness: @unchecked Sendable {
         let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         cli = built.appendingPathComponent("cocoonbox-cli").path
         store = OffloadStore(support: macHome.appendingPathComponent("Library/Application Support/CocoonBox"))
-        let port = Int.random(in: 52000..<56000)
-        endpoint = Endpoint(host: "127.0.0.1", port: port, usesTLS: false)
-        // the shell kills MockBox when this process exits and closes its stdin
-        mock = Process()
-        mock.executableURL = URL(fileURLWithPath: "/bin/sh")
-        mock.arguments = ["-c", "\"$0\" --port \(port) --boot-ms 100 --workspace \"$1\" >\"$2\" 2>&1 & pid=$!; read _; kill $pid", built.appendingPathComponent("MockBox").path, workspace.path, root.appendingPathComponent("mockbox.log").path]
-        mock.environment = Self.environment.merging(["HOME": boxHome.path, "PATH": bin.path + ":" + Self.environment["PATH"]!]) { $1 }
-        mock.standardInput = Pipe()
-        try mock.run()
+        (endpoint, input) = try await Self.mockBox(["--boot-ms", "100", "--workspace", workspace.path], log: root.appendingPathComponent("mockbox.log"),
+                                                   environment: Self.environment.merging(["HOME": boxHome.path, "PATH": bin.path + ":" + Self.environment["PATH"]!]) { $1 })
         connection = try BoxConnection(endpoint: endpoint, token: "mock-token")
         for _ in 0..<100 {
             if let box = try? await connection.firstBox() {
@@ -393,6 +386,30 @@ final class Harness: @unchecked Sendable {
         for _ in 0..<100 where try await connection.firstBox()?.state != .running {
             try await Task.sleep(for: .milliseconds(100))
         }
+    }
+
+    static func mockBox(_ arguments: [String], log: URL, environment: [String: String]) async throws -> (Endpoint, Pipe) {
+        let built = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
+        for _ in 0..<5 {
+            let port = Int.random(in: 52000..<60000)
+            let input = Pipe()
+            let process = Process()
+            try? FileManager.default.removeItem(at: log)
+            // the shell kills MockBox when the caller or this process closes its stdin
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", "log=$1; shift; \"$0\" \"$@\" >\"$log\" 2>&1 & pid=$!; read _; kill $pid", built.appendingPathComponent("MockBox").path, log.path, "--port", "\(port)"] + arguments
+            process.environment = environment
+            process.standardInput = input
+            try process.run()
+            for _ in 0..<200 {
+                let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+                if text.contains("mockbox listening on http://127.0.0.1:\(port) ") { return (Endpoint(host: "127.0.0.1", port: port, usesTLS: false), input) }
+                if text.contains("mockbox cannot listen") { break }
+                try await Task.sleep(for: .milliseconds(50))
+            }
+            try? input.fileHandleForWriting.close()
+        }
+        throw HarnessError(message: "MockBox did not start: \((try? String(contentsOf: log, encoding: .utf8)) ?? "")")
     }
 
     func offloader() async throws -> Offloader {

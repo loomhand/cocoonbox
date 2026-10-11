@@ -15,7 +15,7 @@ final class FrontDoor: Sendable {
         self.mcp = mcp
     }
 
-    func start(port: UInt16) throws {
+    func start(port: UInt16) async throws {
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!)
         let listener = try NWListener(using: parameters)
@@ -30,7 +30,17 @@ final class FrontDoor: Sendable {
                 }
             }
         }
-        listener.start(queue: queue)
+        try await withCheckedThrowingContinuation { (started: CheckedContinuation<Void, any Error>) in
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready: started.resume()
+                case .failed(let error), .waiting(let error): started.resume(throwing: error)
+                default: return
+                }
+                listener.stateUpdateHandler = nil
+            }
+            listener.start(queue: queue)
+        }
     }
 
     private func splice(_ client: NWConnection, first: Data) {
