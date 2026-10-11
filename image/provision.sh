@@ -12,6 +12,10 @@ MISE_VERSION=2026.10.0
 MISE_SHA256=6ae3d2bda39cca86713501317edf623b59b75cd8afa2e31c20b1ee6500b4b739
 MISE_TARBALL="mise-v${MISE_VERSION}-linux-x64.tar.gz"
 MISE_URL="https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/${MISE_TARBALL}"
+NODE_VERSION=24.21.0
+NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+NODE_TARBALL="node-v${NODE_VERSION}-linux-x64.tar.xz"
+NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 CHROME_URL=https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
 PACKAGES=(
 	xserver-xorg-core xserver-xorg-video-dummy xserver-xorg-input-libinput
@@ -133,6 +137,21 @@ setup_mise() {
 	ln -sfn "$dir/bin/mise" /usr/local/bin/mise
 }
 
+setup_node() {
+	log "node $NODE_VERSION"
+	local dir=/opt/node/$NODE_VERSION tmp
+	if [ ! -x "$dir/bin/node" ]; then
+		tmp=$(mktemp -d)
+		curl -fsSL "$NODE_URL" -o "$tmp/$NODE_TARBALL"
+		echo "$NODE_SHA256  $tmp/$NODE_TARBALL" | sha256sum -c --quiet -
+		install -d "$dir"
+		tar -xJf "$tmp/$NODE_TARBALL" -C "$dir" --strip-components=1 --no-same-owner
+		rm -rf "$tmp"
+	fi
+	for b in node npm npx corepack; do ln -sfn "$dir/bin/$b" "/usr/local/bin/$b"; done
+	find /opt/node -mindepth 1 -maxdepth 1 ! -name "$NODE_VERSION" -exec rm -rf {} +
+}
+
 setup_cocoonbox_dirs() {
 	log "cocoonbox dirs"
 	install -d -m 0755 -o user -g user /workspace
@@ -168,6 +187,7 @@ install_rootfs
 setup_desktop
 setup_cua_driver
 setup_mise
+setup_node
 setup_cocoonbox_dirs
 enable_units
 log "done"

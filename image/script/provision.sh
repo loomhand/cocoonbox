@@ -32,12 +32,12 @@ fetch() {
 
 install_runtime() {
 	log "cli $CLI_VERSION, script-js $JS_RELEASE, node $NODE_VERSION"
-	local node=$ROOT/node-v$NODE_VERSION cli=$ROOT/cli-$CLI_VERSION js=$ROOT/js-$JS_RELEASE artifact="$SRC/vendor/$JS_ARTIFACT" tmp
+	local node=/opt/node/$NODE_VERSION cli=$ROOT/cli-$CLI_VERSION js=$ROOT/js-$JS_RELEASE artifact="$SRC/vendor/$JS_ARTIFACT" tmp
 	tmp=$(mktemp -d)
 	if [ ! -x "$node/bin/node" ]; then
 		fetch "$NODE_URL" "$tmp/node.tar.xz" "$NODE_SHA256"
 		install -d "$node"
-		tar -xJf "$tmp/node.tar.xz" -C "$node" --strip-components=1
+		tar -xJf "$tmp/node.tar.xz" -C "$node" --strip-components=1 --no-same-owner
 	fi
 	if [ ! -f "$cli/package.json" ]; then
 		fetch "$CLI_URL" "$tmp/cli.tgz" "$CLI_SHA256"
@@ -54,7 +54,8 @@ install_runtime() {
 	ln -sfn "$node" "$ROOT/node"
 	ln -sfn "$cli" "$ROOT/cli"
 	ln -sfn "$js" "$ROOT/js"
-	find "$ROOT" -mindepth 1 -maxdepth 1 -name 'js-*' ! -name "js-$JS_RELEASE" -exec rm -rf {} +
+	for b in node npm npx corepack; do ln -sfn "$node/bin/$b" "/usr/local/bin/$b"; done
+	find "$ROOT" -mindepth 1 -maxdepth 1 \( -name 'node-v*' -o -name 'js-*' ! -name "js-$JS_RELEASE" \) -exec rm -rf {} +
 }
 
 install_cua_driver() {
@@ -87,6 +88,7 @@ install_rootfs() {
 
 check() {
 	"$ROOT/node/bin/node" -e "require('$ROOT/js')"
+	[ "$(readlink -f /usr/local/bin/node)" = "/opt/node/$NODE_VERSION/bin/node" ]
 	[ "$(grep -cxF "$PRESS" "$ROOT/js/wrapped.js")" = 1 ]
 	runuser -u user -- env HOME=/home/user /usr/local/bin/script --version
 	[ ! -e /home/user/.claude/skills/script ] && [ ! -e /root/.claude/skills/script ]
