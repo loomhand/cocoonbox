@@ -259,15 +259,24 @@ async fn a_session_whose_hooks_never_run_goes_idle_from_its_transcript_and_takes
         json!({"type": "system", "subtype": "turn_duration"})
     ));
     std::fs::write(&transcript, &lines).unwrap();
+    let enter = format!("send-keys -t =cb-off-{REPO}-claude: Enter");
     for _ in 0..240 {
-        if b.tmux_log().contains("load-buffer") {
+        if b.tmux_log().contains(&enter) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let pasted = std::fs::read_to_string(b.fake.join("buffer")).unwrap();
     assert!(pasted.starts_with(handover::BACK), "{pasted}");
-    assert_eq!(b.status().await["status"], "working");
+    let mut status = b.status().await["status"].clone();
+    for _ in 0..100 {
+        if status == "working" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        status = b.status().await["status"].clone();
+    }
+    assert_eq!(status, "working");
     b.call(json!({"op": "event", "repo": REPO, "cli": "claude", "hook": "Stop", "payload": {}}))
         .await;
     tokio::time::sleep(Duration::from_secs(1)).await;
