@@ -86,6 +86,15 @@ install_rootfs() {
 	grep -qxF "$PRESS" "$ROOT/js/wrapped.js" || echo "$PRESS" >>"$ROOT/js/wrapped.js"
 }
 
+route_chrome() {
+	log "chrome launchers"
+	install -d /usr/local/share/applications
+	for f in google-chrome com.google.Chrome; do
+		sed 's|/usr/bin/google-chrome-stable|/usr/local/bin/cocoonbox-chrome|' "/usr/share/applications/$f.desktop" >"/usr/local/share/applications/$f.desktop"
+	done
+	update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/local/bin/cocoonbox-chrome 250 >/dev/null
+}
+
 check() {
 	"$ROOT/node/bin/node" -e "require('$ROOT/js')"
 	[ "$(readlink -f /usr/local/bin/node)" = "/opt/node/$NODE_VERSION/bin/node" ]
@@ -95,10 +104,13 @@ check() {
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	[ "$(readlink -f /usr/local/bin/cua-driver)" = "/opt/cua-driver/$CUA_VERSION/cua-driver" ]
+	[ "$(readlink -f /usr/bin/x-www-browser)" = /usr/local/bin/cocoonbox-chrome ]
+	for f in google-chrome com.google.Chrome; do grep -qx 'Exec=/usr/local/bin/cocoonbox-chrome %U' "/usr/local/share/applications/$f.desktop"; done
 }
 
 install_runtime
 install_cua_driver
 install_rootfs
+route_chrome
 check
 log "done"
