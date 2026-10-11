@@ -1,5 +1,6 @@
 [Unit]
 Description=Render the claim env's COCOONBOX_VAULT into /run/cocoonbox-vault
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
