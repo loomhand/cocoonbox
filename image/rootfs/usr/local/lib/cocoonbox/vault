@@ -1,5 +1,5 @@
 #!/bin/sh
-# renders the claim env's COCOONBOX_VAULT (NAME=placeholder;hosts;how words) into shell exports and the box agent's key list
+# renders the claim env's COCOONBOX_VAULT and COCOONBOX_CONNECT (NAME=placeholder;hosts;how words) into shell exports and the box agent's key list
 set -euf
 dir=/run/cocoonbox-vault
 env=/run/silkd.env
@@ -7,7 +7,7 @@ umask 022
 mkdir -p "$dir"
 while :; do
 	seen=$(cat "$env" 2>/dev/null || true)
-	records=$(printf '%s\n' "$seen" | sed -n 's/^COCOONBOX_VAULT="\(.*\)"$/\1/p')
+	records=$(printf '%s\n' "$seen" | sed -n 's/^COCOONBOX_\(VAULT\|CONNECT\)="\(.*\)"$/\2/p')
 	known=$(cat "$dir/names" 2>/dev/null || true)
 	names=""
 	: > "$dir/.vault.sh"
@@ -17,7 +17,7 @@ while :; do
 		name=${kv%%=*} placeholder=${kv#*=}
 		case $name$placeholder in *[!A-Za-z0-9_-]* | '') continue ;; esac
 		printf "export %s='%s'\n" "$name" "$placeholder" >> "$dir/.vault.sh"
-		printf '%s\n' "$r" >> "$dir/.keys"
+		case $r in *';;'*) ;; *) printf '%s\n' "$r" >> "$dir/.keys" ;; esac
 		names="$names $name"
 	done
 	# a persistent shell that saw a deleted key drops it on its next source
