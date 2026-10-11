@@ -135,7 +135,9 @@ const POINT_JS: &str = r#"((ref) => {
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
   return { x: r.left + r.width / 2, y: r.top + r.height / 2,
-    label: (el.getAttribute('aria-label') || el.innerText || el.value || el.tagName).replace(/\s+/g, ' ').trim().slice(0, 60) };
+    label: (el.getAttribute('aria-label') || el.innerText
+      || (el.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(el.type) ? el.value : '')
+      || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).replace(/\s+/g, ' ').trim().slice(0, 60) };
 })"#;
 
 const FOCUS_JS: &str = r#"((ref, clear) => {

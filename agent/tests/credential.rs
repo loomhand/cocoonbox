@@ -46,6 +46,8 @@ const CARD_PAGE: &str = r#"<!doctype html><title>checkout</title>
 <input name="cvc" placeholder="CVC" value="739">
 <label>Security code <input value="1234"></label>
 <input placeholder="Name on card" value="Ada Lovelace">
+<input type="password" name="pin" value="pw-in-the-page">
+<input type="button" value="Pay now">
 </form>"#;
 
 type Posts = Arc<Mutex<Vec<(String, String)>>>;
@@ -503,6 +505,39 @@ async fn snapshots_mask_the_values_of_card_fields() {
         assert!(!fields.contains(value) && !read.contains(value), "{value}");
     }
     assert!(read.contains("Security code"), "{read}");
+    assert!(
+        snapshot.contains("textbox \"\" [ref=e5] value=<redacted>"),
+        "{snapshot}"
+    );
+
+    for (element, label) in [
+        ("e1", "Number"),
+        ("e2", "CVC"),
+        ("e3", "INPUT"),
+        ("e4", "Name on card"),
+        ("e5", "pin"),
+        ("e6", "Pay now"),
+    ] {
+        let read = tool(&th, "browser_read", json!({"ref": element})).await;
+        let clicked = tool(&th, "browser_click", json!({"ref": element})).await;
+        eprintln!("{clicked}");
+        assert!(
+            clicked.starts_with(&format!("clicked {element} \"{label}\";")),
+            "{clicked}"
+        );
+        for value in [
+            "4392027523501133",
+            "739",
+            "1234",
+            "Ada Lovelace",
+            "pw-in-the-page",
+        ] {
+            assert!(
+                !clicked.contains(value) && !read.contains(value),
+                "{value}: {clicked} {read}"
+            );
+        }
+    }
 
     tool(&th, "browser_close", json!({})).await;
     toolhost.start_kill().unwrap();
