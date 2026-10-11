@@ -24,6 +24,9 @@ service Connectors {
   rpc Approve(ApproveRequest) returns (ApproveResponse);
   // Activity returns the caller's audit records, newest first.
   rpc Activity(ActivityRequest) returns (ActivityResponse);
+  // SpendRequests returns the caller's Link spend requests that wait for the
+  // user, as the api last read them from Link; it reads every 30 seconds.
+  rpc SpendRequests(SpendRequestsRequest) returns (SpendRequestsResponse);
 }
 
 enum Policy {
@@ -173,4 +176,29 @@ message ActivityEntry {
   string args_hash = 11;
   // `ok`, `error` or `outcome_unknown`.
   string outcome = 12;
+}
+
+message SpendRequestsRequest {}
+
+message SpendRequestsResponse {
+  repeated SpendRequest requests = 1;
+  // When the api last read them; 0 before the first read and without an active Link grant.
+  int64 polled_at_ms = 2;
+}
+
+message SpendRequest {
+  // Link's id, `lsrq_…`.
+  string id = 1;
+  // In the currency's smallest unit, such as cents.
+  int64 amount = 2;
+  string currency = 3;
+  string merchant_name = 4;
+  string merchant_url = 5;
+  // `pending_approval`, or `requires_action` while the user must finish a step such as 3-D Secure.
+  string status = 6;
+  // Where the user approves it on the web; the Link app shows it too.
+  string approval_url = 7;
+  int64 created_at_ms = 8;
+  // 0 when Link names no expiry.
+  int64 expires_at_ms = 9;
 }

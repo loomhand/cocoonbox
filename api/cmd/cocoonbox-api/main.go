@@ -97,6 +97,7 @@ func main() {
 		}
 		defer broker.Close()
 		go broker.RunPurge(ctx)
+		go broker.RunSpendRequests(ctx)
 	}
 	svc := boxes.New(backend, boxes.Defaults{
 		Flavor:       machineFlavor(cfg.Flavor),
@@ -322,6 +323,7 @@ func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Servic
 		Google:    connect.Credentials{ClientID: os.Getenv("GOOGLE_CLIENT_ID"), ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET")},
 		HubSpot:   connect.Credentials{ClientID: os.Getenv("HUBSPOT_CLIENT_ID"), ClientSecret: os.Getenv("HUBSPOT_CLIENT_SECRET")},
 		Slack:     connect.Credentials{ClientID: os.Getenv("SLACK_CLIENT_ID"), ClientSecret: os.Getenv("SLACK_CLIENT_SECRET")},
+		Link:      connect.Credentials{ClientID: os.Getenv("LINK_CLIENT_ID"), ClientSecret: os.Getenv("LINK_CLIENT_SECRET"), Key: os.Getenv("LINK_PUBLISHABLE_KEY")},
 	})
 	if err != nil {
 		return nil, err

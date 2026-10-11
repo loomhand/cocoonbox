@@ -1201,6 +1201,208 @@ func (x *ActivityEntry) GetOutcome() string {
 	return ""
 }
 
+type SpendRequestsRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpendRequestsRequest) Reset() {
+	*x = SpendRequestsRequest{}
+	mi := &file_cocoonbox_control_v1_connectors_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpendRequestsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpendRequestsRequest) ProtoMessage() {}
+
+func (x *SpendRequestsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_connectors_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpendRequestsRequest.ProtoReflect.Descriptor instead.
+func (*SpendRequestsRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_connectors_proto_rawDescGZIP(), []int{17}
+}
+
+type SpendRequestsResponse struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Requests []*SpendRequest        `protobuf:"bytes,1,rep,name=requests,proto3" json:"requests,omitempty"`
+	// When the api last read them; 0 before the first read and without an active Link grant.
+	PolledAtMs    int64 `protobuf:"varint,2,opt,name=polled_at_ms,json=polledAtMs,proto3" json:"polled_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpendRequestsResponse) Reset() {
+	*x = SpendRequestsResponse{}
+	mi := &file_cocoonbox_control_v1_connectors_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpendRequestsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpendRequestsResponse) ProtoMessage() {}
+
+func (x *SpendRequestsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_connectors_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpendRequestsResponse.ProtoReflect.Descriptor instead.
+func (*SpendRequestsResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_connectors_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *SpendRequestsResponse) GetRequests() []*SpendRequest {
+	if x != nil {
+		return x.Requests
+	}
+	return nil
+}
+
+func (x *SpendRequestsResponse) GetPolledAtMs() int64 {
+	if x != nil {
+		return x.PolledAtMs
+	}
+	return 0
+}
+
+type SpendRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Link's id, `lsrq_…`.
+	Id string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	// In the currency's smallest unit, such as cents.
+	Amount       int64  `protobuf:"varint,2,opt,name=amount,proto3" json:"amount,omitempty"`
+	Currency     string `protobuf:"bytes,3,opt,name=currency,proto3" json:"currency,omitempty"`
+	MerchantName string `protobuf:"bytes,4,opt,name=merchant_name,json=merchantName,proto3" json:"merchant_name,omitempty"`
+	MerchantUrl  string `protobuf:"bytes,5,opt,name=merchant_url,json=merchantUrl,proto3" json:"merchant_url,omitempty"`
+	// `pending_approval`, or `requires_action` while the user must finish a step such as 3-D Secure.
+	Status string `protobuf:"bytes,6,opt,name=status,proto3" json:"status,omitempty"`
+	// Where the user approves it on the web; the Link app shows it too.
+	ApprovalUrl string `protobuf:"bytes,7,opt,name=approval_url,json=approvalUrl,proto3" json:"approval_url,omitempty"`
+	CreatedAtMs int64  `protobuf:"varint,8,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
+	// 0 when Link names no expiry.
+	ExpiresAtMs   int64 `protobuf:"varint,9,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpendRequest) Reset() {
+	*x = SpendRequest{}
+	mi := &file_cocoonbox_control_v1_connectors_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpendRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpendRequest) ProtoMessage() {}
+
+func (x *SpendRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_connectors_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpendRequest.ProtoReflect.Descriptor instead.
+func (*SpendRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_connectors_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *SpendRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *SpendRequest) GetAmount() int64 {
+	if x != nil {
+		return x.Amount
+	}
+	return 0
+}
+
+func (x *SpendRequest) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *SpendRequest) GetMerchantName() string {
+	if x != nil {
+		return x.MerchantName
+	}
+	return ""
+}
+
+func (x *SpendRequest) GetMerchantUrl() string {
+	if x != nil {
+		return x.MerchantUrl
+	}
+	return ""
+}
+
+func (x *SpendRequest) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *SpendRequest) GetApprovalUrl() string {
+	if x != nil {
+		return x.ApprovalUrl
+	}
+	return ""
+}
+
+func (x *SpendRequest) GetCreatedAtMs() int64 {
+	if x != nil {
+		return x.CreatedAtMs
+	}
+	return 0
+}
+
+func (x *SpendRequest) GetExpiresAtMs() int64 {
+	if x != nil {
+		return x.ExpiresAtMs
+	}
+	return 0
+}
+
 var File_cocoonbox_control_v1_connectors_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
@@ -1287,7 +1489,22 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\x0eresponse_bytes\x18\n" +
 	" \x01(\x03R\rresponseBytes\x12\x1b\n" +
 	"\targs_hash\x18\v \x01(\tR\bargsHash\x12\x18\n" +
-	"\aoutcome\x18\f \x01(\tR\aoutcome*R\n" +
+	"\aoutcome\x18\f \x01(\tR\aoutcome\"\x16\n" +
+	"\x14SpendRequestsRequest\"y\n" +
+	"\x15SpendRequestsResponse\x12>\n" +
+	"\brequests\x18\x01 \x03(\v2\".cocoonbox.control.v1.SpendRequestR\brequests\x12 \n" +
+	"\fpolled_at_ms\x18\x02 \x01(\x03R\n" +
+	"polledAtMs\"\x9d\x02\n" +
+	"\fSpendRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
+	"\x06amount\x18\x02 \x01(\x03R\x06amount\x12\x1a\n" +
+	"\bcurrency\x18\x03 \x01(\tR\bcurrency\x12#\n" +
+	"\rmerchant_name\x18\x04 \x01(\tR\fmerchantName\x12!\n" +
+	"\fmerchant_url\x18\x05 \x01(\tR\vmerchantUrl\x12\x16\n" +
+	"\x06status\x18\x06 \x01(\tR\x06status\x12!\n" +
+	"\fapproval_url\x18\a \x01(\tR\vapprovalUrl\x12\"\n" +
+	"\rcreated_at_ms\x18\b \x01(\x03R\vcreatedAtMs\x12\"\n" +
+	"\rexpires_at_ms\x18\t \x01(\x03R\vexpiresAtMs*R\n" +
 	"\x06Policy\x12\x16\n" +
 	"\x12POLICY_UNSPECIFIED\x10\x00\x12\x10\n" +
 	"\fPOLICY_ALLOW\x10\x01\x12\x0e\n" +
@@ -1299,7 +1516,7 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\x1dAPPROVAL_DECISION_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16APPROVAL_DECISION_ONCE\x10\x01\x12\x1c\n" +
 	"\x18APPROVAL_DECISION_ALWAYS\x10\x02\x12\x1a\n" +
-	"\x16APPROVAL_DECISION_DENY\x10\x032\x8c\x05\n" +
+	"\x16APPROVAL_DECISION_DENY\x10\x032\xf6\x05\n" +
 	"\n" +
 	"Connectors\x12V\n" +
 	"\aCatalog\x12$.cocoonbox.control.v1.CatalogRequest\x1a%.cocoonbox.control.v1.CatalogResponse\x12a\n" +
@@ -1309,7 +1526,8 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"Disconnect\x12\".cocoonbox.control.v1.ConnectorRef\x1a(.cocoonbox.control.v1.DisconnectResponse\x12T\n" +
 	"\tSetPolicy\x12&.cocoonbox.control.v1.SetPolicyRequest\x1a\x1f.cocoonbox.control.v1.Connector\x12V\n" +
 	"\aApprove\x12$.cocoonbox.control.v1.ApproveRequest\x1a%.cocoonbox.control.v1.ApproveResponse\x12Y\n" +
-	"\bActivity\x12%.cocoonbox.control.v1.ActivityRequest\x1a&.cocoonbox.control.v1.ActivityResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\bActivity\x12%.cocoonbox.control.v1.ActivityRequest\x1a&.cocoonbox.control.v1.ActivityResponse\x12h\n" +
+	"\rSpendRequests\x12*.cocoonbox.control.v1.SpendRequestsRequest\x1a+.cocoonbox.control.v1.SpendRequestsResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_connectors_proto_rawDescOnce sync.Once
@@ -1324,7 +1542,7 @@ func file_cocoonbox_control_v1_connectors_proto_rawDescGZIP() []byte {
 }
 
 var file_cocoonbox_control_v1_connectors_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_cocoonbox_control_v1_connectors_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_cocoonbox_control_v1_connectors_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_cocoonbox_control_v1_connectors_proto_goTypes = []any{
 	(Policy)(0),                    // 0: cocoonbox.control.v1.Policy
 	(ApprovalDecision)(0),          // 1: cocoonbox.control.v1.ApprovalDecision
@@ -1345,6 +1563,9 @@ var file_cocoonbox_control_v1_connectors_proto_goTypes = []any{
 	(*ActivityRequest)(nil),        // 16: cocoonbox.control.v1.ActivityRequest
 	(*ActivityResponse)(nil),       // 17: cocoonbox.control.v1.ActivityResponse
 	(*ActivityEntry)(nil),          // 18: cocoonbox.control.v1.ActivityEntry
+	(*SpendRequestsRequest)(nil),   // 19: cocoonbox.control.v1.SpendRequestsRequest
+	(*SpendRequestsResponse)(nil),  // 20: cocoonbox.control.v1.SpendRequestsResponse
+	(*SpendRequest)(nil),           // 21: cocoonbox.control.v1.SpendRequest
 }
 var file_cocoonbox_control_v1_connectors_proto_depIdxs = []int32{
 	2,  // 0: cocoonbox.control.v1.CatalogResponse.entries:type_name -> cocoonbox.control.v1.CatalogEntry
@@ -1355,25 +1576,28 @@ var file_cocoonbox_control_v1_connectors_proto_depIdxs = []int32{
 	0,  // 5: cocoonbox.control.v1.SetPolicyRequest.policy:type_name -> cocoonbox.control.v1.Policy
 	1,  // 6: cocoonbox.control.v1.ApproveRequest.decision:type_name -> cocoonbox.control.v1.ApprovalDecision
 	18, // 7: cocoonbox.control.v1.ActivityResponse.entries:type_name -> cocoonbox.control.v1.ActivityEntry
-	3,  // 8: cocoonbox.control.v1.Connectors.Catalog:input_type -> cocoonbox.control.v1.CatalogRequest
-	7,  // 9: cocoonbox.control.v1.Connectors.List:input_type -> cocoonbox.control.v1.ListConnectorsRequest
-	9,  // 10: cocoonbox.control.v1.Connectors.Begin:input_type -> cocoonbox.control.v1.BeginConnectRequest
-	11, // 11: cocoonbox.control.v1.Connectors.Disconnect:input_type -> cocoonbox.control.v1.ConnectorRef
-	13, // 12: cocoonbox.control.v1.Connectors.SetPolicy:input_type -> cocoonbox.control.v1.SetPolicyRequest
-	14, // 13: cocoonbox.control.v1.Connectors.Approve:input_type -> cocoonbox.control.v1.ApproveRequest
-	16, // 14: cocoonbox.control.v1.Connectors.Activity:input_type -> cocoonbox.control.v1.ActivityRequest
-	4,  // 15: cocoonbox.control.v1.Connectors.Catalog:output_type -> cocoonbox.control.v1.CatalogResponse
-	8,  // 16: cocoonbox.control.v1.Connectors.List:output_type -> cocoonbox.control.v1.ListConnectorsResponse
-	10, // 17: cocoonbox.control.v1.Connectors.Begin:output_type -> cocoonbox.control.v1.BeginConnectResponse
-	12, // 18: cocoonbox.control.v1.Connectors.Disconnect:output_type -> cocoonbox.control.v1.DisconnectResponse
-	5,  // 19: cocoonbox.control.v1.Connectors.SetPolicy:output_type -> cocoonbox.control.v1.Connector
-	15, // 20: cocoonbox.control.v1.Connectors.Approve:output_type -> cocoonbox.control.v1.ApproveResponse
-	17, // 21: cocoonbox.control.v1.Connectors.Activity:output_type -> cocoonbox.control.v1.ActivityResponse
-	15, // [15:22] is the sub-list for method output_type
-	8,  // [8:15] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	21, // 8: cocoonbox.control.v1.SpendRequestsResponse.requests:type_name -> cocoonbox.control.v1.SpendRequest
+	3,  // 9: cocoonbox.control.v1.Connectors.Catalog:input_type -> cocoonbox.control.v1.CatalogRequest
+	7,  // 10: cocoonbox.control.v1.Connectors.List:input_type -> cocoonbox.control.v1.ListConnectorsRequest
+	9,  // 11: cocoonbox.control.v1.Connectors.Begin:input_type -> cocoonbox.control.v1.BeginConnectRequest
+	11, // 12: cocoonbox.control.v1.Connectors.Disconnect:input_type -> cocoonbox.control.v1.ConnectorRef
+	13, // 13: cocoonbox.control.v1.Connectors.SetPolicy:input_type -> cocoonbox.control.v1.SetPolicyRequest
+	14, // 14: cocoonbox.control.v1.Connectors.Approve:input_type -> cocoonbox.control.v1.ApproveRequest
+	16, // 15: cocoonbox.control.v1.Connectors.Activity:input_type -> cocoonbox.control.v1.ActivityRequest
+	19, // 16: cocoonbox.control.v1.Connectors.SpendRequests:input_type -> cocoonbox.control.v1.SpendRequestsRequest
+	4,  // 17: cocoonbox.control.v1.Connectors.Catalog:output_type -> cocoonbox.control.v1.CatalogResponse
+	8,  // 18: cocoonbox.control.v1.Connectors.List:output_type -> cocoonbox.control.v1.ListConnectorsResponse
+	10, // 19: cocoonbox.control.v1.Connectors.Begin:output_type -> cocoonbox.control.v1.BeginConnectResponse
+	12, // 20: cocoonbox.control.v1.Connectors.Disconnect:output_type -> cocoonbox.control.v1.DisconnectResponse
+	5,  // 21: cocoonbox.control.v1.Connectors.SetPolicy:output_type -> cocoonbox.control.v1.Connector
+	15, // 22: cocoonbox.control.v1.Connectors.Approve:output_type -> cocoonbox.control.v1.ApproveResponse
+	17, // 23: cocoonbox.control.v1.Connectors.Activity:output_type -> cocoonbox.control.v1.ActivityResponse
+	20, // 24: cocoonbox.control.v1.Connectors.SpendRequests:output_type -> cocoonbox.control.v1.SpendRequestsResponse
+	17, // [17:25] is the sub-list for method output_type
+	9,  // [9:17] is the sub-list for method input_type
+	9,  // [9:9] is the sub-list for extension type_name
+	9,  // [9:9] is the sub-list for extension extendee
+	0,  // [0:9] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_control_v1_connectors_proto_init() }
@@ -1387,7 +1611,7 @@ func file_cocoonbox_control_v1_connectors_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_connectors_proto_rawDesc), len(file_cocoonbox_control_v1_connectors_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   17,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -107,6 +107,8 @@ type Options struct {
 	Google    Credentials
 	HubSpot   Credentials
 	Slack     Credentials
+	// Link is offered only with all three of its client id, secret and Stripe publishable key.
+	Link Credentials
 	// AllowPrivate lets the broker reach loopback and private addresses; only tests set it.
 	AllowPrivate bool
 }
@@ -125,9 +127,13 @@ type Service struct {
 	refreshes    singleflight.Group
 	watchers     *watchers
 	onInjection  InjectionFunc
+	linkAPI      string
 
 	mu    sync.Mutex
 	conns map[string]*conn
+
+	spendMu sync.Mutex
+	spends  map[string]*spendPoll
 }
 
 // Open connects to the database, applies the Connect migrations and builds the catalog.
@@ -145,7 +151,9 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		http:         newHTTPClient(opts.AllowPrivate),
 		allowPrivate: opts.AllowPrivate,
 		watchers:     newWatchers(),
+		linkAPI:      linkAPI,
 		conns:        map[string]*conn{},
+		spends:       map[string]*spendPoll{},
 	}, nil
 }
 

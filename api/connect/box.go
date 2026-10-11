@@ -12,7 +12,11 @@ import (
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
-const flagOn = "1"
+const (
+	// guestEnv is the guest entry whose records the image renders into box shells, as it does the vault's.
+	guestEnv = "COCOONBOX_CONNECT"
+	flagOn   = "1"
+)
 
 // DoorKey issues machine's box door key for its incarnation; the keys of its earlier incarnations stop working.
 func (s *Service) DoorKey(ctx context.Context, machine, owner, incarnation string) (string, error) {
@@ -34,13 +38,15 @@ func (s *Service) PruneDoorKeys(ctx context.Context, live []string, cutoff time.
 }
 
 // Credentials returns what owner's grants put on the egress of owner's boxes, refreshing a token near its expiry.
-// A connector without an active grant maps to removals; one whose token cannot be read now is left out.
+// A connector without an active grant maps to removals; one whose token cannot be read now is left out, with guestEnv.
 func (s *Service) Credentials(ctx context.Context, owner string) (machines.Credentials, error) {
 	grants, err := s.store.grants(ctx, owner)
 	if err != nil {
 		return machines.Credentials{}, err
 	}
 	out := machines.Credentials{Secrets: map[string]*machines.Secret{}, Flags: map[string]string{}}
+	var records []string
+	unread := false
 	for _, e := range s.catalog {
 		if len(e.inject) == 0 {
 			continue
@@ -48,6 +54,7 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 		token, err := s.injectToken(ctx, e, grants)
 		if err != nil {
 			log.WithFunc("connect.Service.Credentials").Warnf(ctx, "read the %s token of %s: %v", e.id, owner, err)
+			unread = unread || len(e.guest) > 0
 			continue
 		}
 		for _, in := range e.inject {
@@ -62,6 +69,12 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 				out.Flags[e.flag] = flagOn
 			}
 		}
+		if token != "" {
+			records = append(records, e.guest...)
+		}
+	}
+	if !unread {
+		out.Flags[guestEnv] = strings.Join(records, " ")
 	}
 	return out, nil
 }

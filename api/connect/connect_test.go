@@ -841,7 +841,7 @@ func TestCredentialsInjectAnActiveGrantAndClearTheRest(t *testing.T) {
 		mock.Placeholder != "Bearer @MOCK_API@" || len(mock.Hosts) != 1 || mock.Hosts[0] != "api.mock.test" || creds.Flags["COCOONBOX_MOCK"] != flagOn {
 		t.Fatalf("Credentials = %+v, %v", creds, err)
 	}
-	for _, name := range []string{"GH_GIT", "GH_API", "GOOGLE_CALENDAR"} {
+	for _, name := range []string{"GH_GIT", "GH_API", "GOOGLE_CALENDAR", "LINK_API"} {
 		if v, ok := creds.Secrets[name]; !ok || v != nil {
 			t.Errorf("%s = %+v, %t, want a removal", name, v, ok)
 		}
@@ -869,8 +869,9 @@ func TestTheCatalogInjectsTheGitHubAndGoogleRecipes(t *testing.T) {
 		"GH_GIT":          "Basic eC1hY2Nlc3MtdG9rZW46dDE=",
 		"GH_API":          "token t1",
 		"GOOGLE_CALENDAR": "Bearer t1",
+		"LINK_API":        "Bearer t1",
 	}
-	placeholders := map[string]string{"GH_GIT": "Basic @GH_GIT@", "GH_API": "token @GH_API@", "GOOGLE_CALENDAR": "Bearer @GOOGLE_CALENDAR@"}
+	placeholders := map[string]string{"GH_GIT": "Basic @GH_GIT@", "GH_API": "token @GH_API@", "GOOGLE_CALENDAR": "Bearer @GOOGLE_CALENDAR@", "LINK_API": "Bearer cbc_link"}
 	for _, e := range newCatalog(Options{}) {
 		for _, in := range e.inject {
 			if got := in.value("t1"); got != want[in.name] || in.placeholder != placeholders[in.name] || in.header != "Authorization" {

@@ -188,6 +188,7 @@ import Testing
         #expect(try await connection.catalog().map(\.id) == ["github", "custom"])
         #expect(try await connection.listConnectors().map(\.tools.count) == [0])
         #expect(try await connection.listConnectors(withTools: true).first?.tools.map(\.name) == ["list_issues", "create_issue"])
+        #expect(try await connection.spendRequests().polledAtMs == 0)
         #expect(try await connection.disconnect(connectorID: "mockhub"))
         #expect(try await connection.listConnectors().isEmpty)
         await #expect(throws: (any Error).self) { try await connection.disconnect(connectorID: "mockhub") }

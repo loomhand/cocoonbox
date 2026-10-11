@@ -248,4 +248,8 @@ struct ConnectorsService: Cocoonbox_Control_V1_Connectors.SimpleServiceProtocol 
     func activity(request: Cocoonbox_Control_V1_ActivityRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_ActivityResponse {
         .init()
     }
+
+    func spendRequests(request: Cocoonbox_Control_V1_SpendRequestsRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_SpendRequestsResponse {
+        .init()
+    }
 }

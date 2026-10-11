@@ -15,6 +15,12 @@ const (
 	revokeRFC7009 revokeKind = "rfc7009"
 
 	kindCustom = "custom"
+
+	linkID          = "link"
+	linkLogin       = "https://login.link.com"
+	linkAPI         = "https://api.link.com"
+	linkHost        = "api.link.com"
+	linkPlaceholder = "cbc_link"
 )
 
 // slackScopes are the user scopes of every tool of Slack's MCP server; the Slack app must list the same.
@@ -27,11 +33,12 @@ var slackScopes = []string{
 	"canvases:read", "canvases:write", "lists:read", "lists:write", "users:read", "users:read.email",
 }
 
-// Credentials is an OAuth client the api registered with a vendor; a GitHub App adds its slug.
+// Credentials is an OAuth client the api registered with a vendor; a GitHub App adds its slug, Link the Stripe publishable key.
 type Credentials struct {
 	ClientID     string
 	ClientSecret string
 	Slug         string
+	Key          string
 }
 
 type authKind string
@@ -70,7 +77,9 @@ type entry struct {
 	inject       []injection
 	// flag is the guest-visible switch the image follows while the grant injects.
 	flag string
-	// preregistered marks an MCP server that takes only the api's own client, set up by hand at the vendor.
+	// guest are guestEnv records, NAME=placeholder;hosts;how as in the vault, the image renders into box shells while the grant injects.
+	guest []string
+	// preregistered marks a vendor that takes only the api's own client, set up by hand; the catalog leaves it out until it is set.
 	preregistered bool
 }
 
@@ -94,6 +103,9 @@ func newCatalog(opts Options) []*entry {
 			{name: "GH_API", hosts: []string{"api.github.com"}, header: headerAuthorization, placeholder: "token @GH_API@", value: prefixed("token ")},
 		},
 		flag: "COCOONBOX_GH_GIT",
+	}
+	if opts.Link.Key == "" {
+		opts.Link = Credentials{}
 	}
 	if opts.GitHub.Slug != "" {
 		gh.installURL = "https://github.com/apps/" + url.PathEscape(opts.GitHub.Slug) + "/installations/new"
@@ -142,6 +154,23 @@ func newCatalog(opts Options) []*entry {
 			id: "slack", name: "Slack", description: "Messages, channels, canvases and people in your Slack workspace.", mcpURL: "https://mcp.slack.com/mcp",
 			auth: authMCP, icon: "https://slack.com/favicon.ico", client: client{ID: opts.Slack.ClientID, Secret: opts.Slack.ClientSecret}, preregistered: true,
 			scopes: slackScopes,
+		},
+		{
+			id: linkID, name: "Link", description: "Your Link wallet, for programs in your box to pay with one-time cards you approve in the Link app.",
+			auth: authOAuth, icon: "https://images.stripeassets.com/fzn2n1nzq965/35yClx6UuTze6h851WsJqW/18da88ac03bd96140d16bdac62b94578/app-icon.png",
+			client: client{
+				ID: opts.Link.ClientID, Secret: opts.Link.ClientSecret, Key: opts.Link.Key, TokenURL: linkLogin + "/auth/token", RevokeURL: linkLogin + "/auth/revoke",
+			},
+			authorizeURL: linkLogin + "/auth",
+			scopes:       []string{"payment_methods.agentic", "userinfo:read"},
+			params:       url.Values{"key": {opts.Link.Key}},
+			userInfoURL:  linkAPI + "/userinfo", userInfoName: "email",
+			revoke: revokeRFC7009,
+			inject: []injection{{
+				name: "LINK_API", hosts: []string{linkHost}, header: headerAuthorization, placeholder: "Bearer " + linkPlaceholder, value: prefixed("Bearer "),
+			}},
+			guest:         []string{"LINK_ACCESS_TOKEN=" + linkPlaceholder + ";" + linkHost + ";Authorization:%20Bearer%20{}", "LINK_NO_REFRESH=1;;"},
+			preregistered: true,
 		},
 		{id: "exa", name: "Exa", description: "Web search and page contents from Exa, with no sign-in.", mcpURL: "https://mcp.exa.ai/mcp", auth: authOpen, icon: "https://exa.ai/images/favicon-32x32.png"},
 		{

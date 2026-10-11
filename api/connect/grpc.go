@@ -159,6 +159,26 @@ func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) 
 	return out, nil
 }
 
+func (s *Service) SpendRequests(ctx context.Context, _ *controlv1.SpendRequestsRequest) (*controlv1.SpendRequestsResponse, error) {
+	user, err := callerID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	switch _, err := s.linkGrant(ctx, user); {
+	case errors.Is(err, errNoGrant):
+		return &controlv1.SpendRequestsResponse{}, nil
+	case err != nil:
+		return nil, err
+	}
+	s.spendMu.Lock()
+	defer s.spendMu.Unlock()
+	p := s.spends[user]
+	if p == nil || p.polledAt.IsZero() {
+		return &controlv1.SpendRequestsResponse{}, nil
+	}
+	return &controlv1.SpendRequestsResponse{Requests: p.requests, PolledAtMs: p.polledAt.UnixMilli()}, nil
+}
+
 // Remove revokes user's grant of connector at the vendor where it can, deletes it, and reports whether the vendor revoked it.
 func (s *Service) Remove(ctx context.Context, user, connector, door string) (bool, error) {
 	g, err := s.store.grant(ctx, user, connector)

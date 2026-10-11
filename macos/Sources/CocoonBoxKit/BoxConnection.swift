@@ -302,6 +302,12 @@ public final class BoxConnection: Sendable {
         try await connectors.disconnect(.with { $0.connectorID = connectorID }).revoked
     }
 
+    // spendRequests returns the user's Link spend requests that wait for an approval in the Link app, as the api last
+    // read them; polledAtMs is 0 before the first read and without an active Link grant.
+    public func spendRequests() async throws -> Cocoonbox_Control_V1_SpendRequestsResponse {
+        try await connectors.spendRequests(Cocoonbox_Control_V1_SpendRequestsRequest())
+    }
+
     // answerConnector answers a connector approval (design §16.5): the broker
     // records the decision, then the agent's turn resumes and retries the call.
     // It returns false when the broker no longer holds the approval (expired, or

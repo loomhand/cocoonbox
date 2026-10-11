@@ -111,6 +111,19 @@ public enum Cocoonbox_Control_V1_Connectors: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "SpendRequests" metadata.
+        public enum SpendRequests: Sendable {
+            /// Request type for "SpendRequests".
+            public typealias Input = Cocoonbox_Control_V1_SpendRequestsRequest
+            /// Response type for "SpendRequests".
+            public typealias Output = Cocoonbox_Control_V1_SpendRequestsResponse
+            /// Descriptor for "SpendRequests".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Connectors"),
+                method: "SpendRequests",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.control.v1.Connectors" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Catalog.descriptor,
@@ -119,7 +132,8 @@ public enum Cocoonbox_Control_V1_Connectors: Sendable {
             Disconnect.descriptor,
             SetPolicy.descriptor,
             Approve.descriptor,
-            Activity.descriptor
+            Activity.descriptor,
+            SpendRequests.descriptor
         ]
     }
 }
@@ -279,6 +293,25 @@ extension Cocoonbox_Control_V1_Connectors {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ActivityRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ActivityResponse>
+
+        /// Handle the "SpendRequests" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SpendRequests returns the caller's Link spend requests that wait for the
+        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_SpendRequestsRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_SpendRequestsResponse` messages.
+        func spendRequests(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse>
     }
 
     /// Service protocol for the "cocoonbox.control.v1.Connectors" service.
@@ -422,6 +455,25 @@ extension Cocoonbox_Control_V1_Connectors {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_ActivityRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ActivityResponse>
+
+        /// Handle the "SpendRequests" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SpendRequests returns the caller's Link spend requests that wait for the
+        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_SpendRequestsResponse` message.
+        func spendRequests(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.control.v1.Connectors" service.
@@ -563,6 +615,25 @@ extension Cocoonbox_Control_V1_Connectors {
             request: Cocoonbox_Control_V1_ActivityRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_ActivityResponse
+
+        /// Handle the "SpendRequests" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SpendRequests returns the caller's Link spend requests that wait for the
+        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_SpendRequestsRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_SpendRequestsResponse` to respond with.
+        func spendRequests(
+            request: Cocoonbox_Control_V1_SpendRequestsRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_SpendRequestsResponse
     }
 }
 
@@ -647,6 +718,17 @@ extension Cocoonbox_Control_V1_Connectors.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Connectors.Method.SpendRequests.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SpendRequestsRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SpendRequestsResponse>(),
+            handler: { request, context in
+                try await self.spendRequests(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -724,6 +806,17 @@ extension Cocoonbox_Control_V1_Connectors.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ActivityResponse> {
         let response = try await self.activity(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func spendRequests(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse> {
+        let response = try await self.spendRequests(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -818,6 +911,19 @@ extension Cocoonbox_Control_V1_Connectors.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ActivityResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ActivityResponse>(
             message: try await self.activity(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func spendRequests(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_SpendRequestsResponse>(
+            message: try await self.spendRequests(
                 request: request.message,
                 context: context
             ),
@@ -1002,6 +1108,30 @@ extension Cocoonbox_Control_V1_Connectors {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ActivityResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ActivityResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SpendRequests" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SpendRequests returns the caller's Link spend requests that wait for the
+        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SpendRequestsRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_SpendRequestsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func spendRequests<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SpendRequestsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_SpendRequestsResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -1266,6 +1396,41 @@ extension Cocoonbox_Control_V1_Connectors {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "SpendRequests" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SpendRequests returns the caller's Link spend requests that wait for the
+        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SpendRequestsRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_SpendRequestsResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func spendRequests<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SpendRequestsRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_SpendRequestsResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Connectors.Method.SpendRequests.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -1472,6 +1637,36 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ActivityRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ActivityResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SpendRequests" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SpendRequests returns the caller's Link spend requests that wait for the
+    /// > user, as the api last read them from Link; it reads every 30 seconds.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func spendRequests<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.spendRequests(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SpendRequestsRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SpendRequestsResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -1708,6 +1903,40 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
             metadata: metadata
         )
         return try await self.activity(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SpendRequests" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SpendRequests returns the caller's Link spend requests that wait for the
+    /// > user, as the api last read them from Link; it reads every 30 seconds.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func spendRequests<Result>(
+        _ message: Cocoonbox_Control_V1_SpendRequestsRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SpendRequestsResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_SpendRequestsRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.spendRequests(
             request: request,
             options: options,
             onResponse: handleResponse

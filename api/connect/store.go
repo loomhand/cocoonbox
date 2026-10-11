@@ -104,6 +104,15 @@ func (s *store) grants(ctx context.Context, user string) ([]*grant, error) {
 	return pgx.CollectRows(rows, scanGrant)
 }
 
+// activeUsers lists the users with an active grant of kind.
+func (s *store) activeUsers(ctx context.Context, kind string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, "SELECT user_id FROM connect_grants WHERE kind = $1 AND status = $2 ORDER BY user_id", kind, statusActive)
+	if err != nil {
+		return nil, fmt.Errorf("list the users of %s: %w", kind, err)
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
 func (s *store) grant(ctx context.Context, user, connector string) (*grant, error) {
 	rows, err := s.pool.Query(ctx, "SELECT "+grantColumns+" FROM connect_grants WHERE user_id = $1 AND connector = $2", user, connector)
 	if err != nil {

@@ -36,6 +36,8 @@ type client struct {
 	RevokeURL  string `json:"revoke_url,omitzero"`
 	// Resource is the MCP server's resource indicator (RFC 8707), sent on every token request.
 	Resource string `json:"resource,omitzero"`
+	// Key goes as a Bearer token on token and revoke requests, as Link wants Stripe's publishable key.
+	Key string `json:"-"`
 }
 
 type tokens struct {
@@ -237,9 +239,7 @@ func (s *Service) token(ctx context.Context, c client, form url.Values) (*tokens
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	if c.AuthMethod == authSecretBasic {
-		req.SetBasicAuth(url.QueryEscape(c.ID), url.QueryEscape(c.Secret))
-	}
+	setClientAuth(req, c)
 	status, body, err := s.send(req)
 	if err != nil {
 		return nil, fmt.Errorf("token endpoint: %w", err)
@@ -282,9 +282,7 @@ func (s *Service) revoke(ctx context.Context, kind revokeKind, c client, sec sec
 			return false, err
 		}
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		if c.AuthMethod == authSecretBasic {
-			req.SetBasicAuth(url.QueryEscape(c.ID), url.QueryEscape(c.Secret))
-		}
+		setClientAuth(req, c)
 	default:
 		return false, nil
 	}
@@ -332,6 +330,15 @@ func (s *Service) send(req *http.Request) (int, []byte, error) {
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxMetadataSize))
 	return resp.StatusCode, body, err
+}
+
+func setClientAuth(req *http.Request, c client) {
+	switch {
+	case c.AuthMethod == authSecretBasic:
+		req.SetBasicAuth(url.QueryEscape(c.ID), url.QueryEscape(c.Secret))
+	case c.Key != "":
+		req.Header.Set(headerAuthorization, "Bearer "+c.Key)
+	}
 }
 
 func pkce() (string, string) {

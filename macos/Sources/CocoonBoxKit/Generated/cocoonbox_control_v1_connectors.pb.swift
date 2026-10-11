@@ -417,6 +417,64 @@ public nonisolated struct Cocoonbox_Control_V1_ActivityEntry: Sendable {
   public init() {}
 }
 
+public nonisolated struct Cocoonbox_Control_V1_SpendRequestsRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Control_V1_SpendRequestsResponse: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var requests: [Cocoonbox_Control_V1_SpendRequest] = []
+
+  /// When the api last read them; 0 before the first read and without an active Link grant.
+  public var polledAtMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Control_V1_SpendRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  /// Link's id, `lsrq_…`.
+  public var id: String = String()
+
+  /// In the currency's smallest unit, such as cents.
+  public var amount: Int64 = 0
+
+  public var currency: String = String()
+
+  public var merchantName: String = String()
+
+  public var merchantURL: String = String()
+
+  /// `pending_approval`, or `requires_action` while the user must finish a step such as 3-D Secure.
+  public var status: String = String()
+
+  /// Where the user approves it on the web; the Link app shows it too.
+  public var approvalURL: String = String()
+
+  public var createdAtMs: Int64 = 0
+
+  /// 0 when Link names no expiry.
+  public var expiresAtMs: Int64 = 0
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 // MARK: - Code below here is support for the SwiftProtobuf runtime.
 
 fileprivate nonisolated let _protobuf_package = "cocoonbox.control.v1"
@@ -1107,6 +1165,130 @@ nonisolated extension Cocoonbox_Control_V1_ActivityEntry: SwiftProtobuf.Message,
     if lhs.responseBytes != rhs.responseBytes {return false}
     if lhs.argsHash != rhs.argsHash {return false}
     if lhs.outcome != rhs.outcome {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_SpendRequestsRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpendRequestsRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_SpendRequestsRequest, rhs: Cocoonbox_Control_V1_SpendRequestsRequest) -> Bool {
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_SpendRequestsResponse: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpendRequestsResponse"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}requests\0\u{3}polled_at_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeRepeatedMessageField(value: &self.requests) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.polledAtMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.requests.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.requests, fieldNumber: 1)
+    }
+    if self.polledAtMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.polledAtMs, fieldNumber: 2)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_SpendRequestsResponse, rhs: Cocoonbox_Control_V1_SpendRequestsResponse) -> Bool {
+    if lhs.requests != rhs.requests {return false}
+    if lhs.polledAtMs != rhs.polledAtMs {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_SpendRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".SpendRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}id\0\u{1}amount\0\u{1}currency\0\u{3}merchant_name\0\u{3}merchant_url\0\u{1}status\0\u{3}approval_url\0\u{3}created_at_ms\0\u{3}expires_at_ms\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.id) }()
+      case 2: try { try decoder.decodeSingularInt64Field(value: &self.amount) }()
+      case 3: try { try decoder.decodeSingularStringField(value: &self.currency) }()
+      case 4: try { try decoder.decodeSingularStringField(value: &self.merchantName) }()
+      case 5: try { try decoder.decodeSingularStringField(value: &self.merchantURL) }()
+      case 6: try { try decoder.decodeSingularStringField(value: &self.status) }()
+      case 7: try { try decoder.decodeSingularStringField(value: &self.approvalURL) }()
+      case 8: try { try decoder.decodeSingularInt64Field(value: &self.createdAtMs) }()
+      case 9: try { try decoder.decodeSingularInt64Field(value: &self.expiresAtMs) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.id.isEmpty {
+      try visitor.visitSingularStringField(value: self.id, fieldNumber: 1)
+    }
+    if self.amount != 0 {
+      try visitor.visitSingularInt64Field(value: self.amount, fieldNumber: 2)
+    }
+    if !self.currency.isEmpty {
+      try visitor.visitSingularStringField(value: self.currency, fieldNumber: 3)
+    }
+    if !self.merchantName.isEmpty {
+      try visitor.visitSingularStringField(value: self.merchantName, fieldNumber: 4)
+    }
+    if !self.merchantURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.merchantURL, fieldNumber: 5)
+    }
+    if !self.status.isEmpty {
+      try visitor.visitSingularStringField(value: self.status, fieldNumber: 6)
+    }
+    if !self.approvalURL.isEmpty {
+      try visitor.visitSingularStringField(value: self.approvalURL, fieldNumber: 7)
+    }
+    if self.createdAtMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.createdAtMs, fieldNumber: 8)
+    }
+    if self.expiresAtMs != 0 {
+      try visitor.visitSingularInt64Field(value: self.expiresAtMs, fieldNumber: 9)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_SpendRequest, rhs: Cocoonbox_Control_V1_SpendRequest) -> Bool {
+    if lhs.id != rhs.id {return false}
+    if lhs.amount != rhs.amount {return false}
+    if lhs.currency != rhs.currency {return false}
+    if lhs.merchantName != rhs.merchantName {return false}
+    if lhs.merchantURL != rhs.merchantURL {return false}
+    if lhs.status != rhs.status {return false}
+    if lhs.approvalURL != rhs.approvalURL {return false}
+    if lhs.createdAtMs != rhs.createdAtMs {return false}
+    if lhs.expiresAtMs != rhs.expiresAtMs {return false}
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
