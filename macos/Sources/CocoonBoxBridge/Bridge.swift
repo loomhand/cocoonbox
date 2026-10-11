@@ -464,7 +464,7 @@ public actor Bridge {
         return await withTaskGroup(of: [Cocoonbox_Control_V1_Key]?.self) { group in
             group.addTask { try? await connection.listKeys() }
             group.addTask {
-                try? await Task.sleep(for: Self.keysWait)
+                try? await pause(Self.keysWait)
                 return nil
             }
             defer { group.cancelAll() }

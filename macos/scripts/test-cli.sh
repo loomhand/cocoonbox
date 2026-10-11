@@ -6,7 +6,8 @@
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
 # and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm, box schedule set, list and clear, and keys add, ls, rotate and rm. Nothing touches
+# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, and a release-built
+# bridge naming the keys at initialize. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -15,7 +16,9 @@ cd "$(dirname "$0")/.."
 source scripts/toolchain.sh
 swift build --product MockBox >/dev/null
 swift build --product cocoonbox-cli >/dev/null
+swift build -c release --product cocoonbox-cli >/dev/null
 bin="$(swift build --show-bin-path)"
+release="$(swift build -c release --show-bin-path)/cocoonbox-cli"
 
 port=50071
 work="$(mktemp -d)"
@@ -44,10 +47,10 @@ trap cleanup EXIT
 sleep 1
 echo mock-token | "$bin/cocoonbox-cli" login
 
-python3 - "$bin/cocoonbox-cli" "$work/mockbox.log" <<'PY'
+python3 - "$bin/cocoonbox-cli" "$work/mockbox.log" "$release" <<'PY'
 import json, subprocess, sys, time
 
-cli, mocklog = sys.argv[1], sys.argv[2]
+cli, mocklog, release = sys.argv[1], sys.argv[2], sys.argv[3]
 failures = []
 
 def check(name, ok, detail=""):
@@ -62,8 +65,8 @@ status = run("status", "--json")
 check("status over gRPC", json.loads(status.stdout)["state"] == "hibernated", status.stdout + status.stderr)
 
 class Bridge:
-    def __init__(self, *flags, env=None):
-        self.p = subprocess.Popen([cli, "mcp", *flags], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, env=env)
+    def __init__(self, *flags, env=None, binary=None):
+        self.p = subprocess.Popen([binary or cli, "mcp", *flags], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1, env=env)
         self.next = 1
 
     def send(self, method, params=None, notify=False):
@@ -272,9 +275,22 @@ check("box schedule leaves the box hibernated", json.loads(run("status", "--json
 def keys(*args, value=None):
     return subprocess.run([cli, "keys", *args], input=value, capture_output=True, text=True, timeout=60)
 
+def release_instructions():
+    r = Bridge(binary=release, env={**os.environ, "COCOONBOX_TOKEN": "mock-token"})
+    try:
+        init, _ = r.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "release-client", "version": "1"}})
+    except RuntimeError:
+        return None
+    finally:
+        r.p.stdin.close()
+        r.p.wait(timeout=10)
+    return init["result"]["instructions"]
+
 secret = "synthetic-cli-0123456789"
 r = keys("ls")
 check("keys ls without keys", r.returncode == 0 and r.stdout.strip() == "no keys", r.stdout + r.stderr)
+instructions = release_instructions()
+check("a release-built bridge answers initialize without keys", instructions is not None and "API keys" not in instructions, instructions)
 r = keys("add", "ATTIO_API_KEY", "--host", "api.attio.com,*.attio.com", "--json", value=secret + "\n")
 added = json.loads(r.stdout) if r.returncode == 0 else {}
 check("keys add reads the value from stdin and never prints it", added.get("hosts") == ["api.attio.com", "*.attio.com"] and added.get("hint") == "6789" and secret not in r.stdout + r.stderr, r.stdout + r.stderr)
@@ -286,6 +302,8 @@ r = keys("add", "SERP", "--host", "serpapi.com", "--query", "api_key", value="\n
 check("keys add refuses an empty value", r.returncode == 1 and "no value read" in r.stderr, r.stderr)
 r = keys("add", "SERP", "--host", "serpapi.com", "--query", "api_key", value="serp-synthetic-abcdefgh")
 check("keys add sends a query key", r.returncode == 0 and "?api_key={}" in r.stdout and "efgh" in r.stdout, r.stdout + r.stderr)
+instructions = release_instructions()
+check("a release-built bridge names the keys at initialize", instructions is not None and "ATTIO_API_KEY for api.attio.com" in instructions and "SERP for serpapi.com as query ?api_key=$SERP" in instructions, instructions)
 r = keys("ls")
 check("keys ls shows names, hosts, send-as and the last 4", r.returncode == 0 and "ATTIO_API_KEY  api.attio.com,*.attio.com  Authorization: Bearer {}  \u20266789" in r.stdout and secret not in r.stdout, r.stdout + r.stderr)
 r = keys("rotate", "ATTIO_API_KEY", value="synthetic-rotated-wxyz")
