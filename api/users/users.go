@@ -488,6 +488,12 @@ func (s *Service) Login(ctx context.Context, name, password string) (User, error
 	if bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) != nil {
 		return User{}, ErrBadPassword
 	}
+	if u, err := s.Get(id); !errors.Is(err, ErrNotFound) {
+		return u, err
+	}
+	if err := s.Load(ctx); err != nil {
+		return User{}, err
+	}
 	return s.Get(id)
 }
 

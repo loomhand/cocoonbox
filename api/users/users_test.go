@@ -129,6 +129,25 @@ func TestTokensPasswordsAndDisabling(t *testing.T) {
 	}
 }
 
+func TestLoginFindsAUserAnotherProcessAdded(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	cli := openTestService(t, dsn, gw, tenants)
+	u, err := cli.Create(t.Context(), NewUser{Name: "qa1", Admin: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := cli.SetPassword(t.Context(), u.ID, password); err != nil {
+		t.Fatalf("SetPassword: %v", err)
+	}
+	got, err := svc.Login(t.Context(), "qa1", password)
+	if err != nil || got.ID != u.ID || !got.Admin {
+		t.Fatalf("Login = %+v, %v", got, err)
+	}
+	if boxes := svc.Boxes(u.ID); len(boxes) != 1 {
+		t.Errorf("Boxes after Login = %+v, want the first box", boxes)
+	}
+}
+
 func TestUpdateKeepsBoxesUnderTheCapAndMovesTheTenant(t *testing.T) {
 	svc, _, tenants, _ := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
