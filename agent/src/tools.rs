@@ -227,13 +227,15 @@ pub fn computer_tools() -> Vec<ToolSpec> {
             parameters: json!({
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["click", "double_click", "right_click", "type", "key", "hotkey", "scroll", "drag", "launch_app", "wait"]},
+                    "action": {"type": "string", "enum": ["click", "double_click", "right_click", "type", "type_from_file", "key", "hotkey", "scroll", "drag", "launch_app", "wait"]},
                     "element": {"type": "integer", "description": "Element index from the latest computer_state"},
                     "x": {"type": "number"},
                     "y": {"type": "number"},
                     "to_x": {"type": "number", "description": "drag end"},
                     "to_y": {"type": "number", "description": "drag end"},
                     "text": {"type": "string", "description": "type: text to enter"},
+                    "path": {"type": "string", "description": "type_from_file: a link-cli --output-file card JSON under /tmp or $HOME"},
+                    "field": {"type": "string", "description": "type_from_file: number, exp_month, exp_year, exp (MM/YY), cvc or billing_address.<key>; types that card field and never returns it"},
                     "key": {"type": "string", "description": "key: e.g. return, tab, escape, a"},
                     "keys": {"type": "array", "items": {"type": "string"}, "description": "hotkey: e.g. [\"ctrl\", \"s\"]"},
                     "direction": {"type": "string", "enum": ["up", "down", "left", "right"]},

@@ -20,7 +20,7 @@ public actor Bridge {
     public static let maxInstructions = 2048
     static let keysWait = Duration.milliseconds(1500)
     public static let keysHead = "Box shells hold the user's API keys as env vars whose values are placeholders; the box's network swaps in the key only on the listed hosts, so send them as shown and never ask for a key:"
-    public static let linkLine = "The user's Link wallet is connected: you may pay from a box, but only for a purchase the user asked for and only with a one-time card from a Link spend request (link-cli in a box shell, with a truthful --context) that the user approved; read the card only with link-cli's --output-file, never print its number or CVC, and enter it only on that checkout. Never enter the user's own card or other payment details."
+    public static let linkLine = "The user's Link wallet is connected: you may pay from a box, but only for a purchase the user asked for and only with a one-time card from a Link spend request (link-cli in a box shell, with a truthful --context) that the user approved. Read the card only with link-cli's --output-file under /tmp, never cat or print that file, and fill each field of that checkout with computer_act type_from_file. Never enter the user's own card or other payment details."
 
     private let endpoint: Endpoint
     private let token: String
