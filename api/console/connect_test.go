@@ -1,16 +1,24 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/connect"
 	"github.com/CMGS/cocoonbox/api/connect/connecttest"
+	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/users"
+	"github.com/CMGS/cocoonbox/api/vault"
 )
 
 func TestTheCallbackCompletesOnlyWithTheFlowsNonce(t *testing.T) {
@@ -119,6 +127,69 @@ func TestTheConnectPageSetsPoliciesAndDisconnects(t *testing.T) {
 	}
 }
 
+func TestDeleteRevokesTheGrantsAndLeavesNoRowOfTheUser(t *testing.T) {
+	env, vendor := newConnectEnv(t)
+	keys, err := vault.Open(t.Context(), vault.Options{DSN: env.dsn, Keys: env.users})
+	if err != nil {
+		t.Fatalf("vault.Open: %v", err)
+	}
+	t.Cleanup(keys.Close)
+	root := env.login(t, "root")
+	cookie, code, state := env.begin(t, root, "mock", vendor)
+	env.callback(t, cookie.Value, state, code)
+	u, err := env.users.Create(t.Context(), users.NewUser{Name: "qa1", Password: password})
+	if err != nil {
+		t.Fatalf("create qa1: %v", err)
+	}
+	qa1 := env.login(t, "qa1")
+	cookie, code, state = env.begin(t, qa1, "mock", vendor)
+	env.callback(t, cookie.Value, state, code)
+	env.begin(t, qa1, "pending", vendor)
+	for _, machine := range []string{"cb-m1", "cb-m2"} {
+		if _, err := env.srv.connect.DoorKey(t.Context(), machine, u.ID, "inc1"); err != nil {
+			t.Fatalf("DoorKey: %v", err)
+		}
+	}
+	if _, err := keys.Add(auth.WithUser(t.Context(), u.ID), &controlv1.AddKeyRequest{Name: "K", Hosts: []string{"a.example.com"}, Value: "sk-proj-synthetic0123456789abcdef"}); err != nil {
+		t.Fatalf("vault Add: %v", err)
+	}
+	wake := users.WakeSchedule{Box: boxes.BoxID(u.ID), Owner: u.ID, Cron: "0 9 * * *", TZ: "UTC", AwakeFor: time.Hour, NextAt: time.Now().Add(time.Hour)}
+	if err := env.users.PutWakeSchedule(t.Context(), wake, 1); err != nil {
+		t.Fatalf("PutWakeSchedule: %v", err)
+	}
+	if err := exec(env.dsn, `INSERT INTO connect_approvals (id, user_id, grant_id, tool, args_sha256, summary, expires_at)
+		SELECT 'ca_qa1', user_id, id, 'create_item', 'x', 's', now() + interval '10 minutes' FROM connect_grants WHERE user_id = '`+u.ID+`';
+		INSERT INTO connect_audit (user_id, connector, tool, door, caller, decision, outcome) VALUES ('`+u.ID+`', 'mock', 'list_items', 'mcp', 'mcp:test', 'allow', 'ok')`); err != nil {
+		t.Fatalf("approval and audit: %v", err)
+	}
+	tables := map[string]string{
+		"users": "id", "sessions": "user_id", "boxes": "owner", "wake_schedules": "owner", "vault_secrets": "owner", "vault_audit": "owner",
+		"connect_grants": "user_id", "connect_flows": "user_id", "connect_approvals": "user_id", "connect_audit": "user_id", "connect_door_keys": "user_id",
+	}
+	for table, column := range tables {
+		if n := countRows(t, env.dsn, table, column, u.ID); n == 0 {
+			t.Fatalf("%s holds no row of qa1 before the delete", table)
+		}
+	}
+	_, revokedBefore, _ := vendor.Snapshot()
+
+	if code := env.do(t, http.MethodDelete, "api/users/"+u.ID, root, "{}").Code; code != http.StatusNoContent {
+		t.Fatalf("delete = %d", code)
+	}
+	for table, column := range tables {
+		if n := countRows(t, env.dsn, table, column, u.ID); n != 0 {
+			t.Errorf("%s holds %d rows of the deleted user", table, n)
+		}
+	}
+	if _, revoked, _ := vendor.Snapshot(); len(revoked) != len(revokedBefore)+1 {
+		t.Errorf("vendor revokes = %d, want %d", len(revoked), len(revokedBefore)+1)
+	}
+	self, _ := env.users.ByName("root")
+	if n := countRows(t, env.dsn, "connect_grants", "user_id", self.ID); n != 1 {
+		t.Errorf("root's grants = %d, want 1", n)
+	}
+}
+
 func newConnectEnv(t *testing.T) (*env, *connecttest.Vendor) {
 	t.Helper()
 	e := newEnv(t)
@@ -169,4 +240,18 @@ func (e *env) callback(t *testing.T, nonce, state, code string) string {
 		t.Fatalf("callback = %d", rec.Code)
 	}
 	return rec.Header().Get("Location")
+}
+
+func countRows(t *testing.T, dsn, table, column, id string) int {
+	t.Helper()
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	var n int
+	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM "+table+" WHERE "+column+" = $1", id).Scan(&n); err != nil {
+		t.Fatalf("count %s: %v", table, err)
+	}
+	return n
 }

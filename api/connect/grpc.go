@@ -163,12 +163,7 @@ func (s *Service) Remove(ctx context.Context, user, connector, door string) (boo
 		return false, grantStatus(err)
 	}
 	logger := log.WithFunc("connect.Service.Remove")
-	revoked := false
-	if sec, err := s.secrets(ctx, g); err != nil {
-		logger.Warnf(ctx, "open grant %s for its revoke: %v", g.id, err)
-	} else if revoked, err = s.revokeAtVendor(ctx, g, sec); err != nil {
-		logger.Warnf(ctx, "revoke grant %s of %s (%s) at the vendor: %v", g.id, user, connector, err)
-	}
+	revoked := s.revokeGrant(ctx, g)
 	if err := s.store.deleteGrant(ctx, g.id); err != nil {
 		return false, err
 	}
@@ -179,6 +174,19 @@ func (s *Service) Remove(ctx context.Context, user, connector, door string) (boo
 	}
 	logger.Infof(ctx, "user %s disconnected %s (grant %s), revoked at the vendor: %t", user, connector, g.id, revoked)
 	return revoked, nil
+}
+
+// RevokeAll revokes user's grants at the vendors where it can; the grants go with the user's row.
+func (s *Service) RevokeAll(ctx context.Context, user string) error {
+	grants, err := s.store.grants(ctx, user)
+	if err != nil {
+		return err
+	}
+	for _, g := range grants {
+		s.revokeGrant(ctx, g)
+		s.dropConn(g.id)
+	}
+	return nil
 }
 
 // Pending lists user's unanswered approvals, the oldest first.
@@ -227,6 +235,20 @@ func (s *Service) Check(ctx context.Context, user, connector string) (string, er
 		return "", status.Errorf(codes.Unavailable, "%s answered %d", e.name, code)
 	}
 	return label, nil
+}
+
+func (s *Service) revokeGrant(ctx context.Context, g *grant) bool {
+	logger := log.WithFunc("connect.Service.revokeGrant")
+	sec, err := s.secrets(ctx, g)
+	if err != nil {
+		logger.Warnf(ctx, "open grant %s for its revoke: %v", g.id, err)
+		return false
+	}
+	revoked, err := s.revokeAtVendor(ctx, g, sec)
+	if err != nil {
+		logger.Warnf(ctx, "revoke grant %s of %s (%s) at the vendor: %v", g.id, g.user, g.connector, err)
+	}
+	return revoked
 }
 
 // revokeAtVendor refreshes an expiring GitHub token first, since GitHub revokes by a live access token.

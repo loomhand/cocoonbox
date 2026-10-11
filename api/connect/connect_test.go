@@ -797,6 +797,14 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	dsn := freshDatabase(t)
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(t.Context(), "CREATE TABLE users (id text PRIMARY KEY); INSERT INTO users VALUES ('u-alice'), ('u-bob')"); err != nil {
+		t.Fatalf("users table: %v", err)
+	}
 	v := connecttest.New()
 	t.Cleanup(v.Close)
 	sessions := &fakeSessions{live: map[string]string{aliceSess: alice, bobSess: bob}}

@@ -435,6 +435,12 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if s.connect != nil {
+		if err := s.connect.RevokeAll(r.Context(), id); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
 	if err := s.users.Delete(r.Context(), id); err != nil {
 		s.fail(w, r, err)
 		return
