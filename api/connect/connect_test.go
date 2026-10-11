@@ -722,6 +722,32 @@ func TestBoxDoorTakesOnlyTheCurrentKeyOfAMachine(t *testing.T) {
 	}
 }
 
+func TestDoorKeysGoWithTheirMachineAndPruneKeepsLiveAndNewerOnes(t *testing.T) {
+	env := newEnv(t)
+	for _, m := range []string{"cb-m1", "cb-m2", "cb-m3"} {
+		if _, err := env.svc.DoorKey(t.Context(), m, alice, "inc1"); err != nil {
+			t.Fatalf("DoorKey %s: %v", m, err)
+		}
+	}
+	if err := env.svc.DropDoorKey(t.Context(), "cb-m1"); err != nil {
+		t.Fatalf("DropDoorKey: %v", err)
+	}
+	cutoff := time.Now()
+	if _, err := env.svc.DoorKey(t.Context(), "cb-m4", alice, "inc1"); err != nil {
+		t.Fatalf("DoorKey cb-m4: %v", err)
+	}
+	if n, err := env.svc.PruneDoorKeys(t.Context(), []string{"cb-m2"}, cutoff); err != nil || n != 1 {
+		t.Errorf("PruneDoorKeys = %d, %v, want cb-m3 only", n, err)
+	}
+	var left string
+	if err := env.row(t, "SELECT string_agg(machine_id, ',' ORDER BY machine_id) FROM connect_door_keys").Scan(&left); err != nil || left != "cb-m2,cb-m4" {
+		t.Errorf("door keys left = %q, %v, want cb-m2,cb-m4", left, err)
+	}
+	if n, err := env.svc.PruneDoorKeys(t.Context(), nil, time.Now()); err != nil || n != 2 {
+		t.Errorf("PruneDoorKeys without machines = %d, %v, want 2", n, err)
+	}
+}
+
 func TestCredentialsInjectAnActiveGrantAndClearTheRest(t *testing.T) {
 	env := newEnv(t)
 	var hooked []string

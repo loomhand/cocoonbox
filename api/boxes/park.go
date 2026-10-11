@@ -152,7 +152,7 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 		return
 	}
 	if err == nil {
-		err = s.machines.Delete(op.ctx, m.ID)
+		err = s.deleteMachine(op.ctx, m.ID)
 	}
 	if err != nil {
 		logger.Error(op.ctx, err, "park "+m.ID)

@@ -117,6 +117,60 @@ func TestApplyCredentialsReachesEveryMachineOfTheUser(t *testing.T) {
 	}
 }
 
+func TestAHibernatedMachineKeepsItsDoorKeyAndADeletedOneLosesIt(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
+	fake.put(machines.Machine{ID: aliceBox + "-rnew", Owner: alice, State: machines.StateHibernated})
+	fake.put(machines.Machine{ID: BoxID("bob"), Owner: "bob", State: machines.StateRunning})
+	conn := &fakeConnect{}
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableConnect(conn)
+
+	if _, err := svc.Hibernate(auth.WithUser(t.Context(), alice), &controlv1.BoxRef{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	if err := svc.PruneDoorKeys(t.Context()); err != nil {
+		t.Fatalf("PruneDoorKeys: %v", err)
+	}
+	if dropped, live := conn.doorKeys(); len(dropped) != 0 || !slices.Equal(live, []string{aliceBox, aliceBox + "-rnew", BoxID("bob")}) {
+		t.Fatalf("dropped %v, prune kept %v; want nothing dropped and every machine kept", dropped, live)
+	}
+	if err := svc.Release(t.Context(), alice); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if dropped, _ := conn.doorKeys(); !slices.Equal(dropped, []string{aliceBox, aliceBox + "-rnew"}) {
+		t.Errorf("dropped %v, want both of alice's machines", dropped)
+	}
+}
+
+func TestAParkDropsTheDoorKeyOfTheMachineItRemovesAndTheRestoreGetsANewOne(t *testing.T) {
+	e := newParkEnv(t)
+	conn := &fakeConnect{}
+	e.svc.EnableProvisioning(fakeSigner{})
+	e.svc.EnableConnect(conn)
+
+	op := e.park(t, e.clock.Add(parkAfter))
+	if op == nil || lastEvent(op).GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("park = %v", op)
+	}
+	if dropped, _ := conn.doorKeys(); !slices.Equal(dropped, []string{aliceBox}) {
+		t.Fatalf("dropped %v after the park, want the parked machine", dropped)
+	}
+	if _, err := e.svc.Ensure(e.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Ensure after the park: %v", err)
+	}
+	spec := e.fake.waitSpec(t, 2)
+	e.fake.push(machines.Machine{ID: spec.ID, State: machines.StateRunning, Incarnation: "vm2"})
+	e.idle(t)
+	if dropped, _ := conn.doorKeys(); !slices.Equal(dropped, []string{aliceBox}) {
+		t.Errorf("dropped %v after the restore, want only the parked machine", dropped)
+	}
+	execs := e.fake.execCalls()
+	if len(execs) == 0 || execs[len(execs)-1].connectKey != "door:"+spec.ID+":vm2" {
+		t.Errorf("deliveries = %+v, want the restored machine's own door key last", execs)
+	}
+}
+
 func waitCreds(t *testing.T, fake *fakeMachines, n int) []credCall {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
@@ -135,8 +189,10 @@ type fakeConnect struct {
 	keyErr error
 	gate   chan struct{}
 
-	mu    sync.Mutex
-	reads []string
+	mu      sync.Mutex
+	reads   []string
+	dropped []string
+	live    []string
 }
 
 func (c *fakeConnect) DoorKey(_ context.Context, machine, _, incarnation string) (string, error) {
@@ -144,6 +200,20 @@ func (c *fakeConnect) DoorKey(_ context.Context, machine, _, incarnation string)
 		return "", c.keyErr
 	}
 	return "door:" + machine + ":" + incarnation, nil
+}
+
+func (c *fakeConnect) DropDoorKey(_ context.Context, machine string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.dropped = append(c.dropped, machine)
+	return nil
+}
+
+func (c *fakeConnect) PruneDoorKeys(_ context.Context, live []string, _ time.Time) (int64, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.live = live
+	return 0, nil
 }
 
 func (c *fakeConnect) Credentials(ctx context.Context, owner string) (machines.Credentials, error) {
@@ -167,4 +237,10 @@ func (c *fakeConnect) owners() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return slices.Sorted(slices.Values(c.reads))
+}
+
+func (c *fakeConnect) doorKeys() ([]string, []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Sorted(slices.Values(c.dropped)), slices.Sorted(slices.Values(c.live))
 }

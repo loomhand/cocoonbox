@@ -5,6 +5,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/projecteru2/core/log"
 
@@ -20,6 +21,16 @@ func (s *Service) DoorKey(ctx context.Context, machine, owner, incarnation strin
 		return "", err
 	}
 	return key, nil
+}
+
+// DropDoorKey deletes the door key of machine, which is gone.
+func (s *Service) DropDoorKey(ctx context.Context, machine string) error {
+	return s.store.dropDoorKeys(ctx, machine)
+}
+
+// PruneDoorKeys deletes the door keys issued before cutoff to machines not in live and returns how many went.
+func (s *Service) PruneDoorKeys(ctx context.Context, live []string, cutoff time.Time) (int64, error) {
+	return s.store.pruneDoorKeys(ctx, live, cutoff)
 }
 
 // Credentials returns what owner's grants put on the egress of owner's boxes, refreshing a token near its expiry.

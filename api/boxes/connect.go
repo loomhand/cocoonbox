@@ -15,6 +15,8 @@ const wakePushTimeout = 30 * time.Second
 // Connect issues each machine's box door key and the credentials its owner's grants put on its egress.
 type Connect interface {
 	DoorKey(ctx context.Context, machine, owner, incarnation string) (string, error)
+	DropDoorKey(ctx context.Context, machine string) error
+	PruneDoorKeys(ctx context.Context, live []string, cutoff time.Time) (int64, error)
 	Credentials(ctx context.Context, owner string) (machines.Credentials, error)
 }
 
@@ -64,6 +66,28 @@ func (s *Service) RunCredentials(ctx context.Context, interval time.Duration) {
 		}
 		s.refreshCredentials(ctx)
 	}
+}
+
+// PruneDoorKeys deletes the box door keys of machines the backend no longer holds; a hibernated machine keeps its key.
+func (s *Service) PruneDoorKeys(ctx context.Context) error {
+	if s.connect == nil {
+		return nil
+	}
+	cutoff := time.Now()
+	ms, err := s.machines.List(ctx, "")
+	if err != nil {
+		return err
+	}
+	live := make([]string, 0, len(ms))
+	for _, m := range ms {
+		live = append(live, m.ID)
+	}
+	n, err := s.connect.PruneDoorKeys(ctx, live, cutoff)
+	if err != nil {
+		return err
+	}
+	log.WithFunc("boxes.Service.PruneDoorKeys").Infof(ctx, "pruned %d door keys of gone machines, kept those of %d machines", n, len(live))
+	return nil
 }
 
 // refreshCredentials reads each owner's credentials once and applies them to the owner's running machines.
@@ -123,4 +147,14 @@ func (s *Service) pushCredentials(ctx context.Context, m machines.Machine) {
 	if err != nil {
 		log.WithFunc("boxes.Service.pushCredentials").WithField("machine", m.ID).Warnf(ctx, "push credentials: %v", err)
 	}
+}
+
+func (s *Service) deleteMachine(ctx context.Context, id string) error {
+	err := s.machines.Delete(ctx, id)
+	if s.connect != nil && (err == nil || errors.Is(err, machines.ErrNotFound)) {
+		if dropErr := s.connect.DropDoorKey(ctx, id); dropErr != nil {
+			log.WithFunc("boxes.Service.deleteMachine").WithField("machine", id).Warnf(ctx, "drop the box door key: %v", dropErr)
+		}
+	}
+	return err
 }

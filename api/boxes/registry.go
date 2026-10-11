@@ -118,7 +118,7 @@ func (s *Service) runDelete(op *operation, user string, m machines.Machine, save
 			continue
 		}
 		op.note(controlv1.Phase_PHASE_DELETING, boxStates[mm.State], "removing machine "+mm.ID)
-		if err := s.machines.Delete(op.ctx, mm.ID); err != nil && !errors.Is(err, machines.ErrNotFound) {
+		if err := s.deleteMachine(op.ctx, mm.ID); err != nil && !errors.Is(err, machines.ErrNotFound) {
 			logger.Error(op.ctx, err, "delete machine "+mm.ID)
 			op.fail("removing the machine failed")
 			return

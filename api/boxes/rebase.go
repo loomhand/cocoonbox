@@ -93,7 +93,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	}
 	restored := time.Since(start)
 
-	if err := s.machines.Delete(op.ctx, old.ID); err != nil {
+	if err := s.deleteMachine(op.ctx, old.ID); err != nil {
 		logger.Error(op.ctx, err, "delete old machine")
 		op.fail("state restored into the new machine, but removing the old machine failed")
 		return
@@ -126,7 +126,7 @@ func (s *Service) waitRunning(op *operation, m machines.Machine) (machines.Machi
 
 // discard deletes a rebase machine that will not serve; the old machine keeps serving.
 func (s *Service) discard(op *operation, id string) {
-	if err := s.machines.Delete(context.WithoutCancel(op.ctx), id); err != nil {
+	if err := s.deleteMachine(context.WithoutCancel(op.ctx), id); err != nil {
 		log.WithFunc("boxes.Service.discard").WithField("box", op.boxID).Error(op.ctx, err, "delete "+id)
 	}
 }

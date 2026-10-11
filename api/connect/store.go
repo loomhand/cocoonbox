@@ -326,6 +326,21 @@ func (s *store) doorKey(ctx context.Context, keySHA256 string) (string, string, 
 	return user, machine, nil
 }
 
+func (s *store) dropDoorKeys(ctx context.Context, machine string) error {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM connect_door_keys WHERE machine_id = $1", machine); err != nil {
+		return fmt.Errorf("drop door keys: %w", err)
+	}
+	return nil
+}
+
+func (s *store) pruneDoorKeys(ctx context.Context, live []string, cutoff time.Time) (int64, error) {
+	tag, err := s.pool.Exec(ctx, "DELETE FROM connect_door_keys WHERE machine_id <> ALL(coalesce($1::text[], '{}')) AND created_at < $2", live, cutoff)
+	if err != nil {
+		return 0, fmt.Errorf("prune door keys: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
 func (s *store) audit(ctx context.Context, r *record) error {
 	_, err := s.pool.Exec(ctx, `INSERT INTO connect_audit (user_id, connector, tool, door, caller, decision, outcome, upstream_status, latency_ms, req_bytes, resp_bytes, args_sha256)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,

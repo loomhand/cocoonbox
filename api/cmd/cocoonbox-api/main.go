@@ -235,6 +235,9 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service, library *flows.Library) {
 	logger := log.WithFunc("main.enableBoxConnect")
 	svc.EnableConnect(broker)
+	if err := svc.PruneDoorKeys(ctx); err != nil {
+		logger.Warnf(ctx, "prune the door keys of gone machines: %v", err)
+	}
 	broker.OnInjection(func(ctx context.Context, user string) {
 		go func() {
 			applyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), injectionTimeout)

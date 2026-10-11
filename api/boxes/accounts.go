@@ -26,7 +26,7 @@ func (s *Service) Release(ctx context.Context, user string) error {
 		return err
 	}
 	for _, m := range ms {
-		if err := s.machines.Delete(ctx, m.ID); err != nil && !errors.Is(err, machines.ErrNotFound) {
+		if err := s.deleteMachine(ctx, m.ID); err != nil && !errors.Is(err, machines.ErrNotFound) {
 			return fmt.Errorf("delete machine %s: %w", m.ID, err)
 		}
 	}
