@@ -32,7 +32,7 @@ const XPROP: &str = "xprop";
 const XPROP_WAIT: Duration = Duration::from_secs(2);
 const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
 const MAX_WINDOWS: usize = 8;
-const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the keyboard focus is in no web page, so it may be in the address bar, a find bar, DevTools or another app; nothing was typed";
+const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the keyboard focus is in no web page of the agent's Chrome, so it may be in the address bar, a find bar, DevTools, another app or a Chrome the browser tools do not drive; use browser_navigate to open the checkout in the agent's Chrome, then focus the card field; nothing was typed";
 const NOT_A_FIELD: &str = "focus a card field on the checkout page first: the focused element of the page is not a text field; nothing was typed";
 
 const SNAPSHOT_JS: &str = r#"(() => {
@@ -310,6 +310,11 @@ impl Browser {
                 cdp.snapshot().await
             }
             "browser_snapshot" => cdp.snapshot().await,
+            "browser_show" => {
+                cdp.call("Page.bringToFront", json!({})).await?;
+                let title = cdp.eval("document.title || location.href").await?;
+                Ok(title.as_str().unwrap_or_default().to_owned())
+            }
             "browser_click" => {
                 let a: RefArgs = parse(args)?;
                 let p = cdp
@@ -1103,7 +1108,7 @@ pub(super) mod tests {
     }
 
     /// Serves CDP on the returned port only after `delay`; every new window is page 1, whose script evaluations return "Page: slow".
-    async fn slow_chrome(delay: Duration) -> u16 {
+    pub(in crate::toolhost) async fn slow_chrome(delay: Duration) -> u16 {
         let port = std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()
             .local_addr()

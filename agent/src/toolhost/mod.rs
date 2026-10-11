@@ -111,7 +111,7 @@ impl Host {
                 .await
                 .map(Output::text),
             "computer_state" => self.cua.state(call.args).await,
-            "computer_act" => self.cua.act(&self.browser, call.args).await,
+            "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
             "script_run" => {
                 self.script
