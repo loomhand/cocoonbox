@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cocoonbox keys</title>
+<link rel="stylesheet" href="/cb/style.css">
+<script src="/cb/keys.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>cocoonbox · Keys</h1>
+  <span id="whoami"></span>
+  <a href="/cb/">Console</a>
+</header>
+<main>
+  <p id="notice" hidden></p>
+
+  <section id="signed-out" hidden>
+    <h2>Sign in first</h2>
+    <p>Sign in on the <a href="/cb/">console</a>, then come back to this page.</p>
+  </section>
+
+  <section id="keys-section" hidden>
+    <p>Each key is an env var in every box you own. Its value in the box is a placeholder; the box's network adds the real key in its place only on requests to the hosts you list. Programs in your box can use the key on those hosts while the box runs, but cannot read it. A write share hands its guests the same use. CocoonBox never shows a key again after you save it.</p>
+    <table><thead><tr><th>Name</th><th>Hosts</th><th>Sent as</th><th>Key</th><th>Created</th><th></th></tr></thead><tbody id="keys"></tbody></table>
+    <h2>Add a key</h2>
+    <form id="add-form">
+      <label>Name <input name="name" required pattern="[A-Z_][A-Z0-9_]{0,63}" placeholder="ATTIO_API_KEY"></label>
+      <label>Hosts <input name="hosts" required placeholder="api.attio.com" size="28"></label>
+      <label>Header <input name="header" placeholder="Authorization"></label>
+      <label>Template <input name="template" placeholder="Bearer {}"></label>
+      <label>or query <input name="query" placeholder="api_key" size="10"></label>
+      <label>Key <input name="value" type="password" autocomplete="off" required></label>
+      <button>Save</button>
+    </form>
+  </section>
+</main>
+</body>
+</html>

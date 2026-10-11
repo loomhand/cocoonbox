@@ -12,6 +12,7 @@
   <h1>cocoonbox</h1>
   <span id="whoami"></span>
   <a href="/cb/connect">Connections</a>
+  <a href="/cb/keys">Keys</a>
   <button id="logout" hidden>Sign out</button>
 </header>
 <main>
@@ -48,14 +49,14 @@
     </form>
 
     <h2>Sharing</h2>
-    <p>A share link shows the box's whole desktop, including the browser's signed-in sites and /workspace, to anyone who holds it, or only to the users you name. Their own agents can connect over MCP: read-only, with files only under /workspace, or acting on the box when you allow write. Box egress uses your model key; a guest's own agent spends the guest's quota.</p>
+    <p>A share link shows the box's whole desktop, including the browser's signed-in sites and /workspace, to anyone who holds it, or only to the users you name. Their own agents can connect over MCP: read-only, with files only under /workspace, or acting on the box when you allow write. Box egress uses your model key; a guest's own agent spends the guest's quota. With write, programs a guest runs in the box can use your <a href="/cb/keys">keys</a> on their hosts, as your own can.</p>
     <table><thead><tr><th>Box</th><th>Who</th><th>Write</th><th>Expires</th><th></th></tr></thead><tbody id="shares"></tbody></table>
     <form id="share-form">
       <label>Box <select name="box"></select></label>
       <label>Expires in <select name="ttl"><option value="86400">24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select></label>
       <label>Only for users <input name="users" placeholder="anyone with the link"></label>
       <label><input type="checkbox" name="write"> Allow write</label>
-      <span id="write-warning" class="warn">Write hands guests every login in the box: browser sessions and agent CLI logins (Claude Code, Codex, Cursor).</span>
+      <span id="write-warning" class="warn">Write hands guests every login in the box: browser sessions, agent CLI logins (Claude Code, Codex, Cursor) and the use of your keys.</span>
       <button>Share</button>
     </form>
     <div id="share-link" hidden>
