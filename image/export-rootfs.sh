@@ -79,6 +79,11 @@ Environment=REQUESTS_CA_BUNDLE=$CA_BUNDLE SSL_CERT_FILE=$CA_BUNDLE NODE_EXTRA_CA
 Environment=GOOGLE_OAUTH_ACCESS_TOKEN=@GOOGLE_CALENDAR@
 EOF
 done
+proxy_env=(http_proxy="$PROXY" https_proxy="$PROXY" HTTP_PROXY="$PROXY" HTTPS_PROXY="$PROXY" no_proxy="$NO_PROXY" NO_PROXY="$NO_PROXY"
+	REQUESTS_CA_BUNDLE="$CA_BUNDLE" SSL_CERT_FILE="$CA_BUNDLE" NODE_EXTRA_CA_CERTS="$CA_BUNDLE" NODE_USE_ENV_PROXY=1)
+install -d "$add/etc/profile.d" "$add/etc/environment.d"
+printf 'export %s\n' "${proxy_env[@]}" > "$add/etc/profile.d/cocoonbox-proxy.sh"
+printf '%s\n' "${proxy_env[@]}" > "$add/etc/environment.d/90-cocoonbox-proxy.conf"
 
 unshare -m bash -euo pipefail -c '
 B=$1; lower=$2; out=$3
