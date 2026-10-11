@@ -16,6 +16,10 @@ public actor Bridge {
     public static let instructions = "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box."
     public static let codexInstructions = "These tools run on the user's cocoonbox cloud desktop (Ubuntu 24.04, XFCE, 1280x800), not on this Mac. GUI work in a desktop app goes to gui_plan; commands go to shell."
     static let codexClient = "codex-mcp-client"
+    // maxInstructions is Claude Code's cap on a server's instructions.
+    public static let maxInstructions = 2048
+    static let keysWait = Duration.milliseconds(1500)
+    public static let keysHead = "Box shells hold the user's API keys as env vars whose values are placeholders; the box's network swaps in the key only on the listed hosts, so send them as shown and never ask for a key:"
 
     private let endpoint: Endpoint
     private let token: String
@@ -428,6 +432,47 @@ public actor Bridge {
     }
 
     private func instructionsText() async -> String {
+        async let keys = listKeys()
+        let text = await boxInstructionsText()
+        return Self.withKeys(text, await keys)
+    }
+
+    // withKeys names as many of the user's keys as fit under maxInstructions after text.
+    public static func withKeys(_ text: String, _ keys: [Cocoonbox_Control_V1_Key]) -> String {
+        let entries = keys.map { "\($0.name) for \($0.hosts.joined(separator: ", ")) as \(sentAs($0))" }
+        for shown in stride(from: entries.count, through: 1, by: -1) {
+            let more = shown < entries.count ? "; \(entries.count - shown) more in `cocoonbox keys ls`" : ""
+            let full = "\(text) \(keysHead) \(entries.prefix(shown).joined(separator: "; "))\(more)."
+            if full.count <= maxInstructions { return full }
+        }
+        return text
+    }
+
+    public static func sentAs(_ key: Cocoonbox_Control_V1_Key) -> String {
+        let variable = "$" + key.name
+        if !key.query.isEmpty { return "query ?\(key.query)=\(variable)" }
+        if key.template.hasPrefix("Basic ") {
+            return "\(key.header): Basic base64(\(key.template.dropFirst(6).replacingOccurrences(of: "{}", with: variable)))"
+        }
+        return "\(key.header): \(key.template.replacingOccurrences(of: "{}", with: variable))"
+    }
+
+    // listKeys reads the user's keys from the api, or none when it does not answer within keysWait.
+    private func listKeys() async -> [Cocoonbox_Control_V1_Key] {
+        guard let connection = try? BoxConnection(endpoint: endpoint, token: token) else { return [] }
+        defer { connection.close() }
+        return await withTaskGroup(of: [Cocoonbox_Control_V1_Key]?.self) { group in
+            group.addTask { try? await connection.listKeys() }
+            group.addTask {
+                try? await Task.sleep(for: Self.keysWait)
+                return nil
+            }
+            defer { group.cancelAll() }
+            return await group.next().flatMap { $0 } ?? []
+        }
+    }
+
+    private func boxInstructionsText() async -> String {
         guard let box = try? await target(nil) else { return Self.instructions }
         let script = { (tools: [[String: Any]]) in tools.contains { $0["name"] as? String == "script_run" } }
         if sessions[box] == nil, ToolCatalog.loadBox(from: cacheFile(box)).map(script) != false, (try? await status(box))?["state"] as? String == "running" {

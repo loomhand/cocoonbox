@@ -35,7 +35,7 @@ let transport = HTTP2ServerTransport.TransportServices(
 )
 let server = GRPCServer(
     transport: transport,
-    services: [BoxesService(world: world), SharesService(world: world), FlowsService(flows: MockFlows()), ConnectorsService(connect: world.connect), AgentsService(world: world), SessionService(world: world, credentials: options["--credentials"] != "0", workspace: options["--workspace"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory)],
+    services: [BoxesService(world: world), SharesService(world: world), FlowsService(flows: MockFlows()), KeysService(keys: MockKeys()), ConnectorsService(connect: world.connect), AgentsService(world: world), SessionService(world: world, credentials: options["--credentials"] != "0", workspace: options["--workspace"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory)],
     interceptors: [AuthCheck(token: token, world: world)]
 )
 try await withThrowingTaskGroup(of: Void.self) { group in

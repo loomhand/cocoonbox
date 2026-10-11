@@ -95,6 +95,46 @@ import Testing
         #expect(again.instructions == Bridge.instructions)
     }
 
+    @Test func theBridgeNamesTheUsersKeysWithinTheInstructionsCap() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        _ = try await mock.connection.addKey(.with {
+            $0.name = "ATTIO_API_KEY"
+            $0.hosts = ["api.attio.com"]
+            $0.value = "synthetic-0123456789"
+        })
+        let client = try await BridgeClient(mock)
+        defer { client.close() }
+        #expect(client.instructions == Bridge.instructions + " " + Bridge.keysHead + " ATTIO_API_KEY for api.attio.com as Authorization: Bearer $ATTIO_API_KEY.")
+
+        let basic = Cocoonbox_Control_V1_Key.with {
+            $0.name = "STRIPE"
+            $0.hosts = ["api.stripe.com"]
+            $0.header = "Authorization"
+            $0.template = "Basic {}:"
+        }
+        let query = Cocoonbox_Control_V1_Key.with {
+            $0.name = "SERP"
+            $0.hosts = ["serpapi.com"]
+            $0.query = "api_key"
+        }
+        #expect(Bridge.sentAs(basic) == "Authorization: Basic base64($STRIPE:)")
+        #expect(Bridge.sentAs(query) == "query ?api_key=$SERP")
+        let many = (0..<32).map { i in
+            Cocoonbox_Control_V1_Key.with {
+                $0.name = "KEY_\(i)"
+                $0.hosts = ["api\(i).example.com"]
+                $0.header = "Authorization"
+                $0.template = "Bearer {}"
+            }
+        }
+        let long = String(repeating: "x", count: 1600)
+        let capped = Bridge.withKeys(long, many)
+        #expect(capped.count <= Bridge.maxInstructions && capped.contains("KEY_0 for") && capped.contains("more in `cocoonbox keys ls`"), "\(capped.count)")
+        #expect(Bridge.withKeys(long, []) == long)
+        #expect(Bridge.withKeys(String(repeating: "x", count: 2040), many) == String(repeating: "x", count: 2040))
+    }
+
     @Test func codexGetsOneLineOnACbplanBoxAndTheBridgeTextOnACbdeskBox() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }

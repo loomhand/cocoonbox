@@ -29,6 +29,16 @@ usage: cocoonbox <command> [options]
   flows export [NAME...] [-o FILE]      write flows (default: all) as JSON to FILE, else stdout
   flows import FILE|- [--json]          add the flows of an export to your library; the last write wins
   flows rm NAME...                      delete flows from your library and from your boxes' unchanged copies
+  keys add NAME --host HOST [--host HOST...] [--header H] [--template T | --query P] [--json]
+                                        store an API key, read from stdin (or a prompt), as env var NAME in
+                                        every box you own: its value there is a placeholder that the box's
+                                        network swaps for the key on requests to HOST only (exact, or *.domain);
+                                        it goes in Authorization as `Bearer {}` unless --header, --template
+                                        (`{}`, `token {}`, `Basic USER:{}`, ...) or --query P say otherwise.
+                                        A write share hands its guests the same use.
+  keys ls [--json]                      list your keys: name, hosts, how each is sent, last 4 characters
+  keys rotate NAME                      replace a key's value, read from stdin (or a prompt)
+  keys rm NAME                          delete a key from every box; revoke it at the vendor too
   mcp [--no-wake]                       serve your boxes to a local agent over stdio MCP
   mcp-headers                           print the Authorization header as JSON (Claude Code headersHelper)
   rsh [--box NAME|ID] [-t] [HOST] COMMAND...
@@ -392,6 +402,98 @@ func flowsCommand() async {
             if !missing.isEmpty { fail("your library has no \(missing.joined(separator: ", "))") }
         default:
             fail(flowsUsage)
+        }
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+// MARK: keys
+
+let keysUsage = "usage: cocoonbox keys [add NAME --host HOST... [--header H] [--template T | --query P] | ls | rotate NAME | rm NAME] [--json]"
+
+// keyOptions splits the words after `keys` into positional words and the values of its flags; --host repeats and takes commas.
+func keyOptions() -> (words: [String], values: [String: [String]]) {
+    let valued: Set = ["--host", "--header", "--template", "--query", "--endpoint"]
+    var words: [String] = []
+    var values: [String: [String]] = [:]
+    var rest = arguments.dropFirst().makeIterator()
+    while let word = rest.next() {
+        if valued.contains(word) {
+            guard let value = rest.next() else { fail("\(word) needs a value") }
+            values[word, default: []] += word == "--host" ? value.split(separator: ",").map(String.init) : [value]
+        } else if !word.hasPrefix("--") {
+            words.append(word)
+        }
+    }
+    return (words, values)
+}
+
+// readKeyValue reads a key's value from stdin, or a prompt on a terminal, and never from the arguments.
+func readKeyValue(_ name: String) -> String {
+    var value: String
+    if isatty(STDIN_FILENO) == 0 {
+        value = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
+        if value.hasSuffix("\n") { value.removeLast() }
+    } else {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        guard let line = readpassphrase("value of \(name): ", &buffer, buffer.count, 0) else { fail("no value read") }
+        value = String(cString: line)
+    }
+    guard !value.isEmpty else { fail("no value read for \(name)") }
+    return value
+}
+
+func keyObject(_ key: Cocoonbox_Control_V1_Key) -> [String: Any] {
+    [
+        "name": key.name, "hosts": key.hosts, "header": key.header, "template": key.template, "query": key.query,
+        "placeholder": key.placeholder, "hint": key.hint, "created_at_ms": key.createdAtMs, "updated_at_ms": key.updatedAtMs,
+    ]
+}
+
+func keyLine(_ key: Cocoonbox_Control_V1_Key) -> String {
+    let sent = key.query.isEmpty ? "\(key.header): \(key.template)" : "?\(key.query)={}"
+    let created = Date(timeIntervalSince1970: Double(key.createdAtMs) / 1000).formatted(.iso8601)
+    return "\(key.name)  \(key.hosts.joined(separator: ","))  \(sent)  \(key.hint.isEmpty ? "-" : "…" + key.hint)  \(created)"
+}
+
+func keysCommand() async {
+    let (words, values) = keyOptions()
+    let verb = words.first ?? "ls"
+    let name = words.dropFirst().first
+    let connection = connection()
+    defer { connection.close() }
+    do {
+        switch verb {
+        case "ls", "list":
+            let keys = try await connection.listKeys()
+            if flags.contains("--json") { return printJSON(["keys": keys.map(keyObject)]) }
+            if keys.isEmpty { return print("no keys") }
+            keys.forEach { print(keyLine($0)) }
+        case "add":
+            guard let name, let hosts = values["--host"] else { fail(keysUsage) }
+            let key = try await connection.addKey(.with {
+                $0.name = name
+                $0.hosts = hosts
+                $0.header = values["--header"]?.last ?? ""
+                $0.template = values["--template"]?.last ?? ""
+                $0.query = values["--query"]?.last ?? ""
+                $0.value = readKeyValue(name)
+            })
+            if flags.contains("--json") { return printJSON(keyObject(key)) }
+            print("added \(keyLine(key))")
+            print("new shells in your boxes see $\(key.name); a write share hands its guests the same use")
+        case "rotate":
+            guard let name else { fail(keysUsage) }
+            let key = try await connection.rotateKey(name: name, value: readKeyValue(name))
+            if flags.contains("--json") { return printJSON(keyObject(key)) }
+            print("rotated \(keyLine(key))")
+        case "rm", "delete":
+            guard let name else { fail(keysUsage) }
+            try await connection.deleteKey(name: name)
+            print("deleted \(name) from every box; revoke it at the vendor too")
+        default:
+            fail(keysUsage)
         }
     } catch {
         fail(BoxConnection.describe(error))
@@ -1035,6 +1137,8 @@ case "box":
     await boxCommand()
 case "flows":
     await flowsCommand()
+case "keys":
+    await keysCommand()
 case "mcp":
     await serve()
 case "mcp-headers":

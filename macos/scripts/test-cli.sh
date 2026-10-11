@@ -6,7 +6,7 @@
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
 # and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm, and box schedule set, list and clear. Nothing touches
+# export, import and rm, box schedule set, list and clear, and keys add, ls, rotate and rm. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -268,6 +268,33 @@ check("box schedule clear", r.returncode == 0 and r.stdout.strip() == "cleared t
 r = run("box", "schedule", "list")
 check("box schedule list after clear", r.returncode == 0 and r.stdout.strip() == "no wake schedules", r.stdout + r.stderr)
 check("box schedule leaves the box hibernated", json.loads(run("status", "--json").stdout)["state"] == "hibernated")
+
+def keys(*args, value=None):
+    return subprocess.run([cli, "keys", *args], input=value, capture_output=True, text=True, timeout=60)
+
+secret = "synthetic-cli-0123456789"
+r = keys("ls")
+check("keys ls without keys", r.returncode == 0 and r.stdout.strip() == "no keys", r.stdout + r.stderr)
+r = keys("add", "ATTIO_API_KEY", "--host", "api.attio.com,*.attio.com", "--json", value=secret + "\n")
+added = json.loads(r.stdout) if r.returncode == 0 else {}
+check("keys add reads the value from stdin and never prints it", added.get("hosts") == ["api.attio.com", "*.attio.com"] and added.get("hint") == "6789" and secret not in r.stdout + r.stderr, r.stdout + r.stderr)
+r = keys("add", "ATTIO_API_KEY", "--host", "api.attio.com", value=secret)
+check("keys add of a taken name fails with the api's reason", r.returncode == 1 and "already named" in r.stderr, r.stderr)
+r = keys("add", "SERP", "--query", "api_key", value=secret)
+check("keys add without --host prints the usage", r.returncode == 1 and "usage: cocoonbox keys" in r.stderr, r.stderr)
+r = keys("add", "SERP", "--host", "serpapi.com", "--query", "api_key", value="\n")
+check("keys add refuses an empty value", r.returncode == 1 and "no value read" in r.stderr, r.stderr)
+r = keys("add", "SERP", "--host", "serpapi.com", "--query", "api_key", value="serp-synthetic-abcdefgh")
+check("keys add sends a query key", r.returncode == 0 and "?api_key={}" in r.stdout and "efgh" in r.stdout, r.stdout + r.stderr)
+r = keys("ls")
+check("keys ls shows names, hosts, send-as and the last 4", r.returncode == 0 and "ATTIO_API_KEY  api.attio.com,*.attio.com  Authorization: Bearer {}  \u20266789" in r.stdout and secret not in r.stdout, r.stdout + r.stderr)
+r = keys("rotate", "ATTIO_API_KEY", value="synthetic-rotated-wxyz")
+check("keys rotate takes the new value from stdin", r.returncode == 0 and "\u2026wxyz" in r.stdout, r.stdout + r.stderr)
+r = keys("rm", "ATTIO_API_KEY")
+check("keys rm", r.returncode == 0 and "revoke it at the vendor too" in r.stdout, r.stdout + r.stderr)
+r = keys("rm", "ATTIO_API_KEY")
+check("keys rm of a missing key fails", r.returncode == 1 and "NotFound" in r.stderr.replace("notFound", "NotFound"), r.stderr)
+check("keys rm SERP", keys("rm", "SERP").returncode == 0)
 
 headers = run("mcp-headers")
 check("mcp-headers prints the Authorization header", json.loads(headers.stdout) == {"Authorization": "Bearer mock-token"}, headers.stdout)

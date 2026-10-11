@@ -8,6 +8,7 @@ typealias BoxesClient = Cocoonbox_Control_V1_Boxes.Client<BoxTransport>
 typealias SharesClient = Cocoonbox_Control_V1_Shares.Client<BoxTransport>
 typealias FlowsClient = Cocoonbox_Control_V1_Flows.Client<BoxTransport>
 typealias ConnectorsClient = Cocoonbox_Control_V1_Connectors.Client<BoxTransport>
+typealias KeysClient = Cocoonbox_Control_V1_Keys.Client<BoxTransport>
 typealias AgentsClient = Cocoonbox_Agent_V1_Agents.Client<BoxTransport>
 typealias SessionClient = Cocoonbox_Agent_V1_Session.Client<BoxTransport>
 
@@ -20,6 +21,7 @@ public final class BoxConnection: Sendable {
     let shares: SharesClient
     let flows: FlowsClient
     let connectors: ConnectorsClient
+    let keys: KeysClient
     let agents: AgentsClient
     let session: SessionClient
 
@@ -51,6 +53,7 @@ public final class BoxConnection: Sendable {
         self.shares = SharesClient(wrapping: client)
         self.flows = FlowsClient(wrapping: client)
         self.connectors = ConnectorsClient(wrapping: client)
+        self.keys = KeysClient(wrapping: client)
         self.agents = AgentsClient(wrapping: client)
         self.session = SessionClient(wrapping: client)
         self.runner = Task { try? await client.runConnections() }
@@ -258,6 +261,27 @@ public final class BoxConnection: Sendable {
 
     public func deleteFlows(names: [String]) async throws -> [String] {
         try await flows.delete(.with { $0.names = names }).deleted
+    }
+
+    // MARK: Keys
+
+    public func addKey(_ request: Cocoonbox_Control_V1_AddKeyRequest) async throws -> Cocoonbox_Control_V1_Key {
+        try await keys.add(request)
+    }
+
+    public func listKeys() async throws -> [Cocoonbox_Control_V1_Key] {
+        try await keys.list(Cocoonbox_Control_V1_ListKeysRequest()).keys
+    }
+
+    public func rotateKey(name: String, value: String) async throws -> Cocoonbox_Control_V1_Key {
+        try await keys.rotate(.with {
+            $0.name = name
+            $0.value = value
+        })
+    }
+
+    public func deleteKey(name: String) async throws {
+        _ = try await keys.delete(.with { $0.name = name })
     }
 
     // MARK: Connectors
