@@ -272,9 +272,9 @@ import Testing
         #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
         let waited = ContinuousClock.now - started
         #expect(waited > .seconds(2) && waited < .seconds(10))
-        let again = ContinuousClock.now
-        #expect(try await client.tools().count == Self.plain.count)
-        #expect(ContinuousClock.now - again < .seconds(2))
+        let answers = try await client.answers(["tools/list", "ping"])
+        #expect(((answers[0].answer["result"] as? [String: Any])?["tools"] as? [Any])?.count == Self.plain.count)
+        #expect(answers[0].at - answers[1].at < .seconds(2), "the second list waits on the door")
         let status = try await client.tool("box_status")
         #expect((status["structuredContent"] as? [String: Any])?["state"] as? String == "hibernated")
     }
@@ -480,6 +480,20 @@ final class BridgeClient: Sendable {
             return answer != nil
         }
         return try #require(answer, "no answer to \(method)")
+    }
+
+    func answers(_ methods: [String]) async throws -> [(answer: [String: Any], at: ContinuousClock.Instant)] {
+        let ids = methods.map { _ in next.withLock { id in defer { id += 1 }; return id } }
+        let batch = try zip(ids, methods).map { try JSONSerialization.data(withJSONObject: ["jsonrpc": "2.0", "id": $0, "method": $1, "params": [:] as [String: Any]]) + Data("\n".utf8) }
+        input.fileHandleForWriting.write(Data(batch.joined()))
+        var arrived: [Int: (answer: [String: Any], at: ContinuousClock.Instant)] = [:]
+        _ = await until(seconds: 15) {
+            for message in messages() {
+                if let id = message["id"] as? Int, ids.contains(id), arrived[id] == nil { arrived[id] = (message, .now) }
+            }
+            return arrived.count == ids.count
+        }
+        return try ids.map { try #require(arrived[$0], "no answer to \(methods)") }
     }
 
     func close() {
