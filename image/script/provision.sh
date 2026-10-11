@@ -10,9 +10,9 @@ CLI_VERSION=6.0.0
 CLI_SHA256=2d1cb26121149772f77dfb8d1a1542c869bda7314aaf87fe23f994d420847db4
 CLI_URL="https://registry.npmjs.org/@vendor/script/-/script-${CLI_VERSION}.tgz"
 # private release asset built by build-native.sh from script-js-cmgs; cut.sh brings it in as vendor/, since the cut host holds no token
-JS_RELEASE=v14.0.0-cmgs.3
-JS_SHA256=cc097f97aeb274f67254eee18ca4c1424a4a930c3370a6473923fff597e9a72a
-JS_ARTIFACT=script-js-3b2fadc-linux-x64.tgz
+JS_RELEASE=v14.0.0-cmgs.4
+JS_SHA256=14bfeef65795e67305d6c4d3984a9dc79d12758ffc27c1b9ddb0a543153ea221
+JS_ARTIFACT=script-js-1094007-linux-x64.tgz
 JS_URL="https://github.com/vendor/script-js-cmgs/releases/download/${JS_RELEASE}/${JS_ARTIFACT}"
 # CMGS/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh brings it in as vendor/
 CUA_VERSION=0.34.0-cmgs.6
