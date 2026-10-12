@@ -15,6 +15,7 @@ pub mod state;
 pub mod timing;
 pub mod volatile;
 pub mod xshm;
+pub mod xtest;
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;

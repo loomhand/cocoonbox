@@ -322,7 +322,7 @@ async fn type_text(cua: &Cua, text: &str) -> Result<String, String> {
         }
         let line = line.trim_end_matches('\r');
         if !line.is_empty() {
-            cua.desk_input("type_text", json!({"text": line})).await?;
+            cua.desk_type(line).await?;
         }
     }
     Ok(json!({"ok": true, "chars": text.chars().count()}).to_string())
