@@ -1,0 +1,91 @@
+#!/bin/bash
+# Adds the cbcore family's desk runtime and its own cua-driver to a provisioned desktop guest; idempotent.
+# Runs as root inside the guest from an unpacked copy of image/desk (see cut.sh -f cbcore).
+set -euo pipefail
+
+# CMGS/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh brings it in as vendor/
+CUA_VERSION=0.34.0-cmgs.6
+CUA_SHA256=553a7cac7906a293f9ca6ebcf614bd7bc4d153de115f2fead68c7ee5fbf8907b
+CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
+NODE_VERSION=24.21.0
+ROOT=/opt/desk
+ENV_FILE=/etc/cocoonbox/desk.env
+AGENT_ENV=/etc/cocoonbox/agent.env
+
+SRC="$(cd "$(dirname "$0")" && pwd)"
+
+log() { printf '[desk] %s\n' "$*"; }
+
+install_cua_driver() {
+	log "cua-driver $CUA_VERSION"
+	local dir=/opt/cua-driver/$CUA_VERSION tarball="$SRC/vendor/$CUA_TARBALL"
+	if [ ! -x "$dir/cua-driver" ]; then
+		[ -f "$tarball" ] || { echo "missing $tarball: build it with image/cua-driver.sh image/desk/vendor" >&2; exit 1; }
+		echo "$CUA_SHA256  $tarball" | sha256sum -c --quiet -
+		install -d "$dir"
+		tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
+	fi
+	ln -sfn "$dir/cua-driver" /usr/local/bin/cua-driver
+	find /opt/cua-driver -mindepth 1 -maxdepth 1 ! -name "$CUA_VERSION" -exec rm -rf {} +
+	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
+	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
+	systemctl --user -M user@ restart cua-driver.service
+}
+
+install_rootfs() {
+	log "rootfs files"
+	(cd "$SRC/rootfs" && find . -type f) | while read -r f; do
+		case "$f" in
+		./usr/local/bin/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
+		*) install -D -m 0644 "$SRC/rootfs/$f" "/${f#./}" ;;
+		esac
+	done
+	sed -i -e "/^<!-- routing -->\$/{r $SRC/routing.md" -e 'd}' "$ROOT/AGENTS.md"
+}
+
+# the gw endpoint of the agent's contract, for the plan executor and scripts that run as user
+write_env() {
+	log "gw endpoint"
+	grep '^GW_BASE_URL=' "$AGENT_ENV" >"$ENV_FILE.tmp"
+	chmod 0644 "$ENV_FILE.tmp"
+	mv -f "$ENV_FILE.tmp" "$ENV_FILE"
+}
+
+apt_sources() {
+	log "apt sources"
+	apt-get update -q >/dev/null
+}
+
+route_chrome() {
+	log "chrome launchers"
+	install -d /usr/local/share/applications
+	for f in google-chrome com.google.Chrome; do
+		sed 's|/usr/bin/google-chrome-stable|/usr/local/bin/cocoonbox-chrome|' "/usr/share/applications/$f.desktop" >"/usr/local/share/applications/$f.desktop"
+	done
+	update-alternatives --install /usr/bin/x-www-browser x-www-browser /usr/local/bin/cocoonbox-chrome 250 >/dev/null
+}
+
+check() {
+	[ "$(readlink -f /usr/local/bin/node)" = "/opt/node/$NODE_VERSION/bin/node" ]
+	runuser -u user -- /usr/local/bin/node -e "import('$ROOT/lib/desk.mts').then((d) => { if (typeof d.snapshot !== 'function') process.exit(1) })"
+	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
+	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
+	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
+	grep -q '^GW_BASE_URL=http' "$ENV_FILE"
+	[ "$(stat -c %a "$ENV_FILE")" = 644 ]
+	[ -x /usr/local/bin/desk ]
+	[ "$(readlink -f /usr/local/bin/cua-driver)" = "/opt/cua-driver/$CUA_VERSION/cua-driver" ]
+	[ "$(readlink -f /usr/bin/x-www-browser)" = /usr/local/bin/cocoonbox-chrome ]
+	for f in google-chrome com.google.Chrome; do grep -qx 'Exec=/usr/local/bin/cocoonbox-chrome %U' "/usr/local/share/applications/$f.desktop"; done
+	grep -qx 'URIs: mirror+file:/etc/apt/cocoonbox-ubuntu.mirrors' /etc/apt/sources.list.d/ubuntu.sources
+	[ -s /var/lib/apt/lists/_etc_apt_cocoonbox-ubuntu.mirrors_dists_noble_InRelease ]
+	[ -s /var/lib/apt/lists/_etc_apt_cocoonbox-ubuntu-security.mirrors_dists_noble-security_InRelease ]
+}
+
+install_cua_driver
+install_rootfs
+write_env
+apt_sources
+route_chrome
+check
+log "done"

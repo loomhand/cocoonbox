@@ -62,7 +62,7 @@ install_cua_driver() {
 	log "cua-driver $CUA_VERSION"
 	local dir=/opt/cua-driver/$CUA_VERSION tarball="$SRC/vendor/$CUA_TARBALL"
 	if [ ! -x "$dir/cua-driver" ]; then
-		[ -f "$tarball" ] || { echo "missing $tarball: build it with image/script/cua-driver.sh image/script/vendor" >&2; exit 1; }
+		[ -f "$tarball" ] || { echo "missing $tarball: build it with image/cua-driver.sh image/script/vendor" >&2; exit 1; }
 		echo "$CUA_SHA256  $tarball" | sha256sum -c --quiet -
 		install -d "$dir"
 		tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner

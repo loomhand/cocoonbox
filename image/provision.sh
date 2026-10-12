@@ -3,7 +3,7 @@
 # Runs as root inside the guest from an unpacked copy of image/ (see cut.sh -p).
 set -euo pipefail
 
-# CMGS/cua cmgs/x11-typing, built by script/cua-driver.sh; cut.sh -p brings it in as vendor/
+# CMGS/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh -p brings it in as vendor/
 CUA_COMMIT=275de4cecfce355aafdbc3de8223930a04c1270c
 CUA_VERSION=0.34.0-cmgs.5
 CUA_SHA256=333c5462fd360c59112469e5714373e08cbc8b9184776afa16f744dfdd2f0823
@@ -112,7 +112,7 @@ setup_cua_driver() {
 	log "cua-driver $CUA_VERSION"
 	local dir=/opt/cua-driver/$CUA_VERSION tarball="$SRC/vendor/$CUA_TARBALL"
 	if [ ! -x "$dir/cua-driver" ]; then
-		[ -f "$tarball" ] || { echo "missing $tarball: build it with COMMIT=$CUA_COMMIT VERSION=$CUA_VERSION image/script/cua-driver.sh image/vendor" >&2; exit 1; }
+		[ -f "$tarball" ] || { echo "missing $tarball: build it with COMMIT=$CUA_COMMIT VERSION=$CUA_VERSION image/cua-driver.sh image/vendor" >&2; exit 1; }
 		echo "$CUA_SHA256  $tarball" | sha256sum -c --quiet -
 		install -d "$dir"
 		tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Cuts desktop template <family>:<vN> on the cbsbx cocoon root: boot <base template>, provision, seal, stop, export, import.
-# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f cbdesk|cbplan] <base template> <vN>
-#   -p reruns provision.sh; -f cbplan adds the Script runtime of image/script; every step goes to ~/ops-audit.md
+# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f cbdesk|cbplan|cbcore] <base template> <vN>
+#   -p reruns provision.sh; -f cbplan adds the Script runtime of image/script, -f cbcore the desk runtime of image/desk
+#   and checks the guest with image/clean-gate.sh after the agent step; every step goes to ~/ops-audit.md
 set -Eeuo pipefail
 export LC_ALL=C
 
@@ -28,6 +29,7 @@ AUDIT=${AUDIT:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/ops-audit.md}
 case $FAMILY in
 cbdesk) VM=cbcut-$V TARBALL=$S/build/cocoonbox-desktop-$V.tar.gz ;;
 cbplan) VM=cbcut-cbplan-$V TARBALL=$S/build/cocoonbox-cbplan-$V.tar.gz ;;
+cbcore) VM=cbcut-cbcore-$V TARBALL=$S/build/cocoonbox-cbcore-$V.tar.gz RUNTIME=desk ;;
 *) echo "unknown family $FAMILY" >&2; exit 2 ;;
 esac
 TEMPLATE=$FAMILY:$V
@@ -67,7 +69,7 @@ step "boot $BASE as $VM"
 for _ in $(seq 180); do active && break; sleep 1; done
 active
 
-if [ "$PROVISION" = 1 ] || [ "$FAMILY" = cbplan ]; then
+if [ "$PROVISION" = 1 ] || [ "$FAMILY" != cbdesk ]; then
 	VSOCK=$("$COCOON" vm inspect "$VM" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d[0] if isinstance(d,list) else d)["vsock_socket"])')
 	python3 "$SRC/cut-proxy.py" "${VSOCK}_$EGRESS_PORT" &
 	PROXY_PID=$!
@@ -78,10 +80,11 @@ if [ "$PROVISION" = 1 ]; then
 	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/provision.sh
 	guest "$VM" -- rm -rf /tmp/cb-image
 fi
-if [ "$FAMILY" = cbplan ]; then
-	step "script"
-	tar -C "$SRC" -cf - script | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
-	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/script/provision.sh
+if [ "$FAMILY" != cbdesk ]; then
+	R=${RUNTIME:-script}
+	step "$R"
+	tar -C "$SRC" -cf - "$R" | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
+	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash "/tmp/cb-image/$R/provision.sh"
 	guest "$VM" -- rm -rf /tmp/cb-image
 fi
 stop_proxy
@@ -89,6 +92,11 @@ if [ -n "$AGENT" ]; then
 	step "agent $(sha256sum "$AGENT" | cut -c1-16)"
 	guest -i "$VM" -- sh -c 'cat > /tmp/cocoonbox-agent' < "$AGENT"
 	guest "$VM" -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/cocoonbox-agent && rm /tmp/cocoonbox-agent && systemctl enable --now cocoonbox-toolhost cocoonbox-agent'
+fi
+
+if [ "$FAMILY" = cbcore ]; then
+	step "clean gate"
+	guest -i "$VM" -- bash -s < "$SRC/clean-gate.sh"
 fi
 
 step "seal"

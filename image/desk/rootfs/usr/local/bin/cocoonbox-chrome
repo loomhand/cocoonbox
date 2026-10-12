@@ -1,0 +1,7 @@
+#!/bin/sh
+# runs Chrome as the toolhost does, on its profile and CDP port, so the browser tools see every window the desktop opens
+export LANG=en_US.UTF-8 LANGUAGE=en_US
+exec /usr/bin/google-chrome-stable --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 \
+	--user-data-dir="$HOME/.config/cocoonbox-chrome" --force-renderer-accessibility --no-first-run \
+	--no-default-browser-check --disable-session-crashed-bubble --hide-crash-restore-bubble \
+	--password-store=basic --start-maximized --restore-last-session "$@"

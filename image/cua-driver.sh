@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds a cua-driver tarball from CMGS/cua the way upstream's cd-rust-cua-driver.yml builds its linux-x86_64 release:
 # debian:11 with the same apt snapshot, rust 1.97.1, the same cargo command and GitHub container paths, here in a chroot.
-# usage: sudo [COMMIT=<sha> VERSION=<name>] image/script/cua-driver.sh <out dir>; the defaults build cbplan's pin, COMMIT=275de4cecfce355aafdbc3de8223930a04c1270c
+# usage: sudo [COMMIT=<sha> VERSION=<name>] image/cua-driver.sh <out dir>; the defaults build the pin of cbplan and cbcore, COMMIT=275de4cecfce355aafdbc3de8223930a04c1270c
 # VERSION=0.34.0-cmgs.5 cbdesk's, and COMMIT=<sha of tag cua-driver-rs-v0.34.0> rebuilds the upstream binary byte for byte.
 set -euo pipefail
 export LC_ALL=C
