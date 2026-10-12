@@ -502,13 +502,13 @@ public actor Bridge {
 
     private func boxInstructionsText() async -> String {
         guard let box = try? await target(nil) else { return Self.instructions }
-        let script = { (tools: [[String: Any]]) in tools.contains { $0["name"] as? String == "script_run" } }
+        let plans = { (tools: [[String: Any]]) in tools.contains { ["script_run", "script_run"].contains($0["name"] as? String) } }
         if sessions[box] == nil, let entry = await entry(box), entry["state"] as? String == "running",
            (try? String(contentsOf: cacheFile(box, "image"), encoding: .utf8)) != entry["image"] as? String {
             _ = try? await readyBox(box, progress: nil, running: true)
         }
         let own = boxInstructions[box] ?? (try? String(contentsOf: cacheFile(box, "instructions.txt"), encoding: .utf8)) ?? ""
-        guard script(toolsOf(box)), !own.isEmpty else { return Self.instructions }
+        guard plans(toolsOf(box)), !own.isEmpty else { return Self.instructions }
         if (client["clientInfo"] as? [String: Any])?["name"] as? String == Self.codexClient { return Self.codexInstructions }
         return "\(Self.instructions) The default box's own instructions follow. \(own)"
     }
