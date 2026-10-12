@@ -1,0 +1,9 @@
+[Unit]
+Description=Shrink the cocoonbox apt cache to 16 GiB
+RequiresMountsFor=/srv/cb/apt-cache
+
+[Service]
+Type=oneshot
+User=apt-cacher-ng
+Group=apt-cacher-ng
+ExecStart=/usr/lib/apt-cacher-ng/acngtool shrink 16G -f -c /etc/cocoonbox/apt-cache

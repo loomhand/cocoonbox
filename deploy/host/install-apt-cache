@@ -1,0 +1,42 @@
+#!/bin/bash
+# Installs and starts cb-apt-cache (apt-cacher-ng on 10.203.0.1:3142, cache /srv/cb/apt-cache under XFS project quota cbapt); idempotent.
+# The package's own apt-cacher-ng.service would listen on every address, so it never starts: policy-rc.d holds it during the install, then it is masked.
+# usage: sudo deploy/host/install-apt-cache
+set -euo pipefail
+export LC_ALL=C
+
+DIR=/srv/cb/apt-cache
+CONF=/etc/cocoonbox/apt-cache
+QUOTA_ID=45
+QUOTA=20g
+POLICY=/usr/sbin/policy-rc.d
+SRC="$(cd "$(dirname "$0")" && pwd)"
+
+if ! dpkg-query -W -f='${db:Status-Status}' apt-cacher-ng 2>/dev/null | grep -qx installed; then
+	[ ! -e "$POLICY" ] || { echo "$POLICY exists; refusing to replace it" >&2; exit 1; }
+	printf '#!/bin/sh\nexit 101\n' > "$POLICY"
+	chmod 0755 "$POLICY"
+	trap 'rm -f "$POLICY"' EXIT
+	DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends apt-cacher-ng
+	rm -f "$POLICY"
+	trap - EXIT
+fi
+systemctl disable --now apt-cacher-ng.service 2>/dev/null || true
+systemctl mask apt-cacher-ng.service
+grep -qx 'NO_CRON_RUN=1' /etc/default/apt-cacher-ng || echo 'NO_CRON_RUN=1' >> /etc/default/apt-cacher-ng
+
+install -d -o apt-cacher-ng -g apt-cacher-ng -m 0750 "$DIR"
+grep -q "^$QUOTA_ID:$DIR\$" /etc/projects 2>/dev/null || echo "$QUOTA_ID:$DIR" >> /etc/projects
+grep -q "^cbapt:$QUOTA_ID\$" /etc/projid 2>/dev/null || echo "cbapt:$QUOTA_ID" >> /etc/projid
+xfs_quota -x -c "project -s cbapt" /srv/cb >/dev/null
+xfs_quota -x -c "limit -p bhard=$QUOTA cbapt" /srv/cb
+
+install -d -m 0755 "$CONF"
+install -m 0644 "$SRC/cb-apt-cache.conf" "$CONF/acng.conf"
+install -m 0644 "$SRC/cb-apt-cache.service" "$SRC/cb-apt-cache-shrink.service" "$SRC/cb-apt-cache-shrink.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable cb-apt-cache.service cb-apt-cache-shrink.timer
+systemctl restart cb-apt-cache.service
+systemctl start cb-apt-cache-shrink.timer
+for _ in $(seq 1 20); do curl -fsS -o /dev/null http://10.203.0.1:3142/ubuntu/dists/noble/InRelease && break; sleep 0.5; done
+curl -fsS -o /dev/null -w 'cb-apt-cache: InRelease %{http_code}\n' http://10.203.0.1:3142/ubuntu/dists/noble/InRelease

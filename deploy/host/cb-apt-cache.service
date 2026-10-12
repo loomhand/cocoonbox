@@ -1,0 +1,26 @@
+[Unit]
+Description=cocoonbox apt cache for box package replay (apt-cacher-ng, 10.203.0.1:3142)
+Requires=cb-host-net.service
+After=cb-host-net.service network-online.target
+Wants=network-online.target
+RequiresMountsFor=/srv/cb/apt-cache
+
+[Service]
+Type=simple
+User=apt-cacher-ng
+Group=apt-cacher-ng
+ExecStart=/usr/sbin/apt-cacher-ng -c /etc/cocoonbox/apt-cache
+RuntimeDirectory=cb-apt-cache
+LogsDirectory=cb-apt-cache
+Restart=always
+RestartSec=2s
+LimitNOFILE=65536
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/srv/cb/apt-cache
+
+[Install]
+WantedBy=multi-user.target
