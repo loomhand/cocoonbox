@@ -795,6 +795,63 @@ func TestAnAnswerReachesTheBoxDoorStreamsOnly(t *testing.T) {
 	}
 }
 
+func TestABoxDoorStreamReplaysTheAnswersNotYetUsed(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, DoorBox))
+	t.Cleanup(srv.Close)
+	ctx := auth.WithUser(t.Context(), alice)
+	ask := func(args string, decision controlv1.ApprovalDecision) string {
+		out, _ := call(t.Context(), env.svc, modeA, createItem, jsontext.Value(args), "")
+		id := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+		if decision != controlv1.ApprovalDecision_APPROVAL_DECISION_UNSPECIFIED {
+			if _, err := env.svc.Approve(ctx, &controlv1.ApproveRequest{ApprovalId: id, Decision: decision}); err != nil {
+				t.Fatalf("Approve: %v", err)
+			}
+		}
+		return id
+	}
+	approved := ask(`{"title":"a"}`, controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE)
+	denied := ask(`{"title":"b"}`, controlv1.ApprovalDecision_APPROVAL_DECISION_DENY)
+	unanswered := ask(`{"title":"c"}`, controlv1.ApprovalDecision_APPROVAL_DECISION_UNSPECIFIED)
+	used := ask(`{"title":"d"}`, controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE)
+	if out, err := call(t.Context(), env.svc, modeA, createItem, jsontext.Value(`{"title":"d"}`), used); err != nil || out.IsError {
+		t.Fatalf("approved call = %+v, %v", out, err)
+	}
+	expired := ask(`{"title":"e"}`, controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE)
+	env.exec(t, "UPDATE connect_approvals SET expires_at = now() - interval '1 second' WHERE id = $1", expired)
+	streamCtx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	streamReq, _ := http.NewRequestWithContext(streamCtx, http.MethodGet, srv.URL, nil)
+	streamReq.Header.Set("Authorization", "Bearer alice")
+	streamReq.Header.Set("Accept", "text/event-stream")
+	stream, err := http.DefaultClient.Do(streamReq)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	defer func() { _ = stream.Body.Close() }()
+	var got strings.Builder
+	buf := make([]byte, 1024)
+	for !strings.Contains(got.String(), denied) {
+		n, err := stream.Body.Read(buf)
+		got.Write(buf[:n])
+		if err != nil {
+			break
+		}
+	}
+	for id, decision := range map[string]string{approved: "once", denied: "deny"} {
+		want := `"params":{"approval_id":"` + id + `","decision":"` + decision + `"}`
+		if !strings.Contains(got.String(), want) {
+			t.Errorf("box stream = %q, want %q", got.String(), want)
+		}
+	}
+	for _, id := range []string{unanswered, used, expired} {
+		if strings.Contains(got.String(), id) {
+			t.Errorf("box stream replayed %s: %q", id, got.String())
+		}
+	}
+}
+
 func TestBoxDoorTakesOnlyTheCurrentKeyOfAMachine(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)

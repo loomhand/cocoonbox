@@ -59,6 +59,7 @@ type approval struct {
 	tool       string
 	argsSHA256 string
 	summary    string
+	decision   string
 	expiresAt  time.Time
 }
 
@@ -295,6 +296,19 @@ func (s *store) pending(ctx context.Context, user string) ([]*approval, error) {
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (*approval, error) {
 		a := &approval{user: user}
 		err := row.Scan(&a.id, &a.grantID, &a.connector, &a.tool, &a.summary, &a.expiresAt)
+		return a, err
+	})
+}
+
+func (s *store) answered(ctx context.Context, user string) ([]*approval, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, decision FROM connect_approvals
+		WHERE user_id = $1 AND decision <> 'pending' AND used_at IS NULL AND expires_at > now() ORDER BY expires_at`, user)
+	if err != nil {
+		return nil, fmt.Errorf("list answered approvals: %w", err)
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (*approval, error) {
+		a := &approval{user: user}
+		err := row.Scan(&a.id, &a.decision)
 		return a, err
 	})
 }

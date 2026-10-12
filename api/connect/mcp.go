@@ -215,9 +215,23 @@ func (d *Door) client(id string) string {
 func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 	watch, stop := d.svc.watchers.add(user, d.door == DoorBox)
 	defer stop()
+	var replay []*approval
+	if d.door == DoorBox {
+		var err error
+		if replay, err = d.svc.store.answered(r.Context(), user); err != nil {
+			log.WithFunc("connect.Door.stream").Errorf(r.Context(), err, "list the answered approvals of %s", user)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+	}
 	w.Header().Set("Content-Type", eventStreamMedia)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
+	for _, a := range replay {
+		if _, err := w.Write(approvalAnswered(a.id, a.decision)); err != nil {
+			return
+		}
+	}
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
 	tick := time.Tick(keepalive)

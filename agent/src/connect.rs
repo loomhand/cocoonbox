@@ -26,6 +26,7 @@ const EVENT_STREAM: &str = "text/event-stream";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CALL_TIMEOUT: Duration = Duration::from_secs(150);
 const RETRY: Duration = Duration::from_secs(30);
+const RETRY_MIN: Duration = Duration::from_secs(1);
 const MAX_PAGES: usize = 20;
 
 /// What a connector call came back with.
@@ -73,15 +74,26 @@ impl Client {
         let client = Arc::clone(self);
         // detached: ends with stop
         tokio::spawn(async move {
+            let mut delay = RETRY_MIN;
             loop {
-                if let Err(e) = client.follow(&answered).await {
-                    eprintln!("connect: list_changed stream: {e}");
+                let start = Instant::now();
+                match client.open().await {
+                    Ok(resp) => {
+                        delay = RETRY_MIN;
+                        let e = client.follow(resp, &answered).await;
+                        eprintln!("connect: list_changed stream: {e}");
+                    }
+                    Err(e) => eprintln!("connect: list_changed stream: {e}"),
                 }
                 client.state().stale = true;
+                if start.elapsed() >= RETRY {
+                    delay = RETRY_MIN;
+                }
                 tokio::select! {
                     () = stop.cancelled() => return,
-                    () = tokio::time::sleep(RETRY) => {}
+                    () = tokio::time::sleep(delay) => {}
                 }
+                delay = (delay * 2).min(RETRY);
             }
         });
     }
@@ -230,8 +242,7 @@ impl Client {
             .map_err(|e| format!("reach {}: {e}", self.url))
     }
 
-    /// Reads the door's event stream, marking the tools stale on each `list_changed` and passing on each answer.
-    async fn follow(&self, answered: &impl Fn(&str, bool)) -> Result<(), String> {
+    async fn open(&self) -> Result<reqwest::Response, String> {
         let session = self.session().await?;
         let resp = self
             .http
@@ -248,10 +259,18 @@ impl Client {
             return Err(format!("the door answered {}", resp.status()));
         }
         self.state().stale = true;
+        Ok(resp)
+    }
+
+    /// Reads the door's event stream, marking the tools stale on each `list_changed` and passing on each answer.
+    async fn follow(&self, resp: reqwest::Response, answered: &impl Fn(&str, bool)) -> String {
         let mut body = resp.bytes_stream();
         let mut line = Vec::new();
         while let Some(chunk) = body.next().await {
-            let chunk: Bytes = chunk.map_err(|e| format!("read: {e}"))?;
+            let chunk: Bytes = match chunk {
+                Ok(c) => c,
+                Err(e) => return format!("read: {e}"),
+            };
             for b in chunk {
                 if b != b'\n' {
                     line.push(b);
@@ -268,7 +287,7 @@ impl Client {
                 line.clear();
             }
         }
-        Err("the stream ended".to_owned())
+        "the stream ended".to_owned()
     }
 
     fn forget(&self, session: &str) {

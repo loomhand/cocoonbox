@@ -451,16 +451,25 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
 }
 
 /// The Connect box door: a read tool, a write tool the broker holds for approval, a tool named like a box tool, and
-/// its event stream, which carries each message sent on `events`; a `list_changed` also adds a tool.
-async fn mock_door(log: Log, events: tokio::sync::broadcast::Sender<String>) -> String {
+/// its event stream, which carries each message sent on `events`, ends on `close` and refuses its first `refused` readers; a `list_changed` also adds a tool.
+async fn mock_door(
+    log: Log,
+    events: tokio::sync::broadcast::Sender<String>,
+    refused: usize,
+) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let added = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let readers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
-            let (log, mut events, added) =
-                (Arc::clone(&log), events.subscribe(), Arc::clone(&added));
+            let (log, mut events, added, readers) = (
+                Arc::clone(&log),
+                events.subscribe(),
+                Arc::clone(&added),
+                Arc::clone(&readers),
+            );
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
                 let mut line = String::new();
@@ -483,6 +492,15 @@ async fn mock_door(log: Log, events: tokio::sync::broadcast::Sender<String>) -> 
                 let mut body = vec![0u8; len];
                 reader.read_exact(&mut body).await.unwrap();
                 let mut stream = reader.into_inner();
+                if line.starts_with("GET")
+                    && readers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < refused
+                {
+                    stream
+                        .write_all(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                        .await
+                        .unwrap();
+                    return;
+                }
                 if line.starts_with("GET") {
                     log.lock()
                         .unwrap()
@@ -492,6 +510,9 @@ async fn mock_door(log: Log, events: tokio::sync::broadcast::Sender<String>) -> 
                         .await
                         .unwrap();
                     while let Ok(msg) = events.recv().await {
+                        if msg == "close" {
+                            return;
+                        }
                         if msg.contains("list_changed") {
                             added.store(true, std::sync::atomic::Ordering::SeqCst);
                         }
@@ -1861,7 +1882,7 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
 async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let door_log = Log::default();
     let (events, _) = tokio::sync::broadcast::channel(8);
-    let door = mock_door(Arc::clone(&door_log), events.clone()).await;
+    let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
     let h = Harness::with_connect(
         vec![
             (
@@ -1997,10 +2018,36 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
 }
 
 #[tokio::test]
+async fn an_ended_door_stream_is_followed_again_within_a_second_each_time() {
+    let door_log = Log::default();
+    let (events, _) = tokio::sync::broadcast::channel(8);
+    let door = mock_door(Arc::clone(&door_log), events.clone(), 0).await;
+    let _h = Harness::with_connect(vec![], door).await;
+    for readers in 1..=4 {
+        let since = tokio::time::Instant::now();
+        while door_log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == "GET")
+            .count()
+            < readers
+        {
+            assert!(
+                since.elapsed() < Duration::from_millis(2500),
+                "reader {readers} did not come within 2.5 s"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        events.send("close".to_owned()).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_door() {
     let door_log = Log::default();
     let (events, _) = tokio::sync::broadcast::channel(8);
-    let door = mock_door(Arc::clone(&door_log), events.clone()).await;
+    let door = mock_door(Arc::clone(&door_log), events.clone(), 1).await;
     let h = Harness::with_connect(
         vec![
             (
@@ -2016,10 +2063,12 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "make x", "").await;
     let asked = connector_approval(&mut agents, &agent_id, 0).await;
-    for _ in 0..200 {
-        if door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
-            break;
-        }
+    let refused_at = tokio::time::Instant::now();
+    while !door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
+        assert!(
+            refused_at.elapsed() < Duration::from_secs(5),
+            "no reader came back after the refused one"
+        );
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     events
