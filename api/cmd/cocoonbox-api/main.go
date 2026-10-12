@@ -41,7 +41,6 @@ import (
 
 const (
 	provisionInterval   = 10 * time.Second
-	usersInterval       = 10 * time.Second
 	credentialsInterval = time.Minute
 	alarmInterval       = 15 * time.Second
 	parkInterval        = time.Minute
@@ -89,7 +88,7 @@ func main() {
 	if err = accounts.Reconcile(ctx); err != nil {
 		logger.Error(ctx, err, "reconcile sandboxd tenants and gw caps")
 	}
-	go accounts.Run(ctx, usersInterval)
+	go accounts.Listen(ctx)
 	var broker *connect.Service
 	if cfg.Connect.PublicURL != "" {
 		if broker, err = openConnect(ctx, cfg, accounts); err != nil {

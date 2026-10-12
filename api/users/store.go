@@ -17,6 +17,7 @@ import (
 
 const (
 	migrationLock = 0x63627573 // "cbus"
+	notifyChannel = "cocoonbox_users"
 
 	uniqueViolation = "23505"
 
@@ -45,6 +46,27 @@ func openStore(ctx context.Context, dsn string) (*store, error) {
 }
 
 func (s *store) close() { s.pool.Close() }
+
+func (s *store) notify(ctx context.Context) error {
+	if _, err := s.pool.Exec(ctx, "SELECT pg_notify($1, '')", notifyChannel); err != nil {
+		return fmt.Errorf("notify %s: %w", notifyChannel, err)
+	}
+	return nil
+}
+
+// listen takes a connection out of the pool and listens on notifyChannel with it; the caller closes it.
+func (s *store) listen(ctx context.Context) (*pgx.Conn, error) {
+	pooled, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("acquire a connection: %w", err)
+	}
+	conn := pooled.Hijack()
+	if _, err := conn.Exec(ctx, "LISTEN "+notifyChannel); err != nil {
+		_ = conn.Close(context.WithoutCancel(ctx))
+		return nil, fmt.Errorf("listen on %s: %w", notifyChannel, err)
+	}
+	return conn, nil
+}
 
 func (s *store) all(ctx context.Context) ([]record, error) {
 	rows, err := s.pool.Query(ctx, "SELECT "+recordColumns+" FROM users ORDER BY name")

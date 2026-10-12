@@ -60,13 +60,19 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return err
 	}
 	defer accounts.Close()
+	written := func(format string, args ...any) error {
+		if notifyErr := accounts.Notify(ctx); notifyErr != nil {
+			return notifyErr
+		}
+		_, printErr := fmt.Fprintf(stdout, format, args...)
+		return printErr
+	}
 	if verb == "add" {
 		u, createErr := accounts.Create(ctx, users.NewUser{ID: *id, Name: name, Admin: *admin})
 		if createErr != nil {
 			return createErr
 		}
-		_, err = fmt.Fprintf(stdout, "created user %s with id %s\n", u.Name, u.ID)
-		return err
+		return written("created user %s with id %s\n", u.Name, u.ID)
 	}
 	u, err := accounts.ByName(name)
 	if err != nil {
@@ -88,8 +94,7 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		if err = accounts.Delete(ctx, u.ID); err != nil {
 			return err
 		}
-		_, err = fmt.Fprintf(stdout, "deleted user %s and %d state objects\n", u.Name, removed)
-		return err
+		return written("deleted user %s and %d state objects\n", u.Name, removed)
 	}
 	if !*fromStdin {
 		return errors.New(cliUsage)
@@ -110,8 +115,7 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "%s of user %s updated\n", verb, u.Name)
-	return err
+	return written("%s of user %s updated\n", verb, u.Name)
 }
 
 // migrateState gives every user a state key in the users table and copies its box into the per-user store layout; a rerun is safe.
@@ -143,7 +147,7 @@ func migrateState(ctx context.Context, cfg *config.Config, args []string, stdout
 			return err
 		}
 	}
-	return nil
+	return accounts.Notify(ctx)
 }
 
 // expandState rewrites every delta record and manifest delta as full objects, for a rollback to an api without delta records; stop the api first.

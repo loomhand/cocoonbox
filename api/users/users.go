@@ -37,6 +37,7 @@ const (
 	defaultBoxes = 1
 
 	tokenMissInterval = 100 * time.Millisecond
+	listenRetry       = 2 * time.Second
 
 	columnGWKey    = "gw_key"
 	columnTenant   = "tenant_token"
@@ -213,20 +214,26 @@ func (s *Service) Load(ctx context.Context) error {
 	return nil
 }
 
-// Run reloads the index every interval until ctx ends, which picks up changes made by the CLI.
-func (s *Service) Run(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+// Listen reloads the index on every Notify until ctx ends. It reloads after each LISTEN as well, since a notification
+// sent while no connection listens is lost; a failed reload or connection listens again after listenRetry.
+func (s *Service) Listen(ctx context.Context) {
 	for {
+		err := s.listen(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		log.WithFunc("users.Service.Listen").Warnf(ctx, "reload users on notify: %v", err)
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-		}
-		if err := s.Load(ctx); err != nil {
-			log.WithFunc("users.Service.Run").Warnf(ctx, "reload users: %v", err)
+		case <-time.After(listenRetry):
 		}
 	}
+}
+
+// Notify tells every api that listens to reload its index; the CLI calls it after it writes users or tokens.
+func (s *Service) Notify(ctx context.Context) error {
+	return s.store.notify(ctx)
 }
 
 // Reconcile writes every user's tenant with its token and cap, so sandboxd matches the table, and lifts the gw cap of admins on the default.
@@ -653,6 +660,22 @@ func (s *Service) OnResidential(fn func(ctx context.Context, id string, on bool)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onResidential = append(s.onResidential, fn)
+}
+
+func (s *Service) listen(ctx context.Context) error {
+	conn, err := s.store.listen(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	for {
+		if err := s.Load(ctx); err != nil {
+			return err
+		}
+		if _, err := conn.WaitForNotification(ctx); err != nil {
+			return err
+		}
+	}
 }
 
 func (s *Service) record(id string) (record, error) {
