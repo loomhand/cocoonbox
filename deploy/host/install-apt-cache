@@ -6,7 +6,7 @@ set -euo pipefail
 export LC_ALL=C
 
 DIR=/srv/cb/apt-cache
-CONF=/etc/cocoonbox/apt-cache
+CONF=/etc/cb-apt-cache
 QUOTA_ID=45
 QUOTA=20g
 POLICY=/usr/sbin/policy-rc.d
