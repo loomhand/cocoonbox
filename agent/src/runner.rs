@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde_json::Value;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedRwLockReadGuard, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tonic::Status;
@@ -57,7 +57,7 @@ pub struct Runtime {
     pub stop: CancellationToken,
     /// Work that shutdown waits for: running turns and desktop-session cleanups.
     pub tasks: TaskTracker,
-    /// Held shared by every running turn and MCP tool call; the state layer takes it exclusively to pause them.
+    /// Held shared by every running turn not waiting for the user and every MCP tool call; the state layer takes it exclusively to pause them.
     pub turns: Arc<tokio::sync::RwLock<()>>,
     /// Interrupts the MCP calls of share sessions when a quiesce has waited long enough.
     pub guests: Arc<Preempt>,
@@ -490,7 +490,7 @@ impl Runtime {
             Ok(Some(a)) => a.main_model,
             _ => self.cfg.model_main.clone(),
         };
-        let _gate = self.turns.read().await;
+        let gate = Arc::clone(&self.turns).read_owned().await;
         let cancel = CancellationToken::new();
         {
             let mut state = lock(&slot.state);
@@ -506,6 +506,7 @@ impl Runtime {
             blocks: AtomicU32::new(1),
             model,
             slot,
+            gate: Mutex::new(Some(gate)),
         };
         self.journal
             .set_status(agent_id, AgentStatus::Running)
@@ -811,9 +812,12 @@ impl Runtime {
         self.journal
             .set_status(&ctx.agent_id, AgentStatus::WaitingForUser)
             .await;
+        drop(lock(&ctx.gate).take());
         let reply = rx
             .await
             .map_err(|_| format!("the {kind} approval was abandoned"))?;
+        let gate = Arc::clone(&self.turns).read_owned().await;
+        *lock(&ctx.gate) = Some(gate);
         self.journal
             .set_status(&ctx.agent_id, AgentStatus::Running)
             .await;
@@ -903,6 +907,7 @@ pub struct TurnCtx {
     blocks: AtomicU32,
     model: String,
     slot: Arc<Slot>,
+    gate: Mutex<Option<OwnedRwLockReadGuard<()>>>,
 }
 
 impl TurnCtx {

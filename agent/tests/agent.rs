@@ -1757,6 +1757,104 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
 }
 
 #[tokio::test]
+async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call(
+                    "call_t",
+                    "request_take_over",
+                    &json!({"reason": "sign in to GitHub"}),
+                ),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("call_s", "shell", &json!({"command": "touch after"})),
+            ),
+            ("chat/completions", chat_text("Signed in.")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "log in", "").await;
+    let approval_id = loop {
+        let page = agents
+            .transcript(authed(pb::TranscriptRequest {
+                agent_id: agent_id.clone(),
+                after_seq: 0,
+                limit: 0,
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        if let Some(id) = page.entries.iter().find_map(|e| match &e.body {
+            Some(Body::Approval(a)) if a.kind == "take_over" => Some(a.approval_id.clone()),
+            _ => None,
+        }) {
+            break id;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+
+    let started = std::time::Instant::now();
+    plan(&h, pb::Consistency::Quiesced, "").await;
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "the quiesced plan waited {:?} on a pending take-over",
+        started.elapsed()
+    );
+
+    let saving = h.session_save.with_extension("started");
+    write_script(
+        &h.session_save,
+        &format!("touch {}; sleep 2", saving.display()),
+    );
+    let quiesced = {
+        let mut state = state_client(&h).await;
+        tokio::spawn(async move {
+            state
+                .plan(authed(pb::PlanRequest {
+                    key: Some(state_key()),
+                    consistency: pb::Consistency::Quiesced.into(),
+                    parent: String::new(),
+                }))
+                .await
+        })
+    };
+    for _ in 0..200 {
+        if saving.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(saving.exists(), "the quiesce never started");
+    agents
+        .respond(authed(pb::RespondRequest {
+            agent_id: agent_id.clone(),
+            approval_id,
+            approve: true,
+            text: String::new(),
+        }))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+    assert!(
+        !h.workspace.join("after").exists(),
+        "a tool ran during the quiesce"
+    );
+    quiesced.await.unwrap().unwrap();
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(h.workspace.join("after").exists());
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("no turn end: {entries:?}");
+    };
+    assert!(end.ok, "{end:?}");
+}
+
+#[tokio::test]
 async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let door_log = Log::default();
     let changed = Arc::new(tokio::sync::Notify::new());
