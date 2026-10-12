@@ -8,7 +8,7 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.14.0"
+    static let version = "0.15.0"
     static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
@@ -39,8 +39,6 @@ public enum Plugin {
             "\(name)/.mcp.json": mcpConfig(command: command),
             "\(name)/skills/cocoonbox/SKILL.md": skill,
             "\(name)/skills/cocoonbox-offload/SKILL.md": offloadSkill(command: command),
-            "\(name)/skills/script/SKILL.md": scriptSkill,
-            "\(name)/skills/script/LICENSE-vendor": scriptNotice,
             "\(name)/commands/status.md": slash("Show the state of my cocoonbox", "Call the cocoonbox tool box_status and tell me the state, the image, whether an upgrade is available and when my files were last saved."),
             "\(name)/commands/wake.md": slash("Wake my cocoonbox", "Call the cocoonbox tool box_ensure and tell me when the box is running."),
             "\(name)/commands/save.md": slash("Save my cocoonbox now", "Call the cocoonbox tool box_save. Tell me it closes the box's browser during the save, and report the result."),
@@ -74,35 +72,15 @@ public enum Plugin {
 
     - Check `box_status` first when the state matters. A box tool wakes a hibernated box by itself; `box_ensure` wakes it on purpose.
     - The user may have several boxes. `box_list` lists them; every other tool takes `box`, a box name or id, and acts on the session's default box without it. Only a limited number of boxes run at once: hibernate one before waking another when a tool says so.
-    - `box_create` adds a box: kind general (the default) is the standard desktop, kind script a cbplan box with `script_run`. `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
+    - `box_create` adds a box. `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
     - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser, and `computer_state`, `computer_act` and `screenshot` for its desktop.
     - After a GUI action, take a `screenshot` to confirm it worked.
-    - On a cbplan box (box_status shows a cbplan image and its tools include `script_run`), use the script skill: it says which tool tier fits each step.
     - Call `box_save` before the user leaves for a long time. It closes the box's browser during the save.
     - `box_upgrade` restarts running programs and keeps files, logins and agent history; ask the user first, then call it with `confirm: true`.
     - Call `box_hibernate` when the user is done.
     - If `box_hibernate` or `box_ensure` times out, the operation continues on the box; call `box_status` and wait until the state settles.
 
     """
-
-    // routing mirrors image/script/routing.md byte for byte; PluginTests fails on drift.
-    static let routing = """
-    ## Pick the tool tier first
-
-    Rule: GUI work in a desktop app (menus, toggles, dialogs, Preferences, Save As, settings windows, typing and saving a document) goes to `gui_plan`: the whole plan as steps in one call, without looking first; it checks each step and escalates a surprise. A saved flow that fits replays with `gui_plan {flow, params}`; `gui_plan {save: name}` alone saves the last plan without running it again. A loop over many items, data between apps, or logic a plan cannot hold goes to one script run with `script_run`; read `/opt/script/AGENTS.md` before the first script, save a working one as `/workspace/flows/<name>.mts` and replay it with `script_run {script, params}`.
-
-    Otherwise take the first tier that fits, for each request:
-    1. Command: `shell` and the file tools; `browser_fetch` to read a web page (a hidden tab with the user's sign-ins). Do not open an app to do a command's job.
-    2. One look, or a click no plan can name: `screenshot`, `computer_state`, `computer_act` (in the box's own agent: `delegate_computer`). A web page to click, type or sign in on, also a form filled several times: `browser_navigate` and the other `browser_*` tools.
-
-    If a plan or script fails twice at one step, look with `computer_state`, then fix it or do that step with `computer_act`.
-
-    """
-
-    // scriptSkill is the Claude Code face of the box's Script guide, /opt/script/AGENTS.md, led by the tier policy.
-    static let scriptSkill = ""
-
-    static let scriptNotice = ""
 
     // offloadSkill drives the local agent's side of an offload (design.md §27); `command` runs every mechanical step.
     static func offloadSkill(command: String) -> String {

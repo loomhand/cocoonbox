@@ -1138,6 +1138,7 @@ func setup() {
         return print("added cocoonbox to \(file.path)")
     }
     do {
+        try? FileManager.default.removeItem(at: root.appendingPathComponent(Plugin.name))
         try Plugin.write(to: root, command: executable)
     } catch {
         fail("\(error)")
