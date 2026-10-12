@@ -86,6 +86,11 @@ install_rootfs() {
 	grep -qxF "$PRESS" "$ROOT/js/wrapped.js" || echo "$PRESS" >>"$ROOT/js/wrapped.js"
 }
 
+apt_sources() {
+	log "apt sources"
+	apt-get update -q >/dev/null
+}
+
 route_chrome() {
 	log "chrome launchers"
 	install -d /usr/local/share/applications
@@ -106,11 +111,15 @@ check() {
 	[ "$(readlink -f /usr/local/bin/cua-driver)" = "/opt/cua-driver/$CUA_VERSION/cua-driver" ]
 	[ "$(readlink -f /usr/bin/x-www-browser)" = /usr/local/bin/cocoonbox-chrome ]
 	for f in google-chrome com.google.Chrome; do grep -qx 'Exec=/usr/local/bin/cocoonbox-chrome %U' "/usr/local/share/applications/$f.desktop"; done
+	grep -qx 'URIs: mirror+file:/etc/apt/cocoonbox-ubuntu.mirrors' /etc/apt/sources.list.d/ubuntu.sources
+	[ -s /var/lib/apt/lists/_etc_apt_cocoonbox-ubuntu.mirrors_dists_noble_InRelease ]
+	[ -s /var/lib/apt/lists/_etc_apt_cocoonbox-ubuntu-security.mirrors_dists_noble-security_InRelease ]
 }
 
 install_runtime
 install_cua_driver
 install_rootfs
+apt_sources
 route_chrome
 check
 log "done"
