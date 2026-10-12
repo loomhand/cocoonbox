@@ -27,6 +27,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CALL_TIMEOUT: Duration = Duration::from_secs(150);
 const RETRY: Duration = Duration::from_secs(30);
 const RETRY_MIN: Duration = Duration::from_secs(1);
+const RETRY_MAX: Duration = Duration::from_secs(5);
 const MAX_PAGES: usize = 20;
 
 /// What a connector call came back with.
@@ -93,7 +94,7 @@ impl Client {
                     () = stop.cancelled() => return,
                     () = tokio::time::sleep(delay) => {}
                 }
-                delay = (delay * 2).min(RETRY);
+                delay = (delay * 2).min(RETRY_MAX);
             }
         });
     }

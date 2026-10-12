@@ -461,6 +461,7 @@ async fn mock_door(
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let added = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let readers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let born = std::time::Instant::now();
     tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
@@ -495,6 +496,10 @@ async fn mock_door(
                 if line.starts_with("GET")
                     && readers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < refused
                 {
+                    log.lock().unwrap().push((
+                        "GET refused".into(),
+                        json!({"ms": born.elapsed().as_millis()}),
+                    ));
                     stream
                         .write_all(b"HTTP/1.1 401 Unauthorized\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
                         .await
@@ -2041,6 +2046,35 @@ async fn an_ended_door_stream_is_followed_again_within_a_second_each_time() {
         }
         events.send("close".to_owned()).unwrap();
     }
+}
+
+#[tokio::test]
+async fn a_door_that_keeps_refusing_is_tried_again_at_most_every_five_seconds() {
+    let door_log = Log::default();
+    let (events, _) = tokio::sync::broadcast::channel(8);
+    let door = mock_door(Arc::clone(&door_log), events.clone(), usize::MAX).await;
+    let _h = Harness::with_connect(vec![], door).await;
+    let refusals = || -> Vec<u64> {
+        door_log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == "GET refused")
+            .map(|(_, v)| v["ms"].as_u64().unwrap())
+            .collect()
+    };
+    let since = tokio::time::Instant::now();
+    while refusals().len() < 6 {
+        assert!(
+            since.elapsed() < Duration::from_secs(25),
+            "{:?}",
+            refusals()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let gaps: Vec<u64> = refusals().windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.iter().all(|&g| g < 5500), "{gaps:?}");
+    assert!(gaps[3..].iter().all(|&g| g >= 4500), "{gaps:?}");
 }
 
 #[tokio::test]
