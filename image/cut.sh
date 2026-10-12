@@ -1,8 +1,8 @@
 #!/bin/bash
 # Cuts desktop template <family>:<vN> on the cbsbx cocoon root: boot <base template>, provision, seal, stop, export, import.
-# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f cbdesk|cbplan|cbcore] <base template> <vN>
-#   -p reruns provision.sh; -f cbplan adds the Script runtime of image/script, -f cbcore the desk runtime of image/desk
-#   and checks the guest with image/clean-gate.sh after the agent step; every step goes to ~/ops-audit.md
+# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f cbdesk|cbcore] <base template> <vN>
+#   -p reruns provision.sh; -f cbcore adds the desk runtime of image/desk and checks the guest with image/clean-gate.sh
+#   after the agent step; every step goes to ~/ops-audit.md
 set -Eeuo pipefail
 export LC_ALL=C
 
@@ -28,8 +28,7 @@ EGRESS_PORT=2049
 AUDIT=${AUDIT:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/ops-audit.md}
 case $FAMILY in
 cbdesk) VM=cbcut-$V TARBALL=$S/build/cocoonbox-desktop-$V.tar.gz ;;
-cbplan) VM=cbcut-cbplan-$V TARBALL=$S/build/cocoonbox-cbplan-$V.tar.gz ;;
-cbcore) VM=cbcut-cbcore-$V TARBALL=$S/build/cocoonbox-cbcore-$V.tar.gz RUNTIME=desk ;;
+cbcore) VM=cbcut-cbcore-$V TARBALL=$S/build/cocoonbox-cbcore-$V.tar.gz ;;
 *) echo "unknown family $FAMILY" >&2; exit 2 ;;
 esac
 TEMPLATE=$FAMILY:$V
@@ -69,7 +68,7 @@ step "boot $BASE as $VM"
 for _ in $(seq 180); do active && break; sleep 1; done
 active
 
-if [ "$PROVISION" = 1 ] || [ "$FAMILY" != cbdesk ]; then
+if [ "$PROVISION" = 1 ] || [ "$FAMILY" = cbcore ]; then
 	VSOCK=$("$COCOON" vm inspect "$VM" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d[0] if isinstance(d,list) else d)["vsock_socket"])')
 	python3 "$SRC/cut-proxy.py" "${VSOCK}_$EGRESS_PORT" &
 	PROXY_PID=$!
@@ -80,11 +79,10 @@ if [ "$PROVISION" = 1 ]; then
 	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/provision.sh
 	guest "$VM" -- rm -rf /tmp/cb-image
 fi
-if [ "$FAMILY" != cbdesk ]; then
-	R=${RUNTIME:-script}
-	step "$R"
-	tar -C "$SRC" -cf - "$R" | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
-	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash "/tmp/cb-image/$R/provision.sh"
+if [ "$FAMILY" = cbcore ]; then
+	step "desk"
+	tar -C "$SRC" -cf - desk | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
+	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/desk/provision.sh
 	guest "$VM" -- rm -rf /tmp/cb-image
 fi
 stop_proxy
