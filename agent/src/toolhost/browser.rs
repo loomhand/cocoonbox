@@ -21,10 +21,20 @@ use super::timing;
 
 const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
+const SETTLE: Duration = Duration::from_secs(2);
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
 const READ_CHARS: usize = 20_000;
+const PAGE_TYPES: [&str; 7] = [
+    "",
+    "text/html",
+    "text/plain",
+    "text/xml",
+    "application/xhtml+xml",
+    "application/xml",
+    "application/json",
+];
 const RUNNING_MARKER: &str = "cocoonbox-was-running";
 const AGENT_MARKER: &str = "cocoonbox-agent-windows";
 const AGENT_PAGE: &str = "about:blank#cocoonbox-agent";
@@ -243,6 +253,7 @@ pub struct Browser {
     start: Mutex<bool>,
     windows: Mutex<HashMap<String, Slot>>,
     last: Mutex<String>,
+    fetch_wait: Duration,
 }
 
 impl Browser {
@@ -257,6 +268,7 @@ impl Browser {
             start: Mutex::new(false),
             windows: Mutex::new(HashMap::new()),
             last: Mutex::new(String::new()),
+            fetch_wait: LOAD_WAIT,
         }
     }
 
@@ -280,6 +292,7 @@ impl Browser {
                 return Ok("running".to_owned());
             }
             "browser_end" => return Ok(self.end(agent_id).await),
+            "browser_fetch" => return self.fetch(args).await,
             _ => {}
         }
         let (slot, evicted) = self.slot(agent_id).await;
@@ -295,11 +308,7 @@ impl Browser {
         match tool {
             "browser_navigate" => {
                 let a: NavigateArgs = parse(args)?;
-                let url = if a.url.contains("://") || a.url.starts_with("about:") {
-                    a.url
-                } else {
-                    format!("https://{}", a.url)
-                };
+                let url = web_url(a.url);
                 let nav = cdp.call("Page.navigate", json!({"url": url})).await?;
                 timing::mark("navigate");
                 if let Some(err) = nav["errorText"].as_str().filter(|e| !e.is_empty()) {
@@ -360,16 +369,33 @@ impl Browser {
                     .as_deref()
                     .map_or_else(|| "null".to_owned(), js_str);
                 let text = cdp.eval(&format!("{READ_JS}({arg})")).await?;
-                let text = text.as_str().unwrap_or_default();
-                let total = text.chars().count();
-                let mut out: String = text.chars().take(READ_CHARS).collect();
-                if total > READ_CHARS {
-                    let _ = write!(out, "\n[truncated: {total} characters total]");
-                }
-                Ok(out)
+                Ok(capped(text.as_str().unwrap_or_default()))
             }
             _ => Err(format!("unknown browser tool {tool}")),
         }
+    }
+
+    /// Reads `url` in a hidden tab, out of every window, and closes the tab.
+    async fn fetch(&self, args: Value) -> Result<String, String> {
+        let a: NavigateArgs = parse(args)?;
+        let url = web_url(a.url);
+        self.running().await?;
+        let mut cdp = self.browser().await?;
+        let created = cdp
+            .call(
+                "Target.createTarget",
+                json!({"url": "about:blank", "hidden": true}),
+            )
+            .await?;
+        let id = created["targetId"].as_str().unwrap_or_default().to_owned();
+        timing::mark("create");
+        let read = cdp.fetch(&id, &url, self.fetch_wait).await;
+        cdp.session = None;
+        let _ = cdp
+            .call("Target.closeTarget", json!({"targetId": id}))
+            .await;
+        timing::mark("close");
+        read
     }
 
     /// Origin of the active tab; Chrome is not started for it.
@@ -790,6 +816,8 @@ struct ReadArgs {
 struct Cdp {
     ws: Ws,
     next_id: u64,
+    /// The flat session of an attached target, which then receives every call.
+    session: Option<String>,
 }
 
 impl Cdp {
@@ -797,18 +825,30 @@ impl Cdp {
         let (ws, _) = tokio_tungstenite::connect_async(ws_url)
             .await
             .map_err(|e| format!("connect cdp {ws_url}: {e}"))?;
-        Ok(Self { ws, next_id: 0 })
+        Ok(Self {
+            ws,
+            next_id: 0,
+            session: None,
+        })
     }
 
-    async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+    async fn send(&mut self, method: &str, params: Value) -> Result<u64, String> {
         self.next_id += 1;
         let id = self.next_id;
         let mut msg = json!({"id": id, "method": method});
         msg["params"] = params;
+        if let Some(session) = &self.session {
+            msg["sessionId"] = session.as_str().into();
+        }
         self.ws
             .send(WsMessage::text(msg.to_string()))
             .await
             .map_err(|e| format!("cdp send {method}: {e}"))?;
+        Ok(id)
+    }
+
+    async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        let id = self.send(method, params).await?;
         let wait = async {
             while let Some(frame) = self.ws.next().await {
                 let frame = frame.map_err(|e| format!("cdp read: {e}"))?;
@@ -859,6 +899,115 @@ impl Cdp {
             }
             tokio::time::sleep(POLL).await;
         }
+    }
+
+    /// Attaches to page `target`, loads `url` and returns its title, address and text.
+    async fn fetch(&mut self, target: &str, url: &str, wait: Duration) -> Result<String, String> {
+        let attached = self
+            .call(
+                "Target.attachToTarget",
+                json!({"targetId": target, "flatten": true}),
+            )
+            .await?;
+        self.session = attached["sessionId"].as_str().map(str::to_owned);
+        self.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width": 1280, "height": 800, "deviceScaleFactor": 1, "mobile": false}),
+        )
+        .await?;
+        self.call(
+            "Fetch.enable",
+            json!({"patterns": [{"resourceType": "Document", "requestStage": "Response"}]}),
+        )
+        .await?;
+        self.call("Page.enable", json!({})).await?;
+        self.call("Page.setLifecycleEventsEnabled", json!({"enabled": true}))
+            .await?;
+        let tree = self.call("Page.getFrameTree", json!({})).await?;
+        let ready = self
+            .load(url, &tree["frameTree"]["frame"]["id"], wait)
+            .await?;
+        timing::mark("load");
+        let here = self
+            .eval("document.title + ' (' + location.href + ')'")
+            .await?;
+        let text = self.eval(&format!("{READ_JS}(null)")).await?;
+        timing::mark("read");
+        let mut out = format!("Page: {}", here.as_str().unwrap_or_default());
+        if !ready {
+            let _ = write!(
+                out,
+                " [still loading after {}s; text so far]",
+                wait.as_secs()
+            );
+        }
+        out.push_str("\n\n");
+        out.push_str(&capped(text.as_str().unwrap_or_default()));
+        Ok(out)
+    }
+
+    /// Navigates main frame `frame` to `url` and waits for the new document's DOMContentLoaded and a nearly idle network,
+    /// at most `wait` and [`SETTLE`] past the DOMContentLoaded; true once that came. Documents that are no page fail, so nothing downloads.
+    async fn load(&mut self, url: &str, frame: &Value, wait: Duration) -> Result<bool, String> {
+        let id = self.send("Page.navigate", json!({"url": url})).await?;
+        let mut deadline = tokio::time::Instant::now() + wait;
+        let (mut fresh, mut ready, mut idle) = (false, false, false);
+        let mut refused = None;
+        while !(ready && idle) {
+            let next = match tokio::time::timeout_at(deadline, self.ws.next()).await {
+                Err(_) => break,
+                Ok(next) => next.ok_or("cdp connection closed during load")?,
+            };
+            let WsMessage::Text(text) = next.map_err(|e| format!("cdp read: {e}"))? else {
+                continue;
+            };
+            let v: Value = serde_json::from_str(&text).map_err(|e| format!("cdp decode: {e}"))?;
+            if v["id"].as_u64() == Some(id) {
+                if let Some(err) = v.get("error") {
+                    return Err(format!("cdp Page.navigate: {}", err["message"]));
+                }
+                if let Some(kind) = refused {
+                    return Err(format!(
+                        "{url} serves {kind}, not a page: browser_fetch reads HTML, text, XML and JSON; download it with shell"
+                    ));
+                }
+                if let Some(err) = v["result"]["errorText"].as_str().filter(|e| !e.is_empty()) {
+                    return Err(format!("navigate {url}: {err}"));
+                }
+                continue;
+            }
+            if v["method"] == "Fetch.requestPaused" {
+                let paused = &v["params"];
+                let request = json!({"requestId": paused["requestId"]});
+                match not_a_page(paused) {
+                    Some(kind) => {
+                        if paused["frameId"] == *frame {
+                            refused = Some(kind);
+                        }
+                        let mut fail = request;
+                        fail["errorReason"] = "BlockedByClient".into();
+                        self.send("Fetch.failRequest", fail).await?;
+                    }
+                    None => {
+                        self.send("Fetch.continueRequest", request).await?;
+                    }
+                }
+                continue;
+            }
+            if v["method"] != "Page.lifecycleEvent" || v["params"]["frameId"] != *frame {
+                continue;
+            }
+            match v["params"]["name"].as_str() {
+                Some("init") => (fresh, ready, idle) = (true, false, false),
+                Some("DOMContentLoaded") if fresh => {
+                    ready = true;
+                    deadline = deadline.min(tokio::time::Instant::now() + SETTLE);
+                }
+                Some("networkAlmostIdle") if fresh => idle = true,
+                _ => {}
+            }
+        }
+        Ok(ready)
     }
 
     async fn click(&mut self, x: f64, y: f64) -> Result<(), String> {
@@ -1034,6 +1183,56 @@ fn xprop_string(xprop: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
+/// `url` with `https://` added when it names no scheme.
+fn web_url(url: String) -> String {
+    if url.contains("://") || url.starts_with("about:") {
+        url
+    } else {
+        format!("https://{url}")
+    }
+}
+
+/// What a paused successful document response serves when it is no page to read: an attachment or a type outside [`PAGE_TYPES`].
+fn not_a_page(paused: &Value) -> Option<String> {
+    let status = paused["responseStatusCode"].as_u64()?;
+    if !(200..300).contains(&status) {
+        return None;
+    }
+    let header = |name: &str| {
+        paused["responseHeaders"].as_array()?.iter().find(|h| {
+            h["name"]
+                .as_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(name))
+        })?["value"]
+            .as_str()
+    };
+    let kind = header("content-type").unwrap_or_default();
+    let essence = kind
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    if header("content-disposition").is_some_and(|d| {
+        d.trim_start()
+            .to_ascii_lowercase()
+            .starts_with("attachment")
+    }) {
+        return Some(format!("an attachment ({kind})"));
+    }
+    (!PAGE_TYPES.contains(&essence.as_str())).then_some(essence)
+}
+
+/// `text` cut to [`READ_CHARS`] characters, saying so when it was longer.
+fn capped(text: &str) -> String {
+    let total = text.chars().count();
+    let mut out: String = text.chars().take(READ_CHARS).collect();
+    if total > READ_CHARS {
+        let _ = write!(out, "\n[truncated: {total} characters total]");
+    }
+    out
+}
+
 fn js_str(s: &str) -> String {
     Value::String(s.to_owned()).to_string()
 }
@@ -1192,6 +1391,101 @@ pub(super) mod tests {
         port
     }
 
+    /// Serves CDP on the returned port with a hidden tab whose page text is `text`, logging every message;
+    /// its navigation loads only with `loads`, else only the blank page's events come again.
+    async fn fetch_chrome(text: String, loads: bool) -> (u16, Arc<std::sync::Mutex<Vec<Value>>>) {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let version = json!({
+            "webSocketDebuggerUrl": format!("ws://{}/devtools/browser/fake", ws.local_addr().unwrap()),
+        })
+        .to_string();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (log, text) = (Arc::clone(&seen), text.clone());
+                tokio::spawn(async move {
+                    while let Some(Ok(WsMessage::Text(msg))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&msg).unwrap();
+                        log.lock().unwrap().push(v.clone());
+                        let result = match v["method"].as_str().unwrap() {
+                            "Target.createTarget" => json!({"targetId": "hidden"}),
+                            "Target.attachToTarget" => json!({"sessionId": "s1"}),
+                            "Page.getFrameTree" => {
+                                json!({"frameTree": {"frame": {"id": "hidden"}}})
+                            }
+                            "Page.navigate" => json!({"frameId": "hidden", "loaderId": "l2"}),
+                            "Runtime.evaluate"
+                                if v["params"]["expression"]
+                                    .as_str()
+                                    .unwrap()
+                                    .starts_with("document.title") =>
+                            {
+                                json!({"result": {"value": "Doc (https://a.test/)"}})
+                            }
+                            "Runtime.evaluate" => json!({"result": {"value": text}}),
+                            _ => json!({}),
+                        };
+                        let zip = v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.ends_with(".zip"));
+                        if v["method"] == "Page.navigate" {
+                            let kind = if zip {
+                                "application/zip"
+                            } else {
+                                "text/html; charset=utf-8"
+                            };
+                            let paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
+                                "requestId": "r1", "frameId": "hidden", "responseStatusCode": 200,
+                                "responseHeaders": [{"name": "Content-Type", "value": kind}]}});
+                            ws.send(WsMessage::text(paused.to_string())).await.unwrap();
+                        }
+                        let mut result = result;
+                        if zip {
+                            result["errorText"] = "net::ERR_BLOCKED_BY_CLIENT".into();
+                        }
+                        let reply =
+                            json!({"id": v["id"], "sessionId": v["sessionId"], "result": result});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                        if v["method"] != "Page.navigate" {
+                            continue;
+                        }
+                        let names: &[&str] = if loads {
+                            &["init", "DOMContentLoaded", "load", "networkAlmostIdle"]
+                        } else {
+                            &["DOMContentLoaded", "load", "networkAlmostIdle"]
+                        };
+                        for name in names {
+                            let event = json!({"method": "Page.lifecycleEvent", "sessionId": "s1",
+                                "params": {"frameId": "hidden", "name": name}});
+                            ws.send(WsMessage::text(event.to_string())).await.unwrap();
+                        }
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    version.as_str()
+                } else {
+                    "[]"
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        (port, log)
+    }
+
     /// A stand-in Chrome binary in `dir` that lives 5 s.
     fn alive_chrome(dir: &std::path::Path) -> String {
         let chrome = dir.join("chrome");
@@ -1283,6 +1577,127 @@ pub(super) mod tests {
             asked.elapsed() < Duration::from_secs(5),
             "{:?}",
             asked.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_reads_a_hidden_tab_capped_and_closes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = fetch_chrome("x".repeat(READ_CHARS + 5), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let out = b
+            .run("a", "browser_fetch", json!({"url": "a.test"}))
+            .await
+            .unwrap();
+        let want = format!(
+            "Page: Doc (https://a.test/)\n\n{}\n[truncated: {} characters total]",
+            "x".repeat(READ_CHARS),
+            READ_CHARS + 5
+        );
+        assert_eq!(out, want);
+        assert!(b.windows.lock().await.is_empty());
+        let log = log.lock().unwrap();
+        assert_eq!(
+            log[0],
+            json!({"id": 1, "method": "Target.createTarget", "params": {"url": "about:blank", "hidden": true}})
+        );
+        let metrics = log
+            .iter()
+            .find(|m| m["method"] == "Emulation.setDeviceMetricsOverride")
+            .unwrap();
+        assert_eq!(
+            (&metrics["params"]["width"], &metrics["sessionId"]),
+            (&json!(1280), &json!("s1"))
+        );
+        let go = log
+            .iter()
+            .find(|m| m["method"] == "Fetch.continueRequest")
+            .unwrap();
+        assert_eq!(go["params"], json!({"requestId": "r1"}));
+        assert_eq!(go["sessionId"], "s1");
+        let navigate = log.iter().find(|m| m["method"] == "Page.navigate").unwrap();
+        assert_eq!(navigate["params"]["url"], "https://a.test");
+        assert_eq!(navigate["sessionId"], "s1");
+        let close = log.last().unwrap();
+        assert_eq!(close["method"], "Target.closeTarget");
+        assert_eq!(close["params"]["targetId"], "hidden");
+        assert!(close.get("sessionId").is_none(), "{close}");
+    }
+
+    #[tokio::test]
+    async fn fetch_past_its_wait_returns_the_text_so_far_and_closes_the_tab() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = fetch_chrome("partial".into(), false).await;
+        let mut b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        b.fetch_wait = Duration::from_secs(1);
+        let asked = tokio::time::Instant::now();
+        let out = b
+            .run("a", "browser_fetch", json!({"url": "https://a.test/"}))
+            .await
+            .unwrap();
+        assert!(
+            (Duration::from_secs(1)..Duration::from_secs(3)).contains(&asked.elapsed()),
+            "{:?}",
+            asked.elapsed()
+        );
+        assert_eq!(
+            out,
+            "Page: Doc (https://a.test/) [still loading after 1s; text so far]\n\npartial"
+        );
+        assert_eq!(
+            log.lock().unwrap().last().unwrap()["method"],
+            "Target.closeTarget"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_fails_a_document_that_is_no_page_so_nothing_downloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = fetch_chrome(String::new(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let err = b
+            .run("a", "browser_fetch", json!({"url": "https://a.test/f.zip"}))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            "https://a.test/f.zip serves application/zip, not a page: browser_fetch reads HTML, text, XML and JSON; download it with shell"
+        );
+        let log = log.lock().unwrap();
+        let fail = log
+            .iter()
+            .find(|m| m["method"] == "Fetch.failRequest")
+            .unwrap();
+        assert_eq!(
+            fail["params"],
+            json!({"requestId": "r1", "errorReason": "BlockedByClient"})
+        );
+        assert_eq!(log.last().unwrap()["method"], "Target.closeTarget");
+    }
+
+    #[test]
+    fn only_a_successful_document_outside_the_page_types_or_an_attachment_is_no_page() {
+        let paused = |status: u64, headers: Value| json!({"responseStatusCode": status, "responseHeaders": headers});
+        let typed = |kind: &str| json!([{"name": "content-type", "value": kind}]);
+        assert_eq!(
+            not_a_page(&paused(200, typed("text/html; charset=utf-8"))),
+            None
+        );
+        assert_eq!(not_a_page(&paused(200, typed("Application/JSON"))), None);
+        assert_eq!(not_a_page(&paused(200, json!([]))), None);
+        assert_eq!(not_a_page(&paused(302, typed("application/zip"))), None);
+        assert_eq!(not_a_page(&json!({"responseErrorReason": "Failed"})), None);
+        assert_eq!(
+            not_a_page(&paused(200, typed("application/pdf"))),
+            Some("application/pdf".to_owned())
+        );
+        let attachment = json!([
+            {"name": "Content-Type", "value": "text/plain"},
+            {"name": "Content-Disposition", "value": "attachment; filename=a.txt"}
+        ]);
+        assert_eq!(
+            not_a_page(&paused(200, attachment)),
+            Some("an attachment (text/plain)".to_owned())
         );
     }
 

@@ -48,12 +48,13 @@ The user watches the screen live and sees every call.";
 const SCRIPT_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 The user watches the screen live and sees every call.";
-const ALWAYS_LOAD: [&str; 5] = [
+const ALWAYS_LOAD: [&str; 6] = [
     "script_run",
     "gui_plan",
     "shell",
     "browser_navigate",
     "browser_read",
+    "browser_fetch",
 ];
 const NUDGE_STREAK: u32 = 2;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";

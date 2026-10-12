@@ -20,7 +20,7 @@ pub const READ_ONLY: [&str; 6] = [
     "browser_read",
 ];
 
-/// Tools of the main agent; a vision model also gets a read-only screenshot, a Script box `script_run`.
+/// Tools of the main agent; a vision model also gets a read-only screenshot, a Script box `script_run` and `browser_fetch`.
 pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
     let mut tools = vec![
         ToolSpec {
@@ -169,12 +169,12 @@ pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
         });
     }
     if script {
-        tools.extend([gui_plan_tool(), script_tool()]);
+        tools.extend([gui_plan_tool(), script_tool(), fetch_tool()]);
     }
     tools
 }
 
-/// Tools served over MCP to external agents; the names are the contract, and `script_run` and the `computer_act` hint exist only with `script`.
+/// Tools served over MCP to external agents; the names are the contract, and `script_run`, `browser_fetch` and the `computer_act` hint exist only with `script`.
 pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
     let mut tools: Vec<ToolSpec> = main_tools(true, false)
         .into_iter()
@@ -196,7 +196,7 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
                 schema.remove("required");
             }
         }
-        tools.extend([script_tool(), gui_plan_tool()]);
+        tools.extend([script_tool(), gui_plan_tool(), fetch_tool()]);
     }
     tools
 }
@@ -295,6 +295,20 @@ A passing plan that starts with an app step is saved as a flow: name it with sav
                 "screenshot": {"type": "boolean"},
                 "timeout_s": {"type": "integer", "description": "Default 90, max 110"}
             }
+        }),
+    }
+}
+
+fn fetch_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("browser_fetch"),
+        description: Cow::Borrowed(
+            "Read a web page without showing it: the box's Chrome loads the URL in a hidden tab with the user's cookies and sign-ins, waits for the page to load and its network to settle (at most 15 s, then returns what has loaded), and returns the page title, final URL and visible text, up to 20000 characters, then closes the tab. The user's windows and tabs are untouched. Prefer it to browser_navigate plus browser_read for looking something up. For reading only: to sign in, click, fill a form, or show the user a page, use browser_navigate.",
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {"url": {"type": "string"}},
+            "required": ["url"]
         }),
     }
 }

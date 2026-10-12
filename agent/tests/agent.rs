@@ -3296,7 +3296,8 @@ async fn mcp_serves_the_script_guide_as_resources() {
                 "gui_plan",
                 "shell",
                 "browser_navigate",
-                "browser_read"
+                "browser_read",
+                "browser_fetch"
             ]
             .contains(&tool["name"].as_str().unwrap()),
             "{tool}"
@@ -3462,7 +3463,7 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
             .next()
     );
     assert!(
-        instructions.chars().count() <= 1450,
+        instructions.chars().count() <= 1600,
         "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",
         instructions.chars().count()
     );

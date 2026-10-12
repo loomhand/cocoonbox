@@ -21,7 +21,7 @@ pub const TIERS: [(&str, &str); 5] = [
     ),
     (
         "browser",
-        "a web page: the browser_* tools, also for a form filled several times",
+        "a web page: browser_fetch to read it, the other browser_* tools to click, type or sign in, also for a form filled several times",
     ),
     (
         "script",
