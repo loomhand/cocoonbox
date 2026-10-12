@@ -134,8 +134,8 @@ fn open_run(text: &str) -> usize {
 }
 
 /// Replaces each run of digits joined by single spaces, dashes or dots whose digits hold a registered
-/// number or, when `misread`, share a stretch of [`MISREAD_SPAN`] digits with one or are a stretch of
-/// one of at least [`MIN_FRAGMENT`] digits; `None` when none does.
+/// number or, when `misread`, share a stretch of [`MISREAD_SPAN`] digits with one, are one edit from
+/// one or are a stretch of one of at least [`MIN_FRAGMENT`] digits; `None` when none does.
 fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = String::new();
@@ -164,8 +164,9 @@ fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<Stri
             }
             digits.contains(n.as_str())
                 || misread
-                    && (0..=n.len() - MISREAD_SPAN)
+                    && ((0..=n.len() - MISREAD_SPAN)
                         .any(|at| digits.contains(&n[at..at + MISREAD_SPAN]))
+                        || one_edit(digits.as_bytes(), n.as_bytes()))
         });
         if hit {
             out.push_str(&text[last..start]);
@@ -177,6 +178,24 @@ fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<Stri
         out.push_str(&text[last..]);
         out
     })
+}
+
+/// Whether `a` and `b` differ by at most one substituted, inserted or deleted digit or one swap of
+/// adjacent digits.
+fn one_edit(a: &[u8], b: &[u8]) -> bool {
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    if long.len() - short.len() > 1 {
+        return false;
+    }
+    let at = short.iter().zip(long).take_while(|(x, y)| x == y).count();
+    if short.len() < long.len() {
+        return short[at..] == long[at + 1..];
+    }
+    at == short.len()
+        || short[at + 1..] == long[at + 1..]
+        || short.get(at + 1) == Some(&long[at])
+            && long[at + 1] == short[at]
+            && short[at + 2..] == long[at + 2..]
 }
 
 /// Replaces `value` where it stands as a whole number, unless `anywhere`, only within reach of a CVC label.
@@ -328,6 +347,65 @@ mod tests {
             s.scrub_prose(&mut prose);
             assert_eq!(prose, format!("Card number: {NUMBER}"));
             assert_eq!(scrubbed(&s, text), text);
+        }
+    }
+
+    fn replaced_only_in_model_text(near: &str) {
+        let s = Secrets::new();
+        s.register("number", PAN);
+        let text = format!("Card number: {near}.");
+        assert_eq!(whole_prose(&s, &text), format!("Card number: {NUMBER}."));
+        assert_eq!(scrubbed(&s, &text), text);
+    }
+
+    #[test]
+    fn a_number_with_one_digit_changed_is_replaced_only_in_model_text() {
+        replaced_only_in_model_text("4392027513501133");
+        replaced_only_in_model_text("4392 0275 1350 1133");
+    }
+
+    #[test]
+    fn a_number_with_two_adjacent_digits_swapped_is_replaced_only_in_model_text() {
+        replaced_only_in_model_text("4392027253501133");
+    }
+
+    #[test]
+    fn a_number_with_one_digit_inserted_is_replaced_only_in_model_text() {
+        replaced_only_in_model_text("43920275923501133");
+    }
+
+    #[test]
+    fn a_number_with_one_digit_dropped_is_replaced_only_in_model_text() {
+        replaced_only_in_model_text("439202753501133");
+    }
+
+    #[test]
+    fn a_near_number_in_mixed_separators_never_goes_out() {
+        let s = Secrets::new();
+        s.register("number", PAN);
+        let text = "gives 4392 0275-1350.1133 = 43 920 2751 35 01133. Done";
+        let want = format!("gives {NUMBER} = {NUMBER}. Done");
+        assert_eq!(whole_prose(&s, text), want);
+        for at in 0..=text.len() {
+            assert_eq!(
+                streamed(&s, &[&text[..at], &text[at..]]),
+                want,
+                "split at {at}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_number_two_edits_away_stays() {
+        let s = Secrets::new();
+        s.register("number", PAN);
+        for kept in [
+            "4392027513501137",
+            "439202751350113",
+            "4392072513501133",
+            "43920275193501133",
+        ] {
+            assert_eq!(whole_prose(&s, kept), kept);
         }
     }
 
