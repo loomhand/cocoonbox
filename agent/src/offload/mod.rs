@@ -469,7 +469,18 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         "post" => packer::post(layout, &a, &stdin_text().await?).await?,
         "env" => {
             let repo = a.repo_or_env()?;
-            let report = env::show(layout, &repo, a.flag("no-wait")).await?;
+            let report = if a.flag("no-wait") {
+                env::load(layout, &repo).await?
+            } else {
+                let wait_ms = u64::try_from(env::WAIT_LIMIT.as_millis()).unwrap_or(u64::MAX);
+                let resp = call(
+                    layout,
+                    &json!({"op": "env", "repo": repo, "wait_ms": wait_ms}),
+                )
+                .await?;
+                serde_json::from_value(resp["report"].clone())
+                    .map_err(|e| format!("decode env report: {e}"))?
+            };
             if a.flag("json") {
                 json!({"ok": true, "env": report})
             } else {

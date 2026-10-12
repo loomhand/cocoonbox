@@ -12,9 +12,8 @@ use super::{Layout, login_shell};
 const STATE_FILE: &str = "env-state.json";
 const SPEC_FILE: &str = "env.json";
 const LOG_FILE: &str = "env.log";
-const WAIT_POLL: Duration = Duration::from_millis(500);
-// an inbox restart mid-step leaves the report unfinished for good
-const WAIT_LIMIT: Duration = Duration::from_secs(900);
+/// How long `offload env` waits for the step.
+pub const WAIT_LIMIT: Duration = Duration::from_secs(900);
 const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const MISE_FILES: [&str; 3] = [".mise.toml", "mise.toml", ".tool-versions"];
 const HINT_FILES: [&str; 3] = [".devcontainer/devcontainer.json", "flake.nix", "shell.nix"];
@@ -233,22 +232,15 @@ pub async fn run(layout: &Layout, repo: &str, dir: &Path, spec: &Spec, mut repor
     }
 }
 
-/// `offload env`: the step's report, after it finished (or `WAIT_LIMIT` passed) unless `no_wait`.
-pub async fn show(layout: &Layout, repo: &str, no_wait: bool) -> Result<Option<Report>, String> {
+/// The step's report as it stands; `None` when the repo has no step.
+pub async fn load(layout: &Layout, repo: &str) -> Result<Option<Report>, String> {
     let path = layout.repo_dir(repo).join(STATE_FILE);
-    let deadline = Instant::now() + WAIT_LIMIT;
-    loop {
-        let report: Option<Report> = match tokio::fs::read(&path).await {
-            Ok(raw) => {
-                Some(serde_json::from_slice(&raw).map_err(|e| format!("decode env report: {e}"))?)
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(format!("read {}: {e}", path.display())),
-        };
-        if no_wait || report.as_ref().is_none_or(|r| r.done) || Instant::now() >= deadline {
-            return Ok(report);
-        }
-        tokio::time::sleep(WAIT_POLL).await;
+    match tokio::fs::read(&path).await {
+        Ok(raw) => serde_json::from_slice(&raw)
+            .map(Some)
+            .map_err(|e| format!("decode env report: {e}")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("read {}: {e}", path.display())),
     }
 }
 

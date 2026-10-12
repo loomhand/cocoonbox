@@ -543,6 +543,40 @@ async fn a_rescan_after_a_restore_restarts_the_restored_sessions_at_once() {
 }
 
 #[tokio::test]
+async fn env_waits_for_the_inbox_step_and_refuses_a_step_it_does_not_run() {
+    let b = TestBox::start(false).await;
+    std::fs::create_dir_all(b.layout.state.join(REPO)).unwrap();
+    std::fs::write(
+        b.layout.state.join(REPO).join("env.json"),
+        r#"{"v":1,"lockfiles":["go.sum"]}"#,
+    )
+    .unwrap();
+    b.start_session("FIRST").await;
+    let resp = b
+        .call(json!({"op": "env", "repo": REPO, "wait_ms": 60_000}))
+        .await;
+    assert_eq!(resp["ok"], true, "{resp}");
+    assert_eq!(resp["report"]["done"], true, "{resp}");
+    assert_eq!(resp["report"]["fetches"][0]["lockfile"], "go.sum");
+    assert_ne!(resp["report"]["fetches"][0]["outcome"], "pending");
+
+    let state = b.layout.state.join(REPO).join("env-state.json");
+    let mut report: Value = serde_json::from_slice(&std::fs::read(&state).unwrap()).unwrap();
+    report["done"] = false.into();
+    std::fs::write(&state, serde_json::to_vec(&report).unwrap()).unwrap();
+    let started = std::time::Instant::now();
+    let resp = b
+        .call(json!({"op": "env", "repo": REPO, "wait_ms": 60_000}))
+        .await;
+    assert_eq!(resp["code"], "failed", "{resp}");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
 async fn end_stops_the_session_and_returns_the_copy() {
     let b = TestBox::start(false).await;
     b.start_session("FIRST").await;

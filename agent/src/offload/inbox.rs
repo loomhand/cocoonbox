@@ -1,7 +1,7 @@
 //! The inbox (`offload serve`, a user unit of `user`): owns each repo's box CLI session in tmux,
 //! keeps its inbox and outbox, follows the CLI's hooks, and restarts a lost session.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::net::unix::OwnedWriteHalf;
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::env::{self, Spec};
@@ -151,11 +151,12 @@ impl Change {
     }
 }
 
-/// The inbox's state: the session records behind one lock, and the change feed.
+/// The inbox's state: the session records behind one lock, the change feed, and the repos whose environment step runs.
 pub struct Inbox {
     layout: Layout,
     records: Mutex<HashMap<String, Record>>,
     changes: broadcast::Sender<Change>,
+    steps: watch::Sender<HashSet<String>>,
 }
 
 impl Inbox {
@@ -167,6 +168,7 @@ impl Inbox {
             layout,
             records: Mutex::new(records),
             changes: broadcast::channel(CHANGES).0,
+            steps: watch::channel(HashSet::new()).0,
         }))
     }
 
@@ -237,6 +239,7 @@ impl Inbox {
                 since,
                 wait_ms,
             } => self.read(&repo, since, wait_ms).await,
+            Request::Env { repo, wait_ms } => self.env(&repo, wait_ms).await,
             Request::Status { repo } => self.status(repo.as_deref()).await,
             Request::Restart { repo } => self.restart(&repo).await,
             Request::Event {
@@ -440,8 +443,17 @@ impl Inbox {
             let layout = self.layout.clone();
             let repo = rec.repo.clone();
             let dir = rec.dir.clone();
+            let steps = self.steps.clone();
+            steps.send_modify(|s| {
+                s.insert(repo.clone());
+            });
             // detached: the installs and fetches report through env-state.json
-            tokio::spawn(async move { env::run(&layout, &repo, &dir, &spec, report).await });
+            tokio::spawn(async move {
+                env::run(&layout, &repo, &dir, &spec, report).await;
+                steps.send_modify(|s| {
+                    s.remove(&repo);
+                });
+            });
         }
         Ok(())
     }
@@ -575,6 +587,27 @@ impl Inbox {
                     Ok(_) => break,
                 }
             }
+        }
+    }
+
+    async fn env(&self, repo: &str, wait_ms: u64) -> Result<Value, Refusal> {
+        let mut steps = self.steps.subscribe();
+        let deadline =
+            tokio::time::Instant::now() + Duration::from_millis(wait_ms).min(env::WAIT_LIMIT);
+        loop {
+            let running = steps.borrow_and_update().contains(repo);
+            let report = env::load(&self.layout, repo).await?;
+            match &report {
+                Some(r) if !r.done && !running => {
+                    return Err(Refusal::from(
+                        "the environment step stopped before it ended (the inbox restarted)"
+                            .to_owned(),
+                    ));
+                }
+                Some(r) if !r.done && tokio::time::Instant::now() < deadline => {}
+                _ => return Ok(json!({"ok": true, "report": report})),
+            }
+            let _ = tokio::time::timeout_at(deadline, steps.changed()).await;
         }
     }
 
@@ -919,6 +952,11 @@ enum Request {
         repo: String,
         #[serde(default)]
         since: u64,
+        #[serde(default)]
+        wait_ms: u64,
+    },
+    Env {
+        repo: String,
         #[serde(default)]
         wait_ms: u64,
     },

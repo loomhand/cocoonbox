@@ -420,7 +420,7 @@ impl Offload<'_> {
                 Some(s) => {
                     let report = env::plan(self.layout, self.repo, dir, s).await;
                     env::run(self.layout, self.repo, dir, s, report).await;
-                    env::show(self.layout, self.repo, true).await?
+                    env::load(self.layout, self.repo).await?
                 }
                 None => None,
             };
