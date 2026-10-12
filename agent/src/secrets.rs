@@ -7,6 +7,7 @@ const CVC: &str = "[card cvc]";
 const CVC_LABELS: [&str; 5] = ["cvc", "cvv", "csc", "security code", "card code"];
 const LABEL_REACH: usize = 48;
 const MIN_PAN: usize = 12;
+const MIN_FRAGMENT: usize = 8;
 const MISREAD_SPAN: usize = 10;
 
 /// The registry of this process; it lives as long as the process and is never persisted.
@@ -59,14 +60,42 @@ impl Secrets {
         self.replace(text, true);
     }
 
-    fn replace(&self, text: &mut String, prose: bool) {
+    /// The next part of streamed model text `text`, of which the first `sent` bytes went out, scrubbed
+    /// like [`Secrets::scrub_prose`]; a trailing number that more text could extend is held until `end`.
+    /// With none registered it holds nothing back and scrubs nothing.
+    pub fn stream(&self, text: &str, sent: &mut usize, end: bool) -> String {
         let values = self.values.read().unwrap_or_else(PoisonError::into_inner);
-        if !values.numbers.is_empty()
-            && let Some(out) = replace_numbers(text, &values.numbers, prose)
+        let from = *sent;
+        if values.numbers.is_empty() && values.cvcs.is_empty() {
+            *sent = text.len();
+            return text[from..].to_owned();
+        }
+        *sent = if end {
+            text.len()
+        } else {
+            open_run(text).max(from)
+        };
+        let mut part = text[from..*sent].to_owned();
+        values.replace(&mut part, true);
+        part
+    }
+
+    fn replace(&self, text: &mut String, prose: bool) {
+        self.values
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .replace(text, prose);
+    }
+}
+
+impl Registry {
+    fn replace(&self, text: &mut String, prose: bool) {
+        if !self.numbers.is_empty()
+            && let Some(out) = replace_numbers(text, &self.numbers, prose)
         {
             *text = out;
         }
-        for cvc in &values.cvcs {
+        for cvc in &self.cvcs {
             if text.contains(cvc.as_str()) {
                 *text = replace_whole(text, cvc, CVC, prose);
             }
@@ -80,8 +109,33 @@ impl Default for Secrets {
     }
 }
 
+/// Where the run of digits joined by single spaces, dashes or dots that ends `text`, or ends it but for one
+/// such separator, starts; the length of `text` when none does.
+fn open_run(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let separator = |i: usize| matches!(bytes[i], b' ' | b'-' | b'.');
+    let mut i = bytes.len();
+    if i >= 2 && separator(i - 1) && bytes[i - 2].is_ascii_digit() {
+        i -= 1;
+    }
+    if i == 0 || !bytes[i - 1].is_ascii_digit() {
+        return bytes.len();
+    }
+    loop {
+        while i > 0 && bytes[i - 1].is_ascii_digit() {
+            i -= 1;
+        }
+        if i >= 2 && separator(i - 1) && bytes[i - 2].is_ascii_digit() {
+            i -= 1;
+        } else {
+            return i;
+        }
+    }
+}
+
 /// Replaces each run of digits joined by single spaces, dashes or dots whose digits hold a registered
-/// number or, when `misread`, share a stretch of [`MISREAD_SPAN`] digits with one; `None` when none does.
+/// number or, when `misread`, share a stretch of [`MISREAD_SPAN`] digits with one or are a stretch of
+/// one of at least [`MIN_FRAGMENT`] digits; `None` when none does.
 fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = String::new();
@@ -104,13 +158,15 @@ fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<Stri
                 _ => break,
             }
         }
-        let hit = digits.len() >= MIN_PAN
-            && numbers.iter().any(|n| {
-                digits.contains(n.as_str())
-                    || misread
-                        && (0..=n.len() - MISREAD_SPAN)
-                            .any(|at| digits.contains(&n[at..at + MISREAD_SPAN]))
-            });
+        let hit = numbers.iter().any(|n| {
+            if digits.len() < MIN_PAN {
+                return misread && digits.len() >= MIN_FRAGMENT && n.contains(digits.as_str());
+            }
+            digits.contains(n.as_str())
+                || misread
+                    && (0..=n.len() - MISREAD_SPAN)
+                        .any(|at| digits.contains(&n[at..at + MISREAD_SPAN]))
+        });
         if hit {
             out.push_str(&text[last..start]);
             out.push_str(NUMBER);
@@ -286,14 +342,141 @@ mod tests {
             "clicked (424, 242) then (1242, 4242)",
             "button center=4242 424",
             "call +1 415-555-0100 or +86 138 0013 8000",
-            "order 112-4567890-1234567 and #424242424",
+            "order 112-4567890-1234567 and #4242424",
             "version 1.2.42.4242, ip 10.203.0.1",
-            "id 43920275 and 23501133",
+            "at 1791750880206 ms, 2026-10-12T01:24:07.4242424Z",
+            "point (1242, 424), 37.7749295, -323.4392027",
+            "call 415 555 0100, +44 20 7946 0958, 138-0013-8000",
+            "order #4392027 and 2350113, ticket 424-2424, id 7523501",
         ] {
             let mut prose = kept.to_owned();
             s.scrub_prose(&mut prose);
             assert_eq!(prose, kept);
             assert_eq!(scrubbed(&s, kept), kept);
         }
+    }
+
+    fn streamed(s: &Secrets, deltas: &[&str]) -> String {
+        let (mut text, mut sent, mut out) = (String::new(), 0, String::new());
+        for d in deltas {
+            text.push_str(d);
+            out.push_str(&s.stream(&text, &mut sent, false));
+        }
+        out + &s.stream(&text, &mut sent, true)
+    }
+
+    fn whole_prose(s: &Secrets, text: &str) -> String {
+        let mut text = text.to_owned();
+        s.scrub_prose(&mut text);
+        text
+    }
+
+    #[test]
+    fn a_fragment_is_replaced_only_in_model_text() {
+        let s = Secrets::new();
+        s.register("number", PAN);
+        s.register("number", TEST_PAN);
+        for (text, want) in [
+            ("id 43920275 and 23501133", "id {} and {}"),
+            (
+                "first half 4392 0275, then 2350",
+                "first half {}, then 2350",
+            ),
+            ("it ends in 75235011", "it ends in {}"),
+            ("digits 4392-0275-235", "digits {}"),
+            ("digits 39202752350", "digits {}"),
+            ("#424242424", "#{}"),
+            ("4242 4242 42 then", "{} then"),
+        ] {
+            assert_eq!(whole_prose(&s, text), want.replace("{}", NUMBER));
+            assert_eq!(scrubbed(&s, text), text);
+        }
+        for kept in [
+            "4392027 and 3501133",
+            "9392027523",
+            "24242424 4",
+            "4242 4243",
+        ] {
+            assert_eq!(whole_prose(&s, kept), kept);
+        }
+    }
+
+    #[test]
+    fn a_number_split_across_deltas_never_goes_out() {
+        let s = Secrets::new();
+        s.register("number", TEST_PAN);
+        s.register("number", AMEX);
+        s.register("cvc", "739");
+        for form in [
+            "4242 4242 4242 4242",
+            "42424242424242 42",
+            "4242-4242-4242-4242",
+            "4242.4242.4242.4242",
+            "4 2 4 2 4 2 4 2 4 2 4 2 4 2 4 2",
+            "424 2424 24242 4242",
+            "4242 4242 4243 4242",
+            "3714 496353 98431",
+            "4242 4242",
+            "CVC 739",
+        ] {
+            let text = format!("Card: {form}. Done at 12:05");
+            let want = whole_prose(&s, &text);
+            assert!(!want.contains(form), "{want}");
+            for at in 0..=text.len() {
+                let out = streamed(&s, &[&text[..at], &text[at..]]);
+                assert_eq!(out, want, "split at {at}");
+            }
+            let chars: Vec<String> = text.chars().map(String::from).collect();
+            let chars: Vec<&str> = chars.iter().map(String::as_str).collect();
+            assert_eq!(streamed(&s, &chars), want, "one char per delta");
+        }
+    }
+
+    #[test]
+    fn a_stream_holds_only_a_trailing_number() {
+        let s = Secrets::new();
+        s.register("number", TEST_PAN);
+        let mut sent = 0;
+        assert_eq!(
+            s.stream("Clicked at step 12", &mut sent, false),
+            "Clicked at step "
+        );
+        assert_eq!(s.stream("Clicked at step 12 -", &mut sent, false), "12 -");
+        assert_eq!(
+            s.stream("Clicked at step 12 - 4242 ", &mut sent, false),
+            " "
+        );
+        assert_eq!(
+            s.stream("Clicked at step 12 - 4242 x", &mut sent, false),
+            "4242 x"
+        );
+        assert_eq!(
+            s.stream("Clicked at step 12 - 4242 x 7", &mut sent, true),
+            " 7"
+        );
+    }
+
+    #[test]
+    fn an_empty_registry_streams_every_delta_whole() {
+        let s = Secrets::new();
+        let mut sent = 0;
+        assert_eq!(
+            s.stream("Card: 4242 4242", &mut sent, false),
+            "Card: 4242 4242"
+        );
+        assert_eq!(
+            s.stream("Card: 4242 4242 4242 4242", &mut sent, false),
+            " 4242 4242"
+        );
+    }
+
+    #[test]
+    fn deltas_scrubbed_one_by_one_leak_the_number() {
+        let s = Secrets::new();
+        s.register("number", TEST_PAN);
+        let deltas = ["Card: 4242 42", "42 4242 4", "242."];
+        let naive: String = deltas.iter().map(|d| whole_prose(&s, d)).collect();
+        assert_eq!(naive, "Card: 4242 4242 4242 4242.");
+        assert_eq!(streamed(&s, &deltas), format!("Card: {NUMBER}."));
     }
 }

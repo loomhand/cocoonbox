@@ -822,20 +822,29 @@ impl Runtime {
 
     fn stream_delta(&self, ctx: &TurnCtx, block: &mut Block, kind: Kind, t: &str, subagent: &str) {
         block.text.push_str(t);
-        let fragment = match block.index {
-            Some(_) => t,
-            None if block.text.trim().is_empty() => return,
-            None => {
-                block.index = Some(ctx.blocks.fetch_add(1, Ordering::Relaxed));
-                block.text.as_str()
+        if block.index.is_none() {
+            if block.text.trim().is_empty() {
+                return;
             }
-        };
+            block.index = Some(ctx.blocks.fetch_add(1, Ordering::Relaxed));
+        }
+        self.publish_delta(ctx, block, kind, subagent, false);
+    }
+
+    fn publish_delta(
+        &self,
+        ctx: &TurnCtx,
+        block: &mut Block,
+        kind: Kind,
+        subagent: &str,
+        end: bool,
+    ) {
+        let text = SECRETS.stream(&block.text, &mut block.sent, end);
+        if text.is_empty() {
+            return;
+        }
         let (agent_id, turn_id) = (ctx.agent_id.clone(), ctx.turn_id.clone());
-        let (block, text, subagent) = (
-            block.index.unwrap_or_default(),
-            fragment.to_owned(),
-            subagent.to_owned(),
-        );
+        let (block, subagent) = (block.index.unwrap_or_default(), subagent.to_owned());
         self.journal.bus.publish_live(match kind {
             Kind::Text => event::Body::TextDelta(pb::TextDelta {
                 agent_id,
@@ -862,8 +871,11 @@ impl Runtime {
         kind: Kind,
         subagent: &str,
     ) -> Result<String, String> {
-        let text = std::mem::take(&mut block.text);
-        let Some(index) = block.index.take() else {
+        if block.index.is_some() {
+            self.publish_delta(ctx, block, kind, subagent, true);
+        }
+        let Block { text, index, .. } = std::mem::take(block);
+        let Some(index) = index else {
             return Ok(text);
         };
         let body = match kind {
@@ -912,11 +924,13 @@ pub struct StepOut {
     pub usage: Usage,
 }
 
-/// A streamed text or reasoning block; `index` is assigned when its first non-blank delta goes out.
+/// A streamed text or reasoning block; `index` is assigned when its first non-blank delta goes out, and
+/// `sent` bytes of `text` went out.
 #[derive(Default)]
 struct Block {
     text: String,
     index: Option<u32>,
+    sent: usize,
 }
 
 #[derive(Clone, Copy)]
