@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
+use tokio::sync::watch;
 
 use super::files;
 
@@ -12,6 +13,8 @@ use super::files;
 pub const MAX_BYTES: u64 = 128 << 10;
 const DIR: &str = "flows";
 const MAX_NAME: usize = 96;
+const EVENT_HEADER: usize = 16;
+const EVENT_BUF: usize = 64 << 10;
 
 #[derive(Deserialize)]
 struct NameArgs {
@@ -107,6 +110,80 @@ pub async fn remove(workspace: &Path, args: Value) -> Result<String, String> {
     }
 }
 
+/// `flows_wait {after}`: returns the count of flow writes once it passes `after`.
+pub async fn wait(writes: &watch::Sender<u64>, args: Value) -> Result<String, String> {
+    let after = args["after"].as_u64().unwrap_or(0);
+    let mut rx = writes.subscribe();
+    let seen = *rx
+        .wait_for(|n| *n > after)
+        .await
+        .map_err(|e| format!("flow writes: {e}"))?;
+    Ok(seen.to_string())
+}
+
+/// Counts in `writes` each write of a flow file into `workspace/flows`, following the folder when a restore replaces it.
+#[cfg(target_os = "linux")]
+pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(), String> {
+    use std::io::Read;
+
+    use tokio::io::unix::AsyncFd;
+
+    let root_events = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ONLYDIR;
+    let flow_events = libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO;
+    let fd = crate::sys::inotify()
+        .and_then(|fd| AsyncFd::new(std::fs::File::from(fd)))
+        .map_err(|e| format!("inotify: {e}"))?;
+    let root = crate::sys::inotify_watch(fd.get_ref(), &workspace, root_events)
+        .map_err(|e| format!("watch {}: {e}", workspace.display()))?;
+    let dir = workspace.join(DIR);
+    let mut flows = crate::sys::inotify_watch(fd.get_ref(), &dir, flow_events).ok();
+    let mut buf = vec![0u8; EVENT_BUF];
+    loop {
+        let mut ready = fd.readable().await.map_err(|e| format!("inotify: {e}"))?;
+        let Ok(read) = ready.try_io(|f| {
+            let mut file = f.get_ref();
+            file.read(&mut buf)
+        }) else {
+            continue;
+        };
+        let n = read.map_err(|e| format!("read inotify: {e}"))?;
+        let mut written = false;
+        let mut at = 0;
+        while at + EVENT_HEADER <= n {
+            let word = |i: usize| {
+                let mut b = [0u8; 4];
+                b.copy_from_slice(&buf[at + i..at + i + 4]);
+                b
+            };
+            let (wd, mask) = (i32::from_ne_bytes(word(0)), u32::from_ne_bytes(word(4)));
+            let len = u32::from_ne_bytes(word(12)) as usize;
+            let raw = &buf[(at + EVENT_HEADER).min(n)..(at + EVENT_HEADER + len).min(n)];
+            let name = String::from_utf8_lossy(raw.split(|b| *b == 0).next().unwrap_or_default());
+            at += EVENT_HEADER + len;
+            if mask & libc::IN_Q_OVERFLOW != 0 {
+                written = true;
+            } else if wd == root && name == DIR {
+                if let Some(old) = flows.take() {
+                    crate::sys::inotify_unwatch(fd.get_ref(), old);
+                }
+                flows = crate::sys::inotify_watch(fd.get_ref(), &dir, flow_events).ok();
+                written = true;
+            } else if Some(wd) == flows && valid(&name) {
+                written = true;
+            }
+        }
+        if written {
+            writes.send_modify(|w| *w += 1);
+        }
+    }
+}
+
+/// Without inotify no flow write is seen.
+#[cfg(not(target_os = "linux"))]
+pub async fn watch(_workspace: PathBuf, _writes: watch::Sender<u64>) -> Result<(), String> {
+    Err("no inotify on this system".to_owned())
+}
+
 fn path_of(workspace: &Path, name: &str) -> Result<PathBuf, String> {
     if !valid(name) {
         return Err(format!("{name:?} is no flow name"));
@@ -166,5 +243,47 @@ mod tests {
         remove(ws, json!({"name": "a.json"})).await.unwrap();
         remove(ws, json!({"name": "a.json"})).await.unwrap();
         assert!(!ws.join("flows/a.json").exists());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn watch_counts_flow_writes_and_follows_a_replaced_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        let writes = watch::channel(0).0;
+        tokio::spawn(super::watch(ws.clone(), writes.clone()));
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let next = |after: u64| {
+            let writes = writes.clone();
+            async move {
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(2),
+                    wait(&writes, json!({"after": after})),
+                )
+                .await
+                .expect("no flow write seen")
+                .unwrap()
+                .parse::<u64>()
+                .unwrap()
+            }
+        };
+
+        std::fs::create_dir(ws.join("flows")).unwrap();
+        let created = next(0).await;
+        std::fs::write(ws.join("flows/a.json"), "{}").unwrap();
+        let written = next(created).await;
+        std::fs::write(ws.join("flows/INDEX"), "a()").unwrap();
+        std::fs::write(ws.join("flows/.runs.jsonl"), "{}").unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(*writes.borrow(), written, "a file that is no flow counted");
+
+        std::fs::create_dir_all(ws.join("staged/flows")).unwrap();
+        std::fs::create_dir(ws.join("trash")).unwrap();
+        std::fs::rename(ws.join("flows"), ws.join("trash/flows")).unwrap();
+        std::fs::rename(ws.join("staged/flows"), ws.join("flows")).unwrap();
+        let swapped = next(written).await;
+        std::fs::remove_dir_all(ws.join("trash")).unwrap();
+        std::fs::write(ws.join("flows/b.mts"), "x").unwrap();
+        next(swapped).await;
     }
 }

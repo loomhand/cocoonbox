@@ -25,7 +25,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::Value;
 use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, watch};
 
 use crate::config::ToolhostConfig;
 use browser::Browser;
@@ -50,6 +50,7 @@ pub struct Host {
     home: PathBuf,
     /// The saved flows of a Script box, which a read-only share does not read.
     hidden: Option<PathBuf>,
+    flow_writes: watch::Sender<u64>,
 }
 
 impl Host {
@@ -69,6 +70,7 @@ impl Host {
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
             hidden: cfg.script.then(|| cfg.workspace.join("flows")),
+            flow_writes: watch::channel(0).0,
         }
     }
 
@@ -135,6 +137,9 @@ impl Host {
                 .await
                 .map(Output::text),
             "flows_index" => self.script.reindex(&self.workspace).await,
+            "flows_wait" => flows::wait(&self.flow_writes, call.args)
+                .await
+                .map(Output::text),
             "screenshot" => {
                 let max_edge = call.args["max_edge"]
                     .as_u64()
@@ -235,6 +240,15 @@ pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
     let listener = bind(&cfg.socket, &cfg.socket_group)?;
     eprintln!("toolhost listening on {}", cfg.socket.display());
     let host = Arc::new(Host::new(&cfg));
+    if cfg.script {
+        let (workspace, writes) = (cfg.workspace.clone(), host.flow_writes.clone());
+        // detached: lives as long as the toolhost
+        tokio::spawn(async move {
+            if let Err(e) = flows::watch(workspace, writes).await {
+                eprintln!("toolhost: watch the flows: {e}");
+            }
+        });
+    }
     let stop = crate::server::shutdown_signal();
     tokio::pin!(stop);
     loop {

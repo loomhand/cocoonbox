@@ -19,7 +19,7 @@ const PULL_BUDGET: Duration = Duration::from_secs(3);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 const PUSH_DELAY: Duration = Duration::from_millis(500);
-const SWEEP: Duration = Duration::from_secs(60);
+const WATCH_RETRY: Duration = Duration::from_secs(60);
 const FLOW_OWNER: &str = "flows";
 
 /// Keeps `/workspace/flows` and the owner's library in step.
@@ -68,21 +68,34 @@ impl Syncer {
         })
     }
 
-    /// Pulls and pushes once, then pushes after every kick and every minute until `stop`.
+    /// Pulls and pushes once, then pushes after every kick and every flow write the toolhost sees until `stop`.
     pub fn spawn(self: &Arc<Self>, stop: CancellationToken) {
         let sync = Arc::clone(self);
         // detached: ends with stop
         tokio::spawn(async move {
             sync.pull().await;
+            let mut seen = 0;
             loop {
                 if let Err(e) = sync.push().await {
                     eprintln!("flows: push: {e}");
                 }
-                tokio::select! {
+                let written = tokio::select! {
                     () = stop.cancelled() => return,
-                    () = sync.kick.notified() => tokio::time::sleep(PUSH_DELAY).await,
-                    () = tokio::time::sleep(SWEEP) => {}
+                    () = sync.kick.notified() => Ok(seen),
+                    w = sync.written(seen) => w,
+                };
+                match written {
+                    Ok(n) => seen = n,
+                    Err(e) => {
+                        eprintln!("flows: watch: {e}");
+                        tokio::select! {
+                            () = stop.cancelled() => return,
+                            () = sync.kick.notified() => {}
+                            () = tokio::time::sleep(WATCH_RETRY) => {}
+                        }
+                    }
                 }
+                tokio::time::sleep(PUSH_DELAY).await;
             }
         });
     }
@@ -213,6 +226,11 @@ impl Syncer {
             return Err(format!("get {url}: {}", resp.status()));
         }
         Ok(resp)
+    }
+
+    async fn written(&self, after: u64) -> Result<u64, String> {
+        let n = self.run("flows_wait", json!({"after": after})).await?;
+        n.parse().map_err(|e| format!("decode flows_wait: {e}"))
     }
 
     async fn scan(&self) -> Result<HashMap<String, String>, String> {
@@ -368,6 +386,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_flow_written_by_no_tool_is_pushed_within_a_second() {
+        let door = Door::start().await;
+        let b = Box_::new(&door);
+        let stop = CancellationToken::new();
+        b.sync.spawn(stop.clone());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        b.write("shell.json", "{\"by\":\"shell\"}");
+        let started = std::time::Instant::now();
+        while door.content("shell.json").is_none() && started.elapsed() < Duration::from_secs(2) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        stop.cancel();
+        assert_eq!(
+            door.content("shell.json").as_deref(),
+            Some("{\"by\":\"shell\"}"),
+            "not pushed within {:?}",
+            started.elapsed()
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(1500),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
     async fn an_unreachable_library_leaves_the_box_as_it_is() {
         let b = Box_::at("http://127.0.0.1:9/mcp");
         b.write("a.json", "{}");
@@ -380,7 +424,7 @@ mod tests {
         _dir: tempfile::TempDir,
         ws: PathBuf,
         tools: Arc<FileTools>,
-        sync: Syncer,
+        sync: Arc<Syncer>,
     }
 
     impl Box_ {
@@ -396,8 +440,10 @@ mod tests {
             let tools = Arc::new(FileTools {
                 ws: ws.clone(),
                 indexed: AtomicUsize::new(0),
+                writes: tokio::sync::watch::channel(0).0,
             });
-            let sync = Syncer::new(url, store, tools.clone()).unwrap();
+            tokio::spawn(toolhost::flows::watch(ws.clone(), tools.writes.clone()));
+            let sync = Arc::new(Syncer::new(url, store, tools.clone()).unwrap());
             Self {
                 _dir: dir,
                 ws,
@@ -423,6 +469,7 @@ mod tests {
     struct FileTools {
         ws: PathBuf,
         indexed: AtomicUsize,
+        writes: tokio::sync::watch::Sender<u64>,
     }
 
     #[tonic::async_trait]
@@ -434,6 +481,7 @@ mod tests {
                 "flows_read" => toolhost::flows::read(ws, args).await,
                 "flows_write" => toolhost::flows::write(ws, args).await,
                 "flows_remove" => toolhost::flows::remove(ws, args).await,
+                "flows_wait" => toolhost::flows::wait(&self.writes, args).await,
                 "flows_index" => {
                     self.indexed.fetch_add(1, Ordering::SeqCst);
                     Ok("{}".to_owned())

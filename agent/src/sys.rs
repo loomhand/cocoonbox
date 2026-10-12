@@ -128,6 +128,41 @@ pub fn open_beneath(dir: &File, path: &Path, flags: libc::c_int) -> io::Result<F
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
+/// A non-blocking, close-on-exec inotify instance.
+#[cfg(target_os = "linux")]
+pub fn inotify() -> io::Result<OwnedFd> {
+    // SAFETY: inotify_init1 takes flags only.
+    let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: inotify_init1 returned a new descriptor that nothing else owns.
+    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+}
+
+/// Watches `path` for the events in `mask` on the inotify instance `fd`; returns the watch descriptor.
+#[cfg(target_os = "linux")]
+pub fn inotify_watch(fd: &impl AsRawFd, path: &Path, mask: u32) -> io::Result<i32> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let path = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
+    // SAFETY: path is NUL-terminated and outlives the call.
+    let wd = unsafe { libc::inotify_add_watch(fd.as_raw_fd(), path.as_ptr(), mask) };
+    if wd < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(wd)
+    }
+}
+
+/// Drops the watch `wd` of the inotify instance `fd`; one the kernel already dropped is no error.
+#[cfg(target_os = "linux")]
+pub fn inotify_unwatch(fd: &impl AsRawFd, wd: i32) {
+    // SAFETY: inotify_rm_watch takes plain integers.
+    unsafe { libc::inotify_rm_watch(fd.as_raw_fd(), wd) };
+}
+
 /// Without openat2 nothing opens beneath a directory.
 #[cfg(not(target_os = "linux"))]
 pub fn open_beneath(_dir: &File, _path: &Path, _flags: libc::c_int) -> io::Result<File> {
