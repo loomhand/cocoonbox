@@ -952,7 +952,7 @@ impl Cdp {
     async fn load(&mut self, url: &str, frame: &Value, wait: Duration) -> Result<bool, String> {
         let id = self.send("Page.navigate", json!({"url": url})).await?;
         let mut deadline = tokio::time::Instant::now() + wait;
-        let (mut fresh, mut ready, mut idle) = (false, false, false);
+        let (mut fresh, mut ready, mut idle, mut challenge) = (false, false, false, false);
         let mut refused = None;
         let mut poke = tokio::time::interval(POKE);
         while !(ready && idle) {
@@ -986,6 +986,9 @@ impl Cdp {
             }
             if v["method"] == "Fetch.requestPaused" {
                 let paused = &v["params"];
+                if paused["frameId"] == *frame {
+                    challenge = header(paused, "cf-mitigated") == Some("challenge");
+                }
                 let request = json!({"requestId": paused["requestId"]});
                 match not_a_page(paused) {
                     Some(kind) => {
@@ -1007,6 +1010,7 @@ impl Cdp {
             }
             match v["params"]["name"].as_str() {
                 Some("init") => (fresh, ready, idle) = (true, false, false),
+                _ if challenge => {}
                 Some("DOMContentLoaded") if fresh => {
                     ready = true;
                     deadline = deadline.min(tokio::time::Instant::now() + SETTLE);
@@ -1200,28 +1204,29 @@ fn web_url(url: String) -> String {
     }
 }
 
+fn header<'a>(paused: &'a Value, name: &str) -> Option<&'a str> {
+    paused["responseHeaders"].as_array()?.iter().find(|h| {
+        h["name"]
+            .as_str()
+            .is_some_and(|n| n.eq_ignore_ascii_case(name))
+    })?["value"]
+        .as_str()
+}
+
 /// What a paused successful document response serves when it is no page to read: an attachment or a type outside [`PAGE_TYPES`].
 fn not_a_page(paused: &Value) -> Option<String> {
     let status = paused["responseStatusCode"].as_u64()?;
     if !(200..300).contains(&status) {
         return None;
     }
-    let header = |name: &str| {
-        paused["responseHeaders"].as_array()?.iter().find(|h| {
-            h["name"]
-                .as_str()
-                .is_some_and(|n| n.eq_ignore_ascii_case(name))
-        })?["value"]
-            .as_str()
-    };
-    let kind = header("content-type").unwrap_or_default();
+    let kind = header(paused, "content-type").unwrap_or_default();
     let essence = kind
         .split(';')
         .next()
         .unwrap_or_default()
         .trim()
         .to_ascii_lowercase();
-    if header("content-disposition").is_some_and(|d| {
+    if header(paused, "content-disposition").is_some_and(|d| {
         d.trim_start()
             .to_ascii_lowercase()
             .starts_with("attachment")
@@ -1440,15 +1445,25 @@ pub(super) mod tests {
                         let zip = v["params"]["url"]
                             .as_str()
                             .is_some_and(|u| u.ends_with(".zip"));
+                        let challenge = v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.ends_with("/challenge"));
                         if v["method"] == "Page.navigate" {
                             let kind = if zip {
                                 "application/zip"
                             } else {
                                 "text/html; charset=utf-8"
                             };
-                            let paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
+                            let mut paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
                                 "requestId": "r1", "frameId": "hidden", "responseStatusCode": 200,
                                 "responseHeaders": [{"name": "Content-Type", "value": kind}]}});
+                            if challenge {
+                                paused["params"]["responseStatusCode"] = 403.into();
+                                paused["params"]["responseHeaders"]
+                                    .as_array_mut()
+                                    .unwrap()
+                                    .push(json!({"name": "cf-mitigated", "value": "challenge"}));
+                            }
                             ws.send(WsMessage::text(paused.to_string())).await.unwrap();
                         }
                         let mut result = result;
@@ -1655,6 +1670,26 @@ pub(super) mod tests {
         assert_eq!(
             log.lock().unwrap().last().unwrap()["method"],
             "Target.closeTarget"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_does_not_stop_on_a_cloudflare_challenge() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, _) = fetch_chrome("Just a moment...".into(), true).await;
+        let mut b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        b.fetch_wait = Duration::from_secs(1);
+        let out = b
+            .run(
+                "a",
+                "browser_fetch",
+                json!({"url": "https://a.test/challenge"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            out,
+            "Page: Doc (https://a.test/) [still loading after 1s; text so far]\n\nJust a moment..."
         );
     }
 
