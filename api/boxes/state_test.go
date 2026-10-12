@@ -391,22 +391,22 @@ func TestSaveRefusesUnsafeIDs(t *testing.T) {
 
 func TestUpgradeWithoutAnImageStaysInTheBoxFamily(t *testing.T) {
 	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbplan:v1", Revision: 1})
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbcore:v1", Revision: 1})
 	st := newFakeStore()
 	defaults := testDefaults
-	defaults.Image, defaults.RebaseImages = "cbdesk:v25", []string{"cbplan:v1", "cbdesk:v24"}
+	defaults.Image, defaults.RebaseImages = "cbdesk:v25", []string{"cbcore:v1", "cbdesk:v24"}
 	svc := New(fake, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
 	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
-	if err != nil || box.GetLatestImage() != "cbplan:v1" {
-		t.Fatalf("box = %v, %v, want latest cbplan:v1 so no upgrade is offered", box, err)
+	if err != nil || box.GetLatestImage() != "cbcore:v1" {
+		t.Fatalf("box = %v, %v, want latest cbcore:v1 so no upgrade is offered", box, err)
 	}
 	if _, err := svc.Rebase(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}); err != nil {
 		t.Fatalf("Rebase: %v", err)
 	}
-	if spec := fake.waitSpec(t, 1); spec.Image != "cbplan:v1" {
-		t.Errorf("upgrade target = %q, want cbplan:v1, not the cbdesk default", spec.Image)
+	if spec := fake.waitSpec(t, 1); spec.Image != "cbcore:v1" {
+		t.Errorf("upgrade target = %q, want cbcore:v1, not the cbdesk default", spec.Image)
 	}
 }
 
@@ -481,21 +481,21 @@ func TestEnsureRestoresAMissingMachineIntoItsImageFamily(t *testing.T) {
 		legacyHead, parked, owner bool
 		want                      string
 	}{
-		{"cbplan box", "cbplan:v6", false, false, false, "cbplan:v7"},
+		{"cbcore box", "cbcore:v6", false, false, false, "cbcore:v7"},
 		{"cbdesk box", "cbdesk:v22", false, false, false, "cbdesk:v25"},
-		{"head without an image", "cbplan:v6", true, false, false, "cbdesk:v25"},
-		{"parked box on an offered image", "cbplan:v6", false, true, false, "cbplan:v6"},
-		{"parked box on a retired image", "cbplan:v5", false, true, false, "cbplan:v7"},
-		{"image owner's cbplan box", "cbplan:v6", false, false, true, "cbcore:v1"},
-		{"image owner's parked box on an offered image", "cbplan:v6", false, true, true, "cbplan:v6"},
-		{"image owner's parked box on a retired image", "cbplan:v5", false, true, true, "cbcore:v1"},
+		{"head without an image", "cbcore:v6", true, false, false, "cbdesk:v25"},
+		{"parked box on an offered image", "cbcore:v6", false, true, false, "cbcore:v6"},
+		{"parked box on a retired image", "cbcore:v5", false, true, false, "cbcore:v7"},
+		{"image owner's cbcore box", "cbcore:v6", false, false, true, "cbcore:v8"},
+		{"image owner's parked box on an offered image", "cbcore:v6", false, true, true, "cbcore:v6"},
+		{"image owner's parked box on a retired image", "cbcore:v5", false, true, true, "cbcore:v8"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env := newStateEnv(t)
-			env.svc.defaults.Image, env.svc.defaults.RebaseImages = "cbdesk:v25", []string{"cbplan:v7", "cbplan:v6", "cbdesk:v24", "cbcore:v1"}
+			env.svc.defaults.Image, env.svc.defaults.RebaseImages = "cbdesk:v25", []string{"cbcore:v7", "cbcore:v6", "cbdesk:v24", "cbcore:v8"}
 			if tt.owner {
-				env.svc.defaults.ImageOwners = map[string][]string{"cbcore:v1": {alice}}
+				env.svc.defaults.ImageOwners = map[string][]string{"cbcore:v8": {alice}}
 			}
 			env.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: tt.image, Revision: 1})
 			env.agent.chunks = []string{hexID("c1")}

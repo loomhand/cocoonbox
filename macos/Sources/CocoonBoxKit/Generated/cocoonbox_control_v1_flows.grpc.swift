@@ -107,7 +107,7 @@ extension Cocoonbox_Control_V1_Flows {
     /// > Source IDL Documentation:
     /// >
     /// > Flows is served by cocoonbox-api for the caller's own flow library: the
-    /// > GUI flows and scripts that cbplan boxes keep in /workspace/flows
+    /// > GUI flows and scripts that boxes keep in /workspace/flows
     /// > and sync through the box door. Callers authenticate with
     /// > `authorization: Bearer <user token>`; a share secret never reaches it.
     public protocol StreamingServiceProtocol: GRPCCore.RegistrableRPCService {
@@ -197,7 +197,7 @@ extension Cocoonbox_Control_V1_Flows {
     /// > Source IDL Documentation:
     /// >
     /// > Flows is served by cocoonbox-api for the caller's own flow library: the
-    /// > GUI flows and scripts that cbplan boxes keep in /workspace/flows
+    /// > GUI flows and scripts that boxes keep in /workspace/flows
     /// > and sync through the box door. Callers authenticate with
     /// > `authorization: Bearer <user token>`; a share secret never reaches it.
     public protocol ServiceProtocol: Cocoonbox_Control_V1_Flows.StreamingServiceProtocol {
@@ -285,7 +285,7 @@ extension Cocoonbox_Control_V1_Flows {
     /// > Source IDL Documentation:
     /// >
     /// > Flows is served by cocoonbox-api for the caller's own flow library: the
-    /// > GUI flows and scripts that cbplan boxes keep in /workspace/flows
+    /// > GUI flows and scripts that boxes keep in /workspace/flows
     /// > and sync through the box door. Callers authenticate with
     /// > `authorization: Bearer <user token>`; a share secret never reaches it.
     public protocol SimpleServiceProtocol: Cocoonbox_Control_V1_Flows.ServiceProtocol {
@@ -532,7 +532,7 @@ extension Cocoonbox_Control_V1_Flows {
     /// > Source IDL Documentation:
     /// >
     /// > Flows is served by cocoonbox-api for the caller's own flow library: the
-    /// > GUI flows and scripts that cbplan boxes keep in /workspace/flows
+    /// > GUI flows and scripts that boxes keep in /workspace/flows
     /// > and sync through the box door. Callers authenticate with
     /// > `authorization: Bearer <user token>`; a share secret never reaches it.
     public protocol ClientProtocol: Sendable {
@@ -640,7 +640,7 @@ extension Cocoonbox_Control_V1_Flows {
     /// > Source IDL Documentation:
     /// >
     /// > Flows is served by cocoonbox-api for the caller's own flow library: the
-    /// > GUI flows and scripts that cbplan boxes keep in /workspace/flows
+    /// > GUI flows and scripts that boxes keep in /workspace/flows
     /// > and sync through the box door. Callers authenticate with
     /// > `authorization: Bearer <user token>`; a share secret never reaches it.
     public struct Client<Transport>: ClientProtocol where Transport: GRPCCore.ClientTransport {

@@ -25,8 +25,8 @@ import (
 func TestPutKeepsTheLastWriteAndSealsItAtRest(t *testing.T) {
 	st, lib := newLibrary()
 	ctx := t.Context()
-	first, err := lib.Put(ctx, "alice", "mousepad-save.json", []byte(`{"name":"mousepad-save","typed":"secret"}`), Origin{BoxID: "cb-1", Image: "cbplan:v17"})
-	if err != nil || first.Rev != 1 || first.BoxID != "cb-1" || first.Image != "cbplan:v17" {
+	first, err := lib.Put(ctx, "alice", "mousepad-save.json", []byte(`{"name":"mousepad-save","typed":"secret"}`), Origin{BoxID: "cb-1", Image: "cbcore:v17"})
+	if err != nil || first.Rev != 1 || first.BoxID != "cb-1" || first.Image != "cbcore:v17" {
 		t.Fatalf("first Put = %+v, %v", first, err)
 	}
 	same, err := lib.Put(ctx, "alice", "mousepad-save.json", []byte(`{"name":"mousepad-save","typed":"secret"}`), Origin{BoxID: "cb-2"})
@@ -129,7 +129,7 @@ func TestDeleteDropsTheFlowAndItsObject(t *testing.T) {
 func TestDoorServesTheMachineOwnersLibrary(t *testing.T) {
 	_, lib := newLibrary()
 	door := httptest.NewServer(NewDoor(lib, doorKeys, func(_ context.Context, owner, machine string) Origin {
-		return Origin{BoxID: strings.TrimSuffix(machine, "-r1"), Image: "cbplan:v17"}
+		return Origin{BoxID: strings.TrimSuffix(machine, "-r1"), Image: "cbcore:v17"}
 	}))
 	defer door.Close()
 
@@ -144,7 +144,7 @@ func TestDoorServesTheMachineOwnersLibrary(t *testing.T) {
 		Rev   uint64  `json:"rev"`
 		Flows []Entry `json:"flows"`
 	}
-	if err := json.Unmarshal([]byte(body), &listed); code != http.StatusOK || err != nil || listed.Rev != 1 || listed.Flows[0].Image != "cbplan:v17" {
+	if err := json.Unmarshal([]byte(body), &listed); code != http.StatusOK || err != nil || listed.Rev != 1 || listed.Flows[0].Image != "cbcore:v17" {
 		t.Errorf("GET list = %d %s %v", code, body, err)
 	}
 	if code, body := call(t, door.URL, "alice-key", http.MethodGet, "/flows/save.json", ""); code != http.StatusOK || body != `{"steps":[]}` {
@@ -168,7 +168,7 @@ func TestServerExportsAndImportsTheCallersFlowsOnly(t *testing.T) {
 	if _, err := srv.List(t.Context(), &controlv1.ListFlowsRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("List without a user: %v", err)
 	}
-	if _, err := lib.Put(alice, "alice", "save.json", []byte(`{"v":1}`), Origin{BoxID: "cb-a", Image: "cbplan:v17"}); err != nil {
+	if _, err := lib.Put(alice, "alice", "save.json", []byte(`{"v":1}`), Origin{BoxID: "cb-a", Image: "cbcore:v17"}); err != nil {
 		t.Fatal(err)
 	}
 	exported, err := srv.Export(alice, &controlv1.ExportFlowsRequest{})
@@ -183,7 +183,7 @@ func TestServerExportsAndImportsTheCallersFlowsOnly(t *testing.T) {
 		t.Errorf("bob's Export = %v, %v", got, err)
 	}
 	imported, err := srv.Save(bob, &controlv1.SaveFlowsRequest{Flows: exported.GetFlows()})
-	if err != nil || imported.GetFlows()[0].GetRev() != 1 || imported.GetFlows()[0].GetImage() != "cbplan:v17" || imported.GetFlows()[0].GetBoxId() != "" {
+	if err != nil || imported.GetFlows()[0].GetRev() != 1 || imported.GetFlows()[0].GetImage() != "cbcore:v17" || imported.GetFlows()[0].GetBoxId() != "" {
 		t.Fatalf("bob's Save = %v, %v", imported, err)
 	}
 	bad := &controlv1.SaveFlowsRequest{Flows: []*controlv1.Flow{{Name: "ok.json", Content: []byte("{}")}, {Name: "../x", Content: []byte("{}")}}}

@@ -48,11 +48,11 @@ func TestBoxID(t *testing.T) {
 }
 
 func TestLatestStaysInTheImageFamily(t *testing.T) {
-	d := Defaults{Image: "cbdesk:v25", RebaseImages: []string{"cbplan:v2", "cbdesk:v24", "cbplan:v1"}}
+	d := Defaults{Image: "cbdesk:v25", RebaseImages: []string{"cbcore:v2", "cbdesk:v24", "cbcore:v1"}}
 	tests := []struct{ image, want string }{
 		{"cbdesk:v22", "cbdesk:v25"},
 		{"cbdesk:v25", "cbdesk:v25"},
-		{"cbplan:v1", "cbplan:v2"},
+		{"cbcore:v1", "cbcore:v2"},
 		{"other:v1", "cbdesk:v25"},
 		{"", "cbdesk:v25"},
 	}
@@ -67,7 +67,7 @@ func TestImageOwnersGetTheirImageForNewBoxesAndUpgrades(t *testing.T) {
 	fake := newFakeMachines()
 	st := newFakeStore()
 	defaults := testDefaults
-	defaults.Image, defaults.RebaseImages, defaults.MaxRunning = "cbplan:v38", []string{"cbdesk:v34", "cbcore:v1"}, 9
+	defaults.Image, defaults.RebaseImages, defaults.MaxRunning = "cbdesk:v25", []string{"cbcore:v2", "cbcore:v1"}, 9
 	defaults.ImageOwners = map[string][]string{"cbcore:v1": {alice}}
 	svc := New(fake, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
@@ -84,17 +84,17 @@ func TestImageOwnersGetTheirImageForNewBoxesAndUpgrades(t *testing.T) {
 		if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "second"}); err != nil || fake.lastSpec().Image != tt.want {
 			t.Errorf("Create of %s = %v, spec image %q, want %q", tt.user, err, fake.lastSpec().Image, tt.want)
 		}
-		if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "family", Image: "cbdesk"}); err != nil || fake.lastSpec().Image != "cbdesk:v34" {
-			t.Errorf("Create(cbdesk) of %s = %v, spec image %q, want cbdesk:v34", tt.user, err, fake.lastSpec().Image)
+		if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "family", Image: "cbcore"}); err != nil || fake.lastSpec().Image != "cbcore:v2" {
+			t.Errorf("Create(cbcore) of %s = %v, spec image %q, want cbcore:v2", tt.user, err, fake.lastSpec().Image)
 		}
 	}
 
-	if got := defaults.upgrade("bob", "cbplan:v38"); got != "cbplan:v38" {
-		t.Errorf("bob's upgrade = %q, want cbplan:v38", got)
+	if got := defaults.upgrade("bob", "cbdesk:v25"); got != "cbdesk:v25" {
+		t.Errorf("bob's upgrade = %q, want cbdesk:v25", got)
 	}
 
 	running := newFakeMachines()
-	running.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbplan:v38", Revision: 1})
+	running.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbdesk:v25", Revision: 1})
 	svc = New(running, defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)

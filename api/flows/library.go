@@ -1,4 +1,4 @@
-// Package flows keeps each user's flow library: the GUI flows and scripts that cbplan boxes sync through the
+// Package flows keeps each user's flow library: the GUI flows and scripts that boxes sync through the
 // box door, and that the owner lists, exports, imports and deletes through cocoonbox.control.v1.Flows.
 package flows
 

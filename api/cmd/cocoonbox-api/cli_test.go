@@ -64,12 +64,12 @@ func TestOperatorSocketActsAsTheNamedUser(t *testing.T) {
 		t.Errorf("Rebase without an operator user = %v, want Unauthenticated", err)
 	}
 	ctx := metadata.AppendToOutgoingContext(t.Context(), auth.HeaderOperatorUser, "u-1")
-	op, err := client.Rebase(ctx, &controlv1.RebaseRequest{BoxId: "cb-1", Image: "cbplan:v38"})
-	if err != nil || boxes.user != "u-1" || boxes.image != "cbplan:v38" {
-		t.Fatalf("Rebase = %v, %v as %q to %q, want it as u-1 to cbplan:v38", op, err, boxes.user, boxes.image)
+	op, err := client.Rebase(ctx, &controlv1.RebaseRequest{BoxId: "cb-1", Image: "cbcore:v1"})
+	if err != nil || boxes.user != "u-1" || boxes.image != "cbcore:v1" {
+		t.Fatalf("Rebase = %v, %v as %q to %q, want it as u-1 to cbcore:v1", op, err, boxes.user, boxes.image)
 	}
 	var out bytes.Buffer
-	if err := followOperation(ctx, client, op.GetId(), &out); err != nil || !strings.HasSuffix(out.String(), "PHASE_DONE BOX_STATE_RUNNING now on cbplan:v38\n") {
+	if err := followOperation(ctx, client, op.GetId(), &out); err != nil || !strings.HasSuffix(out.String(), "PHASE_DONE BOX_STATE_RUNNING now on cbcore:v1\n") {
 		t.Errorf("follow = %v, printed %q", err, out.String())
 	}
 	boxes.fail = true

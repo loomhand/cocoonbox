@@ -30,7 +30,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // Flows is served by cocoonbox-api for the caller's own flow library: the
-// GUI flows and scripts that cbplan boxes keep in /workspace/flows
+// GUI flows and scripts that boxes keep in /workspace/flows
 // and sync through the box door. Callers authenticate with
 // `authorization: Bearer <user token>`; a share secret never reaches it.
 type FlowsClient interface {
@@ -99,7 +99,7 @@ func (c *flowsClient) Delete(ctx context.Context, in *DeleteFlowsRequest, opts .
 // for forward compatibility.
 //
 // Flows is served by cocoonbox-api for the caller's own flow library: the
-// GUI flows and scripts that cbplan boxes keep in /workspace/flows
+// GUI flows and scripts that boxes keep in /workspace/flows
 // and sync through the box door. Callers authenticate with
 // `authorization: Bearer <user token>`; a share secret never reaches it.
 type FlowsServer interface {

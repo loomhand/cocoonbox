@@ -36,7 +36,7 @@ type Defaults struct {
 	MaxRunning   int
 }
 
-// offered resolves ref, an image or the family of one (such as cbplan), to an offered image; empty is the default image.
+// offered resolves ref, an image or the family of one (such as cbdesk), to an offered image; empty is the default image.
 func (d Defaults) offered(ref string) (string, bool) {
 	if ref == "" || ref == d.Image || slices.Contains(d.RebaseImages, ref) {
 		return cmp.Or(ref, d.Image), true
