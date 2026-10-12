@@ -2,7 +2,6 @@ package controlmcp
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -29,71 +28,65 @@ const (
 	errUpgradeCurrent     toolError = "Already on the latest desktop."
 	errDeleteUnconfirmed  toolError = "Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true."
 	errDeleteUnnamed      toolError = "Name the box to delete in box."
-	errUnknownKind        toolError = "kind must be general or script."
 	errNoGrantBox         toolError = "This client has created no box yet; box_create creates one."
 )
 
-var (
-	// kindFamilies maps a box_create kind to the image family the api resolves; general keeps the default image.
-	kindFamilies = map[string]string{"general": "", "script": "cbplan"}
-
-	toolSpecs = []toolSpec{
-		{
-			Name:         "box_list",
-			Description:  "List your cocoonbox cloud desktops with their names, states and images.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"boxes":{"type":"array","items":{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","last_saved_at_ms"]}}},"required":["boxes"]}`),
-		},
-		{
-			Name:         "box_status",
-			Description:  "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"latest_image":{"type":"string"},"upgrade_available":{"type":"boolean"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","latest_image","upgrade_available","last_saved_at_ms"]}`),
-		},
-		{
-			Name:         "box_ensure",
-			Description:  "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"wait":{"type":"boolean","default":true}},"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
-		},
-		{
-			Name:         "box_create",
-			Description:  "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once. kind general (the default) is the standard desktop; kind script also has the Script runtime, so that box adds the script_run tool.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"kind":{"type":"string","enum":["general","script"],"default":"general"},"wait":{"type":"boolean","default":true}},"required":["name"],"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","name","state","operation_id"]}`),
-		},
-		{
-			Name:         "box_hibernate",
-			Description:  "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
-		},
-		{
-			Name:         "box_save",
-			Description:  "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"last_saved_at_ms":{"type":"integer"},"operation_id":{"type":"string"},"bytes":{"type":"integer"}},"required":["box_id","last_saved_at_ms","operation_id","bytes"]}`),
-		},
-		{
-			Name:         "box_upgrade",
-			Description:  "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["confirm"],"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","image","operation_id"]}`),
-		},
-		{
-			Name:         "box_delete",
-			Description:  "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["box","confirm"],"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","operation_id"]}`),
-		},
-		{
-			Name:         "usage",
-			Description:  "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it.",
-			InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-			OutputSchema: json.RawMessage(`{"type":"object","properties":{"today":` + usagePeriodSchema + `,"month":` + usagePeriodSchema + `,"daily_cap_micros":{"type":"integer"},"default_cap":{"type":"boolean"},"remaining_today_micros":{"type":"integer"}},"required":["today","month","daily_cap_micros","default_cap","remaining_today_micros"]}`),
-		},
-	}
-)
+var toolSpecs = []toolSpec{
+	{
+		Name:         "box_list",
+		Description:  "List your cocoonbox cloud desktops with their names, states and images.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"boxes":{"type":"array","items":{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","last_saved_at_ms"]}}},"required":["boxes"]}`),
+	},
+	{
+		Name:         "box_status",
+		Description:  "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"latest_image":{"type":"string"},"upgrade_available":{"type":"boolean"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","latest_image","upgrade_available","last_saved_at_ms"]}`),
+	},
+	{
+		Name:         "box_ensure",
+		Description:  "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"wait":{"type":"boolean","default":true}},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
+	},
+	{
+		Name:         "box_create",
+		Description:  "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"wait":{"type":"boolean","default":true}},"required":["name"],"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","name","state","operation_id"]}`),
+	},
+	{
+		Name:         "box_hibernate",
+		Description:  "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
+	},
+	{
+		Name:         "box_save",
+		Description:  "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"last_saved_at_ms":{"type":"integer"},"operation_id":{"type":"string"},"bytes":{"type":"integer"}},"required":["box_id","last_saved_at_ms","operation_id","bytes"]}`),
+	},
+	{
+		Name:         "box_upgrade",
+		Description:  "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["confirm"],"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","image","operation_id"]}`),
+	},
+	{
+		Name:         "box_delete",
+		Description:  "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["box","confirm"],"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","operation_id"]}`),
+	},
+	{
+		Name:         "usage",
+		Description:  "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it.",
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+		OutputSchema: json.RawMessage(`{"type":"object","properties":{"today":` + usagePeriodSchema + `,"month":` + usagePeriodSchema + `,"daily_cap_micros":{"type":"integer"},"default_cap":{"type":"boolean"},"remaining_today_micros":{"type":"integer"}},"required":["today","month","daily_cap_micros","default_cap","remaining_today_micros"]}`),
+	},
+}
 
 type (
 	progressFunc func(message string)
@@ -232,15 +225,10 @@ func (s *Server) call(ctx context.Context, call *callParams, progress progressFu
 	case "box_create":
 		var args struct {
 			Name string `json:"name"`
-			Kind string `json:"kind"`
 			Wait *bool  `json:"wait"`
 		}
 		return withArguments(call.Arguments, &args, func() (any, error) {
-			family, ok := kindFamilies[cmp.Or(args.Kind, "general")]
-			if !ok {
-				return nil, errUnknownKind
-			}
-			return s.create(ctx, args.Name, family, args.Wait == nil || *args.Wait, progress)
+			return s.create(ctx, args.Name, args.Wait == nil || *args.Wait, progress)
 		})
 	case "box_hibernate":
 		var args boxArgs
@@ -316,8 +304,8 @@ func (s *Server) ensure(ctx context.Context, ref string, wait bool, progress pro
 	return res, err
 }
 
-func (s *Server) create(ctx context.Context, name, family string, wait bool, progress progressFunc) (*createResult, error) {
-	resp, err := s.startCreate(ctx, name, family)
+func (s *Server) create(ctx context.Context, name string, wait bool, progress progressFunc) (*createResult, error) {
+	resp, err := s.startCreate(ctx, name)
 	if err != nil {
 		return nil, err
 	}
@@ -484,10 +472,10 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 }
 
 // startCreate adds a box; a grant's call stays within its caps and records the box as the grant's before its machine starts.
-func (s *Server) startCreate(ctx context.Context, name, family string) (*controlv1.EnsureResponse, error) {
+func (s *Server) startCreate(ctx context.Context, name string) (*controlv1.EnsureResponse, error) {
 	g := grantOf(ctx)
 	if g == nil {
-		return s.boxes.Create(ctx, &controlv1.CreateBoxRequest{Name: name, Image: family})
+		return s.boxes.Create(ctx, &controlv1.CreateBoxRequest{Name: name})
 	}
 	defer s.lock(g.ID)()
 	list, err := s.visible(ctx)
@@ -501,7 +489,7 @@ func (s *Server) startCreate(ctx context.Context, name, family string) (*control
 		return nil, err
 	}
 	record := func(ctx context.Context, box string) error { return s.grants.AddBox(ctx, g.ID, box) }
-	return s.boxes.Create(boxes.WithAgent(ctx, record), &controlv1.CreateBoxRequest{Name: name, Image: family})
+	return s.boxes.Create(boxes.WithAgent(ctx, record), &controlv1.CreateBoxRequest{Name: name})
 }
 
 // checkRunning refuses to start another box of grant g while its running cap is held.

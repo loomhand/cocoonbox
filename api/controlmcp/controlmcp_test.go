@@ -202,23 +202,14 @@ func TestToolsActOnlyOnCallersBox(t *testing.T) {
 	}
 }
 
-func TestBoxCreateKindPicksTheImageFamily(t *testing.T) {
+func TestBoxCreateTakesTheDefaultImage(t *testing.T) {
 	srv, fake := newTestServer(t)
-	for _, tt := range []struct{ args, name, image string }{
-		{`{"name":"plain"}`, "plain", ""},
-		{`{"name":"desk","kind":"general"}`, "desk", ""},
-		{`{"name":"sim","kind":"script"}`, "sim", "cbplan"},
-	} {
-		structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_create","arguments":`+tt.args+`}}`))
-		fake.mu.Lock()
-		got := fake.extra["alice"][len(fake.extra["alice"])-1]
-		fake.mu.Unlock()
-		if got.GetName() != tt.name || got.GetImage() != tt.image {
-			t.Errorf("box_create %s created %v, want image %q", tt.args, got, tt.image)
-		}
-	}
-	if text := refusal(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"box_create","arguments":{"name":"x","kind":"gpu"}}}`)); text != string(errUnknownKind) {
-		t.Errorf("box_create with kind gpu = %q, want %q", text, errUnknownKind)
+	structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_create","arguments":{"name":"plain"}}}`))
+	fake.mu.Lock()
+	got := fake.extra["alice"][len(fake.extra["alice"])-1]
+	fake.mu.Unlock()
+	if got.GetName() != "plain" || got.GetImage() != "" {
+		t.Errorf("box_create created %v, want the default image", got)
 	}
 }
 
