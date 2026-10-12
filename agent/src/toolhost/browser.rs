@@ -25,6 +25,7 @@ const SETTLE: Duration = Duration::from_secs(2);
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
+const POKE: Duration = Duration::from_millis(100);
 const READ_CHARS: usize = 20_000;
 const PAGE_TYPES: [&str; 7] = [
     "",
@@ -953,10 +954,17 @@ impl Cdp {
         let mut deadline = tokio::time::Instant::now() + wait;
         let (mut fresh, mut ready, mut idle) = (false, false, false);
         let mut refused = None;
+        let mut poke = tokio::time::interval(POKE);
         while !(ready && idle) {
-            let next = match tokio::time::timeout_at(deadline, self.ws.next()).await {
-                Err(_) => break,
-                Ok(next) => next.ok_or("cdp connection closed during load")?,
+            let next = tokio::select! {
+                next = tokio::time::timeout_at(deadline, self.ws.next()) => match next {
+                    Err(_) => break,
+                    Ok(next) => next.ok_or("cdp connection closed during load")?,
+                },
+                _ = poke.tick() => {
+                    self.send("Runtime.evaluate", json!({"expression": "0"})).await?;
+                    continue;
+                }
             };
             let WsMessage::Text(text) = next.map_err(|e| format!("cdp read: {e}"))? else {
                 continue;
