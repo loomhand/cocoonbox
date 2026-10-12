@@ -121,9 +121,7 @@ impl Host {
             "computer_state" => self.cua.state(call.args).await,
             "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
-            "desk_windows" => self.desk.windows().await.map(Output::text),
-            "desk_snapshot" => self.desk.snapshot(call.args).await.map(Output::text),
-            "desk_read" => self.desk.read(call.args).await.map(Output::text),
+            t if t.starts_with("desk_") => self.desk.run(&self.cua, t, call.args).await,
             "script_run" => {
                 self.script
                     .run(&self.cua, &self.workspace, call.args)

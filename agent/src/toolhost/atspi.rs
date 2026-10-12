@@ -29,6 +29,7 @@ const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const CALL_TIMEOUT: Duration = Duration::from_secs(3);
 const HUNG_FOR: Duration = Duration::from_secs(10);
 const MAX_NODES: usize = 4000;
+const MAX_DEPTH: usize = 64;
 const VALUE_CHARS: i32 = 200;
 const SCREEN: u32 = 0;
 const IF_ACTION: u8 = 1;
@@ -38,7 +39,8 @@ const IF_VALUE: u8 = 8;
 const ACTIVE: u32 = 1;
 const CHECKED: u32 = 4;
 const ENABLED: u32 = 8;
-const SHOWING: u32 = 25;
+/// The state of a node drawn on the screen.
+pub const SHOWING: u32 = 25;
 const MANAGES_DESCENDANTS: u32 = 31;
 const STATE_NAMES: [(u32, &str); 16] = [
     (1, "active"),
@@ -647,7 +649,7 @@ impl Atspi {
     pub async fn at_point(&self, within: &Obj, x: i32, y: i32) -> Result<Option<Obj>, String> {
         let mut at: Option<Obj> = None;
         let mut current = within.clone();
-        for _ in 0..64 {
+        for _ in 0..MAX_DEPTH {
             let hit: (String, OwnedObjectPath) = self
                 .call(&current, COMPONENT, "GetAccessibleAtPoint", &(x, y, SCREEN))
                 .await?;
@@ -668,6 +670,21 @@ impl Atspi {
             (!parent.bus.is_empty() && parent.path != ROOT && !parent.path.ends_with("/null"))
                 .then_some(parent),
         )
+    }
+
+    /// The objects above `obj`, from its top-level window down to its parent.
+    pub async fn ancestors(&self, obj: &Obj) -> Result<Vec<Obj>, String> {
+        let mut chain = Vec::new();
+        let mut current = obj.clone();
+        while chain.len() < MAX_DEPTH {
+            let Some(parent) = self.parent(&current).await? else {
+                break;
+            };
+            chain.push(parent.clone());
+            current = parent;
+        }
+        chain.reverse();
+        Ok(chain)
     }
 
     async fn raw(&self, obj: &Obj) -> Result<Raw, String> {
