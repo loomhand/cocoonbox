@@ -54,7 +54,8 @@ type ConnectorsClient interface {
 	// Activity returns the caller's audit records, newest first.
 	Activity(ctx context.Context, in *ActivityRequest, opts ...grpc.CallOption) (*ActivityResponse, error)
 	// SpendRequests returns the caller's Link spend requests that wait for the
-	// user, as the api last read them from Link; it reads every 30 seconds.
+	// user. The api reads Link on this call when its last read is older than
+	// 30 seconds, and answers from that read in between.
 	SpendRequests(ctx context.Context, in *SpendRequestsRequest, opts ...grpc.CallOption) (*SpendRequestsResponse, error)
 }
 
@@ -171,7 +172,8 @@ type ConnectorsServer interface {
 	// Activity returns the caller's audit records, newest first.
 	Activity(context.Context, *ActivityRequest) (*ActivityResponse, error)
 	// SpendRequests returns the caller's Link spend requests that wait for the
-	// user, as the api last read them from Link; it reads every 30 seconds.
+	// user. The api reads Link on this call when its last read is older than
+	// 30 seconds, and answers from that read in between.
 	SpendRequests(context.Context, *SpendRequestsRequest) (*SpendRequestsResponse, error)
 	mustEmbedUnimplementedConnectorsServer()
 }

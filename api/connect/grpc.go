@@ -167,14 +167,15 @@ func (s *Service) SpendRequests(ctx context.Context, _ *controlv1.SpendRequestsR
 	}
 	switch _, err := s.linkGrant(ctx, user); {
 	case errors.Is(err, errNoGrant):
+		s.spendMu.Lock()
+		delete(s.spends, user)
+		s.spendMu.Unlock()
 		return &controlv1.SpendRequestsResponse{}, nil
 	case err != nil:
 		return nil, err
 	}
-	s.spendMu.Lock()
-	defer s.spendMu.Unlock()
-	p := s.spends[user]
-	if p == nil || p.polledAt.IsZero() {
+	p := s.spendRequests(ctx, user)
+	if p.polledAt.IsZero() {
 		return &controlv1.SpendRequestsResponse{}, nil
 	}
 	return &controlv1.SpendRequestsResponse{Requests: p.requests, PolledAtMs: p.polledAt.UnixMilli()}, nil

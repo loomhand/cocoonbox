@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json/v2"
 	"fmt"
-	"maps"
 	"net/http"
 	"slices"
 	"time"
 
 	"github.com/projecteru2/core/log"
-	"golang.org/x/sync/errgroup"
 
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 )
@@ -19,7 +17,6 @@ const (
 	spendInterval   = 30 * time.Second
 	spendBackoffMax = 10 * time.Minute
 	spendMaxShift   = 5
-	spendFanout     = 4
 )
 
 var waitingStatuses = []string{"pending_approval", "requires_action"}
@@ -43,48 +40,25 @@ type linkSpendRequest struct {
 	ExpiresAt    int64  `json:"expires_at"`
 }
 
-// RunSpendRequests reads the waiting spend requests of each user with an active Link grant every 30 seconds until ctx
-// ends, backing off a user whose reads fail; it returns at once while Link is not set up.
-func (s *Service) RunSpendRequests(ctx context.Context) {
-	if e := s.entry(linkID); e == nil || !e.available() {
-		return
-	}
-	tick := time.Tick(spendInterval)
-	for {
-		s.pollSpends(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-tick:
+// spendRequests returns user's last read of its waiting spend requests, read from Link first when that read is older
+// than spendInterval and no failure backoff holds; concurrent callers share one read.
+func (s *Service) spendRequests(ctx context.Context, user string) spendPoll {
+	v, _, _ := s.spendReads.Do(user, func() (any, error) {
+		s.spendMu.Lock()
+		p := s.spends[user]
+		due := p == nil || !time.Now().Before(p.next)
+		s.spendMu.Unlock()
+		if due {
+			s.pollSpend(context.WithoutCancel(ctx), user)
 		}
-	}
-}
-
-func (s *Service) pollSpends(ctx context.Context) {
-	users, err := s.store.activeUsers(ctx, linkID)
-	if err != nil {
-		log.WithFunc("connect.Service.pollSpends").Warnf(ctx, "list the Link users: %v", err)
-		return
-	}
-	now := time.Now()
-	s.spendMu.Lock()
-	maps.DeleteFunc(s.spends, func(user string, _ *spendPoll) bool { return !slices.Contains(users, user) })
-	due := make([]string, 0, len(users))
-	for _, user := range users {
-		if p := s.spends[user]; p == nil || !now.Before(p.next) {
-			due = append(due, user)
+		s.spendMu.Lock()
+		defer s.spendMu.Unlock()
+		if p := s.spends[user]; p != nil {
+			return *p, nil
 		}
-	}
-	s.spendMu.Unlock()
-	var eg errgroup.Group
-	eg.SetLimit(spendFanout)
-	for _, user := range due {
-		eg.Go(func() error {
-			s.pollSpend(ctx, user)
-			return nil
-		})
-	}
-	_ = eg.Wait()
+		return spendPoll{}, nil
+	})
+	return v.(spendPoll)
 }
 
 func (s *Service) pollSpend(ctx context.Context, user string) {
@@ -103,7 +77,7 @@ func (s *Service) pollSpend(ctx context.Context, user string) {
 		log.WithFunc("connect.Service.pollSpend").Warnf(ctx, "read the spend requests of %s (failure %d): %v", user, p.failures, err)
 		return
 	}
-	p.requests, p.polledAt, p.failures, p.next = requests, now, 0, time.Time{}
+	p.requests, p.polledAt, p.failures, p.next = requests, now, 0, now.Add(spendInterval)
 }
 
 func (s *Service) readSpends(ctx context.Context, user string) ([]*controlv1.SpendRequest, error) {

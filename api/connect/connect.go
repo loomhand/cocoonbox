@@ -132,8 +132,9 @@ type Service struct {
 	mu    sync.Mutex
 	conns map[string]*conn
 
-	spendMu sync.Mutex
-	spends  map[string]*spendPoll
+	spendReads singleflight.Group
+	spendMu    sync.Mutex
+	spends     map[string]*spendPoll
 }
 
 // Open connects to the database, applies the Connect migrations and builds the catalog.

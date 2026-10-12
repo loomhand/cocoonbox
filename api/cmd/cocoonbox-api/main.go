@@ -97,7 +97,6 @@ func main() {
 		}
 		defer broker.Close()
 		go broker.RunPurge(ctx)
-		go broker.RunSpendRequests(ctx)
 	}
 	svc := boxes.New(backend, boxes.Defaults{
 		Flavor:       machineFlavor(cfg.Flavor),

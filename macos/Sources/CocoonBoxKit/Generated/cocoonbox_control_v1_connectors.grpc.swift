@@ -299,7 +299,8 @@ extension Cocoonbox_Control_V1_Connectors {
         /// > Source IDL Documentation:
         /// >
         /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        /// > user. The api reads Link on this call when its last read is older than
+        /// > 30 seconds, and answers from that read in between.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Control_V1_SpendRequestsRequest` messages.
@@ -461,7 +462,8 @@ extension Cocoonbox_Control_V1_Connectors {
         /// > Source IDL Documentation:
         /// >
         /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        /// > user. The api reads Link on this call when its last read is older than
+        /// > 30 seconds, and answers from that read in between.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
@@ -621,7 +623,8 @@ extension Cocoonbox_Control_V1_Connectors {
         /// > Source IDL Documentation:
         /// >
         /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        /// > user. The api reads Link on this call when its last read is older than
+        /// > 30 seconds, and answers from that read in between.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Control_V1_SpendRequestsRequest` message.
@@ -1115,7 +1118,8 @@ extension Cocoonbox_Control_V1_Connectors {
         /// > Source IDL Documentation:
         /// >
         /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        /// > user. The api reads Link on this call when its last read is older than
+        /// > 30 seconds, and answers from that read in between.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
@@ -1402,7 +1406,8 @@ extension Cocoonbox_Control_V1_Connectors {
         /// > Source IDL Documentation:
         /// >
         /// > SpendRequests returns the caller's Link spend requests that wait for the
-        /// > user, as the api last read them from Link; it reads every 30 seconds.
+        /// > user. The api reads Link on this call when its last read is older than
+        /// > 30 seconds, and answers from that read in between.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
@@ -1647,7 +1652,8 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > SpendRequests returns the caller's Link spend requests that wait for the
-    /// > user, as the api last read them from Link; it reads every 30 seconds.
+    /// > user. The api reads Link on this call when its last read is older than
+    /// > 30 seconds, and answers from that read in between.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Control_V1_SpendRequestsRequest` message.
@@ -1914,7 +1920,8 @@ extension Cocoonbox_Control_V1_Connectors.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > SpendRequests returns the caller's Link spend requests that wait for the
-    /// > user, as the api last read them from Link; it reads every 30 seconds.
+    /// > user. The api reads Link on this call when its last read is older than
+    /// > 30 seconds, and answers from that read in between.
     ///
     /// - Parameters:
     ///   - message: request message to send.

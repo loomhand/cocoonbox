@@ -25,7 +25,8 @@ service Connectors {
   // Activity returns the caller's audit records, newest first.
   rpc Activity(ActivityRequest) returns (ActivityResponse);
   // SpendRequests returns the caller's Link spend requests that wait for the
-  // user, as the api last read them from Link; it reads every 30 seconds.
+  // user. The api reads Link on this call when its last read is older than
+  // 30 seconds, and answers from that read in between.
   rpc SpendRequests(SpendRequestsRequest) returns (SpendRequestsResponse);
 }
 

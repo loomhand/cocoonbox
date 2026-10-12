@@ -72,7 +72,6 @@ func TestLinkGrantInjectsRefreshesPollsAndDisconnects(t *testing.T) {
 		map[string]any{"id": "lsrq_3", "status": "requires_action", "amount": 700, "created_at": "2026-10-11T09:30:00Z"},
 	)
 	link.ExpireAccess()
-	env.svc.pollSpends(t.Context())
 	ctx := auth.WithUser(t.Context(), alice)
 	got, err := env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{})
 	if err != nil || len(got.GetRequests()) != 2 || got.GetPolledAtMs() == 0 {
@@ -90,18 +89,24 @@ func TestLinkGrantInjectsRefreshesPollsAndDisconnects(t *testing.T) {
 	if refreshes, polls, _ := link.Snapshot(); refreshes != 2 || polls != 2 {
 		t.Errorf("refreshes, polls = %d, %d, want 2, 2 after a 401", refreshes, polls)
 	}
+	if cached, _ := env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{}); cached.GetPolledAtMs() != got.GetPolledAtMs() {
+		t.Errorf("SpendRequests within %s = %v, want the cached read", spendInterval, cached)
+	}
+	if _, polls, _ := link.Snapshot(); polls != 2 {
+		t.Errorf("polls = %d, want 2: a read younger than %s answers", polls, spendInterval)
+	}
 	if got, err := env.svc.SpendRequests(auth.WithUser(t.Context(), bob), &controlv1.SpendRequestsRequest{}); err != nil || len(got.GetRequests()) != 0 || got.GetPolledAtMs() != 0 {
 		t.Errorf("bob's SpendRequests = %v, %v", got, err)
 	}
 
 	link.FailSpends(true)
-	env.svc.pollSpends(t.Context())
-	env.svc.pollSpends(t.Context())
-	if _, polls, _ := link.Snapshot(); polls != 3 {
-		t.Errorf("polls = %d, want 3: a failed user waits out its backoff", polls)
-	}
+	expireSpends(env.svc, alice)
 	if again, _ := env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{}); len(again.GetRequests()) != 2 || again.GetPolledAtMs() != got.GetPolledAtMs() {
 		t.Errorf("SpendRequests after a failed read = %v, want the last good one", again)
+	}
+	_, _ = env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{})
+	if _, polls, _ := link.Snapshot(); polls != 3 {
+		t.Errorf("polls = %d, want 3: a failed user waits out its backoff", polls)
 	}
 
 	current := linkSecrets(t, env.svc)
@@ -119,7 +124,7 @@ func TestLinkGrantInjectsRefreshesPollsAndDisconnects(t *testing.T) {
 		t.Errorf("SpendRequests after Disconnect = %v", got)
 	}
 	link.FailSpends(false)
-	env.svc.pollSpends(t.Context())
+	_, _ = env.svc.SpendRequests(ctx, &controlv1.SpendRequestsRequest{})
 	if _, polls, _ := link.Snapshot(); polls != 3 || len(env.svc.spends) != 0 {
 		t.Errorf("polls = %d, spends = %v after Disconnect", polls, env.svc.spends)
 	}
@@ -157,20 +162,17 @@ func TestLinkIsHiddenWithoutItsCredentials(t *testing.T) {
 	}
 }
 
-func TestThePollerDoesNothingWithoutLinkGrants(t *testing.T) {
+func TestSpendRequestsReadsNothingWithoutAnActiveLinkGrant(t *testing.T) {
 	env := newEnv(t)
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	start := time.Now()
-	env.svc.RunSpendRequests(ctx)
-	if time.Since(start) > 100*time.Millisecond {
-		t.Errorf("RunSpendRequests ran %s without Link set up", time.Since(start))
-	}
-
 	link := newLink(t, env.svc)
 	env.connect(t)
 	env.exec(t, "INSERT INTO connect_grants (id, user_id, connector, kind, mcp_url, status, sealed) VALUES ('cg_lost', 'u-bob', 'link', 'link', '', 'needs_reconnect', '\\x00')")
-	env.svc.pollSpends(t.Context())
+	for _, user := range []string{alice, bob} {
+		got, err := env.svc.SpendRequests(auth.WithUser(t.Context(), user), &controlv1.SpendRequestsRequest{})
+		if err != nil || len(got.GetRequests()) != 0 || got.GetPolledAtMs() != 0 {
+			t.Errorf("%s: SpendRequests = %v, %v", user, got, err)
+		}
+	}
 	if _, polls, _ := link.Snapshot(); polls != 0 || len(env.svc.spends) != 0 {
 		t.Errorf("polls = %d, spends = %v without an active Link grant", polls, env.svc.spends)
 	}
@@ -186,6 +188,12 @@ func newLink(t *testing.T, svc *Service) *connecttest.Link {
 	e.authorizeURL, e.params, e.userInfoURL = l.URL+"/auth", url.Values{"key": {l.Key}}, l.URL+"/userinfo"
 	svc.linkAPI = l.URL
 	return l
+}
+
+func expireSpends(svc *Service, user string) {
+	svc.spendMu.Lock()
+	defer svc.spendMu.Unlock()
+	svc.spends[user].next = time.Time{}
 }
 
 func linkSecrets(t *testing.T, svc *Service) *secrets {
