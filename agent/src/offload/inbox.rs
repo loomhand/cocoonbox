@@ -170,25 +170,18 @@ impl Inbox {
         }))
     }
 
-    /// Serves connections on `listener` until `stop`; restarts lost sessions first and again
-    /// whenever the state directory is replaced (a restore).
+    /// Serves connections on `listener` until `stop`; restarts lost sessions first and again on
+    /// each `rescan`, which the agent sends after a restore replaced the state directory.
     pub async fn run(self: Arc<Self>, listener: tokio::net::UnixListener, stop: CancellationToken) {
         let rescan = Arc::clone(&self);
         let rescan_stop = stop.clone();
         // detached: ends with `stop`
         tokio::spawn(async move {
-            let mut seen = identity(&rescan.layout.state);
             rescan.restart_lost().await;
             loop {
                 tokio::select! {
                     () = tokio::time::sleep(RESCAN) => {}
                     () = rescan_stop.cancelled() => return,
-                }
-                let now = identity(&rescan.layout.state);
-                if now != seen {
-                    seen = now;
-                    *rescan.records.lock().await = load_records(&rescan.layout.state).await;
-                    rescan.restart_lost().await;
                 }
                 rescan.idle_without_hooks().await;
             }
@@ -252,6 +245,11 @@ impl Inbox {
                 hook,
                 payload,
             } => self.event(&repo, &cli, &hook, &payload).await,
+            Request::Rescan => {
+                *self.records.lock().await = load_records(&self.layout.state).await;
+                self.restart_lost().await;
+                Ok(json!({"ok": true}))
+            }
             Request::Watch => Err(Refusal::invalid("watch is served per connection")),
         }
     }
@@ -938,6 +936,7 @@ enum Request {
         #[serde(default)]
         payload: Value,
     },
+    Rescan,
     Watch,
 }
 
@@ -1046,6 +1045,17 @@ async fn follow(socket: &Path, journal: &Journal) -> Result<(), String> {
         }
     }
     Err("the inbox closed the feed".to_owned())
+}
+
+/// Tells the inbox that a restore replaced its state directory; the restart check it runs is not awaited.
+pub async fn rescan(socket: &Path) -> Result<(), String> {
+    let mut stream = UnixStream::connect(socket)
+        .await
+        .map_err(|e| format!("connect {}: {e}", socket.display()))?;
+    stream
+        .write_all(b"{\"op\":\"rescan\"}\n")
+        .await
+        .map_err(|e| format!("rescan: {e}"))
 }
 
 /// The first prompt's file and hooks file go on the command line; the CLI replaces the login shell.
@@ -1286,11 +1296,6 @@ async fn reply(wr: &mut OwnedWriteHalf, v: &Value) -> std::io::Result<()> {
 /// The tmux target of the session's only pane, matched exactly.
 fn pane(rec: &Record) -> String {
     format!("={}:", rec.tmux())
-}
-
-/// The state directory's device and inode; a restore swaps the directory, so they change.
-fn identity(dir: &Path) -> Option<(u64, u64)> {
-    std::fs::metadata(dir).ok().map(|m| (m.dev(), m.ino()))
 }
 
 fn quote(s: &str) -> String {

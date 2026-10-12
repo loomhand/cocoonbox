@@ -5175,6 +5175,32 @@ async fn quiesced_plan_saves_the_desktop_session_and_survives_a_failed_save() {
 }
 
 #[tokio::test]
+async fn a_restore_tells_the_offload_inbox_to_rescan() {
+    let h = Harness::start(Vec::new(), false).await;
+    let inbox = UnixListener::bind(h.home.parent().unwrap().join("offload.sock")).unwrap();
+    let (base, objects) = fake_store().await;
+    std::fs::write(h.workspace.join("a.txt"), b"x").unwrap();
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    restore(&h, &base, &objects, &planned.snapshot_id)
+        .await
+        .unwrap();
+    let rescan = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let (conn, _) = inbox.accept().await.unwrap();
+            let mut line = String::new();
+            BufReader::new(conn).read_line(&mut line).await.unwrap();
+            if line.contains("rescan") {
+                return line;
+            }
+        }
+    })
+    .await
+    .expect("no rescan reached the inbox");
+    assert_eq!(rescan, "{\"op\":\"rescan\"}\n");
+}
+
+#[tokio::test]
 async fn restore_rejects_tampered_chunks_before_touching_files() {
     let h = Harness::start(Vec::new(), false).await;
     let (base, objects) = fake_store().await;

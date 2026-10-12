@@ -506,6 +506,43 @@ async fn a_lost_session_restarts_from_the_newest_progress_hand_over() {
 }
 
 #[tokio::test]
+async fn a_rescan_after_a_restore_restarts_the_restored_sessions_at_once() {
+    let b = TestBox::start(true).await;
+    let staged = b.layout.state.with_extension("restored");
+    std::fs::create_dir_all(staged.join(REPO)).unwrap();
+    std::fs::copy(b.layout.state.join("index.json"), staged.join("index.json")).unwrap();
+    let record = json!({
+        "repo": REPO, "name": "gron", "cli": "claude", "offload_id": ID,
+        "dir": b.layout.workspace.join("gron"), "status": "working",
+        "inbox_seq": 1, "outbox_seq": 0, "reported": false, "queue": [],
+        "hook_at_ms": 0, "started_at_ms": 1,
+    });
+    std::fs::write(
+        staged.join(REPO).join("session.json"),
+        serde_json::to_vec(&record).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(staged.join(REPO).join("prompt.md"), "FIRST").unwrap();
+    std::fs::rename(&b.layout.state, b.layout.state.with_extension("old")).unwrap();
+    std::fs::rename(&staged, &b.layout.state).unwrap();
+
+    offload::inbox::rescan(&b.layout.socket).await.unwrap();
+    let restart = b.layout.state.join(REPO).join("restart.md");
+    for _ in 0..20 {
+        if restart.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let prompt = std::fs::read_to_string(&restart).expect("no restart within 1 s of the rescan");
+    assert!(
+        prompt.starts_with(handover::RESTARTED) && prompt.ends_with("FIRST"),
+        "{prompt}"
+    );
+    assert_eq!(b.status().await["tmux_alive"], true);
+}
+
+#[tokio::test]
 async fn end_stops_the_session_and_returns_the_copy() {
     let b = TestBox::start(false).await;
     b.start_session("FIRST").await;

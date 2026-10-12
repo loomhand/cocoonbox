@@ -388,6 +388,11 @@ impl State for StateSvc {
             .map(|r| r.map_err(|s| format!("restore stream: {}", s.message())));
         Ok(Response::new(progress_stream(move |tx| async move {
             engine.restore(reqs, tx).await?;
+            if let Err(e) = offload::inbox::rescan(&rt.cfg.offload_socket).await
+                && rt.cfg.offload_socket.exists()
+            {
+                eprintln!("restore: tell the offload inbox: {e}");
+            }
             rt.recover("interrupted: the user state was restored")
                 .await
                 .map_err(StateError::Failed)
