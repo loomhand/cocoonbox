@@ -31,7 +31,7 @@ use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
 
-use crate::config::{Automation, ToolhostConfig};
+use crate::config::ToolhostConfig;
 use browser::Browser;
 use cua::Cua;
 use desk::Desk;
@@ -42,8 +42,6 @@ use shell::Shell;
 const SOCKET_MODE: u32 = 0o660;
 const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
-#[cfg(feature = "script")]
-const SCRIPT_DIR: &str = "/tmp/cocoonbox-script";
 
 /// Shared tool state for all connections.
 pub struct Host {
@@ -75,11 +73,7 @@ impl Host {
             ),
             cua: Cua::new(cfg.cua_socket.clone(), cfg.automation.plans()),
             desk: Desk::default(),
-            scripts: Scripts::new(
-                cfg.automation,
-                cfg.script_bin.clone(),
-                script_dir(cfg.automation),
-            ),
+            scripts: Scripts::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
             hidden: cfg.automation.plans().then(|| cfg.workspace.join("flows")),
@@ -129,12 +123,6 @@ impl Host {
             "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
             t if t.starts_with("desk_") => self.desk.run(&self.cua, t, call.args).await,
-            #[cfg(feature = "script")]
-            "script_run" => {
-                self.scripts
-                    .run(&self.cua, &self.workspace, call.args)
-                    .await
-            }
             "script_run" => {
                 self.scripts
                     .run(&self.cua, &self.workspace, call.args)
@@ -350,14 +338,6 @@ pub(crate) fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
             .map_err(|e| format!("chgrp {} {group}: {e}", path.display()))?;
     }
     Ok(listener)
-}
-
-fn script_dir(automation: Automation) -> PathBuf {
-    match automation {
-        #[cfg(feature = "script")]
-        Automation::Script => PathBuf::from(SCRIPT_DIR),
-        _ => PathBuf::from(SCRIPT_DIR),
-    }
 }
 
 fn group_id(name: &str) -> Option<u32> {

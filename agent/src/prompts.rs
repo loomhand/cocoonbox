@@ -46,9 +46,8 @@ Loop: observe, act, verify.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
-const DESK_ROUTING: &str = include_str!("../../image/desk/routing.md");
-#[cfg(feature = "script")]
-const SCRIPT_ROUTING: &str = include_str!("../../image/script/routing.md");
+/// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
+pub const ROUTING: &str = include_str!("../../image/desk/routing.md");
 
 const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that the box's network swaps for the real key only on the listed hosts. Send them exactly as shown; never ask for, print or replace a key";
 
@@ -56,17 +55,8 @@ const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; li
 
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
-/// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
-pub fn routing(automation: Automation) -> &'static str {
-    match automation {
-        #[cfg(feature = "script")]
-        Automation::Script => SCRIPT_ROUTING,
-        _ => DESK_ROUTING,
-    }
-}
-
 /// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a box that
-/// runs GUI plans adds its [`routing`].
+/// runs GUI plans adds the [`ROUTING`].
 pub fn main(model: &str, computer_model: &str, vision: bool, automation: Automation) -> String {
     let eyes = if vision {
         "You can also call screenshot to look at the screen yourself."
@@ -79,12 +69,10 @@ pub fn main(model: &str, computer_model: &str, vision: bool, automation: Automat
         .replace("{eyes}", eyes);
     match automation {
         Automation::Plain => {}
-        Automation::Desk => prompt.push_str("\n\nThis box runs GUI plans and desk scripts.\n\n"),
-        #[cfg(feature = "script")]
-        Automation::Script => prompt.push_str("\n\nThis box has Script.\n\n"),
-    }
-    if automation.plans() {
-        prompt.push_str(routing(automation));
+        Automation::Desk => {
+            prompt.push_str("\n\nThis box runs GUI plans and desk scripts.\n\n");
+            prompt.push_str(ROUTING);
+        }
     }
     prompt
 }
@@ -159,29 +147,15 @@ mod tests {
             main("anthropic/claude-sonnet-5", "x", true, Automation::Plain)
                 .contains("call screenshot")
         );
-        assert!(!p.contains("script"), "{p}");
-    }
-
-    #[cfg(feature = "script")]
-    #[test]
-    fn main_prompt_on_a_script_box_ends_with_the_routing() {
-        let plain = main("m", "c", false, Automation::Plain);
-        let p = main("m", "c", false, Automation::Script);
-        let routing = routing(Automation::Script);
-        assert!(p.starts_with(&plain), "{p}");
-        assert!(p.ends_with(routing), "{p}");
-        assert!(routing.contains("script_run") && routing.contains("delegate_computer"));
     }
 
     #[test]
     fn main_prompt_on_a_desk_box_ends_with_its_routing() {
         let plain = main("m", "c", false, Automation::Plain);
         let p = main("m", "c", false, Automation::Desk);
-        let routing = routing(Automation::Desk);
         assert!(p.starts_with(&plain), "{p}");
-        assert!(p.ends_with(routing), "{p}");
-        assert!(routing.contains("script_run") && routing.contains("delegate_computer"));
-        assert!(!routing.to_lowercase().contains("simul"), "{routing}");
+        assert!(p.ends_with(ROUTING), "{p}");
+        assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
     }
 
     #[test]

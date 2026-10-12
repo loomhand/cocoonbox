@@ -102,7 +102,7 @@ impl Runtime {
         let router = cfg
             .automation
             .plans()
-            .then(|| Router::new(&cfg.gw_base_url, &cfg.gw_api_key, cfg.automation))
+            .then(|| Router::new(&cfg.gw_base_url, &cfg.gw_api_key))
             .transpose()?;
         let flows = match &cfg.connect_url {
             Some(url) if cfg.automation.plans() => {

@@ -1,9 +1,0 @@
-#!/bin/sh
-# runs the script CLI on the pinned Node with the image's script-js build and gw providers
-export SCRIPT_JS="${SCRIPT_JS:-/opt/script/js}"
-export SCRIPT_PROVIDERS_DIR="${SCRIPT_PROVIDERS_DIR:-/etc/script/providers}"
-export SCRIPT_APP_SCOPE="${SCRIPT_APP_SCOPE:-script-app}"
-export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-export GTK_MODULES="${GTK_MODULES:-gail:atk-bridge}"
-export QT_ACCESSIBILITY="${QT_ACCESSIBILITY:-1}"
-exec /opt/script/node/bin/node /opt/script/cli/dist/bin/script.js "$@"

@@ -151,14 +151,7 @@ impl Client {
     }
 
     async fn list(&self) -> Result<Vec<ToolSpec>, String> {
-        let reserved: Vec<ToolSpec> = [
-            Automation::Desk,
-            #[cfg(feature = "script")]
-            Automation::Script,
-        ]
-        .into_iter()
-        .flat_map(|a| tools::main_tools(true, a))
-        .collect();
+        let reserved = tools::main_tools(true, Automation::Desk);
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_PAGES {

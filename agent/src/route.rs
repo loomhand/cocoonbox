@@ -4,12 +4,9 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::config::Automation;
 use crate::llm::Usage;
 
 const DESK_ROUTE: &str = include_str!("../../image/desk/route.json");
-#[cfg(feature = "script")]
-const SCRIPT_ROUTE: &str = include_str!("../../image/script/route.json");
 const TASK: &str = "\"__TASK__\"";
 const TIMEOUT: Duration = Duration::from_secs(2);
 const ERROR_BODY_CHARS: usize = 300;
@@ -32,11 +29,6 @@ pub const TIERS: &[(&str, &str)] = &[
         "plan",
         "run desktop-app GUI work as one gui_plan call with the whole plan, or write one script on the desk API and run it with script_run for loops and logic",
     ),
-    #[cfg(feature = "script")]
-    (
-        "script",
-        "run desktop-app GUI work as one gui_plan call with the whole plan, or write one script and run it with script_run for loops and logic",
-    ),
     (
         "jev",
         "a pure judgment from the given text: no action on the computer is needed",
@@ -53,20 +45,19 @@ pub struct Router {
 }
 
 impl Router {
-    /// Creates the router of `automation`'s tiers for gw at `base_url` (ending in `/v1`).
-    pub fn new(base_url: &str, api_key: &str, automation: Automation) -> Result<Self, String> {
+    /// Creates the router for gw at `base_url` (ending in `/v1`).
+    pub fn new(base_url: &str, api_key: &str) -> Result<Self, String> {
         let http = reqwest::Client::builder()
             .timeout(TIMEOUT)
             .build()
             .map_err(|e| format!("build router client: {e}"))?;
-        let body = route_of(automation);
         let route: Value =
-            serde_json::from_str(body).map_err(|e| format!("decode route.json: {e}"))?;
+            serde_json::from_str(DESK_ROUTE).map_err(|e| format!("decode route.json: {e}"))?;
         Ok(Self {
             http,
             url: format!("{}/decisions", base_url.trim_end_matches('/')),
             api_key: api_key.to_owned(),
-            route: body,
+            route: DESK_ROUTE,
             model: route["model"].as_str().unwrap_or_default().to_owned(),
         })
     }
@@ -159,17 +150,7 @@ pub fn leads(tier: &str, tool: &str) -> bool {
         "cua" => matches!(tool, "delegate_computer" | "screenshot"),
         "browser" => tool.starts_with("browser_"),
         "plan" => matches!(tool, "gui_plan" | "script_run"),
-        #[cfg(feature = "script")]
-        "script" => matches!(tool, "gui_plan" | "script_run"),
         _ => false,
-    }
-}
-
-fn route_of(automation: Automation) -> &'static str {
-    match automation {
-        #[cfg(feature = "script")]
-        Automation::Script => SCRIPT_ROUTE,
-        _ => DESK_ROUTE,
     }
 }
 
@@ -182,41 +163,24 @@ pub fn meaning(tier: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    fn offers_its_tiers_and_takes_one_task(automation: Automation, own: &str, other: &str) {
-        let route = route_of(automation);
-        assert_eq!(route.matches(TASK).count(), 1);
-        let body: Value = serde_json::from_str(&route.replacen(TASK, "\"x\"", 1)).unwrap();
+    #[test]
+    fn the_prompt_offers_exactly_the_tiers_and_takes_one_task() {
+        assert_eq!(DESK_ROUTE.matches(TASK).count(), 1);
+        let body: Value = serde_json::from_str(&DESK_ROUTE.replacen(TASK, "\"x\"", 1)).unwrap();
         assert_eq!(body["model"], "typesafe/jev-1.13");
         assert_eq!(body["state"]["task"], "x");
         let criteria = body["questions"]["tier"]["criteria"].as_object().unwrap();
         let mut offered: Vec<&str> = criteria.keys().map(String::as_str).collect();
-        let mut known: Vec<&str> = TIERS
-            .iter()
-            .map(|(t, _)| *t)
-            .filter(|t| *t != other)
-            .collect();
+        let mut known: Vec<&str> = TIERS.iter().map(|(t, _)| *t).collect();
         offered.sort_unstable();
         known.sort_unstable();
         assert_eq!(offered, known);
-        assert!(offered.contains(&own));
-    }
-
-    #[test]
-    fn the_desk_prompt_offers_exactly_its_tiers_and_takes_one_task() {
-        offers_its_tiers_and_takes_one_task(Automation::Desk, "plan", "script");
-        assert!(!DESK_ROUTE.to_lowercase().contains("simul"));
-    }
-
-    #[cfg(feature = "script")]
-    #[test]
-    fn the_v4_prompt_offers_exactly_the_tiers_and_takes_one_task() {
-        offers_its_tiers_and_takes_one_task(Automation::Script, "script", "plan");
     }
 
     #[test]
     fn a_failed_or_weak_route_is_not_confident() {
         let failed = Route {
-            tier: "script".into(),
+            tier: "plan".into(),
             confidence: 0.99,
             error: Some("gw decisions returned 429".into()),
             usage: None,

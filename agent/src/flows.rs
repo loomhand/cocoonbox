@@ -271,18 +271,12 @@ pub fn reads(name: &str, args: &Value) -> bool {
             .any(|k| !args[*k].is_null()),
         "gui_flows" => true,
         "script_run" => runs_flow(args),
-        #[cfg(feature = "script")]
-        "script_run" => runs_flow(args),
         _ => false,
     }
 }
 
 /// Whether call `name` may write a flow file, so the changed flows are pushed after it.
 pub fn writes(name: &str) -> bool {
-    #[cfg(feature = "script")]
-    if name == "script_run" {
-        return true;
-    }
     matches!(
         name,
         "gui_plan" | "script_run" | "write_file" | "edit_file" | "shell" | "upload"
@@ -327,8 +321,6 @@ mod tests {
         assert!(
             writes("gui_plan") && writes("script_run") && writes("write_file") && writes("shell")
         );
-        #[cfg(feature = "script")]
-        assert!(reads("script_run", &json!({"script": "flows/a.mts"})) && writes("script_run"));
         assert!(!writes("screenshot") && !writes("read_file"));
     }
 

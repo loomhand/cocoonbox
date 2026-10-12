@@ -19,10 +19,6 @@ const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
 const NODE_BIN: &str = "/usr/local/bin/node";
 const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
-#[cfg(feature = "script")]
-const SCRIPT_BIN: &str = "/usr/local/bin/script";
-#[cfg(feature = "script")]
-const SCRIPT_GUIDE: &str = "/opt/script/AGENTS.md";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
@@ -35,18 +31,11 @@ pub enum Automation {
     Plain,
     /// GUI plans and scripts on Node with the desk API.
     Desk,
-    /// GUI plans and scripts on the Script runtime: the cbplan family.
-    #[cfg(feature = "script")]
-    Script,
 }
 
 impl Automation {
     /// The automation whose guide the image holds.
     pub fn detect() -> Self {
-        #[cfg(feature = "script")]
-        if Path::new(SCRIPT_GUIDE).exists() {
-            return Self::Script;
-        }
         if Path::new(DESK_GUIDE).exists() {
             Self::Desk
         } else {
@@ -58,15 +47,6 @@ impl Automation {
     /// screenshots, runs action lists and offers browser_fetch.
     pub fn plans(self) -> bool {
         self != Self::Plain
-    }
-
-    /// The program that runs scripts.
-    fn script_bin(self) -> &'static str {
-        match self {
-            #[cfg(feature = "script")]
-            Self::Script => SCRIPT_BIN,
-            _ => NODE_BIN,
-        }
     }
 }
 
@@ -179,7 +159,6 @@ impl ToolhostConfig {
     /// Reads toolhost settings; every key has a contract default.
     pub fn from_env() -> Result<Self, String> {
         let home = env::var("HOME").map_err(|e| format!("read HOME: {e}"))?;
-        let automation = Automation::detect();
         Ok(Self {
             socket: optional("TOOLHOST_SOCKET", DEFAULT_TOOLHOST_SOCKET).into(),
             socket_group: optional("TOOLHOST_SOCKET_GROUP", "cbagent"),
@@ -196,10 +175,10 @@ impl ToolhostConfig {
                 |_| format!("{home}/.cache/cua-driver/cua-driver.sock").into(),
                 Into::into,
             ),
-            script_bin: optional("SCRIPT_BIN", automation.script_bin()).into(),
+            script_bin: optional("SCRIPT_BIN", NODE_BIN).into(),
             session_save: SESSION_SAVE.into(),
             home: home.into(),
-            automation,
+            automation: Automation::detect(),
         })
     }
 }

@@ -1,5 +1,4 @@
-//! The script tool: one stateless script run as `user` with the automation's program, Node or the image's
-//! `script` CLI; `gui_plan` runs the image's plan executor that way.
+//! The script tool: one stateless script run as `user` by Node; `gui_plan` runs the image's plan executor that way.
 
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
@@ -19,7 +18,6 @@ use super::files;
 use super::rpc::Output;
 use super::shell::Capture;
 use super::timing;
-use crate::config::Automation;
 use crate::llm::image_mime;
 use crate::sys;
 
@@ -33,12 +31,6 @@ const ERROR_LINES: usize = 12;
 const DESK_PLAN: &str = "/opt/desk/lib/gui_plan.mts";
 const FLOW_INDEX: &str = "flows/INDEX";
 const GAMES_PATH: &str = ":/usr/local/games:/usr/games";
-#[cfg(feature = "script")]
-const APP_SCOPE: &str = "/app.slice/script-app-";
-#[cfg(feature = "script")]
-const NOISE: &str = "script: warning: OPENROUTER_API_KEY is not set";
-#[cfg(feature = "script")]
-const SCRIPT_PLAN: &str = "/opt/script/lib/gui_plan.mts";
 const ENTRY: &str = r#"import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 const env = process.env
@@ -49,46 +41,17 @@ if (typeof mod.main === 'function') {
 }
 if (globalThis.$snapshot !== undefined) writeFileSync(env.CB_SNAPSHOT, String(globalThis.$snapshot))
 "#;
-// X keycodes of Control, Shift, Alt and Super, left and right
-#[cfg(feature = "script")]
-const RELEASE: &str = r#"import { Button, Direction, Machine } from '@vendor/script-js'
-const m = Machine.local()
-for (const code of [37, 105, 50, 62, 64, 108, 133, 134]) m.keyRaw(code, Direction.Release)
-for (const button of [Button.Left, Button.Middle, Button.Right]) m.mouseButton(button, Direction.Release)
-"#;
 
-/// Runs scripts with the automation's program at `bin`, one scratch directory per run under `dir`.
+/// Runs scripts with Node at `bin`, one scratch directory per run under `dir`.
 pub struct Scripts {
     bin: PathBuf,
     dir: PathBuf,
-    automation: Automation,
 }
 
 impl Scripts {
-    /// Creates the runner of `bin` for `automation` with its scratch root `dir`.
-    pub fn new(automation: Automation, bin: PathBuf, dir: PathBuf) -> Self {
-        Self {
-            bin,
-            dir,
-            automation,
-        }
-    }
-
-    fn plan_file(&self) -> PathBuf {
-        match self.automation {
-            #[cfg(feature = "script")]
-            Automation::Script => PathBuf::from(SCRIPT_PLAN),
-            _ => PathBuf::from(DESK_PLAN),
-        }
-    }
-
-    /// The arguments before the entry script: the `script` CLI takes `run`.
-    fn verb(&self) -> Option<&'static str> {
-        match self.automation {
-            #[cfg(feature = "script")]
-            Automation::Script => Some("run"),
-            _ => None,
-        }
+    /// Creates the runner of `bin` with its scratch root `dir`.
+    pub fn new(bin: PathBuf, dir: PathBuf) -> Self {
+        Self { bin, dir }
     }
 
     /// Runs one script and reports it as JSON text, with a screenshot taken after the run unless turned off.
@@ -147,7 +110,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let mut report = self
             .run_script(
-                Script::File(self.plan_file()),
+                Script::File(PathBuf::from(DESK_PLAN)),
                 &Value::Object(params).to_string(),
                 workspace,
                 timeout_of(timeout_s),
@@ -174,7 +137,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let report = self
             .run_script(
-                Script::File(self.plan_file()),
+                Script::File(PathBuf::from(DESK_PLAN)),
                 r#"{"reindex":true}"#,
                 workspace,
                 RELEASE_TIMEOUT,
@@ -194,7 +157,7 @@ impl Scripts {
             .unwrap_or_default()
     }
 
-    /// Runs one script in its own scratch directory, releasing held input after a failure.
+    /// Runs one script in its own scratch directory.
     async fn run_script(
         &self,
         script: Script,
@@ -211,20 +174,6 @@ impl Scripts {
         let report = self
             .execute(script, params, workspace, &run_dir, timeout)
             .await;
-        #[cfg(feature = "script")]
-        if self.automation == Automation::Script
-            && report.as_ref().is_ok_and(|r| r.get("error").is_some())
-        {
-            let started = Instant::now();
-            match self.release(workspace, &run_dir).await {
-                Ok(()) => eprintln!(
-                    "script: released held input after a failed run in {} ms",
-                    started.elapsed().as_millis()
-                ),
-                Err(e) => eprintln!("script: release held input after a failed run: {e}"),
-            }
-            timing::mark("release");
-        }
         let _ = tokio::fs::remove_dir_all(&run_dir).await;
         report
     }
@@ -258,7 +207,6 @@ impl Scripts {
         timing::mark("prepare");
         let path = std::env::var("PATH").unwrap_or_default() + GAMES_PATH;
         let mut child = Command::new(&self.bin)
-            .args(self.verb())
             .arg(&entry)
             .current_dir(workspace)
             .env("PATH", path)
@@ -308,12 +256,6 @@ impl Scripts {
         guard.armed = false;
         timing::mark("run");
         let stderr = errs.render();
-        #[cfg(feature = "script")]
-        let stderr = stderr
-            .lines()
-            .filter(|l| !l.starts_with(NOISE))
-            .collect::<Vec<_>>()
-            .join("\n");
         let mut report = json!({
             "duration_ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             "exit_code": Value::Null,
@@ -340,31 +282,6 @@ impl Scripts {
             report["snapshot"] = String::from_utf8_lossy(&snapshot).into_owned().into();
         }
         Ok(report)
-    }
-
-    /// Releases the modifier keys and mouse buttons a failed Script run may have left held in the X server.
-    #[cfg(feature = "script")]
-    async fn release(&self, workspace: &Path, run_dir: &Path) -> Result<(), String> {
-        let script = run_dir.join("release.mjs");
-        files::write_bytes(&script, RELEASE.as_bytes()).await?;
-        let mut child = Command::new(&self.bin)
-            .arg("run")
-            .arg(&script)
-            .current_dir(workspace)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| format!("start {}: {e}", self.bin.display()))?;
-        let status = tokio::time::timeout(RELEASE_TIMEOUT, child.wait())
-            .await
-            .map_err(|_| format!("no exit in {}s", RELEASE_TIMEOUT.as_secs()))?
-            .map_err(|e| format!("wait for script: {e}"))?;
-        if !status.success() {
-            return Err(format!("script {status}"));
-        }
-        Ok(())
     }
 
     async fn screenshot(
@@ -424,7 +341,7 @@ enum Script {
     File(PathBuf),
 }
 
-/// Signals the run's process group on drop unless disarmed, sparing the apps it launched.
+/// Signals the run's process group on drop unless disarmed.
 struct RunGuard {
     pgid: Option<u32>,
     armed: bool,
@@ -433,7 +350,7 @@ struct RunGuard {
 impl RunGuard {
     fn signal(&self, signal: i32) {
         if let Some(pgid) = self.pgid {
-            signal_run(pgid, signal);
+            let _ = sys::signal_group(pgid, signal);
         }
     }
 }
@@ -503,41 +420,6 @@ fn failure(status: ExitStatus, stderr: &str) -> Option<Value> {
     Some(error)
 }
 
-/// Signals every process of group `pgid` except the apps a Script run launched in their own scopes.
-fn signal_run(pgid: u32, signal: i32) {
-    let Ok(entries) = std::fs::read_dir("/proc") else {
-        let _ = sys::signal_group(pgid, signal);
-        return;
-    };
-    for pid in entries
-        .flatten()
-        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
-    {
-        let in_group = std::fs::read_to_string(format!("/proc/{pid}/stat"))
-            .ok()
-            .and_then(|stat| process_group(&stat))
-            == Some(pgid);
-        #[cfg(feature = "script")]
-        let launched = std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
-            .is_ok_and(|cgroup| cgroup.contains(APP_SCOPE));
-        #[cfg(not(feature = "script"))]
-        let launched = false;
-        if in_group && !launched {
-            let _ = sys::signal_process(pid, signal);
-        }
-    }
-}
-
-/// The process group field of a `/proc/<pid>/stat` line, read after the parenthesized command name.
-fn process_group(stat: &str) -> Option<u32> {
-    stat.rsplit_once(')')?
-        .1
-        .split_whitespace()
-        .nth(2)?
-        .parse()
-        .ok()
-}
-
 async fn prune(shots: &Path) {
     let Ok(mut dir) = tokio::fs::read_dir(shots).await else {
         return;
@@ -555,15 +437,6 @@ async fn prune(shots: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn process_group_reads_past_a_command_name_with_spaces_and_parens() {
-        assert_eq!(
-            process_group("4242 (node (x) y) S 1 777 777 0 -1"),
-            Some(777)
-        );
-        assert_eq!(process_group("garbage"), None);
-    }
 
     #[test]
     fn failure_keeps_the_tail_of_stderr_without_info_lines() {

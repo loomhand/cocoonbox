@@ -50,8 +50,6 @@ const PLAN_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 with 
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 The user watches the screen live and sees every call.";
 const ALWAYS_LOAD: &[&str] = &[
-    #[cfg(feature = "script")]
-    "script_run",
     "script_run",
     "gui_plan",
     "shell",
@@ -60,31 +58,8 @@ const ALWAYS_LOAD: &[&str] = &[
     "browser_fetch",
 ];
 const NUDGE_STREAK: u32 = 2;
-#[cfg(feature = "script")]
-const SCRIPT_NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
-const DESK_NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
+const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
 const MAX_FLOWS: usize = 30;
-#[cfg(feature = "script")]
-const SCRIPT_RESOURCES: [Resource; 3] = [
-    Resource {
-        uri: "cocoonbox://script/AGENTS.md",
-        path: "/opt/script/AGENTS.md",
-        mime: "text/markdown",
-        description: "How to write, run and replay scripts on this box",
-    },
-    Resource {
-        uri: "cocoonbox://script/index.d.ts",
-        path: "/opt/script/js/index.d.ts",
-        mime: "text/plain",
-        description: "The script-js API, as installed on this box",
-    },
-    Resource {
-        uri: "cocoonbox://script/CLAUDE.md",
-        path: "/opt/script/js/CLAUDE.md",
-        mime: "text/markdown",
-        description: "script-js usage notes, as installed on this box",
-    },
-];
 const DESK_RESOURCES: [Resource; 1] = [Resource {
     uri: "cocoonbox://desk/AGENTS.md",
     path: "/opt/desk/AGENTS.md",
@@ -343,8 +318,7 @@ impl Mcp {
         });
         if self.automation.plans() {
             result["capabilities"]["resources"] = json!({});
-            result["instructions"] =
-                format!("{PLAN_HEAD}\n\n{}", prompts::routing(self.automation)).into();
+            result["instructions"] = format!("{PLAN_HEAD}\n\n{}", prompts::ROUTING).into();
         }
         Ok((session, result))
     }
@@ -514,7 +488,7 @@ impl Mcp {
         lock(&s.driver).last_seen = Instant::now();
         let mut text = out.text;
         if self.automation.plans() && s.gui_streak(name, launch) {
-            text.push_str(nudge(self.automation));
+            text.push_str(NUDGE);
         }
         let mut content = vec![json!({"type": "text"})];
         content[0]["text"] = text.into();
@@ -816,16 +790,6 @@ fn resources(automation: Automation) -> &'static [Resource] {
     match automation {
         Automation::Plain => &[],
         Automation::Desk => &DESK_RESOURCES,
-        #[cfg(feature = "script")]
-        Automation::Script => &SCRIPT_RESOURCES,
-    }
-}
-
-fn nudge(automation: Automation) -> &'static str {
-    match automation {
-        #[cfg(feature = "script")]
-        Automation::Script => SCRIPT_NUDGE,
-        _ => DESK_NUDGE,
     }
 }
 

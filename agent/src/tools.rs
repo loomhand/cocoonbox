@@ -8,9 +8,7 @@ use crate::config::Automation;
 use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
-#[cfg(feature = "script")]
-const SCRIPT_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
-const DESK_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
+const PLAN_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
 const DESK_OPS: [&str; 15] = [
     "windows", "snapshot", "find", "read", "press", "act", "at", "key", "type", "click", "focus",
     "close", "launch", "shot", "screen",
@@ -192,11 +190,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
     tools.extend(computer_tools());
     if let Some(script) = script_tool(automation) {
         if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            act.description = Cow::Owned(format!(
-                "{}{}{LIST_HINT}",
-                hint(automation),
-                act.description
-            ));
+            act.description = Cow::Owned(format!("{PLAN_HINT}{}{LIST_HINT}", act.description));
             if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
                 actions.insert(3, "triple_click".into());
             }
@@ -209,20 +203,9 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
                 schema.remove("required");
             }
         }
-        tools.extend([script, gui_plan_tool(), fetch_tool()]);
-        if automation == Automation::Desk {
-            tools.push(desk_tool());
-        }
+        tools.extend([script, gui_plan_tool(), fetch_tool(), desk_tool()]);
     }
     tools
-}
-
-fn hint(automation: Automation) -> &'static str {
-    match automation {
-        #[cfg(feature = "script")]
-        Automation::Script => SCRIPT_HINT,
-        _ => DESK_HINT,
-    }
 }
 
 /// The automation's script tool; none on a box without one.
@@ -230,8 +213,6 @@ fn script_tool(automation: Automation) -> Option<ToolSpec> {
     match automation {
         Automation::Plain => None,
         Automation::Desk => Some(desk_script_tool()),
-        #[cfg(feature = "script")]
-        Automation::Script => Some(script_tool()),
     }
 }
 
@@ -332,27 +313,6 @@ fn desk_tool() -> ToolSpec {
                 "app": {"type": "string"}
             },
             "required": ["op"]
-        }),
-    }
-}
-
-#[cfg(feature = "script")]
-fn script_tool() -> ToolSpec {
-    ToolSpec {
-        name: Cow::Borrowed("script_run"),
-        description: Cow::Borrowed(
-            "The preferred tool for any multi-step desktop task on this box (open an app, navigate, type, fill, save, repeat): write the whole flow as one script instead of many computer_act calls. One round trip, replayable with new params, and ground/verify are built in. Read /opt/script/AGENTS.md first (also the resource cocoonbox://script/AGENTS.md); it has a working save-a-file flow to adapt. A script is JavaScript or TypeScript importing @vendor/script-js (synchronous calls: apps, windows, accessibility tree, keyboard, mouse, screenshots, grounding). Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
-        ),
-        parameters: json!({
-            "type": "object",
-            "properties": {
-                "code": {"type": "string", "description": "The script as an ES module"},
-                "script": {"type": "string", "description": "Path of a script file in the box; relative paths resolve under /workspace"},
-                "params": {"type": "object", "description": "Passed to the script's exported main(params)"},
-                "timeout_s": {"type": "integer", "description": "Default 90, max 110; the run is stopped after it"},
-                "screenshot": {"type": "boolean", "description": "Return a screenshot taken after the run, default true"},
-                "max_edge": max_edge()
-            }
         }),
     }
 }
