@@ -29,6 +29,7 @@ printf '%s\n' "$PASSWORD" | cocoonbox-api -config /etc/cocoonbox/api.yaml user p
 printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user token-sha256 NAME -stdin
 cocoonbox-api -config /etc/cocoonbox/api.yaml state migrate [-keyring DIR]   # per-box keys and layout to per-user; safe to rerun
 cocoonbox-api -config /etc/cocoonbox/api.yaml state expand [-user ID]       # delta records and manifests to full ones, before a rollback; api stopped
+cocoonbox-api -config /etc/cocoonbox/api.yaml box rebase USER BOX IMAGE      # the user's Rebase through the running api on operator_socket, saved first; follows it to the end
 ```
 
 ## Build
