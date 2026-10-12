@@ -102,6 +102,7 @@ func main() {
 		Flavors:      flavors,
 		Image:        cfg.Image,
 		RebaseImages: cfg.RebaseImages,
+		ImageOwners:  cfg.ImageOwners,
 		MaxRunning:   cfg.MaxRunningBoxes,
 	}, accounts)
 	svc.EnableAccounts(accounts)

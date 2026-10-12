@@ -48,6 +48,13 @@ func TestLoadParkingForSomeOwners(t *testing.T) {
 	}
 }
 
+func TestLoadImageOwners(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"rebase_images: [cbplan:v38, cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a, u-b]}\n"))
+	if err != nil || !slices.Equal(cfg.ImageOwners["cbcore:v1"], []string{"u-a", "u-b"}) {
+		t.Errorf("Load = %+v, %v, want cbcore:v1 for u-a and u-b", cfg.ImageOwners, err)
+	}
+}
+
 func TestLoadTheBoxDoor(t *testing.T) {
 	cfg, err := Load(writeConfig(t, required+"connect:\n  public_url: https://cb.example/\n  box_listen: 10.203.0.1:18091\n"))
 	if err != nil || cfg.Connect.BoxListen != "10.203.0.1:18091" || cfg.Connect.PublicURL != "https://cb.example" {
@@ -87,6 +94,8 @@ func TestLoadRejects(t *testing.T) {
 		{name: "wake awake under a minute", body: required + "wake:\n  max_awake_for: 30s\n", want: "wake.max_awake_for must be at least 1m"},
 		{name: "negative park after", body: required + "state:\n  park_after: -1h\n", want: "state.park_after must not be negative"},
 		{name: "relative cua meter", body: required + "cua_meter_file: cua-meter.jsonl\n", want: "cua_meter_file must be an absolute path"},
+		{name: "image owners of an image not offered", body: required + "rebase_images: [cbplan:v38]\nimage_owners: {\"cbcore:v1\": [u-a]}\n", want: `image_owners image "cbcore:v1" must be in rebase_images`},
+		{name: "image owner under two images", body: required + "rebase_images: [cbplan:v38, cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a], \"cbplan:v38\": [u-a]}\n", want: `image_owners lists user "u-a" under`},
 		{name: "relative operator socket", body: required + "operator_socket: operator.sock\n", want: "operator_socket must be an absolute path"},
 	}
 	for _, tt := range tests {

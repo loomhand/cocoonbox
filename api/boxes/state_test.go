@@ -477,20 +477,26 @@ func TestEnsureRestoresAMissingMachineFromTheLatestSnapshot(t *testing.T) {
 
 func TestEnsureRestoresAMissingMachineIntoItsImageFamily(t *testing.T) {
 	tests := []struct {
-		name, image        string
-		legacyHead, parked bool
-		want               string
+		name, image               string
+		legacyHead, parked, owner bool
+		want                      string
 	}{
-		{"cbplan box", "cbplan:v6", false, false, "cbplan:v7"},
-		{"cbdesk box", "cbdesk:v22", false, false, "cbdesk:v25"},
-		{"head without an image", "cbplan:v6", true, false, "cbdesk:v25"},
-		{"parked box on an offered image", "cbplan:v6", false, true, "cbplan:v6"},
-		{"parked box on a retired image", "cbplan:v5", false, true, "cbplan:v7"},
+		{"cbplan box", "cbplan:v6", false, false, false, "cbplan:v7"},
+		{"cbdesk box", "cbdesk:v22", false, false, false, "cbdesk:v25"},
+		{"head without an image", "cbplan:v6", true, false, false, "cbdesk:v25"},
+		{"parked box on an offered image", "cbplan:v6", false, true, false, "cbplan:v6"},
+		{"parked box on a retired image", "cbplan:v5", false, true, false, "cbplan:v7"},
+		{"image owner's cbplan box", "cbplan:v6", false, false, true, "cbcore:v1"},
+		{"image owner's parked box on an offered image", "cbplan:v6", false, true, true, "cbplan:v6"},
+		{"image owner's parked box on a retired image", "cbplan:v5", false, true, true, "cbcore:v1"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			env := newStateEnv(t)
-			env.svc.defaults.Image, env.svc.defaults.RebaseImages = "cbdesk:v25", []string{"cbplan:v7", "cbplan:v6", "cbdesk:v24"}
+			env.svc.defaults.Image, env.svc.defaults.RebaseImages = "cbdesk:v25", []string{"cbplan:v7", "cbplan:v6", "cbdesk:v24", "cbcore:v1"}
+			if tt.owner {
+				env.svc.defaults.ImageOwners = map[string][]string{"cbcore:v1": {alice}}
+			}
 			env.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: tt.image, Revision: 1})
 			env.agent.chunks = []string{hexID("c1")}
 			env.save(t)

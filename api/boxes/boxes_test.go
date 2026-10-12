@@ -63,6 +63,53 @@ func TestLatestStaysInTheImageFamily(t *testing.T) {
 	}
 }
 
+func TestImageOwnersGetTheirImageForNewBoxesAndUpgrades(t *testing.T) {
+	fake := newFakeMachines()
+	st := newFakeStore()
+	defaults := testDefaults
+	defaults.Image, defaults.RebaseImages, defaults.MaxRunning = "cbplan:v38", []string{"cbdesk:v34", "cbcore:v1"}, 9
+	defaults.ImageOwners = map[string][]string{"cbcore:v1": {alice}}
+	svc := New(fake, defaults, newFakeRegistry())
+	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
+	for _, tt := range []struct {
+		user, want string
+	}{
+		{alice, "cbcore:v1"},
+		{"bob", ""},
+	} {
+		ctx := auth.WithUser(t.Context(), tt.user)
+		if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{}); err != nil || fake.lastSpec().Image != tt.want {
+			t.Errorf("Ensure of %s's first box = %v, spec image %q, want %q", tt.user, err, fake.lastSpec().Image, tt.want)
+		}
+		if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "second"}); err != nil || fake.lastSpec().Image != tt.want {
+			t.Errorf("Create of %s = %v, spec image %q, want %q", tt.user, err, fake.lastSpec().Image, tt.want)
+		}
+		if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "family", Image: "cbdesk"}); err != nil || fake.lastSpec().Image != "cbdesk:v34" {
+			t.Errorf("Create(cbdesk) of %s = %v, spec image %q, want cbdesk:v34", tt.user, err, fake.lastSpec().Image)
+		}
+	}
+
+	if got := defaults.upgrade("bob", "cbplan:v38"); got != "cbplan:v38" {
+		t.Errorf("bob's upgrade = %q, want cbplan:v38", got)
+	}
+
+	running := newFakeMachines()
+	running.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbplan:v38", Revision: 1})
+	svc = New(running, defaults, newFakeRegistry())
+	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
+	ctx := auth.WithUser(t.Context(), alice)
+	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
+	if err != nil || box.GetLatestImage() != "cbcore:v1" {
+		t.Fatalf("box = %v, %v, want latest cbcore:v1 for its owner", box, err)
+	}
+	if _, err := svc.Rebase(ctx, &controlv1.RebaseRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+	if spec := running.waitSpec(t, 1); spec.Image != "cbcore:v1" {
+		t.Errorf("upgrade target = %q, want cbcore:v1", spec.Image)
+	}
+}
+
 func TestEnsureCreatesBox(t *testing.T) {
 	fake := newFakeMachines()
 	svc := New(fake, testDefaults, newFakeRegistry())

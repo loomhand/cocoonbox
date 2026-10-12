@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -153,7 +154,9 @@ type Config struct {
 	MCPListen    string   `json:"mcp_listen"`
 	Image        string   `json:"image"`
 	RebaseImages []string `json:"rebase_images"`
-	AgentPort    int      `json:"agent_port"`
+	// ImageOwners maps a rebase image to the user ids whose new boxes start from it and whose boxes upgrade to it.
+	ImageOwners map[string][]string `json:"image_owners"`
+	AgentPort   int                 `json:"agent_port"`
 	// Provision configures every box's identity file and gw key.
 	Provision Provision `json:"provision"`
 	Accounts  Accounts  `json:"accounts"`
@@ -287,9 +290,27 @@ func (c *Config) validate() error {
 	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
 		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
 	}
-	errs = append(errs, c.Wake.validate(), absolute("cua_meter_file", c.CUAMeterFile), absolute("operator_socket", c.OperatorSocket))
+	errs = append(errs, c.Wake.validate(), c.validateImageOwners(), absolute("cua_meter_file", c.CUAMeterFile), absolute("operator_socket", c.OperatorSocket))
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
+	}
+	return errors.Join(errs...)
+}
+
+// validateImageOwners refuses an image that Rebase does not offer and a user listed under two images.
+func (c *Config) validateImageOwners() error {
+	var errs []error
+	owned := map[string]string{}
+	for image, owners := range c.ImageOwners {
+		if !slices.Contains(c.RebaseImages, image) {
+			errs = append(errs, fmt.Errorf("image_owners image %q must be in rebase_images", image))
+		}
+		for _, user := range owners {
+			if other, ok := owned[user]; ok {
+				errs = append(errs, fmt.Errorf("image_owners lists user %q under %s and %s", user, other, image))
+			}
+			owned[user] = image
+		}
 	}
 	return errors.Join(errs...)
 }

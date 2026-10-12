@@ -3,6 +3,7 @@ mcp_listen: 127.0.0.1:18201
 # relative paths resolve next to this file (the systemd credentials directory)
 image: cbdesk:v11            # the default sandboxd template
 rebase_images: []            # older templates Rebase may also target; anything else is refused
+image_owners: {}             # a rebase image -> user ids whose new boxes start from it and whose boxes upgrade to it
 agent_port: 7443
 sandboxd:
   url: http://127.0.0.1:17780

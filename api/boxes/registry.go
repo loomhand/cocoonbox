@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,7 +25,7 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, err
 	}
-	image, ok := s.defaults.offered(req.GetImage())
+	image, ok := s.defaults.offered(cmp.Or(req.GetImage(), s.defaults.ownImage(user)))
 	if !ok {
 		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered", req.GetImage())
 	}
