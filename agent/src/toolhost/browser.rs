@@ -930,6 +930,9 @@ impl Cdp {
         let ready = self
             .load(url, &tree["frameTree"]["frame"]["id"], wait)
             .await?;
+        if !ready {
+            self.call("Page.stopLoading", json!({})).await?;
+        }
         timing::mark("load");
         let here = self
             .eval("document.title + ' (' + location.href + ')'")
@@ -1434,10 +1437,26 @@ pub(super) mod tests {
                 let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
                 let (log, text) = (Arc::clone(&seen), text.clone());
                 tokio::spawn(async move {
+                    let (mut retrying, mut late, mut held) = (false, false, false);
                     while let Some(Ok(WsMessage::Text(msg))) = ws.next().await {
                         let v: Value = serde_json::from_str(&msg).unwrap();
                         log.lock().unwrap().push(v.clone());
-                        let result = match v["method"].as_str().unwrap() {
+                        let method = v["method"].as_str().unwrap();
+                        let read = method == "Runtime.evaluate" && v["params"]["expression"] != "0";
+                        if retrying && !late && (read || method == "Page.stopLoading") {
+                            late = true;
+                            held = true;
+                            let paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
+                                "requestId": "r2", "frameId": "hidden", "responseStatusCode": 302, "responseHeaders": []}});
+                            ws.send(WsMessage::text(paused.to_string())).await.unwrap();
+                        }
+                        if method == "Page.stopLoading" {
+                            held = false;
+                        }
+                        if held && method == "Runtime.evaluate" {
+                            continue;
+                        }
+                        let result = match method {
                             "Target.createTarget" => json!({"targetId": "hidden"}),
                             "Target.attachToTarget" => json!({"sessionId": "s1"}),
                             "Page.getFrameTree" => {
@@ -1481,6 +1500,7 @@ pub(super) mod tests {
                                     .push(json!({"name": "cf-mitigated", "value": "challenge"}));
                             }
                             ws.send(WsMessage::text(paused.to_string())).await.unwrap();
+                            retrying = retries;
                             if retries {
                                 tokio::time::sleep(Duration::from_secs(3)).await;
                                 let mut redirect = paused.clone();
