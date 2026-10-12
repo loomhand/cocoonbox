@@ -1,9 +1,10 @@
 #!/bin/bash
 # Builds dist/CocoonBox.app (release, arm64) and signs it ad hoc.
-#   scripts/bundle.sh [--clean]
+#   CB_ENDPOINT=https://<api host> scripts/bundle.sh [--clean]
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+endpoint="${CB_ENDPOINT:?set CB_ENDPOINT to the https origin of the api}"
 if [ "${1:-}" = "--clean" ]; then
   rm -rf .build dist
 fi
@@ -34,6 +35,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>${version}</string>
+  <key>CBEndpoint</key><string>${endpoint}</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
   <key>NSHighResolutionCapable</key><true/>

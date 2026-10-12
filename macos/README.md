@@ -15,7 +15,7 @@ Native client for cocoonbox: sign in, start or wake the box, talk to its agents,
 Requires macOS 15 and the Command Line Tools (Swift 6.2). Xcode is not needed.
 
 ```bash
-scripts/bundle.sh            # dist/CocoonBox.app, ad hoc signed; --clean rebuilds from scratch
+CB_ENDPOINT=https://<api host> scripts/bundle.sh   # dist/CocoonBox.app with that endpoint, ad hoc signed; --clean rebuilds from scratch
 scripts/test.sh              # unit tests
 scripts/gen-proto.sh         # regenerate Sources/CocoonBoxKit/Generated from ../proto
 open dist/CocoonBox.app
@@ -107,7 +107,7 @@ swift-rfb is a local path package (`../../swift-rfb`), so it must be checked out
 
 These environment variables serve test runs:
 
-- `CB_ENDPOINT`: the endpoint URL. It overrides the saved endpoint. The app speaks plaintext `http://` only to loopback (`127.*`, `::1`, `localhost`), so a bearer token never crosses the network unencrypted.
+- `CB_ENDPOINT`: the endpoint URL. It overrides the one `scripts/bundle.sh` wrote into the app. The app speaks plaintext `http://` only to loopback (`127.*`, `::1`, `localhost`), so a bearer token never crosses the network unencrypted.
 - `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `me.cmgs.cocoonbox`). Ad hoc signed dev builds use `me.cmgs.cocoonbox.dev`, so they never read the installed app's item and never raise its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s me.cmgs.cocoonbox.dev -a <endpoint url>`.
 - `CB_KEYCHAIN_FILE`: a keychain file to use instead of the login keychain, so tests never touch the user's own. Create it with `security create-keychain` and unlock it with `security unlock-keychain`; `scripts/test-cli.sh` does this, and also runs with `HOME` set to a test directory.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
@@ -124,8 +124,4 @@ Timings go to `~/Library/Logs/CocoonBox/debug.log` and to os_signpost (subsystem
 
 Ad hoc signing gives every build a new code hash. After a rebuild, the Keychain asks before it lets the new binary read a token that an older build stored. A Developer ID signature removes the prompt.
 
-Tokens live in the login Keychain under service `me.cmgs.cocoonbox`, one item per endpoint URL. Builds before the rename used `me.cmgs.cocoonbox`. To remove the old items, run this once per endpoint until it reports that the item could not be found:
-
-```bash
-security delete-generic-password -s me.cmgs.cocoonbox -a https://box.example.com
-```
+Tokens live in the login Keychain under service `me.cmgs.cocoonbox`, one item per endpoint URL.

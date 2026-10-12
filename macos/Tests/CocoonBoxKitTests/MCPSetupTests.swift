@@ -31,7 +31,7 @@ import Testing
     }
 
     @Test func plaintextIsRefusedExceptOnLoopback() throws {
-        #expect(throws: ConnectionError.self) { try BoxConnection(endpoint: Endpoint(url: "https://box.example.com")!, token: "t") }
+        #expect(throws: ConnectionError.self) { try BoxConnection(endpoint: Endpoint(url: "http://box.example.com")!, token: "t") }
         let local = try BoxConnection(endpoint: Endpoint(url: "http://127.0.0.1:50051")!, token: "t")
         local.close()
     }

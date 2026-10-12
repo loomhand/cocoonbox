@@ -692,7 +692,7 @@ struct SignInSheet: View {
                 .foregroundStyle(.secondary)
             SecureField("Token", text: $token)
                 .textFieldStyle(.roundedBorder)
-            if let console = URL(string: "\(model.endpointURL)/cb/") {
+            if let endpoint = Endpoint(url: model.endpointURL), let console = URL(string: endpoint.url + "/cb/") {
                 HStack(spacing: 4) {
                     Text("Get your token at")
                     Link(console.absoluteString, destination: console)

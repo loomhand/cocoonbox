@@ -109,7 +109,7 @@ final class AppModel {
     @ObservationIgnored private var settleTask: Task<Void, Never>?
 
     init() {
-        endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"] ?? Endpoint.defaultURL
+        endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"] ?? Endpoint.configuredURL ?? ""
         listen()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {

@@ -131,7 +131,9 @@ func savedEndpoint() -> String? {
 }
 
 func endpoint(_ flag: String? = value(of: "--endpoint")) -> Endpoint {
-    let url = flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.defaultURL
+    guard let url = flag ?? ProcessInfo.processInfo.environment["COCOONBOX_ENDPOINT"] ?? savedEndpoint() ?? Endpoint.configuredURL else {
+        fail("no endpoint: pass --endpoint or set COCOONBOX_ENDPOINT")
+    }
     guard let endpoint = Endpoint(url: url) else { fail("\(url) is not an http(s) URL") }
     guard endpoint.usesTLS || endpoint.isLoopback else { fail("\(endpoint.host) is not on this Mac, so it needs https: the token would travel in plaintext") }
     return endpoint

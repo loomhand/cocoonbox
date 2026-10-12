@@ -2,7 +2,9 @@ import Foundation
 import Security
 
 public struct Endpoint: Sendable, Hashable {
-    public static let defaultURL = "https://box.example.com"
+    // configuredURL is the CBEndpoint that bundle.sh writes into the app's Info.plist; the CLI in Contents/Helpers reads its app's.
+    public static let configuredURL = [Bundle.main.bundleURL, Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()]
+        .lazy.compactMap { Bundle(url: $0)?.object(forInfoDictionaryKey: "CBEndpoint") as? String }.first { !$0.isEmpty }
 
     public var host: String
     public var port: Int
