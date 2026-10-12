@@ -1,0 +1,13 @@
+{
+  "chunk": {
+    "id": "f3fc9e1373e26a4fa407260ca68196db0c2e4432781276ba37cda5331bed95fb",
+    "plain_b64": "Y29jb29uYm94IHN0YXRlIGZpeHR1cmU6IG9uZSBjaHVuayBvZiAvd29ya3NwYWNlL25vdGVzLnR4dAo=",
+    "sealed_b64": "vPzgicaj19ZuI4H2yDMdHAvdr8sm/n8KVhzGfdIAitkou0iPI/PTc74MAc6gPj5gJhpa9QkxPJBNS9nOf+Qpbv22JeNhezBdvW25zwduj5gdxxDnKRLAPm0DbQVgS9Tj"
+  },
+  "key_hex": "2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a2a",
+  "manifest": {
+    "id": "fb961fa88237bcf0b539be94e3feaf2b52d26175b575e4b9add74bb78b48fb1f",
+    "plain": "{\"version\":1,\"parent\":\"\",\"key_id\":\"k-fixture\",\"taken_at_ms\":1760000000123,\"consistency\":\"quiesced\",\"files\":[{\"root\":\"home\",\"path\":\".config\",\"kind\":\"dir\",\"mode\":448,\"mtime_ms\":1760000000000,\"size\":0},{\"root\":\"home\",\"path\":\"notes\",\"kind\":\"symlink\",\"mode\":511,\"mtime_ms\":1760000000000,\"size\":20,\"target\":\"/workspace/notes.txt\"},{\"root\":\"workspace\",\"path\":\"notes.txt\",\"kind\":\"file\",\"mode\":420,\"mtime_ms\":1760000000000,\"size\":59,\"chunks\":[\"f3fc9e1373e26a4fa407260ca68196db0c2e4432781276ba37cda5331bed95fb\"]}],\"agent_db\":{\"size\":23,\"chunks\":[\"afbf8f64b2acb834049a50d3bb1b76a09939334174ae6e94a5e08e5978de56e6\"]},\"skipped\":[]}",
+    "sealed_b64": "WojmuS/bC7MU2UbwP/1jHVRx32cn7xdEbjxAmcbXOe276YrsyYHxm625ScRbWrN+A9rka2zsm7Xc9z9i4kKTsvWx1NZJ2c4bgMmiAHgzQl8/29Ju1p6pndlBw5axXtgi/Srpi2/2PWzve7M4mHoHqGnA0FvWR1VG2CH8E8Vb1svBXeX9jM1Mh/BvBs4z8qUeHQ5JJTGqhQYvpTKjXizhfiDD5+bVhTIV2pf6LDJ23YXS6G7pQXVS5IWKJx6R2dj50BYaPDAs69Tj6xBlfXL1/ZEErP10QRRnSs9kXDo30Mv6HziAi+tKi2btruNeUi4giN6OfOJWBZpvxVF/zzkrSVWvhPrtRmHsNVVo9MTx0Gtu+Fr0A0TPKCAZGj4IJBNLjUhPMWPS7zM1qBm/LmNzGgvN7JK5kjxnLV5SFuxLP2b7YvG6OeUb4ABc5vuk3I2zpoVILPHiunvEKzcKl4kbYCpK7jn7L7EeVUdKC7prDnxLKhiW2bfksrZoEbox7vq6GLzOKQ=="
+  }
+}
