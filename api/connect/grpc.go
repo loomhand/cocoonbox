@@ -131,6 +131,7 @@ func (s *Service) Approve(ctx context.Context, req *controlv1.ApproveRequest) (*
 		}
 		s.watchers.notify(user)
 	}
+	s.watchers.answer(user, approvalAnswered(a.id, decision))
 	log.WithFunc("connect.Service.Approve").Infof(ctx, "user %s answered approval %s (%s %s): %s", user, a.id, a.connector, a.tool, decision)
 	return &controlv1.ApproveResponse{}, nil
 }

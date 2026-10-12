@@ -451,16 +451,16 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
 }
 
 /// The Connect box door: a read tool, a write tool the broker holds for approval, a tool named like a box tool, and
-/// `list_changed` on its event stream; `changed` adds a tool and announces it.
-async fn mock_door(log: Log, changed: Arc<tokio::sync::Notify>) -> String {
+/// its event stream, which carries each message sent on `events`; a `list_changed` also adds a tool.
+async fn mock_door(log: Log, events: tokio::sync::broadcast::Sender<String>) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
     let added = Arc::new(std::sync::atomic::AtomicBool::new(false));
     tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
-            let (log, changed, added) =
-                (Arc::clone(&log), Arc::clone(&changed), Arc::clone(&added));
+            let (log, mut events, added) =
+                (Arc::clone(&log), events.subscribe(), Arc::clone(&added));
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
                 let mut line = String::new();
@@ -491,12 +491,15 @@ async fn mock_door(log: Log, changed: Arc<tokio::sync::Notify>) -> String {
                         .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n: open\n\n")
                         .await
                         .unwrap();
-                    changed.notified().await;
-                    added.store(true, std::sync::atomic::Ordering::SeqCst);
-                    let _ = stream
-                        .write_all(b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n")
-                        .await;
-                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    while let Ok(msg) = events.recv().await {
+                        if msg.contains("list_changed") {
+                            added.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        let frame = format!("event: message\ndata: {msg}\n\n");
+                        if stream.write_all(frame.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
                     return;
                 }
                 let req: Value = serde_json::from_slice(&body).unwrap();
@@ -1857,8 +1860,8 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
 #[tokio::test]
 async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
     let door_log = Log::default();
-    let changed = Arc::new(tokio::sync::Notify::new());
-    let door = mock_door(Arc::clone(&door_log), Arc::clone(&changed)).await;
+    let (events, _) = tokio::sync::broadcast::channel(8);
+    let door = mock_door(Arc::clone(&door_log), events.clone()).await;
     let h = Harness::with_connect(
         vec![
             (
@@ -1956,7 +1959,9 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    changed.notify_one();
+    events
+        .send(r#"{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}"#.to_owned())
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(300)).await;
     send(&mut agents, &agent_id, "list", "").await;
     turn_ends(&mut agents, &agent_id, 3).await;
@@ -1989,6 +1994,63 @@ async fn connector_tools_wait_for_the_users_approval_and_follow_list_changed() {
             .filter(|(m, _)| m != "initialize")
             .all(|(_, v)| v["session"] == "s1")
     );
+}
+
+#[tokio::test]
+async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_door() {
+    let door_log = Log::default();
+    let (events, _) = tokio::sync::broadcast::channel(8);
+    let door = mock_door(Arc::clone(&door_log), events.clone()).await;
+    let h = Harness::with_connect(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("c1", "mock_create_item", &json!({"title": "x"})),
+            ),
+            ("chat/completions", chat_text("Created.")),
+        ],
+        door,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "make x", "").await;
+    let asked = connector_approval(&mut agents, &agent_id, 0).await;
+    for _ in 0..200 {
+        if door_log.lock().unwrap().iter().any(|(m, _)| m == "GET") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    events
+        .send(
+            json!({"jsonrpc": "2.0", "method": "notifications/cocoonbox/approval_answered",
+                   "params": {"approval_id": asked.approval_id, "decision": "once"}})
+            .to_string(),
+        )
+        .unwrap();
+    let entries = turn_ends(&mut agents, &agent_id, 1).await;
+    let created = entries
+        .iter()
+        .find_map(|e| match &e.body {
+            Some(Body::ToolResult(r)) if r.call_id == "c1" => Some(r.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!created.is_error, "{created:?}");
+    assert_eq!(
+        created.text,
+        format!("created \"x\" with {}", asked.approval_id)
+    );
+    agents
+        .respond(authed(pb::RespondRequest {
+            agent_id: agent_id.clone(),
+            approval_id: asked.approval_id,
+            approve: true,
+            text: String::new(),
+        }))
+        .await
+        .unwrap();
 }
 
 async fn connector_approval(

@@ -427,7 +427,7 @@ func TestDisconnectRevokesDeletesAndAnnouncesTheChange(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
 	sec := env.secrets(t)
-	changes, stop := env.svc.watchers.add(alice)
+	watch, stop := env.svc.watchers.add(alice, false)
 	defer stop()
 	resp, err := env.svc.Disconnect(auth.WithUser(t.Context(), alice), &controlv1.ConnectorRef{ConnectorId: mockName})
 	if err != nil || !resp.GetRevoked() {
@@ -437,7 +437,7 @@ func TestDisconnectRevokesDeletesAndAnnouncesTheChange(t *testing.T) {
 		t.Errorf("revoked %v", revoked)
 	}
 	select {
-	case <-changes:
+	case <-watch.changed:
 	default:
 		t.Error("no list_changed")
 	}
@@ -761,6 +761,37 @@ func TestBoxDoorTakesTheApprovalFromMeta(t *testing.T) {
 	meta := `,"_meta":{"` + approvalIDMeta + `":"` + approvalID + `"}`
 	if err := json.UnmarshalRead(post(t, srv.URL, "Bearer alice", fmt.Sprintf(body, meta)).Body, &retry); err != nil || retry.Result.IsError || retry.Result.Content[0].Text != "create_item done" {
 		t.Errorf("approved retry = %+v, %v", retry, err)
+	}
+}
+
+func TestAnAnswerReachesTheBoxDoorStreamsOnly(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	srv := httptest.NewServer(env.svc.NewDoor(fakeAuthn{}, DoorBox))
+	t.Cleanup(srv.Close)
+	modeBWatch, stop := env.svc.watchers.add(alice, false)
+	defer stop()
+	streamReq, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+	streamReq.Header.Set("Authorization", "Bearer alice")
+	streamReq.Header.Set("Accept", "text/event-stream")
+	stream, err := http.DefaultClient.Do(streamReq)
+	if err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	defer func() { _ = stream.Body.Close() }()
+	out, _ := call(t.Context(), env.svc, modeA, createItem, nil, "")
+	approvalID := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	if _, err := env.svc.Approve(auth.WithUser(t.Context(), alice), &controlv1.ApproveRequest{ApprovalId: approvalID, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_DENY}); err != nil {
+		t.Fatalf("Deny: %v", err)
+	}
+	want := `data: {"jsonrpc":"2.0","method":"notifications/cocoonbox/approval_answered","params":{"approval_id":"` + approvalID + `","decision":"deny"}}`
+	buf := make([]byte, 512)
+	n, _ := stream.Body.Read(buf)
+	if !strings.Contains(string(buf[:n]), want) {
+		t.Errorf("box stream = %q, want %q", buf[:n], want)
+	}
+	if modeBWatch.answered != nil || len(modeBWatch.changed) != 0 {
+		t.Error("a mode B stream got the answer")
 	}
 }
 

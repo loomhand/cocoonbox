@@ -1,6 +1,6 @@
 //! Per-agent turn queue and the main agent loop.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -23,6 +23,7 @@ use crate::store::Store;
 use crate::{computer, flows, new_id, prompts, route, tools};
 
 const QUEUE_DEPTH: usize = 32;
+const DOOR_ANSWERS: usize = 64;
 const TITLE_CHARS: usize = 24;
 const MAIN_MAX_STEPS: usize = 40;
 const SCRIPT_MAX_STEPS: usize = 150;
@@ -67,6 +68,7 @@ pub struct Runtime {
     main_tools: Vec<ToolSpec>,
     main_vision_tools: Vec<ToolSpec>,
     slots: Mutex<HashMap<String, Arc<Slot>>>,
+    door_answered: Mutex<VecDeque<String>>,
 }
 
 impl Runtime {
@@ -80,14 +82,12 @@ impl Runtime {
             .map_err(|e| format!("create {}: {e}", cfg.state_dir.display()))?;
         let journal = Arc::new(Journal::new(Store::open(&cfg.state_dir.join("agent.db"))?));
         let stop = CancellationToken::new();
-        let connect = match &cfg.connect_url {
-            Some(url) => {
-                let client = Arc::new(connect::Client::new(url)?);
-                client.watch(stop.clone());
-                Some(client)
-            }
-            None => None,
-        };
+        let connect = cfg
+            .connect_url
+            .as_deref()
+            .map(connect::Client::new)
+            .transpose()?
+            .map(Arc::new);
         let router = cfg
             .script
             .then(|| Router::new(&cfg.gw_base_url, &cfg.gw_api_key))
@@ -120,8 +120,17 @@ impl Runtime {
             turns: Arc::new(tokio::sync::RwLock::new(())),
             guests: Arc::default(),
             slots: Mutex::new(HashMap::new()),
+            door_answered: Mutex::new(VecDeque::new()),
             cfg,
         });
+        if let Some(client) = &rt.connect {
+            let weak = Arc::downgrade(&rt);
+            client.watch(rt.stop.clone(), move |id, approve| {
+                if let Some(rt) = weak.upgrade() {
+                    rt.door_answer(id, approve);
+                }
+            });
+        }
         rt.recover("interrupted: the agent restarted").await?;
         Ok(rt)
     }
@@ -294,14 +303,18 @@ impl Runtime {
         Ok(())
     }
 
-    /// Delivers the user's answer to a pending approval.
+    /// Delivers the user's answer to a pending approval; one the broker already reported answered is accepted.
     pub fn respond(&self, req: pb::RespondRequest) -> Result<(), Status> {
         let slot = self.existing_slot(&req.agent_id);
-        let tx = slot
-            .and_then(|s| lock(&s.state).approvals.remove(&req.approval_id))
-            .ok_or_else(|| {
-                Status::not_found(format!("approval {} is not pending", req.approval_id))
-            })?;
+        let Some(tx) = slot.and_then(|s| lock(&s.state).approvals.remove(&req.approval_id)) else {
+            if lock(&self.door_answered).contains(&req.approval_id) {
+                return Ok(());
+            }
+            return Err(Status::not_found(format!(
+                "approval {} is not pending",
+                req.approval_id
+            )));
+        };
         tx.send(Reply {
             approve: req.approve,
             text: req.text,
@@ -483,6 +496,27 @@ impl Runtime {
 
     fn existing_slot(&self, agent_id: &str) -> Option<Arc<Slot>> {
         lock(&self.slots).get(agent_id).cloned()
+    }
+
+    fn door_answer(&self, approval_id: &str, approve: bool) {
+        let slots: Vec<Arc<Slot>> = lock(&self.slots).values().cloned().collect();
+        let Some(tx) = slots
+            .iter()
+            .find_map(|s| lock(&s.state).approvals.remove(approval_id))
+        else {
+            return;
+        };
+        {
+            let mut answered = lock(&self.door_answered);
+            if answered.len() == DOOR_ANSWERS {
+                answered.pop_front();
+            }
+            answered.push_back(approval_id.to_owned());
+        }
+        let _ = tx.send(Reply {
+            approve,
+            text: String::new(),
+        });
     }
 
     async fn run_turn(&self, agent_id: &str, slot: Arc<Slot>, turn_id: String) {

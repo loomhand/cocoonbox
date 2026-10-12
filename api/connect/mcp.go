@@ -27,6 +27,7 @@ const (
 	maxRequestBody  = 1 << 20
 	keepalive       = 25 * time.Second
 	sessionTTL      = 24 * time.Hour
+	answersQueued   = 8
 
 	codeParse          = -32700
 	codeInvalidRequest = -32600
@@ -51,6 +52,11 @@ type authFunc func(ctx context.Context, header string) (string, string, error)
 type session struct {
 	client string
 	at     time.Time
+}
+
+type watcher struct {
+	changed  chan struct{}
+	answered chan []byte
 }
 
 type response struct {
@@ -207,7 +213,7 @@ func (d *Door) client(id string) string {
 }
 
 func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
-	changes, stop := d.svc.watchers.add(user)
+	watch, stop := d.svc.watchers.add(user, d.door == DoorBox)
 	defer stop()
 	w.Header().Set("Content-Type", eventStreamMedia)
 	w.Header().Set("Cache-Control", "no-cache")
@@ -220,8 +226,9 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 		select {
 		case <-r.Context().Done():
 			return
-		case <-changes:
+		case <-watch.changed:
 			msg = listChanged
+		case msg = <-watch.answered:
 		case <-tick:
 			msg = []byte(": keepalive\n\n")
 		}
@@ -246,25 +253,28 @@ func (s *Service) NewBoxDoor() *Door {
 
 type watchers struct {
 	mu     sync.Mutex
-	byUser map[string]map[chan struct{}]struct{}
+	byUser map[string]map[*watcher]struct{}
 }
 
 func newWatchers() *watchers {
-	return &watchers{byUser: map[string]map[chan struct{}]struct{}{}}
+	return &watchers{byUser: map[string]map[*watcher]struct{}{}}
 }
 
-func (w *watchers) add(user string) (<-chan struct{}, func()) {
-	ch := make(chan struct{}, 1)
+func (w *watchers) add(user string, box bool) (*watcher, func()) {
+	watch := &watcher{changed: make(chan struct{}, 1)}
+	if box {
+		watch.answered = make(chan []byte, answersQueued)
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.byUser[user] == nil {
-		w.byUser[user] = map[chan struct{}]struct{}{}
+		w.byUser[user] = map[*watcher]struct{}{}
 	}
-	w.byUser[user][ch] = struct{}{}
-	return ch, func() {
+	w.byUser[user][watch] = struct{}{}
+	return watch, func() {
 		w.mu.Lock()
 		defer w.mu.Unlock()
-		delete(w.byUser[user], ch)
+		delete(w.byUser[user], watch)
 		if len(w.byUser[user]) == 0 {
 			delete(w.byUser, user)
 		}
@@ -274,12 +284,38 @@ func (w *watchers) add(user string) (<-chan struct{}, func()) {
 func (w *watchers) notify(user string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for ch := range w.byUser[user] {
+	for watch := range w.byUser[user] {
 		select {
-		case ch <- struct{}{}:
+		case watch.changed <- struct{}{}:
 		default:
 		}
 	}
+}
+
+func (w *watchers) answer(user string, msg []byte) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for watch := range w.byUser[user] {
+		select {
+		case watch.answered <- msg:
+		default:
+		}
+	}
+}
+
+func approvalAnswered(id, decision string) []byte {
+	var msg struct {
+		JSONRPC string `json:"jsonrpc"`
+		Method  string `json:"method"`
+		Params  struct {
+			ApprovalID string `json:"approval_id"`
+			Decision   string `json:"decision"`
+		} `json:"params"`
+	}
+	msg.JSONRPC, msg.Method = jsonRPCVersion, "notifications/cocoonbox/approval_answered"
+	msg.Params.ApprovalID, msg.Params.Decision = id, decision
+	data, _ := json.Marshal(msg)
+	return fmt.Appendf(nil, "event: message\ndata: %s\n\n", data)
 }
 
 func internalError(r *http.Request, err error) *rpcError {

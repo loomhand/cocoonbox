@@ -21,6 +21,7 @@ const SESSION: &str = "mcp-session-id";
 const APPROVAL: &str = "cocoonbox/approval";
 const APPROVAL_ID: &str = "cocoonbox/approval_id";
 const LIST_CHANGED: &str = "notifications/tools/list_changed";
+const ANSWERED: &str = "notifications/cocoonbox/approval_answered";
 const EVENT_STREAM: &str = "text/event-stream";
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CALL_TIMEOUT: Duration = Duration::from_secs(150);
@@ -63,13 +64,17 @@ impl Client {
         })
     }
 
-    /// Follows the door's `list_changed` stream until `stop`, so the next turn step lists the tools again.
-    pub fn watch(self: &Arc<Self>, stop: CancellationToken) {
+    /// Follows the door's stream until `stop`: after a `list_changed` the next turn step lists the tools again, and
+    /// `answered` gets each approval the user answered elsewhere, with whether it was approved.
+    pub fn watch<F>(self: &Arc<Self>, stop: CancellationToken, answered: F)
+    where
+        F: Fn(&str, bool) + Send + Sync + 'static,
+    {
         let client = Arc::clone(self);
         // detached: ends with stop
         tokio::spawn(async move {
             loop {
-                if let Err(e) = client.follow().await {
+                if let Err(e) = client.follow(&answered).await {
                     eprintln!("connect: list_changed stream: {e}");
                 }
                 client.state().stale = true;
@@ -225,8 +230,8 @@ impl Client {
             .map_err(|e| format!("reach {}: {e}", self.url))
     }
 
-    /// Reads the door's event stream and marks the tools stale on each `list_changed`.
-    async fn follow(&self) -> Result<(), String> {
+    /// Reads the door's event stream, marking the tools stale on each `list_changed` and passing on each answer.
+    async fn follow(&self, answered: &impl Fn(&str, bool)) -> Result<(), String> {
         let session = self.session().await?;
         let resp = self
             .http
@@ -252,10 +257,13 @@ impl Client {
                     line.push(b);
                     continue;
                 }
-                if line.starts_with(b"data:")
-                    && String::from_utf8_lossy(&line).contains(LIST_CHANGED)
-                {
-                    self.state().stale = true;
+                if let Some(data) = line.strip_prefix(b"data:") {
+                    let data = String::from_utf8_lossy(data);
+                    if data.contains(LIST_CHANGED) {
+                        self.state().stale = true;
+                    } else if let Some((id, approve)) = approval_answer(&data) {
+                        answered(&id, approve);
+                    }
                 }
                 line.clear();
             }
@@ -319,6 +327,16 @@ async fn answer(resp: reqwest::Response) -> Result<Value, String> {
         return Err(err["message"].as_str().unwrap_or("error").to_owned());
     }
     Ok(msg["result"].take())
+}
+
+fn approval_answer(data: &str) -> Option<(String, bool)> {
+    let msg: Value = serde_json::from_str(data.trim()).ok()?;
+    if msg["method"] != ANSWERED {
+        return None;
+    }
+    let params = &msg["params"];
+    let id = params["approval_id"].as_str()?.to_owned();
+    Some((id, params["decision"].as_str()? != "deny"))
 }
 
 fn spec(mut tool: Value) -> Option<ToolSpec> {
