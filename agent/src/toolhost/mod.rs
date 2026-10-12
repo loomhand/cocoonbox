@@ -1,7 +1,9 @@
 //! The tool host: runs every tool as the desktop user behind a unix socket.
 
+pub mod atspi;
 pub mod browser;
 pub mod cua;
+pub mod desk;
 pub mod exec;
 pub mod files;
 pub mod flows;
@@ -31,6 +33,7 @@ use tokio::sync::{Mutex, watch};
 use crate::config::ToolhostConfig;
 use browser::Browser;
 use cua::Cua;
+use desk::Desk;
 use rpc::{Call, Output};
 use shell::Shell;
 use script::Script;
@@ -46,6 +49,7 @@ pub struct Host {
     shells: Mutex<HashMap<String, Arc<Mutex<Option<Shell>>>>>,
     browser: Browser,
     cua: Cua,
+    desk: Desk,
     script: Script,
     session_save: PathBuf,
     home: PathBuf,
@@ -67,6 +71,7 @@ impl Host {
                 cfg.cdp_port,
             ),
             cua: Cua::new(cfg.cua_socket.clone(), cfg.script),
+            desk: Desk::default(),
             script: Script::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
@@ -116,6 +121,9 @@ impl Host {
             "computer_state" => self.cua.state(call.args).await,
             "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
+            "desk_windows" => self.desk.windows().await.map(Output::text),
+            "desk_snapshot" => self.desk.snapshot(call.args).await.map(Output::text),
+            "desk_read" => self.desk.read(call.args).await.map(Output::text),
             "script_run" => {
                 self.script
                     .run(&self.cua, &self.workspace, call.args)

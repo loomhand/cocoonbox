@@ -5,7 +5,7 @@ use cocoonbox_agent::config::{ServeConfig, ToolhostConfig};
 use cocoonbox_agent::{offload, server, toolhost};
 
 const RUNTIME_SHUTDOWN: Duration = Duration::from_millis(200);
-const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost|offload|version>";
+const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost|offload|desk|version>";
 
 fn main() -> ExitCode {
     let cmd = std::env::args().nth(1).unwrap_or_default();
@@ -18,6 +18,16 @@ fn main() -> ExitCode {
                 Ok(code) => ExitCode::from(code),
                 Err(e) => {
                     eprintln!("cocoonbox-agent offload: {e}");
+                    ExitCode::FAILURE
+                }
+            };
+        }
+        "desk" => {
+            let args = std::env::args().skip(2).collect();
+            return match run(async { Ok(toolhost::desk::cli(args).await) }) {
+                Ok(code) => ExitCode::from(code),
+                Err(e) => {
+                    eprintln!("cocoonbox-agent desk: {e}");
                     ExitCode::FAILURE
                 }
             };
