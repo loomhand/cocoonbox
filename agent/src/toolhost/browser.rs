@@ -21,6 +21,7 @@ use super::timing;
 
 const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
+const CHALLENGE_WAIT: Duration = Duration::from_secs(8);
 const SETTLE: Duration = Duration::from_secs(2);
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -925,6 +926,7 @@ impl Cdp {
         self.call("Page.setLifecycleEventsEnabled", json!({"enabled": true}))
             .await?;
         let tree = self.call("Page.getFrameTree", json!({})).await?;
+        let start = tokio::time::Instant::now();
         let ready = self
             .load(url, &tree["frameTree"]["frame"]["id"], wait)
             .await?;
@@ -939,7 +941,7 @@ impl Cdp {
             let _ = write!(
                 out,
                 " [still loading after {}s; text so far]",
-                wait.as_secs()
+                start.elapsed().as_secs()
             );
         }
         out.push_str("\n\n");
@@ -951,7 +953,8 @@ impl Cdp {
     /// at most `wait` and [`SETTLE`] past the DOMContentLoaded; true once that came. Documents that are no page fail, so nothing downloads.
     async fn load(&mut self, url: &str, frame: &Value, wait: Duration) -> Result<bool, String> {
         let id = self.send("Page.navigate", json!({"url": url})).await?;
-        let mut deadline = tokio::time::Instant::now() + wait;
+        let end = tokio::time::Instant::now() + wait;
+        let mut deadline = end;
         let (mut fresh, mut ready, mut idle, mut challenge) = (false, false, false, false);
         let mut refused = None;
         let mut poke = tokio::time::interval(POKE);
@@ -987,7 +990,17 @@ impl Cdp {
             if v["method"] == "Fetch.requestPaused" {
                 let paused = &v["params"];
                 if paused["frameId"] == *frame {
+                    let cleared = challenge;
                     challenge = header(paused, "cf-mitigated") == Some("challenge");
+                    if challenge {
+                        deadline = deadline.min(tokio::time::Instant::now() + CHALLENGE_WAIT);
+                    } else if cleared
+                        && paused["responseStatusCode"]
+                            .as_u64()
+                            .is_some_and(|c| (200..300).contains(&c))
+                    {
+                        deadline = end;
+                    }
                 }
                 let request = json!({"requestId": paused["requestId"]});
                 match not_a_page(paused) {
@@ -1447,7 +1460,10 @@ pub(super) mod tests {
                             .is_some_and(|u| u.ends_with(".zip"));
                         let challenge = v["params"]["url"]
                             .as_str()
-                            .is_some_and(|u| u.ends_with("/challenge"));
+                            .is_some_and(|u| u.contains("/challenge"));
+                        let retries = v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.ends_with("/challenge-retry"));
                         if v["method"] == "Page.navigate" {
                             let kind = if zip {
                                 "application/zip"
@@ -1465,6 +1481,16 @@ pub(super) mod tests {
                                     .push(json!({"name": "cf-mitigated", "value": "challenge"}));
                             }
                             ws.send(WsMessage::text(paused.to_string())).await.unwrap();
+                            if retries {
+                                tokio::time::sleep(Duration::from_secs(3)).await;
+                                let mut redirect = paused.clone();
+                                redirect["params"]["responseStatusCode"] = 302.into();
+                                redirect["params"]["responseHeaders"] = json!([]);
+                                paused["params"]["responseStatusCode"] = 429.into();
+                                for p in [redirect, paused] {
+                                    ws.send(WsMessage::text(p.to_string())).await.unwrap();
+                                }
+                            }
                         }
                         let mut result = result;
                         if zip {
@@ -1690,6 +1716,30 @@ pub(super) mod tests {
         assert_eq!(
             out,
             "Page: Doc (https://a.test/) [still loading after 1s; text so far]\n\nJust a moment..."
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_gives_up_on_a_challenge_that_never_clears_before_the_load_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, _) = fetch_chrome("Just a moment...".into(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let start = std::time::Instant::now();
+        let out = b
+            .run(
+                "a",
+                "browser_fetch",
+                json!({"url": "https://a.test/challenge-retry"}),
+            )
+            .await
+            .unwrap();
+        assert!(start.elapsed() < LOAD_WAIT);
+        assert_eq!(
+            out,
+            format!(
+                "Page: Doc (https://a.test/) [still loading after {}s; text so far]\n\nJust a moment...",
+                CHALLENGE_WAIT.as_secs()
+            )
         );
     }
 
