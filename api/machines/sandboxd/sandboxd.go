@@ -68,6 +68,8 @@ type Backend struct {
 
 	mu      sync.Mutex
 	entries map[string]*entry
+	owners  map[string]chan struct{}
+	views   map[string]view
 }
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
@@ -86,6 +88,8 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		api:     api,
 		ctx:     ctx,
 		entries: map[string]*entry{},
+		owners:  map[string]chan struct{}{},
+		views:   map[string]view{},
 	}
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
@@ -198,6 +202,17 @@ func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan m
 		}
 	}()
 	return out
+}
+
+func (b *Backend) Changes(owner string) <-chan struct{} {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	ch := b.owners[owner]
+	if ch == nil {
+		ch = make(chan struct{})
+		b.owners[owner] = ch
+	}
+	return ch
 }
 
 func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, error) {
@@ -573,6 +588,9 @@ func (b *Backend) refresh(ctx context.Context) error {
 		})
 	}
 	wg.Wait()
+	b.mu.Lock()
+	b.publishLocked()
+	b.mu.Unlock()
 	return nil
 }
 
@@ -621,6 +639,31 @@ func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
 		}
 	}
 	return nil
+}
+
+// publishLocked wakes the owners of the machines whose state, image, flavor, incarnation or meta changed since the last call, or that went away.
+func (b *Backend) publishLocked() {
+	views := make(map[string]view, len(b.entries))
+	for id, e := range b.entries {
+		m := e.machine(b.opts.DiskGiB)
+		views[id] = view{owner: m.Owner, key: fmt.Sprintf("%d|%s|%s|%v|%s|%v", m.State, m.Reason, m.Image, m.Flavor, m.Incarnation, m.Meta)}
+		if b.views[id] != views[id] {
+			b.wakeLocked(m.Owner)
+		}
+	}
+	for id, v := range b.views {
+		if _, ok := views[id]; !ok {
+			b.wakeLocked(v.owner)
+		}
+	}
+	b.views = views
+}
+
+func (b *Backend) wakeLocked(owner string) {
+	if ch := b.owners[owner]; ch != nil {
+		close(ch)
+		delete(b.owners, owner)
+	}
 }
 
 // probe marks id ready once its agent answers through the relay.

@@ -413,6 +413,16 @@ public nonisolated struct Cocoonbox_Control_V1_ListBoxesResponse: Sendable {
   public init() {}
 }
 
+public nonisolated struct Cocoonbox_Control_V1_WatchBoxesRequest: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
 public nonisolated struct Cocoonbox_Control_V1_WatchOperationRequest: Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
@@ -1109,6 +1119,25 @@ nonisolated extension Cocoonbox_Control_V1_ListBoxesResponse: SwiftProtobuf.Mess
 
   public static func ==(lhs: Cocoonbox_Control_V1_ListBoxesResponse, rhs: Cocoonbox_Control_V1_ListBoxesResponse) -> Bool {
     if lhs.boxes != rhs.boxes {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Control_V1_WatchBoxesRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".WatchBoxesRequest"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap()
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    // Load everything into unknown fields
+    while try decoder.nextFieldNumber() != nil {}
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Control_V1_WatchBoxesRequest, rhs: Cocoonbox_Control_V1_WatchBoxesRequest) -> Bool {
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

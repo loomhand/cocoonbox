@@ -142,6 +142,8 @@ type Machines interface {
 	Hibernate(ctx context.Context, id string) (Machine, error)
 	// Watch sends the machine's state, judged no older than revision, on every change until ctx ends or the machine is gone.
 	Watch(ctx context.Context, id string, revision int64) <-chan Machine
+	// Changes returns a channel closed on the next change of one of owner's machines, its removal included.
+	Changes(owner string) <-chan struct{}
 	// Address returns how to reach the running machine's agent.
 	Address(ctx context.Context, id string) (Endpoint, error)
 	// Delete removes the machine and its disk.

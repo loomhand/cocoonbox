@@ -42,6 +42,7 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, registryError(ctx, err, "add box")
 	}
+	s.ops.watchers.wake(user)
 	tenant, err := s.tenantOf(user)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "read tenant")
@@ -66,6 +67,7 @@ func (s *Service) Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (
 	if _, err := s.registry.RenameBox(ctx, user, req.GetBoxId(), req.GetName()); err != nil {
 		return nil, registryError(ctx, err, "rename box")
 	}
+	s.ops.watchers.wake(user)
 	return s.Get(ctx, &controlv1.GetBoxRequest{BoxId: req.GetBoxId()})
 }
 

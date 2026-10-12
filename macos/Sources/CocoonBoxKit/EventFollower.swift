@@ -124,6 +124,13 @@ extension EventFollower where Event == Cocoonbox_Agent_V1_Event {
     }
 }
 
+extension EventFollower where Event == Cocoonbox_Control_V1_ListBoxesResponse {
+    // boxes follows Boxes.Watch: each message is the whole list and each subscription starts with it, so no offset is kept.
+    public static func boxes(backoff: Backoff = Backoff()) -> Self {
+        Self(backoff: backoff, offsetOf: { _ in 0 }, isResync: { _ in false })
+    }
+}
+
 extension SessionClient {
     // subscribeEvents adapts Session.Events to EventFollower.Subscribe.
     func subscribeEvents(

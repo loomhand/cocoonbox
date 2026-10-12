@@ -53,6 +53,14 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         return .with { $0.boxes = boxes }
     }
 
+    func watch(request: Cocoonbox_Control_V1_WatchBoxesRequest, response: RPCWriter<Cocoonbox_Control_V1_ListBoxesResponse>, context: ServerContext) async throws {
+        let (boxes, changes) = await world.watchBoxes()
+        try await response.write(.with { $0.boxes = boxes })
+        for await boxes in changes {
+            try await response.write(.with { $0.boxes = boxes })
+        }
+    }
+
     func hibernate(request: Cocoonbox_Control_V1_BoxRef, context: ServerContext) async throws -> Cocoonbox_Control_V1_Operation {
         await world.hibernate(try await owned(request.boxID).id)
     }

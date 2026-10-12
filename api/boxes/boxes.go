@@ -360,6 +360,7 @@ func (s *Service) firstBox(ctx context.Context, user string) (string, error) {
 	if err != nil {
 		return "", registryError(ctx, err, "add box")
 	}
+	s.ops.watchers.wake(user)
 	return b.ID, nil
 }
 

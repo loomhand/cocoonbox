@@ -102,6 +102,8 @@ final class AppModel {
     let screen = ScreenController()
 
     @ObservationIgnored private(set) var connection: BoxConnection?
+    @ObservationIgnored private var boxesTask: Task<Void, Never>?
+    @ObservationIgnored private var boxesLive = false
     @ObservationIgnored private var eventsTask: Task<Void, Never>?
     @ObservationIgnored private var operationTask: Task<Void, Never>?
     @ObservationIgnored private var settleTask: Task<Void, Never>?
@@ -109,7 +111,6 @@ final class AppModel {
     init() {
         endpointURL = ProcessInfo.processInfo.environment["CB_ENDPOINT"] ?? Endpoint.defaultURL
         listen()
-        screen.onBoxChange = { [weak self] _ in self?.followBoxChange() }
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.persistLocal()
@@ -121,7 +122,6 @@ final class AppModel {
             MainActor.assumeIsolated {
                 guard let self, self.connection != nil else { return }
                 Task {
-                    await self.refreshBoxes()
                     await self.refreshOffloads()
                     await self.refreshConnectors()
                 }
@@ -219,11 +219,10 @@ final class AppModel {
         Perf.mark("local_agent", "default \(session.kind.rawValue) \(box.name)")
     }
 
-    // noteCall records a local agent's box-tool call; a box the list lacks, as after box_create, refreshes the list.
+    // noteCall records a local agent's box-tool call.
     private func noteCall(agent: String, box: String, at: Date) {
         guard let session = localAgents.first(where: { $0.id.uuidString == agent }) else { return }
         localCalls[session.id, default: [:]][box] = at
-        if !boxes.contains(where: { $0.id == box }) { Task { await refreshBoxes() } }
     }
 
     // launchLocal starts an agent CLI on this Mac whose MCP server is the bridge, with the selected box as its default.
@@ -556,47 +555,39 @@ final class AppModel {
             return
         }
         Perf.mark("connect", endpoint.url)
-        let mine = connection
-        Task {
-            var attempt = 0
-            while connection === mine, !(await refreshBoxes()) {
-                try? await pause(Backoff().delay(attempt: attempt))
-                attempt += 1
-            }
-            await refreshOffloads()
-            await refreshConnectors()
+        guard let connection else { return }
+        boxesTask = Task {
+            await connection.watchBoxes(
+                onBoxes: { list in await self.received(boxes: list) },
+                onDisconnect: { error in await self.boxesDropped(error) }
+            )
         }
     }
 
     private func disconnect() {
         stopAgentSide()
         operationTask?.cancel()
+        boxesTask?.cancel()
+        boxesTask = nil
+        boxesLive = false
         connection?.close()
         connection = nil
     }
 
-    @discardableResult
-    func refreshBoxes() async -> Bool {
-        guard let connection else { return false }
-        do {
-            apply(boxes: try await connection.listBoxes())
-            lastError = nil
-            return true
-        } catch {
-            report("list boxes", error)
-            return false
-        }
+    // received takes a list from Boxes.Watch; the first one of a connection also loads the offloads and connectors.
+    private func received(boxes list: [Box]) async {
+        apply(boxes: list)
+        guard !boxesLive else { return }
+        boxesLive = true
+        lastError = nil
+        await refreshOffloads()
+        await refreshConnectors()
     }
 
-    // followBoxChange refreshes the list after the screen left a deleted box, and again until a box created
-    // again under its name has started: another client created it, so no operation of this app reports it.
-    private func followBoxChange() {
-        Task {
-            for attempt in 0..<60 {
-                guard await refreshBoxes(), box?.state == .starting else { return }
-                try? await pause(Backoff().delay(attempt: attempt))
-            }
-        }
+    // boxesDropped reports a watch that never delivered a list, such as one refused for a bad token; the watch resubscribes.
+    private func boxesDropped(_ error: any Error) {
+        Perf.mark("boxes_dropped", "\(error)")
+        if !boxesLive { report("watch boxes", error) }
     }
 
     // reconnect names the connected accounts whose grant the vendor refused (design §16.4).
@@ -835,9 +826,6 @@ final class AppModel {
         if var current = boxes.first(where: { $0.id == progress.boxID }), event.boxState != .unspecified {
             current.state = event.boxState
             apply(box: current)
-        }
-        if progress.finished {
-            await refreshBoxes()
         }
     }
 

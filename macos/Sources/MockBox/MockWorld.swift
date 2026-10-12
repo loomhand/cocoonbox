@@ -26,7 +26,13 @@ actor MockWorld {
     let token: String
     let bootDelay: Duration
     // boxes is oldest first, as the api lists them.
-    private(set) var boxes: [Box]
+    private(set) var boxes: [Box] {
+        didSet {
+            guard boxes != oldValue else { return }
+            for watcher in boxWatchers.values { watcher.yield(boxes) }
+        }
+    }
+    private var boxWatchers: [UUID: AsyncStream<[Box]>.Continuation] = [:]
     // deletions counts deleted boxes; a delete ends every screen stream, as removing a machine ends its own.
     private(set) var deletions = 0
     private var boxesCreated = 1
@@ -104,6 +110,19 @@ actor MockWorld {
     }
 
     // MARK: boxes
+
+    // watchBoxes returns the boxes and a stream of the boxes after each later change, as Boxes.Watch sends them.
+    func watchBoxes() -> (boxes: [Box], changes: AsyncStream<[Box]>) {
+        let key = UUID()
+        let (stream, continuation) = AsyncStream<[Box]>.makeStream(bufferingPolicy: .bufferingNewest(1))
+        boxWatchers[key] = continuation
+        continuation.onTermination = { _ in Task { await self.dropBoxWatcher(key) } }
+        return (boxes, stream)
+    }
+
+    private func dropBoxWatcher(_ key: UUID) {
+        boxWatchers[key] = nil
+    }
 
     // box is the first box, which a client without a box id means.
     var box: Box { boxes.first ?? Box() }

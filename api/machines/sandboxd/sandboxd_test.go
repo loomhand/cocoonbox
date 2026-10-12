@@ -585,6 +585,37 @@ func TestWatchSendsAnOpEndAndAMetaChangeBeforeTheNextPoll(t *testing.T) {
 	}
 }
 
+func TestChangesWakesTheOwnerWhenARefreshSeesAChangeOrARemoval(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	mine, others := b.Changes(owner), b.Changes("bob")
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if isClosed(mine) {
+		t.Error("a refresh that saw no change woke the owner")
+	}
+	fake.mutate(func(sb *fakeSandbox) { sb.row.Hibernated = true })
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !isClosed(mine) || isClosed(others) {
+		t.Errorf("after a sandboxd-side hibernation: owner woken %t, bob woken %t", isClosed(mine), isClosed(others))
+	}
+	mine = b.Changes(owner)
+	fake.remove(fake.only())
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if !isClosed(mine) || isClosed(others) {
+		t.Errorf("after a removal: owner woken %t, bob woken %t", isClosed(mine), isClosed(others))
+	}
+}
+
 func TestRenewExtendsEveryLeaseButArchivedOnes(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	fake.add(&fakeSandbox{row: row{ID: "sb_a", Metadata: map[string]string{"cb_machine": "cb-a", "cb_owner": owner}}})
@@ -956,6 +987,15 @@ func waitState(t *testing.T, b *Backend, id string, revision int64, want machine
 	}
 	t.Fatalf("machine %s never reached state %d; last %+v", id, want, last)
 	return last
+}
+
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
 }
 
 func isNotRunning(err error, state machines.State) bool {

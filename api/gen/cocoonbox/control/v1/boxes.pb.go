@@ -868,6 +868,42 @@ func (x *ListBoxesResponse) GetBoxes() []*Box {
 	return nil
 }
 
+type WatchBoxesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WatchBoxesRequest) Reset() {
+	*x = WatchBoxesRequest{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WatchBoxesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WatchBoxesRequest) ProtoMessage() {}
+
+func (x *WatchBoxesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WatchBoxesRequest.ProtoReflect.Descriptor instead.
+func (*WatchBoxesRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{12}
+}
+
 type WatchOperationRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	OperationId string                 `protobuf:"bytes,1,opt,name=operation_id,json=operationId,proto3" json:"operation_id,omitempty"`
@@ -879,7 +915,7 @@ type WatchOperationRequest struct {
 
 func (x *WatchOperationRequest) Reset() {
 	*x = WatchOperationRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[12]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -891,7 +927,7 @@ func (x *WatchOperationRequest) String() string {
 func (*WatchOperationRequest) ProtoMessage() {}
 
 func (x *WatchOperationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[12]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -904,7 +940,7 @@ func (x *WatchOperationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WatchOperationRequest.ProtoReflect.Descriptor instead.
 func (*WatchOperationRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{12}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *WatchOperationRequest) GetOperationId() string {
@@ -938,7 +974,7 @@ type OperationEvent struct {
 
 func (x *OperationEvent) Reset() {
 	*x = OperationEvent{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[13]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -950,7 +986,7 @@ func (x *OperationEvent) String() string {
 func (*OperationEvent) ProtoMessage() {}
 
 func (x *OperationEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[13]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -963,7 +999,7 @@ func (x *OperationEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationEvent.ProtoReflect.Descriptor instead.
 func (*OperationEvent) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{13}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *OperationEvent) GetOperationId() string {
@@ -1040,7 +1076,7 @@ type Snapshot struct {
 
 func (x *Snapshot) Reset() {
 	*x = Snapshot{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[14]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1052,7 +1088,7 @@ func (x *Snapshot) String() string {
 func (*Snapshot) ProtoMessage() {}
 
 func (x *Snapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[14]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1065,7 +1101,7 @@ func (x *Snapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Snapshot.ProtoReflect.Descriptor instead.
 func (*Snapshot) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{14}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *Snapshot) GetId() string {
@@ -1126,7 +1162,7 @@ type ListSnapshotsResponse struct {
 
 func (x *ListSnapshotsResponse) Reset() {
 	*x = ListSnapshotsResponse{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[15]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1138,7 +1174,7 @@ func (x *ListSnapshotsResponse) String() string {
 func (*ListSnapshotsResponse) ProtoMessage() {}
 
 func (x *ListSnapshotsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[15]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1151,7 +1187,7 @@ func (x *ListSnapshotsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSnapshotsResponse.ProtoReflect.Descriptor instead.
 func (*ListSnapshotsResponse) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{15}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListSnapshotsResponse) GetSnapshots() []*Snapshot {
@@ -1173,7 +1209,7 @@ type BrowseSnapshotRequest struct {
 
 func (x *BrowseSnapshotRequest) Reset() {
 	*x = BrowseSnapshotRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[16]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1185,7 +1221,7 @@ func (x *BrowseSnapshotRequest) String() string {
 func (*BrowseSnapshotRequest) ProtoMessage() {}
 
 func (x *BrowseSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[16]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1198,7 +1234,7 @@ func (x *BrowseSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BrowseSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*BrowseSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{16}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *BrowseSnapshotRequest) GetBoxId() string {
@@ -1235,7 +1271,7 @@ type SnapshotEntry struct {
 
 func (x *SnapshotEntry) Reset() {
 	*x = SnapshotEntry{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[17]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1247,7 +1283,7 @@ func (x *SnapshotEntry) String() string {
 func (*SnapshotEntry) ProtoMessage() {}
 
 func (x *SnapshotEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[17]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1260,7 +1296,7 @@ func (x *SnapshotEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotEntry.ProtoReflect.Descriptor instead.
 func (*SnapshotEntry) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{17}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *SnapshotEntry) GetPath() string {
@@ -1302,7 +1338,7 @@ type BrowseSnapshotResponse struct {
 
 func (x *BrowseSnapshotResponse) Reset() {
 	*x = BrowseSnapshotResponse{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[18]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1314,7 +1350,7 @@ func (x *BrowseSnapshotResponse) String() string {
 func (*BrowseSnapshotResponse) ProtoMessage() {}
 
 func (x *BrowseSnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[18]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1327,7 +1363,7 @@ func (x *BrowseSnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BrowseSnapshotResponse.ProtoReflect.Descriptor instead.
 func (*BrowseSnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{18}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *BrowseSnapshotResponse) GetEntries() []*SnapshotEntry {
@@ -1356,7 +1392,7 @@ type RestorePathsRequest struct {
 
 func (x *RestorePathsRequest) Reset() {
 	*x = RestorePathsRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[19]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1368,7 +1404,7 @@ func (x *RestorePathsRequest) String() string {
 func (*RestorePathsRequest) ProtoMessage() {}
 
 func (x *RestorePathsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[19]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1381,7 +1417,7 @@ func (x *RestorePathsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestorePathsRequest.ProtoReflect.Descriptor instead.
 func (*RestorePathsRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{19}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *RestorePathsRequest) GetBoxId() string {
@@ -1423,7 +1459,7 @@ type WakeSchedule struct {
 
 func (x *WakeSchedule) Reset() {
 	*x = WakeSchedule{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[20]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1435,7 +1471,7 @@ func (x *WakeSchedule) String() string {
 func (*WakeSchedule) ProtoMessage() {}
 
 func (x *WakeSchedule) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[20]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1448,7 +1484,7 @@ func (x *WakeSchedule) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WakeSchedule.ProtoReflect.Descriptor instead.
 func (*WakeSchedule) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{20}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *WakeSchedule) GetBoxId() string {
@@ -1506,7 +1542,7 @@ type SetWakeScheduleRequest struct {
 
 func (x *SetWakeScheduleRequest) Reset() {
 	*x = SetWakeScheduleRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[21]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1518,7 +1554,7 @@ func (x *SetWakeScheduleRequest) String() string {
 func (*SetWakeScheduleRequest) ProtoMessage() {}
 
 func (x *SetWakeScheduleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[21]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1531,7 +1567,7 @@ func (x *SetWakeScheduleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetWakeScheduleRequest.ProtoReflect.Descriptor instead.
 func (*SetWakeScheduleRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{21}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *SetWakeScheduleRequest) GetBoxId() string {
@@ -1570,7 +1606,7 @@ type ListWakeSchedulesRequest struct {
 
 func (x *ListWakeSchedulesRequest) Reset() {
 	*x = ListWakeSchedulesRequest{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[22]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1582,7 +1618,7 @@ func (x *ListWakeSchedulesRequest) String() string {
 func (*ListWakeSchedulesRequest) ProtoMessage() {}
 
 func (x *ListWakeSchedulesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[22]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1595,7 +1631,7 @@ func (x *ListWakeSchedulesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWakeSchedulesRequest.ProtoReflect.Descriptor instead.
 func (*ListWakeSchedulesRequest) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{22}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{23}
 }
 
 type ListWakeSchedulesResponse struct {
@@ -1607,7 +1643,7 @@ type ListWakeSchedulesResponse struct {
 
 func (x *ListWakeSchedulesResponse) Reset() {
 	*x = ListWakeSchedulesResponse{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[23]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1619,7 +1655,7 @@ func (x *ListWakeSchedulesResponse) String() string {
 func (*ListWakeSchedulesResponse) ProtoMessage() {}
 
 func (x *ListWakeSchedulesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[23]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1632,7 +1668,7 @@ func (x *ListWakeSchedulesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListWakeSchedulesResponse.ProtoReflect.Descriptor instead.
 func (*ListWakeSchedulesResponse) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{23}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ListWakeSchedulesResponse) GetSchedules() []*WakeSchedule {
@@ -1650,7 +1686,7 @@ type ClearWakeScheduleResponse struct {
 
 func (x *ClearWakeScheduleResponse) Reset() {
 	*x = ClearWakeScheduleResponse{}
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[24]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1662,7 +1698,7 @@ func (x *ClearWakeScheduleResponse) String() string {
 func (*ClearWakeScheduleResponse) ProtoMessage() {}
 
 func (x *ClearWakeScheduleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[24]
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1675,7 +1711,7 @@ func (x *ClearWakeScheduleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClearWakeScheduleResponse.ProtoReflect.Descriptor instead.
 func (*ClearWakeScheduleResponse) Descriptor() ([]byte, []int) {
-	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{24}
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{25}
 }
 
 var File_cocoonbox_control_v1_boxes_proto protoreflect.FileDescriptor
@@ -1723,7 +1759,8 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x06box_id\x18\x01 \x01(\tR\x05boxId\"\x12\n" +
 	"\x10ListBoxesRequest\"D\n" +
 	"\x11ListBoxesResponse\x12/\n" +
-	"\x05boxes\x18\x01 \x03(\v2\x19.cocoonbox.control.v1.BoxR\x05boxes\"b\n" +
+	"\x05boxes\x18\x01 \x03(\v2\x19.cocoonbox.control.v1.BoxR\x05boxes\"\x13\n" +
+	"\x11WatchBoxesRequest\"b\n" +
 	"\x15WatchOperationRequest\x12!\n" +
 	"\foperation_id\x18\x01 \x01(\tR\voperationId\x12&\n" +
 	"\x0ffrom_offset_key\x18\x02 \x01(\tR\rfromOffsetKey\"\xaf\x02\n" +
@@ -1809,14 +1846,15 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x16ENTRY_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fENTRY_KIND_FILE\x10\x01\x12\x12\n" +
 	"\x0eENTRY_KIND_DIR\x10\x02\x12\x16\n" +
-	"\x12ENTRY_KIND_SYMLINK\x10\x032\x9d\v\n" +
+	"\x12ENTRY_KIND_SYMLINK\x10\x032\xfa\v\n" +
 	"\x05Boxes\x12S\n" +
 	"\x06Ensure\x12#.cocoonbox.control.v1.EnsureRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12V\n" +
 	"\x06Create\x12&.cocoonbox.control.v1.CreateBoxRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12K\n" +
 	"\x06Rename\x12&.cocoonbox.control.v1.RenameBoxRequest\x1a\x19.cocoonbox.control.v1.Box\x12G\n" +
 	"\x06Delete\x12\x1c.cocoonbox.control.v1.BoxRef\x1a\x1f.cocoonbox.control.v1.Operation\x12E\n" +
 	"\x03Get\x12#.cocoonbox.control.v1.GetBoxRequest\x1a\x19.cocoonbox.control.v1.Box\x12W\n" +
-	"\x04List\x12&.cocoonbox.control.v1.ListBoxesRequest\x1a'.cocoonbox.control.v1.ListBoxesResponse\x12J\n" +
+	"\x04List\x12&.cocoonbox.control.v1.ListBoxesRequest\x1a'.cocoonbox.control.v1.ListBoxesResponse\x12[\n" +
+	"\x05Watch\x12'.cocoonbox.control.v1.WatchBoxesRequest\x1a'.cocoonbox.control.v1.ListBoxesResponse0\x01\x12J\n" +
 	"\tHibernate\x12\x1c.cocoonbox.control.v1.BoxRef\x1a\x1f.cocoonbox.control.v1.Operation\x12e\n" +
 	"\x0eWatchOperation\x12+.cocoonbox.control.v1.WatchOperationRequest\x1a$.cocoonbox.control.v1.OperationEvent0\x01\x12J\n" +
 	"\tSaveState\x12\x1c.cocoonbox.control.v1.BoxRef\x1a\x1f.cocoonbox.control.v1.Operation\x12N\n" +
@@ -1841,7 +1879,7 @@ func file_cocoonbox_control_v1_boxes_proto_rawDescGZIP() []byte {
 }
 
 var file_cocoonbox_control_v1_boxes_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
 	(BoxState)(0),                     // 0: cocoonbox.control.v1.BoxState
 	(Phase)(0),                        // 1: cocoonbox.control.v1.Phase
@@ -1858,19 +1896,20 @@ var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
 	(*GetBoxRequest)(nil),             // 12: cocoonbox.control.v1.GetBoxRequest
 	(*ListBoxesRequest)(nil),          // 13: cocoonbox.control.v1.ListBoxesRequest
 	(*ListBoxesResponse)(nil),         // 14: cocoonbox.control.v1.ListBoxesResponse
-	(*WatchOperationRequest)(nil),     // 15: cocoonbox.control.v1.WatchOperationRequest
-	(*OperationEvent)(nil),            // 16: cocoonbox.control.v1.OperationEvent
-	(*Snapshot)(nil),                  // 17: cocoonbox.control.v1.Snapshot
-	(*ListSnapshotsResponse)(nil),     // 18: cocoonbox.control.v1.ListSnapshotsResponse
-	(*BrowseSnapshotRequest)(nil),     // 19: cocoonbox.control.v1.BrowseSnapshotRequest
-	(*SnapshotEntry)(nil),             // 20: cocoonbox.control.v1.SnapshotEntry
-	(*BrowseSnapshotResponse)(nil),    // 21: cocoonbox.control.v1.BrowseSnapshotResponse
-	(*RestorePathsRequest)(nil),       // 22: cocoonbox.control.v1.RestorePathsRequest
-	(*WakeSchedule)(nil),              // 23: cocoonbox.control.v1.WakeSchedule
-	(*SetWakeScheduleRequest)(nil),    // 24: cocoonbox.control.v1.SetWakeScheduleRequest
-	(*ListWakeSchedulesRequest)(nil),  // 25: cocoonbox.control.v1.ListWakeSchedulesRequest
-	(*ListWakeSchedulesResponse)(nil), // 26: cocoonbox.control.v1.ListWakeSchedulesResponse
-	(*ClearWakeScheduleResponse)(nil), // 27: cocoonbox.control.v1.ClearWakeScheduleResponse
+	(*WatchBoxesRequest)(nil),         // 15: cocoonbox.control.v1.WatchBoxesRequest
+	(*WatchOperationRequest)(nil),     // 16: cocoonbox.control.v1.WatchOperationRequest
+	(*OperationEvent)(nil),            // 17: cocoonbox.control.v1.OperationEvent
+	(*Snapshot)(nil),                  // 18: cocoonbox.control.v1.Snapshot
+	(*ListSnapshotsResponse)(nil),     // 19: cocoonbox.control.v1.ListSnapshotsResponse
+	(*BrowseSnapshotRequest)(nil),     // 20: cocoonbox.control.v1.BrowseSnapshotRequest
+	(*SnapshotEntry)(nil),             // 21: cocoonbox.control.v1.SnapshotEntry
+	(*BrowseSnapshotResponse)(nil),    // 22: cocoonbox.control.v1.BrowseSnapshotResponse
+	(*RestorePathsRequest)(nil),       // 23: cocoonbox.control.v1.RestorePathsRequest
+	(*WakeSchedule)(nil),              // 24: cocoonbox.control.v1.WakeSchedule
+	(*SetWakeScheduleRequest)(nil),    // 25: cocoonbox.control.v1.SetWakeScheduleRequest
+	(*ListWakeSchedulesRequest)(nil),  // 26: cocoonbox.control.v1.ListWakeSchedulesRequest
+	(*ListWakeSchedulesResponse)(nil), // 27: cocoonbox.control.v1.ListWakeSchedulesResponse
+	(*ClearWakeScheduleResponse)(nil), // 28: cocoonbox.control.v1.ClearWakeScheduleResponse
 }
 var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	0,  // 0: cocoonbox.control.v1.Box.state:type_name -> cocoonbox.control.v1.BoxState
@@ -1882,44 +1921,46 @@ var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	5,  // 6: cocoonbox.control.v1.ListBoxesResponse.boxes:type_name -> cocoonbox.control.v1.Box
 	1,  // 7: cocoonbox.control.v1.OperationEvent.phase:type_name -> cocoonbox.control.v1.Phase
 	0,  // 8: cocoonbox.control.v1.OperationEvent.box_state:type_name -> cocoonbox.control.v1.BoxState
-	17, // 9: cocoonbox.control.v1.ListSnapshotsResponse.snapshots:type_name -> cocoonbox.control.v1.Snapshot
+	18, // 9: cocoonbox.control.v1.ListSnapshotsResponse.snapshots:type_name -> cocoonbox.control.v1.Snapshot
 	2,  // 10: cocoonbox.control.v1.SnapshotEntry.kind:type_name -> cocoonbox.control.v1.EntryKind
-	20, // 11: cocoonbox.control.v1.BrowseSnapshotResponse.entries:type_name -> cocoonbox.control.v1.SnapshotEntry
-	23, // 12: cocoonbox.control.v1.ListWakeSchedulesResponse.schedules:type_name -> cocoonbox.control.v1.WakeSchedule
+	21, // 11: cocoonbox.control.v1.BrowseSnapshotResponse.entries:type_name -> cocoonbox.control.v1.SnapshotEntry
+	24, // 12: cocoonbox.control.v1.ListWakeSchedulesResponse.schedules:type_name -> cocoonbox.control.v1.WakeSchedule
 	7,  // 13: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
 	8,  // 14: cocoonbox.control.v1.Boxes.Create:input_type -> cocoonbox.control.v1.CreateBoxRequest
 	9,  // 15: cocoonbox.control.v1.Boxes.Rename:input_type -> cocoonbox.control.v1.RenameBoxRequest
 	3,  // 16: cocoonbox.control.v1.Boxes.Delete:input_type -> cocoonbox.control.v1.BoxRef
 	12, // 17: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
 	13, // 18: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
-	3,  // 19: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
-	15, // 20: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
-	3,  // 21: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
-	11, // 22: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
-	3,  // 23: cocoonbox.control.v1.Boxes.ListSnapshots:input_type -> cocoonbox.control.v1.BoxRef
-	19, // 24: cocoonbox.control.v1.Boxes.BrowseSnapshot:input_type -> cocoonbox.control.v1.BrowseSnapshotRequest
-	22, // 25: cocoonbox.control.v1.Boxes.RestorePaths:input_type -> cocoonbox.control.v1.RestorePathsRequest
-	24, // 26: cocoonbox.control.v1.Boxes.SetWakeSchedule:input_type -> cocoonbox.control.v1.SetWakeScheduleRequest
-	25, // 27: cocoonbox.control.v1.Boxes.ListWakeSchedules:input_type -> cocoonbox.control.v1.ListWakeSchedulesRequest
-	3,  // 28: cocoonbox.control.v1.Boxes.ClearWakeSchedule:input_type -> cocoonbox.control.v1.BoxRef
-	10, // 29: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
-	10, // 30: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
-	5,  // 31: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
-	6,  // 32: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
-	5,  // 33: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
-	14, // 34: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
-	6,  // 35: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
-	16, // 36: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
-	6,  // 37: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
-	6,  // 38: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
-	18, // 39: cocoonbox.control.v1.Boxes.ListSnapshots:output_type -> cocoonbox.control.v1.ListSnapshotsResponse
-	21, // 40: cocoonbox.control.v1.Boxes.BrowseSnapshot:output_type -> cocoonbox.control.v1.BrowseSnapshotResponse
-	6,  // 41: cocoonbox.control.v1.Boxes.RestorePaths:output_type -> cocoonbox.control.v1.Operation
-	23, // 42: cocoonbox.control.v1.Boxes.SetWakeSchedule:output_type -> cocoonbox.control.v1.WakeSchedule
-	26, // 43: cocoonbox.control.v1.Boxes.ListWakeSchedules:output_type -> cocoonbox.control.v1.ListWakeSchedulesResponse
-	27, // 44: cocoonbox.control.v1.Boxes.ClearWakeSchedule:output_type -> cocoonbox.control.v1.ClearWakeScheduleResponse
-	29, // [29:45] is the sub-list for method output_type
-	13, // [13:29] is the sub-list for method input_type
+	15, // 19: cocoonbox.control.v1.Boxes.Watch:input_type -> cocoonbox.control.v1.WatchBoxesRequest
+	3,  // 20: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
+	16, // 21: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
+	3,  // 22: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
+	11, // 23: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
+	3,  // 24: cocoonbox.control.v1.Boxes.ListSnapshots:input_type -> cocoonbox.control.v1.BoxRef
+	20, // 25: cocoonbox.control.v1.Boxes.BrowseSnapshot:input_type -> cocoonbox.control.v1.BrowseSnapshotRequest
+	23, // 26: cocoonbox.control.v1.Boxes.RestorePaths:input_type -> cocoonbox.control.v1.RestorePathsRequest
+	25, // 27: cocoonbox.control.v1.Boxes.SetWakeSchedule:input_type -> cocoonbox.control.v1.SetWakeScheduleRequest
+	26, // 28: cocoonbox.control.v1.Boxes.ListWakeSchedules:input_type -> cocoonbox.control.v1.ListWakeSchedulesRequest
+	3,  // 29: cocoonbox.control.v1.Boxes.ClearWakeSchedule:input_type -> cocoonbox.control.v1.BoxRef
+	10, // 30: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
+	10, // 31: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
+	5,  // 32: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
+	6,  // 33: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
+	5,  // 34: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
+	14, // 35: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
+	14, // 36: cocoonbox.control.v1.Boxes.Watch:output_type -> cocoonbox.control.v1.ListBoxesResponse
+	6,  // 37: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
+	17, // 38: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
+	6,  // 39: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
+	6,  // 40: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
+	19, // 41: cocoonbox.control.v1.Boxes.ListSnapshots:output_type -> cocoonbox.control.v1.ListSnapshotsResponse
+	22, // 42: cocoonbox.control.v1.Boxes.BrowseSnapshot:output_type -> cocoonbox.control.v1.BrowseSnapshotResponse
+	6,  // 43: cocoonbox.control.v1.Boxes.RestorePaths:output_type -> cocoonbox.control.v1.Operation
+	24, // 44: cocoonbox.control.v1.Boxes.SetWakeSchedule:output_type -> cocoonbox.control.v1.WakeSchedule
+	27, // 45: cocoonbox.control.v1.Boxes.ListWakeSchedules:output_type -> cocoonbox.control.v1.ListWakeSchedulesResponse
+	28, // 46: cocoonbox.control.v1.Boxes.ClearWakeSchedule:output_type -> cocoonbox.control.v1.ClearWakeScheduleResponse
+	30, // [30:47] is the sub-list for method output_type
+	13, // [13:30] is the sub-list for method input_type
 	13, // [13:13] is the sub-list for extension type_name
 	13, // [13:13] is the sub-list for extension extendee
 	0,  // [0:13] is the sub-list for field type_name
@@ -1930,14 +1971,14 @@ func file_cocoonbox_control_v1_boxes_proto_init() {
 	if File_cocoonbox_control_v1_boxes_proto != nil {
 		return
 	}
-	file_cocoonbox_control_v1_boxes_proto_msgTypes[14].OneofWrappers = []any{}
+	file_cocoonbox_control_v1_boxes_proto_msgTypes[15].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_boxes_proto_rawDesc), len(file_cocoonbox_control_v1_boxes_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   25,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

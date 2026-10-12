@@ -98,6 +98,19 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Watch" metadata.
+        public enum Watch: Sendable {
+            /// Request type for "Watch".
+            public typealias Input = Cocoonbox_Control_V1_WatchBoxesRequest
+            /// Response type for "Watch".
+            public typealias Output = Cocoonbox_Control_V1_ListBoxesResponse
+            /// Descriptor for "Watch".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "Watch",
+                type: .serverStreaming
+            )
+        }
         /// Namespace for "Hibernate" metadata.
         public enum Hibernate: Sendable {
             /// Request type for "Hibernate".
@@ -236,6 +249,7 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
             Delete.descriptor,
             Get.descriptor,
             List.descriptor,
+            Watch.descriptor,
             Hibernate.descriptor,
             WatchOperation.descriptor,
             SaveState.descriptor,
@@ -373,6 +387,25 @@ extension Cocoonbox_Control_V1_Boxes {
         /// - Returns: A streaming response of `Cocoonbox_Control_V1_ListBoxesResponse` messages.
         func list(
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_ListBoxesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListBoxesResponse>
+
+        /// Handle the "Watch" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Watch sends the caller's boxes as List does, at once and again after any
+        /// > of them changes, by any client or by the api. Watching never wakes a box.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_WatchBoxesRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_ListBoxesResponse` messages.
+        func watch(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_WatchBoxesRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListBoxesResponse>
 
@@ -672,6 +705,25 @@ extension Cocoonbox_Control_V1_Boxes {
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ListBoxesResponse>
 
+        /// Handle the "Watch" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Watch sends the caller's boxes as List does, at once and again after any
+        /// > of them changes, by any client or by the api. Watching never wakes a box.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_WatchBoxesRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_ListBoxesResponse` messages.
+        func watch(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_WatchBoxesRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListBoxesResponse>
+
         /// Handle the "Hibernate" method.
         ///
         /// - Parameters:
@@ -966,6 +1018,26 @@ extension Cocoonbox_Control_V1_Boxes {
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_ListBoxesResponse
 
+        /// Handle the "Watch" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Watch sends the caller's boxes as List does, at once and again after any
+        /// > of them changes, by any client or by the api. Watching never wakes a box.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_WatchBoxesRequest` message.
+        ///   - response: A response stream of `Cocoonbox_Control_V1_ListBoxesResponse` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        func watch(
+            request: Cocoonbox_Control_V1_WatchBoxesRequest,
+            response: GRPCCore.RPCWriter<Cocoonbox_Control_V1_ListBoxesResponse>,
+            context: GRPCCore.ServerContext
+        ) async throws
+
         /// Handle the "Hibernate" method.
         ///
         /// - Parameters:
@@ -1223,6 +1295,17 @@ extension Cocoonbox_Control_V1_Boxes.StreamingServiceProtocol {
             }
         )
         router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.Watch.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_WatchBoxesRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_ListBoxesResponse>(),
+            handler: { request, context in
+                try await self.watch(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
             forMethod: Cocoonbox_Control_V1_Boxes.Method.Hibernate.descriptor,
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_BoxRef>(),
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_Operation>(),
@@ -1402,6 +1485,17 @@ extension Cocoonbox_Control_V1_Boxes.ServiceProtocol {
             context: context
         )
         return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func watch(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_WatchBoxesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListBoxesResponse> {
+        let response = try await self.watch(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return response
     }
 
     public func hibernate(
@@ -1593,6 +1687,23 @@ extension Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
                 context: context
             ),
             metadata: [:]
+        )
+    }
+
+    public func watch(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_WatchBoxesRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListBoxesResponse> {
+        return GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ListBoxesResponse>(
+            metadata: [:],
+            producer: { writer in
+                try await self.watch(
+                    request: request.message,
+                    response: writer,
+                    context: context
+                )
+                return [:]
+            }
         )
     }
 
@@ -1872,6 +1983,30 @@ extension Cocoonbox_Control_V1_Boxes {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ListBoxesResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ListBoxesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Watch" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Watch sends the caller's boxes as List does, at once and again after any
+        /// > of them changes, by any client or by the api. Watching never wakes a box.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_WatchBoxesRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_WatchBoxesRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ListBoxesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func watch<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_WatchBoxesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_WatchBoxesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ListBoxesResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Control_V1_ListBoxesResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
 
         /// Call the "Hibernate" method.
@@ -2317,6 +2452,39 @@ extension Cocoonbox_Control_V1_Boxes {
             try await self.client.unary(
                 request: request,
                 descriptor: Cocoonbox_Control_V1_Boxes.Method.List.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
+
+        /// Call the "Watch" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > Watch sends the caller's boxes as List does, at once and again after any
+        /// > of them changes, by any client or by the api. Watching never wakes a box.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_WatchBoxesRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_WatchBoxesRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_ListBoxesResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func watch<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_WatchBoxesRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_WatchBoxesRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ListBoxesResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Control_V1_ListBoxesResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.serverStreaming(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.Watch.descriptor,
                 serializer: serializer,
                 deserializer: deserializer,
                 options: options,
@@ -2835,6 +3003,34 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
         )
     }
 
+    /// Call the "Watch" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Watch sends the caller's boxes as List does, at once and again after any
+    /// > of them changes, by any client or by the api. Watching never wakes a box.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_WatchBoxesRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func watch<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_WatchBoxesRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Control_V1_ListBoxesResponse>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        try await self.watch(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_WatchBoxesRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ListBoxesResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
     /// Call the "Hibernate" method.
     ///
     /// - Parameters:
@@ -3313,6 +3509,38 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             metadata: metadata
         )
         return try await self.list(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Watch" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > Watch sends the caller's boxes as List does, at once and again after any
+    /// > of them changes, by any client or by the api. Watching never wakes a box.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func watch<Result>(
+        _ message: Cocoonbox_Control_V1_WatchBoxesRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.StreamingClientResponse<Cocoonbox_Control_V1_ListBoxesResponse>) async throws -> Result
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_WatchBoxesRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.watch(
             request: request,
             options: options,
             onResponse: handleResponse

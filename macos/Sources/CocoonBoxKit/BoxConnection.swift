@@ -110,6 +110,33 @@ public final class BoxConnection: Sendable {
         return list
     }
 
+    // watchBoxes runs Boxes.Watch until cancelled; onBoxes gets the user's boxes, oldest first, at once, after each
+    // change by any client or the api, and again after each reconnect.
+    public func watchBoxes(
+        onBoxes: @escaping @Sendable ([Cocoonbox_Control_V1_Box]) async -> Void,
+        onDisconnect: @escaping @Sendable (any Error) async -> Void
+    ) async {
+        let boxes = boxes
+        await EventFollower<Cocoonbox_Control_V1_ListBoxesResponse>.boxes().run(
+            from: 0,
+            subscribe: { _, deliver in
+                try await boxes.watch(Cocoonbox_Control_V1_WatchBoxesRequest()) { response in
+                    for try await list in response.messages {
+                        await deliver(list)
+                    }
+                }
+            },
+            onEvent: { list in
+                self.names.withLock { names in
+                    for box in list.boxes { names[box.id] = box.name }
+                }
+                await onBoxes(list.boxes)
+            },
+            onResync: {},
+            onDisconnect: onDisconnect
+        )
+    }
+
     // ensure wakes or creates boxID, or the user's first box when it is empty.
     public func ensure(boxID: String = "") async throws -> Cocoonbox_Control_V1_EnsureResponse {
         try seen(await boxes.ensure(.with { $0.boxID = boxID }))

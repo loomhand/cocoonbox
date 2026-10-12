@@ -36,6 +36,12 @@ var tiers = []struct {
 	{"2xlarge", machines.Flavor{VCPUs: 8, MemoryMiB: 16384}},
 }
 
+// view is what an owner's watchers last saw of one machine.
+type view struct {
+	owner string
+	key   string
+}
+
 // entry is the backend's record of one machine: its claim row and what the backend knows beyond it.
 type entry struct {
 	id    string

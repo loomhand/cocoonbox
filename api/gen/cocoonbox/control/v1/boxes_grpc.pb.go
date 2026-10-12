@@ -25,6 +25,7 @@ const (
 	Boxes_Delete_FullMethodName            = "/cocoonbox.control.v1.Boxes/Delete"
 	Boxes_Get_FullMethodName               = "/cocoonbox.control.v1.Boxes/Get"
 	Boxes_List_FullMethodName              = "/cocoonbox.control.v1.Boxes/List"
+	Boxes_Watch_FullMethodName             = "/cocoonbox.control.v1.Boxes/Watch"
 	Boxes_Hibernate_FullMethodName         = "/cocoonbox.control.v1.Boxes/Hibernate"
 	Boxes_WatchOperation_FullMethodName    = "/cocoonbox.control.v1.Boxes/WatchOperation"
 	Boxes_SaveState_FullMethodName         = "/cocoonbox.control.v1.Boxes/SaveState"
@@ -56,6 +57,9 @@ type BoxesClient interface {
 	Delete(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
 	Get(ctx context.Context, in *GetBoxRequest, opts ...grpc.CallOption) (*Box, error)
 	List(ctx context.Context, in *ListBoxesRequest, opts ...grpc.CallOption) (*ListBoxesResponse, error)
+	// Watch sends the caller's boxes as List does, at once and again after any
+	// of them changes, by any client or by the api. Watching never wakes a box.
+	Watch(ctx context.Context, in *WatchBoxesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListBoxesResponse], error)
 	Hibernate(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
 	WatchOperation(ctx context.Context, in *WatchOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[OperationEvent], error)
 	// SaveState writes a quiesced snapshot of the box's user state (home,
@@ -155,6 +159,25 @@ func (c *boxesClient) List(ctx context.Context, in *ListBoxesRequest, opts ...gr
 	return out, nil
 }
 
+func (c *boxesClient) Watch(ctx context.Context, in *WatchBoxesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ListBoxesResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Boxes_ServiceDesc.Streams[0], Boxes_Watch_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[WatchBoxesRequest, ListBoxesResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Boxes_WatchClient = grpc.ServerStreamingClient[ListBoxesResponse]
+
 func (c *boxesClient) Hibernate(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(Operation)
@@ -167,7 +190,7 @@ func (c *boxesClient) Hibernate(ctx context.Context, in *BoxRef, opts ...grpc.Ca
 
 func (c *boxesClient) WatchOperation(ctx context.Context, in *WatchOperationRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[OperationEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Boxes_ServiceDesc.Streams[0], Boxes_WatchOperation_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Boxes_ServiceDesc.Streams[1], Boxes_WatchOperation_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -283,6 +306,9 @@ type BoxesServer interface {
 	Delete(context.Context, *BoxRef) (*Operation, error)
 	Get(context.Context, *GetBoxRequest) (*Box, error)
 	List(context.Context, *ListBoxesRequest) (*ListBoxesResponse, error)
+	// Watch sends the caller's boxes as List does, at once and again after any
+	// of them changes, by any client or by the api. Watching never wakes a box.
+	Watch(*WatchBoxesRequest, grpc.ServerStreamingServer[ListBoxesResponse]) error
 	Hibernate(context.Context, *BoxRef) (*Operation, error)
 	WatchOperation(*WatchOperationRequest, grpc.ServerStreamingServer[OperationEvent]) error
 	// SaveState writes a quiesced snapshot of the box's user state (home,
@@ -339,6 +365,9 @@ func (UnimplementedBoxesServer) Get(context.Context, *GetBoxRequest) (*Box, erro
 }
 func (UnimplementedBoxesServer) List(context.Context, *ListBoxesRequest) (*ListBoxesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method List not implemented")
+}
+func (UnimplementedBoxesServer) Watch(*WatchBoxesRequest, grpc.ServerStreamingServer[ListBoxesResponse]) error {
+	return status.Error(codes.Unimplemented, "method Watch not implemented")
 }
 func (UnimplementedBoxesServer) Hibernate(context.Context, *BoxRef) (*Operation, error) {
 	return nil, status.Error(codes.Unimplemented, "method Hibernate not implemented")
@@ -498,6 +527,17 @@ func _Boxes_List_Handler(srv interface{}, ctx context.Context, dec func(interfac
 	}
 	return interceptor(ctx, in, info, handler)
 }
+
+func _Boxes_Watch_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(WatchBoxesRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(BoxesServer).Watch(m, &grpc.GenericServerStream[WatchBoxesRequest, ListBoxesResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Boxes_WatchServer = grpc.ServerStreamingServer[ListBoxesResponse]
 
 func _Boxes_Hibernate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(BoxRef)
@@ -741,6 +781,11 @@ var Boxes_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Watch",
+			Handler:       _Boxes_Watch_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "WatchOperation",
 			Handler:       _Boxes_WatchOperation_Handler,

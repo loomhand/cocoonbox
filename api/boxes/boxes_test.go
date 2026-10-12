@@ -390,6 +390,8 @@ type fakeMachines struct {
 	specs     []machines.Spec
 	pending   []machines.Machine
 	pushed    chan struct{}
+	changed   chan struct{}
+	lists     int
 	revision  int64
 	ensureErr error
 	addr      string
@@ -401,7 +403,7 @@ type fakeMachines struct {
 }
 
 func newFakeMachines() *fakeMachines {
-	return &fakeMachines{machines: map[string]machines.Machine{}, pushed: make(chan struct{})}
+	return &fakeMachines{machines: map[string]machines.Machine{}, pushed: make(chan struct{}), changed: make(chan struct{})}
 }
 
 func (f *fakeMachines) Ensure(_ context.Context, spec machines.Spec) (machines.Machine, machines.Action, error) {
@@ -443,6 +445,7 @@ func (f *fakeMachines) Get(_ context.Context, id string) (machines.Machine, erro
 func (f *fakeMachines) List(_ context.Context, owner string) ([]machines.Machine, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.lists++
 	var out []machines.Machine
 	for _, m := range f.machines {
 		if owner == "" || m.Owner == owner {
@@ -489,6 +492,12 @@ func (f *fakeMachines) Watch(ctx context.Context, _ string, revision int64) <-ch
 		}
 	}()
 	return out
+}
+
+func (f *fakeMachines) Changes(string) <-chan struct{} {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.changed
 }
 
 func (f *fakeMachines) Address(_ context.Context, id string) (machines.Endpoint, error) {
@@ -594,6 +603,8 @@ func (f *fakeMachines) put(m machines.Machine) {
 		m.CreatedAt = time.Unix(f.clock, 0)
 	}
 	f.machines[m.ID] = m
+	close(f.changed)
+	f.changed = make(chan struct{})
 }
 
 func (f *fakeMachines) push(m machines.Machine) {
@@ -635,6 +646,12 @@ func (f *fakeMachines) lastSpec() machines.Spec {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.specs[len(f.specs)-1]
+}
+
+func (f *fakeMachines) listCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lists
 }
 
 func (f *fakeMachines) watchRevision() int64 {

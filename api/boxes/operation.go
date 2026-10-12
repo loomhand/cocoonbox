@@ -29,10 +29,11 @@ type operation struct {
 	boxID string
 	phase controlv1.Phase
 	// park marks the sweep's save and removal of a hibernated machine, which any client call supersedes.
-	park bool
-	gen  int64
-	ctx  context.Context
-	stop context.CancelFunc
+	park     bool
+	gen      int64
+	ctx      context.Context
+	stop     context.CancelFunc
+	watchers *watchers
 
 	mu         sync.Mutex
 	events     []*controlv1.OperationEvent
@@ -138,16 +139,19 @@ func (o *operation) appendLocked(phase controlv1.Phase, detail string, state con
 	}
 	close(o.changed)
 	o.changed = make(chan struct{})
+	o.watchers.wake(o.user)
 }
 
 type operations struct {
+	watchers *watchers
+
 	mu     sync.Mutex
 	byID   map[string]*operation
 	active map[string]*operation
 }
 
 func newOperations() *operations {
-	return &operations{byID: map[string]*operation{}, active: map[string]*operation{}}
+	return &operations{watchers: &watchers{next: map[string]chan struct{}{}}, byID: map[string]*operation{}, active: map[string]*operation{}}
 }
 
 // start returns the running operation of the same phase on boxID, or supersedes whatever runs there with a new one of user whose context derives from base.
@@ -165,13 +169,14 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 			return cur, false
 		}
 	}
-	op.id, op.changed = rand.Text(), make(chan struct{})
+	op.id, op.changed, op.watchers = rand.Text(), make(chan struct{}), r.watchers
 	op.ctx, op.stop = context.WithTimeout(base, timeout)
 	if cur := r.active[op.boxID]; cur != nil {
 		cur.fail("superseded by operation " + op.id)
 	}
 	r.byID[op.id] = op
 	r.active[op.boxID] = op
+	r.watchers.wake(op.user)
 	return op, true
 }
 

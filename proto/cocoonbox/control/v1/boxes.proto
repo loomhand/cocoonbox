@@ -19,6 +19,9 @@ service Boxes {
   rpc Delete(BoxRef) returns (Operation);
   rpc Get(GetBoxRequest) returns (Box);
   rpc List(ListBoxesRequest) returns (ListBoxesResponse);
+  // Watch sends the caller's boxes as List does, at once and again after any
+  // of them changes, by any client or by the api. Watching never wakes a box.
+  rpc Watch(WatchBoxesRequest) returns (stream ListBoxesResponse);
   rpc Hibernate(BoxRef) returns (Operation);
   rpc WatchOperation(WatchOperationRequest) returns (stream OperationEvent);
   // SaveState writes a quiesced snapshot of the box's user state (home,
@@ -152,6 +155,8 @@ message ListBoxesRequest {}
 message ListBoxesResponse {
   repeated Box boxes = 1;
 }
+
+message WatchBoxesRequest {}
 
 message WatchOperationRequest {
   string operation_id = 1;
