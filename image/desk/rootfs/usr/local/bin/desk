@@ -1,0 +1,3 @@
+#!/bin/sh
+# desk: the desk API from a shell, through the toolhost socket; desk VERB [key=value ...|JSON]
+exec /usr/local/bin/cocoonbox-agent desk "$@"
