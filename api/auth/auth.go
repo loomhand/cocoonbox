@@ -83,15 +83,6 @@ func New(users Users, shares Shares) *Authenticator {
 	return &Authenticator{users: users, shares: shares}
 }
 
-// ShareSecret returns the share secret an Authorization header carries.
-func ShareSecret(header string) (string, bool) {
-	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
-		return "", false
-	}
-	secret := header[len(bearerPrefix):]
-	return secret, strings.HasPrefix(secret, SecretPrefix)
-}
-
 // Admit admits a share secret for box, or for the share's own box when box is empty; guest is the caller's user id or empty.
 func (a *Authenticator) Admit(secret, box, guest string) (Grant, error) {
 	sum := sha256.Sum256([]byte(secret))
@@ -187,6 +178,15 @@ type authedStream struct {
 }
 
 func (s *authedStream) Context() context.Context { return s.ctx }
+
+// ShareSecret returns the share secret an Authorization header carries.
+func ShareSecret(header string) (string, bool) {
+	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
+		return "", false
+	}
+	secret := header[len(bearerPrefix):]
+	return secret, strings.HasPrefix(secret, SecretPrefix)
+}
 
 // User returns the authenticated user id, "" when ctx did not pass the interceptors.
 func User(ctx context.Context) string {
