@@ -26,7 +26,8 @@ const (
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
   cocoonbox-api [-config FILE] state migrate [-keyring DIR]
-  cocoonbox-api [-config FILE] state expand [-user ID]`
+  cocoonbox-api [-config FILE] state expand [-user ID]
+  cocoonbox-api [-config FILE] box rebase USER BOX IMAGE`
 
 	defaultKeyringDir = "/var/lib/cocoonbox-api/keys"
 )
@@ -43,6 +44,9 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	}
 	if len(args) >= 2 && args[0] == "state" && args[1] == "expand" {
 		return expandState(ctx, cfg, args[2:], stdout)
+	}
+	if len(args) >= 2 && args[0] == "box" && args[1] == "rebase" {
+		return rebaseBox(ctx, cfg, args[2:], stdout)
 	}
 	if len(args) < 3 || args[0] != "user" {
 		return errors.New(cliUsage)

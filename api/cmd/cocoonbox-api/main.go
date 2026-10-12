@@ -183,6 +183,11 @@ func main() {
 		Protocols:         &protocols,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
+	if cfg.OperatorSocket != "" {
+		if err = serveOperator(ctx, cfg.OperatorSocket, svc); err != nil {
+			logger.Fatalf(ctx, err, "serve the operator socket %s", cfg.OperatorSocket)
+		}
+	}
 	lis, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		logger.Fatalf(ctx, err, "listen on %s", cfg.Listen)

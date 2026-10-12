@@ -20,6 +20,8 @@ const (
 	HeaderAuthorization = "authorization"
 	// HeaderGuestToken carries the caller's own user token next to the secret of a share that names its users.
 	HeaderGuestToken = "x-cocoonbox-guest-token" //nolint:gosec // a header name, not a credential
+	// HeaderOperatorUser names the user an operator call acts as; only the operator socket reads it.
+	HeaderOperatorUser = "x-cocoonbox-operator-user"
 	// SecretPrefix starts every share secret; a bearer is tried as a share secret only when no user token matches it.
 	SecretPrefix = "cbs_"
 
@@ -197,4 +199,31 @@ func User(ctx context.Context) string {
 // WithUser returns ctx carrying user, as the interceptors do.
 func WithUser(ctx context.Context, user string) context.Context {
 	return context.WithValue(ctx, userKey{}, user)
+}
+
+// OperatorUnary admits unary calls as the user in HeaderOperatorUser; the operator socket's file mode is the access check.
+func OperatorUnary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	ctx, err := operatorUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return handler(ctx, req)
+}
+
+// OperatorStream admits streaming calls as the user in HeaderOperatorUser.
+func OperatorStream(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
+	ctx, err := operatorUser(ss.Context())
+	if err != nil {
+		return err
+	}
+	return handler(srv, &authedStream{ServerStream: ss, ctx: ctx})
+}
+
+func operatorUser(ctx context.Context) (context.Context, error) {
+	md, _ := metadata.FromIncomingContext(ctx)
+	values := md.Get(HeaderOperatorUser)
+	if len(values) != 1 || values[0] == "" {
+		return nil, status.Error(codes.Unauthenticated, "missing operator user")
+	}
+	return WithUser(ctx, values[0]), nil
 }
