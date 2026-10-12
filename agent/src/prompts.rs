@@ -1,7 +1,6 @@
 //! System prompts for the main agent and the computer subagent.
 
-/// The tool-tier policy of a box with Script, shared by its MCP instructions, its own agent and its guide.
-pub const ROUTING: &str = include_str!("../../image/script/routing.md");
+use crate::config::Automation;
 
 /// Where the image lists the box's API keys, one `NAME=placeholder;hosts;how` record per line.
 pub const KEYS_FILE: &str = "/run/cocoonbox-vault/keys";
@@ -47,14 +46,28 @@ Loop: observe, act, verify.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
+const DESK_ROUTING: &str = include_str!("../../image/desk/routing.md");
+#[cfg(feature = "script")]
+const SCRIPT_ROUTING: &str = include_str!("../../image/script/routing.md");
+
 const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that the box's network swaps for the real key only on the listed hosts. Send them exactly as shown; never ask for, print or replace a key";
 
 const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; link-cli (`npx -y @stripe/link-cli`) reads it by itself. Never enter the user's own card or other payment details. Pay only with Link and only for a purchase the user asked for: create a spend request with a truthful `--context`, wait until the user approves it in the Link app or on the web, and read the one-time card only with `--output-file <path>` under /tmp. Never cat, read or print that file: give delegate_computer its path and have it fill each card field (number, exp, cvc) with computer_act type_from_file, only on the checkout the user asked for. Never repeat a card number, CVC or other payment value seen on a screen, a page or a report: say only which fields are filled.";
 
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
-/// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a Script box adds [`ROUTING`].
-pub fn main(model: &str, computer_model: &str, vision: bool, script: bool) -> String {
+/// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
+pub fn routing(automation: Automation) -> &'static str {
+    match automation {
+        #[cfg(feature = "script")]
+        Automation::Script => SCRIPT_ROUTING,
+        _ => DESK_ROUTING,
+    }
+}
+
+/// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a box that
+/// runs GUI plans adds its [`routing`].
+pub fn main(model: &str, computer_model: &str, vision: bool, automation: Automation) -> String {
     let eyes = if vision {
         "You can also call screenshot to look at the screen yourself."
     } else {
@@ -64,9 +77,14 @@ pub fn main(model: &str, computer_model: &str, vision: bool, script: bool) -> St
         .replace("{model}", model)
         .replace("{computer_model}", computer_model)
         .replace("{eyes}", eyes);
-    if script {
-        prompt.push_str("\n\nThis box has Script.\n\n");
-        prompt.push_str(ROUTING);
+    match automation {
+        Automation::Plain => {}
+        Automation::Desk => prompt.push_str("\n\nThis box runs GUI plans and desk scripts.\n\n"),
+        #[cfg(feature = "script")]
+        Automation::Script => prompt.push_str("\n\nThis box has Script.\n\n"),
+    }
+    if automation.plans() {
+        prompt.push_str(routing(automation));
     }
     prompt
 }
@@ -122,7 +140,7 @@ mod tests {
             "deepseek/deepseek-v4.1-flash",
             "anthropic/claude-sonnet-5",
             false,
-            false,
+            Automation::Plain,
         );
         assert!(p.starts_with(
             "You are deepseek/deepseek-v4.1-flash, served through the cocoonbox gateway."
@@ -137,17 +155,33 @@ mod tests {
         for vendor in ["Claude", "Anthropic", "GPT", "OpenAI", "Gemini"] {
             assert!(!without_subagent.contains(vendor), "mentions {vendor}");
         }
-        assert!(main("anthropic/claude-sonnet-5", "x", true, false).contains("call screenshot"));
+        assert!(
+            main("anthropic/claude-sonnet-5", "x", true, Automation::Plain)
+                .contains("call screenshot")
+        );
         assert!(!p.contains("script"), "{p}");
     }
 
+    #[cfg(feature = "script")]
     #[test]
     fn main_prompt_on_a_script_box_ends_with_the_routing() {
-        let plain = main("m", "c", false, false);
-        let p = main("m", "c", false, true);
+        let plain = main("m", "c", false, Automation::Plain);
+        let p = main("m", "c", false, Automation::Script);
+        let routing = routing(Automation::Script);
         assert!(p.starts_with(&plain), "{p}");
-        assert!(p.ends_with(ROUTING), "{p}");
-        assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
+        assert!(p.ends_with(routing), "{p}");
+        assert!(routing.contains("script_run") && routing.contains("delegate_computer"));
+    }
+
+    #[test]
+    fn main_prompt_on_a_desk_box_ends_with_its_routing() {
+        let plain = main("m", "c", false, Automation::Plain);
+        let p = main("m", "c", false, Automation::Desk);
+        let routing = routing(Automation::Desk);
+        assert!(p.starts_with(&plain), "{p}");
+        assert!(p.ends_with(routing), "{p}");
+        assert!(routing.contains("script_run") && routing.contains("delegate_computer"));
+        assert!(!routing.to_lowercase().contains("simul"), "{routing}");
     }
 
     #[test]

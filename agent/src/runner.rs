@@ -26,7 +26,7 @@ const QUEUE_DEPTH: usize = 32;
 const DOOR_ANSWERS: usize = 64;
 const TITLE_CHARS: usize = 24;
 const MAIN_MAX_STEPS: usize = 40;
-const SCRIPT_MAX_STEPS: usize = 150;
+const PLAN_MAX_STEPS: usize = 150;
 const MAIN_MAX_TOKENS: u32 = 4096;
 const REPORT_MAX_TOKENS: u32 = 1024;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
@@ -73,7 +73,7 @@ pub struct Runtime {
     pub turns: Arc<tokio::sync::RwLock<()>>,
     /// Interrupts the MCP calls of share sessions when a quiesce has waited long enough.
     pub guests: Arc<Preempt>,
-    /// The tier router of a Script box; `None` elsewhere.
+    /// The tier router of a box that runs GUI plans; `None` elsewhere.
     pub router: Option<Router>,
     connect: Option<Arc<connect::Client>>,
     main_tools: Vec<ToolSpec>,
@@ -100,11 +100,12 @@ impl Runtime {
             .transpose()?
             .map(Arc::new);
         let router = cfg
-            .script
-            .then(|| Router::new(&cfg.gw_base_url, &cfg.gw_api_key))
+            .automation
+            .plans()
+            .then(|| Router::new(&cfg.gw_base_url, &cfg.gw_api_key, cfg.automation))
             .transpose()?;
         let flows = match &cfg.connect_url {
-            Some(url) if cfg.script => {
+            Some(url) if cfg.automation.plans() => {
                 let sync = Arc::new(flows::Syncer::new(
                     url,
                     journal.store.clone(),
@@ -120,8 +121,8 @@ impl Runtime {
             router,
             dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal)).with_flows(flows)),
             journal,
-            main_tools: tools::main_tools(false, cfg.script),
-            main_vision_tools: tools::main_tools(true, cfg.script),
+            main_tools: tools::main_tools(false, cfg.automation),
+            main_vision_tools: tools::main_tools(true, cfg.automation),
             computer_tools: tools::computer_tools(),
             computer_prompt: prompts::computer(&cfg.model_computer),
             screen: tokio::sync::Mutex::new(()),
@@ -626,7 +627,7 @@ impl Runtime {
             &ctx.model,
             &self.cfg.model_computer,
             vision,
-            self.cfg.script,
+            self.cfg.automation,
         );
         if let Some(keys) = tokio::fs::read_to_string(prompts::KEYS_FILE)
             .await
@@ -641,8 +642,8 @@ impl Runtime {
             Some(router) => self.front_route(ctx, router, &mut messages, usage).await?,
             None => None,
         };
-        let cap = if self.cfg.script {
-            SCRIPT_MAX_STEPS
+        let cap = if self.cfg.automation.plans() {
+            PLAN_MAX_STEPS
         } else {
             MAIN_MAX_STEPS
         };

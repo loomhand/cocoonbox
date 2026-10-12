@@ -11,6 +11,10 @@ publish = false
 name = "cocoonbox-agent"
 path = "src/main.rs"
 
+[features]
+default = ["script"]
+script = []
+
 [dependencies]
 aes = { version = "0.8", features = ["zeroize"] }
 aes-gcm = { version = "0.10", features = ["zeroize"] }

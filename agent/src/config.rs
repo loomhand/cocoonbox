@@ -17,11 +17,58 @@ const ROOT_UID: u32 = 0;
 const REDACTED: &str = "<redacted>";
 const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
+const NODE_BIN: &str = "/usr/local/bin/node";
+const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
+#[cfg(feature = "script")]
 const SCRIPT_BIN: &str = "/usr/local/bin/script";
+#[cfg(feature = "script")]
 const SCRIPT_GUIDE: &str = "/opt/script/AGENTS.md";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
+
+/// The desktop automation of the box's image family, found by its guide at start.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum Automation {
+    /// cua-driver only: the cbdesk family.
+    #[default]
+    Plain,
+    /// GUI plans and scripts on Node with the desk API.
+    Desk,
+    /// GUI plans and scripts on the Script runtime: the cbplan family.
+    #[cfg(feature = "script")]
+    Script,
+}
+
+impl Automation {
+    /// The automation whose guide the image holds.
+    pub fn detect() -> Self {
+        #[cfg(feature = "script")]
+        if Path::new(SCRIPT_GUIDE).exists() {
+            return Self::Script;
+        }
+        if Path::new(DESK_GUIDE).exists() {
+            Self::Desk
+        } else {
+            Self::Plain
+        }
+    }
+
+    /// Whether the box runs GUI plans and scripts, which also settles on a still screen, recompresses
+    /// screenshots, runs action lists and offers browser_fetch.
+    pub fn plans(self) -> bool {
+        self != Self::Plain
+    }
+
+    /// The program that runs scripts.
+    fn script_bin(self) -> &'static str {
+        match self {
+            #[cfg(feature = "script")]
+            Self::Script => SCRIPT_BIN,
+            _ => NODE_BIN,
+        }
+    }
+}
 
 /// Settings of `serve`, read from `/etc/cocoonbox/agent.env` via systemd.
 #[derive(Clone)]
@@ -48,8 +95,8 @@ pub struct ServeConfig {
     pub desktop_unit: Option<String>,
     /// The Connect box door; without it the loop offers no connector tools.
     pub connect_url: Option<String>,
-    /// Whether the box has the Script runtime (the cbplan family), which adds script_run and its guide to MCP.
-    pub script: bool,
+    /// The box's desktop automation, which adds GUI plans, a script tool and its guide to MCP.
+    pub automation: Automation,
 }
 
 impl std::fmt::Debug for ServeConfig {
@@ -74,7 +121,7 @@ impl std::fmt::Debug for ServeConfig {
             .field("state_roots", &self.state_roots)
             .field("desktop_unit", &self.desktop_unit)
             .field("connect_url", &self.connect_url)
-            .field("script", &self.script)
+            .field("automation", &self.automation)
             .finish()
     }
 }
@@ -105,7 +152,7 @@ impl ServeConfig {
             state_roots: crate::state::default_roots(),
             desktop_unit: Some(DESKTOP_UNIT.to_owned()),
             connect_url: env::var("CONNECT_URL").ok().filter(|v| !v.is_empty()),
-            script: Path::new(SCRIPT_GUIDE).exists(),
+            automation: Automation::detect(),
         })
     }
 }
@@ -120,17 +167,19 @@ pub struct ToolhostConfig {
     pub chrome_profile: PathBuf,
     pub cdp_port: u16,
     pub cua_socket: PathBuf,
+    /// The program that runs scripts and GUI plans.
     pub script_bin: PathBuf,
     pub session_save: PathBuf,
     pub home: PathBuf,
-    /// Whether the box has the Script runtime (the cbplan family), which settles on a still screen, recompresses screenshots and runs action lists.
-    pub script: bool,
+    /// The box's desktop automation.
+    pub automation: Automation,
 }
 
 impl ToolhostConfig {
     /// Reads toolhost settings; every key has a contract default.
     pub fn from_env() -> Result<Self, String> {
         let home = env::var("HOME").map_err(|e| format!("read HOME: {e}"))?;
+        let automation = Automation::detect();
         Ok(Self {
             socket: optional("TOOLHOST_SOCKET", DEFAULT_TOOLHOST_SOCKET).into(),
             socket_group: optional("TOOLHOST_SOCKET_GROUP", "cbagent"),
@@ -147,10 +196,10 @@ impl ToolhostConfig {
                 |_| format!("{home}/.cache/cua-driver/cua-driver.sock").into(),
                 Into::into,
             ),
-            script_bin: optional("SCRIPT_BIN", SCRIPT_BIN).into(),
+            script_bin: optional("SCRIPT_BIN", automation.script_bin()).into(),
             session_save: SESSION_SAVE.into(),
             home: home.into(),
-            script: Path::new(SCRIPT_GUIDE).exists(),
+            automation,
         })
     }
 }
@@ -195,7 +244,7 @@ mod tests {
             state_roots: Vec::new(),
             desktop_unit: None,
             connect_url: None,
-            script: false,
+            automation: Automation::Plain,
         };
         let shown = format!("{cfg:?}");
         assert!(

@@ -4,10 +4,17 @@ use std::borrow::Cow;
 
 use serde_json::json;
 
+use crate::config::Automation;
 use crate::llm::ToolSpec;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
+#[cfg(feature = "script")]
 const SCRIPT_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
+const DESK_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
+const DESK_OPS: [&str; 15] = [
+    "windows", "snapshot", "find", "read", "press", "act", "at", "key", "type", "click", "focus",
+    "close", "launch", "shot", "screen",
+];
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -20,8 +27,9 @@ pub const READ_ONLY: [&str; 6] = [
     "browser_read",
 ];
 
-/// Tools of the main agent; a vision model also gets a read-only screenshot, a Script box `script_run` and `browser_fetch`.
-pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
+/// Tools of the main agent; a vision model also gets a read-only screenshot, a box that runs GUI plans
+/// `gui_plan`, its script tool and `browser_fetch`.
+pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     let mut tools = vec![
         ToolSpec {
             name: Cow::Borrowed("shell"),
@@ -168,22 +176,27 @@ pub fn main_tools(vision: bool, script: bool) -> Vec<ToolSpec> {
             parameters: json!({"type": "object", "properties": {"max_edge": max_edge()}}),
         });
     }
-    if script {
-        tools.extend([gui_plan_tool(), script_tool(), fetch_tool()]);
+    if let Some(script) = script_tool(automation) {
+        tools.extend([gui_plan_tool(), script, fetch_tool()]);
     }
     tools
 }
 
-/// Tools served over MCP to external agents; the names are the contract, and `script_run`, `browser_fetch` and the `computer_act` hint exist only with `script`.
-pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
-    let mut tools: Vec<ToolSpec> = main_tools(true, false)
+/// Tools served over MCP to external agents; the names are the contract, and `gui_plan`, the script tool,
+/// `browser_fetch`, `desk` and the `computer_act` hint exist only on a box that runs GUI plans.
+pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
+    let mut tools: Vec<ToolSpec> = main_tools(true, Automation::Plain)
         .into_iter()
         .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
         .collect();
     tools.extend(computer_tools());
-    if script {
+    if let Some(script) = script_tool(automation) {
         if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            act.description = Cow::Owned(format!("{SCRIPT_HINT}{}{LIST_HINT}", act.description));
+            act.description = Cow::Owned(format!(
+                "{}{}{LIST_HINT}",
+                hint(automation),
+                act.description
+            ));
             if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
                 actions.insert(3, "triple_click".into());
             }
@@ -196,9 +209,30 @@ pub fn remote_tools(script: bool) -> Vec<ToolSpec> {
                 schema.remove("required");
             }
         }
-        tools.extend([script_tool(), gui_plan_tool(), fetch_tool()]);
+        tools.extend([script, gui_plan_tool(), fetch_tool()]);
+        if automation == Automation::Desk {
+            tools.push(desk_tool());
+        }
     }
     tools
+}
+
+fn hint(automation: Automation) -> &'static str {
+    match automation {
+        #[cfg(feature = "script")]
+        Automation::Script => SCRIPT_HINT,
+        _ => DESK_HINT,
+    }
+}
+
+/// The automation's script tool; none on a box without one.
+fn script_tool(automation: Automation) -> Option<ToolSpec> {
+    match automation {
+        Automation::Plain => None,
+        Automation::Desk => Some(desk_script_tool()),
+        #[cfg(feature = "script")]
+        Automation::Script => Some(script_tool()),
+    }
 }
 
 /// Tools of the computer subagent.
@@ -252,6 +286,57 @@ pub fn computer_tools() -> Vec<ToolSpec> {
     ]
 }
 
+fn desk_script_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("script_run"),
+        description: Cow::Borrowed(
+            "Run one script for desktop work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 that drives the desktop through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, clicks, screen crops, gw model calls); the desk command does the same from shell. Read /opt/desk/AGENTS.md first (also the resource cocoonbox://desk/AGENTS.md). Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "code": {"type": "string", "description": "The script as an ES module"},
+                "script": {"type": "string", "description": "Path of a script file in the box; relative paths resolve under /workspace"},
+                "params": {"type": "object", "description": "Passed to the script's exported main(params)"},
+                "timeout_s": {"type": "integer", "description": "Default 90, max 110; the run is stopped after it"},
+                "screenshot": {"type": "boolean", "description": "Return a screenshot taken after the run, default true"},
+                "max_edge": max_edge()
+            }
+        }),
+    }
+}
+
+fn desk_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("desk"),
+        description: Cow::Borrowed(
+            "One desktop call in plain JSON on the accessibility tree: op windows; snapshot {window?, text?}; find {name, role?, window?}; read {id, text?}; press {id} (selects, opens menus, clicks or runs the element's action); act {id, action: click|action|select|focus}; at {x, y, window?}; key {keys: \"ctrl+shift+s\"}; type {text}; click {x, y, button?, count?}; focus {window}; close {window}; launch {app}; shot {x?, y?, w?, h?}; screen. Element ids come from snapshot or find; window is title text, default the focused window. For GUI work of several steps use gui_plan.",
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "op": {"type": "string", "enum": DESK_OPS},
+                "window": {"type": "string"},
+                "id": {"type": "string"},
+                "name": {"type": "string"},
+                "role": {"type": "string"},
+                "action": {"type": "string"},
+                "keys": {"type": "string"},
+                "text": {"description": "type: the text; snapshot and read: true for text"},
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "w": {"type": "number"},
+                "h": {"type": "number"},
+                "button": {"type": "string"},
+                "count": {"type": "integer"},
+                "app": {"type": "string"}
+            },
+            "required": ["op"]
+        }),
+    }
+}
+
+#[cfg(feature = "script")]
 fn script_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("script_run"),

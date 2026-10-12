@@ -12,6 +12,7 @@ use reqwest::{StatusCode, header};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
+use crate::config::Automation;
 use crate::dispatch::ToolOutput;
 use crate::llm::ToolSpec;
 use crate::tools;
@@ -150,7 +151,14 @@ impl Client {
     }
 
     async fn list(&self) -> Result<Vec<ToolSpec>, String> {
-        let reserved = tools::main_tools(true, true);
+        let reserved: Vec<ToolSpec> = [
+            Automation::Desk,
+            #[cfg(feature = "script")]
+            Automation::Script,
+        ]
+        .into_iter()
+        .flat_map(|a| tools::main_tools(true, a))
+        .collect();
         let mut out = Vec::new();
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_PAGES {

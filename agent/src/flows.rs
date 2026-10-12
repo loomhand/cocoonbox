@@ -1,4 +1,4 @@
-//! Flow library sync of a Script box: the owner's saved flows reach every cbplan box through the box door.
+//! Flow library sync of a box that runs GUI plans: the owner's saved flows reach every such box of the owner through the box door.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -270,19 +270,29 @@ pub fn reads(name: &str, args: &Value) -> bool {
             .iter()
             .any(|k| !args[*k].is_null()),
         "gui_flows" => true,
-        "script_run" => args["script"]
-            .as_str()
-            .is_some_and(|s| s.trim_start_matches("/workspace/").starts_with("flows/")),
+        "script_run" => runs_flow(args),
+        #[cfg(feature = "script")]
+        "script_run" => runs_flow(args),
         _ => false,
     }
 }
 
 /// Whether call `name` may write a flow file, so the changed flows are pushed after it.
 pub fn writes(name: &str) -> bool {
+    #[cfg(feature = "script")]
+    if name == "script_run" {
+        return true;
+    }
     matches!(
         name,
         "gui_plan" | "script_run" | "write_file" | "edit_file" | "shell" | "upload"
     )
+}
+
+fn runs_flow(args: &Value) -> bool {
+    args["script"]
+        .as_str()
+        .is_some_and(|s| s.trim_start_matches("/workspace/").starts_with("flows/"))
 }
 
 fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -314,7 +324,11 @@ mod tests {
         ));
         assert!(reads("script_run", &json!({"script": "flows/a.mts"})));
         assert!(!reads("script_run", &json!({"code": "x"})));
-        assert!(writes("gui_plan") && writes("write_file") && writes("shell"));
+        assert!(
+            writes("gui_plan") && writes("script_run") && writes("write_file") && writes("shell")
+        );
+        #[cfg(feature = "script")]
+        assert!(reads("script_run", &json!({"script": "flows/a.mts"})) && writes("script_run"));
         assert!(!writes("screenshot") && !writes("read_file"));
     }
 

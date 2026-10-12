@@ -9,8 +9,8 @@ pub mod files;
 pub mod flows;
 pub mod rpc;
 pub mod scope;
-pub mod shell;
 pub mod script;
+pub mod shell;
 pub mod state;
 pub mod timing;
 pub mod volatile;
@@ -30,16 +30,18 @@ use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
 
-use crate::config::ToolhostConfig;
+use crate::config::{Automation, ToolhostConfig};
 use browser::Browser;
 use cua::Cua;
 use desk::Desk;
 use rpc::{Call, Output};
+use script::Scripts;
 use shell::Shell;
-use script::Script;
 
 const SOCKET_MODE: u32 = 0o660;
 const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
+const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
+#[cfg(feature = "script")]
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-script";
 
 /// Shared tool state for all connections.
@@ -50,10 +52,10 @@ pub struct Host {
     browser: Browser,
     cua: Cua,
     desk: Desk,
-    script: Script,
+    scripts: Scripts,
     session_save: PathBuf,
     home: PathBuf,
-    /// The saved flows of a Script box, which a read-only share does not read.
+    /// The saved flows of a box that runs GUI plans, which a read-only share does not read.
     hidden: Option<PathBuf>,
     flow_writes: watch::Sender<u64>,
 }
@@ -70,12 +72,16 @@ impl Host {
                 cfg.chrome_profile.clone(),
                 cfg.cdp_port,
             ),
-            cua: Cua::new(cfg.cua_socket.clone(), cfg.script),
+            cua: Cua::new(cfg.cua_socket.clone(), cfg.automation.plans()),
             desk: Desk::default(),
-            script: Script::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
+            scripts: Scripts::new(
+                cfg.automation,
+                cfg.script_bin.clone(),
+                script_dir(cfg.automation),
+            ),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
-            hidden: cfg.script.then(|| cfg.workspace.join("flows")),
+            hidden: cfg.automation.plans().then(|| cfg.workspace.join("flows")),
             flow_writes: watch::channel(0).0,
         }
     }
@@ -122,17 +128,29 @@ impl Host {
             "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
             t if t.starts_with("desk_") => self.desk.run(&self.cua, t, call.args).await,
+            #[cfg(feature = "script")]
             "script_run" => {
-                self.script
+                self.scripts
+                    .run(&self.cua, &self.workspace, call.args)
+                    .await
+            }
+            "script_run" => {
+                self.scripts
                     .run(&self.cua, &self.workspace, call.args)
                     .await
             }
             "gui_plan" => {
-                self.script
+                self.scripts
                     .plan(&self.cua, &self.workspace, call.args)
                     .await
             }
-            "gui_flows" => Ok(Output::text(Script::flows(&self.workspace).await)),
+            "gui_flows" => Ok(Output::text(Scripts::flows(&self.workspace).await)),
+            "desk" => {
+                let op = call.args["op"].as_str().unwrap_or_default().to_owned();
+                self.desk
+                    .run(&self.cua, &format!("desk_{op}"), call.args)
+                    .await
+            }
             "flows_scan" => flows::scan(&self.workspace).await.map(Output::text),
             "flows_read" => flows::read(&self.workspace, call.args)
                 .await
@@ -146,7 +164,7 @@ impl Host {
             "flows_mark" => flows::mark(&self.workspace, call.args)
                 .await
                 .map(Output::text),
-            "flows_index" => self.script.reindex(&self.workspace).await,
+            "flows_index" => self.scripts.reindex(&self.workspace).await,
             "flows_wait" => flows::wait(&self.flow_writes, call.args)
                 .await
                 .map(Output::text),
@@ -250,7 +268,7 @@ pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
     let listener = bind(&cfg.socket, &cfg.socket_group)?;
     eprintln!("toolhost listening on {}", cfg.socket.display());
     let host = Arc::new(Host::new(&cfg));
-    if cfg.script {
+    if cfg.automation.plans() {
         let (workspace, writes) = (cfg.workspace.clone(), host.flow_writes.clone());
         // detached: lives as long as the toolhost
         tokio::spawn(async move {
@@ -331,6 +349,14 @@ pub(crate) fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
             .map_err(|e| format!("chgrp {} {group}: {e}", path.display()))?;
     }
     Ok(listener)
+}
+
+fn script_dir(automation: Automation) -> PathBuf {
+    match automation {
+        #[cfg(feature = "script")]
+        Automation::Script => PathBuf::from(SCRIPT_DIR),
+        _ => PathBuf::from(SCRIPT_DIR),
+    }
 }
 
 fn group_id(name: &str) -> Option<u32> {

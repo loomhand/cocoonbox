@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use cocoonbox_agent::config::{ServeConfig, ToolhostConfig};
+use cocoonbox_agent::config::{Automation, ServeConfig, ToolhostConfig};
 use cocoonbox_agent::pb::agents_client::AgentsClient;
 use cocoonbox_agent::pb::session_client::SessionClient;
 use cocoonbox_agent::pb::{
@@ -29,13 +29,20 @@ use tonic::transport::Channel;
 use tonic::{Code, Request};
 
 const TOKEN: &str = "edge-token-for-tests";
+#[cfg(feature = "script")]
 const FAKE_SCRIPT: &str = r#"case "$2" in *release.mjs) cat "$2" >> released.log; exit 0 ;; esac
-src=$(cat "$CB_SCRIPT_SCRIPT")
+src=$(cat "$CB_SCRIPT")
 echo "script: warning: OPENROUTER_API_KEY is not set; scripts that hit hosted services will fail to authenticate." >&2
 case "$src" in
 *boom*) echo "[info] Opening app Mousepad" >&2; echo "Error: boom" >&2; exit 1 ;;
 *hang*) sleep 300 & echo $! > grandchild.pid; sleep 300 ;;
-*) echo "ran $1 in $PWD"; printf '{"params":%s}' "$CB_SCRIPT_PARAMS" > "$CB_SCRIPT_RESULT"; printf outline > "$CB_SCRIPT_SNAPSHOT" ;;
+*) echo "ran $1 in $PWD"; printf '{"params":%s}' "$CB_PARAMS" > "$CB_RESULT"; printf outline > "$CB_SNAPSHOT" ;;
+esac"#;
+const FAKE_NODE: &str = r#"src=$(cat "$CB_SCRIPT")
+case "$src" in
+*boom*) echo "Error: boom" >&2; exit 1 ;;
+*hang*) sleep 300 & echo $! > grandchild.pid; sleep 300 ;;
+*) echo "ran $1 in $PWD"; printf '{"params":%s}' "$CB_PARAMS" > "$CB_RESULT"; printf outline > "$CB_SNAPSHOT" ;;
 esac"#;
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
 const THUMB: &str =
@@ -84,7 +91,7 @@ impl Harness {
             mcp_prune_after,
             None,
             None,
-            false,
+            Automation::Plain,
         )
         .await
     }
@@ -99,7 +106,7 @@ impl Harness {
             day,
             Some(chrome),
             None,
-            false,
+            Automation::Plain,
         )
         .await
     }
@@ -114,12 +121,13 @@ impl Harness {
             day,
             None,
             Some(connect_url),
-            false,
+            Automation::Plain,
         )
         .await
     }
 
     /// A harness of a box with the Script runtime (the cbplan family).
+    #[cfg(feature = "script")]
     async fn with_script(script: Vec<(&'static str, String)>) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
@@ -129,7 +137,22 @@ impl Harness {
             day,
             None,
             None,
-            true,
+            Automation::Script,
+        )
+        .await
+    }
+
+    /// A harness of a box with the desk runtime, which runs GUI plans and scripts on Node.
+    async fn with_desk(script: Vec<(&'static str, String)>) -> Self {
+        let day = Duration::from_secs(24 * 3600);
+        Self::boot(
+            script,
+            false,
+            Duration::from_secs(600),
+            day,
+            None,
+            None,
+            Automation::Desk,
         )
         .await
     }
@@ -141,7 +164,7 @@ impl Harness {
         mcp_prune_after: Duration,
         chrome: Option<&Path>,
         connect_url: Option<String>,
-        script: bool,
+        automation: Automation,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -156,8 +179,12 @@ impl Harness {
         fake_cua(&cua_socket, Arc::clone(&cua_log));
         let session_save = dir.path().join("session-save");
         write_script(&session_save, "echo saved >> \"$0.log\"");
-        let script_bin = dir.path().join("script");
-        write_script(&script_bin, FAKE_SCRIPT);
+        let script_bin = dir.path().join("script-bin");
+        match automation {
+            #[cfg(feature = "script")]
+            Automation::Script => write_script(&script_bin, FAKE_SCRIPT),
+            _ => write_script(&script_bin, FAKE_NODE),
+        }
         let toolhost_socket = dir.path().join("toolhost.sock");
         let (chrome_bin, cdp_port) = match chrome {
             Some(bin) => {
@@ -184,7 +211,7 @@ impl Harness {
             script_bin,
             session_save: session_save.clone(),
             home: home.clone(),
-            script,
+            automation,
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -206,7 +233,7 @@ impl Harness {
             quiesce_wait: Duration::from_secs(1),
             desktop_unit: None,
             connect_url,
-            script,
+            automation,
             state_roots: vec![
                 Root {
                     name: "home".into(),
@@ -1389,7 +1416,7 @@ async fn run_delegate(messages_wire: bool) {
 
 #[tokio::test]
 async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
-    for (script, cap) in [(false, 40), (true, 150)] {
+    for (plans, cap) in [(false, 40), (true, 150)] {
         let mut script: Vec<(&'static str, String)> = (0..cap)
             .map(|n| {
                 (
@@ -1399,8 +1426,8 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
             })
             .collect();
         script.push(("chat/completions", chat_text("Done: a. Left: b. Stuck: c.")));
-        let h = if script {
-            Harness::with_script(script).await
+        let h = if plans {
+            Harness::with_desk(script).await
         } else {
             Harness::start(script, false).await
         };
@@ -3418,14 +3445,25 @@ async fn mcp_surface_without_script_matches_the_cbdesk_agent_byte_for_byte() {
     }
 }
 
+#[cfg(feature = "script")]
 #[tokio::test]
 async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
-    let h = Harness::with_script(Vec::new()).await;
-    let mut mcp = McpClient::connect(&h).await;
+    reports_result_logs_and_a_screenshot(&Harness::with_script(Vec::new()).await, "script_run")
+        .await;
+}
+
+#[tokio::test]
+async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
+    reports_result_logs_and_a_screenshot(&Harness::with_desk(Vec::new()).await, "script_run").await;
+}
+
+/// Runs scripts through `tool`; a failed Script run also releases held input.
+async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
+    let mut mcp = McpClient::connect(h).await;
 
     let ok = mcp
         .call(
-            "script_run",
+            tool,
             json!({"code": "export function main(p) { return p }", "params": {"text": "hi"}}),
         )
         .await;
@@ -3451,10 +3489,7 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
 
     std::fs::write(h.workspace.join("flow.mjs"), "boom").unwrap();
     let failed = mcp
-        .call(
-            "script_run",
-            json!({"script": "flow.mjs", "screenshot": false}),
-        )
+        .call(tool, json!({"script": "flow.mjs", "screenshot": false}))
         .await;
     assert_eq!(failed["isError"], true, "{failed}");
     let report: Value =
@@ -3466,20 +3501,22 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
     assert_eq!(report["exit_code"], 1);
     assert!(report.get("screenshot_path").is_none(), "{report}");
     assert_eq!(failed["content"].as_array().unwrap().len(), 1);
-    let release = std::fs::read_to_string(&released).unwrap();
-    assert!(
-        release.contains("m.keyRaw(code, Direction.Release)")
-            && release.contains("m.mouseButton(button, Direction.Release)"),
-        "{release}"
-    );
+    if tool == "script_run" {
+        assert!(!released.exists(), "a desk run released input");
+    } else {
+        let release = std::fs::read_to_string(&released).unwrap();
+        assert!(
+            release.contains("m.keyRaw(code, Direction.Release)")
+                && release.contains("m.mouseButton(button, Direction.Release)"),
+            "{release}"
+        );
+    }
 
     let refused = mcp
-        .call("script_run", json!({"code": "1", "script": "flow.mjs"}))
+        .call(tool, json!({"code": "1", "script": "flow.mjs"}))
         .await;
     assert_eq!(refused["isError"], true, "{refused}");
-    let missing = mcp
-        .call("script_run", json!({"script": "nope.mjs"}))
-        .await;
+    let missing = mcp.call(tool, json!({"script": "nope.mjs"})).await;
     assert!(
         missing["content"][0]["text"]
             .as_str()
@@ -3489,15 +3526,24 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
     );
 }
 
+#[cfg(feature = "script")]
 #[tokio::test]
 async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
-    let h = Harness::with_script(Vec::new()).await;
-    let mut mcp = McpClient::connect(&h).await;
+    stops_a_run_past_its_timeout(&Harness::with_script(Vec::new()).await, "script_run").await;
+}
+
+#[tokio::test]
+async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
+    stops_a_run_past_its_timeout(&Harness::with_desk(Vec::new()).await, "script_run").await;
+}
+
+async fn stops_a_run_past_its_timeout(h: &Harness, tool: &str) {
+    let mut mcp = McpClient::connect(h).await;
 
     let started = std::time::Instant::now();
     let out = mcp
         .call(
-            "script_run",
+            tool,
             json!({"code": "hang", "timeout_s": 1, "screenshot": false}),
         )
         .await;
@@ -3509,7 +3555,10 @@ async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
     assert_eq!(out["isError"], true, "{out}");
     let report: Value = serde_json::from_str(out["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(report["error"]["kind"], "timeout", "{report}");
-    assert!(h.workspace.join("released.log").exists());
+    assert_eq!(
+        h.workspace.join("released.log").exists(),
+        tool != "script_run"
+    );
     let pid = std::fs::read_to_string(h.workspace.join("grandchild.pid")).unwrap();
     let proc = PathBuf::from(format!("/proc/{}", pid.trim()));
     let mut alive = true;
@@ -3524,6 +3573,39 @@ async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
     assert!(!alive, "the script's child survived the timeout");
 }
 
+#[tokio::test]
+async fn mcp_serves_the_desk_guide_as_a_resource() {
+    let h = Harness::with_desk(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let names = McpClient::tool_names(&listed);
+    assert!(names.contains(&"desk".to_owned()), "{names:?}");
+    for tool in listed["result"]["tools"].as_array().unwrap() {
+        let always = tool["_meta"]["anthropic/alwaysLoad"] == true;
+        assert_eq!(
+            always,
+            [
+                "script_run",
+                "gui_plan",
+                "shell",
+                "browser_navigate",
+                "browser_read",
+                "browser_fetch"
+            ]
+            .contains(&tool["name"].as_str().unwrap()),
+            "{tool}"
+        );
+        assert!(!tool.to_string().to_lowercase().contains("simul"), "{tool}");
+    }
+    let listed = mcp.rpc("resources/list", json!({})).await;
+    assert_eq!(
+        listed["result"]["resources"][0]["uri"], "cocoonbox://desk/AGENTS.md",
+        "{listed}"
+    );
+    assert_eq!(listed["result"]["resources"].as_array().unwrap().len(), 1);
+}
+
+#[cfg(feature = "script")]
 #[tokio::test]
 async fn mcp_serves_the_script_guide_as_resources() {
     let h = Harness::with_script(Vec::new()).await;
@@ -3577,7 +3659,7 @@ async fn mcp_serves_the_script_guide_as_resources() {
 
 #[tokio::test]
 async fn mcp_gui_plan_keeps_a_static_description_and_lists_saved_flows_on_request() {
-    let h = Harness::with_script(Vec::new()).await;
+    let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let plan = |listed: &Value| {
         listed["result"]["tools"]
@@ -3617,11 +3699,12 @@ async fn mcp_gui_plan_keeps_a_static_description_and_lists_saved_flows_on_reques
         out["content"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("/opt/script/lib/gui_plan.mts does not exist"),
+            .contains("/opt/desk/lib/gui_plan.mts does not exist"),
         "{out}"
     );
 }
 
+#[cfg(feature = "script")]
 #[tokio::test]
 async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routing() {
     let run = json!({"code": "export function main(p) { return p }", "params": {"n": 1}, "screenshot": false});
@@ -3745,8 +3828,98 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
 }
 
 #[tokio::test]
-async fn a_script_box_serves_no_cua_route_over_mcp() {
-    let h = Harness::with_script(Vec::new()).await;
+async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routing() {
+    let run = json!({"code": "export function main(p) { return p }", "params": {"n": 1}, "screenshot": false});
+    let h = Harness::with_desk(vec![
+        ("decisions", decision("plan", 0.93)),
+        (
+            "chat/completions",
+            chat_tool_call("call_r", "script_run", &run),
+        ),
+        ("chat/completions", chat_text("Saved.")),
+    ])
+    .await;
+    let routing = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../image/desk/routing.md"),
+    )
+    .unwrap();
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "save a note in mousepad", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    let offered: Vec<&str> = chats[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(offered[..2], ["gui_plan", "script_run"], "{offered:?}");
+    assert!(offered.contains(&"delegate_computer"), "{offered:?}");
+    assert!(!offered.contains(&"cua_route"), "{offered:?}");
+    let system = chats[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(system.ends_with(&routing), "{system}");
+    let asked = gw_bodies(&h.gw_log, "decisions");
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0]["state"]["task"], "save a note in mousepad");
+    assert_eq!(asked[0]["model"], "typesafe/jev-1.13");
+    let request = &chats[0]["messages"][1]["content"];
+    assert_eq!(
+        request[0]["text"],
+        "Router: this task is tier plan (0.93): run desktop-app GUI work as one gui_plan call with the whole plan, or write one script on the desk API and run it with script_run for loops and logic."
+    );
+    assert_eq!(request[1]["text"], "save a note in mousepad");
+    assert!(entries.iter().any(|e| e.role == i32::from(pb::Role::System)
+        && matches!(&e.body, Some(Body::Text(t)) if t.text.starts_with("Router: this task is tier plan"))));
+    let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(result["role"], "tool");
+    let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+    assert_eq!(report["result"], json!({"params": {"n": 1}}), "{report}");
+
+    let golden: Value = serde_json::from_slice(
+        &std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/mcp-initialize.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let init: Value = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .header("accept", "application/json, text/event-stream")
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.ends_with(&format!("\n\n{routing}")),
+        "{instructions}"
+    );
+    assert_ne!(
+        instructions.lines().next(),
+        golden["result"]["instructions"]
+            .as_str()
+            .unwrap()
+            .lines()
+            .next()
+    );
+    assert!(
+        instructions.chars().count() <= 1600,
+        "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",
+        instructions.chars().count()
+    );
+}
+
+#[tokio::test]
+async fn a_desk_box_serves_no_cua_route_over_mcp() {
+    let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let tools = McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await);
     assert!(tools.contains(&"script_run".to_owned()), "{tools:?}");
@@ -3762,8 +3935,8 @@ async fn a_script_box_serves_no_cua_route_over_mcp() {
 }
 
 #[tokio::test]
-async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
-    let h = Harness::with_script(Vec::new()).await;
+async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
+    let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
     let act = listed["result"]["tools"]
@@ -3773,10 +3946,7 @@ async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
         .find(|t| t["name"] == "computer_act")
         .unwrap();
     assert!(
-        act["description"]
-            .as_str()
-            .unwrap()
-            .contains("script_run"),
+        act["description"].as_str().unwrap().contains("script_run"),
         "{act}"
     );
     let press = json!({"action": "key", "key": "a"});
@@ -3819,8 +3989,8 @@ async fn a_script_box_points_a_streak_of_computer_acts_to_script_run_once() {
 }
 
 #[tokio::test]
-async fn a_script_box_runs_a_computer_act_list_until_its_first_failure() {
-    let h = Harness::with_script(Vec::new()).await;
+async fn a_desk_box_runs_a_computer_act_list_until_its_first_failure() {
+    let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
     let act = listed["result"]["tools"]
@@ -3873,8 +4043,8 @@ async fn a_script_box_runs_a_computer_act_list_until_its_first_failure() {
 }
 
 #[tokio::test]
-async fn a_script_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
-    let h = Harness::with_script(Vec::new()).await;
+async fn a_desk_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
+    let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let click = json!({"action": "click", "x": 10, "y": 20});
 
@@ -3912,8 +4082,8 @@ async fn a_script_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
 }
 
 #[tokio::test]
-async fn a_script_box_takes_triple_click_and_left_click_as_clicks() {
-    let h = Harness::with_script(Vec::new()).await;
+async fn a_desk_box_takes_triple_click_and_left_click_as_clicks() {
+    let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     for action in ["triple_click", "left_click"] {
         let out = mcp
@@ -4157,8 +4327,8 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
 }
 
 #[tokio::test]
-async fn a_read_share_of_a_script_box_does_not_read_its_saved_flows() {
-    let h = Harness::with_script(Vec::new()).await;
+async fn a_read_share_of_a_desk_box_does_not_read_its_saved_flows() {
+    let h = Harness::with_desk(Vec::new()).await;
     let edge = Edge::provision(&h);
     std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
     std::fs::write(h.workspace.join("flows/save.json"), "{\"typed\":\"x\"}").unwrap();

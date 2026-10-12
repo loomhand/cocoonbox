@@ -18,6 +18,7 @@ use serde_json::{Value, json};
 use tokio::sync::Notify;
 use tonic::Status;
 
+use crate::config::Automation;
 use crate::dispatch::{Caller, ToolOutput, uses_driver};
 use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
 use crate::llm::{b64, image_mime};
@@ -45,10 +46,12 @@ Relative file paths resolve under /workspace, and shell is one persistent bash s
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
-const SCRIPT_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
+const PLAN_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
 Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 The user watches the screen live and sees every call.";
-const ALWAYS_LOAD: [&str; 6] = [
+const ALWAYS_LOAD: &[&str] = &[
+    #[cfg(feature = "script")]
+    "script_run",
     "script_run",
     "gui_plan",
     "shell",
@@ -57,9 +60,12 @@ const ALWAYS_LOAD: [&str; 6] = [
     "browser_fetch",
 ];
 const NUDGE_STREAK: u32 = 2;
-const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
+#[cfg(feature = "script")]
+const SCRIPT_NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
+const DESK_NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
 const MAX_FLOWS: usize = 30;
-const RESOURCES: [Resource; 3] = [
+#[cfg(feature = "script")]
+const SCRIPT_RESOURCES: [Resource; 3] = [
     Resource {
         uri: "cocoonbox://script/AGENTS.md",
         path: "/opt/script/AGENTS.md",
@@ -79,13 +85,19 @@ const RESOURCES: [Resource; 3] = [
         description: "script-js usage notes, as installed on this box",
     },
 ];
+const DESK_RESOURCES: [Resource; 1] = [Resource {
+    uri: "cocoonbox://desk/AGENTS.md",
+    path: "/opt/desk/AGENTS.md",
+    mime: "text/markdown",
+    description: "How to write, run and replay desk scripts on this box, with the desk API",
+}];
 
 /// MCP sessions of external agents.
 pub struct Mcp {
     rt: Arc<Runtime>,
     gate: Arc<Gate>,
     tools: Vec<(Cow<'static, str>, Value)>,
-    script: bool,
+    automation: Automation,
     idle: Duration,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
 }
@@ -93,13 +105,13 @@ pub struct Mcp {
 impl Mcp {
     /// Creates the server behind `gate`; sessions idle for `idle` are closed.
     pub fn new(rt: Arc<Runtime>, idle: Duration, gate: Arc<Gate>) -> Arc<Self> {
-        let script = rt.cfg.script;
-        let tools = tools::remote_tools(script)
+        let automation = rt.cfg.automation;
+        let tools = tools::remote_tools(automation)
             .into_iter()
             .map(|t| {
                 let mut tool = json!({"name": t.name, "description": t.description});
                 tool["inputSchema"] = t.parameters;
-                if script && ALWAYS_LOAD.contains(&t.name.as_ref()) {
+                if automation.plans() && ALWAYS_LOAD.contains(&t.name.as_ref()) {
                     tool["_meta"] = json!({"anthropic/alwaysLoad": true});
                 }
                 (t.name, tool)
@@ -109,7 +121,7 @@ impl Mcp {
             rt,
             gate,
             tools,
-            script,
+            automation,
             idle,
             sessions: Mutex::new(HashMap::new()),
         })
@@ -329,9 +341,10 @@ impl Mcp {
             "serverInfo": {"name": "cocoonbox-agent", "version": env!("CB_AGENT_VERSION")},
             "instructions": INSTRUCTIONS,
         });
-        if self.script {
+        if self.automation.plans() {
             result["capabilities"]["resources"] = json!({});
-            result["instructions"] = format!("{SCRIPT_HEAD}\n\n{}", prompts::ROUTING).into();
+            result["instructions"] =
+                format!("{PLAN_HEAD}\n\n{}", prompts::routing(self.automation)).into();
         }
         Ok((session, result))
     }
@@ -397,11 +410,12 @@ impl Mcp {
             ("ping", _) => Ok(json!({})),
             ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
             ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
-            ("resources/list", _) if self.script => Ok(list_resources()),
-            ("resources/read", _) if self.script => {
+            ("resources/list", _) if self.automation.plans() => Ok(list_resources(self.automation)),
+            ("resources/read", _) if self.automation.plans() => {
                 let mut flows = String::new();
                 let reads_flows = !matches!(principal, Principal::Share { write: false, .. });
-                if reads_flows && msg["params"]["uri"] == RESOURCES[0].uri {
+                let guide = resources(self.automation).first().map(|r| r.uri);
+                if reads_flows && msg["params"]["uri"].as_str() == guide {
                     let index = self
                         .rt
                         .dispatcher
@@ -411,7 +425,7 @@ impl Mcp {
                         flows = index.text;
                     }
                 }
-                read_resource(&msg["params"], &flows).await
+                read_resource(self.automation, &msg["params"], &flows).await
             }
             ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
@@ -499,8 +513,8 @@ impl Mcp {
         }
         lock(&s.driver).last_seen = Instant::now();
         let mut text = out.text;
-        if self.script && s.gui_streak(name, launch) {
-            text.push_str(NUDGE);
+        if self.automation.plans() && s.gui_streak(name, launch) {
+            text.push_str(nudge(self.automation));
         }
         let mut content = vec![json!({"type": "text"})];
         content[0]["text"] = text.into();
@@ -798,8 +812,25 @@ async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response
     }
 }
 
-fn list_resources() -> Value {
-    let resources: Vec<Value> = RESOURCES
+fn resources(automation: Automation) -> &'static [Resource] {
+    match automation {
+        Automation::Plain => &[],
+        Automation::Desk => &DESK_RESOURCES,
+        #[cfg(feature = "script")]
+        Automation::Script => &SCRIPT_RESOURCES,
+    }
+}
+
+fn nudge(automation: Automation) -> &'static str {
+    match automation {
+        #[cfg(feature = "script")]
+        Automation::Script => SCRIPT_NUDGE,
+        _ => DESK_NUDGE,
+    }
+}
+
+fn list_resources(automation: Automation) -> Value {
+    let resources: Vec<Value> = resources(automation)
         .iter()
         .map(|r| {
             let name = r.uri.rsplit('/').next().unwrap_or(r.uri);
@@ -810,9 +841,13 @@ fn list_resources() -> Value {
 }
 
 /// Reads a resource; the guide gains a "Saved flows" section from `flows`, the flow index, up to [`MAX_FLOWS`] lines.
-async fn read_resource(params: &Value, flows: &str) -> Result<Value, (i64, String)> {
+async fn read_resource(
+    automation: Automation,
+    params: &Value,
+    flows: &str,
+) -> Result<Value, (i64, String)> {
     let uri = params["uri"].as_str().unwrap_or_default();
-    let Some(r) = RESOURCES.iter().find(|r| r.uri == uri) else {
+    let Some(r) = resources(automation).iter().find(|r| r.uri == uri) else {
         return Err((-32002, format!("resource not found: {uri}")));
     };
     let mut text = tokio::fs::read_to_string(r.path)
