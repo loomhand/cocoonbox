@@ -31,6 +31,7 @@ const LINE = /^(\s*)- (\S+)(?: "((?:[^"\\]|\\.)*)")?(.*?)\[ref=(\d+)\](?:: "(.*)
 const MARGIN = 0.25
 const HOLDERS = /^at-spi\.role\.(page|filler|panel|scroll|viewport|layered|frame|dialog|window)\b/
 const OPS = ['app', 'menu', 'click', 'check', 'set', 'type', 'key', 'wait', 'expect', 'verify', 'close']
+const CUT = '\n(the outline holds only the start of the web page: use the browser_* tools for page content)'
 const m = Machine.local()
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const norm = (s: string) => s.toLowerCase().replace(/[_…]|\.\.\.|:$/g, '').replace(/\s+/g, ' ').trim()
@@ -86,7 +87,7 @@ function snapOf(w: NonNullable<ReturnType<typeof focused>>) {
 }
 function outline(w = focused()) {
   if (!w) return '(no focused window)'
-  try { const s = snapOf(w); return s.print({ interactiveOnly: s.len() > 60, maxChars: 100 }).slice(0, 1800) } catch (e) { return String(e) }
+  try { const s = snapOf(w); return s.print({ interactiveOnly: s.len() > 60, maxChars: 100 }).slice(0, 1800) + (s.truncated ? CUT : '') } catch (e) { return String(e) }
 }
 function seen() {
   const w = focused()
