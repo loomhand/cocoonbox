@@ -9,8 +9,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -54,72 +52,6 @@ func TestMCPPostRoundTrip(t *testing.T) {
 	}
 	if reached := env.resolver.reaches(); !slices.Equal(reached, []string{boxes.BoxID("alice")}) {
 		t.Errorf("reached %v, want alice's box", reached)
-	}
-}
-
-func TestMCPMetersScriptRunCalls(t *testing.T) {
-	env := newMCPEnv(t)
-	path := filepath.Join(t.TempDir(), "cua-meter.jsonl")
-	meter, err := OpenMeter(path)
-	if err != nil {
-		t.Fatalf("open meter: %v", err)
-	}
-	env.mcp.EnableMeter(meter)
-	tests := []struct {
-		name, body, reply string
-		want              []meterRow
-	}{
-		{
-			name:  "a call",
-			body:  `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"script_run","arguments":{"code":"1"}}}`,
-			reply: `{"id":7,"jsonrpc":"2.0","result":{"content":[],"isError":false}}`,
-			want:  []meterRow{{Tool: "script_run", OK: true, BytesOut: 64}},
-		},
-		{
-			name:  "a failed call in a batch",
-			body:  `[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"shell"}},{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"script_run"}}]`,
-			reply: `[{"id":1,"jsonrpc":"2.0","result":{"isError":false}},{"id":2,"jsonrpc":"2.0","result":{"isError":true}}]`,
-			want:  []meterRow{{Tool: "script_run", BytesOut: 50}},
-		},
-		{
-			name:  "a duplicated method name the agent reads last",
-			body:  `{"jsonrpc":"2.0","id":3,"method":"ping","method":"tools/call","params":{"name":"script_run"}}`,
-			reply: `{"id":3,"jsonrpc":"2.0","error":{"code":-32603,"message":"x"}}`,
-			want:  []meterRow{{Tool: "script_run", BytesOut: 62}},
-		},
-		{
-			name:  "an escaped name",
-			body:  `{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"simul\u0061ng_run"}}`,
-			reply: `{"id":5,"jsonrpc":"2.0","result":{"isError":false}}`,
-			want:  []meterRow{{Tool: "script_run", OK: true, BytesOut: 51}},
-		},
-		{
-			name:  "another tool",
-			body:  `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"shell"}}`,
-			reply: `{"id":4,"jsonrpc":"2.0","result":{"isError":false}}`,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			before := meterRows(t, path)
-			env.upstream.reply.Store(&tt.reply)
-			resp := env.do(t, env.request(t, http.MethodPost, boxes.BoxID("alice"), tt.body))
-			body, _ := io.ReadAll(resp.Body)
-			_ = resp.Body.Close()
-			if string(body) != tt.reply {
-				t.Fatalf("client got %q, want the agent's reply", body)
-			}
-			got := meterRows(t, path)[len(before):]
-			if len(got) != len(tt.want) {
-				t.Fatalf("rows %+v, want %d", got, len(tt.want))
-			}
-			for i, w := range tt.want {
-				g := got[i]
-				if g.Tool != w.Tool || g.OK != w.OK || g.BytesOut != w.BytesOut || g.UID != "alice" || g.GWUser != "alice" || g.Machine != boxes.BoxID("alice") || g.Primitives == nil {
-					t.Errorf("row %+v, want %+v for alice's box", g, w)
-				}
-			}
-		})
 	}
 }
 
@@ -243,7 +175,6 @@ func TestMCPIgnoresOtherPaths(t *testing.T) {
 type mcpEnv struct {
 	served   chan string
 	addr     string
-	mcp      *MCP
 	resolver *fakeResolver
 	upstream *fakeMCP
 	shares   *fakeShares
@@ -268,7 +199,7 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 		defer func() { served <- r.Method }()
 		mcp.ServeHTTP(w, r)
 	}))
-	return &mcpEnv{served: served, addr: addr, mcp: mcp, resolver: resolver, upstream: upstream, shares: shares, users: users, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
+	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, shares: shares, users: users, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
 }
 
 func (e *mcpEnv) request(t *testing.T, method, path, body string) *http.Request {
@@ -291,23 +222,6 @@ func (e *mcpEnv) do(t *testing.T, req *http.Request) *http.Response {
 	return resp
 }
 
-func meterRows(t *testing.T, path string) []meterRow {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read meter: %v", err)
-	}
-	var rows []meterRow
-	for line := range strings.Lines(string(raw)) {
-		var row meterRow
-		if err := json.Unmarshal([]byte(line), &row); err != nil {
-			t.Fatalf("meter line %q: %v", line, err)
-		}
-		rows = append(rows, row)
-	}
-	return rows
-}
-
 func serveHTTP(t *testing.T, handler http.Handler) string {
 	t.Helper()
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -323,9 +237,8 @@ func serveHTTP(t *testing.T, handler http.Handler) string {
 	return lis.Addr().String()
 }
 
-// fakeMCP answers POST with reply when set, else with what it received, and GET with one SSE event per signal on next.
+// fakeMCP answers POST with what it received and GET with one SSE event per signal on next.
 type fakeMCP struct {
-	reply  atomic.Pointer[string]
 	calls  atomic.Int64
 	next   chan struct{}
 	closed chan struct{}
@@ -340,10 +253,6 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Mcp-Session-Id", "sess-1")
 	w.Header().Set("Content-Type", "application/json")
-	if reply := f.reply.Load(); reply != nil {
-		_, _ = io.WriteString(w, *reply)
-		return
-	}
 	_ = json.NewEncoder(w).Encode(map[string]string{
 		"path": r.URL.Path, "query": r.URL.RawQuery, "session": r.Header.Get("Mcp-Session-Id"),
 		"edge_token": r.Header.Get(HeaderEdgeToken), "authorization": r.Header.Get("Authorization"), "body": string(body),

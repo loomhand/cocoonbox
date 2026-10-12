@@ -204,8 +204,6 @@ type Config struct {
 	MaxRunningBoxes int     `json:"max_running_boxes"`
 	State           State   `json:"state"`
 	Connect         Connect `json:"connect"`
-	// CUAMeterFile gets one JSON line per script_run call through the edge; empty turns the meter off.
-	CUAMeterFile string `json:"cua_meter_file"`
 	// OperatorSocket serves the root CLI's box commands on this unix socket; empty turns them off.
 	OperatorSocket string `json:"operator_socket"`
 	Wake           Wake   `json:"wake"`
@@ -328,7 +326,7 @@ func (c *Config) validate() error {
 	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
 		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
 	}
-	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate(), c.validateImageOwners(), absolute("cua_meter_file", c.CUAMeterFile), absolute("operator_socket", c.OperatorSocket))
+	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate(), c.validateImageOwners(), absolute("operator_socket", c.OperatorSocket))
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}

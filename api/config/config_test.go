@@ -96,7 +96,6 @@ func TestLoadRejects(t *testing.T) {
 		{name: "oauth over http", body: required + "oauth:\n  public_url: http://cb.example\n", want: "oauth.public_url must be an https origin"},
 		{name: "negative idle hibernate", body: required + "oauth:\n  idle_hibernate: -1m\n", want: "oauth.idle_hibernate must not be negative"},
 		{name: "negative park after", body: required + "state:\n  park_after: -1h\n", want: "state.park_after must not be negative"},
-		{name: "relative cua meter", body: required + "cua_meter_file: cua-meter.jsonl\n", want: "cua_meter_file must be an absolute path"},
 		{name: "image owners of an image not offered", body: required + "rebase_images: [cbplan:v38]\nimage_owners: {\"cbcore:v1\": [u-a]}\n", want: `image_owners image "cbcore:v1" must be in rebase_images`},
 		{name: "image owner under two images", body: required + "rebase_images: [cbplan:v38, cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a], \"cbplan:v38\": [u-a]}\n", want: `image_owners lists user "u-a" under`},
 		{name: "relative operator socket", body: required + "operator_socket: operator.sock\n", want: "operator_socket must be an absolute path"},
