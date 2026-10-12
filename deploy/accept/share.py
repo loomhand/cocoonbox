@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ENDPOINT = os.environ.get("CB_ENDPOINT", "https://box.example.com").rstrip("/")
+ENDPOINT = os.environ["CB_ENDPOINT"].rstrip("/")
 PROTO = Path(__file__).resolve().parents[2] / "proto"
 READ_ONLY = sorted(["screenshot", "computer_state", "read_file", "list_dir", "browser_snapshot", "browser_read"])
 CUT_LIMIT = 1.0

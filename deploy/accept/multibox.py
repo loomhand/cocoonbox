@@ -15,7 +15,7 @@ import time
 import urllib.error
 import urllib.request
 
-ENDPOINT = os.environ.get("CB_ENDPOINT", "https://box.example.com").rstrip("/")
+ENDPOINT = os.environ["CB_ENDPOINT"].rstrip("/")
 USER = os.environ.get("CB_USER", "mb1")
 REAL = {"test", "cmgs", "dev", "a tester"}
 SANDBOXD = "http://127.0.0.1:17780"
