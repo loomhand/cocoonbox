@@ -251,10 +251,10 @@ final class MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "cocoonbox-mock", "version": "0.1"],
-                "instructions": box.image.hasPrefix("cbplan:") ? "Mock cbplan box: write one script with script_run for a multi-step task." : "Mock cbdesk box.",
+                "instructions": box.image.hasPrefix("cbcore:") ? "Mock cbcore box: write one script with script_run for a multi-step task." : "Mock cbdesk box.",
             ]
         case "tools/list":
-            result = ["tools": box.image.hasPrefix("cbplan:") ? Self.scriptTools : Self.tools]
+            result = ["tools": box.image.hasPrefix("cbcore:") ? Self.scriptTools : Self.tools]
         case "tools/call":
             guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")

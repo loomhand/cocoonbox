@@ -662,14 +662,14 @@ final class AppModel {
 
     // MARK: boxes
 
-    func createBox(name: String, kind: BoxKind = .general) {
+    func createBox(name: String) {
         guard let connection else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         busy = true
         Task {
             defer { busy = false }
             do {
-                let response = try await connection.createBox(name: name, kind: kind)
+                let response = try await connection.createBox(name: name)
                 apply(box: response.box)
                 selectBox(response.box.id)
                 if response.hasOperation, !response.operation.id.isEmpty {

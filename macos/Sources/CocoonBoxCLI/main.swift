@@ -15,10 +15,7 @@ usage: cocoonbox <command> [options]
   ensure | save                         wake or save the box, with progress
   hibernate [--yes]                     hibernate the box, with progress
   upgrade [--yes]                       move the box to the latest desktop image
-  box create NAME [--kind general|script] [--json]
-                                        create another box and wait until it runs; general (the default) is
-                                        the standard desktop, script also has the Script runtime, whose
-                                        box tools add script_run
+  box create NAME [--json]              create another box and wait until it runs
   box schedule set BOX --cron "M H DOM MON DOW" --tz ZONE [--awake-for 15m] [--json]
                                         wake BOX from hibernation a minute before each time of the cron in
                                         ZONE, an IANA zone; after --awake-for (1m to 1h) it hibernates again
@@ -27,7 +24,7 @@ usage: cocoonbox <command> [options]
   box schedule clear BOX                remove the wake schedule of BOX
   usage [--json]                        show the model usage gw metered for you today and this month (UTC),
                                         by model, with your daily cost cap and what is left of it
-  flows [list] [--json]                 list your saved flows: every cbplan box of yours syncs them
+  flows [list] [--json]                 list your saved flows: your boxes sync them
   flows export [NAME...] [-o FILE]      write flows (default: all) as JSON to FILE, else stdout
   flows import FILE|- [--json]          add the flows of an export to your library; the last write wins
   flows rm NAME...                      delete flows from your library and from your boxes' unchanged copies
@@ -259,15 +256,13 @@ func lifecycle(_ command: String) async {
 
 func boxCommand() async {
     if words.first == "schedule" { return await scheduleCommand() }
-    let kindValue = value(of: "--kind")
-    guard words.first == "create", let name = words.dropFirst().first(where: { $0 != kindValue }) else {
-        fail("usage: cocoonbox box create NAME [--kind general|script]")
+    guard words.first == "create", let name = words.dropFirst().first else {
+        fail("usage: cocoonbox box create NAME")
     }
-    guard let kind = BoxKind(rawValue: kindValue ?? BoxKind.general.rawValue) else { fail("--kind is general or script") }
     let connection = connection()
     defer { connection.close() }
     do {
-        let response = try await connection.createBox(name: name, kind: kind)
+        let response = try await connection.createBox(name: name)
         if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
         printBox(try await connection.listBoxes().first { $0.id == response.box.id }, json: flags.contains("--json"))
     } catch {

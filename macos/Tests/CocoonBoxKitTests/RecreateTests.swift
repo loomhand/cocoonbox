@@ -3,8 +3,8 @@ import Foundation
 import Testing
 
 // RecreateTests deletes a box another client holds and creates one under its
-// name, as A client app saw on 2026-10-09: the holder follows the new box by name,
-// and reports a deleted box when no box has the name.
+// name: the holder follows the new box by name, and reports a deleted box when
+// no box has the name.
 @Suite struct RecreateTests {
     @MainActor @Test func liveScreenFollowsABoxRecreatedUnderItsName() async throws {
         let mock = try await MockBoxProcess()

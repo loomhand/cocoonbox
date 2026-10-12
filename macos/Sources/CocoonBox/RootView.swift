@@ -452,15 +452,13 @@ struct BoxSwitcher: View {
         .help("Switch, create, rename or delete boxes")
         .alert("New box", isPresented: $model.showNewBox) {
             TextField("Name", text: $name)
-            ForEach(BoxKind.allCases, id: \.self) { kind in
-                Button(kind == .general ? "Create" : "Create \(kind.title) Box") {
-                    model.createBox(name: name, kind: kind)
-                    name = ""
-                }
+            Button("Create") {
+                model.createBox(name: name)
+                name = ""
             }
             Button("Cancel", role: .cancel) { name = "" }
         } message: {
-            Text("A name of lowercase letters, digits, - or _. If another box runs, hibernate it first. Create makes a General box, the standard desktop; a Script box also has the Script runtime for agents (script_run).")
+            Text("A name of lowercase letters, digits, - or _. If another box runs, hibernate it first.")
         }
         .alert("Rename “\(model.renamingBox?.name ?? "box")”", isPresented: Binding(get: { model.renamingBox != nil }, set: { if !$0 { model.renamingBox = nil } }), presenting: model.renamingBox) { box in
             TextField("Name", text: $name)

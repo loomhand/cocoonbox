@@ -142,10 +142,11 @@ public final class BoxConnection: Sendable {
         try seen(await boxes.ensure(.with { $0.boxID = boxID }))
     }
 
-    public func createBox(name: String, kind: BoxKind = .general) async throws -> Cocoonbox_Control_V1_EnsureResponse {
+    // createBox runs image, an offered image or the family of one, else the default image.
+    public func createBox(name: String, image: String = "") async throws -> Cocoonbox_Control_V1_EnsureResponse {
         try seen(await boxes.create(.with {
             $0.name = name
-            $0.image = kind.family
+            $0.image = image
         }))
     }
 

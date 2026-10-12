@@ -57,12 +57,12 @@ import Testing
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         let cbdesk = try #require(try await mock.connection.firstBox()).id
-        let sim = try await BridgeClient(mock, box: "sim1")
-        _ = try await sim.tool("box_create", ["name": "sim1", "kind": "script"])
-        _ = try await sim.tool("shell", ["command": "true"])
-        let live = try await sim.tools().first { $0["name"] as? String == "script_run" }
+        try await Self.core(mock)
+        let core = try await BridgeClient(mock, box: "core1")
+        _ = try await core.tool("shell", ["command": "true"])
+        let live = try await core.tools().first { $0["name"] as? String == "script_run" }
         #expect((live?["_meta"] as? [String: Any])?["anthropic/alwaysLoad"] as? Bool == true, "the bridge forwards script_run's _meta")
-        sim.close()
+        core.close()
 
         let desk = try await BridgeClient(mock, box: cbdesk)
         defer { desk.close() }
@@ -71,21 +71,21 @@ import Testing
         #expect(boxTools.count == 13 && !names.contains("script_run"), "\(names)")
     }
 
-    @Test func aCbplanDefaultBoxAddsItsOwnInstructionsAndACbdeskBoxAddsNone() async throws {
+    @Test func aCbcoreDefaultBoxAddsItsOwnInstructionsAndACbdeskBoxAddsNone() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         let cbdesk = try #require(try await mock.connection.firstBox()).id
         let desk = try await BridgeClient(mock, box: cbdesk)
         #expect(desk.instructions == Bridge.instructions, "a cbdesk box's bridge instructions stay the bridge's own")
-        _ = try await desk.tool("box_create", ["name": "sim1", "kind": "script"])
         desk.close()
+        try await Self.core(mock)
 
-        let running = try await BridgeClient(mock, box: "sim1")
-        #expect(running.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbplan box: write one script with script_run for a multi-step task.")
-        _ = try await running.tool("box_hibernate", ["box": "sim1"])
+        let running = try await BridgeClient(mock, box: "core1")
+        #expect(running.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbcore box: write one script with script_run for a multi-step task.")
+        _ = try await running.tool("box_hibernate", ["box": "core1"])
         running.close()
-        let hibernated = try await BridgeClient(mock, box: "sim1")
-        #expect(hibernated.instructions == running.instructions, "a hibernated cbplan box keeps its cached instructions")
+        let hibernated = try await BridgeClient(mock, box: "core1")
+        #expect(hibernated.instructions == running.instructions, "a hibernated cbcore box keeps its cached instructions")
         let cached = try await hibernated.tools().first { $0["name"] as? String == "script_run" }
         #expect((cached?["_meta"] as? [String: Any])?["anthropic/alwaysLoad"] as? Bool == true, "the cached list keeps script_run's _meta")
         hibernated.close()
@@ -104,11 +104,11 @@ import Testing
         desk.close()
         #expect(desk.instructions == Bridge.instructions)
 
-        _ = try await mock.connection.rebase(boxID: cbdesk, image: "cbplan:v1")
-        #expect(await until(seconds: 10) { (try? await mock.connection.firstBox())?.image == "cbplan:v1" })
-        let sim = try await BridgeClient(mock, box: cbdesk)
-        defer { sim.close() }
-        #expect(sim.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbplan box: write one script with script_run for a multi-step task.")
+        _ = try await mock.connection.rebase(boxID: cbdesk, image: "cbcore:v1")
+        #expect(await until(seconds: 10) { (try? await mock.connection.firstBox())?.image == "cbcore:v1" })
+        let core = try await BridgeClient(mock, box: cbdesk)
+        defer { core.close() }
+        #expect(core.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbcore box: write one script with script_run for a multi-step task.")
     }
 
     @Test func theBridgeNamesTheUsersKeysWithinTheInstructionsCap() async throws {
@@ -151,7 +151,7 @@ import Testing
         #expect(Bridge.withKeys(String(repeating: "x", count: 2040), many) == String(repeating: "x", count: 2040))
     }
 
-    @Test func aCbplanBoxNamesTheKeysAndLinkInShellsDescription() async throws {
+    @Test func aCbcoreBoxNamesTheKeysAndLinkInShellsDescription() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         _ = try await mock.connection.addKey(.with {
@@ -163,13 +163,13 @@ import Testing
         let desk = try await BridgeClient(mock)
         let shell = { (client: BridgeClient) in try await client.tools().first { $0["name"] as? String == "shell" }?["description"] as? String }
         #expect(try await shell(desk)?.contains(Bridge.keysHead) == false)
-        _ = try await desk.tool("box_create", ["name": "sim1", "kind": "script"])
         desk.close()
+        try await Self.core(mock)
 
-        let sim = try await BridgeClient(mock, box: "sim1")
-        defer { sim.close() }
-        #expect(sim.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbplan box: write one script with script_run for a multi-step task.")
-        #expect(try await shell(sim) == "Run a shell command on the box. " + Bridge.linkLine + " " + Bridge.keysHead + " ATTIO_API_KEY for api.attio.com as Authorization: Bearer $ATTIO_API_KEY.")
+        let core = try await BridgeClient(mock, box: "core1")
+        defer { core.close() }
+        #expect(core.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbcore box: write one script with script_run for a multi-step task.")
+        #expect(try await shell(core) == "Run a shell command on the box. " + Bridge.linkLine + " " + Bridge.keysHead + " ATTIO_API_KEY for api.attio.com as Authorization: Bearer $ATTIO_API_KEY.")
     }
 
     @Test func theBridgeAddsTheLinkLineOnlyWithAnActiveLinkGrant() async throws {
@@ -186,26 +186,26 @@ import Testing
         #expect(Bridge.withKeys(String(repeating: "x", count: 2000), [], link: true) == String(repeating: "x", count: 2000))
     }
 
-    @Test func codexGetsOneLineOnACbplanBoxAndTheBridgeTextOnACbdeskBox() async throws {
+    @Test func codexGetsOneLineOnACbcoreBoxAndTheBridgeTextOnACbdeskBox() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         let cbdesk = try #require(try await mock.connection.firstBox()).id
         let desk = try await BridgeClient(mock, box: cbdesk, client: "codex-mcp-client")
         #expect(desk.instructions == Bridge.instructions)
-        _ = try await desk.tool("box_create", ["name": "sim1", "kind": "script"])
         desk.close()
-        let sim = try await BridgeClient(mock, box: "sim1", client: "codex-mcp-client")
-        defer { sim.close() }
-        #expect(sim.instructions == Bridge.codexInstructions)
+        try await Self.core(mock)
+        let core = try await BridgeClient(mock, box: "core1", client: "codex-mcp-client")
+        defer { core.close() }
+        #expect(core.instructions == Bridge.codexInstructions)
     }
 
     @Test func anAppSwitchToABoxWithOtherToolsSendsListChanged() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         let cbdesk = try #require(try await mock.connection.firstBox()).id
+        try await Self.core(mock)
         let creator = try await BridgeClient(mock)
-        _ = try await creator.tool("box_create", ["name": "sim1", "kind": "script"])
-        _ = try await creator.tool("shell", ["box": "sim1", "command": "true"])
+        _ = try await creator.tool("shell", ["box": "core1", "command": "true"])
         creator.close()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("link-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -216,7 +216,7 @@ import Testing
         let client = try await BridgeClient(mock, box: cbdesk, link: try #require(AgentLinkClient(path: path, agent: "agent-1")))
         defer { client.close() }
         #expect(try await !client.tools().contains { $0["name"] as? String == "script_run" })
-        server.push(agent: "agent-1", box: "sim1")
+        server.push(agent: "agent-1", box: "core1")
         try await Task.sleep(for: .milliseconds(300))
         _ = try await client.tool("box_status")
         #expect(client.listChanged == 1)
@@ -343,6 +343,12 @@ import Testing
 
         #expect(try await !connection.answerConnector(agentID: agent.id, approvalID: request.approvalID, decision: .once))
         #expect(await until { await Self.entries(connection, agent.id).contains { Self.says($0, "Refused: denied.") } })
+    }
+
+    // core creates a running cbcore box, the family whose box tools add script_run.
+    static func core(_ mock: MockBoxProcess) async throws {
+        let id = try await mock.connection.createBox(name: "core1", image: "cbcore").box.id
+        #expect(await until(seconds: 10) { (try? await mock.connection.listBoxes())?.first { $0.id == id }?.state == .running })
     }
 
     static func text(_ result: [String: Any]) -> String {

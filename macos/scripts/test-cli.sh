@@ -220,12 +220,12 @@ check("flows lists an empty library", r.returncode == 0 and r.stdout.strip() == 
 seed = os.path.join(flowwork, "seed.json")
 with open(seed, "w") as f:
     json.dump({"version": 1, "flows": [
-        {"name": "mousepad-save-fruit.json", "content": '{"name":"mousepad-save-fruit","steps":[]}', "image": "cbplan:v17"},
+        {"name": "mousepad-save-fruit.json", "content": '{"name":"mousepad-save-fruit","steps":[]}', "image": "cbcore:v1"},
         {"name": "save-note.mts", "content": "export function main() {}\n"},
     ]}, f)
 r = run("flows", "import", seed, "--json")
 stored = json.loads(r.stdout)["flows"] if r.returncode == 0 else []
-check("flows import stores each flow with its image", [(x["name"], x["rev"], x["image"]) for x in stored] == [("mousepad-save-fruit.json", 1, "cbplan:v17"), ("save-note.mts", 2, "")], r.stdout + r.stderr)
+check("flows import stores each flow with its image", [(x["name"], x["rev"], x["image"]) for x in stored] == [("mousepad-save-fruit.json", 1, "cbcore:v1"), ("save-note.mts", 2, "")], r.stdout + r.stderr)
 r = run("flows", "import", seed)
 check("importing the same content keeps the revs", r.returncode == 0 and "imported mousepad-save-fruit.json as rev 1" in r.stdout, r.stdout + r.stderr)
 r = run("flows", "list", "--json")
@@ -464,24 +464,18 @@ result, _ = p.tool("box_list")
 check("box_list after delete", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
 p.close()
 
-# box create: --kind picks the image family; general keeps the default image.
-r = run("box", "create", "k1", "--kind", "gpu")
-check("box create --kind gpu is refused", r.returncode != 0 and "--kind is general or script" in r.stderr, r.stderr)
+# box create: a new box runs the default image.
 r = run("box", "create")
 check("box create without a name prints its usage", r.returncode != 0 and "usage: cocoonbox box create" in r.stderr, r.stderr)
 run("hibernate", "--box", "main", "--yes")
-r = run("box", "create", "sim1", "--kind", "script", "--json")
-created = json.loads(r.stdout or "{}")
-check("box create --kind script runs a cbplan box", created.get("name") == "sim1" and created.get("image") == "cbplan:v1" and created.get("state") == "running", r.stdout + r.stderr)
 k = Bridge()
-k.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "kind-client", "version": "1"}})
-result, _ = k.tool("box_delete", {"box": "sim1", "confirm": True})
+k.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "create-client", "version": "1"}})
 r = run("box", "create", "gen1", "--json")
 created = json.loads(r.stdout or "{}")
-check("box create without --kind keeps the default image", created.get("name") == "gen1" and created.get("image") == json.loads(run("status", "--json", "--box", "main").stdout)["latest_image"], r.stdout + r.stderr)
+check("box create keeps the default image", created.get("name") == "gen1" and created.get("image") == json.loads(run("status", "--json", "--box", "main").stdout)["latest_image"], r.stdout + r.stderr)
 result, _ = k.tool("box_delete", {"box": "gen1", "confirm": True})
 result, _ = k.tool("box_list")
-check("box_list after the kind boxes are deleted", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
+check("box_list after the created box is deleted", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
 k.close()
 
 import os, urllib.request, urllib.error
