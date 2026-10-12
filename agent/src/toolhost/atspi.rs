@@ -28,7 +28,7 @@ const DBUS: &str = "org.freedesktop.DBus";
 const DBUS_PATH: &str = "/org/freedesktop/DBus";
 const CALL_TIMEOUT: Duration = Duration::from_secs(3);
 const HUNG_FOR: Duration = Duration::from_secs(10);
-const MAX_NODES: usize = 4000;
+const MAX_NODES: usize = 2500;
 const MAX_DEPTH: usize = 64;
 const VALUE_CHARS: i32 = 200;
 const SCREEN: u32 = 0;
@@ -456,19 +456,24 @@ impl Atspi {
                 .collect();
             let lists = join_all(live.iter().map(|o| self.children(o))).await;
             let mut listed: HashMap<Obj, Vec<Obj>> = HashMap::new();
-            for (o, list) in live.into_iter().zip(lists) {
+            for (o, list) in live.iter().zip(lists) {
                 if let Ok(list) = list {
-                    listed.insert(o.clone(), list);
+                    listed.insert((*o).clone(), list);
                 }
             }
-            let unknown: Vec<Obj> = listed
-                .values()
+            let mut queued: HashSet<&Obj> = HashSet::new();
+            let mut unknown: Vec<Obj> = live
+                .iter()
+                .filter_map(|o| listed.get(*o))
                 .flatten()
-                .filter(|c| !raw.contains_key(*c))
+                .filter(|c| !raw.contains_key(*c) && queued.insert(*c))
                 .cloned()
-                .collect::<HashSet<_>>()
-                .into_iter()
                 .collect();
+            let budget = MAX_NODES.saturating_sub(seen.len());
+            if unknown.len() > budget {
+                truncated = true;
+                unknown.truncate(budget);
+            }
             let fetched = join_all(unknown.iter().map(|o| self.raw(o))).await;
             for (o, r) in unknown.into_iter().zip(fetched) {
                 if let Ok(r) = r {
