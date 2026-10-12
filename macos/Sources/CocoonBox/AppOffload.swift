@@ -2,6 +2,7 @@ import AppKit
 import CocoonBoxKit
 import CocoonBoxTerminal
 import Foundation
+import Synchronization
 import UserNotifications
 
 // BoxCLISheet installs a box CLI in a box, or signs it in there.
@@ -49,11 +50,15 @@ extension AppModel {
         do {
             var box = try await connection.listBoxes().first { $0.id == boxID }
             if wake, box?.state != .running {
-                _ = try await connection.ensure(boxID: boxID)
-                for _ in 0..<120 where box?.state != .running {
-                    try await pause(.seconds(1))
-                    box = try await connection.listBoxes().first { $0.id == boxID }
+                let response = try await connection.ensure(boxID: boxID)
+                if response.hasOperation, !response.operation.id.isEmpty {
+                    let failure = Mutex<String?>(nil)
+                    try await connection.watchOperation(response.operation.id, after: "") { event in
+                        if event.phase == .failed { failure.withLock { $0 = event.detail } }
+                    }
+                    if let reason = failure.withLock({ $0 }) { throw OffloadError.failed("the box \(boxID) did not start: \(reason)") }
                 }
+                box = try await connection.listBoxes().first { $0.id == boxID }
             }
             guard let box, box.state == .running else { throw OffloadError.failed("the box \(boxID) is not running") }
             return Offloader(connection: connection, box: box, token: token, cli: cli, store: Self.offloadStore,
