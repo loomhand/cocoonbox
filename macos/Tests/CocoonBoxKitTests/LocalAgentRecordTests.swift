@@ -102,6 +102,42 @@ import Testing
         #expect(claude.claim(home: home) == nil)
     }
 
+    @Test func claudeIsNamedAfterItsFirstPromptUntilItsTitleArrives() throws {
+        let home = try temporaryHome()
+        var claude = LocalAgentRecord(kind: .claudeCode, boxID: "cb-1", sessionID: "0b5e", workspace: "/Users/me/Library/Application Support/CocoonBox/local-agents/claudeCode", startedAt: start)
+        claude.retitle("✳ Claude Code", home: home)
+        #expect(claude.title == nil)
+        try conversation(home, [
+            ["type": "user", "isMeta": true, "message": ["role": "user", "content": "<local-command-caveat>Caveat</local-command-caveat>"]],
+            ["type": "user", "message": ["role": "user", "content": "<command-name>/model</command-name>"]],
+            ["type": "user", "message": ["role": "user", "content": "<local-command-stdout>Set model to Sonnet</local-command-stdout>"]],
+            ["type": "atis-latch", "atis": "6eca0b97ab47a726"],
+            ["type": "user", "origin": ["kind": "human"], "message": ["role": "user", "content": "开豆瓣"]],
+            ["type": "user", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "t1", "content": "ok"]]]],
+        ])
+        for frame in ["◐ Claude Code", "◑ Claude Code", "✳ Claude Code"] {
+            claude.retitle(frame, home: home)
+            #expect(claude.title == "开豆瓣")
+        }
+        for frame in ["◑ Claude Code", "◐ Claude Code", "◐ 16 格子扫雷游戏", "◑ 16 格子扫雷游戏", "✳ 16 格子扫雷游戏"] {
+            claude.retitle(frame, home: home)
+        }
+        #expect(claude.title == "16 格子扫雷游戏")
+        claude.settle(home: home)
+        #expect(claude.title == "16 格子扫雷游戏")
+        claude.name = "Mine"
+        claude.retitle("✳ Next topic", home: home)
+        #expect(claude.displayName == "Mine")
+    }
+
+    @Test func claudeIsNamedAfterAPromptWithAnImage() throws {
+        let home = try temporaryHome()
+        var claude = LocalAgentRecord(kind: .claudeCode, boxID: "cb-1", sessionID: "0b5e", workspace: "/Users/me/Library/Application Support/CocoonBox/local-agents/claudeCode", startedAt: start)
+        try conversation(home, [["type": "user", "message": ["role": "user", "content": [["type": "text", "text": "\n Make this screenshot's dialog work on the box, then save it\nthanks"], ["type": "image"]]]]])
+        claude.settle(home: home)
+        #expect(claude.title == "Make this screenshot's dialog work on th")
+    }
+
     @Test func resumeArguments() {
         let target = MCPTarget(bridge: "/usr/local/bin/cocoonbox", box: "cb-1", endpoint: "https://example.test", token: "tok")
         let claude = LocalAgentKind.claudeCode.launch(executable: "claude", target: target, session: "s-1").arguments
@@ -117,6 +153,8 @@ import Testing
         (LocalAgentKind.claudeCode, "✳ Fix the login bug", "Fix the login bug"),
         (.claudeCode, "⠂ Fix the login bug", "Fix the login bug"),
         (.claudeCode, "✳ Claude Code", nil),
+        (.claudeCode, "◐ Claude Code", nil),
+        (.claudeCode, "◑ 16 格扫雷游戏设计", "16 格扫雷游戏设计"),
         (.codex, "⠋ Rename the files | codex", "Rename the files"),
         (.codex, "[ ! ] Action Required | Rename the files | codex", "Rename the files"),
         (.codex, "codex", nil),
@@ -164,6 +202,13 @@ import Testing
         }
         try Data(lines.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) + "\n" }.joined().utf8)
             .write(to: directory.appendingPathComponent("rollout-\(id).jsonl"))
+    }
+
+    private func conversation(_ home: URL, _ entries: [[String: Any]]) throws {
+        let project = home.appendingPathComponent(".claude/projects/-Users-me-Library-Application-Support-CocoonBox-local-agents-claudeCode")
+        try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
+        try Data(entries.map { String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) + "\n" }.joined().utf8)
+            .write(to: project.appendingPathComponent("0b5e.jsonl"))
     }
 
     private func chat(_ home: URL, id: String, at date: Date, conversation: Bool) throws {

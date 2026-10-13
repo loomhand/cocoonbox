@@ -156,9 +156,9 @@ public final class LocalAgentSession: Identifiable, HostedTerminal {
     }
 
     fileprivate func titleChanged(_ title: String) {
-        guard let name = kind.autoName(fromTitle: title), name != record.title else { return }
-        record.title = name
-        onTitle?()
+        let before = record.title
+        record.retitle(title, home: home)
+        if record.title != before { onTitle?() }
     }
 
     private static func workspace(_ kind: LocalAgentKind) throws -> URL {

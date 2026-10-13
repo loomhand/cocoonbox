@@ -38,20 +38,31 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
     public func resumable(home: URL) -> Bool {
         guard let sessionID else { return false }
         guard kind == .claudeCode else { return true }
-        let project = String(workspace.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
-        return FileManager.default.fileExists(atPath: home.appendingPathComponent(".claude/projects/\(project)/\(sessionID).jsonl").path)
+        return FileManager.default.fileExists(atPath: claudeFile(home: home, id: sessionID).path)
     }
 
     // settle records the session Codex or Cursor chose once it is on disk,
-    // and names a Codex session after its first prompt, as Codex sets no title.
+    // and names a Codex or Claude Code session after its first prompt until
+    // the CLI titles it; Codex sets no title, Claude Code none for a short prompt.
     public mutating func settle(home: URL, now: Date = Date()) {
         if let sessionID {
-            if kind == .codex, title == nil { title = codexName(home: home, id: sessionID) }
+            guard title == nil else { return }
+            switch kind {
+            case .claudeCode: title = claudeName(home: home, id: sessionID)
+            case .codex: title = codexName(home: home, id: sessionID)
+            case .cursor: break
+            }
             return
         }
         guard let session = claim(home: home, now: now) else { return }
         sessionID = session.id
         title = title ?? session.name
+    }
+
+    // retitle names the session after the CLI's terminal title, or after its
+    // first prompt while the title only names the CLI.
+    public mutating func retitle(_ terminalTitle: String, home: URL) {
+        if let name = kind.autoName(fromTitle: terminalTitle) { title = name } else { settle(home: home) }
     }
 
     // claim finds the session this record's process began: the earliest one
@@ -104,6 +115,25 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
         return nil
     }
 
+    // claudeName reads the first prompt of a Claude Code conversation, past
+    // slash commands and the CLI's own entries.
+    private func claudeName(home: URL, id: String) -> String? {
+        var name: String?
+        Self.lines(claudeFile(home: home, id: id)) { entry in
+            guard entry["type"] as? String == "user", entry["isMeta"] as? Bool != true, let message = entry["message"] as? [String: Any] else { return true }
+            let text = message["content"] as? String ?? (message["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined() ?? ""
+            guard !text.hasPrefix("<"), let prompt = Self.promptName(text) else { return true }
+            name = prompt
+            return false
+        }
+        return name
+    }
+
+    private func claudeFile(home: URL, id: String) -> URL {
+        let project = String(workspace.map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "-" })
+        return home.appendingPathComponent(".claude/projects/\(project)/\(id).jsonl")
+    }
+
     // cursorSessions lists the workspace's chats that hold a conversation;
     // Cursor keeps them under the MD5 of the workspace path.
     private func cursorSessions(home: URL) -> [Session] {
@@ -122,36 +152,49 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
     static let stamp = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
     // rollout reads a rollout of workspace up to its first user message,
-    // whose first line, cut to 40 characters, names the session.
+    // which names the session.
     private static func rollout(_ file: URL, workspace: String) -> Session? {
-        guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
-        defer { try? handle.close() }
         var meta: (id: String, startedAt: Date)?
+        var session: Session?
+        lines(file) { entry in
+            guard let payload = entry["payload"] as? [String: Any] else { return true }
+            guard let started = meta else {
+                guard entry["type"] as? String == "session_meta", payload["cwd"] as? String == workspace,
+                      let id = payload["id"] as? String, let stamp = (payload["timestamp"] as? String).flatMap({ try? Self.stamp.parse($0) })
+                else { return false }
+                meta = (id, stamp)
+                return true
+            }
+            guard payload["type"] as? String == "item_completed", let item = payload["item"] as? [String: Any],
+                  item["type"] as? String == "UserMessage"
+            else { return true }
+            let text = (item["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined() ?? ""
+            session = (started.id, started.startedAt, promptName(text))
+            return false
+        }
+        return session
+    }
+
+    // promptName is the first line of a prompt, cut to 40 characters.
+    private static func promptName(_ text: String) -> String? {
+        let first = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
+        return first.map { String($0.prefix(40)).trimmingCharacters(in: .whitespaces) }
+    }
+
+    // lines hands each JSON object line in the first 4 MiB of file to visit until it returns false.
+    private static func lines(_ file: URL, _ visit: ([String: Any]) -> Bool) {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return }
+        defer { try? handle.close() }
         var buffer = Data()
         while buffer.count < 4 << 20, let chunk = try? handle.read(upToCount: 64 << 10), !chunk.isEmpty {
             buffer += chunk
             while let newline = buffer.firstIndex(of: 0x0A) {
                 let line = buffer[buffer.startIndex..<newline]
                 buffer = buffer[buffer.index(after: newline)...]
-                guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
-                      let payload = entry["payload"] as? [String: Any]
-                else { continue }
-                guard let session = meta else {
-                    guard entry["type"] as? String == "session_meta", payload["cwd"] as? String == workspace,
-                          let id = payload["id"] as? String, let stamp = (payload["timestamp"] as? String).flatMap({ try? Self.stamp.parse($0) })
-                    else { return nil }
-                    meta = (id, stamp)
-                    continue
-                }
-                guard payload["type"] as? String == "item_completed", let item = payload["item"] as? [String: Any],
-                      item["type"] as? String == "UserMessage"
-                else { continue }
-                let text = (item["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined() ?? ""
-                let first = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.first { !$0.isEmpty }
-                return (session.id, session.startedAt, first.map { String($0.prefix(40)).trimmingCharacters(in: .whitespaces) })
+                guard let entry = try? JSONSerialization.jsonObject(with: line) as? [String: Any] else { continue }
+                guard visit(entry) else { return }
             }
         }
-        return nil
     }
 }
 
