@@ -2,10 +2,10 @@
 // params: {steps, params?, save?, start?} | {save} | {flow, params?, start?} | {find} | {reindex}; result: {ok, done, ms, trace, saved?, escalate?}
 import { execFileSync, spawn } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { request } from 'node:http'
 import { createConnection } from 'node:net'
 import {
-  AccessibilitySnapshot, AskModel, Button, choice, Coordinate, DecisionModel, Direction, FocusPolicy, GroundingModel, Image, Key, Machine, noul,
-  Visibility,
+  AccessibilitySnapshot, Button, choice, Coordinate, DecisionModel, Direction, FocusPolicy, Key, Machine, noul, Visibility,
 } from '@vendor/script-js'
 
 type Step = {
@@ -16,13 +16,16 @@ type Step = {
 type Fp = { role: string; name: string; parent: string; nth: number; label?: string }
 type Node = { ref: number; depth: number; role: string; name: string; value: string; disabled: boolean; parent: number; keys: string; accel: string }
 type Hit = { n: Node; i: number; how: string; p?: number; margin?: number }
-type Flow = { name: string; params: Record<string, string>; steps: Step[]; idempotent: boolean; runs: number; saved_at: string; rewrites: number }
-type Chain = { at: number; window: string | null; pid: number | null; name?: string; named?: boolean; params: Record<string, string>; steps: Step[]; dirty: boolean; saved?: boolean; escalated?: boolean }
+type Flow = { name: string; params: Record<string, string>; steps: Step[]; idempotent: boolean; runs: number; saved_at: string; rewrites: number; usage?: Usage }
+type Chain = { at: number; window: string | null; pid: number | null; name?: string; named?: boolean; params: Record<string, string>; steps: Step[]; dirty: boolean; saved?: boolean; escalated?: boolean; usage?: Usage }
+type Usage = Record<string, { calls: number; input_tokens: number; output_tokens: number; cached_tokens: number }>
+type Params = { steps?: Step[]; flow?: string; params?: Record<string, string>; save?: string; start?: number; find?: string; reindex?: boolean }
 
 const FLOWS = '/workspace/flows'
 const LOG = `${FLOWS}/.runs.jsonl`
 const INDEX = `${FLOWS}/INDEX`
 const PENDING = `${FLOWS}/.pending.json`
+const PROVIDER = '/etc/script/providers/gw.json'
 const CHAIN_AGE = 10 * 60 * 1000
 const ACTIVE = new Set(['button', 'checkbox', 'menuitem', 'menu', 'tab', 'textbox', 'spinbutton', 'slider', 'combobox', 'radio', 'link', 'switch', 'option', 'treeitem', 'togglebutton', 'searchbox', 'menuitemcheckbox', 'menuitemradio'])
 const TOGGLES = 'checkbox|switch|togglebutton|menuitemcheckbox'
@@ -38,6 +41,8 @@ const norm = (s: string) => s.toLowerCase().replace(/[_…]|\.\.\.|:$/g, '').rep
 const slug = (s: string) => norm(s).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
 const session = `gp-${process.pid}`
 let jev: DecisionModel | null = null
+let gw: { base: string; key: string; timeout: number; models: Record<string, string> } | null = null
+const used: Usage = {}
 let busNames: string[] | null = null
 const known = new Set<string>()
 let lastSeen = ''
@@ -104,17 +109,83 @@ async function filled(w: NonNullable<ReturnType<typeof focused>>) {
   return o
 }
 
-function decide(state: unknown, q: Record<string, any>) {
-  const t0 = Date.now(); jev ??= DecisionModel.byAlias('gw_jev')
-  try { return jev.decide(state as any, q) } finally { tick('jev', t0); T.jev_calls = (T.jev_calls ?? 0) + 1 }
+function provider() {
+  if (gw) return gw
+  const f = JSON.parse(readFileSync(PROVIDER, 'utf8'))
+  const models: Record<string, string> = {}
+  for (const svc of Object.values(f.services) as { models: { alias: string; name: string }[] }[]) for (const x of svc.models) models[x.alias] = x.name
+  gw = { base: f.base_url.replace(/\/+$/, ''), key: f.auth?.key ?? '', timeout: (f.timeout_secs ?? 120) * 1000, models }
+  return gw
 }
 
-function vision(prompt: string, shot: { base64(): string }) {
+function meter(model: string, input = 0, output = 0, cached = 0) {
+  const u = used[model] ??= { calls: 0, input_tokens: 0, output_tokens: 0, cached_tokens: 0 }
+  u.calls += 1; u.input_tokens += input; u.output_tokens += output; u.cached_tokens += cached
+}
+function plus(a: Usage = {}, b: Usage = {}): Usage {
+  const out: Usage = structuredClone(a)
+  for (const [k, v] of Object.entries(b)) {
+    const u = out[k] ??= { calls: 0, input_tokens: 0, output_tokens: 0, cached_tokens: 0 }
+    u.calls += v.calls; u.input_tokens += v.input_tokens; u.output_tokens += v.output_tokens; u.cached_tokens += v.cached_tokens
+  }
+  return out
+}
+
+function chat(alias: string, content: unknown[], extra: Record<string, unknown> = {}): Promise<string> {
+  const { base, key, timeout, models } = provider()
+  const url = new URL(`${base}/v1/chat/completions`)
+  const proxy = process.env.http_proxy || process.env.HTTP_PROXY
+  const bypass = (process.env.no_proxy || process.env.NO_PROXY || '').split(',').map((h) => h.trim()).filter(Boolean)
+  const via = proxy && url.protocol === 'http:' && !bypass.includes(url.hostname) ? new URL(proxy) : null
+  const data = Buffer.from(JSON.stringify({ model: models[alias], ...extra, stream: false, messages: [{ role: 'user', content }] }))
+  const headers = { 'content-type': 'application/json', 'content-length': data.length, authorization: `Bearer ${key}`, host: url.host }
+  const target = via ? { host: via.hostname, port: via.port || 80, path: url.href } : { host: url.hostname, port: url.port || 80, path: url.pathname }
+  return new Promise((resolve, reject) => {
+    const req = request({ ...target, method: 'POST', headers, timeout }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (c) => chunks.push(c))
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString()
+        if ((res.statusCode ?? 500) >= 300) return reject(new Error(`gw ${alias} returned ${res.statusCode}: ${text.slice(0, 300)}`))
+        try {
+          const r = JSON.parse(text)
+          meter(models[alias], r.usage?.prompt_tokens, r.usage?.completion_tokens, r.usage?.prompt_tokens_details?.cached_tokens)
+          resolve(r.choices?.[0]?.message?.content ?? '')
+        } catch (e) { reject(e) }
+      })
+    })
+    req.on('timeout', () => req.destroy(new Error(`gw ${alias} timed out`)))
+    req.on('error', reject)
+    req.end(data)
+  })
+}
+const png = (b64: string) => ({ type: 'image_url', image_url: { url: `data:image/png;base64,${b64}` } })
+
+function decide(state: unknown, q: Record<string, any>) {
+  const t0 = Date.now(); jev ??= DecisionModel.byAlias('gw_jev')
+  try {
+    const d = jev.decide(state as any, q)
+    meter(provider().models.gw_jev, d.usage?.inputTokens, d.usage?.outputTokens)
+    return d
+  } finally { tick('jev', t0); T.jev_calls = (T.jev_calls ?? 0) + 1 }
+}
+
+async function vision(prompt: string, shot: { base64(): string }) {
   const t0 = Date.now()
   try {
-    const a = AskModel.byAlias('gw_verify').ask(`${prompt}\nAnswer with one JSON object and nothing else.`, null, [Image.fromBase64(shot.base64())])
+    const a = await chat('gw_verify', [png(shot.base64()), { type: 'text', text: `${prompt}\nAnswer with one JSON object and nothing else.` }])
     return JSON.parse(a.slice(a.indexOf('{'), a.lastIndexOf('}') + 1))
   } finally { tick('vision', t0) }
+}
+
+async function ground(concept: string) {
+  const sc = m.screenFromMouse(); const b = sc.boundingBox()
+  const text = await chat('gw_ground', [png(sc.screenshot(true).base64()), { type: 'text', text: `Query: ${concept}\nOutput only the coordinate of one point in your response.\n` }], { temperature: 0 })
+  const n = text.split(/[^A-Za-z0-9_-]/).filter((t) => /^-?\d+$/.test(t)).map(Number)
+  const [x, y] = n.length === 4 ? [(n[0] + n[2]) / 2, (n[1] + n[3]) / 2] : n
+  if (!(n.length === 2 || n.length === 4) || x < 0 || y < 0 || x > 1000 || y > 1000) throw new Error(`grounding found no point for ${concept}: ${text.slice(0, 120)}`)
+  const [w, h] = [b.right - b.left, b.bottom - b.top]
+  return [b.left + Math.min(Math.round((x / 1000) * w), w - 1), b.top + Math.min(Math.round((y / 1000) * h), h - 1)]
 }
 
 // cua-driver get_window_state over its socket: the checked state AT-SPI publishes for check boxes and toggles
@@ -395,20 +466,20 @@ async function replaced(snap: AccessibilitySnapshot, nodes: Node[], read: () => 
 async function setState(s: Step, w: NonNullable<ReturnType<typeof focused>>, snap: AccessibilitySnapshot, hit: Hit, rec: Record<string, unknown>) {
   const on = s.on ?? true
   let was = await checked(w.pid, hit.n.name)
-  if (was === null) was = cropState(snap, hit.n)
+  if (was === null) was = await cropState(snap, hit.n)
   rec.was = was
   if (was === on) { rec.noop = true; return }
   act(snap, hit.n)
   let now = await checked(w.pid, hit.n.name)
   for (let i = 0; i < 5 && now !== on && now !== null; i++) { await sleep(30); now = await checked(w.pid, hit.n.name) }
-  if (now === null) now = cropState(snap, hit.n)
+  if (now === null) now = await cropState(snap, hit.n)
   if (now !== on) throw new Surprise(`"${hit.n.name}" is still ${now ? 'on' : 'off'}`, seen())
 }
 
-function cropState(snap: AccessibilitySnapshot, n: Node) {
+async function cropState(snap: AccessibilitySnapshot, n: Node) {
   const b = snap.boundingBox(n.ref)
   const shot = m.screenshotCropped(Math.max(0, b.left - 40), Math.max(0, b.top - 4), b.width + 80, b.height + 8, true)
-  return vision(`This is one control of a desktop app: "${n.name}". Is it switched on (a check mark, tick, filled box or pressed state)? {"on": true or false}`, shot).on === true
+  return (await vision(`This is one control of a desktop app: "${n.name}". Is it switched on (a check mark, tick, filled box or pressed state)? {"on": true or false}`, shot)).on === true
 }
 
 async function run(s: Step, rec: Record<string, unknown>) {
@@ -487,7 +558,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     rec.p = +d.ok.probability.toFixed(2)
     if (d.ok.probability >= 0.5) return
     const shot = m.screenFromMouse().screenshot(true); shot.shrink(960, 600)
-    const v = vision(`You check the state of a computer screen.\nCondition: ${s.expect}\n{"ok": true or false, "why": "one short sentence"}`, shot); rec.vision = v
+    const v = await vision(`You check the state of a computer screen.\nCondition: ${s.expect}\n{"ok": true or false, "why": "one short sentence"}`, shot); rec.verdict = v
     if (!v.ok) throw new Surprise(`expectation not met: ${s.expect} (${v.why})`, seen())
     return
   }
@@ -498,7 +569,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const bad: string[] = []
     if (s.value !== undefined) { let v = ''; try { v = snap.node(hit.n.ref).value ?? '' } catch (e) { if (blocked(String(e))) throw new Surprise(unanswered(w.title), seen()); v = hit.n.value }; if (!norm(v).includes(norm(s.value))) bad.push(`reads "${v}"`) }
     if (s.enabled !== undefined && hit.n.disabled === s.enabled) bad.push(hit.n.disabled ? 'is disabled' : 'is enabled')
-    if (s.on !== undefined) { const c = gtkToggle(w.pid, hit.n.name) ?? (await checked(w.pid, hit.n.name)) ?? cropState(snap, hit.n); rec.was = c; if (c !== s.on) bad.push(c ? 'is on' : 'is off') }
+    if (s.on !== undefined) { const c = gtkToggle(w.pid, hit.n.name) ?? (await checked(w.pid, hit.n.name)) ?? (await cropState(snap, hit.n)); rec.was = c; if (c !== s.on) bad.push(c ? 'is on' : 'is off') }
     if (bad.length) throw new Surprise(`verify: "${hit.n.name || s.verify}" ${bad.join(', ')}`, seen())
     return
   }
@@ -522,7 +593,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
       }
     } else rec.how = 'fp'
     rec.fp = fingerprint(nodes, hit!)
-    if (hit!.p !== undefined) rec.jev = [hit!.p, hit!.margin]
+    if (hit!.p !== undefined) rec.pick = [hit!.p, hit!.margin]
     if (s.on === undefined) { const pid = pidOf(w); await choose(snap, nodes, hit!.n, rec); await settle(w.title); const now = pid === null ? null : gtkToggle(pid, hit!.n.name); if (now !== null) rec.now = now; return }
     const was = gtkToggle(w.pid, hit!.n.name)
     if (was !== null) {
@@ -539,7 +610,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     const chain: Node[] = []
     for (let q: Node | null = parent; q; q = q.parent >= 0 && nodes[q.parent].role === 'menu' ? nodes[q.parent] : null) chain.unshift(q)
     for (const q of chain) { act(snap, q); await sleep(120) }
-    const on = cropState(snap, hit!.n); rec.was = on; rec.state = 'vision'
+    const on = await cropState(snap, hit!.n); rec.was = on; rec.state = 'vision'
     if (on === s.on) { for (const _ of chain) press('Escape'); rec.noop = true; return }
     act(snap, hit!.n); await settle(w.title); return
   }
@@ -548,7 +619,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
   if (!hit) {
     if (!s.click) throw new Surprise(`no element matches "${target}"`, seen())
     t0 = Date.now()
-    const [x, y] = m.screenFromMouse().screenshot(true).ground(GroundingModel.byAlias('gw_ground'), `${target} in the "${w.title}" window`)
+    const [x, y] = await ground(`${target} in the "${w.title}" window`)
     tick('ground', t0)
     const under = m.nodeAtPoint(x, y)
     const what = under?.overallDescription ?? ''
@@ -559,7 +630,7 @@ async function run(s: Step, rec: Record<string, unknown>) {
     rec.how = 'ground'; rec.unsaved = true; await settle(w.title); return
   }
   rec.how = hit.how; rec.ref = `${hit.n.role} "${hit.n.name}"`; rec.fp = fingerprint(nodes, hit)
-  if (hit.p !== undefined) rec.jev = [+hit.p.toFixed(2), +hit.margin!.toFixed(2)]
+  if (hit.p !== undefined) rec.pick = [+hit.p.toFixed(2), +hit.margin!.toFixed(2)]
   if (hit.n.disabled) {
     t0 = Date.now(); let on = false
     for (let i = 0; i < 15 && !on; i++) { await sleep(40); on = !parse(snapOf(w)).find((n) => n.ref === hit.n.ref)?.disabled }
@@ -664,7 +735,7 @@ function store(chain: Chain) {
   const auto = slug([chain.steps[0].app, ...targets].filter(Boolean).map((x) => x!.split(' ').slice(0, 3).join(' ')).join(' ')) || undefined
   if (!chain.named && auto && chain.name && auto !== chain.name) git('rm', '-q', '--ignore-unmatch', `${chain.name}.json`)
   if (!chain.named) chain.name = auto
-  if (chain.name) saveFlow({ name: chain.name, params: tpl.params, steps: tpl.steps, idempotent: idempotent(chain.steps), runs: 1, saved_at: new Date().toISOString(), rewrites: 0 }, `saved from ${chain.steps.length} passing steps`)
+  if (chain.name) saveFlow({ name: chain.name, params: tpl.params, steps: tpl.steps, idempotent: idempotent(chain.steps), runs: 1, saved_at: new Date().toISOString(), rewrites: 0, usage: chain.usage ?? {} }, `saved from ${chain.steps.length} passing steps`)
   return chain.name
 }
 
@@ -704,7 +775,11 @@ function find(request: string) {
   return { ok: true, flow: rows[+k.slice(1)].replace(/\(.*$/, ''), p: +p.toFixed(2) }
 }
 
-export async function main(p: { steps?: Step[]; flow?: string; params?: Record<string, string>; save?: string; start?: number; find?: string; reindex?: boolean }) {
+export async function main(p: Params) {
+  return { ...(await perform(p)), usage: used }
+}
+
+async function perform(p: Params) {
   const t0 = Date.now()
   if (p.reindex) { repo(); writeIndex(); git('add', '-A'); git('commit', '-q', '-m', 'sync from the flow library'); return { ok: true } }
   if (p.find) return find(p.find)
@@ -771,7 +846,7 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     opened = !!f && !startTitles.has(f.title) && isDialog(o)
   }
   let saved: string | undefined
-  const jevs = recs.filter((r) => r?.jev).length
+  const jevs = recs.filter((r) => r?.pick).length
   const settled = !escalate && !opened
   if (flow) {
     try { writeFileSync(PENDING, 'null') } catch {}
@@ -790,8 +865,8 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     const dirty = recs.some((r) => r?.unsaved)
     let chain: Chain | null = null; let prev: Chain | null = null
     try { prev = JSON.parse(readFileSync(PENDING, 'utf8')) } catch {}
-    if (plan[0].app && !(p.start ?? 0)) chain = { at: Date.now(), window: null, pid: null, params: { ...(p.params ?? {}) }, steps: ran, dirty }
-    else if (prev && Date.now() - prev.at < CHAIN_AGE && (prev.window === startWindow || (prev.pid !== null && prev.pid === startPid))) chain = { ...prev, at: Date.now(), params: { ...prev.params, ...(p.params ?? {}) }, steps: [...prev.steps, ...ran], dirty: prev.dirty || dirty }
+    if (plan[0].app && !(p.start ?? 0)) chain = { at: Date.now(), window: null, pid: null, params: { ...(p.params ?? {}) }, steps: ran, dirty, usage: plus({}, used) }
+    else if (prev && Date.now() - prev.at < CHAIN_AGE && (prev.window === startWindow || (prev.pid !== null && prev.pid === startPid))) chain = { ...prev, at: Date.now(), params: { ...prev.params, ...(p.params ?? {}) }, steps: [...prev.steps, ...ran], dirty: prev.dirty || dirty, usage: plus(prev.usage, used) }
     if (chain) {
       if (p.save) { chain.name = slug(p.save); chain.named = true }
       const changes = chain.steps.some((s) => s.check || s.set || s.type !== undefined || (s.menu && s.on !== undefined))
@@ -804,9 +879,10 @@ export async function main(p: { steps?: Step[]; flow?: string; params?: Record<s
     } else if (prev) try { writeFileSync(PENDING, JSON.stringify({ ...prev, saved: false, escalated: false })) } catch {}
   }
   const ms = Date.now() - t0
-  try { mkdirSync(FLOWS, { recursive: true }); appendFileSync(LOG, JSON.stringify({ at: new Date().toISOString(), flow: p.flow ?? null, ok: !escalate, ms, jevs, saved: saved ?? null, steps: log }) + '\n') } catch {}
+  try { mkdirSync(FLOWS, { recursive: true }); appendFileSync(LOG, JSON.stringify({ at: new Date().toISOString(), flow: p.flow ?? null, ok: !escalate, ms, jevs, saved: saved ?? null, usage: used, steps: log }) + '\n') } catch {}
   const out: Record<string, unknown> = { ok: !escalate, done, ms, trace }
   if (saved) out[flow ? 'flow' : 'saved'] = saved
+  if (flow?.usage) out.recorded_usage = flow.usage
   if (escalate) out.escalate = escalate
   else out.window = focused()?.title ?? null
   return out
