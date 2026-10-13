@@ -694,7 +694,7 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
             Err(e) => rpc_failure(StatusCode::INTERNAL_SERVER_ERROR, -32603, &e),
         };
     }
-    let (batch, messages) = match msg {
+    let (batch, mut messages) = match msg {
         Value::Array(items) => (true, items),
         single => (false, vec![single]),
     };
@@ -712,6 +712,15 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
             Err((status, code, message)) => return rpc_failure(status, code, message),
         }
     };
+    if !batch && messages[0]["method"] == "tools/call" && accepts_events(&headers) {
+        let msg = messages.swap_remove(0);
+        let token = Some(msg["params"]["_meta"]["progressToken"].clone()).filter(|t| !t.is_null());
+        let call = {
+            let session = session.clone();
+            async move { mcp.dispatch(session.as_deref(), &principal, &msg).await }
+        };
+        return answer(call, token, KEEPALIVE, session).await;
+    }
     let mut replies = Vec::new();
     for m in &messages {
         if let Some(reply) = mcp.dispatch(session.as_deref(), &principal, m).await {
@@ -748,7 +757,65 @@ async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
         let chunk: Result<Bytes, Infallible> = Ok(Bytes::from_static(chunk));
         Some((chunk, (guard, false)))
     });
-    let mut resp = Response::new(Body::from_stream(stream));
+    event_stream(Body::from_stream(stream))
+}
+
+/// Answers a tool call as JSON when it ends within `every`. A longer call gets an SSE stream that sends a
+/// progress notification every `every`, an SSE comment when the client sent no progress token, and then
+/// the answer, so that a client's idle timeout does not cut it.
+async fn answer<F>(
+    call: F,
+    token: Option<Value>,
+    every: Duration,
+    session: Option<Arc<Session>>,
+) -> Response
+where
+    F: Future<Output = Option<Value>> + Send + 'static,
+{
+    let mut call = Box::pin(call);
+    match tokio::time::timeout(every, &mut call).await {
+        Ok(Some(reply)) => return json_response(StatusCode::OK, &reply),
+        Ok(None) => return StatusCode::ACCEPTED.into_response(),
+        Err(_) => {}
+    }
+    let started = Instant::now();
+    let stream = futures_util::stream::unfold(Some((call, 0u64)), move |state| {
+        let (token, session) = (token.clone(), session.clone());
+        async move {
+            let (mut call, ticks) = state?;
+            let (chunk, next) = tokio::select! {
+                reply = &mut call => (event(&reply?), None),
+                () = tokio::time::sleep(every) => {
+                    if let Some(s) = &session {
+                        lock(&s.driver).last_seen = Instant::now();
+                    }
+                    let chunk = match &token {
+                        Some(token) => event(&json!({
+                            "jsonrpc": "2.0",
+                            "method": "notifications/progress",
+                            "params": {
+                                "progressToken": token,
+                                "progress": ticks + 1,
+                                "message": format!("running for {} s", started.elapsed().as_secs()),
+                            },
+                        })),
+                        None => Bytes::from_static(b": keepalive\n\n"),
+                    };
+                    (chunk, Some((call, ticks + 1)))
+                }
+            };
+            Some((Ok::<Bytes, Infallible>(chunk), next))
+        }
+    });
+    event_stream(Body::from_stream(stream))
+}
+
+fn event(message: &Value) -> Bytes {
+    Bytes::from(format!("event: message\ndata: {message}\n\n"))
+}
+
+fn event_stream(body: Body) -> Response {
+    let mut resp = Response::new(body);
     let h = resp.headers_mut();
     h.insert(
         header::CONTENT_TYPE,
@@ -759,6 +826,14 @@ async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
         header::HeaderValue::from_static("no-cache"),
     );
     resp
+}
+
+/// Whether the client takes an SSE stream as the answer to a POST.
+fn accepts_events(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|a| a.contains("text/event-stream"))
 }
 
 async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
@@ -859,4 +934,58 @@ fn rpc_failure(status: StatusCode, code: i64, message: &str) -> Response {
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn body(resp: Response) -> String {
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_long_call_streams_progress_or_keepalives_before_its_answer() {
+        let every = Duration::from_millis(40);
+        let reply = json!({"jsonrpc": "2.0", "id": 7, "result": {"isError": false}});
+        let call = |after: Duration| {
+            let reply = reply.clone();
+            async move {
+                tokio::time::sleep(after).await;
+                Some(reply)
+            }
+        };
+
+        let quick = answer(call(Duration::ZERO), Some(json!("t")), every, None).await;
+        assert_eq!(quick.headers()[header::CONTENT_TYPE], "application/json");
+        assert_eq!(body(quick).await, reply.to_string());
+
+        let slow = answer(call(every * 4), Some(json!("t")), every, None).await;
+        assert_eq!(slow.headers()[header::CONTENT_TYPE], "text/event-stream");
+        let events: Vec<Value> = body(slow)
+            .await
+            .split("\n\n")
+            .filter_map(|e| e.strip_prefix("event: message\ndata: "))
+            .map(|d| serde_json::from_str(d).unwrap())
+            .collect();
+        let (last, progress) = events.split_last().unwrap();
+        assert_eq!(*last, reply);
+        assert!(!progress.is_empty(), "{events:?}");
+        for (i, p) in progress.iter().enumerate() {
+            assert_eq!(p["method"], "notifications/progress");
+            assert_eq!(p["params"]["progressToken"], "t");
+            assert_eq!(p["params"]["progress"], i + 1);
+        }
+
+        let silent = body(answer(call(every * 4), None, every, None).await).await;
+        assert!(silent.starts_with(": keepalive\n\n"), "{silent}");
+        assert!(
+            silent.ends_with(&format!("event: message\ndata: {reply}\n\n")),
+            "{silent}"
+        );
+        assert!(!silent.contains("notifications/progress"), "{silent}");
+    }
 }

@@ -159,6 +159,9 @@ check("first box-tool call wakes the box and runs", "Linux 6.12.0 (mockbox)" in 
 check("wake progress reaches the client with its token", any(p.startswith("waking:") for p in progress) and all(m["params"]["progressToken"] == "t1" for m in seen if m.get("method") == "notifications/progress"), progress)
 check("tools/list_changed after the box's own list arrives", changed)
 print(f"     wake + call took {time.time() - started:.1f} s; progress: {progress}")
+result, seen = b.tool("shell", {"command": "sleep 360; echo done"}, token="t3")
+progress = [m["params"] for m in seen if m.get("method") == "notifications/progress"]
+check("the box's progress on a long call reaches the client with its token", [p["progressToken"] for p in progress] == ["t3"] and "sleep 360" in text(result), seen)
 
 result, _ = b.tool("box_upgrade")
 check("box_upgrade without confirm is refused", result.get("isError") and "confirm: true" in text(result), result)

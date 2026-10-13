@@ -146,8 +146,8 @@ struct HTTPResponse {
     }
 }
 
-// MCPServer answers MCP Streamable HTTP with JSON responses (no server
-// stream). Every session is the owner's, which the box does not track as an agent.
+// MCPServer answers MCP Streamable HTTP with JSON responses, a tool call with
+// a progress token as an SSE stream (no server stream). Every session is the owner's, which the box does not track as an agent.
 // It logs one line per request with the auth verdict, never the token.
 final class MCPServer: Sendable {
     static let prefix = "/cocoonbox.mcp/"
@@ -268,6 +268,14 @@ final class MCPServer: Sendable {
                 content.append(["type": "image", "data": image.base64EncodedString(), "mimeType": "image/png"])
             }
             result = ["content": content, "isError": outcome.isError]
+            if let token = (params["_meta"] as? [String: Any])?["progressToken"] {
+                let progress: [String: Any] = ["jsonrpc": "2.0", "method": "notifications/progress", "params": ["progressToken": token, "progress": 1, "message": "running for 25 s"]]
+                let events = [progress, ["jsonrpc": "2.0", "id": id, "result": result]].compactMap { try? JSONSerialization.data(withJSONObject: $0) }
+                return HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "text/event-stream"], events: AsyncStream { stream in
+                    events.forEach { stream.yield($0) }
+                    stream.finish()
+                })
+            }
         case "ping":
             result = [:]
         default:
