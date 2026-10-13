@@ -27,6 +27,8 @@ const MAX_FOUND: usize = 20;
 const MENU_POLL: Duration = Duration::from_millis(30);
 const MENU_POLLS: u32 = 10;
 const SELECTED_ROLES: [&str; 5] = ["tab", "option", "radio", "listitem", "treeitem"];
+const TITLE_TIERS: usize = 4;
+const TITLE_SEPARATORS: [&str; 2] = [" - ", " — "];
 
 /// Snapshots and element actions over AT-SPI; the bus connection opens on first use.
 #[derive(Default)]
@@ -352,16 +354,12 @@ async fn focus(cua: &Cua, a: WindowArgs) -> Result<String, String> {
         a.pid
             .is_none_or(|p| w["pid"].as_u64() == Some(u64::from(p)))
     };
-    let lower = a.window.trim().to_lowercase();
-    let w = windows
-        .iter()
-        .rev()
-        .find(|w| pid_ok(w) && titled(w) == a.window)
-        .or_else(|| {
+    let w = (0..TITLE_TIERS)
+        .find_map(|tier| {
             windows
                 .iter()
                 .rev()
-                .find(|w| pid_ok(w) && titled(w).to_lowercase().contains(&lower))
+                .find(|w| pid_ok(w) && title_matches(tier, &titled(w), &a.window))
         })
         .ok_or_else(|| format!("no window {:?}", a.window))?;
     cua.desk_call(
@@ -412,16 +410,12 @@ fn close(a: WindowArgs) -> Result<String, String> {
         })
         .filter(|(_, _, pid)| a.pid.is_none_or(|p| *pid == Some(p)))
         .collect();
-    let lower = a.window.trim().to_lowercase();
-    let (w, title, _) = windows
-        .iter()
-        .rev()
-        .find(|(_, t, _)| *t == a.window)
-        .or_else(|| {
+    let (w, title, _) = (0..TITLE_TIERS)
+        .find_map(|tier| {
             windows
                 .iter()
                 .rev()
-                .find(|(_, t, _)| t.to_lowercase().contains(&lower))
+                .find(|(_, t, _)| title_matches(tier, t, &a.window))
         })
         .ok_or_else(|| format!("no window {:?}", a.window))?;
     let event = ClientMessageEvent::new(32, *w, close, [0, 2, 0, 0, 0]);
@@ -661,7 +655,7 @@ struct ShotArgs {
     path: Option<String>,
 }
 
-/// The window named `want` (exact, then trimmed, then contained, ignoring case), else the focused one; among equals the active one, else the newest.
+/// The window named `want` (by [`title_matches`] tiers), else the focused one; among equals the active one, else the newest.
 fn pick(frames: Vec<Frame>, want: Option<&str>, pid: Option<u32>) -> Result<Frame, String> {
     let frames: Vec<Frame> = frames
         .into_iter()
@@ -681,20 +675,33 @@ fn pick(frames: Vec<Frame>, want: Option<&str>, pid: Option<u32>) -> Result<Fram
             .collect();
         return best(active).ok_or_else(|| "no focused window".to_owned());
     };
-    let lower = want.trim().to_lowercase();
-    let tests: [&dyn Fn(&Frame) -> bool; 3] = [
-        &|f| f.name == want,
-        &|f| f.name.trim().to_lowercase() == lower,
-        &|f| f.name.to_lowercase().contains(&lower),
-    ];
-    for test in tests {
-        let hits: Vec<&Frame> = frames.iter().filter(|f| test(f)).collect();
+    for tier in 0..TITLE_TIERS {
+        let hits: Vec<&Frame> = frames
+            .iter()
+            .filter(|f| title_matches(tier, &f.name, want))
+            .collect();
         if let Some(f) = best(hits) {
             return Ok(f);
         }
     }
     let names: Vec<&str> = frames.iter().map(|f| f.name.as_str()).collect();
     Err(format!("no window {want:?}; windows: {names:?}"))
+}
+
+/// Whether window title `title` matches `want` at `tier`: 0 the same, 1 the same ignoring case and outer
+/// spaces, 2 containing it ignoring case, 3 ending with its app part, such as ` - Thunar` of `inbox - Thunar`.
+fn title_matches(tier: usize, title: &str, want: &str) -> bool {
+    let lower = want.trim().to_lowercase();
+    match tier {
+        0 => title == want,
+        1 => title.trim().to_lowercase() == lower,
+        2 => title.to_lowercase().contains(&lower),
+        _ => TITLE_SEPARATORS
+            .iter()
+            .filter_map(|s| lower.rfind(s))
+            .max()
+            .is_some_and(|i| title.trim_end().to_lowercase().ends_with(&lower[i..])),
+    }
 }
 
 fn frame_json(f: &Frame) -> Value {
@@ -826,6 +833,30 @@ mod tests {
         );
         assert!(pick(frames.clone(), Some("Mousepad"), Some(9)).is_err());
         assert!(pick(frames, Some("xfce4-panel"), None).is_err());
+    }
+
+    #[test]
+    fn a_stale_title_finds_the_window_of_its_app_unless_one_matches() {
+        let frames = vec![
+            frame("images - Thunar", 23, false, 4),
+            frame("docs - Thunar", 23, true, 4),
+            frame("notes.txt - Mousepad", 23, false, 7),
+            frame("Mousepad Preferences", 16, false, 7),
+        ];
+        let named = |want: &str| pick(frames.clone(), Some(want), None).map(|f| f.name);
+        assert_eq!(named("inbox - Thunar").unwrap(), "docs - Thunar");
+        assert_eq!(named("images - Thunar").unwrap(), "images - Thunar");
+        assert_eq!(
+            named("Untitled 5 - Mousepad").unwrap(),
+            "notes.txt - Mousepad"
+        );
+        assert_eq!(
+            named("*notes.txt - Mousepad").unwrap(),
+            "notes.txt - Mousepad"
+        );
+        assert_eq!(named("Mousepad").unwrap(), "Mousepad Preferences");
+        assert!(named("report - Writer").is_err());
+        assert!(named("Thunar Preferences").is_err());
     }
 
     #[test]
