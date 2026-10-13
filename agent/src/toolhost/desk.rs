@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask};
 
-use super::atspi::{Atspi, Extras, Frame, Node, Obj, SHOWING};
+use super::atspi::{Atspi, Extras, Frame, Node, Obj, SHOWING, key_combos};
 use super::cua::Cua;
 use super::files;
 use super::rpc::{Call, Client, Output};
@@ -723,7 +723,17 @@ fn node_json((i, n): (usize, &Node)) -> Value {
     if let Some(value) = &n.value {
         v["value"] = value.clone().into();
     }
+    if let Some(native) = n.native_role() {
+        v["native_role"] = native.into();
+    }
     if let Some(keys) = &n.keys {
+        let (mnemonic, shortcut) = key_combos(keys);
+        if let Some(m) = mnemonic {
+            v["mnemonic"] = m.into();
+        }
+        if let Some(s) = shortcut {
+            v["shortcut"] = s.into();
+        }
         v["keys"] = keys.clone().into();
     }
     if let Some(b) = n.bounds {

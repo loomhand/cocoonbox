@@ -39,6 +39,7 @@ const IF_VALUE: u8 = 8;
 const ACTIVE: u32 = 1;
 const CHECKED: u32 = 4;
 const ENABLED: u32 = 8;
+const INDETERMINATE: u32 = 32;
 /// The state of a node drawn on the screen.
 pub const SHOWING: u32 = 25;
 const MANAGES_DESCENDANTS: u32 = 31;
@@ -287,7 +288,17 @@ impl Node {
         if self.disabled() {
             names.push("disabled");
         }
+        if self.has(INDETERMINATE) && matches!(self.role(), "checkbox" | "menuitemcheckbox") {
+            names.push("mixed");
+        }
         names
+    }
+
+    /// The node's AT-SPI role name when its role has no ARIA counterpart.
+    pub fn native_role(&self) -> Option<&'static str> {
+        aria_role(self.role, false)
+            .is_none()
+            .then(|| native_role(self.role))
     }
 }
 
@@ -822,9 +833,58 @@ impl Atspi {
     }
 }
 
-/// The ARIA role of AT-SPI role `role` after W3C Core-AAM; a nameless generic container has none.
+/// The ARIA role of AT-SPI role `role` after W3C Core-AAM, else its AT-SPI name; a nameless generic container has none.
 pub fn role_name(role: u32, named: bool) -> &'static str {
-    match role {
+    aria_role(role, named).unwrap_or_else(|| native_role(role))
+}
+
+/// The AT-SPI name of role `role`.
+pub fn native_role(role: u32) -> &'static str {
+    ROLE_NAMES.get(role as usize).copied().unwrap_or("unknown")
+}
+
+/// The mnemonic and the shortcut of an AT-SPI key binding `mnemonic;sequence;accelerator`, in desk key names.
+pub fn key_combos(binding: &str) -> (Option<String>, Option<String>) {
+    let mut parts = binding.split(';');
+    let mnemonic = parts.next().and_then(gtk_combo);
+    let shortcut = parts.nth(1).and_then(gtk_combo);
+    (mnemonic, shortcut)
+}
+
+/// Whether a caller can act on a node of this role.
+pub fn is_active(role: &str) -> bool {
+    matches!(
+        role,
+        "button"
+            | "checkbox"
+            | "menuitem"
+            | "menu"
+            | "tab"
+            | "textbox"
+            | "spinbutton"
+            | "slider"
+            | "combobox"
+            | "radio"
+            | "link"
+            | "option"
+            | "listitem"
+            | "treeitem"
+            | "menuitemcheckbox"
+            | "menuitemradio"
+            | "cell"
+    )
+}
+
+/// Whether a node of this role holds a value a caller reads.
+pub fn is_field(role: &str) -> bool {
+    matches!(
+        role,
+        "textbox" | "spinbutton" | "slider" | "combobox" | "progressbar"
+    )
+}
+
+fn aria_role(role: u32, named: bool) -> Option<&'static str> {
+    Some(match role {
         2 | 101 => "alert",
         3 | 26 | 27 => "img",
         7 => "checkbox",
@@ -875,40 +935,42 @@ pub fn role_name(role: u32, named: bool) -> &'static str {
                 "generic"
             }
         }
-        r => ROLE_NAMES.get(r as usize).copied().unwrap_or("unknown"),
+        _ => return None,
+    })
+}
+
+/// A GTK accelerator such as `<Primary><Shift>s` as `ctrl+shift+s`; none for an empty or unknown one.
+fn gtk_combo(accel: &str) -> Option<String> {
+    let mut keys = Vec::new();
+    let mut rest = accel.trim();
+    while let Some(tail) = rest.strip_prefix('<') {
+        let (modifier, after) = tail.split_once('>')?;
+        keys.push(match modifier.to_lowercase().as_str() {
+            "primary" | "control" | "ctrl" | "ctl" => "ctrl",
+            "shift" | "shft" => "shift",
+            "alt" | "mod1" => "alt",
+            "super" | "meta" | "hyper" | "mod4" => "super",
+            _ => return None,
+        });
+        rest = after;
     }
-}
-
-/// Whether a caller can act on a node of this role.
-pub fn is_active(role: &str) -> bool {
-    matches!(
-        role,
-        "button"
-            | "checkbox"
-            | "menuitem"
-            | "menu"
-            | "tab"
-            | "textbox"
-            | "spinbutton"
-            | "slider"
-            | "combobox"
-            | "radio"
-            | "link"
-            | "option"
-            | "listitem"
-            | "treeitem"
-            | "menuitemcheckbox"
-            | "menuitemradio"
-            | "cell"
-    )
-}
-
-/// Whether a node of this role holds a value a caller reads.
-pub fn is_field(role: &str) -> bool {
-    matches!(
-        role,
-        "textbox" | "spinbutton" | "slider" | "combobox" | "progressbar"
-    )
+    if rest.is_empty() {
+        return None;
+    }
+    let key = rest.to_lowercase();
+    let key = match key.as_str() {
+        "page_up" | "prior" => "pageup",
+        "page_down" | "next" => "pagedown",
+        "kp_enter" => "return",
+        "iso_left_tab" => "tab",
+        k => k,
+    };
+    let mut combo = keys.join("+");
+    if !combo.is_empty() {
+        combo.push('+');
+    }
+    combo.push_str(key);
+    Some(combo)
 }
 
 fn needs_live(r: &Raw, cached: Option<&Vec<(i32, Obj)>>) -> bool {
@@ -1131,6 +1193,45 @@ mod tests {
         ));
         assert!(!needs_live(&r(5, 1 << MANAGES_DESCENDANTS), None));
         assert!(!needs_live(&r(0, 0), None));
+    }
+
+    #[test]
+    fn key_bindings_become_desk_key_combinations() {
+        assert_eq!(
+            key_combos("<Alt>a;<Alt>f:a;<Primary><Shift>s"),
+            (Some("alt+a".into()), Some("ctrl+shift+s".into()))
+        );
+        assert_eq!(key_combos("s;;"), (Some("s".into()), None));
+        assert_eq!(
+            key_combos(";;<Control>Page_Down"),
+            (None, Some("ctrl+pagedown".into()))
+        );
+        assert_eq!(key_combos(";;F11"), (None, Some("f11".into())));
+        assert_eq!(key_combos("<Release>x;;<Primary>"), (None, None));
+        assert_eq!(key_combos(""), (None, None));
+    }
+
+    #[test]
+    fn an_unmapped_role_keeps_its_native_name() {
+        let n = |role: u32| Node {
+            role,
+            ..Node::default()
+        };
+        assert_eq!(n(18).native_role(), Some("drawing area"));
+        assert_eq!(n(18).role(), "drawing area");
+        assert_eq!(n(43).native_role(), None);
+        assert_eq!(n(ROLE_PANEL).native_role(), None);
+    }
+
+    #[test]
+    fn an_indeterminate_check_box_is_mixed() {
+        let n = |role: u32| Node {
+            role,
+            states: (1 << INDETERMINATE) | (1 << ENABLED),
+            ..Node::default()
+        };
+        assert_eq!(n(7).state_names(), vec!["indeterminate", "mixed"]);
+        assert_eq!(n(42).state_names(), vec!["indeterminate"]);
     }
 
     #[test]
