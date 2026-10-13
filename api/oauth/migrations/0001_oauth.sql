@@ -43,10 +43,9 @@ CREATE TABLE oauth_tokens (
 
 CREATE INDEX oauth_tokens_grant ON oauth_tokens (grant_id);
 
--- A box keeps its row after its grant goes, so it still hibernates when idle.
 CREATE TABLE oauth_boxes (
     box_id   text PRIMARY KEY REFERENCES boxes (id) ON DELETE CASCADE,
-    grant_id text REFERENCES oauth_grants (id) ON DELETE SET NULL
+    grant_id text NOT NULL REFERENCES oauth_grants (id) ON DELETE CASCADE
 );
 
 CREATE INDEX oauth_boxes_grant ON oauth_boxes (grant_id);

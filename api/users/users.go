@@ -242,7 +242,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	for _, r := range s.records() {
 		token, err := s.seal.open(r.tenantToken, userData(r.ID, columnTenant))
 		if err == nil {
-			err = s.tenants.Put(ctx, r.ID, token, r.claimCap())
+			err = s.tenants.Put(ctx, r.ID, token, s.claimCap(r))
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("tenant of %s: %w", r.Name, err))
@@ -345,7 +345,7 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		err = s.gw.SetDailyCap(ctx, id, new(int64(gwkeys.Unlimited)))
 	}
 	if err == nil {
-		if err = s.tenants.Put(ctx, id, tenantToken, r.claimCap()); err == nil {
+		if err = s.tenants.Put(ctx, id, tenantToken, s.claimCap(r)); err == nil {
 			if err = s.store.insert(ctx, r, string(hash), first); err != nil {
 				err = errors.Join(err, s.tenants.Delete(context.WithoutCancel(ctx), id))
 			}
@@ -412,13 +412,13 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d", ErrInvalid, maxBoxesCap)
 	case r.MaxBoxes < 1 || r.MaxBoxes > r.MaxBoxesCap:
 		return User{}, fmt.Errorf("%w: max boxes must be in 1..%d", ErrInvalid, r.MaxBoxesCap)
-	case r.MaxBoxes < old.MaxBoxes && r.MaxBoxes < len(s.Boxes(id)):
-		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, len(s.Boxes(id)))
+	case r.MaxBoxes < old.MaxBoxes && r.MaxBoxes < len(s.Boxes(id))-s.agentBoxes(id):
+		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, len(s.Boxes(id))-s.agentBoxes(id))
 	case r.MaxRunning < 0 || r.MaxRunning > r.MaxBoxes:
 		return User{}, fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, r.MaxBoxes)
 	}
 	if r.MaxBoxes != old.MaxBoxes {
-		if err := s.tenants.Put(ctx, id, "", r.claimCap()); err != nil {
+		if err := s.tenants.Put(ctx, id, "", s.claimCap(r)); err != nil {
 			return User{}, fmt.Errorf("set tenant cap: %w", err)
 		}
 	}
@@ -731,9 +731,6 @@ type record struct {
 }
 
 func (r record) serves() bool { return r.tokenSHA256 != "" && !r.Disabled }
-
-// claimCap is the tenant's max_claims: the box quota plus the old machine a Rebase keeps until the new one serves.
-func (r record) claimCap() int { return r.MaxBoxes + 1 }
 
 func hashPassword(password string) ([]byte, error) {
 	if len(password) < minPassword || len(password) > maxPassword {

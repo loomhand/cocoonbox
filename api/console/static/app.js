@@ -91,7 +91,7 @@ async function load() {
     }, true));
   }
   if (!me.boxes.length) cell(boxes.insertRow(), "No box yet: create one here, or the app creates one on first connect.");
-  $("box-form").hidden = me.boxes.length >= u.max_boxes;
+  $("box-form").hidden = me.own_boxes >= u.max_boxes;
 
   await loadShares(me.boxes);
 

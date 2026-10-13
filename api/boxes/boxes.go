@@ -110,7 +110,6 @@ type Service struct {
 	wake      *wakeAlarms
 	park      *parking
 	usage     *usageMeter
-	agents    AgentBoxes
 	idle      *idling
 
 	mu     sync.Mutex
@@ -384,11 +383,15 @@ func (s *Service) firstBox(ctx context.Context, user string) (string, error) {
 	return b.ID, nil
 }
 
-// checkRunning refuses to start box while other boxes of user hold the user's running limit; a box being parked holds none.
+// checkRunning refuses to start box of the user's own while others hold the user's running limit; a box being parked
+// holds none, and an agent's boxes are bounded by the agent's caps instead.
 func (s *Service) checkRunning(user, box string, current map[string]machines.Machine) error {
+	if s.agentBox(user, box) {
+		return nil
+	}
 	var running []string
 	for id, m := range current {
-		if id != box && holdsMemory(m) && !s.parking(id) {
+		if id != box && holdsMemory(m) && !s.parking(id) && !s.agentBox(user, id) {
 			running = append(running, id)
 		}
 	}

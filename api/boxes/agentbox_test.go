@@ -13,37 +13,35 @@ import (
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/users"
-
 	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/users"
 )
 
-const (
-	idleAfter = 30 * time.Minute
-	agentBox  = "cb-a9e47b0c55d1"
-)
+const idleAfter = 30 * time.Minute
 
 func TestIdleHibernatesOnlyAnAgentBoxWithNoCallForTheThreshold(t *testing.T) {
 	tests := []struct {
 		name    string
 		agent   bool
-		call    func(svc *Service)
+		open    bool
 		elapsed time.Duration
 		want    machines.State
 	}{
-		{"idle agent box", true, func(*Service) {}, idleAfter, machines.StateHibernating},
-		{"under the threshold", true, func(*Service) {}, idleAfter - time.Second, machines.StateRunning},
-		{"a call open", true, func(svc *Service) { svc.Reached(aliceBox) }, 2 * idleAfter, machines.StateRunning},
-		{"a user's box", false, func(*Service) {}, 2 * idleAfter, machines.StateRunning},
+		{"idle agent box", true, false, idleAfter, machines.StateHibernating},
+		{"under the threshold", true, false, idleAfter - time.Second, machines.StateRunning},
+		{"a call open", true, true, 2 * idleAfter, machines.StateRunning},
+		{"a user's box", false, false, 2 * idleAfter, machines.StateRunning},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc, fake, clock := newIdleService(t, tt.agent)
+			svc, fake, clock, box := newIdleService(t, tt.agent)
 			svc.hibernateIdle(t.Context())
-			tt.call(svc)
+			if tt.open {
+				svc.Reached(box)
+			}
 			*clock = clock.Add(tt.elapsed)
 			svc.hibernateIdle(t.Context())
-			if got := fake.state(aliceBox); got != tt.want {
+			if got := fake.state(box); got != tt.want {
 				t.Errorf("state = %v, want %v", got, tt.want)
 			}
 		})
@@ -51,37 +49,38 @@ func TestIdleHibernatesOnlyAnAgentBoxWithNoCallForTheThreshold(t *testing.T) {
 }
 
 func TestIdleCountsFromTheEndOfTheLastCall(t *testing.T) {
-	svc, fake, clock := newIdleService(t, true)
-	left := svc.Reached(aliceBox)
+	svc, fake, clock, box := newIdleService(t, true)
+	left := svc.Reached(box)
 	*clock = clock.Add(2 * idleAfter)
 	left()
 	*clock = clock.Add(idleAfter - time.Second)
 	svc.hibernateIdle(t.Context())
-	if got := fake.state(aliceBox); got != machines.StateRunning {
+	if got := fake.state(box); got != machines.StateRunning {
 		t.Fatalf("state = %v right under the threshold after the call ended", got)
 	}
 	*clock = clock.Add(time.Second)
 	svc.hibernateIdle(t.Context())
-	if got := fake.state(aliceBox); got != machines.StateHibernating {
+	if got := fake.state(box); got != machines.StateHibernating {
 		t.Errorf("state = %v at the threshold after the call ended", got)
 	}
 }
 
 func TestIdleStartsAgainAtAWake(t *testing.T) {
-	svc, fake, clock := newIdleService(t, true)
+	svc, fake, clock, box := newIdleService(t, true)
 	svc.hibernateIdle(t.Context())
-	fake.setState(aliceBox, machines.StateHibernated)
+	fake.setState(box, machines.StateHibernated)
 	*clock = clock.Add(2 * idleAfter)
 	svc.hibernateIdle(t.Context())
-	fake.setState(aliceBox, machines.StateRunning)
+	fake.setState(box, machines.StateRunning)
 	svc.hibernateIdle(t.Context())
-	if got := fake.state(aliceBox); got != machines.StateRunning {
+	if got := fake.state(box); got != machines.StateRunning {
 		t.Errorf("state = %v on the first pass after a wake", got)
 	}
 }
 
 func TestAnAgentBoxGetsNoKeysConnectCredentialsOrDoorKey(t *testing.T) {
-	fake, svc := newCredentialService(t, func(context.Context) (map[string]bool, error) { return map[string]bool{agentBox: true}, nil })
+	svc, fake := newCredentialService(t)
+	box := addAgentBox(t, svc, fake)
 	svc.provisionStale(t.Context())
 	if err := svc.ApplyCredentials(t.Context(), alice); err != nil {
 		t.Fatalf("ApplyCredentials: %v", err)
@@ -91,7 +90,7 @@ func TestAnAgentBoxGetsNoKeysConnectCredentialsOrDoorKey(t *testing.T) {
 	}
 	svc.refreshCredentials(t.Context())
 	synctest.Test(t, func(t *testing.T) {
-		for _, id := range []string{aliceBox, agentBox} {
+		for _, id := range []string{aliceBox, box} {
 			m, _ := fake.Get(t.Context(), id)
 			svc.wakeCredentials(t.Context(), m)
 		}
@@ -102,10 +101,10 @@ func TestAnAgentBoxGetsNoKeysConnectCredentialsOrDoorKey(t *testing.T) {
 	for _, e := range fake.execCalls() {
 		keys[e.machine] = e.connectKey
 	}
-	if keys[agentBox] != "" || keys[aliceBox] != "door:"+aliceBox+":vm1" {
+	if _, ok := keys[box]; !ok || keys[box] != "" || keys[aliceBox] != "door:"+aliceBox+":vm1" {
 		t.Errorf("door keys = %v, want one for the owner's box only", keys)
 	}
-	if n := pushesTo(fake, agentBox); n != 0 {
+	if n := pushesTo(fake, box); n != 0 {
 		t.Errorf("credential pushes to the agent box = %d, want 0", n)
 	}
 	var vault, connect bool
@@ -120,65 +119,74 @@ func TestAnAgentBoxGetsNoKeysConnectCredentialsOrDoorKey(t *testing.T) {
 	}
 }
 
-func TestUnreadableAgentBoxesKeepEveryCredentialBack(t *testing.T) {
-	fake, svc := newCredentialService(t, func(context.Context) (map[string]bool, error) { return nil, errors.New("database down") })
-	svc.provisionStale(t.Context())
-	_ = svc.ApplyCredentials(t.Context(), alice)
-	_ = svc.ApplyVault(t.Context(), alice)
-	for _, e := range fake.execCalls() {
-		if e.connectKey != "" {
-			t.Errorf("machine %s got a door key", e.machine)
-		}
-	}
-	if calls := fake.credCalls(); len(calls) != 0 {
-		t.Errorf("credential pushes = %+v, want none", calls)
-	}
-}
-
-func TestCreateRecordsTheBoxBeforeItsMachineStarts(t *testing.T) {
+func TestAnAgentCreateRecordsItsBoxFirstAndSkipsTheOwnersLimits(t *testing.T) {
 	fake := newFakeMachines()
-	defaults := testDefaults
-	defaults.MaxRunning = 3
-	svc := New(fake, defaults, newFakeRegistry())
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning})
+	registry := newFakeRegistry()
+	registry.max = 1
+	svc := New(fake, testDefaults, registry)
 	ctx := auth.WithUser(t.Context(), alice)
+	if _, err := svc.Create(ctx, &controlv1.CreateBoxRequest{Name: "mine"}); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("the owner's Create past the running limit = %v, want FailedPrecondition", err)
+	}
+
 	var recorded string
-	created, err := svc.Create(WithCreated(ctx, func(_ context.Context, box string) error {
+	created, err := svc.Create(WithAgent(ctx, func(_ context.Context, box string) error {
 		if fake.specCount() != 0 {
 			t.Error("the machine started before the box was recorded")
 		}
 		recorded = box
 		return nil
 	}), &controlv1.CreateBoxRequest{Name: "agent-one"})
-	if err != nil || recorded == "" || created.GetBox().GetId() != recorded {
-		t.Fatalf("Create = %v, %v, recorded %q", created, err, recorded)
+	if err != nil || recorded == "" || created.GetBox().GetId() != recorded || !svc.agentBox(alice, recorded) {
+		t.Fatalf("an agent's Create past the owner's max boxes and running limit = %v, %v, recorded %q", created, err, recorded)
 	}
 
-	_, err = svc.Create(WithCreated(ctx, func(context.Context, string) error { return errors.New("database down") }), &controlv1.CreateBoxRequest{Name: "agent-two"})
+	_, err = svc.Create(WithAgent(ctx, func(context.Context, string) error { return errors.New("database down") }), &controlv1.CreateBoxRequest{Name: "agent-two"})
 	if status.Code(err) != codes.Unavailable || fake.specCount() != 1 || slices.ContainsFunc(svc.registry.Boxes(alice), func(b users.Box) bool { return b.Name == "agent-two" }) {
 		t.Errorf("Create with a failed record = %v, machines %d, boxes %v", err, fake.specCount(), svc.registry.Boxes(alice))
 	}
+	if err := svc.checkRunning(alice, recorded, map[string]machines.Machine{aliceBox: {State: machines.StateRunning}}); err != nil {
+		t.Errorf("waking the agent box with the owner's box running = %v", err)
+	}
+	if err := svc.checkRunning(alice, aliceBox, map[string]machines.Machine{recorded: {State: machines.StateRunning}}); err != nil {
+		t.Errorf("waking the owner's box with the agent box running = %v", err)
+	}
 }
 
-func newCredentialService(t *testing.T, agents AgentBoxes) (*fakeMachines, *Service) {
-	t.Helper()
-	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
-	fake.put(machines.Machine{ID: agentBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
-	svc.EnableConnect(&fakeConnect{})
-	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
-	svc.EnableAgentBoxes(agents, 0)
-	return fake, svc
-}
-
-func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *time.Time) {
+func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *time.Time, string) {
 	t.Helper()
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
 	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableAgentBoxes(func(context.Context) (map[string]bool, error) { return map[string]bool{aliceBox: agent}, nil }, idleAfter)
+	box := aliceBox
+	if agent {
+		box = addAgentBox(t, svc, fake)
+	}
+	svc.EnableIdle(idleAfter)
 	clock := time.Unix(1_000_000, 0)
 	svc.idle.now = func() time.Time { return clock }
-	return svc, fake, &clock
+	return svc, fake, &clock, box
+}
+
+func newCredentialService(t *testing.T) (*Service, *fakeMachines) {
+	t.Helper()
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "vm1"})
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableProvisioning(fakeSigner{})
+	svc.EnableConnect(&fakeConnect{})
+	svc.EnableVault(&fakeVault{digests: map[string]string{alice: "d1"}})
+	return svc, fake
+}
+
+// addAgentBox gives alice a running box an agent created.
+func addAgentBox(t *testing.T, svc *Service, fake *fakeMachines) string {
+	t.Helper()
+	b, err := svc.registry.AddBox(t.Context(), users.Box{ID: newBoxID(), Owner: alice, Name: "agent", Agent: true})
+	if err != nil {
+		t.Fatalf("add agent box: %v", err)
+	}
+	fake.put(machines.Machine{ID: b.ID, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Incarnation: "vm1", Revision: 1})
+	return b.ID
 }

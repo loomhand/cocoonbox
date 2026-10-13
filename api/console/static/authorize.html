@@ -29,9 +29,8 @@
     <p id="client-id" class="muted"></p>
     <p id="client-trust"></p>
     <p id="redirect"></p>
-    <p>If you allow it, it may create boxes, run programs in them, and list, wake, save, upgrade, hibernate and delete only the boxes it creates. Their programs use your model budget. It cannot see or touch your other boxes or your shares, and this agent cannot use your saved keys or connected accounts: the boxes it creates get neither. Boxes it creates count against your account's limit and hibernate when no one uses them. You can revoke it on the <a href="/cb/agents">Agents</a> page at any time; its boxes then stay yours.</p>
+    <p>If you allow it, it may create boxes, run programs in them, and list, wake, save, upgrade, hibernate and delete only the boxes it creates. Their programs use your model budget. It cannot see or touch your other boxes or your shares, and this agent cannot use your saved keys or connected accounts: the boxes it creates get neither. Its boxes do not count against your own box limit: the limits below bound them, and they hibernate when no one uses them. You can revoke it on the <a href="/cb/agents">Agents</a> page at any time; its boxes then stay yours.</p>
     <p id="existing" hidden>This agent already has access. Allowing it again keeps its boxes and replaces its limits and expiry.</p>
-    <p id="account" class="muted"></p>
     <form id="consent-form">
       <label>Boxes it may create <input type="number" name="max_boxes" min="1" max="16" required></label>
       <label>Running at once <input type="number" name="max_running" min="1" max="16" required></label>

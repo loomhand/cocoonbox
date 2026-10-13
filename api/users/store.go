@@ -102,18 +102,18 @@ func (s *store) insert(ctx context.Context, r record, passwordHash string, first
 }
 
 func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
-	rows, err := s.pool.Query(ctx, "SELECT id, owner, name, created_at FROM boxes ORDER BY created_at, id")
+	rows, err := s.pool.Query(ctx, "SELECT id, owner, name, agent, created_at FROM boxes ORDER BY created_at, id")
 	if err != nil {
 		return nil, fmt.Errorf("list boxes: %w", err)
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Box, error) {
 		var b Box
-		err := row.Scan(&b.ID, &b.Owner, &b.Name, &b.CreatedAt)
+		err := row.Scan(&b.ID, &b.Owner, &b.Name, &b.Agent, &b.CreatedAt)
 		return b, err
 	})
 }
 
-// insertBox adds b while its owner has fewer boxes than max_boxes; the owner's row lock orders concurrent adds.
+// insertBox adds b, a box of the owner's own only while the owner has fewer of them than max_boxes; the owner's row lock orders concurrent adds.
 func (s *store) insertBox(ctx context.Context, b Box) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var maxBoxes, boxes int
@@ -122,13 +122,13 @@ func (s *store) insertBox(ctx context.Context, b Box) error {
 		} else if err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, "SELECT count(*) FROM boxes WHERE owner = $1", b.Owner).Scan(&boxes); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM boxes WHERE owner = $1 AND NOT agent", b.Owner).Scan(&boxes); err != nil {
 			return err
 		}
-		if boxes >= maxBoxes {
+		if !b.Agent && boxes >= maxBoxes {
 			return fmt.Errorf("%w: %d boxes is the most this user may have", ErrQuota, maxBoxes)
 		}
-		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", b.ID, b.Owner, b.Name, b.CreatedAt)
+		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, agent, created_at) VALUES ($1, $2, $3, $4, $5)", b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt)
 		return err
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {

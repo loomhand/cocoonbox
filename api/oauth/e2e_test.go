@@ -79,6 +79,9 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	if text := e.toolError(t, access, "box_delete", map[string]any{"box": "main", "confirm": true}); !strings.Contains(text, `no box "main"`) {
 		t.Errorf("delete of the user's own box: %q", text)
 	}
+	if u, _ := e.users.Get(e.alice); u.MaxBoxes != 1 {
+		t.Fatalf("alice may have %d boxes, want the default 1, which main uses", u.MaxBoxes)
+	}
 	e.call(t, access, "box_create", map[string]any{"name": "agent-one"})
 	if text := e.toolError(t, access, "box_create", map[string]any{"name": "agent-two"}); !strings.Contains(text, "keep 1 box at most") {
 		t.Errorf("create past max boxes: %q", text)
@@ -338,9 +341,6 @@ func newEnv(t *testing.T) *env {
 	alice, err := us.Create(t.Context(), users.NewUser{Name: "alice", Password: alicePassword})
 	if err != nil {
 		t.Fatalf("create alice: %v", err)
-	}
-	if _, err := us.Update(t.Context(), alice.ID, users.Settings{MaxBoxesCap: new(4), MaxBoxes: new(4)}); err != nil {
-		t.Fatalf("raise max boxes: %v", err)
 	}
 	userToken, err := us.RegenerateToken(t.Context(), alice.ID)
 	if err != nil {
@@ -611,12 +611,13 @@ func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*c
 }
 
 func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
-	b, err := f.users.AddBox(ctx, users.Box{ID: "cb-" + hex.EncodeToString([]byte(rand.Text()))[:12], Owner: auth.User(ctx), Name: req.GetName()})
+	record := boxes.AgentRecord(ctx)
+	b, err := f.users.AddBox(ctx, users.Box{ID: "cb-" + hex.EncodeToString([]byte(rand.Text()))[:12], Owner: auth.User(ctx), Name: req.GetName(), Agent: record != nil})
 	if err != nil {
 		return nil, err
 	}
-	if fn := boxes.Created(ctx); fn != nil {
-		if err := fn(ctx, b.ID); err != nil {
+	if record != nil {
+		if err := record(ctx, b.ID); err != nil {
 			return nil, err
 		}
 	}

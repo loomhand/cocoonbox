@@ -238,20 +238,6 @@ func (s *store) addBox(ctx context.Context, grant, box string) error {
 	return err
 }
 
-func (s *store) agentBoxes(ctx context.Context) (map[string]bool, error) {
-	rows, err := s.pool.Query(ctx, "SELECT box_id FROM oauth_boxes")
-	if err != nil {
-		return nil, fmt.Errorf("list agent boxes: %w", err)
-	}
-	out := map[string]bool{}
-	var box string
-	_, err = pgx.ForEachRow(rows, []any{&box}, func() error {
-		out[box] = true
-		return nil
-	})
-	return out, err
-}
-
 func liveGrant(ctx context.Context, q querier, user, client string) (string, error) {
 	var id string
 	err := q.QueryRow(ctx, `SELECT id FROM oauth_grants WHERE user_id = $1 AND client_id = $2 AND expires_at > now()

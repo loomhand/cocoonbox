@@ -235,11 +235,6 @@ func (s *Service) AddBox(ctx context.Context, id, box string) error {
 	return s.store.addBox(ctx, id, box)
 }
 
-// AgentBoxes returns every box a grant created, also after its grant ended.
-func (s *Service) AgentBoxes(ctx context.Context) (map[string]bool, error) {
-	return s.store.agentBoxes(ctx)
-}
-
 // Grants returns user's grants, newest first.
 func (s *Service) Grants(ctx context.Context, user string) ([]Grant, error) {
 	return s.store.grants(ctx, user)

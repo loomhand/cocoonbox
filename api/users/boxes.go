@@ -3,11 +3,14 @@ package users
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/projecteru2/core/log"
 )
 
 const (
@@ -21,9 +24,11 @@ var boxNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,31}$`)
 
 // Box is one of a user's boxes: its id names its machines and its state, its name is unique among the owner's boxes.
 type Box struct {
-	ID        string
-	Owner     string
-	Name      string
+	ID    string
+	Owner string
+	Name  string
+	// Agent marks a box an agent's grant created: the grant's caps bound it, the owner's max boxes do not.
+	Agent     bool
 	CreatedAt time.Time
 }
 
@@ -41,7 +46,8 @@ func (s *Service) HasBox(owner, id string) bool {
 	return slices.ContainsFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
 }
 
-// AddBox gives b.Owner the box b, refused with ErrQuota once the owner has max boxes.
+// AddBox gives b.Owner the box b, refused with ErrQuota once the owner has max boxes of its own; an agent's box raises
+// the owner's tenant cap by one.
 func (s *Service) AddBox(ctx context.Context, b Box) (Box, error) {
 	if err := checkBoxName(b.Name); err != nil {
 		return Box{}, err
@@ -54,8 +60,14 @@ func (s *Service) AddBox(ctx context.Context, b Box) (Box, error) {
 		return Box{}, err
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.putBox(b)
+	s.mu.Unlock()
+	if !b.Agent {
+		return b, nil
+	}
+	if err := s.putClaimCap(ctx, b.Owner); err != nil {
+		return Box{}, errors.Join(fmt.Errorf("raise the tenant cap: %w", err), s.RemoveBox(context.WithoutCancel(ctx), b.Owner, b.ID))
+	}
 	return b, nil
 }
 
@@ -82,11 +94,14 @@ func (s *Service) RenameBox(ctx context.Context, owner, id, name string) (Box, e
 	return b, nil
 }
 
-// RemoveBox removes owner's box id and revokes its share, which cuts the share's sessions.
+// RemoveBox removes owner's box id and revokes its share, which cuts the share's sessions; an agent's box lowers the tenant cap again.
 func (s *Service) RemoveBox(ctx context.Context, owner, id string) error {
-	if !s.HasBox(owner, id) {
+	list := s.Boxes(owner)
+	i := slices.IndexFunc(list, func(b Box) bool { return b.ID == id })
+	if i < 0 {
 		return ErrNotFound
 	}
+	agent := list[i].Agent
 	if err := s.store.removeBox(ctx, owner, id); err != nil {
 		return err
 	}
@@ -103,7 +118,38 @@ func (s *Service) RemoveBox(ctx context.Context, owner, id string) error {
 	for _, share := range shares {
 		s.endShare(ctx, share)
 	}
+	if agent {
+		if err := s.putClaimCap(ctx, owner); err != nil {
+			log.WithFunc("users.Service.RemoveBox").Warnf(ctx, "lower the tenant cap of %s: %v", owner, err)
+		}
+	}
 	return nil
+}
+
+// putClaimCap writes owner's tenant cap for the boxes owner has now.
+func (s *Service) putClaimCap(ctx context.Context, owner string) error {
+	r, err := s.record(owner)
+	if err != nil {
+		return err
+	}
+	return s.tenants.Put(ctx, owner, "", s.claimCap(r))
+}
+
+// claimCap is the tenant's max_claims: the owner's box quota, its agents' boxes, and the old machine a Rebase keeps until the new one serves.
+func (s *Service) claimCap(r record) int {
+	return r.MaxBoxes + s.agentBoxes(r.ID) + 1
+}
+
+func (s *Service) agentBoxes(owner string) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	n := 0
+	for _, b := range s.boxes[owner] {
+		if b.Agent {
+			n++
+		}
+	}
+	return n
 }
 
 // putBox stores b in the index in place of its previous version; the caller holds s.mu.

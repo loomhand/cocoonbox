@@ -376,7 +376,7 @@ func (r *fakeRegistry) AddBox(_ context.Context, b users.Box) (users.Box, error)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch {
-	case len(list) >= r.max:
+	case !b.Agent && len(slices.DeleteFunc(slices.Clone(list), func(x users.Box) bool { return x.Agent })) >= r.max:
 		return users.Box{}, users.ErrQuota
 	case slices.ContainsFunc(list, func(x users.Box) bool { return x.Name == b.Name }):
 		return users.Box{}, users.ErrExists

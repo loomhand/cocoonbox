@@ -501,7 +501,7 @@ func (s *Server) startCreate(ctx context.Context, name, family string) (*control
 		return nil, err
 	}
 	record := func(ctx context.Context, box string) error { return s.grants.AddBox(ctx, g.ID, box) }
-	return s.boxes.Create(boxes.WithCreated(ctx, record), &controlv1.CreateBoxRequest{Name: name, Image: family})
+	return s.boxes.Create(boxes.WithAgent(ctx, record), &controlv1.CreateBoxRequest{Name: name, Image: family})
 }
 
 // checkRunning refuses to start another box of grant g while its running cap is held.

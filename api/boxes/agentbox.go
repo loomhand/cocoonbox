@@ -12,34 +12,30 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/users"
 )
 
-// AgentBoxes lists the boxes that agents created.
-type AgentBoxes func(ctx context.Context) (map[string]bool, error)
+// RecordFunc records the box an agent's Create added, before its machine starts.
+type RecordFunc func(ctx context.Context, box string) error
 
-// CreatedFunc runs on a box Create added, before its machine starts.
-type CreatedFunc func(ctx context.Context, box string) error
+type agentKey struct{}
 
-type createdKey struct{}
-
-// WithCreated returns ctx whose Create runs fn on the new box before its machine starts; an error removes the box and fails the Create.
-func WithCreated(ctx context.Context, fn CreatedFunc) context.Context {
-	return context.WithValue(ctx, createdKey{}, fn)
+// WithAgent marks the Creates of ctx as an agent's: the box counts against the agent's caps instead of the owner's max
+// boxes and running limit, gets none of the owner's credentials, and record runs on it before its machine starts; a
+// record error removes the box and fails the Create.
+func WithAgent(ctx context.Context, record RecordFunc) context.Context {
+	return context.WithValue(ctx, agentKey{}, record)
 }
 
-// Created returns the CreatedFunc of ctx, nil without one.
-func Created(ctx context.Context) CreatedFunc {
-	fn, _ := ctx.Value(createdKey{}).(CreatedFunc)
-	return fn
+// AgentRecord returns the RecordFunc of an agent's ctx, nil for the owner's.
+func AgentRecord(ctx context.Context) RecordFunc {
+	record, _ := ctx.Value(agentKey{}).(RecordFunc)
+	return record
 }
 
-// EnableAgentBoxes keeps the owner's keys, Connect credentials and box door key off the boxes agentBoxes lists; with idle
-// above 0, such a running box also hibernates once no client call to it is open and none ended for idle.
-func (s *Service) EnableAgentBoxes(agentBoxes AgentBoxes, idle time.Duration) {
-	s.agents = agentBoxes
-	if idle > 0 {
-		s.idle = &idling{after: idle, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
-	}
+// EnableIdle hibernates a running agent box once no client call to it is open and none ended for after.
+func (s *Service) EnableIdle(after time.Duration) {
+	s.idle = &idling{after: after, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
 }
 
 // RunIdle hibernates the idle agent boxes every interval until ctx ends.
@@ -58,11 +54,6 @@ func (s *Service) RunIdle(ctx context.Context, interval time.Duration) {
 
 func (s *Service) hibernateIdle(ctx context.Context) {
 	logger := log.WithFunc("boxes.Service.hibernateIdle")
-	agents, err := s.agents(ctx)
-	if err != nil {
-		logger.Error(ctx, err, "list agent boxes")
-		return
-	}
 	ms, err := s.machines.List(ctx, "")
 	if err != nil {
 		logger.Error(ctx, err, "list machines")
@@ -78,7 +69,7 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 	s.idle.keep(running)
 	for _, box := range slices.Sorted(maps.Keys(byBox)) {
 		m := byBox[box][0]
-		if !agents[box] || len(byBox[box]) > 1 || m.State != machines.StateRunning || !s.ready(m) || s.ops.activeFor(box) != nil ||
+		if !s.agentBox(m.Owner, box) || len(byBox[box]) > 1 || m.State != machines.StateRunning || !s.ready(m) || s.ops.activeFor(box) != nil ||
 			!s.registry.HasBox(m.Owner, box) || !s.idle.idleAt(box, now) {
 			continue
 		}
@@ -90,17 +81,14 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 	}
 }
 
-// ownerMachines drops the machines of agent boxes from ms; when the agent boxes cannot be read, it drops every machine.
-func (s *Service) ownerMachines(ctx context.Context, ms []machines.Machine) []machines.Machine {
-	if s.agents == nil {
-		return ms
-	}
-	agents, err := s.agents(ctx)
-	if err != nil {
-		log.WithFunc("boxes.Service.ownerMachines").Warnf(ctx, "list agent boxes, so no machine gets its owner's credentials now: %v", err)
-		return nil
-	}
-	return slices.DeleteFunc(slices.Clone(ms), func(m machines.Machine) bool { return agents[boxOfMachine(m.ID)] })
+// agentBox reports whether owner's box is one an agent created.
+func (s *Service) agentBox(owner, box string) bool {
+	return slices.ContainsFunc(s.registry.Boxes(owner), func(b users.Box) bool { return b.ID == box && b.Agent })
+}
+
+// ownerMachines drops the machines of agent boxes from ms.
+func (s *Service) ownerMachines(ms []machines.Machine) []machines.Machine {
+	return slices.DeleteFunc(slices.Clone(ms), func(m machines.Machine) bool { return s.agentBox(m.Owner, boxOfMachine(m.ID)) })
 }
 
 // idling keeps, per box, how many client calls are open and when the last one began or ended.

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/oauth"
 )
 
@@ -51,17 +50,10 @@ func (s *Server) checkAuthorization(w http.ResponseWriter, r *http.Request) {
 		s.failAuthorization(w, r, err)
 		return
 	}
-	list, err := s.boxes.List(s.ownerCtx(r), &controlv1.ListBoxesRequest{})
-	if err != nil {
-		s.fail(w, r, err)
-		return
-	}
 	writeJSON(w, struct {
 		oauth.Consent
-		User         string `json:"user"`
-		AccountBoxes int    `json:"account_boxes"`
-		AccountLimit int    `json:"account_max_boxes"`
-	}{Consent: consent, User: u.Name, AccountBoxes: len(list.GetBoxes()), AccountLimit: u.MaxBoxes})
+		User string `json:"user"`
+	}{Consent: consent, User: u.Name})
 }
 
 func (s *Server) approveAuthorization(w http.ResponseWriter, r *http.Request) {

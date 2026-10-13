@@ -121,7 +121,7 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	}
 	box := boxOfMachine(m.ID)
 	identity := machines.Identity{BoxID: box, WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
-	owned := len(s.ownerMachines(ctx, []machines.Machine{m})) == 1
+	owned := !s.agentBox(m.Owner, box)
 	var connectKey string
 	if s.connect != nil && owned {
 		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)

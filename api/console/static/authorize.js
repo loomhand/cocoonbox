@@ -63,7 +63,6 @@ async function load() {
     ? "The answer goes to " + c.redirect_host + " on this computer. Allow it only if you started this from an agent on this computer just now."
     : "The answer goes to " + c.redirect_host + ".";
   $("existing").hidden = !c.existing;
-  $("account").textContent = "Your account has " + c.account_boxes + " of at most " + c.account_max_boxes + " boxes.";
   const f = $("consent-form");
   f.max_boxes.value = c.defaults.max_boxes;
   f.max_running.value = c.defaults.max_running;

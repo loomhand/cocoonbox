@@ -208,7 +208,13 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		DefaultDailyCap int64          `json:"default_daily_cap_micros,omitempty"`
 		DefaultRunning  int            `json:"default_max_running"`
 		SpentToday      int64          `json:"spent_today_micros"`
+		OwnBoxes        int            `json:"own_boxes"`
 	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning}
+	for _, b := range s.users.Boxes(u.ID) {
+		if !b.Agent {
+			resp.OwnBoxes++
+		}
+	}
 	list, err := s.boxes.List(s.ownerCtx(r), &controlv1.ListBoxesRequest{})
 	if err != nil {
 		s.fail(w, r, err)

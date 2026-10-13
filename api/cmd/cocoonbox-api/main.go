@@ -120,9 +120,8 @@ func main() {
 			logger.Fatalf(ctx, err, "open oauth")
 		}
 		defer grants.Close()
-		idle := time.Duration(*cfg.OAuth.IdleHibernate)
-		svc.EnableAgentBoxes(grants.AgentBoxes, idle)
-		if idle > 0 {
+		if idle := time.Duration(*cfg.OAuth.IdleHibernate); idle > 0 {
+			svc.EnableIdle(idle)
 			go svc.RunIdle(ctx, idleInterval)
 		}
 	}

@@ -33,8 +33,8 @@ func TestTheMigrationGivesEveryUserItsOldBox(t *testing.T) {
 	}
 	svc, gw, tenants, dsn := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1", ID: "test"})
-	if err := exec(t, dsn, "DROP TABLE boxes CASCADE; DELETE FROM schema_migrations WHERE version = 4"); err != nil {
-		t.Fatalf("undo migration 4: %v", err)
+	if err := exec(t, dsn, "DROP TABLE boxes CASCADE; DELETE FROM schema_migrations WHERE version IN (4, 8)"); err != nil {
+		t.Fatalf("undo migrations 4 and 8: %v", err)
 	}
 	got := openTestService(t, dsn, gw, tenants).Boxes(u.ID)
 	if len(got) != 1 || got[0].ID != firstBoxID("test") || got[0].Name != FirstBoxName {
@@ -85,6 +85,34 @@ func TestAddBoxKeepsTheQuotaAndUniqueNames(t *testing.T) {
 	list := svc.Boxes(u.ID)
 	if list[0].Name != FirstBoxName || !slices.IsSortedFunc(list, compareBoxes) {
 		t.Errorf("Boxes = %+v, want oldest first", list)
+	}
+}
+
+func TestAgentBoxesStayOutsideMaxBoxesAndRaiseTheTenantCap(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	for _, id := range []string{"cb-a1", "cb-a2"} {
+		if _, err := svc.AddBox(t.Context(), Box{ID: id, Owner: u.ID, Name: id[3:], Agent: true}); err != nil {
+			t.Fatalf("AddBox of an agent with max boxes 1 used = %v", err)
+		}
+	}
+	if got := tenants.tenants[u.ID].max; got != 4 {
+		t.Errorf("tenant cap = %d, want max boxes 1 + 2 agent boxes + 1", got)
+	}
+	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-o", Owner: u.ID, Name: "own"}); !errors.Is(err, ErrQuota) {
+		t.Errorf("the owner's AddBox past max boxes = %v, want ErrQuota", err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(1)}); err != nil {
+		t.Errorf("max boxes 1 with one own and two agent boxes = %v", err)
+	}
+	if got := openTestService(t, dsn, gw, tenants).Boxes(u.ID); len(got) != 3 || !got[1].Agent || got[0].Agent {
+		t.Errorf("Boxes after reopen = %+v, want main and two agent boxes", got)
+	}
+	if err := svc.RemoveBox(t.Context(), u.ID, "cb-a1"); err != nil {
+		t.Fatalf("RemoveBox: %v", err)
+	}
+	if got := tenants.tenants[u.ID].max; got != 3 {
+		t.Errorf("tenant cap after a removal = %d, want 3", got)
 	}
 }
 

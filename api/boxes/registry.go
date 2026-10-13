@@ -36,15 +36,18 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "list boxes")
 	}
-	if err = s.checkRunning(user, "", current); err != nil {
-		return nil, err
+	record := AgentRecord(ctx)
+	if record == nil {
+		if err = s.checkRunning(user, "", current); err != nil {
+			return nil, err
+		}
 	}
-	b, err := s.registry.AddBox(ctx, users.Box{ID: newBoxID(), Owner: user, Name: req.GetName()})
+	b, err := s.registry.AddBox(ctx, users.Box{ID: newBoxID(), Owner: user, Name: req.GetName(), Agent: record != nil})
 	if err != nil {
 		return nil, registryError(ctx, err, "add box")
 	}
-	if fn := Created(ctx); fn != nil {
-		if err = fn(ctx, b.ID); err != nil {
+	if record != nil {
+		if err = record(ctx, b.ID); err != nil {
 			logger.Errorf(ctx, err, "record the new box %s", b.ID)
 			if rmErr := s.registry.RemoveBox(context.WithoutCancel(ctx), user, b.ID); rmErr != nil {
 				logger.Errorf(ctx, rmErr, "remove the unrecorded box %s", b.ID)
