@@ -3648,6 +3648,38 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     assert_eq!(result["role"], "tool");
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(report["result"], json!({"params": {"n": 1}}), "{report}");
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("want turn end, got {:?}", entries.last());
+    };
+    let usage = end.usage.as_ref().unwrap();
+    let mut models: Vec<(&str, u64, u64, u64, u64)> = usage
+        .models
+        .iter()
+        .map(|m| {
+            (
+                m.model.as_str(),
+                m.calls,
+                m.input_tokens,
+                m.output_tokens,
+                m.cached_input_tokens,
+            )
+        })
+        .collect();
+    models.sort_unstable();
+    let mut want = vec![
+        (chats[0]["model"].as_str().unwrap(), 2, 250, 15, 100),
+        ("typesafe/jev-1.13", 1, 1000, 50, 0),
+    ];
+    want.sort_unstable();
+    assert_eq!(models, want);
+    assert_eq!(
+        (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cached_input_tokens
+        ),
+        (1250, 65, 100)
+    );
 
     let golden: Value = serde_json::from_slice(
         &std::fs::read(
