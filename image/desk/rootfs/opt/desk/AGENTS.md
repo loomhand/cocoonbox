@@ -35,6 +35,21 @@ Windows and elements come from the accessibility tree (AT-SPI), roles named as i
 
 Element ids stay valid while the element exists; take a new snapshot after a window changes.
 
+Shapes that scripts get wrong:
+
+- `snapshot()` returns `{window, nodes, truncated, ms}`: loop over `s.nodes`. A node has `bounds`
+  only when you ask for them: `snapshot(title, {bounds: true})`.
+- `press`, `read` and `act` take a node's `id` (such as `1.17/62`). The `ref=N` of an outline is
+  only its position in that one snapshot, and no call takes it. To act on a named element:
+  `const {found} = await desk.find('Save', {role: 'button'}); await desk.press(found[0].id)`.
+- "UnknownObject" or "bad element id": the element is gone (a list refreshed, a menu closed, a
+  folder changed). `find` it again.
+- `windows()` also lists untitled panel and desktop windows, and an app's title changes as it
+  works (Thunar `inbox - Thunar` becomes `docs - Thunar`; Mousepad adds `*` to an unsaved file).
+  Look the window up again before each use instead of keeping its title:
+  `const w = (await desk.windows()).find((w) => w.title.endsWith(' - Thunar'))`.
+- `ask(prompt, [await desk.shot()])`: the images argument is an array of PNG buffers.
+
 ## GUI plans and saved flows
 
 `gui_plan` runs `/opt/desk/lib/gui_plan.mts` on this API: a list of steps (app, menu, click,
@@ -122,6 +137,10 @@ Replay it: `script_run {script: "flows/save-note.mts", params: {path: "/home/use
   may only close the path-completion popup; press it again while the dialog is still in front.
 - Save As for a file that already has a name selects only its stem, so typed text keeps the old
   extension. Press Home, then Shift+End, before typing a new path.
+- Thunar by keyboard: `ctrl+l`, an absolute path and Return open a folder; `ctrl+s` (Select by
+  Pattern, such as `*.png`) selects files; `ctrl+x` then `ctrl+v` in the target folder moves them;
+  `ctrl+shift+n` makes a folder; `F2` renames the selected file, and with several files selected
+  it opens Rename Multiple Files (search and replace, numbering) to rename them all at once.
 - Menu toggles such as Mousepad's Word Wrap publish no checked state; check them in the app's
   preferences dialog or with `gsettings`.
 - A snapshot of a Chrome window holds the browser's own controls and the start of the page;
