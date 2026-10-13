@@ -23,6 +23,7 @@ const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
 const CHALLENGE_WAIT: Duration = Duration::from_secs(8);
 const SETTLE: Duration = Duration::from_secs(2);
+const TAB_WAIT: Duration = Duration::from_secs(2);
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
@@ -45,6 +46,8 @@ const XPROP_WAIT: Duration = Duration::from_secs(2);
 const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
 const MAX_WINDOWS: usize = 8;
 const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the keyboard focus is in no web page of the agent's Chrome, so it may be in the address bar, a find bar, DevTools, another app or a Chrome the browser tools do not drive; use browser_navigate to open the checkout in the agent's Chrome, then focus the card field; nothing was typed";
+const SHARE_TAB: &str = "a read-only share reads only its own window, so it takes no tab";
+const TAB_JS: &str = "[document.visibilityState, document.title, location.href]";
 const NOT_A_FIELD: &str = "focus a card field on the checkout page first: the focused element of the page is not a text field; nothing was typed";
 
 const SNAPSHOT_JS: &str = r#"(() => {
@@ -256,11 +259,13 @@ pub struct Browser {
     windows: Mutex<HashMap<String, Slot>>,
     last: Mutex<String>,
     fetch_wait: Duration,
+    /// A box that runs GUI plans: the tools also act on a tab the user has open.
+    plans: bool,
 }
 
 impl Browser {
-    /// Creates a browser handle; Chrome starts on first use.
-    pub fn new(bin: String, profile: PathBuf, port: u16) -> Self {
+    /// Creates a browser handle; Chrome starts on first use. `plans` turns on the behaviour of a box that runs GUI plans.
+    pub fn new(bin: String, profile: PathBuf, port: u16, plans: bool) -> Self {
         Self {
             bin,
             profile,
@@ -271,6 +276,7 @@ impl Browser {
             windows: Mutex::new(HashMap::new()),
             last: Mutex::new(String::new()),
             fetch_wait: LOAD_WAIT,
+            plans,
         }
     }
 
@@ -295,7 +301,18 @@ impl Browser {
             }
             "browser_end" => return Ok(self.end(agent_id).await),
             "browser_fetch" => return self.fetch(args).await,
+            "browser_tabs" if self.plans => return self.tabs().await,
             _ => {}
+        }
+        if self.plans
+            && let Some(tab) = args["tab"].as_str()
+        {
+            if args["workspace_only"] == true {
+                return Err(SHARE_TAB.to_owned());
+            }
+            let mut cdp = self.tab(tab).await?;
+            timing::mark("connect");
+            return Self::act(&mut cdp, tool, args).await;
         }
         let (slot, evicted) = self.slot(agent_id).await;
         if let Some(evicted) = evicted {
@@ -307,6 +324,11 @@ impl Browser {
         if let Some(t) = window.as_ref() {
             t.ws_url.clone_into(&mut *self.last.lock().await);
         }
+        Self::act(&mut cdp, tool, args).await
+    }
+
+    /// Runs a page tool of `run` in the tab of `cdp`.
+    async fn act(cdp: &mut Cdp, tool: &str, args: Value) -> Result<String, String> {
         match tool {
             "browser_navigate" => {
                 let a: NavigateArgs = parse(args)?;
@@ -375,6 +397,85 @@ impl Browser {
             }
             _ => Err(format!("unknown browser tool {tool}")),
         }
+    }
+
+    /// Lists the tabs open outside the agent windows, with their ids for `tab`.
+    async fn tabs(&self) -> Result<String, String> {
+        let tabs = self.user_tabs().await?;
+        if tabs.is_empty() {
+            return Ok("no tab is open outside the agent windows".to_owned());
+        }
+        let mut out = String::from(
+            "Tabs the user has open; pass an id, or \"active\" for the one in front, as tab:",
+        );
+        for t in &tabs {
+            let _ = write!(out, "\n{t}");
+        }
+        Ok(out)
+    }
+
+    /// The user's tab `tab`: an id from `browser_tabs`, or "active" for the one tab in front, else the one
+    /// of those titled as the X active window; Chrome is not started for it.
+    async fn tab(&self, tab: &str) -> Result<Cdp, String> {
+        let tabs = self.user_tabs().await?;
+        if tab != "active" {
+            return tabs
+                .into_iter()
+                .find(|t| t.id == tab)
+                .map(|t| t.cdp)
+                .ok_or_else(|| format!("no tab {tab} is open; browser_tabs lists the tabs"));
+        }
+        let mut shown: Vec<Tab> = tabs.into_iter().filter(|t| t.shown).collect();
+        if shown.len() > 1
+            && let Some(title) = active_title().await
+            && shown.iter().filter(|t| t.title == title).count() == 1
+        {
+            shown.retain(|t| t.title == title);
+        }
+        match shown.len() {
+            1 => Ok(shown.remove(0).cdp),
+            0 => Err("no tab of the user is in front; browser_tabs lists the tabs".to_owned()),
+            n => {
+                let mut err = format!("{n} tabs are in front, one per window; pass one id as tab:");
+                for t in &shown {
+                    let _ = write!(err, "\n{t}");
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// The page tabs outside the agent windows, which are known by their first history entry.
+    async fn user_tabs(&self) -> Result<Vec<Tab>, String> {
+        let targets = self
+            .targets()
+            .await
+            .map_err(|_| "Chrome is not running in the box".to_owned())?;
+        let mut tabs = Vec::new();
+        for t in targets.into_iter().filter(Target::is_tab) {
+            let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
+                continue;
+            };
+            let Ok(history) = cdp.call("Page.getNavigationHistory", json!({})).await else {
+                continue;
+            };
+            if history["entries"][0]["url"] == AGENT_PAGE {
+                continue;
+            }
+            let info = tokio::time::timeout(TAB_WAIT, cdp.eval(TAB_JS))
+                .await
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
+            tabs.push(Tab {
+                shown: info[0] == "visible",
+                title: info[1].as_str().unwrap_or_default().to_owned(),
+                url: info[2].as_str().unwrap_or(&t.url).to_owned(),
+                id: t.id,
+                cdp,
+            });
+        }
+        Ok(tabs)
     }
 
     /// Reads `url` in a hidden tab, out of every window, and closes the tab.
@@ -784,6 +885,25 @@ impl Target {
     fn is_web(&self) -> bool {
         matches!(self.kind.as_str(), "page" | "iframe")
             && (self.url.starts_with("https://") || self.url.starts_with("http://"))
+    }
+}
+
+/// A tab the user has open, attached.
+struct Tab {
+    id: String,
+    title: String,
+    url: String,
+    shown: bool,
+    cdp: Cdp,
+}
+
+impl std::fmt::Display for Tab {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "- tab {} \"{}\" ({})", self.id, self.title, self.url)?;
+        if self.shown {
+            f.write_str(" [in front]")?;
+        }
+        Ok(())
     }
 }
 
@@ -1420,6 +1540,52 @@ pub(super) mod tests {
         port
     }
 
+    /// Serves CDP on the returned port for page tabs of (first history entry, visibility, title); a tab's
+    /// other script evaluations return `Page: tab <index>`.
+    async fn tabs_chrome(tabs: &[(&str, &str, &str)]) -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let mut list = Vec::new();
+        for (i, (first, shown, title)) in tabs.iter().enumerate() {
+            let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = ws.local_addr().unwrap();
+            let url = format!("https://t{i}.test/");
+            list.push(json!({"id": format!("T{i}"), "type": "page", "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/T{i}")}));
+            let history = json!({"entries": [{"url": first}]});
+            let info = json!([shown, title, url]);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = ws.accept().await {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        let result = match v["method"].as_str().unwrap() {
+                            "Page.getNavigationHistory" => history.clone(),
+                            _ if v["params"]["expression"] == TAB_JS => {
+                                json!({"result": {"value": info}})
+                            }
+                            _ => json!({"result": {"value": format!("Page: tab {i}")}}),
+                        };
+                        let reply = json!({"id": v["id"], "result": result});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                }
+            });
+        }
+        let list = Value::from(list).to_string();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    list.len()
+                );
+                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
+            }
+        });
+        port
+    }
+
     /// Serves CDP on the returned port with a hidden tab whose page text is `text`, logging every message;
     /// its navigation loads only with `loads`, else only the blank page's events come again.
     async fn fetch_chrome(text: String, loads: bool) -> (u16, Arc<std::sync::Mutex<Vec<Value>>>) {
@@ -1570,7 +1736,7 @@ pub(super) mod tests {
         let marker = dir.path().join(AGENT_MARKER);
         std::fs::write(&marker, b"").unwrap();
         let port = slow_chrome(Duration::from_millis(300)).await;
-        let b = Browser::new(alive_chrome(dir.path()), dir.path().into(), port);
+        let b = Browser::new(alive_chrome(dir.path()), dir.path().into(), port, false);
         assert_eq!(
             b.run("state", "browser_start", json!({})).await.unwrap(),
             "running"
@@ -1585,7 +1751,7 @@ pub(super) mod tests {
         std::fs::write(&marker, b"").unwrap();
         let port = slow_chrome(Duration::ZERO).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
-        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         for swept in [true, false] {
             assert_eq!(
                 b.run("state", "browser_start", json!({})).await.unwrap(),
@@ -1605,6 +1771,7 @@ pub(super) mod tests {
             alive_chrome(dir.path()),
             dir.path().into(),
             port,
+            false,
         ));
         let start = {
             let b = std::sync::Arc::clone(&b);
@@ -1635,7 +1802,7 @@ pub(super) mod tests {
             .local_addr()
             .unwrap()
             .port();
-        let b = Browser::new("false".into(), dir.path().into(), port);
+        let b = Browser::new("false".into(), dir.path().into(), port, false);
         let asked = tokio::time::Instant::now();
         let err = b.run("a", "browser_start", json!({})).await.unwrap_err();
         assert!(
@@ -1653,7 +1820,7 @@ pub(super) mod tests {
     async fn fetch_reads_a_hidden_tab_capped_and_closes_it() {
         let dir = tempfile::tempdir().unwrap();
         let (port, log) = fetch_chrome("x".repeat(READ_CHARS + 5), true).await;
-        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         let out = b
             .run("a", "browser_fetch", json!({"url": "a.test"}))
             .await
@@ -1697,7 +1864,7 @@ pub(super) mod tests {
     async fn fetch_past_its_wait_returns_the_text_so_far_and_closes_the_tab() {
         let dir = tempfile::tempdir().unwrap();
         let (port, log) = fetch_chrome("partial".into(), false).await;
-        let mut b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let mut b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         b.fetch_wait = Duration::from_secs(1);
         let asked = tokio::time::Instant::now();
         let out = b
@@ -1723,7 +1890,7 @@ pub(super) mod tests {
     async fn fetch_does_not_stop_on_a_cloudflare_challenge() {
         let dir = tempfile::tempdir().unwrap();
         let (port, _) = fetch_chrome("Just a moment...".into(), true).await;
-        let mut b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let mut b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         b.fetch_wait = Duration::from_secs(1);
         let out = b
             .run(
@@ -1743,7 +1910,7 @@ pub(super) mod tests {
     async fn fetch_gives_up_on_a_challenge_that_never_clears_before_the_load_wait() {
         let dir = tempfile::tempdir().unwrap();
         let (port, _) = fetch_chrome("Just a moment...".into(), true).await;
-        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         let start = std::time::Instant::now();
         let out = b
             .run(
@@ -1767,7 +1934,7 @@ pub(super) mod tests {
     async fn fetch_fails_a_document_that_is_no_page_so_nothing_downloads() {
         let dir = tempfile::tempdir().unwrap();
         let (port, log) = fetch_chrome(String::new(), true).await;
-        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port);
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         let err = b
             .run("a", "browser_fetch", json!({"url": "https://a.test/f.zip"}))
             .await
@@ -1843,7 +2010,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn past_the_window_cap_a_new_agent_evicts_the_least_recently_used_one() {
         let dir = tempfile::tempdir().unwrap();
-        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1, false);
         for i in 0..MAX_WINDOWS {
             assert!(b.slot(&format!("a{i}")).await.1.is_none());
         }
@@ -1887,7 +2054,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn fill_refuses_bad_arguments_and_never_starts_chrome() {
         let dir = tempfile::tempdir().unwrap();
-        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1, false);
         let both = json!({"origin": "https://a.test", "password": "p", "code": "1"});
         for (args, want) in [
             (json!({"password": "p"}), "fill needs the origin of the tab"),
@@ -1940,11 +2107,12 @@ pub(super) mod tests {
                 "/nonexistent/chrome".into(),
                 dir.path().into(),
                 web_chrome(&targets).await,
+                false,
             );
             let got = b.page_field().await.err().unwrap_or_default();
             assert_eq!(got, want, "{targets:?}");
         }
-        let idle = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        let idle = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1, false);
         assert_eq!(idle.page_field().await.unwrap_err(), NO_PAGE_FOCUS);
     }
 
@@ -1956,6 +2124,7 @@ pub(super) mod tests {
             "/nonexistent/chrome".into(),
             dir.path().into(),
             fake_chrome().await,
+            false,
         );
         assert_eq!(
             running
@@ -1970,7 +2139,7 @@ pub(super) mod tests {
             .await;
         assert!(start.unwrap_err().contains("launch /nonexistent/chrome"));
 
-        let idle = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1);
+        let idle = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1, false);
         assert_eq!(
             idle.run("state", "browser_close", json!({})).await.unwrap(),
             "not running"
@@ -1980,5 +2149,87 @@ pub(super) mod tests {
             .run("state", "browser_start", json!({"if_was_running": true}))
             .await;
         assert_eq!(start.unwrap(), "not running");
+    }
+
+    #[tokio::test]
+    async fn the_tab_argument_acts_on_a_user_tab_and_never_on_an_agent_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let tabs = |port| Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        let one = tabs(
+            tabs_chrome(&[
+                (AGENT_PAGE, "visible", "agent"),
+                ("https://mail.test/", "visible", "Inbox"),
+                ("https://docs.test/", "hidden", "Doc"),
+            ])
+            .await,
+        );
+        assert_eq!(
+            one.run("a", "browser_tabs", json!({})).await.unwrap(),
+            "Tabs the user has open; pass an id, or \"active\" for the one in front, as tab:\n\
+             - tab T1 \"Inbox\" (https://t1.test/) [in front]\n\
+             - tab T2 \"Doc\" (https://t2.test/)"
+        );
+        for (tab, want) in [
+            ("active", Ok("Page: tab 1")),
+            ("T2", Ok("Page: tab 2")),
+            ("T0", Err("no tab T0 is open; browser_tabs lists the tabs")),
+        ] {
+            let got = one.run("a", "browser_snapshot", json!({"tab": tab})).await;
+            assert_eq!(got.as_deref().map_err(String::as_str), want, "{tab}");
+        }
+        assert_eq!(
+            one.run(
+                "a",
+                "browser_read",
+                json!({"tab": "T1", "workspace_only": true})
+            )
+            .await
+            .unwrap_err(),
+            SHARE_TAB
+        );
+        let two = tabs(
+            tabs_chrome(&[
+                ("https://a.test/", "visible", "A"),
+                ("https://b.test/", "visible", "B"),
+            ])
+            .await,
+        );
+        let err = two
+            .run("a", "browser_snapshot", json!({"tab": "active"}))
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("2 tabs are in front"), "{err}");
+        let none = tabs(tabs_chrome(&[(AGENT_PAGE, "visible", "agent")]).await);
+        assert_eq!(
+            none.run("a", "browser_tabs", json!({})).await.unwrap(),
+            "no tab is open outside the agent windows"
+        );
+    }
+
+    #[tokio::test]
+    async fn without_plans_the_tab_argument_and_the_tab_list_do_not_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let port = slow_chrome(Duration::ZERO).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let plain = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        assert_eq!(
+            plain
+                .run("a", "browser_snapshot", json!({"tab": "active"}))
+                .await
+                .unwrap(),
+            "Page: slow"
+        );
+        assert_eq!(
+            plain.run("a", "browser_tabs", json!({})).await.unwrap_err(),
+            "unknown browser tool browser_tabs"
+        );
+        let plans = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        assert_eq!(
+            plans
+                .run("a", "browser_snapshot", json!({"tab": "active"}))
+                .await
+                .unwrap_err(),
+            "no tab of the user is in front; browser_tabs lists the tabs"
+        );
     }
 }

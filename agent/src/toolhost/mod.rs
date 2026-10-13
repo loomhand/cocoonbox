@@ -73,6 +73,7 @@ impl Host {
                 cfg.chrome_bin.clone(),
                 cfg.chrome_profile.clone(),
                 cfg.cdp_port,
+                cfg.automation.plans(),
             ),
             cua: Cua::new(cfg.cua_socket.clone(), cfg.automation.plans()),
             desk: Desk::default(),

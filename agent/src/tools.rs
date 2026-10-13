@@ -13,6 +13,16 @@ const DESK_OPS: [&str; 15] = [
     "windows", "snapshot", "find", "read", "press", "act", "at", "key", "type", "click", "focus",
     "close", "launch", "shot", "screen",
 ];
+const TAB_TOOLS: [&str; 5] = [
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_click",
+    "browser_type",
+    "browser_read",
+];
+const TAB_HINT: &str = "A tab the user already has open, instead of your own window: \"active\" for the tab in front, or an id from browser_tabs. Leave it out to work in your own window.";
+const NAVIGATE_TAB: &str =
+    " It works in your own Chrome window; to act on a page the user already has open, pass tab.";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -175,7 +185,8 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
         });
     }
     if let Some(script) = script_tool(automation) {
-        tools.extend([gui_plan_tool(), script, fetch_tool()]);
+        with_tab(&mut tools);
+        tools.extend([gui_plan_tool(), script, fetch_tool(), tabs_tool()]);
     }
     tools
 }
@@ -203,9 +214,29 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
                 schema.remove("required");
             }
         }
-        tools.extend([script, gui_plan_tool(), fetch_tool(), desk_tool()]);
+        with_tab(&mut tools);
+        tools.extend([
+            script,
+            gui_plan_tool(),
+            fetch_tool(),
+            tabs_tool(),
+            desk_tool(),
+        ]);
     }
     tools
+}
+
+/// Gives the page tools of a box that runs GUI plans their `tab` argument.
+fn with_tab(tools: &mut [ToolSpec]) {
+    for t in tools
+        .iter_mut()
+        .filter(|t| TAB_TOOLS.contains(&t.name.as_ref()))
+    {
+        t.parameters["properties"]["tab"] = json!({"type": "string", "description": TAB_HINT});
+        if t.name == "browser_navigate" {
+            t.description = Cow::Owned(format!("{}{NAVIGATE_TAB}", t.description));
+        }
+    }
 }
 
 /// The automation's script tool; none on a box without one.
@@ -355,6 +386,16 @@ fn fetch_tool() -> ToolSpec {
             "properties": {"url": {"type": "string"}},
             "required": ["url"]
         }),
+    }
+}
+
+fn tabs_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("browser_tabs"),
+        description: Cow::Borrowed(
+            "List the tabs the user has open in the box's Chrome, outside your own window: id, title, URL and which ones are in front. To act on one, such as a page a task refers to that is already open, pass its id, or \"active\" for the tab in front, as tab to browser_navigate, browser_snapshot, browser_click, browser_type or browser_read. Without tab those tools work in your own window and leave the user's tabs alone.",
+        ),
+        parameters: json!({"type": "object", "properties": {}}),
     }
 }
 

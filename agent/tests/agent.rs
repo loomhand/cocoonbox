@@ -3522,7 +3522,25 @@ async fn mcp_serves_the_desk_guide_as_a_resource() {
     let listed = mcp.rpc("tools/list", json!({})).await;
     let names = McpClient::tool_names(&listed);
     assert!(names.contains(&"desk".to_owned()), "{names:?}");
+    assert!(names.contains(&"browser_tabs".to_owned()), "{names:?}");
     for tool in listed["result"]["tools"].as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        assert!(
+            tool["description"].as_str().unwrap().chars().count() <= 2048,
+            "{name}: Claude Code cuts a description at 2048 characters"
+        );
+        assert_eq!(
+            tool["inputSchema"]["properties"].get("tab").is_some(),
+            [
+                "browser_navigate",
+                "browser_snapshot",
+                "browser_click",
+                "browser_type",
+                "browser_read"
+            ]
+            .contains(&name),
+            "{tool}"
+        );
         let always = tool["_meta"]["anthropic/alwaysLoad"] == true;
         assert_eq!(
             always,
@@ -4696,6 +4714,72 @@ async fn each_mcp_session_types_into_its_own_chrome_window() {
         "the closed session's window stayed open"
     );
     assert!(tabs(h.cdp_port).await.iter().any(|t| t.0 == tab_a2.0));
+}
+
+#[tokio::test]
+async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
+    let Some(chrome) = test_chrome() else {
+        return;
+    };
+    let site = field_pages().await;
+    let url = |path: &str| format!("http://{site}{path}");
+    let day = Duration::from_secs(24 * 3600);
+    let h = Harness::boot(
+        Vec::new(),
+        false,
+        Duration::from_secs(600),
+        day,
+        Some(&chrome),
+        None,
+        Automation::Desk,
+    )
+    .await;
+    let mut mcp = McpClient::connect(&h).await;
+    let own = mcp
+        .call("browser_navigate", json!({"url": url("/agent")}))
+        .await;
+    assert_eq!(own["isError"], false, "{own}");
+    let user: Value = reqwest::Client::new()
+        .put(format!(
+            "http://127.0.0.1:{}/json/new?about:blank",
+            h.cdp_port
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = user["id"].as_str().unwrap();
+    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
+
+    let nav = mcp
+        .call("browser_navigate", json!({"url": url("/user"), "tab": id}))
+        .await;
+    assert!(
+        text(&nav).contains("textbox \"field /user\" [ref=e1]"),
+        "{nav}"
+    );
+    let listed = text(&mcp.call("browser_tabs", json!({})).await);
+    assert!(
+        listed.contains(&format!("- tab {id} \"/user\" ({})", url("/user"))),
+        "{listed}"
+    );
+    assert!(!listed.contains(&url("/agent")), "{listed}");
+    let typed = mcp
+        .call(
+            "browser_type",
+            json!({"ref": "e1", "text": "for the user", "tab": id}),
+        )
+        .await;
+    assert_eq!(typed["isError"], false, "{typed}");
+    let value = "document.querySelector('input').value";
+    let open = tabs(h.cdp_port).await;
+    let ws = |u: String| open.iter().find(|t| t.1 == u).unwrap().2.clone();
+    assert_eq!(tab_eval(&ws(url("/user")), value).await, "for the user");
+    assert_eq!(tab_eval(&ws(url("/agent")), value).await, "");
+    let own = mcp.call("browser_snapshot", json!({})).await;
+    assert!(text(&own).contains("field /agent"), "{own}");
 }
 
 #[tokio::test]
