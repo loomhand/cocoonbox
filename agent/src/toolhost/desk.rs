@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask};
 
-use super::atspi::{Atspi, Extras, Frame, Node, Obj, SHOWING, key_combos};
+use super::atspi::{Atspi, Extras, FOCUSED, Frame, Node, Obj, SHOWING, key_combos};
 use super::cua::Cua;
 use super::files;
 use super::rpc::{Call, Client, Output};
@@ -28,6 +28,9 @@ const MENU_POLL: Duration = Duration::from_millis(30);
 const MENU_POLLS: u32 = 10;
 const SELECTED_ROLES: [&str; 5] = ["tab", "option", "radio", "listitem", "treeitem"];
 const TITLE_TIERS: usize = 3;
+const TYPE_SETTLE: Duration = Duration::from_millis(100);
+const TYPE_POLL: Duration = Duration::from_millis(10);
+const TYPE_TAIL: usize = 16;
 const TITLE_SEPARATORS: [&str; 2] = [" - ", " — "];
 
 /// Snapshots and element actions over AT-SPI; the bus connection opens on first use.
@@ -48,7 +51,12 @@ impl Desk {
             "desk_act" => self.act(cua, parse(args)?).await?,
             "desk_at" => self.at(parse(args)?).await?,
             "desk_key" => key(cua, &parse::<KeyArgs>(args)?.keys).await?,
-            "desk_type" => type_text(cua, &parse::<TypeArgs>(args)?.text).await?,
+            "desk_type" => {
+                let text = parse::<TypeArgs>(args)?.text;
+                let out = type_text(cua, &text).await?;
+                self.typed(&text).await;
+                out
+            }
             "desk_click" => click(cua, parse(args)?).await?,
             "desk_focus" => {
                 let a = parse(args)?;
@@ -308,6 +316,36 @@ impl Desk {
         Ok(json!({"found": node_json((0, &node?)), "path": path}).to_string())
     }
 
+    /// Waits, at most [`TYPE_SETTLE`], until the focused element of the focused window holds the end of
+    /// the last line typed, since an app reads typed keys after the input call returns.
+    async fn typed(&self, text: &str) {
+        let Some(tail) = typed_tail(text) else {
+            return;
+        };
+        let _ = tokio::time::timeout(TYPE_SETTLE, async {
+            let frame = pick(self.frames().await?, None, None)?;
+            let tree = self.atspi.tree(frame, Extras::default()).await?;
+            let Some((obj, ifaces)) = tree
+                .nodes
+                .into_iter()
+                .find(|n| n.has(FOCUSED))
+                .and_then(|n| Some((n.obj?, n.ifaces)))
+            else {
+                return Ok(());
+            };
+            while !self
+                .atspi
+                .value(&obj, ifaces, READ_CHARS)
+                .await?
+                .contains(&tail)
+            {
+                tokio::time::sleep(TYPE_POLL).await;
+            }
+            Ok::<(), String>(())
+        })
+        .await;
+    }
+
     /// The window that `a` names by its app part, for a call that found no window titled as `a` says.
     async fn by_app(&self, a: &WindowArgs) -> Result<WindowArgs, String> {
         let frames: Vec<Frame> = self
@@ -504,6 +542,13 @@ fn key_names(combo: &str) -> Result<Vec<String>, String> {
         return Err(format!("bad key combination {combo:?}"));
     }
     Ok(keys)
+}
+
+/// The last characters of the last line of `text`, which a field holds once it has read the typing.
+fn typed_tail(text: &str) -> Option<String> {
+    let line = text.rsplit('\n').next()?.trim_end_matches('\r');
+    let n = line.chars().count();
+    (n > 0).then(|| line.chars().skip(n.saturating_sub(TYPE_TAIL)).collect())
 }
 
 fn text_of(v: &Value) -> String {
@@ -931,6 +976,22 @@ mod tests {
             named(none_active, "inbox - Thunar").unwrap_err(),
             "no window \"inbox - Thunar\"; windows of its app: [\"images - Thunar\", \"docs - Thunar\"]"
         );
+    }
+
+    #[test]
+    fn typing_waits_for_the_end_of_its_last_line() {
+        assert_eq!(typed_tail("hello").as_deref(), Some("hello"));
+        assert_eq!(
+            typed_tail("a\r\nsecond line").as_deref(),
+            Some("second line")
+        );
+        assert_eq!(
+            typed_tail("/home/user/Desktop/report/final/web.txt").as_deref(),
+            Some("rt/final/web.txt")
+        );
+        assert_eq!(typed_tail("café 草稿").as_deref(), Some("café 草稿"));
+        assert_eq!(typed_tail("path\n"), None);
+        assert_eq!(typed_tail(""), None);
     }
 
     #[test]

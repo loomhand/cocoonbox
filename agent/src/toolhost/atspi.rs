@@ -40,6 +40,8 @@ const ACTIVE: u32 = 1;
 const CHECKED: u32 = 4;
 const ENABLED: u32 = 8;
 const INDETERMINATE: u32 = 32;
+/// The state of the node that holds the keyboard focus.
+pub const FOCUSED: u32 = 12;
 /// The state of a node drawn on the screen.
 pub const SHOWING: u32 = 25;
 const MANAGES_DESCENDANTS: u32 = 31;

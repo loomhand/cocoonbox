@@ -26,7 +26,7 @@ Windows and elements come from the accessibility tree (AT-SPI), roles named as i
 | `press(id)` | presses an element as a user would: selects a tab or list row, opens the menus above a hidden menu entry, clicks a shown control, else runs its accessibility action |
 | `act(id, 'click' \| 'action' \| 'select' \| 'focus')` | one of those ways only |
 | `at(x, y, window?)` | the element at a screen point and the elements above it |
-| `key('ctrl+shift+s')`, `typeText('text')`, `click(x, y, {button?, count?})` | desktop input to the focused window; `typeText` turns each newline into Return |
+| `key('ctrl+shift+s')`, `typeText('text')`, `click(x, y, {button?, count?})` | desktop input to the focused window; `typeText` turns each newline into Return and returns once the focused field holds the text (at most 0.1 s more) |
 | `focus(window)`, `close(window)`, `launch(app)` | bring a window to the front, ask it to close as its close button does, start an app |
 | `screen()`, `shot({x?, y?, w?, h?})` | the screen size; a PNG `Buffer` of a screen rectangle |
 | `decide(state, {key: yes(q) \| choice(q, options)})` | a fast judgment over text or JSON state (about 0.3 s): `yes` answers `{probability}`, `choice` answers `{choice, confidence, probabilities}` |
