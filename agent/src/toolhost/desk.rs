@@ -742,10 +742,10 @@ fn node_json((i, n): (usize, &Node)) -> Value {
     v
 }
 
-/// One line per node: `- role "name" [disabled] [checked] [keys] [ref=N]: "value"`, indented by depth.
+/// One line per node: `- role "name" [disabled] [checked] [keys] [id=ID]: "value"`, indented by depth.
 pub fn outline(nodes: &[Node], max_chars: usize) -> String {
     let mut out = String::new();
-    for (i, n) in nodes.iter().enumerate() {
+    for n in nodes {
         let _ = write!(out, "{}- {}", "  ".repeat(n.depth), n.role());
         if !n.name.is_empty() {
             let _ = write!(out, " \"{}\"", quote(&n.name, max_chars));
@@ -759,7 +759,9 @@ pub fn outline(nodes: &[Node], max_chars: usize) -> String {
         if let Some(keys) = &n.keys {
             let _ = write!(out, " [{keys}]");
         }
-        let _ = write!(out, " [ref={i}]");
+        if let Some(obj) = &n.obj {
+            let _ = write!(out, " [id={}]", obj.id());
+        }
         if let Some(value) = &n.value {
             let _ = write!(out, ": \"{}\"", quote(value, max_chars));
         }
@@ -861,15 +863,23 @@ mod tests {
     }
 
     #[test]
-    fn the_outline_shows_states_keys_and_values() {
+    fn the_outline_shows_states_keys_ids_and_values() {
+        let obj = |n: u32| {
+            Some(Obj {
+                bus: ":1.17".into(),
+                path: format!("/org/a11y/atspi/accessible/{n}"),
+            })
+        };
         let nodes = vec![
             Node {
+                obj: obj(5),
                 role: 16,
                 name: "Prefs".into(),
                 states: 1 << 8,
                 ..Node::default()
             },
             Node {
+                obj: obj(62),
                 role: 7,
                 name: "Wrap \"long\" lines".into(),
                 states: (1 << 8) | (1 << 4),
@@ -889,7 +899,7 @@ mod tests {
         ];
         assert_eq!(
             outline(&nodes, 80),
-            "- dialog \"Prefs\" [ref=0]\n  - checkbox \"Wrap \\\"long\\\" lines\" [checked] [ref=1]\n  - spinbutton [disabled] [<Alt>n] [ref=2]: \"80\"\n"
+            "- dialog \"Prefs\" [id=1.17/5]\n  - checkbox \"Wrap \\\"long\\\" lines\" [checked] [id=1.17/62]\n  - spinbutton [disabled] [<Alt>n]: \"80\"\n"
         );
     }
 }
