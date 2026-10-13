@@ -5,7 +5,7 @@ pub mod openai;
 pub mod sse;
 
 use std::borrow::Cow;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::Duration;
 
 use base64::Engine;
@@ -111,6 +111,43 @@ impl Usage {
         self.input += other.input;
         self.output += other.output;
         self.cached += other.cached;
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tally(BTreeMap<String, (u64, Usage)>);
+
+impl Tally {
+    pub fn add(&mut self, model: &str, calls: u64, usage: Usage) {
+        let (n, sum) = self.0.entry(model.to_owned()).or_default();
+        *n += calls;
+        sum.add(usage);
+    }
+
+    pub fn add_reported(&mut self, report: &str) {
+        let Ok(report) = serde_json::from_str::<Value>(report) else {
+            return;
+        };
+        for (model, u) in report["usage"].as_object().into_iter().flatten() {
+            let usage = Usage {
+                input: u["input_tokens"].as_u64().unwrap_or(0),
+                output: u["output_tokens"].as_u64().unwrap_or(0),
+                cached: u["cached_tokens"].as_u64().unwrap_or(0),
+            };
+            self.add(model, u["calls"].as_u64().unwrap_or(0), usage);
+        }
+    }
+
+    pub fn total(&self) -> Usage {
+        let mut total = Usage::default();
+        for (_, u) in self.0.values() {
+            total.add(*u);
+        }
+        total
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&str, u64, Usage)> {
+        self.0.iter().map(|(m, (n, u))| (m.as_str(), *n, *u))
     }
 }
 
@@ -298,4 +335,56 @@ pub fn image_mime(data: &[u8]) -> &'static str {
 /// Encodes image bytes as base64.
 pub fn b64(data: &[u8]) -> String {
     B64.encode(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tally_sums_each_model_and_the_usage_a_gui_plan_report_carries() {
+        let mut tally = Tally::default();
+        let step = Usage {
+            input: 100,
+            output: 10,
+            cached: 40,
+        };
+        tally.add("anthropic/claude-sonnet-5", 1, step);
+        tally.add("anthropic/claude-sonnet-5", 1, step);
+        tally.add_reported(r#"{"ok":true,"usage":{"typesafe/jev-1.13":{"calls":3,"input_tokens":900,"output_tokens":30,"cached_tokens":0},"anthropic/claude-sonnet-5":{"calls":1,"input_tokens":1500,"output_tokens":20,"cached_tokens":0}}}"#);
+        tally.add_reported(r#"{"ok":true,"done":2}"#);
+        tally.add_reported("not json");
+        let got: Vec<_> = tally.iter().collect();
+        assert_eq!(
+            got,
+            [
+                (
+                    "anthropic/claude-sonnet-5",
+                    3,
+                    Usage {
+                        input: 1700,
+                        output: 40,
+                        cached: 80
+                    }
+                ),
+                (
+                    "typesafe/jev-1.13",
+                    3,
+                    Usage {
+                        input: 900,
+                        output: 30,
+                        cached: 0
+                    }
+                ),
+            ]
+        );
+        assert_eq!(
+            tally.total(),
+            Usage {
+                input: 2600,
+                output: 70,
+                cached: 80
+            }
+        );
+    }
 }

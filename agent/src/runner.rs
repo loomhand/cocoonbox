@@ -15,7 +15,7 @@ use crate::config::ServeConfig;
 use crate::connect::{self, Outcome};
 use crate::dispatch::{Caller, Dispatcher, ToolOutput, Tools};
 use crate::journal::Journal;
-use crate::llm::{self, Delta, Message, Model, Part, Request, ToolCall, ToolSpec, Usage};
+use crate::llm::{self, Delta, Message, Model, Part, Request, Tally, ToolCall, ToolSpec, Usage};
 use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
 use crate::route::Router;
 use crate::secrets::SECRETS;
@@ -436,7 +436,7 @@ impl Runtime {
         req: &Request<'_>,
         cap: usize,
         subagent: &str,
-        usage: &mut Usage,
+        usage: &mut Tally,
     ) -> Option<String> {
         let mut messages = req.messages.to_vec();
         messages.push(Message::User(vec![Part::Text(prompts::cap_report(cap))]));
@@ -448,7 +448,7 @@ impl Runtime {
         };
         match self.step(ctx, &req, subagent).await {
             Ok(step) => {
-                usage.add(step.usage);
+                usage.add(req.model, 1, step.usage);
                 let report = step.text.trim();
                 (!report.is_empty()).then(|| report.to_owned())
             }
@@ -545,7 +545,7 @@ impl Runtime {
         self.journal
             .set_status(agent_id, AgentStatus::Running)
             .await;
-        let mut usage = Usage::default();
+        let mut usage = Tally::default();
         let result = tokio::select! {
             r = self.main_loop(&ctx, &mut usage) => r,
             () = cancel.cancelled() => Err("cancelled".to_owned()),
@@ -560,13 +560,25 @@ impl Runtime {
             Ok(()) => (true, String::new()),
             Err(e) => (false, e),
         };
+        let total = usage.total();
+        let models = usage
+            .iter()
+            .map(|(model, calls, u)| pb::ModelUsage {
+                model: model.to_owned(),
+                calls,
+                input_tokens: u.input,
+                output_tokens: u.output,
+                cached_input_tokens: u.cached,
+            })
+            .collect();
         let end = pb::TurnEnd {
             ok,
             error,
             usage: Some(pb::Usage {
-                input_tokens: usage.input,
-                output_tokens: usage.output,
-                cached_input_tokens: usage.cached,
+                input_tokens: total.input,
+                output_tokens: total.output,
+                cached_input_tokens: total.cached,
+                models,
             }),
         };
         if let Err(e) = self
@@ -586,7 +598,7 @@ impl Runtime {
         self.journal.set_status(agent_id, status).await;
     }
 
-    async fn main_loop(&self, ctx: &TurnCtx, usage: &mut Usage) -> Result<(), String> {
+    async fn main_loop(&self, ctx: &TurnCtx, usage: &mut Tally) -> Result<(), String> {
         let history = self
             .journal
             .store
@@ -615,7 +627,7 @@ impl Runtime {
             system.push_str(&keys);
         }
         let tier = match &self.router {
-            Some(router) => self.front_route(ctx, router, &mut messages).await?,
+            Some(router) => self.front_route(ctx, router, &mut messages, usage).await?,
             None => None,
         };
         let cap = if self.cfg.script {
@@ -653,7 +665,7 @@ impl Runtime {
             }
             steps += 1;
             let step = self.step(ctx, &req, "").await?;
-            usage.add(step.usage);
+            usage.add(&ctx.model, 1, step.usage);
             if step.calls.is_empty() {
                 match ending(&step.text) {
                     Ending::Answer => return Ok(()),
@@ -692,6 +704,7 @@ impl Runtime {
         ctx: &TurnCtx,
         router: &Router,
         messages: &mut [Message],
+        usage: &mut Tally,
     ) -> Result<Option<&'static str>, String> {
         let Some(Message::User(parts)) = messages.last_mut() else {
             return Ok(None);
@@ -704,6 +717,9 @@ impl Runtime {
             })
             .unwrap_or_default();
         let r = router.route(task).await;
+        if let Some(u) = r.usage {
+            usage.add(router.model(), 1, u);
+        }
         let tier = route::TIERS
             .iter()
             .find(|(t, _)| r.confident() && *t == r.tier)
@@ -738,7 +754,7 @@ impl Runtime {
         &self,
         ctx: &TurnCtx,
         call: &ToolCall,
-        usage: &mut Usage,
+        usage: &mut Tally,
     ) -> Result<ToolOutput, String> {
         let caller = ctx.caller("", None);
         let args: Value = match serde_json::from_str(&call.arguments) {
@@ -768,7 +784,16 @@ impl Runtime {
             }
             name => match self.connect.as_ref().filter(|c| c.serves(name)) {
                 Some(client) => self.connector(ctx, client, name, &args).await?,
-                None => return self.dispatcher.execute(&caller, &call.id, name, args).await,
+                None => {
+                    let out = self
+                        .dispatcher
+                        .execute(&caller, &call.id, name, args)
+                        .await?;
+                    if name == "gui_plan" {
+                        usage.add_reported(&out.text);
+                    }
+                    return Ok(out);
+                }
             },
         };
         SECRETS.scrub_prose(&mut out.text);

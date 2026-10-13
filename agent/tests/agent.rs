@@ -346,7 +346,7 @@ fn chat_tool_call(id: &str, name: &str, args: &Value) -> String {
 }
 
 fn decision(tier: &str, confidence: f64) -> String {
-    json!({"answers": {"tier": {"type": "choice", "choice": tier, "confidence": confidence, "probabilities": {tier: confidence}}}, "usage": {"cost": 0.00004}}).to_string()
+    json!({"answers": {"tier": {"type": "choice", "choice": tier, "confidence": confidence, "probabilities": {tier: confidence}}}, "usage": {"cost": 0.00004, "input_tokens": 1000, "output_tokens": 50}}).to_string()
 }
 
 fn chat_text(text: &str) -> String {
@@ -1056,7 +1056,7 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
         panic!("want turn end, got {:?}", bodies[5]);
     };
     assert!(end.ok, "{}", end.error);
-    let usage = end.usage.unwrap();
+    let usage = end.usage.as_ref().unwrap();
     assert_eq!(
         (
             usage.input_tokens,
@@ -1416,7 +1416,7 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
             end.error,
             format!("stopped at the {cap}-step cap; the last reply reports the progress")
         );
-        assert_eq!(end.usage.unwrap().output_tokens, cap * 10 + 5);
+        assert_eq!(end.usage.as_ref().unwrap().output_tokens, cap * 10 + 5);
         let last_text = entries.iter().rev().find_map(|e| match &e.body {
             Some(Body::Text(t)) if e.role == i32::from(pb::Role::Assistant) => {
                 Some(t.text.as_str())
@@ -3673,6 +3673,38 @@ async fn a_script_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_rout
     assert_eq!(result["role"], "tool");
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(report["result"], json!({"params": {"n": 1}}), "{report}");
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("want turn end, got {:?}", entries.last());
+    };
+    let usage = end.usage.as_ref().unwrap();
+    let mut models: Vec<(&str, u64, u64, u64, u64)> = usage
+        .models
+        .iter()
+        .map(|m| {
+            (
+                m.model.as_str(),
+                m.calls,
+                m.input_tokens,
+                m.output_tokens,
+                m.cached_input_tokens,
+            )
+        })
+        .collect();
+    models.sort_unstable();
+    let mut want = vec![
+        (chats[0]["model"].as_str().unwrap(), 2, 250, 15, 100),
+        ("typesafe/jev-1.13", 1, 1000, 50, 0),
+    ];
+    want.sort_unstable();
+    assert_eq!(models, want);
+    assert_eq!(
+        (
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cached_input_tokens
+        ),
+        (1250, 65, 100)
+    );
 
     let golden: Value = serde_json::from_slice(
         &std::fs::read(

@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use crate::llm::Usage;
+
 const ROUTE: &str = include_str!("../../image/script/route.json");
 const TASK: &str = "\"__TASK__\"";
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -38,6 +40,7 @@ pub struct Router {
     http: reqwest::Client,
     url: String,
     api_key: String,
+    model: String,
 }
 
 impl Router {
@@ -47,11 +50,18 @@ impl Router {
             .timeout(TIMEOUT)
             .build()
             .map_err(|e| format!("build router client: {e}"))?;
+        let route: Value =
+            serde_json::from_str(ROUTE).map_err(|e| format!("decode route.json: {e}"))?;
         Ok(Self {
             http,
             url: format!("{}/decisions", base_url.trim_end_matches('/')),
             api_key: api_key.to_owned(),
+            model: route["model"].as_str().unwrap_or_default().to_owned(),
         })
+    }
+
+    pub fn model(&self) -> &str {
+        &self.model
     }
 
     /// Routes `task`; a failure comes back as an uncertain route that carries the error.
@@ -62,6 +72,7 @@ impl Router {
                 tier: String::new(),
                 confidence: 0.0,
                 error: Some(e),
+                usage: None,
             },
         }
     }
@@ -88,16 +99,25 @@ impl Router {
         }
         let reply: Value =
             serde_json::from_str(&text).map_err(|e| format!("decode decisions reply: {e}"))?;
+        let usage = Some(Usage {
+            input: reply["usage"]["input_tokens"].as_u64().unwrap_or(0),
+            output: reply["usage"]["output_tokens"].as_u64().unwrap_or(0),
+            cached: 0,
+        });
         let answer = &reply["answers"]["tier"];
-        let tier = answer["choice"]
-            .as_str()
-            .filter(|t| meaning(t).is_some())
-            .ok_or_else(|| format!("decisions reply has no known tier: {answer}"))?
-            .to_owned();
+        let Some(tier) = answer["choice"].as_str().filter(|t| meaning(t).is_some()) else {
+            return Ok(Route {
+                tier: String::new(),
+                confidence: 0.0,
+                error: Some(format!("decisions reply has no known tier: {answer}")),
+                usage,
+            });
+        };
         Ok(Route {
-            tier,
+            tier: tier.to_owned(),
             confidence: answer["confidence"].as_f64().unwrap_or(0.0),
             error: None,
+            usage,
         })
     }
 }
@@ -108,6 +128,7 @@ pub struct Route {
     pub tier: String,
     pub confidence: f64,
     pub error: Option<String>,
+    pub usage: Option<Usage>,
 }
 
 impl Route {
@@ -160,16 +181,19 @@ mod tests {
             tier: "script".into(),
             confidence: 0.99,
             error: Some("gw decisions returned 429".into()),
+            usage: None,
         };
         let weak = Route {
             tier: "cua".into(),
             confidence: 0.55,
             error: None,
+            usage: None,
         };
         let strong = Route {
             tier: "browser".into(),
             confidence: CONFIDENT,
             error: None,
+            usage: None,
         };
         assert!(!failed.confident() && !weak.confident() && strong.confident());
     }

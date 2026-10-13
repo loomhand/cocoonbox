@@ -6,7 +6,7 @@ use serde_json::Value;
 use tokio_util::task::TaskTracker;
 
 use crate::dispatch::{Dispatcher, ToolOutput};
-use crate::llm::{Message, Part, Request, ToolSpec, Usage};
+use crate::llm::{Message, Part, Request, Tally, ToolSpec};
 use crate::new_id;
 use crate::runner::{Runtime, TurnCtx};
 
@@ -22,7 +22,7 @@ pub async fn run(
     rt: &Runtime,
     ctx: &TurnCtx,
     task: &str,
-    usage: &mut Usage,
+    usage: &mut Tally,
 ) -> Result<ToolOutput, String> {
     let _screen = rt.screen.lock().await;
     let driver = new_id("cu");
@@ -70,7 +70,7 @@ async fn drive(
     ctx: &TurnCtx,
     task: &str,
     driver: &str,
-    usage: &mut Usage,
+    usage: &mut Tally,
 ) -> Result<ToolOutput, String> {
     let caller = ctx.caller(SUBAGENT, Some(driver));
     let mut messages = vec![Message::User(vec![Part::Text(task.to_owned())])];
@@ -95,7 +95,7 @@ async fn drive(
         }
         steps += 1;
         let step = rt.step(ctx, &req, SUBAGENT).await?;
-        usage.add(step.usage);
+        usage.add(&rt.cfg.model_computer, 1, step.usage);
         if step.calls.is_empty() {
             break Ok(step.text);
         }

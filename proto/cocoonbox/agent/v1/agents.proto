@@ -162,6 +162,15 @@ message Usage {
   uint64 input_tokens = 1;
   uint64 output_tokens = 2;
   uint64 cached_input_tokens = 3;
+  repeated ModelUsage models = 4;
+}
+
+message ModelUsage {
+  string model = 1;
+  uint64 calls = 2;
+  uint64 input_tokens = 3;
+  uint64 output_tokens = 4;
+  uint64 cached_input_tokens = 5;
 }
 
 message RespondRequest {
