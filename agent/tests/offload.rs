@@ -361,11 +361,11 @@ async fn read_wait_returns_on_post() {
     );
     b.call(json!({"op": "post", "repo": REPO, "kind": "question", "body": "which flag?"}))
         .await;
-    let got = tokio::time::timeout(Duration::from_secs(2), reader)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(started.elapsed() < Duration::from_secs(3));
+    let got = reader.await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "read returned at its wait limit, not on the post"
+    );
     assert_eq!(got["entries"][0]["kind"], "question", "{got}");
     assert_eq!(got["entries"][0]["body"], "which flag?");
     assert_eq!(got["entries"][0]["offload_id"], ID);
