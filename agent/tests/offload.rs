@@ -642,8 +642,9 @@ async fn send_rebuilds_history_checks_s_places_secrets_and_starts_the_cli() {
     let stream = std::io::Cursor::new(tar.into_inner().unwrap());
 
     let socket = b.layout.socket.clone();
+    let session = b.fake.join(format!("sessions/cb-off-{REPO}-claude"));
     let hook = tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(700)).await;
+        until("the CLI session", || session.exists()).await;
         offload::request(
             &socket,
             &json!({"op": "event", "repo": REPO, "cli": "claude", "hook": "UserPromptSubmit", "payload": {}}),
@@ -820,8 +821,9 @@ async fn a_second_send_takes_history_while_the_synced_refs_name_objects_only_the
     }
     let stream = std::io::Cursor::new(tar.into_inner().unwrap());
     let socket = b.layout.socket.clone();
+    let session = b.fake.join(format!("sessions/cb-off-{REPO}-claude"));
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        until("the CLI session", || session.exists()).await;
         offload::request(
             &socket,
             &json!({"op": "event", "repo": REPO, "cli": "claude", "hook": "UserPromptSubmit", "payload": {}}),
