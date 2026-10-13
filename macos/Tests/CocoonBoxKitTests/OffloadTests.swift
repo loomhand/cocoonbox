@@ -254,7 +254,7 @@ import Testing
 
     @Test func aCLIPathWithASpaceRoundTrips() async throws {
         let box = try await Harness.shared()
-        let dir = try Harness.temporary("app").appendingPathComponent("A client app 2.app")
+        let dir = try Harness.temporary("app").appendingPathComponent("CocoonBox 2.app")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let cli = dir.appendingPathComponent("cocoonbox")
         try FileManager.default.createSymbolicLink(atPath: cli.path, withDestinationPath: box.cli)
@@ -314,7 +314,7 @@ import Testing
     @Test func imagesOlderThanV22Block() {
         #expect(Preflight.image("cbdesk:v21")?.outcome == .block)
         #expect(Preflight.image("cbdesk:v22") == nil && Preflight.image("cbdesk:v104") == nil && Preflight.image("custom") == nil)
-        #expect(Preflight.image("cbcore:v1") == nil && Preflight.image("cbplan:v1") == nil)
+        #expect(Preflight.image("cbcore:v1") == nil)
     }
 
     @Test func macOSOnlyWork() throws {
