@@ -123,7 +123,7 @@ public struct Offloader: Sendable {
         self.connection = connection
         self.box = box
         self.store = store
-        rsh = "\(cli) rsh --box \(box.id)"
+        rsh = "\(Self.quote(cli)) rsh --box \(box.id)"
         self.environment = environment.merging(["COCOONBOX_ENDPOINT": connection.endpoint.url, "COCOONBOX_TOKEN": token]) { $1 }
         self.progress = progress
     }

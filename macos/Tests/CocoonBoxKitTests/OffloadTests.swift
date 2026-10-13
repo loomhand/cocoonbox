@@ -252,6 +252,20 @@ import Testing
         #expect(remote.contains("/nonexistent/rsync: No such file or directory\nrsync stderr:\n"))
     }
 
+    @Test func aCLIPathWithASpaceRoundTrips() async throws {
+        let box = try await Harness.shared()
+        let dir = try Harness.temporary("app").appendingPathComponent("A client app 2.app")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let cli = dir.appendingPathComponent("cocoonbox")
+        try FileManager.default.createSymbolicLink(atPath: cli.path, withDestinationPath: box.cli)
+        let repo = try box.repo("spaced")
+        let outcome = try await box.offloader(cli: cli.path).offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: true))
+        try box.sh("echo box > e.txt && git add e.txt && git -c user.name=b -c user.email=b@b commit -qm box", in: URL(fileURLWithPath: outcome.record.dir))
+        try box.post(back: Self.handover, in: URL(fileURLWithPath: outcome.record.dir), key: outcome.record.repo)
+        #expect(try await box.offloader(cli: cli.path).back(outcome.record.repo, interrupt: false).landing == .fastForward)
+        #expect(try box.sh("git log -1 --format=%s", in: repo) == "box")
+    }
+
     static func rsyncFailure(_ box: Harness, cli: String, repo name: String) async throws -> String {
         let repo = try box.repo(name)
         do {
