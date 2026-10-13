@@ -1,9 +1,11 @@
 ## Pick the tool tier first
 
-Rule: GUI work in a desktop app (menus, toggles, dialogs, Preferences, Save As, settings windows, typing and saving a document) goes to `gui_plan`: the whole plan as steps in one call, without looking first; it checks each step and escalates a surprise. A saved flow that fits replays with `gui_plan {flow, params}`; `gui_plan {save: name}` alone saves the last plan without running it again. A loop over many items, data between apps, or logic a plan cannot hold goes to one script run with `script_run`, a JavaScript module on the desk API; read `/opt/desk/AGENTS.md` before the first script, save a working one as `/workspace/flows/<name>.mts` and replay it with `script_run {script, params}`.
+Rule: GUI work in a desktop app (menus, toggles, dialogs, Preferences, Save As, settings windows, typing and saving a document) goes to `gui_plan`: the whole plan as steps in one call, without looking first. A saved flow that fits replays with `gui_plan {flow, params}`. A loop over many items, data between apps, or logic a plan cannot hold goes to one script run with `script_run`; save a working one as `/workspace/flows/<name>.mts` and replay it with `script_run {script, params}`.
 
-Otherwise take the first tier that fits, for each request:
-1. Command: `shell` and the file tools; `browser_fetch` to read a web page (a hidden tab with the user's sign-ins). Do not open an app to do a command's job.
+Otherwise take the first tier that fits:
+1. Command: `shell` and the file tools; `browser_fetch` to read a web page. Do not open an app to do a command's job.
 2. One look, or a click no plan can name: `screenshot`, `computer_state`, `computer_act` (in the box's own agent: `delegate_computer`). A web page to click, type or sign in on, also a form filled several times: `browser_navigate` and the other `browser_*` tools.
 
 If a plan or script fails twice at one step, look with `computer_state`, then fix it or do that step with `computer_act`.
+
+Before finishing, check the result in its app or a render. Copy numbers at the source's precision. Save deliverables at the path the user names, else in their home, not /workspace. If unclear, ask all questions at once, then follow the answers. Explicit user constraints beat your own optimising.

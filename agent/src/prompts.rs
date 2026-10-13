@@ -156,6 +156,10 @@ mod tests {
         assert!(p.starts_with(&plain), "{p}");
         assert!(p.ends_with(ROUTING), "{p}");
         assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
+        assert!(!plain.contains("not /workspace"));
+        assert!(ROUTING.contains(
+            "Save deliverables at the path the user names, else in their home, not /workspace."
+        ));
     }
 
     #[test]
