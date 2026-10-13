@@ -244,10 +244,22 @@ public struct Offloader: Sendable {
     func rsync(_ repo: GitRepo, to dir: String, excludes: URL) throws -> Int64 {
         let argv = ["/usr/bin/rsync", "-az", "--stats", "--delete", "--exclude-from=\(excludes.path)", "--exclude=/.git/objects/"]
             + (repo.linked ? ["--exclude=/.git"] : []) + ["-e", rsh, repo.top.path + "/", "box:\(dir)/"]
-        let run = try Command.run(argv, environment: environment)
-        guard run.status == 0 else { throw OffloadError.failed("rsync to the box failed (\(run.status)): \(run.error.split(separator: "\n").last ?? "")") }
+        let report = excludes.deletingLastPathComponent().appendingPathComponent("rsh-report")
+        try? FileManager.default.removeItem(at: report)
+        defer { try? FileManager.default.removeItem(at: report) }
+        let run = try Command.run(argv, environment: environment.merging(["COCOONBOX_RSH_REPORT": report.path]) { $1 })
+        guard run.status == 0 else { throw OffloadError.failed(Self.rsyncFailure(run.status, stderr: run.error, report: try? String(contentsOf: report, encoding: .utf8))) }
         let line = run.text.split(separator: "\n").first { $0.hasPrefix("Total sent:") || $0.hasPrefix("Total bytes sent:") } ?? ""
         return Int64(line.filter(\.isNumber)) ?? 0
+    }
+
+    static func rsyncFailure(_ status: Int32, stderr: String, report: String?) -> String {
+        var side = "cocoonbox rsh never reported, so it did not start or was killed"
+        if let report {
+            let (head, rest) = (report.prefix { $0 != "\n" }, report.drop { $0 != "\n" }.trimmingCharacters(in: .whitespacesAndNewlines))
+            side = (head.hasPrefix("exit ") ? "the box command exited \(head.dropFirst(5))" : "cocoonbox rsh \(head)") + (rest.isEmpty ? "" : ", with stderr:\n" + rest)
+        }
+        return "rsync to the box failed (\(status)); \(side)\nrsync stderr:\n\(stderr)"
     }
 
     // dryRun is the bytes rsync would send to an empty copy.

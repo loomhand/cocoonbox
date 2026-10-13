@@ -96,10 +96,18 @@ let words = arguments.dropFirst().filter { !$0.hasPrefix("--") }
 
 // rsh exits 255 on its own failures, so they differ from the command's exit codes.
 let failureStatus: Int32 = command == "rsh" ? 255 : 1
+let rshReport = command == "rsh" ? ProcessInfo.processInfo.environment["COCOONBOX_RSH_REPORT"].map { URL(fileURLWithPath: $0) } : nil
+let rshStderr = Mutex(Data())
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("cocoonbox: \(message)\n".utf8))
+    writeRshReport("failed: \(message)")
     exit(failureStatus)
+}
+
+func writeRshReport(_ status: String) {
+    guard let rshReport else { return }
+    try? (Data("\(status)\n".utf8) + rshStderr.withLock { $0 }).write(to: rshReport)
 }
 
 func value(of flag: String) -> String? {
@@ -836,6 +844,7 @@ func rsh() async {
     let code: Int32?
     do {
         code = try await connection.exec(start: start, input: input) { data, toStderr in
+            if toStderr, rshReport != nil { rshStderr.withLock { $0.append(data) } }
             try writeAll(toStderr ? STDERR_FILENO : STDOUT_FILENO, data)
         }
     } catch {
@@ -844,6 +853,7 @@ func rsh() async {
     }
     terminal?.restore()
     guard let code else { fail("the box ended the command without an exit code") }
+    writeRshReport("exit \(code)")
     exit(code)
 }
 

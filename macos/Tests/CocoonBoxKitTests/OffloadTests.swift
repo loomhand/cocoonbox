@@ -238,6 +238,32 @@ import Testing
         #expect(back.landing == nil && back.handover.contains("From: box"))
     }
 
+    @Test func anRshThatCannotStartReadsDifferentlyFromABoxSideFailure() async throws {
+        let box = try await Harness.shared()
+        let missing = try await Self.rsyncFailure(box, cli: "/nonexistent/cocoonbox", repo: "norsh")
+        #expect(missing.hasPrefix("rsync to the box failed (14); cocoonbox rsh never reported"))
+        #expect(missing.contains("exec on '/nonexistent/cocoonbox': No such file or directory") && missing.hasSuffix("unexpected end of file"))
+
+        let wrapper = try Harness.temporary("rsh").appendingPathComponent("cocoonbox")
+        try Data("#!/bin/sh\nfor a; do shift; [ \"$a\" = rsync ] && a=/nonexistent/rsync; set -- \"$@\" \"$a\"; done\nexec '\(box.cli)' \"$@\"\n".utf8).write(to: wrapper)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: wrapper.path)
+        let remote = try await Self.rsyncFailure(box, cli: wrapper.path, repo: "norsync")
+        #expect(remote.hasPrefix("rsync to the box failed (127); the box command exited 127, with stderr:\n"))
+        #expect(remote.contains("/nonexistent/rsync: No such file or directory\nrsync stderr:\n"))
+    }
+
+    static func rsyncFailure(_ box: Harness, cli: String, repo name: String) async throws -> String {
+        let repo = try box.repo(name)
+        do {
+            _ = try await box.offloader(cli: cli).offload(OffloadRequest(directory: repo, kind: .claude, handover: handover, yes: true))
+        } catch let error as OffloadError {
+            #expect(try box.sh("git for-each-ref refs/cocoonbox", in: repo).isEmpty)
+            return error.description
+        }
+        Issue.record("offloaded over \(cli)")
+        return ""
+    }
+
     @Test func theSendStreamIsATarWithLongNames() async throws {
         let long = "secrets/file/" + String(repeating: "deep/", count: 30) + ".env"
         let frames = try ExecFrames.tar([("handover.md", .bytes(Data("h".utf8))), (long, .bytes(Data(count: 70_000)))])
@@ -412,9 +438,9 @@ final class Harness: @unchecked Sendable {
         throw HarnessError(message: "MockBox did not start: \((try? String(contentsOf: log, encoding: .utf8)) ?? "")")
     }
 
-    func offloader() async throws -> Offloader {
+    func offloader(cli: String? = nil) async throws -> Offloader {
         let box = try #require(try await connection.firstBox())
-        return Offloader(connection: connection, box: box, token: "mock-token", cli: cli, store: store,
+        return Offloader(connection: connection, box: box, token: "mock-token", cli: cli ?? self.cli, store: store,
                          environment: Self.environment.merging(["HOME": macHome.path]) { $1 }, progress: { _ in })
     }
 
