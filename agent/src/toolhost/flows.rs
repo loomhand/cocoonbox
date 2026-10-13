@@ -13,6 +13,7 @@ use super::files;
 pub const MAX_BYTES: u64 = 128 << 10;
 const DIR: &str = "flows";
 const MARK: &str = ".sync-id";
+const INDEX: &str = "INDEX";
 const MAX_NAME: usize = 96;
 const EVENT_HEADER: usize = 16;
 const EVENT_BUF: usize = 64 << 10;
@@ -143,7 +144,7 @@ pub async fn wait(writes: &watch::Sender<u64>, args: Value) -> Result<String, St
     Ok(seen.to_string())
 }
 
-/// Counts in `writes` each write of a flow file into `workspace/flows`, following the folder when a restore replaces it.
+/// Counts in `writes` each write of a flow file into `workspace/flows` and drops each removed flow from `INDEX`, following the folder when a restore replaces it.
 #[cfg(target_os = "linux")]
 pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(), String> {
     use std::io::Read;
@@ -151,7 +152,8 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
     use tokio::io::unix::AsyncFd;
 
     let root_events = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ONLYDIR;
-    let flow_events = libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO;
+    let removals = libc::IN_DELETE | libc::IN_MOVED_FROM;
+    let flow_events = libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO | removals;
     let fd = crate::sys::inotify()
         .and_then(|fd| AsyncFd::new(std::fs::File::from(fd)))
         .map_err(|e| format!("inotify: {e}"))?;
@@ -169,7 +171,7 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
             continue;
         };
         let n = read.map_err(|e| format!("read inotify: {e}"))?;
-        let mut written = false;
+        let (mut written, mut removed) = (false, false);
         let mut at = 0;
         while at + EVENT_HEADER <= n {
             let word = |i: usize| {
@@ -183,7 +185,7 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
             let name = String::from_utf8_lossy(raw.split(|b| *b == 0).next().unwrap_or_default());
             at += EVENT_HEADER + len;
             if mask & libc::IN_Q_OVERFLOW != 0 {
-                written = true;
+                (written, removed) = (true, true);
             } else if wd == root && name == DIR {
                 if let Some(old) = flows.take() {
                     crate::sys::inotify_unwatch(fd.get_ref(), old);
@@ -191,13 +193,62 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
                 flows = crate::sys::inotify_watch(fd.get_ref(), &dir, flow_events).ok();
                 written = true;
             } else if Some(wd) == flows && valid(&name) {
-                written = true;
+                if mask & removals == 0 {
+                    written = true;
+                } else {
+                    removed |= name.ends_with(".json");
+                }
             }
         }
         if written {
             writes.send_modify(|w| *w += 1);
         }
+        if removed && let Err(e) = prune(&dir).await {
+            eprintln!("toolhost: prune the flow index: {e}");
+        }
     }
+}
+
+/// Drops from `dir/INDEX` each flow whose `.json` file is gone, rewriting the file in place so that a folder being removed gains no entry.
+#[cfg(target_os = "linux")]
+async fn prune(dir: &Path) -> Result<(), String> {
+    use tokio::io::AsyncWriteExt;
+
+    let path = dir.join(INDEX);
+    let index = match tokio::fs::read_to_string(&path).await {
+        Ok(index) => index,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let (mut kept, mut dropped) = (String::new(), false);
+    for line in index.lines().filter(|l| !l.is_empty()) {
+        let name = line.split('(').next().unwrap_or_default();
+        if tokio::fs::try_exists(dir.join(format!("{name}.json")))
+            .await
+            .unwrap_or(true)
+        {
+            kept.push_str(line);
+            kept.push('\n');
+        } else {
+            dropped = true;
+        }
+    }
+    if !dropped {
+        return Ok(());
+    }
+    let opened = tokio::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .await;
+    let mut file = match opened {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("open {}: {e}", path.display())),
+    };
+    file.write_all(kept.as_bytes())
+        .await
+        .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 /// Without inotify no flow write is seen.
@@ -320,5 +371,54 @@ mod tests {
         std::fs::remove_dir_all(ws.join("trash")).unwrap();
         std::fs::write(ws.join("flows/b.mts"), "x").unwrap();
         next(swapped).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn watch_drops_a_removed_flow_from_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().to_path_buf();
+        let flows = ws.join("flows");
+        std::fs::create_dir(&flows).unwrap();
+        for name in ["a.json", "b.json", "c.json", "d.mts"] {
+            std::fs::write(flows.join(name), "{}").unwrap();
+        }
+        std::fs::write(
+            flows.join("INDEX"),
+            "a(x): one\nb(): two\nc() once: three\n",
+        )
+        .unwrap();
+        tokio::spawn(super::watch(ws.clone(), watch::channel(0).0));
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let index_becomes = |want: &'static str| {
+            let path = flows.join("INDEX");
+            async move {
+                let started = std::time::Instant::now();
+                loop {
+                    let index = std::fs::read_to_string(&path).unwrap_or_default();
+                    if index == want || started.elapsed() > std::time::Duration::from_secs(2) {
+                        return index;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            }
+        };
+
+        std::fs::remove_file(flows.join("a.json")).unwrap();
+        assert_eq!(
+            index_becomes("b(): two\nc() once: three\n").await,
+            "b(): two\nc() once: three\n"
+        );
+        std::fs::rename(flows.join("c.json"), ws.join("c.json")).unwrap();
+        assert_eq!(index_becomes("b(): two\n").await, "b(): two\n");
+        std::fs::remove_file(flows.join("d.mts")).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert_eq!(
+            std::fs::read_to_string(flows.join("INDEX")).unwrap(),
+            "b(): two\n"
+        );
+        std::fs::remove_dir_all(&flows).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(!flows.exists(), "the removed folder came back");
     }
 }
