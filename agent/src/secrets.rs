@@ -8,6 +8,7 @@ const CVC_LABELS: [&str; 5] = ["cvc", "cvv", "csc", "security code", "card code"
 const LABEL_REACH: usize = 48;
 const MIN_PAN: usize = 12;
 const MIN_FRAGMENT: usize = 8;
+const MAX_REPEAT: usize = 4;
 const MISREAD_SPAN: usize = 10;
 
 /// The registry of this process; it lives as long as the process and is never persisted.
@@ -20,6 +21,7 @@ pub struct Secrets {
 
 struct Registry {
     numbers: Vec<String>,
+    stretches: Vec<u32>,
     cvcs: Vec<String>,
 }
 
@@ -29,6 +31,7 @@ impl Secrets {
         Self {
             values: RwLock::new(Registry {
                 numbers: Vec::new(),
+                stretches: Vec::new(),
                 cvcs: Vec::new(),
             }),
         }
@@ -39,13 +42,16 @@ impl Secrets {
     pub fn register(&self, field: &str, value: &str) {
         let digits: String = value.chars().filter(char::is_ascii_digit).collect();
         let mut values = self.values.write().unwrap_or_else(PoisonError::into_inner);
-        let list = match field {
-            "number" if digits.len() >= MIN_PAN => &mut values.numbers,
-            "cvc" if (3..=4).contains(&digits.len()) => &mut values.cvcs,
-            _ => return,
-        };
-        if !list.contains(&digits) {
-            list.push(digits);
+        match field {
+            "number" if digits.len() >= MIN_PAN && !values.numbers.contains(&digits) => {
+                values.stretches.extend(varied_stretches(&digits));
+                values.stretches.sort_unstable();
+                values.numbers.push(digits);
+            }
+            "cvc" if (3..=4).contains(&digits.len()) && !values.cvcs.contains(&digits) => {
+                values.cvcs.push(digits);
+            }
+            _ => {}
         }
     }
 
@@ -91,7 +97,7 @@ impl Secrets {
 impl Registry {
     fn replace(&self, text: &mut String, prose: bool) {
         if !self.numbers.is_empty()
-            && let Some(out) = replace_numbers(text, &self.numbers, prose)
+            && let Some(out) = replace_numbers(text, &self.numbers, &self.stretches, prose)
         {
             *text = out;
         }
@@ -135,8 +141,14 @@ fn open_run(text: &str) -> usize {
 
 /// Replaces each run of digits joined by single spaces, dashes or dots whose digits hold a registered
 /// number or, when `misread`, share a stretch of [`MISREAD_SPAN`] digits with one, are one edit from
-/// one or are a stretch of one of at least [`MIN_FRAGMENT`] digits; `None` when none does.
-fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<String> {
+/// one, are a stretch of one of at least [`MIN_FRAGMENT`] digits or hold one of `stretches`, the varied
+/// stretches of them all; `None` when none does.
+fn replace_numbers(
+    text: &str,
+    numbers: &[String],
+    stretches: &[u32],
+    misread: bool,
+) -> Option<String> {
     let bytes = text.as_bytes();
     let mut out = String::new();
     let mut digits = String::new();
@@ -158,16 +170,17 @@ fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<Stri
                 _ => break,
             }
         }
-        let hit = numbers.iter().any(|n| {
-            if digits.len() < MIN_PAN {
-                return misread && digits.len() >= MIN_FRAGMENT && n.contains(digits.as_str());
-            }
-            digits.contains(n.as_str())
-                || misread
-                    && ((0..=n.len() - MISREAD_SPAN)
-                        .any(|at| digits.contains(&n[at..at + MISREAD_SPAN]))
-                        || one_edit(digits.as_bytes(), n.as_bytes()))
-        });
+        let hit = misread && holds_stretch(&digits, stretches)
+            || numbers.iter().any(|n| {
+                if digits.len() < MIN_PAN {
+                    return misread && digits.len() >= MIN_FRAGMENT && n.contains(digits.as_str());
+                }
+                digits.contains(n.as_str())
+                    || misread
+                        && ((0..=n.len() - MISREAD_SPAN)
+                            .any(|at| digits.contains(&n[at..at + MISREAD_SPAN]))
+                            || one_edit(digits.as_bytes(), n.as_bytes()))
+            });
         if hit {
             out.push_str(&text[last..start]);
             out.push_str(NUMBER);
@@ -177,6 +190,28 @@ fn replace_numbers(text: &str, numbers: &[String], misread: bool) -> Option<Stri
     (last > 0).then(|| {
         out.push_str(&text[last..]);
         out
+    })
+}
+
+/// The stretches of [`MIN_FRAGMENT`] digits of `number` in which no digit fills more than [`MAX_REPEAT`]
+/// places, as integers; a stretch such as 40000000 of a test number would match ordinary numbers.
+fn varied_stretches(number: &str) -> impl Iterator<Item = u32> {
+    number
+        .as_bytes()
+        .windows(MIN_FRAGMENT)
+        .filter(|w| {
+            w.iter()
+                .all(|d| w.iter().filter(|e| *e == d).count() <= MAX_REPEAT)
+        })
+        .map(|w| w.iter().fold(0, |v, d| v * 10 + u32::from(d - b'0')))
+}
+
+/// Whether `digits` hold one of the sorted `stretches` of [`MIN_FRAGMENT`] digits.
+fn holds_stretch(digits: &str, stretches: &[u32]) -> bool {
+    let mut value = 0;
+    digits.bytes().enumerate().any(|(i, d)| {
+        value = value % 10u32.pow(MIN_FRAGMENT as u32 - 1) * 10 + u32::from(d - b'0');
+        i + 1 >= MIN_FRAGMENT && stretches.binary_search(&value).is_ok()
     })
 }
 
@@ -396,14 +431,14 @@ mod tests {
     }
 
     #[test]
-    fn a_number_two_edits_away_stays() {
+    fn a_number_two_edits_away_with_no_stretch_left_stays() {
         let s = Secrets::new();
         s.register("number", PAN);
         for kept in [
-            "4392027513501137",
-            "439202751350113",
+            "4392327523541133",
+            "439208752351133",
             "4392072513501133",
-            "43920275193501133",
+            "439290275235901133",
         ] {
             assert_eq!(whole_prose(&s, kept), kept);
         }
@@ -469,14 +504,31 @@ mod tests {
             assert_eq!(whole_prose(&s, text), want.replace("{}", NUMBER));
             assert_eq!(scrubbed(&s, text), text);
         }
-        for kept in [
-            "4392027 and 3501133",
-            "9392027523",
-            "24242424 4",
-            "4242 4243",
-        ] {
+        for kept in ["4392027 and 3501133", "4242 4243"] {
             assert_eq!(whole_prose(&s, kept), kept);
         }
+    }
+
+    #[test]
+    fn a_run_holding_a_varied_stretch_of_a_number_is_replaced_only_in_model_text() {
+        let s = Secrets::new();
+        s.register("number", PAN);
+        s.register("number", TEST_PAN);
+        s.register("number", "4000000000000077");
+        for text in [
+            "9392027523",
+            "43920275 999",
+            "7777 2350 1133 7",
+            "4392027513501137",
+            "24242424 4",
+            "42424242 999",
+        ] {
+            let text = format!("Card number: {text}.");
+            assert_eq!(whole_prose(&s, &text), format!("Card number: {NUMBER}."));
+            assert_eq!(scrubbed(&s, &text), text);
+        }
+        let kept = "at 1700000000, ref 4000000099";
+        assert_eq!(whole_prose(&s, kept), kept);
     }
 
     #[test]
