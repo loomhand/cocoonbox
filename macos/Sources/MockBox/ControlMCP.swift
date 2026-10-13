@@ -19,6 +19,7 @@ final class ControlMCP: Sendable {
         tool("box_save", "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.", ["box": box], []),
         tool("box_upgrade", "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.", ["box": box, "confirm": ["type": "boolean"]], ["confirm"]),
         tool("box_delete", "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state stays in storage. Requires the box and confirm: true.", ["box": box, "confirm": ["type": "boolean"]], ["box", "confirm"]),
+        tool("usage", "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it.", [:], []),
     ]
 
     private let world: MockWorld
@@ -84,6 +85,9 @@ final class ControlMCP: Sendable {
             } catch {
                 return Self.error(id, -32603, "\(error)")
             }
+        }
+        if name == "usage" {
+            return Self.reply(id, Self.success(MockWorld.usage.object))
         }
         if name == "box_delete", ref.isEmpty {
             return Self.reply(id, Self.failure("Name the box to delete in box."))

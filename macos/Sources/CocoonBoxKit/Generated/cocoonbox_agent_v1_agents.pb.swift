@@ -465,6 +465,28 @@ public nonisolated struct Cocoonbox_Agent_V1_Usage: Sendable {
 
   public var cachedInputTokens: UInt64 = 0
 
+  public var models: [Cocoonbox_Agent_V1_ModelUsage] = []
+
+  public var unknownFields = SwiftProtobuf.UnknownStorage()
+
+  public init() {}
+}
+
+public nonisolated struct Cocoonbox_Agent_V1_ModelUsage: Sendable {
+  // SwiftProtobuf.Message conformance is added in an extension below. See the
+  // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
+  // methods supported on all messages.
+
+  public var model: String = String()
+
+  public var calls: UInt64 = 0
+
+  public var inputTokens: UInt64 = 0
+
+  public var outputTokens: UInt64 = 0
+
+  public var cachedInputTokens: UInt64 = 0
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
@@ -1363,7 +1385,7 @@ nonisolated extension Cocoonbox_Agent_V1_TurnEnd: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension Cocoonbox_Agent_V1_Usage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".Usage"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}input_tokens\0\u{3}output_tokens\0\u{3}cached_input_tokens\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{3}input_tokens\0\u{3}output_tokens\0\u{3}cached_input_tokens\0\u{1}models\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1374,6 +1396,7 @@ nonisolated extension Cocoonbox_Agent_V1_Usage: SwiftProtobuf.Message, SwiftProt
       case 1: try { try decoder.decodeSingularUInt64Field(value: &self.inputTokens) }()
       case 2: try { try decoder.decodeSingularUInt64Field(value: &self.outputTokens) }()
       case 3: try { try decoder.decodeSingularUInt64Field(value: &self.cachedInputTokens) }()
+      case 4: try { try decoder.decodeRepeatedMessageField(value: &self.models) }()
       default: break
       }
     }
@@ -1389,10 +1412,64 @@ nonisolated extension Cocoonbox_Agent_V1_Usage: SwiftProtobuf.Message, SwiftProt
     if self.cachedInputTokens != 0 {
       try visitor.visitSingularUInt64Field(value: self.cachedInputTokens, fieldNumber: 3)
     }
+    if !self.models.isEmpty {
+      try visitor.visitRepeatedMessageField(value: self.models, fieldNumber: 4)
+    }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: Cocoonbox_Agent_V1_Usage, rhs: Cocoonbox_Agent_V1_Usage) -> Bool {
+    if lhs.inputTokens != rhs.inputTokens {return false}
+    if lhs.outputTokens != rhs.outputTokens {return false}
+    if lhs.cachedInputTokens != rhs.cachedInputTokens {return false}
+    if lhs.models != rhs.models {return false}
+    if lhs.unknownFields != rhs.unknownFields {return false}
+    return true
+  }
+}
+
+nonisolated extension Cocoonbox_Agent_V1_ModelUsage: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
+  public static let protoMessageName: String = _protobuf_package + ".ModelUsage"
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}model\0\u{1}calls\0\u{3}input_tokens\0\u{3}output_tokens\0\u{3}cached_input_tokens\0")
+
+  public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
+    while let fieldNumber = try decoder.nextFieldNumber() {
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every case branch when no optimizations are
+      // enabled. https://github.com/apple/swift-protobuf/issues/1034
+      switch fieldNumber {
+      case 1: try { try decoder.decodeSingularStringField(value: &self.model) }()
+      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.calls) }()
+      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.inputTokens) }()
+      case 4: try { try decoder.decodeSingularUInt64Field(value: &self.outputTokens) }()
+      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.cachedInputTokens) }()
+      default: break
+      }
+    }
+  }
+
+  public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
+    if !self.model.isEmpty {
+      try visitor.visitSingularStringField(value: self.model, fieldNumber: 1)
+    }
+    if self.calls != 0 {
+      try visitor.visitSingularUInt64Field(value: self.calls, fieldNumber: 2)
+    }
+    if self.inputTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.inputTokens, fieldNumber: 3)
+    }
+    if self.outputTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.outputTokens, fieldNumber: 4)
+    }
+    if self.cachedInputTokens != 0 {
+      try visitor.visitSingularUInt64Field(value: self.cachedInputTokens, fieldNumber: 5)
+    }
+    try unknownFields.traverse(visitor: &visitor)
+  }
+
+  public static func ==(lhs: Cocoonbox_Agent_V1_ModelUsage, rhs: Cocoonbox_Agent_V1_ModelUsage) -> Bool {
+    if lhs.model != rhs.model {return false}
+    if lhs.calls != rhs.calls {return false}
     if lhs.inputTokens != rhs.inputTokens {return false}
     if lhs.outputTokens != rhs.outputTokens {return false}
     if lhs.cachedInputTokens != rhs.cachedInputTokens {return false}

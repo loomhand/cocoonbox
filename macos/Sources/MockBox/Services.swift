@@ -101,6 +101,10 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         return Cocoonbox_Control_V1_ClearWakeScheduleResponse()
     }
 
+    func usage(request: Cocoonbox_Control_V1_UsageRequest, context: ServerContext) async throws -> Cocoonbox_Control_V1_UsageResponse {
+        MockWorld.usage
+    }
+
     private func owned(_ boxID: String) async throws -> Cocoonbox_Control_V1_Box {
         guard let box = await world.box(boxID), box.id == boxID else { throw MockWorld.noBox }
         return box

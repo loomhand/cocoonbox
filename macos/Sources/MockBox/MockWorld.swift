@@ -22,6 +22,45 @@ actor MockWorld {
     static let users = ["qa2": "u-qa2000000002", "qa3": "u-qa3000000003"]
     static let shareID = "sh-mock000000"
     static let noBox = RPCError(code: .notFound, message: "no such box for this user (it may have been deleted)")
+    static let usage = Cocoonbox_Control_V1_UsageResponse.with {
+        let sonnet = Cocoonbox_Control_V1_ModelUsage.with {
+            $0.model = "anthropic/claude-sonnet-5"
+            $0.requests = 2
+            $0.promptTokens = 1000
+            $0.completionTokens = 100
+            $0.totalTokens = 1100
+            $0.costMicros = 4_000_000
+        }
+        let jev = Cocoonbox_Control_V1_ModelUsage.with {
+            $0.model = "typesafe/jev-1.13"
+            $0.requests = 3
+            $0.promptTokens = 900
+            $0.completionTokens = 30
+            $0.totalTokens = 930
+            $0.costMicros = 1500
+        }
+        $0.today = .with {
+            $0.sinceMs = 1_760_313_600_000
+            $0.requests = 5
+            $0.promptTokens = 1900
+            $0.completionTokens = 130
+            $0.totalTokens = 2030
+            $0.costMicros = 4_001_500
+            $0.models = [sonnet, jev]
+        }
+        $0.month = .with {
+            $0.sinceMs = 1_759_276_800_000
+            $0.requests = 5
+            $0.promptTokens = 1900
+            $0.completionTokens = 130
+            $0.totalTokens = 2030
+            $0.costMicros = 4_001_500
+            $0.models = [sonnet, jev]
+        }
+        $0.dailyCapMicros = 5_000_000
+        $0.defaultCap = true
+        $0.remainingTodayMicros = 998_500
+    }
 
     let token: String
     let bootDelay: Duration

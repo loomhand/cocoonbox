@@ -25,6 +25,8 @@ usage: cocoonbox <command> [options]
                                         unless a client reached it. Timers in the box run the routine.
   box schedule list [--json]            list the wake schedules of your boxes
   box schedule clear BOX                remove the wake schedule of BOX
+  usage [--json]                        show the model usage gw metered for you today and this month (UTC),
+                                        by model, with your daily cost cap and what is left of it
   flows [list] [--json]                 list your saved flows: every cbplan box of yours syncs them
   flows export [NAME...] [-o FILE]      write flows (default: all) as JSON to FILE, else stdout
   flows import FILE|- [--json]          add the flows of an export to your library; the last write wins
@@ -323,6 +325,37 @@ func scheduleCommand() async {
             guard !schedules.isEmpty else { return print("no wake schedules") }
             schedules.forEach { print(scheduleLine($0, name: names[$0.boxID] ?? "")) }
         }
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+// MARK: usage
+
+func dollars(_ micros: Int64) -> String {
+    "$" + String(format: "%.4f", Double(micros) / 1_000_000)
+}
+
+func periodLines(_ name: String, _ period: Cocoonbox_Control_V1_UsagePeriod) -> [String] {
+    ["\(name): \(period.requests) requests, \(period.totalTokens) tokens, \(dollars(period.costMicros))"]
+        + period.models.map { "  \($0.model): \($0.requests) requests, \($0.promptTokens) in, \($0.completionTokens) out, \(dollars($0.costMicros))" }
+}
+
+func usageCommand() async {
+    let connection = connection()
+    defer { connection.close() }
+    do {
+        let report = try await connection.usage()
+        if flags.contains("--json") { return printJSON(report.object) }
+        (periodLines("today (UTC)", report.today) + periodLines("this month", report.month)).forEach { print($0) }
+        var cap = switch report.dailyCapMicros {
+        case -1: "unlimited"
+        case 0: "unknown"
+        default: dollars(report.dailyCapMicros)
+        }
+        if report.defaultCap { cap += " (default)" }
+        if report.remainingTodayMicros >= 0 { cap += ", \(dollars(report.remainingTodayMicros)) left today" }
+        print("daily cap: \(cap)")
     } catch {
         fail(BoxConnection.describe(error))
     }
@@ -1135,6 +1168,8 @@ case "status", "ensure", "wake", "hibernate", "save", "upgrade":
     await lifecycle(command)
 case "box":
     await boxCommand()
+case "usage":
+    await usageCommand()
 case "flows":
     await flowsCommand()
 case "keys":

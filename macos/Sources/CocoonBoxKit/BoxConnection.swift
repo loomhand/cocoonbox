@@ -225,6 +225,10 @@ public final class BoxConnection: Sendable {
         _ = try await boxes.clearWakeSchedule(.with { $0.boxID = boxID })
     }
 
+    public func usage() async throws -> Cocoonbox_Control_V1_UsageResponse {
+        try await boxes.usage(Cocoonbox_Control_V1_UsageRequest())
+    }
+
     public func watchOperation(
         _ id: String,
         after offsetKey: String,

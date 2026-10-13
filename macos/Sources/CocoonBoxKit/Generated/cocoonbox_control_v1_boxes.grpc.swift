@@ -241,6 +241,19 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "Usage" metadata.
+        public enum Usage: Sendable {
+            /// Request type for "Usage".
+            public typealias Input = Cocoonbox_Control_V1_UsageRequest
+            /// Response type for "Usage".
+            public typealias Output = Cocoonbox_Control_V1_UsageResponse
+            /// Descriptor for "Usage".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Boxes"),
+                method: "Usage",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.control.v1.Boxes" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             Ensure.descriptor,
@@ -259,7 +272,8 @@ public enum Cocoonbox_Control_V1_Boxes: Sendable {
             RestorePaths.descriptor,
             SetWakeSchedule.descriptor,
             ListWakeSchedules.descriptor,
-            ClearWakeSchedule.descriptor
+            ClearWakeSchedule.descriptor,
+            Usage.descriptor
         ]
     }
 }
@@ -591,6 +605,20 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_BoxRef>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>
+
+        /// Handle the "Usage" method.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_UsageRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_UsageResponse` messages.
+        func usage(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_UsageRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_UsageResponse>
     }
 
     /// Service protocol for the "cocoonbox.control.v1.Boxes" service.
@@ -906,6 +934,20 @@ extension Cocoonbox_Control_V1_Boxes {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_BoxRef>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>
+
+        /// Handle the "Usage" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_UsageRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_UsageResponse` message.
+        func usage(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_UsageRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_UsageResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.control.v1.Boxes" service.
@@ -1221,6 +1263,20 @@ extension Cocoonbox_Control_V1_Boxes {
             request: Cocoonbox_Control_V1_BoxRef,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_ClearWakeScheduleResponse
+
+        /// Handle the "Usage" method.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_UsageRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_UsageResponse` to respond with.
+        func usage(
+            request: Cocoonbox_Control_V1_UsageRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_UsageResponse
     }
 }
 
@@ -1415,6 +1471,17 @@ extension Cocoonbox_Control_V1_Boxes.StreamingServiceProtocol {
                 )
             }
         )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Boxes.Method.Usage.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_UsageRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_UsageResponse>(),
+            handler: { request, context in
+                try await self.usage(
+                    request: request,
+                    context: context
+                )
+            }
+        )
     }
 }
 
@@ -1602,6 +1669,17 @@ extension Cocoonbox_Control_V1_Boxes.ServiceProtocol {
         context: GRPCCore.ServerContext
     ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse> {
         let response = try await self.clearWakeSchedule(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
+
+    public func usage(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_UsageRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_UsageResponse> {
+        let response = try await self.usage(
             request: GRPCCore.ServerRequest(stream: request),
             context: context
         )
@@ -1834,6 +1912,19 @@ extension Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>(
             message: try await self.clearWakeSchedule(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func usage(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_UsageRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_UsageResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_UsageResponse>(
+            message: try await self.usage(
                 request: request.message,
                 context: context
             ),
@@ -2240,6 +2331,25 @@ extension Cocoonbox_Control_V1_Boxes {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_ClearWakeScheduleResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_ClearWakeScheduleResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "Usage" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_UsageRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_UsageRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_UsageResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func usage<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_UsageRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_UsageRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_UsageResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_UsageResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -2832,6 +2942,36 @@ extension Cocoonbox_Control_V1_Boxes {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "Usage" method.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_UsageRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_UsageRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_UsageResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func usage<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_UsageRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_UsageRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_UsageResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_UsageResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Boxes.Method.Usage.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -3317,6 +3457,31 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_BoxRef>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_ClearWakeScheduleResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Usage" method.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_UsageRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func usage<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_UsageRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_UsageResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.usage(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_UsageRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_UsageResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -3872,6 +4037,35 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
             metadata: metadata
         )
         return try await self.clearWakeSchedule(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "Usage" method.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func usage<Result>(
+        _ message: Cocoonbox_Control_V1_UsageRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_UsageResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_UsageRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.usage(
             request: request,
             options: options,
             onResponse: handleResponse
