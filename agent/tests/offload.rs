@@ -23,7 +23,7 @@ has-session) [ -e "$d/sessions/${3#=}" ] ;;
 new-session) while [ $# -gt 0 ]; do [ "$1" = -s ] && { mkdir -p "$d/sessions"; touch "$d/sessions/$2"; }; shift; done ;;
 kill-session) rm -f "$d/sessions/${3#=}" ;;
 load-buffer) cat > "$d/buffer" ;;
-display-message) echo 0 ;;
+display-message) case "$*" in *pane_pid*) ;; *) echo 0 ;; esac ;;
 esac"#;
 
 struct TestBox {
