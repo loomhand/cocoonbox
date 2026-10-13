@@ -756,6 +756,36 @@ async fn field_pages() -> String {
     addr
 }
 
+/// Serves `/spa`, a page that shows "Loading your feed…" until a script puts the reply of `/feed` in its
+/// place; `/feed` replies after 1 s.
+async fn feed_pages() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let (kind, body) = if buf[..n].starts_with(b"GET /feed ") {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    ("text/plain", "feed item one")
+                } else {
+                    (
+                        "text/html",
+                        "<!doctype html><title>Feed</title><p>Loading your feed…</p><script>fetch('/feed').then((r) => r.text()).then((t) => { document.querySelector('p').textContent = t })</script>",
+                    )
+                };
+                let reply = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: {kind}; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = s.write_all(reply.as_bytes()).await;
+            });
+        }
+    });
+    addr
+}
+
 /// Chrome's open tabs as (target id, url, websocket url).
 async fn tabs(port: u16) -> Vec<(String, String, String)> {
     let list: Vec<Value> = reqwest::get(format!("http://127.0.0.1:{port}/json/list"))
@@ -4780,6 +4810,36 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
     assert_eq!(tab_eval(&ws(url("/agent")), value).await, "");
     let own = mcp.call("browser_snapshot", json!({})).await;
     assert!(text(&own).contains("field /agent"), "{own}");
+}
+
+#[tokio::test]
+async fn a_desk_box_waits_for_the_content_a_page_script_loads() {
+    let Some(chrome) = test_chrome() else {
+        return;
+    };
+    let page = format!("http://{}/spa", feed_pages().await);
+    let day = Duration::from_secs(24 * 3600);
+    let plain = Harness::with_chrome(Vec::new(), &chrome).await;
+    let desk = Harness::boot(
+        Vec::new(),
+        false,
+        Duration::from_secs(600),
+        day,
+        Some(&chrome),
+        None,
+        Automation::Desk,
+    )
+    .await;
+    let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
+    for (h, tool, want) in [
+        (&plain, "browser_navigate", "Loading your feed"),
+        (&desk, "browser_navigate", "feed item one"),
+        (&desk, "browser_fetch", "feed item one"),
+    ] {
+        let mut mcp = McpClient::connect(h).await;
+        let out = text(&mcp.call(tool, json!({"url": page})).await);
+        assert!(out.contains(want), "{tool}: {out}");
+    }
 }
 
 #[tokio::test]

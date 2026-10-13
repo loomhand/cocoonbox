@@ -24,6 +24,9 @@ const LOAD_WAIT: Duration = Duration::from_secs(15);
 const CHALLENGE_WAIT: Duration = Duration::from_secs(8);
 const SETTLE: Duration = Duration::from_secs(2);
 const TAB_WAIT: Duration = Duration::from_secs(2);
+const SPA_WAIT: Duration = Duration::from_secs(3);
+const SPA_POLL: Duration = Duration::from_millis(150);
+const XHR_STALE: Duration = Duration::from_millis(1500);
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
@@ -47,6 +50,7 @@ const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
 const MAX_WINDOWS: usize = 8;
 const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the keyboard focus is in no web page of the agent's Chrome, so it may be in the address bar, a find bar, DevTools, another app or a Chrome the browser tools do not drive; use browser_navigate to open the checkout in the agent's Chrome, then focus the card field; nothing was typed";
 const SHARE_TAB: &str = "a read-only share reads only its own window, so it takes no tab";
+const TEXT_LEN_JS: &str = "document.body ? document.body.textContent.length : 0";
 const TAB_JS: &str = "[document.visibilityState, document.title, location.href]";
 const NOT_A_FIELD: &str = "focus a card field on the checkout page first: the focused element of the page is not a text field; nothing was typed";
 
@@ -259,7 +263,7 @@ pub struct Browser {
     windows: Mutex<HashMap<String, Slot>>,
     last: Mutex<String>,
     fetch_wait: Duration,
-    /// A box that runs GUI plans: the tools also act on a tab the user has open.
+    /// A box that runs GUI plans: the tools also act on a tab the user has open, and a navigation waits for content that scripts load.
     plans: bool,
 }
 
@@ -312,7 +316,7 @@ impl Browser {
             }
             let mut cdp = self.tab(tab).await?;
             timing::mark("connect");
-            return Self::act(&mut cdp, tool, args).await;
+            return self.act(&mut cdp, tool, args).await;
         }
         let (slot, evicted) = self.slot(agent_id).await;
         if let Some(evicted) = evicted {
@@ -324,15 +328,18 @@ impl Browser {
         if let Some(t) = window.as_ref() {
             t.ws_url.clone_into(&mut *self.last.lock().await);
         }
-        Self::act(&mut cdp, tool, args).await
+        self.act(&mut cdp, tool, args).await
     }
 
     /// Runs a page tool of `run` in the tab of `cdp`.
-    async fn act(cdp: &mut Cdp, tool: &str, args: Value) -> Result<String, String> {
+    async fn act(&self, cdp: &mut Cdp, tool: &str, args: Value) -> Result<String, String> {
         match tool {
             "browser_navigate" => {
                 let a: NavigateArgs = parse(args)?;
                 let url = web_url(a.url);
+                if self.plans {
+                    cdp.call("Network.enable", json!({})).await?;
+                }
                 let nav = cdp.call("Page.navigate", json!({"url": url})).await?;
                 timing::mark("navigate");
                 if let Some(err) = nav["errorText"].as_str().filter(|e| !e.is_empty()) {
@@ -340,6 +347,10 @@ impl Browser {
                 }
                 cdp.wait_loaded().await;
                 timing::mark("load");
+                if self.plans {
+                    cdp.settle(tokio::time::Instant::now() + SPA_WAIT).await;
+                    timing::mark("settle");
+                }
                 cdp.snapshot().await
             }
             "browser_snapshot" => cdp.snapshot().await,
@@ -940,6 +951,33 @@ struct Cdp {
     next_id: u64,
     /// The flat session of an attached target, which then receives every call.
     session: Option<String>,
+    xhr: Xhr,
+}
+
+/// The XHR and fetch requests of a page, from the Network events of its connection.
+#[derive(Default)]
+struct Xhr {
+    /// When each request in flight was seen to start.
+    flight: HashMap<String, Instant>,
+    /// Whether one started or ended since the last poll of [`Cdp::settle`].
+    moved: bool,
+}
+
+impl Xhr {
+    fn note(&mut self, v: &Value) {
+        let id = v["params"]["requestId"].as_str().unwrap_or_default();
+        match v["method"].as_str() {
+            Some("Network.requestWillBeSent")
+                if matches!(v["params"]["type"].as_str(), Some("XHR" | "Fetch")) =>
+            {
+                self.moved |= self.flight.insert(id.to_owned(), Instant::now()).is_none();
+            }
+            Some("Network.loadingFinished" | "Network.loadingFailed") => {
+                self.moved |= self.flight.remove(id).is_some();
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Cdp {
@@ -951,6 +989,7 @@ impl Cdp {
             ws,
             next_id: 0,
             session: None,
+            xhr: Xhr::default(),
         })
     }
 
@@ -980,6 +1019,7 @@ impl Cdp {
                 let mut v: Value =
                     serde_json::from_str(&text).map_err(|e| format!("cdp decode: {e}"))?;
                 if v["id"].as_u64() != Some(id) {
+                    self.xhr.note(&v);
                     continue;
                 }
                 if let Some(err) = v.get("error") {
@@ -1043,6 +1083,7 @@ impl Cdp {
         )
         .await?;
         self.call("Page.enable", json!({})).await?;
+        self.call("Network.enable", json!({})).await?;
         self.call("Page.setLifecycleEventsEnabled", json!({"enabled": true}))
             .await?;
         let tree = self.call("Page.getFrameTree", json!({})).await?;
@@ -1050,7 +1091,10 @@ impl Cdp {
         let ready = self
             .load(url, &tree["frameTree"]["frame"]["id"], wait)
             .await?;
-        if !ready {
+        if ready {
+            self.settle((start + wait).min(tokio::time::Instant::now() + SPA_WAIT))
+                .await;
+        } else {
             self.call("Page.stopLoading", json!({})).await?;
         }
         timing::mark("load");
@@ -1096,6 +1140,7 @@ impl Cdp {
                 continue;
             };
             let v: Value = serde_json::from_str(&text).map_err(|e| format!("cdp decode: {e}"))?;
+            self.xhr.note(&v);
             if v["id"].as_u64() == Some(id) {
                 if let Some(err) = v.get("error") {
                     return Err(format!("cdp Page.navigate: {}", err["message"]));
@@ -1156,6 +1201,25 @@ impl Cdp {
             }
         }
         Ok(ready)
+    }
+
+    /// Waits until the page text kept its length over one [`SPA_POLL`] with no XHR or fetch ended meanwhile or in
+    /// flight for less than [`XHR_STALE`], at most until `deadline`, so content that scripts load after the page is in.
+    async fn settle(&mut self, deadline: tokio::time::Instant) {
+        let mut last = None;
+        self.xhr.moved = false;
+        loop {
+            let Ok(len) = tokio::time::timeout_at(deadline, self.eval(TEXT_LEN_JS)).await else {
+                return;
+            };
+            let fresh = self.xhr.flight.values().any(|t| t.elapsed() < XHR_STALE);
+            let quiet = !fresh && !std::mem::take(&mut self.xhr.moved);
+            if quiet && last.is_some() && len.as_ref().ok() == last.as_ref() {
+                return;
+            }
+            last = len.ok();
+            tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + SPA_POLL)).await;
+        }
     }
 
     async fn click(&mut self, x: f64, y: f64) -> Result<(), String> {
@@ -1587,7 +1651,9 @@ pub(super) mod tests {
     }
 
     /// Serves CDP on the returned port with a hidden tab whose page text is `text`, logging every message;
-    /// its navigation loads only with `loads`, else only the blank page's events come again.
+    /// its navigation loads only with `loads`, else only the blank page's events come again. A page under
+    /// `/spa` starts an XHR that ends at the 3rd text length read, after which the text grows; one under
+    /// `/spa-hang` never ends it, and the text of one under `/spa-grow` grows at every read.
     async fn fetch_chrome(text: String, loads: bool) -> (u16, Arc<std::sync::Mutex<Vec<Value>>>) {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1604,6 +1670,7 @@ pub(super) mod tests {
                 let (log, text) = (Arc::clone(&seen), text.clone());
                 tokio::spawn(async move {
                     let (mut retrying, mut late, mut held) = (false, false, false);
+                    let (mut spa, mut hang, mut grow, mut reads) = (false, false, false, 0);
                     while let Some(Ok(WsMessage::Text(msg))) = ws.next().await {
                         let v: Value = serde_json::from_str(&msg).unwrap();
                         log.lock().unwrap().push(v.clone());
@@ -1620,6 +1687,25 @@ pub(super) mod tests {
                             held = false;
                         }
                         if held && method == "Runtime.evaluate" {
+                            continue;
+                        }
+                        if method == "Runtime.evaluate" && v["params"]["expression"] == TEXT_LEN_JS
+                        {
+                            reads += 1;
+                            if spa && !hang && reads == 3 {
+                                let done = json!({"method": "Network.loadingFinished", "sessionId": "s1",
+                                    "params": {"requestId": "x1"}});
+                                ws.send(WsMessage::text(done.to_string())).await.unwrap();
+                            }
+                            let len = if grow {
+                                reads
+                            } else if spa && reads > 3 && !hang {
+                                50
+                            } else {
+                                5
+                            };
+                            let reply = json!({"id": v["id"], "sessionId": "s1", "result": {"result": {"value": len}}});
+                            ws.send(WsMessage::text(reply.to_string())).await.unwrap();
                             continue;
                         }
                         let result = match method {
@@ -1650,6 +1736,17 @@ pub(super) mod tests {
                             .as_str()
                             .is_some_and(|u| u.ends_with("/challenge-retry"));
                         if v["method"] == "Page.navigate" {
+                            let url = v["params"]["url"].as_str().unwrap();
+                            (spa, hang, grow) = (
+                                url.contains("/spa"),
+                                url.ends_with("/spa-hang"),
+                                url.ends_with("/spa-grow"),
+                            );
+                            if spa {
+                                let xhr = json!({"method": "Network.requestWillBeSent", "sessionId": "s1",
+                                    "params": {"requestId": "x1", "type": "XHR"}});
+                                ws.send(WsMessage::text(xhr.to_string())).await.unwrap();
+                            }
                             let kind = if zip {
                                 "application/zip"
                             } else {
@@ -2231,5 +2328,59 @@ pub(super) mod tests {
                 .unwrap_err(),
             "no tab of the user is in front; browser_tabs lists the tabs"
         );
+    }
+
+    #[tokio::test]
+    async fn fetch_reads_a_page_once_its_xhr_ended_and_its_text_stopped_growing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = fetch_chrome("feed".into(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        let asked = tokio::time::Instant::now();
+        let out = b
+            .run("a", "browser_fetch", json!({"url": "https://a.test/spa"}))
+            .await
+            .unwrap();
+        assert!(asked.elapsed() < SPA_WAIT, "{:?}", asked.elapsed());
+        assert_eq!(out, "Page: Doc (https://a.test/)\n\nfeed");
+        let log = log.lock().unwrap();
+        let reads = log
+            .iter()
+            .filter(|m| m["params"]["expression"] == TEXT_LEN_JS)
+            .count();
+        assert_eq!(reads, 5, "5, 5 in flight, 5 ended, 50, 50");
+        let network = log.iter().position(|m| m["method"] == "Network.enable");
+        let navigate = log.iter().position(|m| m["method"] == "Page.navigate");
+        assert!(network < navigate, "{network:?} {navigate:?}");
+    }
+
+    #[tokio::test]
+    async fn fetch_stops_waiting_for_an_xhr_in_flight_past_its_stale_age_or_for_text_past_its_spa_wait()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, _) = fetch_chrome("loading".into(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        for (page, waits) in [
+            (
+                "spa-hang",
+                XHR_STALE..XHR_STALE + Duration::from_millis(500),
+            ),
+            ("spa-grow", SPA_WAIT..SPA_WAIT + Duration::from_millis(500)),
+        ] {
+            let asked = tokio::time::Instant::now();
+            let out = b
+                .run(
+                    "a",
+                    "browser_fetch",
+                    json!({"url": format!("https://a.test/{page}")}),
+                )
+                .await
+                .unwrap();
+            assert!(
+                waits.contains(&asked.elapsed()),
+                "{page}: {:?}",
+                asked.elapsed()
+            );
+            assert_eq!(out, "Page: Doc (https://a.test/)\n\nloading");
+        }
     }
 }
