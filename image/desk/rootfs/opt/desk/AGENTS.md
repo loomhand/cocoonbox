@@ -20,7 +20,7 @@ Windows and elements come from the accessibility tree (AT-SPI), roles named as i
 |---|---|
 | `windows()` | top-level windows `{id, title, role, pid, active}`; `focused()` the active one |
 | `snapshot(window?, {pid?, keys?})` | the elements of one window (default: the focused one) in tree order: `{ref, id, parent, depth, role, name, states, value?, bounds?}`; `states` holds `checked`, `disabled`, `focused`, `showing`, `selected`, `expanded` … |
-| `outline(window?)` | the same tree as text, one `- role "name" [checked] [ref=N]: "value"` line per element |
+| `outline(window?)` | the same tree as text, one `- role "name" [checked] [id=ID]: "value"` line per element |
 | `find(name, {role?, window?})` | the elements named `name` (else containing it), ignoring case and punctuation |
 | `read(id, {text?})` | one element read again; `text: true` returns its whole text as `value` |
 | `press(id)` | presses an element as a user would: selects a tab or list row, opens the menus above a hidden menu entry, clicks a shown control, else runs its accessibility action |
@@ -30,7 +30,7 @@ Windows and elements come from the accessibility tree (AT-SPI), roles named as i
 | `focus(window)`, `close(window)`, `launch(app)` | bring a window to the front, ask it to close as its close button does, start an app |
 | `screen()`, `shot({x?, y?, w?, h?})` | the screen size; a PNG `Buffer` of a screen rectangle |
 | `decide(state, {key: yes(q) \| choice(q, options)})` | a fast judgment over text or JSON state (about 0.3 s): `yes` answers `{probability}`, `choice` answers `{choice, confidence, probabilities}` |
-| `ask(prompt, [png])` | a vision model's answer about screenshots |
+| `ask(prompt, png \| [png])` | a vision model's answer about screenshots |
 | `ground(png, target, {left?, top?, width, height})` | the screen point of a described element in a screenshot of that area |
 
 Element ids stay valid while the element exists; take a new snapshot after a window changes.
@@ -39,16 +39,16 @@ Shapes that scripts get wrong:
 
 - `snapshot()` returns `{window, nodes, truncated, ms}`: loop over `s.nodes`. A node has `bounds`
   only when you ask for them: `snapshot(title, {bounds: true})`.
-- `press`, `read` and `act` take a node's `id` (such as `1.17/62`). The `ref=N` of an outline is
-  only its position in that one snapshot, and no call takes it. To act on a named element:
-  `const {found} = await desk.find('Save', {role: 'button'}); await desk.press(found[0].id)`.
+- `press`, `read` and `act` take a node's `id` (such as `1.17/62`, `[id=1.17/62]` in an outline).
+  A node's `ref` is only its position in that one snapshot, and no call takes it. To act on a named
+  element: `const {found} = await desk.find('Save', {role: 'button'}); await desk.press(found[0].id)`.
 - "UnknownObject" or "bad element id": the element is gone (a list refreshed, a menu closed, a
   folder changed). `find` it again.
 - `windows()` also lists untitled panel and desktop windows, and an app's title changes as it
   works (Thunar `inbox - Thunar` becomes `docs - Thunar`; Mousepad adds `*` to an unsaved file).
-  Look the window up again before each use instead of keeping its title:
-  `const w = (await desk.windows()).find((w) => w.title.endsWith(' - Thunar'))`.
-- `ask(prompt, [await desk.shot()])`: the images argument is an array of PNG buffers.
+  A call that takes a window title looks it up each time; a title that no longer matches finds the
+  window that ends with its app part (` - Thunar`), the active one first, so keep one window per app
+  or look the title up again: `(await desk.windows()).find((w) => w.title.endsWith(' - Thunar'))`.
 
 ## GUI plans and saved flows
 
