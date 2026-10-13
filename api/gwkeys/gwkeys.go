@@ -36,10 +36,12 @@ const (
 
 // Usage is one model's share of an owner's gw usage.
 type Usage struct {
-	Model       string `json:"model"`
-	Requests    int64  `json:"requests"`
-	TotalTokens int64  `json:"total_tokens"`
-	CostMicros  int64  `json:"cost_micros"`
+	Model            string `json:"model"`
+	Requests         int64  `json:"requests"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	TotalTokens      int64  `json:"total_tokens"`
+	CostMicros       int64  `json:"cost_micros"`
 }
 
 // Client manages keys in tenant cocoonbox-boxes, one per owner.

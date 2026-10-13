@@ -52,7 +52,7 @@ func TestInitializeAndToolsList(t *testing.T) {
 		}
 		names = append(names, spec["name"].(string))
 	}
-	if want := []string{"box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete"}; !slices.Equal(names, want) {
+	if want := []string{"box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete", "usage"}; !slices.Equal(names, want) {
 		t.Fatalf("tools = %v, want %v", names, want)
 	}
 	if ping := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"ping"}`); ping.Error != nil || ping.Result == nil {
@@ -354,6 +354,28 @@ func TestSaveReportsBytesAndRefusals(t *testing.T) {
 	}
 }
 
+func TestUsageReportsTheCallersMeter(t *testing.T) {
+	srv, fake := newTestServer(t)
+
+	got := structured(t, post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"usage"}}`))
+	jev := map[string]any{"model": "typesafe/jev-1.13", "requests": float64(3), "prompt_tokens": float64(900), "completion_tokens": float64(30), "total_tokens": float64(930), "cost_micros": float64(120)}
+	today := map[string]any{"since_ms": float64(1000), "requests": float64(3), "prompt_tokens": float64(900), "completion_tokens": float64(30), "total_tokens": float64(930), "cost_micros": float64(120), "models": []any{jev}}
+	month := map[string]any{"since_ms": float64(10), "requests": float64(0), "prompt_tokens": float64(0), "completion_tokens": float64(0), "total_tokens": float64(0), "cost_micros": float64(0), "models": []any{}}
+	want := map[string]any{"today": today, "month": month, "daily_cap_micros": float64(5_000_000), "default_cap": true, "remaining_today_micros": float64(4_999_880)}
+	if !mapsEqual(got, want) {
+		t.Fatalf("usage = %v, want %v", got, want)
+	}
+	if calls := fake.recorded(); len(calls) != 1 || calls[0] != (fakeCall{method: "Usage", user: "alice"}) {
+		t.Fatalf("calls = %v, want one Usage as alice", calls)
+	}
+	if resp := post(t, srv, bobToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"usage"}}`); resp.Error == nil || resp.Error.Code != codeInternal {
+		t.Fatalf("usage while gw is down = %+v", resp)
+	}
+	if resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"usage","arguments":{"box":"x"}}}`); resp.Error == nil || resp.Error.Code != codeInvalidParams {
+		t.Fatalf("usage with a box = %+v", resp)
+	}
+}
+
 type rpcReply struct {
 	ID     any            `json:"id"`
 	Result map[string]any `json:"result"`
@@ -457,6 +479,20 @@ func (f *fakeBoxes) WatchOperation(req *controlv1.WatchOperationRequest, stream 
 		}
 	}
 	return nil
+}
+
+func (f *fakeBoxes) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*controlv1.UsageResponse, error) {
+	user := auth.User(ctx)
+	f.record("Usage", user, "")
+	if user != "alice" {
+		return nil, status.Error(codes.Unavailable, "read gw usage failed")
+	}
+	jev := &controlv1.ModelUsage{Model: "typesafe/jev-1.13", Requests: 3, PromptTokens: 900, CompletionTokens: 30, TotalTokens: 930, CostMicros: 120}
+	return &controlv1.UsageResponse{
+		Today:          &controlv1.UsagePeriod{SinceMs: 1000, Requests: 3, PromptTokens: 900, CompletionTokens: 30, TotalTokens: 930, CostMicros: 120, Models: []*controlv1.ModelUsage{jev}},
+		Month:          &controlv1.UsagePeriod{SinceMs: 10},
+		DailyCapMicros: 5_000_000, DefaultCap: true, RemainingTodayMicros: 4_999_880,
+	}, nil
 }
 
 func (f *fakeBoxes) operate(ctx context.Context, method, box string) (*controlv1.Operation, error) {

@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	stateAbsent = "absent"
-	boxProperty = `{"type":"string","description":"The box's name or id; without it, your first box."}`
+	stateAbsent       = "absent"
+	boxProperty       = `{"type":"string","description":"The box's name or id; without it, your first box."}`
+	usagePeriodSchema = `{"type":"object","properties":{"since_ms":{"type":"integer"},"requests":{"type":"integer"},"prompt_tokens":{"type":"integer"},"completion_tokens":{"type":"integer"},"total_tokens":{"type":"integer"},"cost_micros":{"type":"integer"},"models":{"type":"array","items":{"type":"object","properties":{"model":{"type":"string"},"requests":{"type":"integer"},"prompt_tokens":{"type":"integer"},"completion_tokens":{"type":"integer"},"total_tokens":{"type":"integer"},"cost_micros":{"type":"integer"}},"required":["model","requests","prompt_tokens","completion_tokens","total_tokens","cost_micros"]}}},"required":["since_ms","requests","prompt_tokens","completion_tokens","total_tokens","cost_micros","models"]}`
 
 	errUpgradeUnconfirmed toolError = "Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."
 	errUpgradeCurrent     toolError = "Already on the latest desktop."
@@ -79,6 +80,12 @@ var (
 			Description:  "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state stays in storage. Requires the box and confirm: true.",
 			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["box","confirm"],"additionalProperties":false}`),
 			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","operation_id"]}`),
+		},
+		{
+			Name:         "usage",
+			Description:  "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it.",
+			InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
+			OutputSchema: json.RawMessage(`{"type":"object","properties":{"today":` + usagePeriodSchema + `,"month":` + usagePeriodSchema + `,"daily_cap_micros":{"type":"integer"},"default_cap":{"type":"boolean"},"remaining_today_micros":{"type":"integer"}},"required":["today","month","daily_cap_micros","default_cap","remaining_today_micros"]}`),
 		},
 	}
 )
@@ -167,6 +174,33 @@ type saveResult struct {
 	Bytes         uint64 `json:"bytes"`
 }
 
+type usageResult struct {
+	Today                usagePeriod `json:"today"`
+	Month                usagePeriod `json:"month"`
+	DailyCapMicros       int64       `json:"daily_cap_micros"`
+	DefaultCap           bool        `json:"default_cap"`
+	RemainingTodayMicros int64       `json:"remaining_today_micros"`
+}
+
+type usagePeriod struct {
+	SinceMs          int64        `json:"since_ms"`
+	Requests         int64        `json:"requests"`
+	PromptTokens     int64        `json:"prompt_tokens"`
+	CompletionTokens int64        `json:"completion_tokens"`
+	TotalTokens      int64        `json:"total_tokens"`
+	CostMicros       int64        `json:"cost_micros"`
+	Models           []modelUsage `json:"models"`
+}
+
+type modelUsage struct {
+	Model            string `json:"model"`
+	Requests         int64  `json:"requests"`
+	PromptTokens     int64  `json:"prompt_tokens"`
+	CompletionTokens int64  `json:"completion_tokens"`
+	TotalTokens      int64  `json:"total_tokens"`
+	CostMicros       int64  `json:"cost_micros"`
+}
+
 type upgradeResult struct {
 	BoxID       string `json:"box_id"`
 	State       string `json:"state"`
@@ -225,6 +259,8 @@ func (s *Server) call(ctx context.Context, call *callParams, progress progressFu
 			}
 			return s.delete(ctx, args.Box, progress)
 		})
+	case "usage":
+		return withArguments(call.Arguments, &struct{}{}, func() (any, error) { return s.usage(ctx) })
 	default:
 		return nil, &rpcError{Code: codeInvalidParams, Message: "unknown tool: " + call.Name}
 	}
@@ -370,6 +406,17 @@ func (s *Server) delete(ctx context.Context, ref string, progress progressFunc) 
 	return &deleteResult{BoxID: op.GetBoxId(), OperationID: op.GetId()}, nil
 }
 
+func (s *Server) usage(ctx context.Context) (*usageResult, error) {
+	resp, err := s.boxes.Usage(ctx, &controlv1.UsageRequest{})
+	if err != nil {
+		return nil, err
+	}
+	return &usageResult{
+		Today: toUsagePeriod(resp.GetToday()), Month: toUsagePeriod(resp.GetMonth()),
+		DailyCapMicros: resp.GetDailyCapMicros(), DefaultCap: resp.GetDefaultCap(), RemainingTodayMicros: resp.GetRemainingTodayMicros(),
+	}, nil
+}
+
 // finish follows operation id to its end; a failed operation becomes "<verb> failed: <detail>".
 func (s *Server) finish(ctx context.Context, verb, id string, progress progressFunc) (*watchStream, error) {
 	w := &watchStream{ctx: ctx, progress: progress}
@@ -479,6 +526,20 @@ func internal(err error) bool {
 	default:
 		return false
 	}
+}
+
+func toUsagePeriod(p *controlv1.UsagePeriod) usagePeriod {
+	out := usagePeriod{
+		SinceMs: p.GetSinceMs(), Requests: p.GetRequests(), PromptTokens: p.GetPromptTokens(), CompletionTokens: p.GetCompletionTokens(),
+		TotalTokens: p.GetTotalTokens(), CostMicros: p.GetCostMicros(), Models: []modelUsage{},
+	}
+	for _, m := range p.GetModels() {
+		out.Models = append(out.Models, modelUsage{
+			Model: m.GetModel(), Requests: m.GetRequests(), PromptTokens: m.GetPromptTokens(), CompletionTokens: m.GetCompletionTokens(),
+			TotalTokens: m.GetTotalTokens(), CostMicros: m.GetCostMicros(),
+		})
+	}
+	return out
 }
 
 func stateName(state controlv1.BoxState) string {

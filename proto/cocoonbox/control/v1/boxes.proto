@@ -51,6 +51,7 @@ service Boxes {
   // ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
   // stays up.
   rpc ClearWakeSchedule(BoxRef) returns (ClearWakeScheduleResponse);
+  rpc Usage(UsageRequest) returns (UsageResponse);
 }
 
 enum BoxState {
@@ -249,3 +250,32 @@ message ListWakeSchedulesResponse {
 }
 
 message ClearWakeScheduleResponse {}
+
+message UsageRequest {}
+
+message UsageResponse {
+  UsagePeriod today = 1;
+  UsagePeriod month = 2;
+  int64 daily_cap_micros = 3;
+  bool default_cap = 4;
+  int64 remaining_today_micros = 5;
+}
+
+message UsagePeriod {
+  int64 since_ms = 1;
+  int64 requests = 2;
+  int64 prompt_tokens = 3;
+  int64 completion_tokens = 4;
+  int64 total_tokens = 5;
+  int64 cost_micros = 6;
+  repeated ModelUsage models = 7;
+}
+
+message ModelUsage {
+  string model = 1;
+  int64 requests = 2;
+  int64 prompt_tokens = 3;
+  int64 completion_tokens = 4;
+  int64 total_tokens = 5;
+  int64 cost_micros = 6;
+}

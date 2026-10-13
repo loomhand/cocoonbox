@@ -106,6 +106,7 @@ func main() {
 		MaxRunning:   cfg.MaxRunningBoxes,
 	}, accounts)
 	svc.EnableAccounts(accounts)
+	svc.EnableUsage(accounts, cfg.Accounts.DefaultDailyCapMicros)
 	svc.EnableWake(accounts, boxes.WakeLimits{
 		MaxSchedules: cfg.Wake.MaxSchedules,
 		Floor:        time.Duration(cfg.Wake.Floor),

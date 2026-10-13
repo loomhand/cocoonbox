@@ -118,10 +118,10 @@ func TestErrorsNeverCarryTheKey(t *testing.T) {
 
 func TestUsageReadsTheOwnersRollup(t *testing.T) {
 	gw, c := newFakeGW(t)
-	gw.usage = `{"usage":[{"user_id":"u-3f9a2c41d07e","model":"m1","requests":2,"total_tokens":30,"cost_micros":120,"vendor_cost_micros":0}]}`
+	gw.usage = `{"usage":[{"user_id":"u-3f9a2c41d07e","model":"m1","requests":2,"prompt_tokens":24,"completion_tokens":6,"total_tokens":30,"cost_micros":120,"vendor_cost_micros":0}]}`
 	since := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
 	got, err := c.Usage(t.Context(), owner, since)
-	if err != nil || len(got) != 1 || got[0] != (Usage{Model: "m1", Requests: 2, TotalTokens: 30, CostMicros: 120}) {
+	if err != nil || len(got) != 1 || got[0] != (Usage{Model: "m1", Requests: 2, PromptTokens: 24, CompletionTokens: 6, TotalTokens: 30, CostMicros: 120}) {
 		t.Fatalf("Usage = %+v, %v", got, err)
 	}
 	if gw.usageUser != owner || gw.usageSince != strconv.FormatInt(since.Unix(), 10) {

@@ -109,6 +109,7 @@ type Service struct {
 	vault     Vault
 	wake      *wakeAlarms
 	park      *parking
+	usage     *usageMeter
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex

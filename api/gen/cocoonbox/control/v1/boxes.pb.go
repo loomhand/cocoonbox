@@ -1714,6 +1714,294 @@ func (*ClearWakeScheduleResponse) Descriptor() ([]byte, []int) {
 	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{25}
 }
 
+type UsageRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UsageRequest) Reset() {
+	*x = UsageRequest{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageRequest) ProtoMessage() {}
+
+func (x *UsageRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageRequest.ProtoReflect.Descriptor instead.
+func (*UsageRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{26}
+}
+
+type UsageResponse struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Today                *UsagePeriod           `protobuf:"bytes,1,opt,name=today,proto3" json:"today,omitempty"`
+	Month                *UsagePeriod           `protobuf:"bytes,2,opt,name=month,proto3" json:"month,omitempty"`
+	DailyCapMicros       int64                  `protobuf:"varint,3,opt,name=daily_cap_micros,json=dailyCapMicros,proto3" json:"daily_cap_micros,omitempty"`
+	DefaultCap           bool                   `protobuf:"varint,4,opt,name=default_cap,json=defaultCap,proto3" json:"default_cap,omitempty"`
+	RemainingTodayMicros int64                  `protobuf:"varint,5,opt,name=remaining_today_micros,json=remainingTodayMicros,proto3" json:"remaining_today_micros,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *UsageResponse) Reset() {
+	*x = UsageResponse{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsageResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsageResponse) ProtoMessage() {}
+
+func (x *UsageResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsageResponse.ProtoReflect.Descriptor instead.
+func (*UsageResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *UsageResponse) GetToday() *UsagePeriod {
+	if x != nil {
+		return x.Today
+	}
+	return nil
+}
+
+func (x *UsageResponse) GetMonth() *UsagePeriod {
+	if x != nil {
+		return x.Month
+	}
+	return nil
+}
+
+func (x *UsageResponse) GetDailyCapMicros() int64 {
+	if x != nil {
+		return x.DailyCapMicros
+	}
+	return 0
+}
+
+func (x *UsageResponse) GetDefaultCap() bool {
+	if x != nil {
+		return x.DefaultCap
+	}
+	return false
+}
+
+func (x *UsageResponse) GetRemainingTodayMicros() int64 {
+	if x != nil {
+		return x.RemainingTodayMicros
+	}
+	return 0
+}
+
+type UsagePeriod struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	SinceMs          int64                  `protobuf:"varint,1,opt,name=since_ms,json=sinceMs,proto3" json:"since_ms,omitempty"`
+	Requests         int64                  `protobuf:"varint,2,opt,name=requests,proto3" json:"requests,omitempty"`
+	PromptTokens     int64                  `protobuf:"varint,3,opt,name=prompt_tokens,json=promptTokens,proto3" json:"prompt_tokens,omitempty"`
+	CompletionTokens int64                  `protobuf:"varint,4,opt,name=completion_tokens,json=completionTokens,proto3" json:"completion_tokens,omitempty"`
+	TotalTokens      int64                  `protobuf:"varint,5,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	CostMicros       int64                  `protobuf:"varint,6,opt,name=cost_micros,json=costMicros,proto3" json:"cost_micros,omitempty"`
+	Models           []*ModelUsage          `protobuf:"bytes,7,rep,name=models,proto3" json:"models,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *UsagePeriod) Reset() {
+	*x = UsagePeriod{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UsagePeriod) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UsagePeriod) ProtoMessage() {}
+
+func (x *UsagePeriod) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UsagePeriod.ProtoReflect.Descriptor instead.
+func (*UsagePeriod) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *UsagePeriod) GetSinceMs() int64 {
+	if x != nil {
+		return x.SinceMs
+	}
+	return 0
+}
+
+func (x *UsagePeriod) GetRequests() int64 {
+	if x != nil {
+		return x.Requests
+	}
+	return 0
+}
+
+func (x *UsagePeriod) GetPromptTokens() int64 {
+	if x != nil {
+		return x.PromptTokens
+	}
+	return 0
+}
+
+func (x *UsagePeriod) GetCompletionTokens() int64 {
+	if x != nil {
+		return x.CompletionTokens
+	}
+	return 0
+}
+
+func (x *UsagePeriod) GetTotalTokens() int64 {
+	if x != nil {
+		return x.TotalTokens
+	}
+	return 0
+}
+
+func (x *UsagePeriod) GetCostMicros() int64 {
+	if x != nil {
+		return x.CostMicros
+	}
+	return 0
+}
+
+func (x *UsagePeriod) GetModels() []*ModelUsage {
+	if x != nil {
+		return x.Models
+	}
+	return nil
+}
+
+type ModelUsage struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Model            string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
+	Requests         int64                  `protobuf:"varint,2,opt,name=requests,proto3" json:"requests,omitempty"`
+	PromptTokens     int64                  `protobuf:"varint,3,opt,name=prompt_tokens,json=promptTokens,proto3" json:"prompt_tokens,omitempty"`
+	CompletionTokens int64                  `protobuf:"varint,4,opt,name=completion_tokens,json=completionTokens,proto3" json:"completion_tokens,omitempty"`
+	TotalTokens      int64                  `protobuf:"varint,5,opt,name=total_tokens,json=totalTokens,proto3" json:"total_tokens,omitempty"`
+	CostMicros       int64                  `protobuf:"varint,6,opt,name=cost_micros,json=costMicros,proto3" json:"cost_micros,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ModelUsage) Reset() {
+	*x = ModelUsage{}
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ModelUsage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ModelUsage) ProtoMessage() {}
+
+func (x *ModelUsage) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_boxes_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ModelUsage.ProtoReflect.Descriptor instead.
+func (*ModelUsage) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_boxes_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *ModelUsage) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *ModelUsage) GetRequests() int64 {
+	if x != nil {
+		return x.Requests
+	}
+	return 0
+}
+
+func (x *ModelUsage) GetPromptTokens() int64 {
+	if x != nil {
+		return x.PromptTokens
+	}
+	return 0
+}
+
+func (x *ModelUsage) GetCompletionTokens() int64 {
+	if x != nil {
+		return x.CompletionTokens
+	}
+	return 0
+}
+
+func (x *ModelUsage) GetTotalTokens() int64 {
+	if x != nil {
+		return x.TotalTokens
+	}
+	return 0
+}
+
+func (x *ModelUsage) GetCostMicros() int64 {
+	if x != nil {
+		return x.CostMicros
+	}
+	return 0
+}
+
 var File_cocoonbox_control_v1_boxes_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
@@ -1822,7 +2110,33 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x18ListWakeSchedulesRequest\"]\n" +
 	"\x19ListWakeSchedulesResponse\x12@\n" +
 	"\tschedules\x18\x01 \x03(\v2\".cocoonbox.control.v1.WakeScheduleR\tschedules\"\x1b\n" +
-	"\x19ClearWakeScheduleResponse*\x9f\x01\n" +
+	"\x19ClearWakeScheduleResponse\"\x0e\n" +
+	"\fUsageRequest\"\x82\x02\n" +
+	"\rUsageResponse\x127\n" +
+	"\x05today\x18\x01 \x01(\v2!.cocoonbox.control.v1.UsagePeriodR\x05today\x127\n" +
+	"\x05month\x18\x02 \x01(\v2!.cocoonbox.control.v1.UsagePeriodR\x05month\x12(\n" +
+	"\x10daily_cap_micros\x18\x03 \x01(\x03R\x0edailyCapMicros\x12\x1f\n" +
+	"\vdefault_cap\x18\x04 \x01(\bR\n" +
+	"defaultCap\x124\n" +
+	"\x16remaining_today_micros\x18\x05 \x01(\x03R\x14remainingTodayMicros\"\x94\x02\n" +
+	"\vUsagePeriod\x12\x19\n" +
+	"\bsince_ms\x18\x01 \x01(\x03R\asinceMs\x12\x1a\n" +
+	"\brequests\x18\x02 \x01(\x03R\brequests\x12#\n" +
+	"\rprompt_tokens\x18\x03 \x01(\x03R\fpromptTokens\x12+\n" +
+	"\x11completion_tokens\x18\x04 \x01(\x03R\x10completionTokens\x12!\n" +
+	"\ftotal_tokens\x18\x05 \x01(\x03R\vtotalTokens\x12\x1f\n" +
+	"\vcost_micros\x18\x06 \x01(\x03R\n" +
+	"costMicros\x128\n" +
+	"\x06models\x18\a \x03(\v2 .cocoonbox.control.v1.ModelUsageR\x06models\"\xd4\x01\n" +
+	"\n" +
+	"ModelUsage\x12\x14\n" +
+	"\x05model\x18\x01 \x01(\tR\x05model\x12\x1a\n" +
+	"\brequests\x18\x02 \x01(\x03R\brequests\x12#\n" +
+	"\rprompt_tokens\x18\x03 \x01(\x03R\fpromptTokens\x12+\n" +
+	"\x11completion_tokens\x18\x04 \x01(\x03R\x10completionTokens\x12!\n" +
+	"\ftotal_tokens\x18\x05 \x01(\x03R\vtotalTokens\x12\x1f\n" +
+	"\vcost_micros\x18\x06 \x01(\x03R\n" +
+	"costMicros*\x9f\x01\n" +
 	"\bBoxState\x12\x19\n" +
 	"\x15BOX_STATE_UNSPECIFIED\x10\x00\x12\x16\n" +
 	"\x12BOX_STATE_STARTING\x10\x01\x12\x15\n" +
@@ -1846,7 +2160,7 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x16ENTRY_KIND_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fENTRY_KIND_FILE\x10\x01\x12\x12\n" +
 	"\x0eENTRY_KIND_DIR\x10\x02\x12\x16\n" +
-	"\x12ENTRY_KIND_SYMLINK\x10\x032\xfa\v\n" +
+	"\x12ENTRY_KIND_SYMLINK\x10\x032\xcc\f\n" +
 	"\x05Boxes\x12S\n" +
 	"\x06Ensure\x12#.cocoonbox.control.v1.EnsureRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12V\n" +
 	"\x06Create\x12&.cocoonbox.control.v1.CreateBoxRequest\x1a$.cocoonbox.control.v1.EnsureResponse\x12K\n" +
@@ -1864,7 +2178,8 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\fRestorePaths\x12).cocoonbox.control.v1.RestorePathsRequest\x1a\x1f.cocoonbox.control.v1.Operation\x12c\n" +
 	"\x0fSetWakeSchedule\x12,.cocoonbox.control.v1.SetWakeScheduleRequest\x1a\".cocoonbox.control.v1.WakeSchedule\x12t\n" +
 	"\x11ListWakeSchedules\x12..cocoonbox.control.v1.ListWakeSchedulesRequest\x1a/.cocoonbox.control.v1.ListWakeSchedulesResponse\x12b\n" +
-	"\x11ClearWakeSchedule\x12\x1c.cocoonbox.control.v1.BoxRef\x1a/.cocoonbox.control.v1.ClearWakeScheduleResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\x11ClearWakeSchedule\x12\x1c.cocoonbox.control.v1.BoxRef\x1a/.cocoonbox.control.v1.ClearWakeScheduleResponse\x12P\n" +
+	"\x05Usage\x12\".cocoonbox.control.v1.UsageRequest\x1a#.cocoonbox.control.v1.UsageResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_boxes_proto_rawDescOnce sync.Once
@@ -1879,7 +2194,7 @@ func file_cocoonbox_control_v1_boxes_proto_rawDescGZIP() []byte {
 }
 
 var file_cocoonbox_control_v1_boxes_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_cocoonbox_control_v1_boxes_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
 	(BoxState)(0),                     // 0: cocoonbox.control.v1.BoxState
 	(Phase)(0),                        // 1: cocoonbox.control.v1.Phase
@@ -1910,6 +2225,10 @@ var file_cocoonbox_control_v1_boxes_proto_goTypes = []any{
 	(*ListWakeSchedulesRequest)(nil),  // 26: cocoonbox.control.v1.ListWakeSchedulesRequest
 	(*ListWakeSchedulesResponse)(nil), // 27: cocoonbox.control.v1.ListWakeSchedulesResponse
 	(*ClearWakeScheduleResponse)(nil), // 28: cocoonbox.control.v1.ClearWakeScheduleResponse
+	(*UsageRequest)(nil),              // 29: cocoonbox.control.v1.UsageRequest
+	(*UsageResponse)(nil),             // 30: cocoonbox.control.v1.UsageResponse
+	(*UsagePeriod)(nil),               // 31: cocoonbox.control.v1.UsagePeriod
+	(*ModelUsage)(nil),                // 32: cocoonbox.control.v1.ModelUsage
 }
 var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	0,  // 0: cocoonbox.control.v1.Box.state:type_name -> cocoonbox.control.v1.BoxState
@@ -1925,45 +2244,50 @@ var file_cocoonbox_control_v1_boxes_proto_depIdxs = []int32{
 	2,  // 10: cocoonbox.control.v1.SnapshotEntry.kind:type_name -> cocoonbox.control.v1.EntryKind
 	21, // 11: cocoonbox.control.v1.BrowseSnapshotResponse.entries:type_name -> cocoonbox.control.v1.SnapshotEntry
 	24, // 12: cocoonbox.control.v1.ListWakeSchedulesResponse.schedules:type_name -> cocoonbox.control.v1.WakeSchedule
-	7,  // 13: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
-	8,  // 14: cocoonbox.control.v1.Boxes.Create:input_type -> cocoonbox.control.v1.CreateBoxRequest
-	9,  // 15: cocoonbox.control.v1.Boxes.Rename:input_type -> cocoonbox.control.v1.RenameBoxRequest
-	3,  // 16: cocoonbox.control.v1.Boxes.Delete:input_type -> cocoonbox.control.v1.BoxRef
-	12, // 17: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
-	13, // 18: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
-	15, // 19: cocoonbox.control.v1.Boxes.Watch:input_type -> cocoonbox.control.v1.WatchBoxesRequest
-	3,  // 20: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
-	16, // 21: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
-	3,  // 22: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
-	11, // 23: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
-	3,  // 24: cocoonbox.control.v1.Boxes.ListSnapshots:input_type -> cocoonbox.control.v1.BoxRef
-	20, // 25: cocoonbox.control.v1.Boxes.BrowseSnapshot:input_type -> cocoonbox.control.v1.BrowseSnapshotRequest
-	23, // 26: cocoonbox.control.v1.Boxes.RestorePaths:input_type -> cocoonbox.control.v1.RestorePathsRequest
-	25, // 27: cocoonbox.control.v1.Boxes.SetWakeSchedule:input_type -> cocoonbox.control.v1.SetWakeScheduleRequest
-	26, // 28: cocoonbox.control.v1.Boxes.ListWakeSchedules:input_type -> cocoonbox.control.v1.ListWakeSchedulesRequest
-	3,  // 29: cocoonbox.control.v1.Boxes.ClearWakeSchedule:input_type -> cocoonbox.control.v1.BoxRef
-	10, // 30: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
-	10, // 31: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
-	5,  // 32: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
-	6,  // 33: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
-	5,  // 34: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
-	14, // 35: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
-	14, // 36: cocoonbox.control.v1.Boxes.Watch:output_type -> cocoonbox.control.v1.ListBoxesResponse
-	6,  // 37: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
-	17, // 38: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
-	6,  // 39: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
-	6,  // 40: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
-	19, // 41: cocoonbox.control.v1.Boxes.ListSnapshots:output_type -> cocoonbox.control.v1.ListSnapshotsResponse
-	22, // 42: cocoonbox.control.v1.Boxes.BrowseSnapshot:output_type -> cocoonbox.control.v1.BrowseSnapshotResponse
-	6,  // 43: cocoonbox.control.v1.Boxes.RestorePaths:output_type -> cocoonbox.control.v1.Operation
-	24, // 44: cocoonbox.control.v1.Boxes.SetWakeSchedule:output_type -> cocoonbox.control.v1.WakeSchedule
-	27, // 45: cocoonbox.control.v1.Boxes.ListWakeSchedules:output_type -> cocoonbox.control.v1.ListWakeSchedulesResponse
-	28, // 46: cocoonbox.control.v1.Boxes.ClearWakeSchedule:output_type -> cocoonbox.control.v1.ClearWakeScheduleResponse
-	30, // [30:47] is the sub-list for method output_type
-	13, // [13:30] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	31, // 13: cocoonbox.control.v1.UsageResponse.today:type_name -> cocoonbox.control.v1.UsagePeriod
+	31, // 14: cocoonbox.control.v1.UsageResponse.month:type_name -> cocoonbox.control.v1.UsagePeriod
+	32, // 15: cocoonbox.control.v1.UsagePeriod.models:type_name -> cocoonbox.control.v1.ModelUsage
+	7,  // 16: cocoonbox.control.v1.Boxes.Ensure:input_type -> cocoonbox.control.v1.EnsureRequest
+	8,  // 17: cocoonbox.control.v1.Boxes.Create:input_type -> cocoonbox.control.v1.CreateBoxRequest
+	9,  // 18: cocoonbox.control.v1.Boxes.Rename:input_type -> cocoonbox.control.v1.RenameBoxRequest
+	3,  // 19: cocoonbox.control.v1.Boxes.Delete:input_type -> cocoonbox.control.v1.BoxRef
+	12, // 20: cocoonbox.control.v1.Boxes.Get:input_type -> cocoonbox.control.v1.GetBoxRequest
+	13, // 21: cocoonbox.control.v1.Boxes.List:input_type -> cocoonbox.control.v1.ListBoxesRequest
+	15, // 22: cocoonbox.control.v1.Boxes.Watch:input_type -> cocoonbox.control.v1.WatchBoxesRequest
+	3,  // 23: cocoonbox.control.v1.Boxes.Hibernate:input_type -> cocoonbox.control.v1.BoxRef
+	16, // 24: cocoonbox.control.v1.Boxes.WatchOperation:input_type -> cocoonbox.control.v1.WatchOperationRequest
+	3,  // 25: cocoonbox.control.v1.Boxes.SaveState:input_type -> cocoonbox.control.v1.BoxRef
+	11, // 26: cocoonbox.control.v1.Boxes.Rebase:input_type -> cocoonbox.control.v1.RebaseRequest
+	3,  // 27: cocoonbox.control.v1.Boxes.ListSnapshots:input_type -> cocoonbox.control.v1.BoxRef
+	20, // 28: cocoonbox.control.v1.Boxes.BrowseSnapshot:input_type -> cocoonbox.control.v1.BrowseSnapshotRequest
+	23, // 29: cocoonbox.control.v1.Boxes.RestorePaths:input_type -> cocoonbox.control.v1.RestorePathsRequest
+	25, // 30: cocoonbox.control.v1.Boxes.SetWakeSchedule:input_type -> cocoonbox.control.v1.SetWakeScheduleRequest
+	26, // 31: cocoonbox.control.v1.Boxes.ListWakeSchedules:input_type -> cocoonbox.control.v1.ListWakeSchedulesRequest
+	3,  // 32: cocoonbox.control.v1.Boxes.ClearWakeSchedule:input_type -> cocoonbox.control.v1.BoxRef
+	29, // 33: cocoonbox.control.v1.Boxes.Usage:input_type -> cocoonbox.control.v1.UsageRequest
+	10, // 34: cocoonbox.control.v1.Boxes.Ensure:output_type -> cocoonbox.control.v1.EnsureResponse
+	10, // 35: cocoonbox.control.v1.Boxes.Create:output_type -> cocoonbox.control.v1.EnsureResponse
+	5,  // 36: cocoonbox.control.v1.Boxes.Rename:output_type -> cocoonbox.control.v1.Box
+	6,  // 37: cocoonbox.control.v1.Boxes.Delete:output_type -> cocoonbox.control.v1.Operation
+	5,  // 38: cocoonbox.control.v1.Boxes.Get:output_type -> cocoonbox.control.v1.Box
+	14, // 39: cocoonbox.control.v1.Boxes.List:output_type -> cocoonbox.control.v1.ListBoxesResponse
+	14, // 40: cocoonbox.control.v1.Boxes.Watch:output_type -> cocoonbox.control.v1.ListBoxesResponse
+	6,  // 41: cocoonbox.control.v1.Boxes.Hibernate:output_type -> cocoonbox.control.v1.Operation
+	17, // 42: cocoonbox.control.v1.Boxes.WatchOperation:output_type -> cocoonbox.control.v1.OperationEvent
+	6,  // 43: cocoonbox.control.v1.Boxes.SaveState:output_type -> cocoonbox.control.v1.Operation
+	6,  // 44: cocoonbox.control.v1.Boxes.Rebase:output_type -> cocoonbox.control.v1.Operation
+	19, // 45: cocoonbox.control.v1.Boxes.ListSnapshots:output_type -> cocoonbox.control.v1.ListSnapshotsResponse
+	22, // 46: cocoonbox.control.v1.Boxes.BrowseSnapshot:output_type -> cocoonbox.control.v1.BrowseSnapshotResponse
+	6,  // 47: cocoonbox.control.v1.Boxes.RestorePaths:output_type -> cocoonbox.control.v1.Operation
+	24, // 48: cocoonbox.control.v1.Boxes.SetWakeSchedule:output_type -> cocoonbox.control.v1.WakeSchedule
+	27, // 49: cocoonbox.control.v1.Boxes.ListWakeSchedules:output_type -> cocoonbox.control.v1.ListWakeSchedulesResponse
+	28, // 50: cocoonbox.control.v1.Boxes.ClearWakeSchedule:output_type -> cocoonbox.control.v1.ClearWakeScheduleResponse
+	30, // 51: cocoonbox.control.v1.Boxes.Usage:output_type -> cocoonbox.control.v1.UsageResponse
+	34, // [34:52] is the sub-list for method output_type
+	16, // [16:34] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_control_v1_boxes_proto_init() }
@@ -1978,7 +2302,7 @@ func file_cocoonbox_control_v1_boxes_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_boxes_proto_rawDesc), len(file_cocoonbox_control_v1_boxes_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   26,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

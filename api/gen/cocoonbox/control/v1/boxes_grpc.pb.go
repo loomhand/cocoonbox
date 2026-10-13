@@ -36,6 +36,7 @@ const (
 	Boxes_SetWakeSchedule_FullMethodName   = "/cocoonbox.control.v1.Boxes/SetWakeSchedule"
 	Boxes_ListWakeSchedules_FullMethodName = "/cocoonbox.control.v1.Boxes/ListWakeSchedules"
 	Boxes_ClearWakeSchedule_FullMethodName = "/cocoonbox.control.v1.Boxes/ClearWakeSchedule"
+	Boxes_Usage_FullMethodName             = "/cocoonbox.control.v1.Boxes/Usage"
 )
 
 // BoxesClient is the client API for Boxes service.
@@ -89,6 +90,7 @@ type BoxesClient interface {
 	// ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
 	// stays up.
 	ClearWakeSchedule(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*ClearWakeScheduleResponse, error)
+	Usage(ctx context.Context, in *UsageRequest, opts ...grpc.CallOption) (*UsageResponse, error)
 }
 
 type boxesClient struct {
@@ -287,6 +289,16 @@ func (c *boxesClient) ClearWakeSchedule(ctx context.Context, in *BoxRef, opts ..
 	return out, nil
 }
 
+func (c *boxesClient) Usage(ctx context.Context, in *UsageRequest, opts ...grpc.CallOption) (*UsageResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(UsageResponse)
+	err := c.cc.Invoke(ctx, Boxes_Usage_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // BoxesServer is the server API for Boxes service.
 // All implementations must embed UnimplementedBoxesServer
 // for forward compatibility.
@@ -338,6 +350,7 @@ type BoxesServer interface {
 	// ClearWakeSchedule removes the box's wake schedule; a box the alarm woke
 	// stays up.
 	ClearWakeSchedule(context.Context, *BoxRef) (*ClearWakeScheduleResponse, error)
+	Usage(context.Context, *UsageRequest) (*UsageResponse, error)
 	mustEmbedUnimplementedBoxesServer()
 }
 
@@ -398,6 +411,9 @@ func (UnimplementedBoxesServer) ListWakeSchedules(context.Context, *ListWakeSche
 }
 func (UnimplementedBoxesServer) ClearWakeSchedule(context.Context, *BoxRef) (*ClearWakeScheduleResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ClearWakeSchedule not implemented")
+}
+func (UnimplementedBoxesServer) Usage(context.Context, *UsageRequest) (*UsageResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Usage not implemented")
 }
 func (UnimplementedBoxesServer) mustEmbedUnimplementedBoxesServer() {}
 func (UnimplementedBoxesServer) testEmbeddedByValue()               {}
@@ -712,6 +728,24 @@ func _Boxes_ClearWakeSchedule_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Boxes_Usage_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(UsageRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(BoxesServer).Usage(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Boxes_Usage_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(BoxesServer).Usage(ctx, req.(*UsageRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Boxes_ServiceDesc is the grpc.ServiceDesc for Boxes service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -778,6 +812,10 @@ var Boxes_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClearWakeSchedule",
 			Handler:    _Boxes_ClearWakeSchedule_Handler,
+		},
+		{
+			MethodName: "Usage",
+			Handler:    _Boxes_Usage_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
