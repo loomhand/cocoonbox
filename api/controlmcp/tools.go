@@ -7,13 +7,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
+	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/CMGS/cocoonbox/api/oauth"
 )
 
 const (
@@ -26,6 +29,7 @@ const (
 	errDeleteUnconfirmed  toolError = "Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true."
 	errDeleteUnnamed      toolError = "Name the box to delete in box."
 	errUnknownKind        toolError = "kind must be general or script."
+	errNoGrantBox         toolError = "This client has created no box yet; box_create creates one."
 )
 
 var (
@@ -267,12 +271,12 @@ func (s *Server) call(ctx context.Context, call *callParams, progress progressFu
 }
 
 func (s *Server) list(ctx context.Context) (*listResult, error) {
-	resp, err := s.boxes.List(ctx, &controlv1.ListBoxesRequest{})
+	list, err := s.visible(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := &listResult{Boxes: []listEntry{}}
-	for _, b := range resp.GetBoxes() {
+	for _, b := range list {
 		out.Boxes = append(out.Boxes, listEntry{BoxID: b.GetId(), Name: b.GetName(), State: stateName(b.GetState()), Image: b.GetImage(), LastSavedAtMs: b.GetLastSavedAtMs()})
 	}
 	return out, nil
@@ -295,15 +299,7 @@ func (s *Server) status(ctx context.Context, ref string) (*statusResult, error) 
 }
 
 func (s *Server) ensure(ctx context.Context, ref string, wait bool, progress progressFunc) (*operationResult, error) {
-	req := &controlv1.EnsureRequest{}
-	if ref != "" {
-		box, err := s.box(ctx, ref)
-		if err != nil {
-			return nil, err
-		}
-		req.BoxId = box.GetId()
-	}
-	resp, err := s.boxes.Ensure(ctx, req)
+	resp, err := s.startEnsure(ctx, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +316,7 @@ func (s *Server) ensure(ctx context.Context, ref string, wait bool, progress pro
 }
 
 func (s *Server) create(ctx context.Context, name, family string, wait bool, progress progressFunc) (*createResult, error) {
-	resp, err := s.boxes.Create(ctx, &controlv1.CreateBoxRequest{Name: name, Image: family})
+	resp, err := s.startCreate(ctx, name, family)
 	if err != nil {
 		return nil, err
 	}
@@ -444,11 +440,10 @@ func (s *Server) runningBox(ctx context.Context, ref string) (*controlv1.Box, er
 
 // box returns the caller's box named or numbered ref, or the first one when ref is empty, nil when the caller has none.
 func (s *Server) box(ctx context.Context, ref string) (*controlv1.Box, error) {
-	resp, err := s.boxes.List(ctx, &controlv1.ListBoxesRequest{})
+	list, err := s.visible(ctx)
 	if err != nil {
 		return nil, err
 	}
-	list := resp.GetBoxes()
 	if ref == "" {
 		if len(list) == 0 {
 			return nil, nil
@@ -461,6 +456,93 @@ func (s *Server) box(ctx context.Context, ref string) (*controlv1.Box, error) {
 		}
 	}
 	return nil, toolError(fmt.Sprintf("You have no box %q; box_list lists your boxes.", ref))
+}
+
+// startEnsure starts or wakes the box ref names; a grant's call names one of its boxes and stays within its running cap.
+func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.EnsureResponse, error) {
+	g := grantOf(ctx)
+	if g == nil && ref == "" {
+		return s.boxes.Ensure(ctx, &controlv1.EnsureRequest{})
+	}
+	if g != nil {
+		defer s.lock(g.ID)()
+	}
+	box, err := s.box(ctx, ref)
+	switch {
+	case err != nil:
+		return nil, err
+	case box == nil:
+		return nil, errNoGrantBox
+	}
+	if g != nil && !holdsMemory(box) {
+		if err = s.checkRunning(ctx, g); err != nil {
+			return nil, err
+		}
+	}
+	return s.boxes.Ensure(ctx, &controlv1.EnsureRequest{BoxId: box.GetId()})
+}
+
+// startCreate adds a box; a grant's call stays within its caps and records the box as the grant's.
+func (s *Server) startCreate(ctx context.Context, name, family string) (*controlv1.EnsureResponse, error) {
+	g := grantOf(ctx)
+	if g == nil {
+		return s.boxes.Create(ctx, &controlv1.CreateBoxRequest{Name: name, Image: family})
+	}
+	defer s.lock(g.ID)()
+	list, err := s.visible(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(list) >= g.MaxBoxes {
+		return nil, toolError(fmt.Sprintf("This client may keep %s at most; delete one of its boxes first.", countBoxes(g.MaxBoxes)))
+	}
+	if err = s.checkRunning(ctx, g); err != nil {
+		return nil, err
+	}
+	resp, err := s.boxes.Create(ctx, &controlv1.CreateBoxRequest{Name: name, Image: family})
+	if err != nil {
+		return nil, err
+	}
+	box := resp.GetBox().GetId()
+	if err = s.grants.AddBox(ctx, g.ID, box); err != nil {
+		logger := log.WithFunc("controlmcp.Server.startCreate")
+		logger.Errorf(ctx, err, "record box %s of grant %s", box, g.ID)
+		if _, delErr := s.boxes.Delete(ctx, &controlv1.BoxRef{BoxId: box}); delErr != nil {
+			logger.Errorf(ctx, delErr, "delete unrecorded box %s", box)
+		}
+		return nil, status.Error(codes.Unavailable, "recording the box failed")
+	}
+	return resp, nil
+}
+
+// checkRunning refuses to start another box of grant g while its running cap is held.
+func (s *Server) checkRunning(ctx context.Context, g *oauth.Grant) error {
+	list, err := s.visible(ctx)
+	if err != nil {
+		return err
+	}
+	if running := len(slices.DeleteFunc(list, func(b *controlv1.Box) bool { return !holdsMemory(b) })); running >= g.MaxRunning {
+		return toolError(fmt.Sprintf("This client may run %s at once; hibernate one of its boxes first.", countBoxes(g.MaxRunning)))
+	}
+	return nil
+}
+
+// visible returns the caller's boxes, oldest first: for a grant, only those it created.
+func (s *Server) visible(ctx context.Context) ([]*controlv1.Box, error) {
+	resp, err := s.boxes.List(ctx, &controlv1.ListBoxesRequest{})
+	if err != nil {
+		return nil, err
+	}
+	g := grantOf(ctx)
+	if g == nil {
+		return resp.GetBoxes(), nil
+	}
+	ids, err := s.grants.Boxes(ctx, g.ID)
+	if err != nil {
+		log.WithFunc("controlmcp.Server.visible").Errorf(ctx, err, "list the boxes of grant %s", g.ID)
+		return nil, status.Error(codes.Unavailable, "reading the client's boxes failed")
+	}
+	return slices.DeleteFunc(resp.GetBoxes(), func(b *controlv1.Box) bool { return !slices.Contains(ids, b.GetId()) }), nil
 }
 
 // watchStream receives WatchOperation events in-process as the caller in ctx.
@@ -540,6 +622,28 @@ func toUsagePeriod(p *controlv1.UsagePeriod) usagePeriod {
 		})
 	}
 	return out
+}
+
+func grantOf(ctx context.Context) *oauth.Grant {
+	g, _ := ctx.Value(grantKey{}).(*oauth.Grant)
+	return g
+}
+
+// holdsMemory reports whether a box counts against a running cap: starting, running or hibernating.
+func holdsMemory(b *controlv1.Box) bool {
+	switch b.GetState() {
+	case controlv1.BoxState_BOX_STATE_STARTING, controlv1.BoxState_BOX_STATE_RUNNING, controlv1.BoxState_BOX_STATE_HIBERNATING:
+		return true
+	default:
+		return false
+	}
+}
+
+func countBoxes(n int) string {
+	if n == 1 {
+		return "1 box"
+	}
+	return fmt.Sprintf("%d boxes", n)
 }
 
 func stateName(state controlv1.BoxState) string {

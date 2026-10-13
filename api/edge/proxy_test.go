@@ -377,10 +377,11 @@ func (r *fakeResolver) Resolve(_ context.Context, user, boxID string) (machines.
 	return ep, r.wake, r.err
 }
 
-func (r *fakeResolver) Reached(boxID string) {
+func (r *fakeResolver) Reached(boxID string) func() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.reached = append(r.reached, boxID)
+	return func() {}
 }
 
 func (r *fakeResolver) reaches() []string {

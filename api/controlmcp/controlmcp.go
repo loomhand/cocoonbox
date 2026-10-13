@@ -4,6 +4,7 @@ package controlmcp
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/CMGS/cocoonbox/api/auth"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/CMGS/cocoonbox/api/oauth"
 )
 
 const (
@@ -40,22 +42,39 @@ const (
 
 var protocolVersions = []string{"2025-11-25", "2025-06-18"}
 
-// Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user.
+// Grants checks the OAuth access tokens of agents and keeps the boxes each grant created.
+type Grants interface {
+	Authenticate(ctx context.Context, header string) (oauth.Grant, error)
+	Boxes(ctx context.Context, grant string) ([]string, error)
+	AddBox(ctx context.Context, grant, box string) error
+	Challenge(invalid bool) string
+}
+
+// Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user, or of its grant.
 type Server struct {
-	boxes controlv1.BoxesServer
-	authn *auth.Authenticator
+	boxes  controlv1.BoxesServer
+	authn  *auth.Authenticator
+	grants Grants
+
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
 }
 
 // New serves the control tools over boxes, authenticating with authn.
 func New(boxes controlv1.BoxesServer, authn *auth.Authenticator) *Server {
-	return &Server{boxes: boxes, authn: authn}
+	return &Server{boxes: boxes, authn: authn, locks: map[string]*sync.Mutex{}}
+}
+
+// EnableGrants admits OAuth access tokens next to user tokens; a token acts only on the boxes its grant created, within its caps.
+func (s *Server) EnableGrants(grants Grants) {
+	s.grants = grants
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	user, err := s.authn.Authenticate(r.Context(), r.Header.Get("Authorization"))
+	user, grant, err := s.authenticate(r)
 	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
+		s.refuse(w, r, err)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -82,6 +101,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := auth.WithUser(r.Context(), user)
+	caller := user
+	if grant != nil {
+		ctx = context.WithValue(ctx, grantKey{}, grant)
+		caller += " grant=" + grant.ID
+	}
 	var (
 		call   callParams
 		result any
@@ -89,7 +113,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	)
 	defer func() {
 		log.WithFunc("controlmcp.Server.ServeHTTP").Infof(ctx, "%s %s user=%s code=%d in %s",
-			req.Method, cmp.Or(call.Name, "-"), user, rpcErr.code(), time.Since(start).Round(time.Millisecond))
+			req.Method, cmp.Or(call.Name, "-"), caller, rpcErr.code(), time.Since(start).Round(time.Millisecond))
 	}()
 	switch {
 	case req.Method == "initialize":
@@ -110,6 +134,50 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, newResponse(req.ID, result, rpcErr))
 }
+
+// authenticate maps the bearer to its user, and an access token also to its grant.
+func (s *Server) authenticate(r *http.Request) (string, *oauth.Grant, error) {
+	header := r.Header.Get("Authorization")
+	if s.grants == nil || !oauth.IsAccessToken(header) {
+		user, err := s.authn.Authenticate(r.Context(), header)
+		return user, nil, err
+	}
+	g, err := s.grants.Authenticate(r.Context(), header)
+	if err != nil {
+		return "", nil, err
+	}
+	return g.User, &g, nil
+}
+
+// refuse answers a failed authentication: 401 with the OAuth challenge, or 503 when the grant store failed.
+func (s *Server) refuse(w http.ResponseWriter, r *http.Request, err error) {
+	if s.grants == nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if oauth.IsAccessToken(r.Header.Get("Authorization")) && !errors.Is(err, oauth.ErrInvalidToken) {
+		log.WithFunc("controlmcp.Server.refuse").Error(r.Context(), err, "check access token")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("WWW-Authenticate", s.grants.Challenge(r.Header.Get("Authorization") != ""))
+	w.WriteHeader(http.StatusUnauthorized)
+}
+
+// lock serializes the calls of one grant that may start a box, so two cannot both pass its caps.
+func (s *Server) lock(grant string) func() {
+	s.mu.Lock()
+	l := s.locks[grant]
+	if l == nil {
+		l = &sync.Mutex{}
+		s.locks[grant] = l
+	}
+	s.mu.Unlock()
+	l.Lock()
+	return l.Unlock
+}
+
+type grantKey struct{}
 
 type request struct {
 	JSONRPC string          `json:"jsonrpc"`

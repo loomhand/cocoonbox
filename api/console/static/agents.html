@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cocoonbox agents</title>
+<link rel="stylesheet" href="/cb/style.css">
+<script src="/cb/agents.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>cocoonbox · Agents</h1>
+  <span id="whoami"></span>
+  <a href="/cb/">Console</a>
+</header>
+<main>
+  <p id="notice" hidden></p>
+
+  <section id="signed-out" hidden>
+    <h2>Sign in first</h2>
+    <p>Sign in on the <a href="/cb/">console</a>, then come back to this page.</p>
+  </section>
+
+  <section id="agents-section" hidden>
+    <p>Agents you allowed through their MCP sign-in. Each one manages only the boxes it created, within the limits you set; it never sees your other boxes, keys, connections or shares. Revoking one ends its access at once; the boxes it created stay yours.</p>
+    <table><thead><tr><th>Agent</th><th>Verified host</th><th>Allowed</th><th>Expires</th><th>Last used</th><th>Limits</th><th>Its boxes</th><th></th></tr></thead><tbody id="agents"></tbody></table>
+  </section>
+</main>
+</body>
+</html>

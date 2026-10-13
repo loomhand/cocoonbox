@@ -93,6 +93,8 @@ func TestLoadRejects(t *testing.T) {
 		{name: "box door without connect", body: required + "connect:\n  box_listen: 10.203.0.1:18091\n", want: "connect.box_listen must be an ip:port of one address"},
 		{name: "negative wake floor", body: required + "wake:\n  floor: -1h\n", want: "wake.max_schedules and wake.floor must not be negative"},
 		{name: "wake awake under a minute", body: required + "wake:\n  max_awake_for: 30s\n", want: "wake.max_awake_for must be at least 1m"},
+		{name: "oauth over http", body: required + "oauth:\n  public_url: http://cb.example\n", want: "oauth.public_url must be an https origin"},
+		{name: "negative idle hibernate", body: required + "oauth:\n  idle_hibernate: -1m\n", want: "oauth.idle_hibernate must not be negative"},
 		{name: "negative park after", body: required + "state:\n  park_after: -1h\n", want: "state.park_after must not be negative"},
 		{name: "relative cua meter", body: required + "cua_meter_file: cua-meter.jsonl\n", want: "cua_meter_file must be an absolute path"},
 		{name: "image owners of an image not offered", body: required + "rebase_images: [cbplan:v38]\nimage_owners: {\"cbcore:v1\": [u-a]}\n", want: `image_owners image "cbcore:v1" must be in rebase_images`},
@@ -123,6 +125,26 @@ func TestLoadResolvesRelativePaths(t *testing.T) {
 	}
 	if cfg.Accounts.DSNFile != filepath.Join(dir, "pg.dsn") || cfg.Accounts.MasterKeyFile != filepath.Join(dir, "master.key") {
 		t.Errorf("accounts = %+v, want under %s", cfg.Accounts, dir)
+	}
+}
+
+func TestLoadOAuth(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		idle time.Duration
+	}{
+		{"default idle", "oauth:\n  public_url: https://cb.example/\n", 30 * time.Minute},
+		{"idle off", "oauth:\n  public_url: https://cb.example\n  idle_hibernate: 0s\n", 0},
+		{"idle set", "oauth:\n  public_url: https://cb.example\n  idle_hibernate: 10m\n", 10 * time.Minute},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Load(writeConfig(t, required+tt.body))
+			if err != nil || cfg.OAuth.PublicURL != "https://cb.example" || time.Duration(*cfg.OAuth.IdleHibernate) != tt.idle {
+				t.Errorf("Load = %+v, %v", cfg.OAuth, err)
+			}
+		})
 	}
 }
 

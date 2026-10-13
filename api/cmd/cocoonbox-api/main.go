@@ -33,6 +33,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/gwkeys"
 	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/machines/sandboxd"
+	"github.com/CMGS/cocoonbox/api/oauth"
 	"github.com/CMGS/cocoonbox/api/shares"
 	"github.com/CMGS/cocoonbox/api/store/s3"
 	"github.com/CMGS/cocoonbox/api/users"
@@ -44,6 +45,7 @@ const (
 	credentialsInterval = time.Minute
 	alarmInterval       = 15 * time.Second
 	parkInterval        = time.Minute
+	idleInterval        = time.Minute
 	injectionTimeout    = time.Minute
 	shutdownGrace       = 5 * time.Second
 	readHeaderTimeout   = 10 * time.Second
@@ -112,6 +114,17 @@ func main() {
 		Floor:        time.Duration(cfg.Wake.Floor),
 		MaxAwakeFor:  time.Duration(cfg.Wake.MaxAwakeFor),
 	})
+	var grants *oauth.Service
+	if cfg.OAuth.PublicURL != "" {
+		if grants, err = openOAuth(ctx, cfg, accounts); err != nil {
+			logger.Fatalf(ctx, err, "open oauth")
+		}
+		defer grants.Close()
+		if idle := time.Duration(*cfg.OAuth.IdleHibernate); idle > 0 {
+			svc.EnableIdle(idle, grants.AgentBoxes)
+			go svc.RunIdle(ctx, idleInterval)
+		}
+	}
 	var library *flows.Library
 	if cfg.State.Bucket != "" {
 		var st *s3.S3
@@ -154,7 +167,8 @@ func main() {
 	}
 
 	httpMux := http.NewServeMux()
-	httpMux.Handle(controlmcp.Path, controlmcp.New(svc, authn))
+	control := controlmcp.New(svc, authn)
+	httpMux.Handle(controlmcp.Path, control)
 	boxMCP := edge.NewMCP(svc, authn, signer)
 	if cfg.CUAMeterFile != "" {
 		var meter *edge.Meter
@@ -175,6 +189,15 @@ func main() {
 		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
 		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)
 		enableBoxConnect(ctx, cfg, svc, broker, library)
+	}
+	if grants != nil {
+		control.EnableGrants(grants)
+		web.EnableAgents(grants)
+		httpMux.HandleFunc("GET "+grants.ResourceMetadataPath(), grants.ServeResourceMetadata)
+		httpMux.HandleFunc("GET "+oauth.ServerMetadataPath, grants.ServeServerMetadata)
+		httpMux.HandleFunc("POST "+oauth.TokenPath, grants.ServeToken)
+		httpMux.HandleFunc("POST "+oauth.RegisterPath, grants.ServeRegister)
+		httpMux.HandleFunc("POST "+oauth.RevokePath, grants.ServeRevoke)
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -335,6 +358,20 @@ func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Servic
 	}
 	log.WithFunc("main.openConnect").Infof(ctx, "connect on %s", cfg.Connect.PublicURL)
 	return broker, nil
+}
+
+// openOAuth opens the authorization server of the control MCP on the users database.
+func openOAuth(ctx context.Context, cfg *config.Config, accounts *users.Service) (*oauth.Service, error) {
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return nil, err
+	}
+	grants, err := oauth.Open(ctx, oauth.Options{DSN: dsn, Issuer: cfg.OAuth.PublicURL, Resource: cfg.OAuth.PublicURL + controlmcp.Path, Accounts: accounts})
+	if err != nil {
+		return nil, err
+	}
+	log.WithFunc("main.openOAuth").Infof(ctx, "oauth for the control MCP, issuer %s, agent boxes hibernate after %s idle", cfg.OAuth.PublicURL, time.Duration(*cfg.OAuth.IdleHibernate))
+	return grants, nil
 }
 
 // openUsers opens the users table with gw and sandboxd as the holders of each user's keys.

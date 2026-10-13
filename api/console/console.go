@@ -97,6 +97,7 @@ type Server struct {
 	screens Screens
 	connect *connect.Service
 	keys    controlv1.KeysServer
+	agents  Agents
 
 	defaultDailyCap   int64
 	defaultMaxRunning int

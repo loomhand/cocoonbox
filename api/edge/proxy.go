@@ -49,8 +49,8 @@ var (
 // Resolver maps a caller and box id to the box agent's endpoint and the wake id its credential names.
 type Resolver interface {
 	Resolve(ctx context.Context, user, boxID string) (ep machines.Endpoint, wake string, err error)
-	// Reached records that a client's call goes to boxID; the api's own calls do not report.
-	Reached(boxID string)
+	// Reached records that a client's call goes to boxID and returns what records its end; the api's own calls do not report.
+	Reached(boxID string) func()
 }
 
 // Credentials issues the credentials an agent accepts for a box at a wake: the owner's, or one naming a share's principal.
@@ -97,7 +97,7 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	if err != nil {
 		return err
 	}
-	p.resolver.Reached(boxes[0])
+	defer p.resolver.Reached(boxes[0])()
 	conn, err := p.conn(ctx, boxes[0], ep)
 	if err != nil {
 		return err

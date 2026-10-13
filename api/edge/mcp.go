@@ -47,6 +47,7 @@ type route struct {
 	ep     machines.Endpoint
 	wake   string
 	grant  *auth.Grant
+	left   func()
 }
 
 type boxTransport struct {
@@ -91,6 +92,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeJSONRPCError(w, err)
 		return
 	}
+	defer rt.left()
 	if rt.grant != nil {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
@@ -149,7 +151,7 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
 	if rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), owner, boxID); err == nil {
-		m.resolver.Reached(boxID)
+		rt.left = m.resolver.Reached(boxID)
 	}
 	return rt, err
 }

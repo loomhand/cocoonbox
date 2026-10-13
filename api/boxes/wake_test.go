@@ -121,7 +121,7 @@ func TestAClientThatReachesTheWokenBoxKeepsItUpAcrossARestart(t *testing.T) {
 		want  machines.State
 	}{
 		{name: "an edge call", reach: func(e *wakeEnv) error {
-			e.svc.Reached(aliceBox)
+			e.svc.Reached(aliceBox)()
 			return nil
 		}, want: machines.StateRunning},
 		{name: "an Ensure", reach: func(e *wakeEnv) error {

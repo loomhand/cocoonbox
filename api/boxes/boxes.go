@@ -110,6 +110,7 @@ type Service struct {
 	wake      *wakeAlarms
 	park      *parking
 	usage     *usageMeter
+	idle      *idling
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex
@@ -140,7 +141,7 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		return nil, ErrNoBox
 	}
 	if ctx.Value(alarmCall{}) == nil {
-		s.Reached(box)
+		s.Reached(box)()
 	}
 	if s.deleting(box) {
 		return nil, status.Error(codes.FailedPrecondition, "box is being deleted")

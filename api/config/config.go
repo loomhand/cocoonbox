@@ -33,6 +33,8 @@ const (
 	defaultWakeFloor     = time.Hour
 	defaultMaxAwakeFor   = time.Hour
 
+	defaultIdleHibernate = 30 * time.Minute
+
 	defaultVCPUs     = 4
 	defaultMemoryMiB = 8192
 	defaultDiskGiB   = 40
@@ -133,6 +135,25 @@ type Connect struct {
 	BoxListen string `json:"box_listen"`
 }
 
+// OAuth makes the control MCP an OAuth 2.1 protected resource for agents the user approves in the console.
+type OAuth struct {
+	// PublicURL is the api's public https origin and the issuer; empty turns OAuth off.
+	PublicURL string `json:"public_url"`
+	// IdleHibernate hibernates a running box an agent created after this long without a client call; "0s" turns it off.
+	IdleHibernate *Duration `json:"idle_hibernate"`
+}
+
+func (o OAuth) validate() error {
+	var errs []error
+	if u, err := url.Parse(o.PublicURL); o.PublicURL != "" && (err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "") {
+		errs = append(errs, fmt.Errorf("oauth.public_url must be an https origin, got %q", o.PublicURL))
+	}
+	if *o.IdleHibernate < 0 {
+		errs = append(errs, fmt.Errorf("oauth.idle_hibernate must not be negative, got %s", time.Duration(*o.IdleHibernate)))
+	}
+	return errors.Join(errs...)
+}
+
 // Wake bounds the scheduled wakes of boxes (design §15.13).
 type Wake struct {
 	// MaxSchedules bounds the wake schedules of one user.
@@ -188,6 +209,7 @@ type Config struct {
 	// OperatorSocket serves the root CLI's box commands on this unix socket; empty turns them off.
 	OperatorSocket string `json:"operator_socket"`
 	Wake           Wake   `json:"wake"`
+	OAuth          OAuth  `json:"oauth"`
 }
 
 // Load reads, defaults and validates the file at path.
@@ -259,6 +281,10 @@ func (c *Config) applyDefaults() {
 	c.Wake.Floor = cmp.Or(c.Wake.Floor, Duration(defaultWakeFloor))
 	c.Wake.MaxAwakeFor = cmp.Or(c.Wake.MaxAwakeFor, Duration(defaultMaxAwakeFor))
 	c.Connect.PublicURL = strings.TrimSuffix(c.Connect.PublicURL, "/")
+	c.OAuth.PublicURL = strings.TrimSuffix(c.OAuth.PublicURL, "/")
+	if c.OAuth.IdleHibernate == nil {
+		c.OAuth.IdleHibernate = new(Duration(defaultIdleHibernate))
+	}
 }
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
@@ -302,7 +328,7 @@ func (c *Config) validate() error {
 	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
 		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
 	}
-	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.validateImageOwners(), absolute("cua_meter_file", c.CUAMeterFile), absolute("operator_socket", c.OperatorSocket))
+	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate(), c.validateImageOwners(), absolute("cua_meter_file", c.CUAMeterFile), absolute("operator_socket", c.OperatorSocket))
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
