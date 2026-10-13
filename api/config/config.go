@@ -96,6 +96,20 @@ type GC struct {
 	DeletedRetention Duration `json:"deleted_retention"`
 }
 
+func (g GC) validate(bucket string) error {
+	var errs []error
+	if g.Interval < 0 || (g.Interval > 0 && bucket == "") {
+		errs = append(errs, errors.New("state.gc.interval must not be negative and needs state.bucket"))
+	}
+	if g.DeleteBatch < 1 || g.DeleteBatch > maxDeleteBatch {
+		errs = append(errs, fmt.Errorf("state.gc.delete_batch must be in 1..%d, got %d", maxDeleteBatch, g.DeleteBatch))
+	}
+	if g.DeletedRetention < 0 {
+		errs = append(errs, fmt.Errorf("state.gc.deleted_retention must not be negative, got %s", time.Duration(g.DeletedRetention)))
+	}
+	return errors.Join(errs...)
+}
+
 // Provision names the edge signing key, gw's admin API for per-user gw keys and the residential exit.
 type Provision struct {
 	SigningKeyFile string  `json:"signing_key_file"`
@@ -161,20 +175,6 @@ type Wake struct {
 	// Floor is the least time between two wakes of one box from hibernation.
 	Floor       Duration `json:"floor"`
 	MaxAwakeFor Duration `json:"max_awake_for"`
-}
-
-func (g GC) validate(bucket string) error {
-	var errs []error
-	if g.Interval < 0 || (g.Interval > 0 && bucket == "") {
-		errs = append(errs, errors.New("state.gc.interval must not be negative and needs state.bucket"))
-	}
-	if g.DeleteBatch < 1 || g.DeleteBatch > maxDeleteBatch {
-		errs = append(errs, fmt.Errorf("state.gc.delete_batch must be in 1..%d, got %d", maxDeleteBatch, g.DeleteBatch))
-	}
-	if g.DeletedRetention < 0 {
-		errs = append(errs, fmt.Errorf("state.gc.deleted_retention must not be negative, got %s", time.Duration(g.DeletedRetention)))
-	}
-	return errors.Join(errs...)
 }
 
 func (w Wake) validate() error {

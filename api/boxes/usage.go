@@ -16,11 +16,6 @@ type Meter interface {
 	DailyCap(ctx context.Context, user string) (*int64, error)
 }
 
-type usageMeter struct {
-	meter      Meter
-	defaultCap int64
-}
-
 func (s *Service) EnableUsage(meter Meter, defaultCap int64) {
 	s.usage = &usageMeter{meter: meter, defaultCap: defaultCap}
 }
@@ -56,6 +51,11 @@ func (s *Service) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*contro
 		resp.RemainingTodayMicros = max(resp.DailyCapMicros-resp.Today.GetCostMicros(), 0)
 	}
 	return resp, nil
+}
+
+type usageMeter struct {
+	meter      Meter
+	defaultCap int64
 }
 
 func (m *usageMeter) period(ctx context.Context, user string, since time.Time) (*controlv1.UsagePeriod, error) {

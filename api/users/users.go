@@ -422,7 +422,8 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			return User{}, fmt.Errorf("set tenant cap: %w", err)
 		}
 	}
-	if err := s.store.setSettings(ctx, r); err != nil {
+	if err := s.store.exec(ctx, "UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0) WHERE id = $1",
+		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning); err != nil {
 		return User{}, err
 	}
 	if r.Disabled && !old.Disabled {

@@ -193,11 +193,6 @@ func (s *store) tokenServes(ctx context.Context, sha string) (bool, error) {
 	return serves, err
 }
 
-func (s *store) setSettings(ctx context.Context, r record) error {
-	return s.exec(ctx, "UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0) WHERE id = $1",
-		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning)
-}
-
 func (s *store) setStateKey(ctx context.Context, r record) error {
 	tag, err := s.pool.Exec(ctx, "UPDATE users SET state_key_id = $2, state_key_sealed = $3 WHERE id = $1 AND state_key_sealed IS NULL",
 		r.ID, r.stateKeyID, r.stateKey)
