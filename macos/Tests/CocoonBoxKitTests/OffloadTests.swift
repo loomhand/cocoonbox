@@ -266,6 +266,20 @@ import Testing
         #expect(try box.sh("git log -1 --format=%s", in: repo) == "box")
     }
 
+    @Test func aFailedFetchBackCarriesGitsWholeStderr() async throws {
+        let box = try await Harness.shared()
+        let repo = try box.repo("nofetch")
+        let outcome = try await box.offloader().offload(OffloadRequest(directory: repo, kind: .claude, handover: Self.handover, yes: true))
+        try box.post(back: Self.handover, in: URL(fileURLWithPath: outcome.record.dir), key: outcome.record.repo)
+        do {
+            _ = try await box.offloader(cli: "/nonexistent/cocoonbox").back(outcome.record.repo, interrupt: false)
+            Issue.record("fetched over a missing CLI")
+        } catch let error as OffloadError {
+            #expect(error.description.hasPrefix("git fetch from the box failed (128):\n"))
+            #expect(error.description.contains("/nonexistent/cocoonbox") && error.description.contains("\nfatal: "))
+        }
+    }
+
     static func rsyncFailure(_ box: Harness, cli: String, repo name: String) async throws -> String {
         let repo = try box.repo(name)
         do {

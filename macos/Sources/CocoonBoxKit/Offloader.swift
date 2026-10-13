@@ -351,7 +351,7 @@ public struct Offloader: Sendable {
             let ref = "refs/cocoonbox/back/\(record.id)"
             let fetch = try repo.run(["fetch", "-q", "box:\(record.dir)", "+refs/heads/*:refs/cocoonbox/box/*", "+\(ref):\(ref)"],
                                      extra: ["GIT_SSH_COMMAND": rsh, "GIT_SSH_VARIANT": "simple"])
-            guard fetch.status == 0 else { throw OffloadError.failed("git fetch from the box failed: \(fetch.error.split(separator: "\n").last ?? "")") }
+            guard fetch.status == 0 else { throw OffloadError.failed("git fetch from the box failed (\(fetch.status)):\n\(fetch.error)") }
             landing = try repo.land(id: record.id, base: base, box: ref, index: try store.directory(key).appendingPathComponent("snapshot.index"))
         }
         _ = try await verb(["end", "--repo", key])
