@@ -314,6 +314,7 @@ import Testing
     @Test func imagesOlderThanV22Block() {
         #expect(Preflight.image("cbdesk:v21")?.outcome == .block)
         #expect(Preflight.image("cbdesk:v22") == nil && Preflight.image("cbdesk:v104") == nil && Preflight.image("custom") == nil)
+        #expect(Preflight.image("cbcore:v1") == nil && Preflight.image("cbplan:v1") == nil)
     }
 
     @Test func macOSOnlyWork() throws {

@@ -32,7 +32,7 @@ enum Preflight {
 
     // image blocks a box on an image older than cbdesk:v22; an image name of another form passes to begin's own checks.
     static func image(_ image: String) -> Finding? {
-        guard let tag = image.split(separator: ":").last, tag.hasPrefix("v"), let version = Int(tag.dropFirst().prefix { $0.isNumber }),
+        guard image.hasPrefix("cbdesk:"), let tag = image.split(separator: ":").last, tag.hasPrefix("v"), let version = Int(tag.dropFirst().prefix { $0.isNumber }),
               version < minimumImage
         else { return nil }
         return Finding(check: "image", outcome: .block, detail: "the box runs \(image), older than cbdesk:v\(minimumImage); upgrade the box first")
