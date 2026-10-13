@@ -6,6 +6,7 @@ pub mod exec;
 pub mod files;
 pub mod flows;
 pub mod rpc;
+pub mod scope;
 pub mod shell;
 pub mod script;
 pub mod state;
