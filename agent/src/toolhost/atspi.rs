@@ -16,6 +16,7 @@ const REGISTRY: &str = "org.a11y.atspi.Registry";
 const ROOT: &str = "/org/a11y/atspi/accessible/root";
 const PATH_PREFIX: &str = "/org/a11y/atspi/accessible";
 const CACHE_PATH: &str = "/org/a11y/atspi/cache";
+const CACHE: &str = "org.a11y.atspi.Cache";
 const ACCESSIBLE: &str = "org.a11y.atspi.Accessible";
 const ACTION: &str = "org.a11y.atspi.Action";
 const COMPONENT: &str = "org.a11y.atspi.Component";
@@ -360,6 +361,18 @@ type Item = (
     Vec<u32>,
 );
 
+type OldItem = (
+    (String, OwnedObjectPath),
+    (String, OwnedObjectPath),
+    (String, OwnedObjectPath),
+    Vec<(String, OwnedObjectPath)>,
+    Vec<String>,
+    String,
+    u32,
+    String,
+    Vec<u32>,
+);
+
 /// A lazily opened connection to the accessibility bus, shared by all calls.
 pub struct Atspi {
     conn: Mutex<Option<Connection>>,
@@ -421,17 +434,7 @@ impl Atspi {
             phases.push((name, clock.elapsed().as_micros()));
             clock = Instant::now();
         };
-        let items: Vec<Item> = self
-            .call(
-                &Obj {
-                    bus: frame.obj.bus.clone(),
-                    path: CACHE_PATH.to_owned(),
-                },
-                "org.a11y.atspi.Cache",
-                "GetItems",
-                &(),
-            )
-            .await?;
+        let items = self.items(&frame.obj.bus).await.unwrap_or_default();
         lap("items", &mut phases);
         let mut raw: HashMap<Obj, Raw> = HashMap::with_capacity(items.len());
         let mut cached: HashMap<Obj, Vec<(i32, Obj)>> = HashMap::new();
@@ -724,6 +727,17 @@ impl Atspi {
         })
     }
 
+    /// The app's cached objects, from the cache of at-spi2-core 2.46 and later or from the older one,
+    /// which lists the children of each object instead of its index and child count.
+    async fn items(&self, bus: &str) -> Result<Vec<Item>, String> {
+        let cache = Obj {
+            bus: bus.to_owned(),
+            path: CACHE_PATH.to_owned(),
+        };
+        let reply = self.reply(&cache, CACHE, "GetItems", &()).await?;
+        cache_items(&reply).map_err(|e| format!("{CACHE}.GetItems on {bus}: {e}"))
+    }
+
     async fn children(&self, obj: &Obj) -> Result<Vec<Obj>, String> {
         let kids: Vec<(String, OwnedObjectPath)> =
             self.call(obj, ACCESSIBLE, "GetChildren", &()).await?;
@@ -761,10 +775,27 @@ impl Atspi {
         T::try_from(v).map_err(|e| format!("{iface}.{name}: {e}"))
     }
 
-    /// One method call with a timeout; a peer that times out is skipped for a while.
     async fn call<R, B>(&self, obj: &Obj, iface: &str, method: &str, body: &B) -> Result<R, String>
     where
         R: DeserializeOwned + zbus::zvariant::Type,
+        B: serde::Serialize + DynamicType,
+    {
+        self.reply(obj, iface, method, body)
+            .await?
+            .body()
+            .deserialize::<R>()
+            .map_err(|e| format!("{iface}.{method} on {}: {e}", obj.id()))
+    }
+
+    /// One method call with a timeout; a peer that times out is skipped for a while.
+    async fn reply<B>(
+        &self,
+        obj: &Obj,
+        iface: &str,
+        method: &str,
+        body: &B,
+    ) -> Result<zbus::Message, String>
+    where
         B: serde::Serialize + DynamicType,
     {
         if self.is_hung(&obj.bus) {
@@ -778,21 +809,17 @@ impl Atspi {
             method,
             body,
         );
-        let reply = match tokio::time::timeout(CALL_TIMEOUT, call).await {
-            Ok(Ok(reply)) => reply,
-            Ok(Err(e)) => return Err(format!("{iface}.{method} on {}: {e}", obj.id())),
+        match tokio::time::timeout(CALL_TIMEOUT, call).await {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(e)) => Err(format!("{iface}.{method} on {}: {e}", obj.id())),
             Err(_) => {
                 self.hung
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .insert(obj.bus.clone(), Instant::now());
-                return Err(not_responding(&obj.bus));
+                Err(not_responding(&obj.bus))
             }
-        };
-        reply
-            .body()
-            .deserialize::<R>()
-            .map_err(|e| format!("{iface}.{method} on {}: {e}", obj.id()))
+        }
     }
 
     fn is_hung(&self, bus: &str) -> bool {
@@ -973,6 +1000,48 @@ fn gtk_combo(accel: &str) -> Option<String> {
     }
     combo.push_str(key);
     Some(combo)
+}
+
+/// The items of a `GetItems` reply in either cache signature.
+fn cache_items(reply: &zbus::Message) -> Result<Vec<Item>, zbus::Error> {
+    let body = reply.body();
+    match body.deserialize::<Vec<Item>>() {
+        Ok(items) => Ok(items),
+        Err(_) => body.deserialize::<Vec<OldItem>>().map(indexed),
+    }
+}
+
+/// Items of the older cache with each object's index among its parent's children, -1 when the parent
+/// does not list it, and its child count.
+fn indexed(old: Vec<OldItem>) -> Vec<Item> {
+    let mut index: HashMap<(Obj, Obj), i32> = HashMap::new();
+    for (object, _, _, children, ..) in &old {
+        let parent = Obj::of(object.clone());
+        for (i, child) in (0..).zip(children) {
+            index.insert((parent.clone(), Obj::of(child.clone())), i);
+        }
+    }
+    old.into_iter()
+        .map(
+            |(object, app, parent, children, ifaces, name, role, description, states)| {
+                let at = (Obj::of(parent.clone()), Obj::of(object.clone()));
+                let count = i32::try_from(children.len()).unwrap_or(i32::MAX);
+                let i = index.get(&at).copied().unwrap_or(-1);
+                (
+                    object,
+                    app,
+                    parent,
+                    i,
+                    count,
+                    ifaces,
+                    name,
+                    role,
+                    description,
+                    states,
+                )
+            },
+        )
+        .collect()
 }
 
 fn needs_live(r: &Raw, cached: Option<&Vec<(i32, Obj)>>) -> bool {
@@ -1195,6 +1264,65 @@ mod tests {
         ));
         assert!(!needs_live(&r(5, 1 << MANAGES_DESCENDANTS), None));
         assert!(!needs_live(&r(0, 0), None));
+    }
+
+    #[test]
+    fn the_older_cache_gives_each_object_its_index_and_child_count() {
+        let o = |p: &str| {
+            (
+                ":1.1".to_owned(),
+                OwnedObjectPath::try_from(format!("{PATH_PREFIX}/{p}")).unwrap(),
+            )
+        };
+        let item = |name: &str, parent: &str, children: &[&str]| -> OldItem {
+            (
+                o(name),
+                o("root"),
+                o(parent),
+                children.iter().map(|c| o(c)).collect(),
+                vec![ACTION.to_owned()],
+                name.to_owned(),
+                43,
+                String::new(),
+                vec![1 << ENABLED, 0],
+            )
+        };
+        let old = vec![
+            item("f", "root", &["a", "b"]),
+            item("b", "f", &[]),
+            item("a", "f", &["c"]),
+            item("c", "a", &[]),
+            item("x", "f", &[]),
+        ];
+        let reply = zbus::Message::method_call(CACHE_PATH, "GetItems")
+            .unwrap()
+            .build(&old)
+            .unwrap();
+        let items = cache_items(&reply).unwrap();
+        let got: Vec<(&str, i32, i32)> = items
+            .iter()
+            .map(|(_, _, _, i, n, _, name, ..)| (name.as_str(), *i, *n))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("f", -1, 2),
+                ("b", 1, 0),
+                ("a", 0, 1),
+                ("c", 0, 0),
+                ("x", -1, 0)
+            ]
+        );
+        let reply = zbus::Message::method_call(CACHE_PATH, "GetItems")
+            .unwrap()
+            .build(&items)
+            .unwrap();
+        assert_eq!(cache_items(&reply).unwrap(), items);
+        let other = zbus::Message::method_call(CACHE_PATH, "GetItems")
+            .unwrap()
+            .build(&("x",))
+            .unwrap();
+        assert!(cache_items(&other).is_err());
     }
 
     #[test]
