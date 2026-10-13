@@ -240,7 +240,7 @@ actor MockWorld {
             self.emitOperation(id: id, phase: .deleting, detail: "removing machine \(target.id)", state: target.state)
             self.boxes.removeAll { $0.id == target.id }
             self.deletions += 1
-            self.emitOperation(id: id, phase: .done, detail: "deleted; the saved state of \(target.id) stays in storage", state: .unspecified)
+            self.emitOperation(id: id, phase: .done, detail: "deleted; the saved state of \(target.id) is removed after the retention of deleted boxes", state: .unspecified)
         }
         return operation(id)
     }

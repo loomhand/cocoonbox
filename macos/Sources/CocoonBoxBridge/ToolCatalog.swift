@@ -15,7 +15,7 @@ public enum ToolCatalog {
         tool("box_hibernate", "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake.", ["box": box]),
         tool("box_save", "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.", ["box": box]),
         tool("box_upgrade", "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true.", ["box": box, "confirm": ["type": "boolean"]], required: ["confirm"]),
-        tool("box_delete", "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state stays in storage. Requires the box and confirm: true.", ["box": box, "confirm": ["type": "boolean"]], required: ["box", "confirm"]),
+        tool("box_delete", "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true.", ["box": box, "confirm": ["type": "boolean"]], required: ["box", "confirm"]),
         tool("usage", "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it.", [:]),
     ]
 

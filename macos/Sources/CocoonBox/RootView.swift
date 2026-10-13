@@ -471,7 +471,7 @@ struct BoxSwitcher: View {
             Button("Delete", role: .destructive) { model.deleteBox(box) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("A running box is saved first. Its running programs stop, and its saved state stays in storage.")
+            Text("A running box is saved first. Its running programs stop, and its saved state is kept for 7 days, then removed.")
         }
     }
 }
