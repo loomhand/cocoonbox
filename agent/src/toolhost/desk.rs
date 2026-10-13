@@ -27,7 +27,7 @@ const MAX_FOUND: usize = 20;
 const MENU_POLL: Duration = Duration::from_millis(30);
 const MENU_POLLS: u32 = 10;
 const SELECTED_ROLES: [&str; 5] = ["tab", "option", "radio", "listitem", "treeitem"];
-const TITLE_TIERS: usize = 4;
+const TITLE_TIERS: usize = 3;
 const TITLE_SEPARATORS: [&str; 2] = [" - ", " — "];
 
 /// Snapshots and element actions over AT-SPI; the bus connection opens on first use.
@@ -50,8 +50,22 @@ impl Desk {
             "desk_key" => key(cua, &parse::<KeyArgs>(args)?.keys).await?,
             "desk_type" => type_text(cua, &parse::<TypeArgs>(args)?.text).await?,
             "desk_click" => click(cua, parse(args)?).await?,
-            "desk_focus" => focus(cua, parse(args)?).await?,
-            "desk_close" => close(parse(args)?)?,
+            "desk_focus" => {
+                let a = parse(args)?;
+                match focus(cua, &a).await {
+                    Err(e) if e.starts_with("no window") => {
+                        focus(cua, &self.by_app(&a).await?).await?
+                    }
+                    r => r?,
+                }
+            }
+            "desk_close" => {
+                let a = parse(args)?;
+                match close(&a) {
+                    Err(e) if e.starts_with("no window") => close(&self.by_app(&a).await?)?,
+                    r => r?,
+                }
+            }
             "desk_launch" => {
                 let app = parse::<LaunchArgs>(args)?.app;
                 let v = cua.desk_call("launch_app", json!({"name": app})).await?;
@@ -294,6 +308,21 @@ impl Desk {
         Ok(json!({"found": node_json((0, &node?)), "path": path}).to_string())
     }
 
+    /// The window that `a` names by its app part, for a call that found no window titled as `a` says.
+    async fn by_app(&self, a: &WindowArgs) -> Result<WindowArgs, String> {
+        let frames: Vec<Frame> = self
+            .frames()
+            .await?
+            .into_iter()
+            .filter(|f| FRAME_ROLES.contains(&f.role) && a.pid.is_none_or(|p| f.pid == Some(p)))
+            .collect();
+        let f = app_window(&frames, &a.window)?;
+        Ok(WindowArgs {
+            window: f.name,
+            pid: f.pid,
+        })
+    }
+
     async fn frames(&self) -> Result<Vec<Frame>, String> {
         match self.atspi.frames().await {
             Ok(frames) => Ok(frames),
@@ -343,7 +372,7 @@ async fn click(cua: &Cua, a: ClickArgs) -> Result<String, String> {
 }
 
 /// Brings the window titled `window` to the front.
-async fn focus(cua: &Cua, a: WindowArgs) -> Result<String, String> {
+async fn focus(cua: &Cua, a: &WindowArgs) -> Result<String, String> {
     let listed = cua.desk_call("list_windows", json!({})).await?;
     let windows = listed["structuredContent"]["windows"]
         .as_array()
@@ -371,7 +400,7 @@ async fn focus(cua: &Cua, a: WindowArgs) -> Result<String, String> {
 }
 
 /// Asks the window manager to close the window titled `window`, as its close button does.
-fn close(a: WindowArgs) -> Result<String, String> {
+fn close(a: &WindowArgs) -> Result<String, String> {
     let (conn, n) = x11rb::connect(None).map_err(|e| format!("connect X: {e}"))?;
     let root = conn.setup().roots[n].root;
     let atom = |name: &[u8]| -> Result<u32, String> {
@@ -684,23 +713,44 @@ fn pick(frames: Vec<Frame>, want: Option<&str>, pid: Option<u32>) -> Result<Fram
             return Ok(f);
         }
     }
-    let names: Vec<&str> = frames.iter().map(|f| f.name.as_str()).collect();
-    Err(format!("no window {want:?}; windows: {names:?}"))
+    app_window(&frames, want)
 }
 
 /// Whether window title `title` matches `want` at `tier`: 0 the same, 1 the same ignoring case and outer
-/// spaces, 2 containing it ignoring case, 3 ending with its app part, such as ` - Thunar` of `inbox - Thunar`.
+/// spaces, 2 containing it ignoring case.
 fn title_matches(tier: usize, title: &str, want: &str) -> bool {
     let lower = want.trim().to_lowercase();
     match tier {
         0 => title == want,
         1 => title.trim().to_lowercase() == lower,
-        2 => title.to_lowercase().contains(&lower),
-        _ => TITLE_SEPARATORS
-            .iter()
-            .filter_map(|s| lower.rfind(s))
-            .max()
-            .is_some_and(|i| title.trim_end().to_lowercase().ends_with(&lower[i..])),
+        _ => title.to_lowercase().contains(&lower),
+    }
+}
+
+/// The window whose title ends with the app part of `want`, such as ` - Thunar` of `inbox - Thunar`:
+/// the only one, else the active one among several; more than one and none active is an error naming them.
+fn app_window(frames: &[Frame], want: &str) -> Result<Frame, String> {
+    let lower = want.trim().to_lowercase();
+    let app = TITLE_SEPARATORS
+        .iter()
+        .filter_map(|s| lower.rfind(s))
+        .max()
+        .map(|i| &lower[i..]);
+    let hits: Vec<&Frame> = frames
+        .iter()
+        .filter(|f| app.is_some_and(|app| f.name.trim_end().to_lowercase().ends_with(app)))
+        .collect();
+    let active: Vec<&Frame> = hits.iter().copied().filter(|f| f.active()).collect();
+    match (hits.as_slice(), active.as_slice()) {
+        ([one], _) | (_, [one]) => Ok(Frame::clone(one)),
+        ([], _) => {
+            let names: Vec<&str> = frames.iter().map(|f| f.name.as_str()).collect();
+            Err(format!("no window {want:?}; windows: {names:?}"))
+        }
+        _ => {
+            let names: Vec<&str> = hits.iter().map(|f| f.name.as_str()).collect();
+            Err(format!("no window {want:?}; windows of its app: {names:?}"))
+        }
     }
 }
 
@@ -857,6 +907,30 @@ mod tests {
         assert_eq!(named("Mousepad").unwrap(), "Mousepad Preferences");
         assert!(named("report - Writer").is_err());
         assert!(named("Thunar Preferences").is_err());
+    }
+
+    #[test]
+    fn a_stale_title_takes_its_app_window_only_when_that_is_unambiguous() {
+        let named = |frames: Vec<Frame>, want: &str| pick(frames, Some(want), None).map(|f| f.name);
+        let one = vec![
+            frame("images - Thunar", 23, false, 4),
+            frame("notes.txt - Mousepad", 23, true, 7),
+        ];
+        assert_eq!(named(one, "inbox - Thunar").unwrap(), "images - Thunar");
+        let active = vec![
+            frame("images - Thunar", 23, false, 4),
+            frame("docs - Thunar", 23, true, 5),
+        ];
+        assert_eq!(named(active, "inbox - Thunar").unwrap(), "docs - Thunar");
+        let none_active = vec![
+            frame("images - Thunar", 23, false, 4),
+            frame("docs - Thunar", 23, false, 5),
+            frame("notes.txt - Mousepad", 23, true, 7),
+        ];
+        assert_eq!(
+            named(none_active, "inbox - Thunar").unwrap_err(),
+            "no window \"inbox - Thunar\"; windows of its app: [\"images - Thunar\", \"docs - Thunar\"]"
+        );
     }
 
     #[test]

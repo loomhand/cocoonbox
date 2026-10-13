@@ -47,8 +47,8 @@ Shapes that scripts get wrong:
 - `windows()` also lists untitled panel and desktop windows, and an app's title changes as it
   works (Thunar `inbox - Thunar` becomes `docs - Thunar`; Mousepad adds `*` to an unsaved file).
   A call that takes a window title looks it up each time; a title that no longer matches finds the
-  window that ends with its app part (` - Thunar`), the active one first, so keep one window per app
-  or look the title up again: `(await desk.windows()).find((w) => w.title.endsWith(' - Thunar'))`.
+  window that ends with its app part (` - Thunar`) when it is the app's only or active window, else
+  the error lists them; or look the title up again: `(await desk.windows()).find((w) => w.title.endsWith(' - Thunar'))`.
 
 ## GUI plans and saved flows
 
