@@ -44,6 +44,17 @@ const ANNOUNCE_PHRASES: [&str; 4] = [
 ];
 const DONE_WORDS: [&str; 5] = ["done", "finished", "completed", "saved", "all"];
 const DONE_MARKS: [&str; 4] = ["完成", "已", "保存", "全部"];
+const LEAD_IN_ENDS: [&str; 4] = [":", "：", "…", "..."];
+const NEXT_LEADS: [&str; 8] = [
+    "let me ",
+    "i'll ",
+    "i’ll ",
+    "i will ",
+    "now i'll",
+    "now i’ll",
+    "starting with",
+    "接下来",
+];
 
 /// Shared state of `serve`: journal, tool dispatcher, model and per-agent queues.
 pub struct Runtime {
@@ -1151,13 +1162,22 @@ fn ending(text: &str) -> Ending {
     {
         return Ending::Empty;
     }
-    let announces = ANNOUNCE_LEADS.iter().any(|l| lower.starts_with(l))
-        || ANNOUNCE_PHRASES.iter().any(|p| lower.contains(p));
+    let announces = line
+        && (ANNOUNCE_LEADS.iter().any(|l| lower.starts_with(l))
+            || ANNOUNCE_PHRASES.iter().any(|p| lower.contains(p)));
+    let next = lower
+        .split(['.', '!', '。', '！'])
+        .map(str::trim_start)
+        .any(|s| NEXT_LEADS.iter().any(|l| s.starts_with(l)) && !s.starts_with("let me know"));
+    let lead_in = LEAD_IN_ENDS.iter().any(|e| text.ends_with(e));
     let done = lower
         .split(|c: char| !c.is_alphanumeric())
         .any(|w| DONE_WORDS.contains(&w))
         || DONE_MARKS.iter().any(|m| text.contains(m));
-    if line && !text.ends_with(['?', '？']) && announces && !done {
+    if (announces || (!text.contains('\n') && (lead_in || next)))
+        && !text.ends_with(['?', '？'])
+        && !done
+    {
         Ending::Announcement
     } else {
         Ending::Answer
@@ -1279,6 +1299,14 @@ mod tests {
             "I'll continue with the next steps.",
             "Call 133/400 complete. Continuing.",
             "继续第 64 步。",
+            "Now I'll fix the two settings that got toggled, using the approach I verified works (pointer click + arrows for the spin, popup + Down/Return for the Tab mode combo):\n\n",
+            "Now I'll set the font…",
+            "Next, the theme...",
+            "接下来设置字体：",
+            "Thunar's **Rename** dialog is scriptable (F2 → name field → Rename button) — that's the reliable path. Let me probe Thunar's Edit menu (for \"Select by Pattern\") and Mousepad's close-confirm dialog.",
+            "The dialog is open. Now I'll set the font",
+            "标签页打开了。接下来设置字体。",
+            "I'll do this GUI-only, step by step. Starting with Thunar creating the folder structure.",
         ] {
             assert_eq!(ending(reply), Ending::Announcement, "{reply}");
         }
@@ -1307,6 +1335,11 @@ mod tests {
             "继续执行后已全部完成。",
             "我将继续下一步",
             "是否继续？",
+            "Saved all three files to final:",
+            "Which file should I use: a.txt or b.txt?",
+            "Steps:\n1. Opened Thunar.\n2. Next:",
+            "The page title is Field Notes 42. Let me know if you need its second paragraph.",
+            "Mousepad is open.\nLet me set the font next.",
         ] {
             assert_eq!(ending(reply), Ending::Answer, "{reply}");
         }
