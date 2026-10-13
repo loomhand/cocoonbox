@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/CMGS/cocoonbox/api/boxes"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/oauth"
 )
@@ -482,7 +483,7 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 	return s.boxes.Ensure(ctx, &controlv1.EnsureRequest{BoxId: box.GetId()})
 }
 
-// startCreate adds a box; a grant's call stays within its caps and records the box as the grant's.
+// startCreate adds a box; a grant's call stays within its caps and records the box as the grant's before its machine starts.
 func (s *Server) startCreate(ctx context.Context, name, family string) (*controlv1.EnsureResponse, error) {
 	g := grantOf(ctx)
 	if g == nil {
@@ -499,20 +500,8 @@ func (s *Server) startCreate(ctx context.Context, name, family string) (*control
 	if err = s.checkRunning(ctx, g); err != nil {
 		return nil, err
 	}
-	resp, err := s.boxes.Create(ctx, &controlv1.CreateBoxRequest{Name: name, Image: family})
-	if err != nil {
-		return nil, err
-	}
-	box := resp.GetBox().GetId()
-	if err = s.grants.AddBox(ctx, g.ID, box); err != nil {
-		logger := log.WithFunc("controlmcp.Server.startCreate")
-		logger.Errorf(ctx, err, "record box %s of grant %s", box, g.ID)
-		if _, delErr := s.boxes.Delete(ctx, &controlv1.BoxRef{BoxId: box}); delErr != nil {
-			logger.Errorf(ctx, delErr, "delete unrecorded box %s", box)
-		}
-		return nil, status.Error(codes.Unavailable, "recording the box failed")
-	}
-	return resp, nil
+	record := func(ctx context.Context, box string) error { return s.grants.AddBox(ctx, g.ID, box) }
+	return s.boxes.Create(boxes.WithCreated(ctx, record), &controlv1.CreateBoxRequest{Name: name, Image: family})
 }
 
 // checkRunning refuses to start another box of grant g while its running cap is held.

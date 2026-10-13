@@ -14,12 +14,32 @@ import (
 	"github.com/CMGS/cocoonbox/api/machines"
 )
 
-// AgentBoxes lists the boxes that agents created, which hibernate when idle.
+// AgentBoxes lists the boxes that agents created.
 type AgentBoxes func(ctx context.Context) (map[string]bool, error)
 
-// EnableIdle hibernates a running box of agentBoxes once no client call to it is open and none ended for after.
-func (s *Service) EnableIdle(after time.Duration, agentBoxes AgentBoxes) {
-	s.idle = &idling{after: after, agentBoxes: agentBoxes, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
+// CreatedFunc runs on a box Create added, before its machine starts.
+type CreatedFunc func(ctx context.Context, box string) error
+
+type createdKey struct{}
+
+// WithCreated returns ctx whose Create runs fn on the new box before its machine starts; an error removes the box and fails the Create.
+func WithCreated(ctx context.Context, fn CreatedFunc) context.Context {
+	return context.WithValue(ctx, createdKey{}, fn)
+}
+
+// Created returns the CreatedFunc of ctx, nil without one.
+func Created(ctx context.Context) CreatedFunc {
+	fn, _ := ctx.Value(createdKey{}).(CreatedFunc)
+	return fn
+}
+
+// EnableAgentBoxes keeps the owner's keys, Connect credentials and box door key off the boxes agentBoxes lists; with idle
+// above 0, such a running box also hibernates once no client call to it is open and none ended for idle.
+func (s *Service) EnableAgentBoxes(agentBoxes AgentBoxes, idle time.Duration) {
+	s.agents = agentBoxes
+	if idle > 0 {
+		s.idle = &idling{after: idle, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
+	}
 }
 
 // RunIdle hibernates the idle agent boxes every interval until ctx ends.
@@ -38,7 +58,7 @@ func (s *Service) RunIdle(ctx context.Context, interval time.Duration) {
 
 func (s *Service) hibernateIdle(ctx context.Context) {
 	logger := log.WithFunc("boxes.Service.hibernateIdle")
-	agents, err := s.idle.agentBoxes(ctx)
+	agents, err := s.agents(ctx)
 	if err != nil {
 		logger.Error(ctx, err, "list agent boxes")
 		return
@@ -70,11 +90,23 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 	}
 }
 
+// ownerMachines drops the machines of agent boxes from ms; when the agent boxes cannot be read, it drops every machine.
+func (s *Service) ownerMachines(ctx context.Context, ms []machines.Machine) []machines.Machine {
+	if s.agents == nil {
+		return ms
+	}
+	agents, err := s.agents(ctx)
+	if err != nil {
+		log.WithFunc("boxes.Service.ownerMachines").Warnf(ctx, "list agent boxes, so no machine gets its owner's credentials now: %v", err)
+		return nil
+	}
+	return slices.DeleteFunc(slices.Clone(ms), func(m machines.Machine) bool { return agents[boxOfMachine(m.ID)] })
+}
+
 // idling keeps, per box, how many client calls are open and when the last one began or ended.
 type idling struct {
-	after      time.Duration
-	agentBoxes AgentBoxes
-	now        func() time.Time
+	after time.Duration
+	now   func() time.Time
 
 	mu   sync.Mutex
 	last map[string]time.Time

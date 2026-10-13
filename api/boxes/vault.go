@@ -32,7 +32,7 @@ func (s *Service) ApplyVault(ctx context.Context, user string) error {
 		return err
 	}
 	var errs []error
-	for _, m := range ms {
+	for _, m := range s.ownerMachines(ctx, ms) {
 		errs = append(errs, s.syncVault(ctx, m.ID))
 	}
 	return errors.Join(errs...)
@@ -46,7 +46,7 @@ func (s *Service) reconcileVault(ctx context.Context, ms []machines.Machine) {
 		logger.Error(ctx, err, "read the key digests")
 		return
 	}
-	for _, m := range ms {
+	for _, m := range s.ownerMachines(ctx, ms) {
 		if m.State != machines.StateRunning || wakeOf(m) == "" || m.Meta[metaVault] == digests[m.Owner] {
 			continue
 		}

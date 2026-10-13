@@ -81,7 +81,7 @@ type Options struct {
 	DSN string
 	// Issuer is the api's public https origin.
 	Issuer string
-	// Resource is the canonical URL of the control MCP.
+	// Resource is the canonical URL that covers every MCP endpoint a token reaches: the control MCP and the box MCPs under it.
 	Resource string
 	Accounts Accounts
 }
@@ -158,7 +158,8 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 // Close releases the database pool.
 func (s *Service) Close() { s.store.close() }
 
-// ResourceMetadataPath is where the protected resource's RFC 9728 metadata lives: the well-known prefix and the resource's path.
+// ResourceMetadataPath is where the protected resource's RFC 9728 metadata lives: the well-known prefix and the resource's path;
+// the same metadata also answers under it, for clients that probe the path of the endpoint they use.
 func (s *Service) ResourceMetadataPath() string {
 	u, _ := url.Parse(s.resource)
 	return resourceMetadataPrefix + u.Path

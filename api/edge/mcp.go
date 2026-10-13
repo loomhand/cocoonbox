@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/CMGS/cocoonbox/api/auth"
 	"github.com/CMGS/cocoonbox/api/credential"
 	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/oauth"
 )
 
 const (
@@ -31,6 +33,9 @@ const (
 	jsonRPCServer  = -32000
 )
 
+// errNoBox answers a box its grant did not create as the resolver answers another user's box.
+var errNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+
 type jsonRPCError struct {
 	JSONRPC string `json:"jsonrpc"`
 	ID      any    `json:"id"`
@@ -38,6 +43,13 @@ type jsonRPCError struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// Grants checks the OAuth access tokens of agents and lists the boxes each grant created.
+type Grants interface {
+	Authenticate(ctx context.Context, header string) (oauth.Grant, error)
+	Boxes(ctx context.Context, grant string) ([]string, error)
+	Challenge(invalid bool) string
 }
 
 // route is where one MCP exchange goes and as whom: the caller for the log, the box owner, and the grant of a share call.
@@ -61,6 +73,7 @@ type MCP struct {
 	authn    *auth.Authenticator
 	creds    Credentials
 	meter    *Meter
+	grants   Grants
 
 	mu         sync.Mutex
 	transports map[string]*boxTransport
@@ -76,6 +89,11 @@ func (m *MCP) EnableMeter(meter *Meter) {
 	m.meter = meter
 }
 
+// EnableGrants admits an agent's OAuth access token on the boxes its grant created, and on nothing else.
+func (m *MCP) EnableGrants(grants Grants) {
+	m.grants = grants
+}
+
 func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.URL.Path, MCPPrefix) {
 		http.NotFound(w, r)
@@ -89,6 +107,9 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			r.Method, r.URL.Path, rt.caller, boxID, rt.ep.Key, status.Code(err), time.Since(start).Round(time.Millisecond))
 	}()
 	if err != nil {
+		if authorization := r.Header.Get("Authorization"); m.grants != nil && status.Code(err) == codes.Unauthenticated && !sharing(authorization) {
+			w.Header().Set("WWW-Authenticate", m.grants.Challenge(authorization != ""))
+		}
 		writeJSONRPCError(w, err)
 		return
 	}
@@ -128,6 +149,9 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // route authorizes one exchange for the bearer's user, or, when no user holds it and it is a share secret, for that share.
 func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	authorization := r.Header.Get("Authorization")
+	if m.grants != nil && oauth.IsAccessToken(authorization) {
+		return m.grantRoute(r, authorization, boxID)
+	}
 	owner, err := m.authn.Authenticate(r.Context(), authorization)
 	if secret, ok := auth.ShareSecret(authorization); err != nil && ok && boxID != "" {
 		var guest string
@@ -151,6 +175,33 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
 	if rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), owner, boxID); err == nil {
+		rt.left = m.resolver.Reached(boxID)
+	}
+	return rt, err
+}
+
+// grantRoute authorizes one exchange for an access token on a box its grant created, as the box owner.
+func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route, err error) {
+	g, err := m.grants.Authenticate(r.Context(), authorization)
+	switch {
+	case errors.Is(err, oauth.ErrInvalidToken):
+		return rt, status.Error(codes.Unauthenticated, "invalid access token")
+	case err != nil:
+		log.WithFunc("edge.MCP.grantRoute").Error(r.Context(), err, "check access token")
+		return rt, status.Error(codes.Unavailable, "checking the access token failed")
+	}
+	rt.caller, rt.owner = g.User+" grant="+g.ID, g.User
+	ids, err := m.grants.Boxes(r.Context(), g.ID)
+	switch {
+	case err != nil:
+		log.WithFunc("edge.MCP.grantRoute").Errorf(r.Context(), err, "list the boxes of grant %s", g.ID)
+		return rt, status.Error(codes.Unavailable, "reading the client's boxes failed")
+	case boxID == "":
+		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
+	case !slices.Contains(ids, boxID):
+		return rt, errNoBox
+	}
+	if rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), g.User, boxID); err == nil {
 		rt.left = m.resolver.Reached(boxID)
 	}
 	return rt, err
@@ -214,6 +265,12 @@ func cutOnEnd(ctx context.Context, cancel context.CancelFunc, g *auth.Grant, str
 	case <-ctx.Done():
 	}
 	cancel()
+}
+
+// sharing reports whether an Authorization header carries a share secret.
+func sharing(authorization string) bool {
+	_, ok := auth.ShareSecret(authorization)
+	return ok
 }
 
 func newH2CTransport(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {

@@ -120,8 +120,9 @@ func main() {
 			logger.Fatalf(ctx, err, "open oauth")
 		}
 		defer grants.Close()
-		if idle := time.Duration(*cfg.OAuth.IdleHibernate); idle > 0 {
-			svc.EnableIdle(idle, grants.AgentBoxes)
+		idle := time.Duration(*cfg.OAuth.IdleHibernate)
+		svc.EnableAgentBoxes(grants.AgentBoxes, idle)
+		if idle > 0 {
 			go svc.RunIdle(ctx, idleInterval)
 		}
 	}
@@ -192,8 +193,10 @@ func main() {
 	}
 	if grants != nil {
 		control.EnableGrants(grants)
+		boxMCP.EnableGrants(grants)
 		web.EnableAgents(grants)
 		httpMux.HandleFunc("GET "+grants.ResourceMetadataPath(), grants.ServeResourceMetadata)
+		httpMux.HandleFunc("GET "+grants.ResourceMetadataPath()+"/", grants.ServeResourceMetadata)
 		httpMux.HandleFunc("GET "+oauth.ServerMetadataPath, grants.ServeServerMetadata)
 		httpMux.HandleFunc("POST "+oauth.TokenPath, grants.ServeToken)
 		httpMux.HandleFunc("POST "+oauth.RegisterPath, grants.ServeRegister)
@@ -366,7 +369,7 @@ func openOAuth(ctx context.Context, cfg *config.Config, accounts *users.Service)
 	if err != nil {
 		return nil, err
 	}
-	grants, err := oauth.Open(ctx, oauth.Options{DSN: dsn, Issuer: cfg.OAuth.PublicURL, Resource: cfg.OAuth.PublicURL + controlmcp.Path, Accounts: accounts})
+	grants, err := oauth.Open(ctx, oauth.Options{DSN: dsn, Issuer: cfg.OAuth.PublicURL, Resource: cfg.OAuth.PublicURL + strings.TrimSuffix(edge.MCPPrefix, "/"), Accounts: accounts})
 	if err != nil {
 		return nil, err
 	}

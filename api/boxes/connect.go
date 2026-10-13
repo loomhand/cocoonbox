@@ -39,7 +39,7 @@ func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 		return err
 	}
 	var errs []error
-	for _, m := range ms {
+	for _, m := range s.ownerMachines(ctx, ms) {
 		errs = append(errs, s.machines.SetCredentials(ctx, m.ID, creds))
 	}
 	return errors.Join(errs...)
@@ -104,7 +104,7 @@ func (s *Service) refreshCredentials(ctx context.Context) {
 		return
 	}
 	running := map[string][]string{}
-	for _, m := range ms {
+	for _, m := range s.ownerMachines(ctx, ms) {
 		if m.State == machines.StateRunning {
 			running[m.Owner] = append(running[m.Owner], m.ID)
 		}
@@ -132,6 +132,9 @@ func (s *Service) wakeCredentials(ctx context.Context, m machines.Machine) {
 	go func() {
 		pushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), wakePushTimeout)
 		defer cancel()
+		if len(s.ownerMachines(pushCtx, []machines.Machine{m})) == 0 {
+			return
+		}
 		if s.connect != nil {
 			s.pushCredentials(pushCtx, m)
 		}

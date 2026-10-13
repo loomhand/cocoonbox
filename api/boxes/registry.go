@@ -43,6 +43,15 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if err != nil {
 		return nil, registryError(ctx, err, "add box")
 	}
+	if fn := Created(ctx); fn != nil {
+		if err = fn(ctx, b.ID); err != nil {
+			logger.Errorf(ctx, err, "record the new box %s", b.ID)
+			if rmErr := s.registry.RemoveBox(context.WithoutCancel(ctx), user, b.ID); rmErr != nil {
+				logger.Errorf(ctx, rmErr, "remove the unrecorded box %s", b.ID)
+			}
+			return nil, status.Error(codes.Unavailable, "recording the new box failed")
+		}
+	}
 	s.ops.watchers.wake(user)
 	tenant, err := s.tenantOf(user)
 	if err != nil {

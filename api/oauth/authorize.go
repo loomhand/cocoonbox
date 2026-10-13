@@ -36,7 +36,7 @@ func ParseRequest(q url.Values) Request {
 	}
 }
 
-// Consent is what the consent page shows of a request it may approve.
+// Consent is what the consent page shows of a request it may approve; Existing marks a client that already holds a live grant of the user, which an approval renews.
 type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
@@ -44,6 +44,7 @@ type Consent struct {
 	ClientHost   string `json:"client_host"`
 	RedirectHost string `json:"redirect_host"`
 	Loopback     bool   `json:"loopback"`
+	Existing     bool   `json:"existing"`
 	Defaults     Caps   `json:"defaults"`
 }
 
@@ -57,15 +58,19 @@ type AuthorizeError struct {
 
 func (e *AuthorizeError) Error() string { return e.Description }
 
-// Check validates req and returns what the consent page shows.
-func (s *Service) Check(ctx context.Context, req Request) (Consent, error) {
+// Check validates req of user and returns what the consent page shows.
+func (s *Service) Check(ctx context.Context, user string, req Request) (Consent, error) {
 	c, err := s.check(ctx, req)
+	if err != nil {
+		return Consent{}, err
+	}
+	existing, err := s.store.liveGrant(ctx, user, c.id)
 	if err != nil {
 		return Consent{}, err
 	}
 	host, loopback := redirectHost(req.RedirectURI)
 	return Consent{
-		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback,
+		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "",
 		Defaults: Caps{MaxBoxes: DefaultMaxBoxes, MaxRunning: DefaultMaxRunning, Days: DefaultDays},
 	}, nil
 }
@@ -115,7 +120,7 @@ func (s *Service) check(ctx context.Context, req Request) (client, error) {
 		refusal = &AuthorizeError{Code: "invalid_request", Description: "PKCE with code_challenge_method S256 is required"}
 	case !scopeAllowed(req.Scope):
 		refusal = &AuthorizeError{Code: "invalid_scope", Description: "the only scope is " + Scope}
-	case req.Resource != "" && !sameResource(req.Resource, s.resource):
+	case req.Resource != "" && !s.covers(req.Resource):
 		refusal = &AuthorizeError{Code: "invalid_target", Description: "resource must be " + s.resource}
 	default:
 		return c, nil
@@ -137,6 +142,17 @@ func (s *Service) redirect(req Request, params url.Values) string {
 	return u.String()
 }
 
+// covers reports whether uri is the resource or an MCP endpoint under it, with the scheme and host in any case.
+func (s *Service) covers(uri string) bool {
+	u, err := url.Parse(uri)
+	base, _ := url.Parse(s.resource)
+	if err != nil || !strings.EqualFold(u.Scheme, base.Scheme) || !strings.EqualFold(u.Host, base.Host) || u.RawQuery != "" || u.Fragment != "" {
+		return false
+	}
+	path := strings.TrimSuffix(u.Path, "/")
+	return path == base.Path || strings.HasPrefix(path, base.Path+"/")
+}
+
 func scopeAllowed(scope string) bool {
 	for s := range strings.FieldsSeq(scope) {
 		if s != Scope {
@@ -144,12 +160,4 @@ func scopeAllowed(scope string) bool {
 		}
 	}
 	return true
-}
-
-// sameResource compares resource URLs with the scheme and host in any case and without a trailing slash.
-func sameResource(a, b string) bool {
-	ua, errA := url.Parse(a)
-	ub, errB := url.Parse(b)
-	return errA == nil && errB == nil && strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Host, ub.Host) &&
-		strings.TrimSuffix(ua.Path, "/") == strings.TrimSuffix(ub.Path, "/") && ua.RawQuery == "" && ua.Fragment == ""
 }

@@ -110,6 +110,7 @@ type Service struct {
 	wake      *wakeAlarms
 	park      *parking
 	usage     *usageMeter
+	agents    AgentBoxes
 	idle      *idling
 
 	mu     sync.Mutex

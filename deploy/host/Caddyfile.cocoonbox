@@ -8,7 +8,7 @@
 			flush_interval -1
 		}
 	}
-	@cocoonboxoauth path /cocoonbox.oauth/* /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource/cocoonbox.mcp/*
+	@cocoonboxoauth path /cocoonbox.oauth/* /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource/cocoonbox.mcp /.well-known/oauth-protected-resource/cocoonbox.mcp/*
 	handle @cocoonboxoauth {
 		reverse_proxy 127.0.0.1:18201
 	}

@@ -23,12 +23,17 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/CMGS/cocoonbox/api/boxes"
 	"github.com/CMGS/cocoonbox/api/console"
 	"github.com/CMGS/cocoonbox/api/controlmcp"
+	"github.com/CMGS/cocoonbox/api/edge"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/gwkeys"
+	"github.com/CMGS/cocoonbox/api/machines"
 	"github.com/CMGS/cocoonbox/api/oauth"
 	"github.com/CMGS/cocoonbox/api/users"
 )
@@ -45,12 +50,12 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 		t.Fatalf("no token: %d, want 401", resp.StatusCode)
 	}
 	challenge := resp.Header.Get("WWW-Authenticate")
-	if !strings.Contains(challenge, `resource_metadata="`+e.srv.URL+"/.well-known/oauth-protected-resource/cocoonbox.mcp/control") || !strings.Contains(challenge, `scope="boxes"`) {
+	if !strings.Contains(challenge, `resource_metadata="`+e.srv.URL+`/.well-known/oauth-protected-resource/cocoonbox.mcp"`) || !strings.Contains(challenge, `scope="boxes"`) {
 		t.Fatalf("challenge = %q", challenge)
 	}
 	var prm map[string]any
 	e.getJSON(t, "/.well-known/oauth-protected-resource/cocoonbox.mcp/control", &prm)
-	if prm["resource"] != e.resource {
+	if prm["resource"] != e.resource || e.resource != e.srv.URL+"/cocoonbox.mcp" {
 		t.Errorf("protected resource = %v", prm["resource"])
 	}
 	var asm map[string]any
@@ -179,7 +184,7 @@ func TestAuthorizeRefusesUntrustedRequests(t *testing.T) {
 		{"unregistered redirect", func(q url.Values) { q.Set("redirect_uri", "https://evil.example/cb") }, false},
 		{"plain PKCE", func(q url.Values) { q.Set("code_challenge_method", "plain") }, true},
 		{"another scope", func(q url.Values) { q.Set("scope", "boxes keys") }, true},
-		{"another resource", func(q url.Values) { q.Set("resource", e.srv.URL+"/cocoonbox.mcp/connect") }, true},
+		{"another resource", func(q url.Values) { q.Set("resource", e.srv.URL+"/cocoonbox.mcpx") }, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -220,6 +225,80 @@ func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 	}
 	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("after revocation the access token answers %d", resp.StatusCode)
+	}
+}
+
+func TestAGrantDrivesOnlyItsOwnBoxesThroughTheBoxMCP(t *testing.T) {
+	e := newEnv(t)
+	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
+	var made struct {
+		BoxID string `json:"box_id"`
+	}
+	if err := json.Unmarshal(e.call(t, access, "box_create", map[string]any{"name": "agent-one"}), &made); err != nil {
+		t.Fatalf("box_create: %v", err)
+	}
+	main := e.users.Boxes(e.alice)[0].ID
+	tests := []struct {
+		name  string
+		token string
+		box   string
+		want  int
+	}{
+		{"the grant on its box", access, made.BoxID, http.StatusOK},
+		{"the grant on the user's box", access, main, http.StatusNotFound},
+		{"the user on the user's box", e.userToken, main, http.StatusOK},
+		{"a bad access token", oauth.AccessPrefix + "00", made.BoxID, http.StatusUnauthorized},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp := e.boxMCP(t, tt.token, tt.box)
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+			switch tt.want {
+			case http.StatusOK:
+				if got := resp.Header.Get("X-Seen-Credential"); got != "cred:"+tt.box || resp.Header.Get("X-Seen-Authorization") != "" {
+					t.Errorf("the agent saw credential %q and authorization %q", got, resp.Header.Get("X-Seen-Authorization"))
+				}
+			case http.StatusUnauthorized:
+				if !strings.Contains(resp.Header.Get("WWW-Authenticate"), `error="invalid_token"`) {
+					t.Errorf("challenge = %q", resp.Header.Get("WWW-Authenticate"))
+				}
+			}
+		})
+	}
+	var prm map[string]any
+	e.getJSON(t, "/.well-known/oauth-protected-resource/cocoonbox.mcp/"+made.BoxID, &prm)
+	if prm["resource"] != e.resource {
+		t.Errorf("box resource metadata = %v", prm)
+	}
+}
+
+func TestSigningInAgainRenewsTheClientsGrant(t *testing.T) {
+	e := newEnv(t)
+	clientID := e.register(t, "Agent")
+	first, _ := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
+	e.call(t, first, "box_create", map[string]any{"name": "agent-one"})
+	q := url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(strings.Repeat("v", 43))},
+		"code_challenge_method": {"S256"},
+	}
+	var consent oauth.Consent
+	e.console(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()}, &consent)
+	if !consent.Existing {
+		t.Error("the consent page does not say the client already has access")
+	}
+	second, _ := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 2, MaxRunning: 1, Days: 7})
+	if list := e.boxNames(t, second); !slices.Equal(list, []string{"agent-one"}) {
+		t.Errorf("the second sign-in sees %v, want the grant's box", list)
+	}
+	if list := e.boxNames(t, first); !slices.Equal(list, []string{"agent-one"}) {
+		t.Errorf("the first sign-in's token sees %v after the renewal", list)
+	}
+	var grants []oauth.Grant
+	e.console(t, http.MethodGet, "agents", nil, &grants)
+	if len(grants) != 1 || grants[0].MaxBoxes != 2 {
+		t.Errorf("grants = %+v, want one renewed to 2 boxes", grants)
 	}
 }
 
@@ -270,21 +349,26 @@ func newEnv(t *testing.T) *env {
 	mux := http.NewServeMux()
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
-	resource := srv.URL + controlmcp.Path
+	resource := srv.URL + strings.TrimSuffix(edge.MCPPrefix, "/")
 	grants, err := oauth.Open(t.Context(), oauth.Options{DSN: dsn, Issuer: srv.URL, Resource: resource, Accounts: us})
 	if err != nil {
 		t.Fatalf("open oauth: %v", err)
 	}
 	t.Cleanup(grants.Close)
 	authn := auth.New(us, us)
-	boxes := &fakeBoxes{users: us, states: map[string]controlv1.BoxState{}}
-	control := controlmcp.New(boxes, authn)
+	store := &fakeBoxes{users: us, states: map[string]controlv1.BoxState{}}
+	control := controlmcp.New(store, authn)
 	control.EnableGrants(grants)
-	web := console.New(us, boxes, 0, 2)
+	web := console.New(us, store, 0, 2)
 	web.EnableAgents(grants)
+	agent := newFakeAgent(t)
+	boxMCP := edge.NewMCP(fakeResolver{users: us, addr: agent.Listener.Addr().String()}, authn, fakeCredentials{})
+	boxMCP.EnableGrants(grants)
+	mux.Handle(edge.MCPPrefix, boxMCP)
 	mux.Handle(controlmcp.Path, control)
 	mux.Handle(console.Prefix, web)
 	mux.HandleFunc("GET "+grants.ResourceMetadataPath(), grants.ServeResourceMetadata)
+	mux.HandleFunc("GET "+grants.ResourceMetadataPath()+"/", grants.ServeResourceMetadata)
 	mux.HandleFunc("GET "+oauth.ServerMetadataPath, grants.ServeServerMetadata)
 	mux.HandleFunc("POST "+oauth.TokenPath, grants.ServeToken)
 	mux.HandleFunc("POST "+oauth.RegisterPath, grants.ServeRegister)
@@ -438,6 +522,19 @@ func (e *env) boxNames(t *testing.T, token string) []string {
 	return names
 }
 
+func (e *env) boxMCP(t *testing.T, token, box string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+edge.MCPPrefix+box, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatalf("box mcp: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	return resp
+}
+
 func (e *env) console(t *testing.T, method, path string, body, out any) {
 	t.Helper()
 	status, data := e.consoleStatus(t, method, path, body)
@@ -518,6 +615,11 @@ func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest)
 	if err != nil {
 		return nil, err
 	}
+	if fn := boxes.Created(ctx); fn != nil {
+		if err := fn(ctx, b.ID); err != nil {
+			return nil, err
+		}
+	}
 	return f.start(b.ID, b.Name), nil
 }
 
@@ -568,6 +670,29 @@ func (f *fakeBoxes) start(id, name string) *controlv1.EnsureResponse {
 	}
 }
 
+// fakeResolver routes every box of its owner to the fake agent.
+type fakeResolver struct {
+	users *users.Service
+	addr  string
+}
+
+func (r fakeResolver) Resolve(_ context.Context, user, box string) (machines.Endpoint, string, error) {
+	if !r.users.HasBox(user, box) {
+		return machines.Endpoint{}, "", status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+	}
+	return machines.TCPEndpoint(r.addr), "w1", nil
+}
+
+func (fakeResolver) Reached(string) func() { return func() {} }
+
+type fakeCredentials struct{}
+
+func (fakeCredentials) Credential(box, _ string) string { return "cred:" + box }
+
+func (fakeCredentials) ShareCredential(box, _, principal string) string {
+	return "share:" + box + ":" + principal
+}
+
 type fakeGW struct{}
 
 func (*fakeGW) Add(context.Context, string) (string, string, error)              { return "gw-key", "ak", nil }
@@ -583,6 +708,22 @@ type fakeTenants struct{}
 
 func (fakeTenants) Put(context.Context, string, string, int) error { return nil }
 func (fakeTenants) Delete(context.Context, string) error           { return nil }
+
+// newFakeAgent answers every MCP request over h2c and echoes the credential and authorization it saw.
+func newFakeAgent(t *testing.T) *httptest.Server {
+	t.Helper()
+	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Seen-Credential", r.Header.Get("X-Cocoonbox-Credential"))
+		w.Header().Set("X-Seen-Authorization", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+	}))
+	agent.Config.Protocols = new(http.Protocols)
+	agent.Config.Protocols.SetUnencryptedHTTP2(true)
+	agent.Start()
+	t.Cleanup(agent.Close)
+	return agent
+}
 
 func challenge(verifier string) string {
 	sum := sha256.Sum256([]byte(verifier))

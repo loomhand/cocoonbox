@@ -29,7 +29,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f := r.PostForm
-	if resource := f.Get("resource"); resource != "" && !sameResource(resource, s.resource) {
+	if resource := f.Get("resource"); resource != "" && !s.covers(resource) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "resource must be "+s.resource)
 		return
 	}

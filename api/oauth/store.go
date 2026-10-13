@@ -36,6 +36,11 @@ type code struct {
 	codeSHA256   string
 }
 
+// querier reads within a transaction or from the pool.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // issued holds the sha256 of a new access token and of its refresh token.
 type issued struct {
 	access  string
@@ -89,7 +94,8 @@ func (s *store) addCode(ctx context.Context, c code) error {
 	})
 }
 
-// redeem takes the code once and, when check accepts it, makes its grant with the tokens c carries.
+// redeem takes the code once and, when check accepts it, issues tokens on a new grant, or on the client's live grant of the
+// user, which takes the new consent's caps and expiry, so a client that signs in again keeps its boxes.
 func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens issued, check func(code) error) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		stored := code{codeSHA256: codeSHA256}
@@ -103,12 +109,26 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 		if err != nil {
 			return fmt.Errorf("take code: %w", err)
 		}
-		if err := check(stored); err != nil {
+		if err = check(stored); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO oauth_grants (id, user_id, client_id, client_name, client_host, max_boxes, max_running, expires_at)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, grantID, stored.user, stored.client.id, stored.client.name, stored.client.host,
-			stored.caps.MaxBoxes, stored.caps.MaxRunning, stored.grantExpires); err != nil {
+		if _, err = tx.Exec(ctx, "SELECT id FROM users WHERE id = $1 FOR UPDATE", stored.user); err != nil {
+			return fmt.Errorf("lock user: %w", err)
+		}
+		existing, err := liveGrant(ctx, tx, stored.user, stored.client.id)
+		if err != nil {
+			return err
+		}
+		if existing != "" {
+			grantID = existing
+			_, err = tx.Exec(ctx, `UPDATE oauth_grants SET client_name = $2, client_host = $3, max_boxes = $4, max_running = $5, expires_at = $6
+				WHERE id = $1`, grantID, stored.client.name, stored.client.host, stored.caps.MaxBoxes, stored.caps.MaxRunning, stored.grantExpires)
+		} else {
+			_, err = tx.Exec(ctx, `INSERT INTO oauth_grants (id, user_id, client_id, client_name, client_host, max_boxes, max_running, expires_at)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, grantID, stored.user, stored.client.id, stored.client.name, stored.client.host,
+				stored.caps.MaxBoxes, stored.caps.MaxRunning, stored.grantExpires)
+		}
+		if err != nil {
 			return fmt.Errorf("add grant: %w", err)
 		}
 		return insertTokens(ctx, tx, grantID, tokens, stored.grantExpires)
@@ -152,6 +172,10 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 		return errInvalidGrant
 	}
 	return err
+}
+
+func (s *store) liveGrant(ctx context.Context, user, client string) (string, error) {
+	return liveGrant(ctx, s.pool, user, client)
 }
 
 func (s *store) byAccess(ctx context.Context, sum string) (Grant, error) {
@@ -226,6 +250,19 @@ func (s *store) agentBoxes(ctx context.Context) (map[string]bool, error) {
 		return nil
 	})
 	return out, err
+}
+
+func liveGrant(ctx context.Context, q querier, user, client string) (string, error) {
+	var id string
+	err := q.QueryRow(ctx, `SELECT id FROM oauth_grants WHERE user_id = $1 AND client_id = $2 AND expires_at > now()
+		ORDER BY created_at DESC LIMIT 1`, user, client).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("read live grant: %w", err)
+	}
+	return id, nil
 }
 
 func insertTokens(ctx context.Context, tx pgx.Tx, grantID string, tokens issued, grantExpires time.Time) error {

@@ -15,7 +15,7 @@ const agentsPage = "/cb/agents"
 
 // Agents checks and answers an agent's authorization request, and lists, revokes and acknowledges a user's grants.
 type Agents interface {
-	Check(ctx context.Context, req oauth.Request) (oauth.Consent, error)
+	Check(ctx context.Context, user string, req oauth.Request) (oauth.Consent, error)
 	Approve(ctx context.Context, user string, req oauth.Request, caps oauth.Caps) (string, error)
 	Deny(ctx context.Context, req oauth.Request) (string, error)
 	Grants(ctx context.Context, user string) ([]oauth.Grant, error)
@@ -45,12 +45,12 @@ func (s *Server) checkAuthorization(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	consent, err := s.agents.Check(r.Context(), req)
+	u := caller(r)
+	consent, err := s.agents.Check(r.Context(), u.ID, req)
 	if err != nil {
 		s.failAuthorization(w, r, err)
 		return
 	}
-	u := caller(r)
 	list, err := s.boxes.List(s.ownerCtx(r), &controlv1.ListBoxesRequest{})
 	if err != nil {
 		s.fail(w, r, err)

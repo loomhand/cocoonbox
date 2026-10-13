@@ -121,8 +121,9 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	}
 	box := boxOfMachine(m.ID)
 	identity := machines.Identity{BoxID: box, WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
+	owned := len(s.ownerMachines(ctx, []machines.Machine{m})) == 1
 	var connectKey string
-	if s.connect != nil {
+	if s.connect != nil && owned {
 		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)
 		if err != nil {
 			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the box door key: %v", err)
@@ -132,10 +133,10 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	if err := s.machines.Deliver(ctx, m.ID, identity, gwKey, connectKey); err != nil {
 		return "", err
 	}
-	if s.connect != nil {
+	if s.connect != nil && owned {
 		s.pushCredentials(ctx, m)
 	}
-	if s.vault != nil {
+	if s.vault != nil && owned {
 		if err := s.pushVault(ctx, m); err != nil {
 			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "push keys: %v", err)
 		}
