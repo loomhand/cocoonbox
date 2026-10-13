@@ -1322,6 +1322,9 @@ async fn append(path: &Path, line: &Value) -> Result<(), String> {
         .map_err(|e| format!("open {}: {e}", path.display()))?;
     f.write_all(&raw)
         .await
+        .map_err(|e| format!("append {}: {e}", path.display()))?;
+    f.flush()
+        .await
         .map_err(|e| format!("append {}: {e}", path.display()))
 }
 
@@ -1351,7 +1354,62 @@ fn cut(s: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::io::{Read, Write};
+    use std::os::unix::fs::OpenOptionsExt;
+
     use super::*;
+
+    #[tokio::test]
+    async fn append_returns_only_once_its_line_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(OUTBOX_FILE);
+        let made = std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .unwrap();
+        assert!(made.success());
+        let mut reader = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+            .unwrap();
+        let mut filler = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+            .unwrap();
+        let mut filled = 0;
+        while let Ok(n) = filler.write(&[b'x'; 4096]) {
+            filled += n;
+        }
+        let line = json!({"seq": 1});
+        let want = b"{\"seq\":1}\n";
+        let mut appending = std::pin::pin!(append(&path, &line));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), appending.as_mut())
+                .await
+                .is_err(),
+            "append returned while its line still waited for room in the pipe"
+        );
+        let drain = std::thread::spawn(move || {
+            let mut got = Vec::new();
+            let mut buf = [0u8; 8192];
+            while got.len() < filled + want.len() {
+                match reader.read(&mut buf) {
+                    Ok(n) => got.extend_from_slice(&buf[..n]),
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(e) => panic!("drain: {e}"),
+                }
+            }
+            got
+        });
+        appending.await.unwrap();
+        let got = drain.join().unwrap();
+        drop(filler);
+        assert_eq!(&got[filled..], want);
+    }
 
     #[tokio::test]
     async fn api_errors_and_usage_limits_block_and_ordinary_text_does_not() {
