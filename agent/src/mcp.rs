@@ -4,6 +4,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
+use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -46,8 +47,7 @@ Relative file paths resolve under /workspace, and shell is one persistent bash s
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
-const PLAN_HEAD: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
-Relative file paths resolve under /workspace, and shell is one persistent bash session. \
+const PLAN_HEAD: &str = "Relative file paths resolve under /workspace, and shell is one persistent bash session. \
 The user watches the screen live and sees every call.";
 const ALWAYS_LOAD: &[&str] = &[
     "script_run",
@@ -75,6 +75,8 @@ pub struct Mcp {
     automation: Automation,
     idle: Duration,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
+    /// The line that names the box's OS, desktop and screen, once the toolhost has read all three.
+    machine: tokio::sync::OnceCell<String>,
 }
 
 impl Mcp {
@@ -99,6 +101,7 @@ impl Mcp {
             automation,
             idle,
             sessions: Mutex::new(HashMap::new()),
+            machine: tokio::sync::OnceCell::new(),
         })
     }
 
@@ -318,9 +321,29 @@ impl Mcp {
         });
         if self.automation.plans() {
             result["capabilities"]["resources"] = json!({});
-            result["instructions"] = format!("{PLAN_HEAD}\n\n{}", prompts::ROUTING).into();
+            let machine = self.machine().await;
+            result["instructions"] =
+                format!("{machine} {PLAN_HEAD}\n\n{}", prompts::ROUTING).into();
         }
         Ok((session, result))
+    }
+
+    /// The box's OS, desktop and screen in one line, as the toolhost reads them from the box.
+    async fn machine(&self) -> String {
+        if let Some(line) = self.machine.get() {
+            return line.clone();
+        }
+        let out = self
+            .rt
+            .dispatcher
+            .run("", None, "desktop_info", json!({}))
+            .await;
+        let info: Value = serde_json::from_str(&out.text).unwrap_or_default();
+        let line = machine_line(&info);
+        if info["desktop"].is_string() && info["width"].is_u64() {
+            let _ = self.machine.set(line.clone());
+        }
+        line
     }
 
     async fn close(&self, s: &Session, reason: &str) {
@@ -861,6 +884,21 @@ async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response
     }
 }
 
+/// `These tools act on a cloud computer: Ubuntu 24.04 with the XFCE desktop at 1280x800.`, without
+/// the parts `info` lacks.
+fn machine_line(info: &Value) -> String {
+    let os = info["os"].as_str().unwrap_or("Linux");
+    let mut line = format!("These tools act on a cloud computer: {os}");
+    if let Some(desktop) = info["desktop"].as_str() {
+        let _ = write!(line, " with the {desktop} desktop");
+    }
+    if let (Some(w), Some(h)) = (info["width"].as_u64(), info["height"].as_u64()) {
+        let _ = write!(line, " at {w}x{h}");
+    }
+    line.push('.');
+    line
+}
+
 fn resources(automation: Automation) -> &'static [Resource] {
     match automation {
         Automation::Plain => &[],
@@ -945,6 +983,30 @@ mod tests {
             .await
             .unwrap();
         String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    #[test]
+    fn the_machine_line_names_what_the_box_reports() {
+        assert_eq!(
+            machine_line(
+                &json!({"os": "Ubuntu 24.04", "desktop": "XFCE", "width": 1280, "height": 800})
+            ),
+            "These tools act on a cloud computer: Ubuntu 24.04 with the XFCE desktop at 1280x800."
+        );
+        assert_eq!(
+            machine_line(
+                &json!({"os": "Ubuntu 22.04", "desktop": "GNOME", "width": 1920, "height": 1080})
+            ),
+            "These tools act on a cloud computer: Ubuntu 22.04 with the GNOME desktop at 1920x1080."
+        );
+        assert_eq!(
+            machine_line(&json!({"os": "Ubuntu 24.04"})),
+            "These tools act on a cloud computer: Ubuntu 24.04."
+        );
+        assert_eq!(
+            machine_line(&Value::Null),
+            "These tools act on a cloud computer: Linux."
+        );
     }
 
     #[tokio::test]

@@ -3712,6 +3712,18 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
             .lines()
             .next()
     );
+    let version = std::fs::read_to_string("/etc/os-release")
+        .unwrap()
+        .lines()
+        .find_map(|l| l.strip_prefix("VERSION_ID="))
+        .unwrap()
+        .trim_matches('"')
+        .to_owned();
+    let machine = instructions.lines().next().unwrap();
+    assert!(
+        machine.starts_with("These tools act on a cloud computer: ") && machine.contains(&version),
+        "{machine}"
+    );
     assert!(
         instructions.chars().count() <= 1600,
         "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",

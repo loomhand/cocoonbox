@@ -26,10 +26,11 @@ use std::time::Duration;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
+use x11rb::connection::Connection as _;
 
 use crate::config::ToolhostConfig;
 use browser::Browser;
@@ -42,6 +43,8 @@ use shell::Shell;
 const SOCKET_MODE: u32 = 0o660;
 const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
+const OS_RELEASE: &str = "/etc/os-release";
+const DESKTOP_VAR: &str = "XDG_CURRENT_DESKTOP";
 
 /// Shared tool state for all connections.
 pub struct Host {
@@ -107,6 +110,7 @@ impl Host {
             "state_swap" => state::swap(call.args).await.map(Output::text),
             "state_place" => state::place(call.args).await.map(Output::text),
             "desktop_save" => self.desktop_save().await.map(Output::text),
+            "desktop_info" => Ok(Output::text(desktop_info())),
             "active_origin" => self.browser.origin().await.map(Output::text),
             "credential_fill" => {
                 let mut args = call.args;
@@ -349,6 +353,62 @@ fn group_id(name: &str) -> Option<u32> {
     })
 }
 
+/// The box's OS release, desktop and X screen size as JSON, with the fields it could read.
+fn desktop_info() -> String {
+    let mut info = json!({});
+    if let Some(os) = std::fs::read_to_string(OS_RELEASE)
+        .ok()
+        .and_then(|r| os_name(&r))
+    {
+        info["os"] = os.into();
+    }
+    let desktop = std::env::var(DESKTOP_VAR).ok().or_else(session_desktop);
+    if let Some(desktop) = desktop.as_deref().and_then(desktop_name) {
+        info["desktop"] = desktop.into();
+    }
+    if let Ok((conn, n)) = x11rb::connect(None) {
+        let screen = &conn.setup().roots[n];
+        info["width"] = screen.width_in_pixels.into();
+        info["height"] = screen.height_in_pixels.into();
+    }
+    info.to_string()
+}
+
+/// `NAME VERSION_ID` of an os-release file, else its `PRETTY_NAME`.
+fn os_name(release: &str) -> Option<String> {
+    let field = |key: &str| {
+        release
+            .lines()
+            .find_map(|l| l.strip_prefix(key)?.strip_prefix('='))
+            .map(|v| v.trim().trim_matches('"'))
+            .filter(|v| !v.is_empty())
+    };
+    match (field("NAME"), field("VERSION_ID")) {
+        (Some(name), Some(version)) => Some(format!("{name} {version}")),
+        _ => field("PRETTY_NAME").map(str::to_owned),
+    }
+}
+
+/// The desktop of a session such as `ubuntu:GNOME` in `XDG_CURRENT_DESKTOP`: its last name.
+fn desktop_name(value: &str) -> Option<&str> {
+    value.rsplit(':').next().filter(|d| !d.is_empty())
+}
+
+/// `XDG_CURRENT_DESKTOP` of a process of this user, such as the desktop session's.
+fn session_desktop() -> Option<String> {
+    let prefix = format!("{DESKTOP_VAR}=");
+    std::fs::read_dir("/proc")
+        .ok()?
+        .flatten()
+        .find_map(|entry| {
+            let environ = std::fs::read(entry.path().join("environ")).ok()?;
+            environ
+                .split(|b| *b == 0)
+                .find_map(|var| var.strip_prefix(prefix.as_bytes()))
+                .map(|v| String::from_utf8_lossy(v).into_owned())
+        })
+}
+
 fn safe_name(s: &str) -> String {
     s.chars()
         .map(|c| {
@@ -359,4 +419,24 @@ fn safe_name(s: &str) -> String {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_os_is_its_name_and_version_and_the_desktop_its_last_name() {
+        let ubuntu = "PRETTY_NAME=\"Ubuntu 22.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"22.04\"\nID=ubuntu\n";
+        assert_eq!(os_name(ubuntu).as_deref(), Some("Ubuntu 22.04"));
+        assert_eq!(
+            os_name("PRETTY_NAME=\"Debian GNU/Linux trixie/sid\"\nNAME=\"Debian GNU/Linux\"\n")
+                .as_deref(),
+            Some("Debian GNU/Linux trixie/sid")
+        );
+        assert_eq!(os_name("ID=x\n"), None);
+        assert_eq!(desktop_name("ubuntu:GNOME"), Some("GNOME"));
+        assert_eq!(desktop_name("XFCE"), Some("XFCE"));
+        assert_eq!(desktop_name(""), None);
+    }
 }
