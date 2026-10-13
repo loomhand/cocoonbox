@@ -9,9 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/CMGS/cocoonbox/api/users"
 )
 
 func TestRetainKeepsTheTimeMachineSet(t *testing.T) {
@@ -183,7 +187,7 @@ func TestGCWaitsForASaveBetweenItsIndexReadAndCommit(t *testing.T) {
 	}
 	done := make(chan gcReport)
 	go func() {
-		r, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour))
+		r, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
 		if err != nil {
 			t.Errorf("collect: %v", err)
 		}
@@ -235,7 +239,7 @@ func TestGCPrunesWithTheTimelineOfASaveThatCommittedWhileItWaited(t *testing.T) 
 	}
 	collected := make(chan error, 1)
 	go func() {
-		_, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now())
+		_, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now(), env.live)
 		collected <- err
 	}()
 	<-readTimeline
@@ -335,7 +339,7 @@ func TestGCRefusesToPruneAHeadMissingFromTheTimeline(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 	before := len(env.store.objects)
-	if _, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now()); err == nil || !strings.Contains(err.Error(), "not in the timeline") {
+	if _, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now(), env.live); err == nil || !strings.Contains(err.Error(), "not in the timeline") {
 		t.Errorf("collect = %v, want the head refused", err)
 	}
 	if len(env.store.objects) != before || len(env.store.deleted) != 0 {
@@ -360,13 +364,140 @@ func TestGCSkipsUsersOffTheAllowList(t *testing.T) {
 	}
 }
 
+func TestGCPurgesADeletedBoxAfterItsRetentionAndKeepsSharedChunks(t *testing.T) {
+	env := newStateEnv(t)
+	gone, other := statePath{user: alice, box: aliceBox}, statePath{user: alice, box: "cb-00000000000b"}
+	env.agent.byBox = map[string][]string{gone.box + ":7443": hexIDs("c1", "c2"), other.box + ":7443": hexIDs("c2", "c3")}
+	env.addBox(t, other.box)
+	env.save(t)
+	env.saveBox(t, other.box)
+	env.deleteBox(t, gone.box)
+
+	opts := GCOptions{DeleteBatch: 1000, DeletedRetention: 7 * 24 * time.Hour}
+	before := maps.Clone(env.store.objects)
+	if dry := env.collect(t, GCOptions{DryRun: true, DeleteBatch: 1000, DeletedRetention: opts.DeletedRetention}, 0); dry.deleted != 1 || dry.purged != 0 || len(env.store.objects) != len(before) {
+		t.Fatalf("dry run = %+v, wrote %d objects", dry, len(env.store.objects)-len(before))
+	}
+	if r := env.collect(t, opts, 0); r.deleted != 1 || r.purged != 0 || r.boxes != 2 || !env.store.has(gone.deleted()) {
+		t.Fatalf("first pass after the delete = %+v, want the box recorded as deleted and kept", r)
+	}
+	if r := env.collect(t, opts, 6*24*time.Hour); r.purged != 0 || !env.store.has(gone.head()) || !env.store.has(gone.chunk(hexID("c1"))) {
+		t.Fatalf("pass inside the retention = %+v, want the deleted box kept", r)
+	}
+	dry := env.collect(t, GCOptions{DryRun: true, DeleteBatch: 1000, DeletedRetention: opts.DeletedRetention}, 8*24*time.Hour)
+	r := env.collect(t, opts, 8*24*time.Hour)
+	if r.purged != 1 || r.boxes != 1 || r.chunks != 1 || r.purgedBytes == 0 || dry != r {
+		t.Errorf("pass after the retention = %+v, dry run %+v, want the box and c1 purged", r, dry)
+	}
+	if left, _ := env.store.List(env.ctx, gone.boxDir()); len(left) != 0 {
+		t.Errorf("%d objects of the deleted box survived: %v", len(left), left)
+	}
+	if env.store.has(gone.chunk(hexID("c1"))) || !env.store.has(other.chunk(hexID("c2"))) || !env.store.has(other.chunk(hexID("c3"))) {
+		t.Error("the purge kept c1 or dropped a chunk the other box uses")
+	}
+	if idx := env.indexIDs(t); !slices.Equal(idx, slices.Sorted(slices.Values(hexIDs("c2", "c3")))) {
+		t.Errorf("index = %v, want c2 and c3", idx)
+	}
+	if _, err := env.svc.state.restore(env.ctx, other, machines.Endpoint{Key: "restore"}, "", noProgress); err != nil {
+		t.Errorf("restore of the other box: %v", err)
+	}
+	if r := env.collect(t, opts, 9*24*time.Hour); r.deleted != 0 || r.chunks != 0 {
+		t.Errorf("pass after the purge = %+v, want nothing left to do", r)
+	}
+}
+
+func TestGCKeepsABoxWhoseDeleteIsStillSaving(t *testing.T) {
+	env := newStateEnv(t)
+	p := statePath{user: alice, box: aliceBox}
+	env.agent.chunks = hexIDs("c1")
+	env.save(t)
+	env.agent.chunks = hexIDs("c1", "c2")
+	uploading, release := make(chan struct{}), make(chan struct{})
+	env.agent.onUpload = func(machines.Endpoint) {
+		close(uploading)
+		<-release
+	}
+	op, err := env.svc.Delete(env.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+	if err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	<-uploading
+	if _, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("SaveState during the delete = %v, want FailedPrecondition", err)
+	}
+	opts := GCOptions{DeleteBatch: 1000}
+	during := make(chan gcReport)
+	go func() {
+		r, err := env.svc.state.collect(env.ctx, alice, opts, time.Now(), env.live)
+		if err != nil {
+			t.Errorf("collect: %v", err)
+		}
+		during <- r
+	}()
+	select {
+	case r := <-during:
+		t.Fatalf("the GC finished during the delete's save: %+v", r)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if events := watch(t, env.svc, env.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("delete ended with %v", events[len(events)-1])
+	}
+	if r := <-during; r.deleted != 0 || env.store.has(p.deleted()) {
+		t.Fatalf("pass during the delete's save = %+v, want the box live", r)
+	}
+	if !env.store.has(p.record(snapshotID(2))) {
+		t.Fatal("the delete's save did not commit")
+	}
+	if r := env.collect(t, opts, 0); r.purged != 1 || r.chunks != 2 {
+		t.Errorf("pass after the delete = %+v, want the box and both chunks purged", r)
+	}
+	if left, _ := env.store.List(env.ctx, alice+"/"); len(left) != 1 || left[0].Key != p.index() {
+		t.Errorf("after the purge the user holds %v, want only the index", left)
+	}
+}
+
 func (e *stateEnv) collect(t *testing.T, opts GCOptions, ahead time.Duration) gcReport {
 	t.Helper()
-	r, err := e.svc.state.collect(e.ctx, alice, opts, time.Now().Add(ahead))
+	r, err := e.svc.state.collect(e.ctx, alice, opts, time.Now().Add(ahead), e.live)
 	if err != nil {
 		t.Fatalf("collect: %v", err)
 	}
 	return r
+}
+
+func (e *stateEnv) live(box string) bool {
+	return e.svc.registry.HasBox(alice, box)
+}
+
+func (e *stateEnv) addBox(t *testing.T, box string) {
+	t.Helper()
+	if _, err := e.svc.registry.AddBox(e.ctx, users.Box{ID: box, Owner: alice, Name: box}); err != nil {
+		t.Fatalf("AddBox: %v", err)
+	}
+	e.fake.put(machines.Machine{ID: box, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop-v1", Revision: 1})
+}
+
+func (e *stateEnv) saveBox(t *testing.T, box string) {
+	t.Helper()
+	op, err := e.svc.SaveState(e.ctx, &controlv1.BoxRef{BoxId: box})
+	if err != nil {
+		t.Fatalf("SaveState %s: %v", box, err)
+	}
+	if events := watch(t, e.svc, e.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("save of %s ended with %v", box, events[len(events)-1])
+	}
+}
+
+func (e *stateEnv) deleteBox(t *testing.T, box string) {
+	t.Helper()
+	op, err := e.svc.Delete(e.ctx, &controlv1.BoxRef{BoxId: box})
+	if err != nil {
+		t.Fatalf("Delete %s: %v", box, err)
+	}
+	if events := watch(t, e.svc, e.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("delete of %s ended with %v", box, events[len(events)-1])
+	}
 }
 
 func (e *stateEnv) restoreHead(t *testing.T) {

@@ -400,14 +400,14 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 		logger.Infof(ctx, "parking boxes hibernated for %s, owners %q (empty: everyone)", after, cfg.State.ParkOwners)
 	}
 	if gc := cfg.State.GC; gc.Interval > 0 {
-		go svc.RunGC(ctx, boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, DeleteBatch: gc.DeleteBatch}, func() []string {
+		go svc.RunGC(ctx, boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, DeleteBatch: gc.DeleteBatch, DeletedRetention: time.Duration(gc.DeletedRetention)}, func() []string {
 			var ids []string
 			for _, u := range accounts.List() {
 				ids = append(ids, u.ID)
 			}
 			return ids
 		})
-		logger.Infof(ctx, "state gc every %s, dry run %t, users %q", time.Duration(gc.Interval), gc.DryRun, gc.Users)
+		logger.Infof(ctx, "state gc every %s, dry run %t, users %q, deleted boxes kept %s", time.Duration(gc.Interval), gc.DryRun, gc.Users, time.Duration(gc.DeletedRetention))
 	}
 }
 

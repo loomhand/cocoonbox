@@ -29,6 +29,8 @@ type GCOptions struct {
 	// Users limits the passes to these user ids; empty means every user.
 	Users       []string
 	DeleteBatch int
+	// DeletedRetention keeps a deleted box's state this long after the first pass that finds its box gone.
+	DeletedRetention time.Duration
 }
 
 // gcReport counts what one pass removed for one user, or would remove in a dry run.
@@ -44,6 +46,9 @@ type gcReport struct {
 	indexEntries  int
 	expanded      int
 	compacted     int
+	deleted       int
+	purged        int
+	purgedBytes   int64
 }
 
 // keySource returns the user's state key, read once per pass.
@@ -74,33 +79,42 @@ func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []st
 			continue
 		}
 		start := time.Now()
-		r, err := s.state.collect(ctx, user, opts, now)
+		r, err := s.state.collect(ctx, user, opts, now, func(box string) bool { return s.registry.HasBox(user, box) })
 		if err != nil {
 			logger.Errorf(ctx, err, "collect the state of user %s", user)
 			continue
 		}
-		logger.Infof(ctx, "user %s: %s %d snapshots (%d kept in %d boxes) and %d of %d chunks (%d index entries), %.1f MiB: records %.1f, manifests %.1f, chunks %.1f; %d made full, %d manifests compacted; %s",
+		logger.Infof(ctx, "user %s: %s %d snapshots (%d kept in %d boxes) and %d of %d chunks (%d index entries), %.1f MiB: records %.1f, manifests %.1f, chunks %.1f; %d of %d deleted boxes purged, %.1f MiB; %d made full, %d manifests compacted; %s",
 			user, verb, r.pruned, r.kept, r.boxes, r.chunks, r.stored, r.indexEntries,
 			float64(r.recordBytes+r.manifestBytes+r.chunkBytes)/mib, float64(r.recordBytes)/mib, float64(r.manifestBytes)/mib, float64(r.chunkBytes)/mib,
-			r.expanded, r.compacted, time.Since(start).Round(time.Millisecond))
+			r.purged, r.deleted, float64(r.purgedBytes)/mib, r.expanded, r.compacted, time.Since(start).Round(time.Millisecond))
 	}
 }
 
-// collect prunes every box of user, then deletes the chunks that no kept snapshot references.
-func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, now time.Time) (gcReport, error) {
+// collect prunes every box of user and purges the expired state of the boxes live denies, asked after the listing since a box saves only while live and no box id is reused, then deletes the chunks that no kept snapshot references.
+func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, now time.Time, live func(box string) bool) (gcReport, error) {
 	var r gcReport
 	boxes, err := l.boxesOf(ctx, user)
 	if err != nil {
 		return r, err
 	}
-	kept, dropped := map[string][]string{}, map[string]map[string]bool{}
+	kept, dropped, purged := map[string][]string{}, map[string]map[string]bool{}, map[string]bool{}
 	for _, box := range boxes {
-		if kept[box], dropped[box], err = l.prune(ctx, statePath{user: user, box: box}, opts, now, &r); err != nil {
+		p := statePath{user: user, box: box}
+		if !live(box) {
+			if purged[box], err = l.expire(ctx, p, opts, now, &r); err != nil {
+				return r, fmt.Errorf("purge box %s: %w", box, err)
+			}
+			if purged[box] {
+				continue
+			}
+		}
+		if kept[box], dropped[box], err = l.prune(ctx, p, opts, now, &r); err != nil {
 			return r, fmt.Errorf("prune box %s: %w", box, err)
 		}
 	}
-	r.boxes = len(boxes)
-	return r, l.sweep(ctx, user, opts, kept, dropped, &r)
+	r.boxes = len(kept)
+	return r, l.sweep(ctx, user, opts, kept, dropped, purged, &r)
 }
 
 // prune applies the retention rule to p's timeline under the box lock, makes the only dependent of a dropped base full, removes the dropped snapshots and every record or manifest the timeline does not name or need, and compacts the kept manifests.
@@ -236,8 +250,8 @@ func (l *stateLayer) compact(ctx context.Context, p statePath, next timeline, ke
 	}
 }
 
-// sweep marks the chunks of kept without a lock, then under the user lock marks the snapshots committed since, writes the index without the garbage and deletes it.
-func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kept map[string][]string, dropped map[string]map[string]bool, r *gcReport) error {
+// sweep marks the chunks of kept without a lock, then under the user lock marks the snapshots committed since outside purged boxes, writes the index without the garbage and deletes it.
+func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kept map[string][]string, dropped map[string]map[string]bool, purged map[string]bool, r *gcReport) error {
 	p := statePath{user: user}
 	marked, seen := map[string]bool{}, map[string]map[string]bool{}
 	for box, ids := range kept {
@@ -259,6 +273,9 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kep
 		return err
 	}
 	for _, box := range boxes {
+		if purged[box] {
+			continue
+		}
 		bp := statePath{user: user, box: box}
 		ids, err := l.snapshotIDs(ctx, bp)
 		if err != nil {

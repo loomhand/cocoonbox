@@ -84,7 +84,7 @@ async function load() {
       await load();
     }));
     actions.appendChild(button("Delete", async () => {
-      if (!confirm("Delete " + b.name + "? A running box is saved first; its running programs stop, and its saved state stays in storage.")) return;
+      if (!confirm("Delete " + b.name + "? A running box is saved first; its running programs stop, and its saved state is kept for 7 days, then removed.")) return;
       await api("DELETE", "boxes/" + encodeURIComponent(b.id));
       notice("Deleting " + b.name + ". It leaves this list once it is saved and removed.");
       await load();

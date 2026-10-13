@@ -103,6 +103,7 @@ func (p statePath) record(id string) string   { return p.records() + id + ".json
 func (p statePath) records() string           { return p.boxDir() + "snapshots/" }
 func (p statePath) timeline() string          { return p.boxDir() + "timeline.json" }
 func (p statePath) head() string              { return p.boxDir() + "head.json" }
+func (p statePath) deleted() string           { return p.boxDir() + "deleted.json" }
 func (p statePath) boxDir() string            { return p.boxes() + p.box + "/" }
 func (p statePath) boxes() string             { return p.user + "/boxes/" }
 

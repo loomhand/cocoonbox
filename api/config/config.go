@@ -22,11 +22,12 @@ const (
 	defaultMCPListen = "127.0.0.1:18201"
 	defaultAgentPort = 7443
 
-	defaultStateInterval = 15 * time.Minute
-	defaultPresignTTL    = 10 * time.Minute
-	defaultRegion        = "us-east-1"
-	maxDeleteBatch       = 1000
-	defaultMaxRunning    = 1
+	defaultStateInterval    = 15 * time.Minute
+	defaultDeletedRetention = 7 * 24 * time.Hour
+	defaultPresignTTL       = 10 * time.Minute
+	defaultRegion           = "us-east-1"
+	maxDeleteBatch          = 1000
+	defaultMaxRunning       = 1
 
 	defaultWakeSchedules = 3
 	defaultWakeFloor     = time.Hour
@@ -89,6 +90,8 @@ type GC struct {
 	Users []string `json:"users"`
 	// DeleteBatch is the number of keys per DeleteObjects request.
 	DeleteBatch int `json:"delete_batch"`
+	// DeletedRetention keeps a deleted box's state this long after the first pass that finds it deleted.
+	DeletedRetention Duration `json:"deleted_retention"`
 }
 
 // Provision names the edge signing key, gw's admin API for per-user gw keys and the residential exit.
@@ -137,6 +140,20 @@ type Wake struct {
 	// Floor is the least time between two wakes of one box from hibernation.
 	Floor       Duration `json:"floor"`
 	MaxAwakeFor Duration `json:"max_awake_for"`
+}
+
+func (g GC) validate(bucket string) error {
+	var errs []error
+	if g.Interval < 0 || (g.Interval > 0 && bucket == "") {
+		errs = append(errs, errors.New("state.gc.interval must not be negative and needs state.bucket"))
+	}
+	if g.DeleteBatch < 1 || g.DeleteBatch > maxDeleteBatch {
+		errs = append(errs, fmt.Errorf("state.gc.delete_batch must be in 1..%d, got %d", maxDeleteBatch, g.DeleteBatch))
+	}
+	if g.DeletedRetention < 0 {
+		errs = append(errs, fmt.Errorf("state.gc.deleted_retention must not be negative, got %s", time.Duration(g.DeletedRetention)))
+	}
+	return errors.Join(errs...)
 }
 
 func (w Wake) validate() error {
@@ -236,6 +253,7 @@ func (c *Config) applyDefaults() {
 	c.State.Interval = cmp.Or(c.State.Interval, Duration(defaultStateInterval))
 	c.State.PresignTTL = cmp.Or(c.State.PresignTTL, Duration(defaultPresignTTL))
 	c.State.GC.DeleteBatch = cmp.Or(c.State.GC.DeleteBatch, maxDeleteBatch)
+	c.State.GC.DeletedRetention = cmp.Or(c.State.GC.DeletedRetention, Duration(defaultDeletedRetention))
 	c.MaxRunningBoxes = cmp.Or(c.MaxRunningBoxes, defaultMaxRunning)
 	c.Wake.MaxSchedules = cmp.Or(c.Wake.MaxSchedules, defaultWakeSchedules)
 	c.Wake.Floor = cmp.Or(c.Wake.Floor, Duration(defaultWakeFloor))
@@ -266,14 +284,8 @@ func (c *Config) validate() error {
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
 	}
-	if c.State.GC.Interval < 0 || (c.State.GC.Interval > 0 && c.State.Bucket == "") {
-		errs = append(errs, errors.New("state.gc.interval must not be negative and needs state.bucket"))
-	}
 	if c.State.ParkAfter < 0 {
 		errs = append(errs, fmt.Errorf("state.park_after must not be negative, got %s", time.Duration(c.State.ParkAfter)))
-	}
-	if c.State.GC.DeleteBatch < 1 || c.State.GC.DeleteBatch > maxDeleteBatch {
-		errs = append(errs, fmt.Errorf("state.gc.delete_batch must be in 1..%d, got %d", maxDeleteBatch, c.State.GC.DeleteBatch))
 	}
 	if c.Sandboxd.URL == "" || c.Sandboxd.TokenFile == "" {
 		errs = append(errs, errors.New("sandboxd.url and sandboxd.token_file are required"))
@@ -290,7 +302,7 @@ func (c *Config) validate() error {
 	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
 		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
 	}
-	errs = append(errs, c.Wake.validate(), c.validateImageOwners(), absolute("cua_meter_file", c.CUAMeterFile), absolute("operator_socket", c.OperatorSocket))
+	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.validateImageOwners(), absolute("cua_meter_file", c.CUAMeterFile), absolute("operator_socket", c.OperatorSocket))
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}

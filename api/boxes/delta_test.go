@@ -209,7 +209,7 @@ func TestGCAndADeltaSaveInterleave(t *testing.T) {
 			}
 			done := make(chan error, 2)
 			collect := func() {
-				_, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour))
+				_, err := env.svc.state.collect(env.ctx, alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), env.live)
 				done <- err
 			}
 			save := func() { done <- env.trySave() }

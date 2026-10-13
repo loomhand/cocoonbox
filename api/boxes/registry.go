@@ -72,7 +72,7 @@ func (s *Service) Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (
 	return s.Get(ctx, &controlv1.GetBoxRequest{BoxId: req.GetBoxId()})
 }
 
-// Delete saves a running box quiesced, then removes every machine of the box and the box; its saved state stays in the store.
+// Delete saves a running box quiesced, then removes every machine of the box and the box; the GC removes its saved state after the retention of deleted boxes.
 func (s *Service) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {
 	box := ref.GetBoxId()
 	user, err := s.ownerOf(ctx, box)
@@ -133,7 +133,7 @@ func (s *Service) runDelete(op *operation, user string, m machines.Machine, save
 		return
 	}
 	logger.Infof(op.ctx, "deleted box of user %s", user)
-	op.succeed(fmt.Sprintf("deleted; the saved state of %s stays in storage", op.boxID))
+	op.succeed(fmt.Sprintf("deleted; the saved state of %s is removed after the retention of deleted boxes", op.boxID))
 }
 
 // deleting reports whether box is being deleted.

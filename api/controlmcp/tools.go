@@ -23,7 +23,7 @@ const (
 
 	errUpgradeUnconfirmed toolError = "Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."
 	errUpgradeCurrent     toolError = "Already on the latest desktop."
-	errDeleteUnconfirmed  toolError = "Deleting removes the box and stops its running programs; its last saved state stays in storage. Call again with confirm: true."
+	errDeleteUnconfirmed  toolError = "Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true."
 	errDeleteUnnamed      toolError = "Name the box to delete in box."
 	errUnknownKind        toolError = "kind must be general or script."
 )
@@ -77,7 +77,7 @@ var (
 		},
 		{
 			Name:         "box_delete",
-			Description:  "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state stays in storage. Requires the box and confirm: true.",
+			Description:  "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true.",
 			InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["box","confirm"],"additionalProperties":false}`),
 			OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","operation_id"]}`),
 		},
