@@ -11,6 +11,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::dispatch::Tools;
+use crate::new_id;
 use crate::store::Store;
 use crate::toolhost::flows::{self, digest};
 
@@ -100,7 +101,7 @@ impl Syncer {
         });
     }
 
-    /// Brings the library's newer flows into the box, within a bounded time; a failure leaves the box's flows as they are.
+    /// Brings the library's newer flows into the box, and every flow it lacks once its flows folder is gone or replaced, within a bounded time; a failure leaves the box's flows as they are.
     pub async fn pull(&self) {
         match tokio::time::timeout(PULL_BUDGET, self.try_pull()).await {
             Ok(Ok(())) => {}
@@ -124,13 +125,16 @@ impl Syncer {
             .map_err(|e| format!("decode the library: {e}"))?;
         let local = self.scan().await?;
         let rows = self.store.flow_rows().await?;
+        let folder = self.mark().await?;
+        let known = self.store.flow_folder().await?;
+        let replaced = known.as_ref().map_or(folder.is_empty(), |id| *id != folder);
         let mut changed = false;
         for remote in &library.flows {
             if !flows::valid(&remote.name) {
                 continue;
             }
             let row = rows.get(&remote.name);
-            if row.is_some_and(|(rev, _)| *rev >= remote.rev) {
+            if !replaced && row.is_some_and(|(rev, _)| *rev >= remote.rev) {
                 continue;
             }
             match local.get(&remote.name) {
@@ -160,6 +164,14 @@ impl Syncer {
         }
         if changed {
             self.run("flows_index", json!({})).await?;
+        }
+        let folder = if folder.is_empty() {
+            self.mark().await?
+        } else {
+            folder
+        };
+        if !folder.is_empty() && known.as_ref() != Some(&folder) {
+            self.store.set_flow_folder(folder).await?;
         }
         Ok(())
     }
@@ -226,6 +238,10 @@ impl Syncer {
             return Err(format!("get {url}: {}", resp.status()));
         }
         Ok(resp)
+    }
+
+    async fn mark(&self) -> Result<String, String> {
+        self.run("flows_mark", json!({"id": new_id("flows")})).await
     }
 
     async fn written(&self, after: u64) -> Result<u64, String> {
@@ -371,6 +387,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_removed_folder_pulls_the_library_again_and_keeps_new_flows() {
+        let door = Door::start().await;
+        let names = ["a.json", "b.json", "c.mts", "d.json"];
+        for name in names {
+            door.put(name, "{}");
+        }
+        let b = Box_::new(&door);
+        b.sync.pull().await;
+        std::fs::remove_dir_all(b.ws.join("flows")).unwrap();
+        b.sync.pull().await;
+        for name in names {
+            assert_eq!(b.file(name).as_deref(), Some("{}"), "{name}");
+        }
+
+        std::fs::remove_dir_all(b.ws.join("flows")).unwrap();
+        b.write("new.json", "{\"new\":1}");
+        b.sync.push().await.unwrap();
+        b.sync.pull().await;
+        for name in names {
+            assert_eq!(b.file(name).as_deref(), Some("{}"), "{name}");
+        }
+        assert_eq!(b.file("new.json").as_deref(), Some("{\"new\":1}"));
+        assert_eq!(door.content("new.json").as_deref(), Some("{\"new\":1}"));
+
+        std::fs::remove_file(b.ws.join("flows/a.json")).unwrap();
+        b.sync.pull().await;
+        assert_eq!(b.file("a.json"), None, "a box delete is not undone");
+
+        let c = Box_::new(&door);
+        let rev = lock(&door.state).flows["b.json"].0;
+        c.sync
+            .store
+            .set_flow_row("b.json".to_owned(), rev, digest(b"{}"))
+            .await
+            .unwrap();
+        c.sync.pull().await;
+        assert_eq!(c.file("b.json").as_deref(), Some("{}"), "lost before marks");
+    }
+
+    #[tokio::test]
+    async fn box_deletes_stay_local_in_the_same_folder_a_restored_copy_and_an_unmarked_one() {
+        let door = Door::start().await;
+        door.put("a.json", "{}");
+        door.put("b.mts", "x");
+        let b = Box_::new(&door);
+        b.sync.pull().await;
+        std::fs::remove_file(b.ws.join("flows/a.json")).unwrap();
+        std::fs::remove_file(b.ws.join("flows/b.mts")).unwrap();
+        b.sync.pull().await;
+        assert_eq!((b.file("a.json"), b.file("b.mts")), (None, None));
+
+        let old = b.ws.join("old");
+        std::fs::rename(b.ws.join("flows"), &old).unwrap();
+        std::fs::create_dir(b.ws.join("flows")).unwrap();
+        for entry in std::fs::read_dir(&old).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), b.ws.join("flows").join(entry.file_name())).unwrap();
+        }
+        b.sync.pull().await;
+        assert_eq!((b.file("a.json"), b.file("b.mts")), (None, None));
+
+        let c = Box_::new(&door);
+        c.write("c.json", "{}");
+        let rev = lock(&door.state).flows["a.json"].0;
+        c.sync
+            .store
+            .set_flow_row("a.json".to_owned(), rev, digest(b"{}"))
+            .await
+            .unwrap();
+        c.sync.pull().await;
+        assert_eq!(c.file("a.json"), None);
+        assert_eq!(c.file("b.mts").as_deref(), Some("x"));
+    }
+
+    #[tokio::test]
     async fn content_the_library_refuses_is_not_sent_again_until_it_changes() {
         let door = Door::start().await;
         let b = Box_::new(&door);
@@ -481,6 +572,7 @@ mod tests {
                 "flows_read" => toolhost::flows::read(ws, args).await,
                 "flows_write" => toolhost::flows::write(ws, args).await,
                 "flows_remove" => toolhost::flows::remove(ws, args).await,
+                "flows_mark" => toolhost::flows::mark(ws, args).await,
                 "flows_wait" => toolhost::flows::wait(&self.writes, args).await,
                 "flows_index" => {
                     self.indexed.fetch_add(1, Ordering::SeqCst);

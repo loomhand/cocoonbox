@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS flow_sync (
     rev INTEGER NOT NULL,
     sha256 TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS flow_folder (
+    id TEXT NOT NULL
+);
 ";
 
 const PAGE_BYTES: usize = 3 << 20;
@@ -321,6 +324,26 @@ impl Store {
         self.call(move |c| {
             c.execute("DELETE FROM flow_sync WHERE name = ?1", params![name])
                 .map(drop)
+        })
+        .await
+    }
+
+    /// The id of the flows folder that the rows were agreed in.
+    pub async fn flow_folder(&self) -> Result<Option<String>, String> {
+        self.call(|c| {
+            c.query_row("SELECT id FROM flow_folder", [], |r| r.get(0))
+                .optional()
+        })
+        .await
+    }
+
+    /// Records `id` as the flows folder that the rows are agreed in.
+    pub async fn set_flow_folder(&self, id: String) -> Result<(), String> {
+        self.call(move |c| {
+            let tx = c.transaction()?;
+            tx.execute("DELETE FROM flow_folder", [])?;
+            tx.execute("INSERT INTO flow_folder (id) VALUES (?1)", params![id])?;
+            tx.commit()
         })
         .await
     }

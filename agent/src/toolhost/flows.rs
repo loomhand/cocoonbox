@@ -12,6 +12,7 @@ use super::files;
 /// The largest flow the library takes, in bytes.
 pub const MAX_BYTES: u64 = 128 << 10;
 const DIR: &str = "flows";
+const MARK: &str = ".sync-id";
 const MAX_NAME: usize = 96;
 const EVENT_HEADER: usize = 16;
 const EVENT_BUF: usize = 64 << 10;
@@ -19,6 +20,11 @@ const EVENT_BUF: usize = 64 << 10;
 #[derive(Deserialize)]
 struct NameArgs {
     name: String,
+}
+
+#[derive(Deserialize)]
+struct MarkArgs {
+    id: String,
 }
 
 #[derive(Deserialize)]
@@ -107,6 +113,22 @@ pub async fn remove(workspace: &Path, args: Value) -> Result<String, String> {
             Ok(json!({"removed": name}).to_string())
         }
         Err(e) => Err(format!("remove {}: {e}", path.display())),
+    }
+}
+
+/// `flows_mark {id}`: the folder's id, first written as `id` into a folder that has none; empty without a folder.
+pub async fn mark(workspace: &Path, args: Value) -> Result<String, String> {
+    let MarkArgs { id } = parse(args)?;
+    let path = workspace.join(DIR).join(MARK);
+    match tokio::fs::read_to_string(&path).await {
+        Ok(id) => return Ok(id),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    }
+    match tokio::fs::write(&path, &id).await {
+        Ok(()) => Ok(id),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(format!("write {}: {e}", path.display())),
     }
 }
 
@@ -243,6 +265,19 @@ mod tests {
         remove(ws, json!({"name": "a.json"})).await.unwrap();
         remove(ws, json!({"name": "a.json"})).await.unwrap();
         assert!(!ws.join("flows/a.json").exists());
+    }
+
+    #[tokio::test]
+    async fn mark_keeps_the_first_id_and_creates_no_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        assert_eq!(mark(ws, json!({"id": "a"})).await.unwrap(), "");
+        assert!(!ws.join("flows").exists());
+        std::fs::create_dir(ws.join("flows")).unwrap();
+        assert_eq!(mark(ws, json!({"id": "a"})).await.unwrap(), "a");
+        assert_eq!(mark(ws, json!({"id": "b"})).await.unwrap(), "a");
+        assert!(mark(ws, json!({})).await.is_err());
+        assert_eq!(scan(ws).await.unwrap(), "{}");
     }
 
     #[cfg(target_os = "linux")]

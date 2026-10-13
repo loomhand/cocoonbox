@@ -136,6 +136,9 @@ impl Host {
             "flows_remove" => flows::remove(&self.workspace, call.args)
                 .await
                 .map(Output::text),
+            "flows_mark" => flows::mark(&self.workspace, call.args)
+                .await
+                .map(Output::text),
             "flows_index" => self.script.reindex(&self.workspace).await,
             "flows_wait" => flows::wait(&self.flow_writes, call.args)
                 .await
