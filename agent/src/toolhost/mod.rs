@@ -162,25 +162,7 @@ impl Host {
             "flows_wait" => flows::wait(&self.flow_writes, call.args)
                 .await
                 .map(Output::text),
-            "screenshot" => {
-                let max_edge = call.args["max_edge"]
-                    .as_u64()
-                    .and_then(|e| u32::try_from(e).ok());
-                let shot = match call.args["session"].as_str() {
-                    Some(session) => self.cua.screenshot(session, max_edge).await,
-                    None => self.cua.screenshot_once(max_edge).await,
-                };
-                shot.map(|image_b64| Output {
-                    text: if image_b64.is_some() {
-                        "screenshot of the whole screen".to_owned()
-                    } else {
-                        "no screenshot returned".to_owned()
-                    },
-                    is_error: false,
-                    image_b64,
-                    ..Output::default()
-                })
-            }
+            "screenshot" => self.cua.look(&call.args).await,
             other => Err(format!("unknown tool {other}")),
         };
         let out = result.unwrap_or_else(Output::error);

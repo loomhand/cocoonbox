@@ -24,6 +24,9 @@ const TAB_HINT: &str = "A tab the user already has open, instead of your own win
 const NAVIGATE_TAB: &str =
     " It works in your own Chrome window; to act on a page the user already has open, pass tab.";
 const FRONT_HINT: &str = "true brings the page to the front of the desktop with the keyboard focus, for the desktop tools or the user to see it, and takes the focus from whatever the user types in. Leave it out to keep the page in the background.";
+const SHOT_HINT: &str = "Look at the desktop: a read-only screenshot of the whole 1280x800 screen, scaled to 1024x640 unless max_edge says otherwise; the result gives its size and input tokens. To look again, prefer a desk snapshot (text, no image) or a region at full resolution to another full screenshot.";
+const EDGE_HINT: &str = "Scale the screenshot so its long edge is at most this many pixels, default 1024, 0 for full size; x,y then refer to the scaled image";
+const REGION_HINT: &str = "Only this part of the screen, at full resolution: x, y, w, h in the pixels of your last screenshot";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -223,8 +226,28 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
             tabs_tool(),
             desk_tool(),
         ]);
+        with_region(&mut tools);
     }
     tools
+}
+
+/// Gives the screenshots of a box that runs GUI plans their default scale, and `screenshot` its region.
+fn with_region(tools: &mut [ToolSpec]) {
+    for t in tools.iter_mut() {
+        if t.parameters["properties"].get("max_edge").is_some() {
+            t.parameters["properties"]["max_edge"] =
+                json!({"type": "integer", "description": EDGE_HINT});
+        }
+        if t.name == "screenshot" {
+            t.description = Cow::Borrowed(SHOT_HINT);
+            t.parameters["properties"]["region"] = json!({
+                "type": "object",
+                "description": REGION_HINT,
+                "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number"}, "h": {"type": "number"}},
+                "required": ["x", "y", "w", "h"]
+            });
+        }
+    }
 }
 
 /// Gives the page tools of a box that runs GUI plans their `tab` argument, and browser_navigate its `front`.

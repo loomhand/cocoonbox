@@ -3966,7 +3966,7 @@ async fn a_desk_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
         .filter(|(n, _)| n == "click")
         .map(|(_, a)| (a["x"].as_f64().unwrap(), a["y"].as_f64().unwrap()))
         .collect();
-    assert_eq!(clicks, [(20.0, 40.0), (10.0, 20.0)], "{mine:?}");
+    assert_eq!(clicks, [(20.0, 40.0), (12.5, 25.0)], "{mine:?}");
     for (i, (name, _)) in mine.iter().enumerate().filter(|(_, (n, _))| n == "click") {
         let capture = mine[..i]
             .iter()
@@ -3978,6 +3978,56 @@ async fn a_desk_box_maps_clicks_by_the_scale_of_the_frame_it_returned_last() {
             "{name} after {capture:?}"
         );
     }
+}
+
+#[tokio::test]
+async fn a_desk_box_scales_screenshots_to_1024_by_default_and_weighs_them() {
+    let h = Harness::with_desk(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let schema = |name: &str| {
+        listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap()["inputSchema"]
+            .clone()
+    };
+    assert_eq!(
+        schema("screenshot")["properties"]["region"]["required"],
+        json!(["x", "y", "w", "h"])
+    );
+    for name in ["screenshot", "computer_state", "computer_act", "script_run"] {
+        let edge = &schema(name)["properties"]["max_edge"]["description"];
+        assert!(
+            edge.as_str().unwrap().contains("default 1024"),
+            "{name}: {edge}"
+        );
+    }
+
+    let shot = mcp.call("screenshot", json!({})).await;
+    assert_eq!(shot["content"][1]["type"], "image");
+    assert_eq!(
+        shot["content"][0]["text"],
+        "screenshot of the whole screen: 1 KB"
+    );
+    mcp.call("screenshot", json!({"max_edge": 0})).await;
+    let state = mcp.call("computer_state", json!({})).await;
+    assert!(
+        state["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .ends_with("\nScreenshot: 1 KB"),
+        "{state}"
+    );
+    let edges: Vec<Value> = driver_calls(&h, "get_desktop_state")
+        .iter()
+        .map(|a| a["max_image_dimension"].clone())
+        .collect();
+    assert_eq!(edges[0], 1024, "{edges:?}");
+    assert_eq!(edges.iter().filter(|e| **e == 1024).count(), 2, "{edges:?}");
+    assert!(edges.contains(&json!(0)), "{edges:?}");
 }
 
 #[tokio::test]
@@ -3994,13 +4044,11 @@ async fn a_desk_box_takes_triple_click_and_left_click_as_clicks() {
     assert_eq!(clicks.len(), 2, "{clicks:?}");
     assert_eq!(clicks[0]["count"], 3, "{clicks:?}");
     assert!(clicks[1].get("count").is_none(), "{clicks:?}");
-    for c in &clicks {
-        assert_eq!(
-            (c["x"].as_f64(), c["y"].as_f64()),
-            (Some(10.0), Some(20.0)),
-            "{c}"
-        );
-    }
+    let at: Vec<(f64, f64)> = clicks
+        .iter()
+        .map(|c| (c["x"].as_f64().unwrap(), c["y"].as_f64().unwrap()))
+        .collect();
+    assert_eq!(at, [(10.0, 20.0), (12.5, 25.0)], "{clicks:?}");
 }
 
 #[tokio::test]
