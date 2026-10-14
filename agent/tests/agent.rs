@@ -4834,7 +4834,6 @@ async fn a_desk_box_waits_for_the_content_a_page_script_loads() {
     for (h, tool, want) in [
         (&plain, "browser_navigate", "Loading your feed"),
         (&desk, "browser_navigate", "feed item one"),
-        (&desk, "browser_fetch", "feed item one"),
     ] {
         let mut mcp = McpClient::connect(h).await;
         let out = text(&mcp.call(tool, json!({"url": page})).await);

@@ -1083,7 +1083,6 @@ impl Cdp {
         )
         .await?;
         self.call("Page.enable", json!({})).await?;
-        self.call("Network.enable", json!({})).await?;
         self.call("Page.setLifecycleEventsEnabled", json!({"enabled": true}))
             .await?;
         let tree = self.call("Page.getFrameTree", json!({})).await?;
@@ -1091,10 +1090,7 @@ impl Cdp {
         let ready = self
             .load(url, &tree["frameTree"]["frame"]["id"], wait)
             .await?;
-        if ready {
-            self.settle((start + wait).min(tokio::time::Instant::now() + SPA_WAIT))
-                .await;
-        } else {
+        if !ready {
             self.call("Page.stopLoading", json!({})).await?;
         }
         timing::mark("load");
@@ -1140,7 +1136,6 @@ impl Cdp {
                 continue;
             };
             let v: Value = serde_json::from_str(&text).map_err(|e| format!("cdp decode: {e}"))?;
-            self.xhr.note(&v);
             if v["id"].as_u64() == Some(id) {
                 if let Some(err) = v.get("error") {
                     return Err(format!("cdp Page.navigate: {}", err["message"]));
@@ -2331,31 +2326,28 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_reads_a_page_once_its_xhr_ended_and_its_text_stopped_growing() {
+    async fn settle_ends_once_the_xhr_ended_and_the_text_stopped_growing() {
         let dir = tempfile::tempdir().unwrap();
         let (port, log) = fetch_chrome("feed".into(), true).await;
         let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
-        let asked = tokio::time::Instant::now();
-        let out = b
-            .run("a", "browser_fetch", json!({"url": "https://a.test/spa"}))
+        let mut cdp = b.browser().await.unwrap();
+        cdp.call("Page.navigate", json!({"url": "https://a.test/spa"}))
             .await
             .unwrap();
-        assert!(asked.elapsed() < SPA_WAIT, "{:?}", asked.elapsed());
-        assert_eq!(out, "Page: Doc (https://a.test/)\n\nfeed");
-        let log = log.lock().unwrap();
+        let asked = tokio::time::Instant::now();
+        cdp.settle(asked + SPA_WAIT).await;
+        assert!(asked.elapsed() < XHR_STALE, "{:?}", asked.elapsed());
         let reads = log
+            .lock()
+            .unwrap()
             .iter()
             .filter(|m| m["params"]["expression"] == TEXT_LEN_JS)
             .count();
         assert_eq!(reads, 5, "5, 5 in flight, 5 ended, 50, 50");
-        let network = log.iter().position(|m| m["method"] == "Network.enable");
-        let navigate = log.iter().position(|m| m["method"] == "Page.navigate");
-        assert!(network < navigate, "{network:?} {navigate:?}");
     }
 
     #[tokio::test]
-    async fn fetch_stops_waiting_for_an_xhr_in_flight_past_its_stale_age_or_for_text_past_its_spa_wait()
-     {
+    async fn settle_stops_waiting_for_an_xhr_past_its_stale_age_or_for_text_past_its_deadline() {
         let dir = tempfile::tempdir().unwrap();
         let (port, _) = fetch_chrome("loading".into(), true).await;
         let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
@@ -2366,21 +2358,38 @@ pub(super) mod tests {
             ),
             ("spa-grow", SPA_WAIT..SPA_WAIT + Duration::from_millis(500)),
         ] {
+            let mut cdp = b.browser().await.unwrap();
+            cdp.call(
+                "Page.navigate",
+                json!({"url": format!("https://a.test/{page}")}),
+            )
+            .await
+            .unwrap();
             let asked = tokio::time::Instant::now();
-            let out = b
-                .run(
-                    "a",
-                    "browser_fetch",
-                    json!({"url": format!("https://a.test/{page}")}),
-                )
-                .await
-                .unwrap();
+            cdp.settle(asked + SPA_WAIT).await;
             assert!(
                 waits.contains(&asked.elapsed()),
                 "{page}: {:?}",
                 asked.elapsed()
             );
-            assert_eq!(out, "Page: Doc (https://a.test/)\n\nloading");
         }
+    }
+
+    #[tokio::test]
+    async fn fetch_does_not_wait_for_scripts_past_the_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = fetch_chrome("loading".into(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        let out = b
+            .run("a", "browser_fetch", json!({"url": "https://a.test/spa"}))
+            .await
+            .unwrap();
+        assert_eq!(out, "Page: Doc (https://a.test/)\n\nloading");
+        let log = log.lock().unwrap();
+        assert!(
+            !log.iter().any(
+                |m| m["method"] == "Network.enable" || m["params"]["expression"] == TEXT_LEN_JS
+            )
+        );
     }
 }
