@@ -163,6 +163,11 @@ mod tests {
         assert!(
             ROUTING.contains("Edit a file an app has open in that app, or close the app first.")
         );
+        assert!(
+            ROUTING.contains(
+                "Watch a chat or inbox by polling its activity list, not just known pages."
+            )
+        );
     }
 
     #[test]
