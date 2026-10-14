@@ -1,0 +1,105 @@
+#!/bin/bash
+# Fails while deny-listed code, product names or hosts remain outside the entries of scripts/clean-allow.
+# usage: scripts/clean-gate [repo]       tracked file names and text of this repo
+#        scripts/clean-gate deps         Cargo.lock, go.mod, the Swift package pins and the image's download URLs
+#        scripts/clean-gate tree DIR...  names and contents under DIR, such as an image root or an app bundle
+#        scripts/clean-gate binary FILE...
+set -euo pipefail
+export LC_ALL=C
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ALLOW="$ROOT/scripts/clean-allow"
+# the deny list is base64 so the gate does not match itself
+CG_WIDE=$(echo c2ltdWxhcnxzaW11bGFuZ3xjYnNpbXxcYm9mZmhhbmRcYnxzYWktY3VhfHNhaWhvc3R8XGJzYWlcYnxcYnNwZXhcYnxcYnNhcGlcYg== | base64 -d)
+CG_NARROW=$(echo c2ltdWxhcnxzaW11bGFuZ3xjYnNpbXxcYm9mZmhhbmRcYnxzYWktY3VhfHNhaWhvc3Q= | base64 -d)
+CG_VENDOR=$(echo c2ltdWxhcg== | base64 -d)
+CG_RUNTIME=$(echo c2ltdWxhbmc= | base64 -d)
+export CG_WIDE CG_NARROW
+
+scan() {
+	perl -e '
+use strict;
+use warnings;
+my ($allowfile, $mode) = @ARGV;
+@ARGV = ();
+my $wide = qr/$ENV{CG_WIDE}/i;
+my $narrow = qr/$ENV{CG_NARROW}/i;
+my $text = $mode eq "repo" ? $wide : $narrow;
+my @allow;
+open my $af, "<", $allowfile or die "$allowfile: $!\n";
+while (<$af>) {
+	chomp;
+	next if /^\s*(#|$)/;
+	my ($path, $token) = split /\t+/, $_, 2;
+	die "$allowfile:$.: want <path regex> TAB <token regex>\n" unless defined $token;
+	push @allow, [qr/^(?:$path)$/, qr/$token/i];
+}
+sub left {
+	my ($path, $s, $re) = @_;
+	for my $e (@allow) {
+		$s =~ s/$e->[1]//g if $path =~ $e->[0];
+	}
+	return $s =~ $re;
+}
+my $hits = 0;
+local $/ = "\0";
+while (my $path = <STDIN>) {
+	chomp $path;
+	if (left($path, $path, $text)) {
+		print "$path: name\n";
+		$hits++;
+	}
+	next if -l $path || !-f $path;
+	open my $fh, "<:raw", $path or do { print "$path: unreadable\n"; $hits++; next };
+	my $data = do { local $/; <$fh> } // "";
+	if (index(substr($data, 0, 8000), "\0") >= 0) {
+		next if $mode eq "repo";
+		my @found = $data =~ /($narrow)/g;
+		my $kept = grep { left($path, $_, $narrow) } @found;
+		if ($kept) {
+			my %seen;
+			my @uniq = grep { !$seen{lc $_}++ } @found;
+			print "$path: binary, $kept matches (" . join(", ", @uniq[0 .. ($#uniq < 4 ? $#uniq : 4)]) . ")\n";
+			$hits++;
+		}
+		next;
+	}
+	my $n = 0;
+	for my $line (split /\n/, $data, -1) {
+		$n++;
+		next unless $line =~ $text && left($path, $line, $text);
+		$line =~ s/^\s+//;
+		print "$path:$n: " . substr($line, 0, 160) . "\n";
+		$hits++;
+	}
+}
+print STDERR "clean-gate $mode: " . ($hits ? "$hits hits" : "clean") . "\n";
+exit($hits ? 1 : 0);
+' "$ALLOW" "$1"
+}
+
+deps() {
+	local bad=0
+	if grep -n -E "^name = \"(enigo|$CG_RUNTIME[a-z_-]*)\"\$|^source = \"(git\+|path\+)" "$ROOT/agent/Cargo.lock"; then bad=1; fi
+	if grep -n -i -E "$CG_VENDOR" "$ROOT/api/go.mod" "$ROOT/api/go.sum"; then bad=1; fi
+	if grep -n -i -E "\"location\" : \"[^\"]*$CG_VENDOR|url: \"[^\"]*$CG_VENDOR|path: \"[^\"]*${CG_VENDOR:0:5}" "$ROOT/macos/Package.resolved" "$ROOT/macos/Package.swift"; then bad=1; fi
+	if git -C "$ROOT" grep -n -i -E "https?://[^ \"]*$CG_VENDOR|@$CG_VENDOR-ai/" -- image; then bad=1; fi
+	echo "clean-gate deps: $([ "$bad" = 0 ] && echo clean || echo 'deny-listed or enigo dependencies')" >&2
+	return "$bad"
+}
+
+case "${1:-repo}" in
+repo) git -C "$ROOT" ls-files -z | (cd "$ROOT" && scan repo) ;;
+deps) deps ;;
+tree)
+	shift
+	[ $# -gt 0 ] || { echo "usage: clean-gate tree DIR..." >&2; exit 2; }
+	find "$@" -xdev -print0 | scan tree
+	;;
+binary)
+	shift
+	[ $# -gt 0 ] || { echo "usage: clean-gate binary FILE..." >&2; exit 2; }
+	printf '%s\0' "$@" | scan tree
+	;;
+*) sed -n '2,6p' "$0" >&2; exit 2 ;;
+esac

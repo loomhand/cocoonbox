@@ -1,0 +1,4 @@
+# <path regex> TAB <token regex>: in files whose path matches, the token is no finding.
+# third-party words in an image: Chrome locales and the en_US dictionary hold deny-listed words in other senses
+(.*/)?opt/google/chrome/locales/[A-Za-z0-9_-]+\.pak	.*
+(.*/)?usr/share/hunspell/en_US\.dic	.*
