@@ -18,7 +18,7 @@ axum = { version = "0.8", default-features = false }
 base64 = "0.23"
 bytes = "1"
 ed25519-dalek = "2"
-fastcdc = "3"
+fastcdc = "5"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 hex = "0.4"
 hmac = "0.12"
