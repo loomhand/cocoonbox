@@ -111,6 +111,18 @@ import Testing
         #expect(core.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbcore box: write one script with script_run for a multi-step task.")
     }
 
+    @Test func aBoxWithGuiPlanButNoScriptRunGetsItsOwnInstructions() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let box = try #require(try await mock.connection.firstBox()).id
+        _ = try await mock.connection.rebase(boxID: box, image: "plans:v1")
+        #expect(await until(seconds: 10) { (try? await mock.connection.firstBox())?.image == "plans:v1" })
+        let client = try await BridgeClient(mock, box: box)
+        defer { client.close() }
+        #expect(try await !client.tools().contains { $0["name"] as? String == "script_run" })
+        #expect(client.instructions == Bridge.instructions + " The default box's own instructions follow. Mock box that runs GUI plans.")
+    }
+
     @Test func theBridgeNamesTheUsersKeysWithinTheInstructionsCap() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }

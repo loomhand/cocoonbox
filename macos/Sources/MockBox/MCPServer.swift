@@ -166,9 +166,10 @@ final class MCPServer: Sendable {
         tool("computer_act", "Click, type or press keys on the desktop.", ["action": "string", "x": "integer", "y": "integer", "text": "string"]),
         tool("screenshot", "Take a PNG screenshot of the desktop.", ["max_edge": "integer"]),
     ]
-    nonisolated(unsafe) static let scriptTools: [[String: Any]] = (tools + [tool("script_run", "Run a script on the desktop.", ["code": "string"])]).map { tool in
-        ["shell", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
+    nonisolated(unsafe) static let scriptTools: [[String: Any]] = (tools + [tool("gui_plan", "Run a GUI plan on the desktop.", ["steps": "array"]), tool("script_run", "Run a script on the desktop.", ["code": "string"])]).map { tool in
+        ["shell", "gui_plan", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
     }
+    nonisolated(unsafe) static let planTools = scriptTools.filter { $0["name"] as? String != "script_run" }
 
     private let world: MockWorld
     private let token: String
@@ -251,10 +252,10 @@ final class MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "cocoonbox-mock", "version": "0.1"],
-                "instructions": box.image.hasPrefix("cbcore:") ? "Mock cbcore box: write one script with script_run for a multi-step task." : "Mock cbdesk box.",
+                "instructions": box.image.hasPrefix("cbcore:") ? "Mock cbcore box: write one script with script_run for a multi-step task." : box.image.hasPrefix("cbdesk:") ? "Mock cbdesk box." : "Mock box that runs GUI plans.",
             ]
         case "tools/list":
-            result = ["tools": box.image.hasPrefix("cbcore:") ? Self.scriptTools : Self.tools]
+            result = ["tools": box.image.hasPrefix("cbcore:") ? Self.scriptTools : box.image.hasPrefix("cbdesk:") ? Self.tools : Self.planTools]
         case "tools/call":
             guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")
