@@ -129,6 +129,7 @@ pub fn bash(cwd: &Path) -> Command {
         .env("GIT_PAGER", "cat")
         .env("NO_COLOR", "1")
         .kill_on_drop(true);
+    sys::unprotect(&mut cmd);
     cmd
 }
 
@@ -284,6 +285,19 @@ mod tests {
             .unwrap();
         assert!(out.contains("start") && out.contains("timed out"), "{out}");
         assert!(sh.is_dead());
+    }
+
+    #[tokio::test]
+    async fn a_session_does_not_inherit_the_oom_protection_of_the_toolhost() {
+        let adj = "/proc/self/oom_score_adj";
+        let own = std::fs::read_to_string(adj).unwrap();
+        std::fs::write(adj, "500").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let mut sh = shell(dir.path()).await;
+        let out = sh.run("cat /proc/self/oom_score_adj", None).await;
+        std::fs::write(adj, own.trim()).unwrap();
+        let out = out.unwrap();
+        assert!(out.starts_with("0\n"), "{out}");
     }
 
     #[tokio::test]

@@ -208,8 +208,8 @@ impl Scripts {
         let started = Instant::now();
         timing::mark("prepare");
         let path = std::env::var("PATH").unwrap_or_default() + GAMES_PATH;
-        let mut child = Command::new(&self.bin)
-            .arg(&entry)
+        let mut node = Command::new(&self.bin);
+        node.arg(&entry)
             .current_dir(workspace)
             .env("PATH", path)
             .env("CB_SCRIPT", &script)
@@ -220,7 +220,9 @@ impl Scripts {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .kill_on_drop(true)
+            .kill_on_drop(true);
+        sys::unprotect(&mut node);
+        let mut child = node
             .spawn()
             .map_err(|e| format!("start {}: {e}", self.bin.display()))?;
         timing::mark("spawn");

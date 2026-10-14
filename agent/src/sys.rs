@@ -98,6 +98,22 @@ pub fn take_terminal(cmd: &mut Command) {
     }
 }
 
+/// Gives the child of `cmd` the default OOM score, so it does not inherit the protection of this service.
+pub fn unprotect(cmd: &mut Command) {
+    // SAFETY: the hook runs in the forked child before exec and calls only open, write and close,
+    // which are async-signal-safe, on a NUL-terminated literal path.
+    unsafe {
+        cmd.pre_exec(|| {
+            let fd = libc::open(c"/proc/self/oom_score_adj".as_ptr(), libc::O_WRONLY);
+            if fd >= 0 {
+                libc::write(fd, c"0".as_ptr().cast(), 1);
+                libc::close(fd);
+            }
+            Ok(())
+        });
+    }
+}
+
 /// Opens `path` relative to `dir` with openat2 `RESOLVE_BENEATH`: a `..`, absolute path
 /// or symlink that leaves `dir` fails with `EXDEV`.
 #[cfg(target_os = "linux")]

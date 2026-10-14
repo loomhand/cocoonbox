@@ -18,6 +18,8 @@ Restart=always
 RestartSec=2s
 TimeoutStopSec=5s
 KillMode=mixed
+OOMScoreAdjust=-900
+OOMPolicy=continue
 
 [Install]
 WantedBy=graphical.target

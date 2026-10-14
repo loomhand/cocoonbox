@@ -18,6 +18,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use zeroize::Zeroizing;
 
 use super::timing;
+use crate::sys;
 
 const LAUNCH_WAIT: Duration = Duration::from_secs(60);
 const LOAD_WAIT: Duration = Duration::from_secs(15);
@@ -813,8 +814,8 @@ impl Browser {
 
     /// Starts Chrome and waits for its CDP while it lives; a session restore blocks CDP until every window is back.
     async fn launch(&self) -> Result<(), String> {
-        let mut chrome = Command::new(&self.bin)
-            .arg(format!("--remote-debugging-port={}", self.port))
+        let mut cmd = Command::new(&self.bin);
+        cmd.arg(format!("--remote-debugging-port={}", self.port))
             .arg("--remote-debugging-address=127.0.0.1")
             .arg(format!("--user-data-dir={}", self.profile.display()))
             .args([
@@ -832,7 +833,9 @@ impl Browser {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .process_group(0)
+            .process_group(0);
+        sys::unprotect(&mut cmd);
+        let mut chrome = cmd
             .spawn()
             .map_err(|e| format!("launch {}: {e}", self.bin))?;
         let deadline = tokio::time::Instant::now() + LAUNCH_WAIT;
