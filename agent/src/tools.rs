@@ -27,6 +27,8 @@ const FRONT_HINT: &str = "true brings the page to the front of the desktop with 
 const SHOT_HINT: &str = "Look at the desktop: a read-only screenshot of the whole 1280x800 screen, scaled to 1024x640 unless max_edge says otherwise; the result gives its size and input tokens. To look again, prefer a desk snapshot (text, no image) or a region at full resolution to another full screenshot.";
 const EDGE_HINT: &str = "Scale the screenshot so its long edge is at most this many pixels, default 1024, 0 for full size; x,y then refer to the scaled image";
 const SCALED_SHOT: &str = "Look at the desktop: a read-only screenshot of the whole screen, scaled to a long edge of 1024 pixels unless max_edge says otherwise.";
+const SCREEN_POINT: &str = "or screen coordinates x,y.";
+const SHOT_POINT: &str = "or x,y in the pixels of your latest screenshot.";
 const SCALED_STATE: &str = "Screenshot of the whole screen, scaled to a long edge of 1024 pixels unless max_edge says otherwise, the visible windows (pid, window_id), and the accessibility elements [index] of the frontmost window or of the given pid.";
 const REGION_HINT: &str = "Only this part of the screen, at full resolution: x, y, w, h in the pixels of your last screenshot";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
@@ -245,6 +247,9 @@ fn with_scale(tools: &mut [ToolSpec]) {
         match t.name.as_ref() {
             "screenshot" => t.description = Cow::Borrowed(SCALED_SHOT),
             "computer_state" => t.description = Cow::Borrowed(SCALED_STATE),
+            "computer_act" => {
+                t.description = Cow::Owned(t.description.replace(SCREEN_POINT, SHOT_POINT));
+            }
             _ => {}
         }
     }
@@ -367,7 +372,7 @@ fn desk_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("desk"),
         description: Cow::Borrowed(
-            "One desktop call in plain JSON on the accessibility tree: op windows; snapshot {window?, text?}; find {name, role?, window?}; read {id, text?}; press {id} (selects, opens menus, clicks or runs the element's action); act {id, action: click|action|select|focus}; at {x, y, window?}; key {keys: \"ctrl+shift+s\"}; type {text}; click {x, y, button?, count?}; focus {window}; close {window}; launch {app}; shot {x?, y?, w?, h?}; screen. Element ids come from snapshot or find; window is title text, default the focused window. For GUI work of several steps use gui_plan.",
+            "One desktop call in plain JSON on the accessibility tree: op windows; snapshot {window?, text?}; find {name, role?, window?}; read {id, text?}; press {id} (selects, opens menus, clicks or runs the element's action); act {id, action: click|action|select|focus}; at {x, y, window?}; key {keys: \"ctrl+shift+s\"}; type {text}; click {x, y, button?, count?}; focus {window}; close {window}; launch {app}; shot {x?, y?, w?, h?}; screen. Element ids come from snapshot or find; window is title text, default the focused window. x, y, w, h and bounds are screen pixels, unlike computer_act's screenshot pixels. For GUI work of several steps use gui_plan.",
         ),
         parameters: json!({
             "type": "object",
