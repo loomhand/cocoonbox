@@ -10,19 +10,13 @@ on:
       - "proto/**"
       - ".github/workflows/macos.yml"
   pull_request:
-    paths:
-      - "macos/**"
-      - "deskhost/**"
-      - "Package.swift"
-      - "proto/**"
-      - ".github/workflows/macos.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  macos:
     runs-on: macos-26
     timeout-minutes: 30
     steps:

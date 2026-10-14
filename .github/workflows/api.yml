@@ -9,18 +9,13 @@ on:
       - "docs/fixtures/**"
       - ".github/workflows/api.yml"
   pull_request:
-    paths:
-      - "api/**"
-      - "proto/**"
-      - "docs/fixtures/**"
-      - ".github/workflows/api.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  api:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout

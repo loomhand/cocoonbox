@@ -11,19 +11,13 @@ on:
       - "docs/fixtures/**"
       - ".github/workflows/agent.yml"
   pull_request:
-    paths:
-      - "agent/**"
-      - "proto/**"
-      - "image/desk/**"
-      - "docs/fixtures/**"
-      - ".github/workflows/agent.yml"
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  test:
+  agent:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
