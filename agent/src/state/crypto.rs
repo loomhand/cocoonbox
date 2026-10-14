@@ -2,8 +2,8 @@
 
 use std::io::Read;
 
-use aes_gcm::aead::{Aead, AeadCore, KeyInit, OsRng, Payload};
-use aes_gcm::{Aes256Gcm, Nonce};
+use aes_gcm::Aes256Gcm;
+use aes_gcm::aead::{Aead, Generate, KeyInit, Nonce, Payload};
 use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use zeroize::Zeroizing;
@@ -47,7 +47,7 @@ impl Keys {
     pub fn seal(&self, id: &str, plaintext: &[u8]) -> Result<Vec<u8>, String> {
         let packed =
             zstd::bulk::compress(plaintext, ZSTD_LEVEL).map_err(|e| format!("compress: {e}"))?;
-        let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+        let nonce = Nonce::<Aes256Gcm>::generate();
         let sealed = self
             .seal
             .encrypt(
@@ -66,14 +66,13 @@ impl Keys {
 
     /// Decrypts, decompresses at most `limit` bytes, and checks the plaintext against `id`.
     pub fn open(&self, id: &str, sealed: &[u8], limit: u64) -> Result<Vec<u8>, String> {
-        if sealed.len() < NONCE_LEN {
-            return Err(format!("object {id} is truncated"));
-        }
-        let (nonce, body) = sealed.split_at(NONCE_LEN);
+        let (nonce, body) = sealed
+            .split_first_chunk::<NONCE_LEN>()
+            .ok_or_else(|| format!("object {id} is truncated"))?;
         let packed = self
             .seal
             .decrypt(
-                Nonce::from_slice(nonce),
+                &Nonce::<Aes256Gcm>::from(*nonce),
                 Payload {
                     msg: body,
                     aad: id.as_bytes(),
