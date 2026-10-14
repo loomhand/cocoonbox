@@ -123,7 +123,7 @@ impl Runtime {
             journal,
             main_tools: tools::main_tools(false, cfg.automation),
             main_vision_tools: tools::main_tools(true, cfg.automation),
-            computer_tools: tools::computer_tools(),
+            computer_tools: tools::computer_tools(cfg.automation),
             computer_prompt: prompts::computer(&cfg.model_computer),
             screen: tokio::sync::Mutex::new(()),
             stop,

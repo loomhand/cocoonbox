@@ -3635,6 +3635,38 @@ async fn mcp_serves_the_desk_guide_as_a_resource() {
     assert_eq!(unknown["error"]["code"], -32002, "{unknown}");
 }
 
+#[test]
+fn screenshots_of_a_box_that_runs_gui_plans_name_the_default_scale_instead_of_the_screen_size() {
+    let shots = ["screenshot", "computer_state"];
+    let desk = cocoonbox_agent::tools::main_tools(true, Automation::Desk)
+        .into_iter()
+        .chain(cocoonbox_agent::tools::computer_tools(Automation::Desk))
+        .filter(|t| shots.contains(&t.name.as_ref()));
+    let mut named = Vec::new();
+    for t in desk {
+        assert!(
+            !t.description.contains("1280x800"),
+            "{}: {}",
+            t.name,
+            t.description
+        );
+        assert!(
+            t.description.contains("1024 pixels"),
+            "{}: {}",
+            t.name,
+            t.description
+        );
+        named.push(t.name);
+    }
+    assert_eq!(named, shots);
+    let plain = cocoonbox_agent::tools::computer_tools(Automation::Plain);
+    assert!(
+        plain[0].description.contains("whole 1280x800 screen"),
+        "{}",
+        plain[0].description
+    );
+}
+
 #[tokio::test]
 async fn mcp_gui_plan_keeps_a_static_description_and_lists_saved_flows_on_request() {
     let h = Harness::with_desk(Vec::new()).await;
