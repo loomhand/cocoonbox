@@ -38,7 +38,10 @@ jobs:
           ssh-key: ${{ secrets.SWIFT_RFB_DEPLOY_KEY }}
 
       - name: Select the Command Line Tools
-        run: sudo xcode-select -s /Library/Developer/CommandLineTools
+        run: |
+          sudo xcode-select -s /Library/Developer/CommandLineTools
+          swift --version
+          find /Library/Developer/CommandLineTools /Applications/Xcode*.app/Contents/Developer/Toolchains -name 'lib_TestingInterop*' 2>/dev/null || true
 
       - name: App build and tests
         working-directory: cocoonbox
