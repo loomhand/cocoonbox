@@ -4444,6 +4444,29 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
 }
 
 #[tokio::test]
+async fn only_a_box_that_runs_gui_plans_says_that_shell_capped_its_timeout() {
+    for (h, note) in [
+        (Harness::start(Vec::new(), false).await, false),
+        (Harness::with_desk(Vec::new()).await, true),
+    ] {
+        let mut mcp = McpClient::connect(&h).await;
+        let out = mcp
+            .call("shell", json!({"command": "echo hi", "timeout_s": 2400}))
+            .await;
+        assert_eq!(out["isError"], false, "{out}");
+        let text = out["content"][0]["text"].as_str().unwrap();
+        assert_eq!(
+            text.ends_with(
+                "[exit status 0]\n[timeout_s 2400 is over the 600 s maximum; ran with 600 s]"
+            ),
+            note,
+            "{text}"
+        );
+        assert_eq!(text.ends_with("[exit status 0]"), !note, "{text}");
+    }
+}
+
+#[tokio::test]
 async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
     let h = Harness::start(Vec::new(), false).await;
     let mut mcp = McpClient::connect(&h).await;

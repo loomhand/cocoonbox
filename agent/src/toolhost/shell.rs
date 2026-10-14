@@ -120,6 +120,19 @@ impl Shell {
     }
 }
 
+/// A note for a requested `timeout` over [`MAX_TIMEOUT`], which a command runs with instead.
+pub fn capped_note(timeout: Option<Duration>) -> String {
+    match timeout {
+        Some(t) if t > MAX_TIMEOUT => format!(
+            "\n[timeout_s {} is over the {} s maximum; ran with {} s]",
+            t.as_secs(),
+            MAX_TIMEOUT.as_secs(),
+            MAX_TIMEOUT.as_secs()
+        ),
+        _ => String::new(),
+    }
+}
+
 /// bash in `cwd` with the environment of the shell tool.
 pub fn bash(cwd: &Path) -> Command {
     let mut cmd = Command::new("bash");
@@ -273,6 +286,17 @@ mod tests {
         assert!(!out.ends_with("[exit status 0]"), "{out}");
         let out = sh.run("cat; echo after", None).await.unwrap();
         assert!(out.starts_with("after"), "{out}");
+    }
+
+    #[test]
+    fn only_a_timeout_over_the_maximum_gets_a_note() {
+        assert_eq!(
+            capped_note(Some(Duration::from_secs(2400))),
+            "\n[timeout_s 2400 is over the 600 s maximum; ran with 600 s]"
+        );
+        for quiet in [None, Some(MAX_TIMEOUT), Some(Duration::from_secs(30))] {
+            assert_eq!(capped_note(quiet), "", "{quiet:?}");
+        }
     }
 
     #[tokio::test]

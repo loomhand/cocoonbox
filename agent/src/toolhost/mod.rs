@@ -57,6 +57,8 @@ pub struct Host {
     scripts: Scripts,
     session_save: PathBuf,
     home: PathBuf,
+    /// A box that runs GUI plans.
+    plans: bool,
     /// The saved flows of a box that runs GUI plans, which a read-only share does not read.
     hidden: Option<PathBuf>,
     flow_writes: watch::Sender<u64>,
@@ -80,6 +82,7 @@ impl Host {
             scripts: Scripts::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
+            plans: cfg.automation.plans(),
             hidden: cfg.automation.plans().then(|| cfg.workspace.join("flows")),
             flow_writes: watch::channel(0).0,
         }
@@ -198,7 +201,12 @@ impl Host {
             *slot = Some(Shell::spawn(&self.workspace, self.script(agent_id)).await?);
         }
         let shell = slot.as_mut().ok_or("shell missing")?;
-        shell.run(command, timeout).await
+        let out = shell.run(command, timeout).await?;
+        Ok(if self.plans {
+            out + &shell::capped_note(timeout)
+        } else {
+            out
+        })
     }
 
     /// With plans, a note on the files that `text` names and an app window has open (see [`files::held_note`]).
