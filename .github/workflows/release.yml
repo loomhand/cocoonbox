@@ -1,4 +1,5 @@
-# A v* tag builds cocoonbox-api (linux amd64, arm64) and cocoonbox-agent (linux x86_64) and publishes them as a release.
+# A v* tag publishes cocoonbox-api (linux amd64, arm64), cocoonbox-agent (linux x86_64), the image recipe with its pins
+# and, when the repository variable CB_ENDPOINT names an api origin, CocoonBox.app (ad hoc signed).
 name: release
 
 on:
@@ -57,20 +58,62 @@ jobs:
           name: agent
           path: cocoonbox-agent-linux-amd64
 
+  app:
+    if: vars.CB_ENDPOINT != ''
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Select the Command Line Tools
+        run: sudo xcode-select -s /Library/Developer/CommandLineTools
+
+      - name: Bundle
+        env:
+          CB_ENDPOINT: ${{ vars.CB_ENDPOINT }}
+        run: |
+          make app
+          ditto -c -k --keepParent macos/dist/CocoonBox.app CocoonBox-macos-arm64.zip
+
+      - name: Upload
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: app
+          path: CocoonBox-macos-arm64.zip
+
   release:
-    needs: [api, agent]
+    needs: [api, agent, app]
+    if: ${{ !cancelled() && needs.api.result == 'success' && needs.agent.result == 'success' && needs.app.result != 'failure' }}
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
       - name: Download
         uses: actions/download-artifact@v8.0.2
         with:
           path: dist
           merge-multiple: true
 
+      - name: Image recipe
+        run: |
+          set -eu
+          recipe="cocoonbox-image-recipe-$GITHUB_REF_NAME"
+          mkdir -p "$RUNNER_TEMP/$recipe"
+          git archive HEAD image | tar -x -C "$RUNNER_TEMP/$recipe"
+          {
+            echo "release $GITHUB_REF_NAME"
+            echo "commit $GITHUB_SHA"
+            echo "agent-sha256 $(sha256sum dist/cocoonbox-agent-linux-amd64 | cut -d' ' -f1)"
+            sed -n -e 's/^COMMIT=${COMMIT:-\(.*\)}$/cua-driver-commit \1/p' -e 's/^VERSION=${VERSION:-\(.*\)}$/cua-driver-version \1/p' image/cua-driver.sh
+          } > "$RUNNER_TEMP/$recipe/PINS"
+          cat "$RUNNER_TEMP/$recipe/PINS"
+          tar -czf "dist/$recipe.tar.gz" -C "$RUNNER_TEMP" "$recipe"
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          sha256sum cocoonbox-* > SHA256SUMS
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes cocoonbox-* SHA256SUMS
+          sha256sum ./* > "$RUNNER_TEMP/SHA256SUMS" && mv "$RUNNER_TEMP/SHA256SUMS" .
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes ./*

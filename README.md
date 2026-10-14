@@ -45,6 +45,7 @@ make help            # every target
 make api             # api: build, vet, lint, test
 make agent           # agent: fmt check, clippy -D warnings, test (CB_NO_BROWSER=1 skips the Chrome tests)
 make macos           # macOS app: build and the swift-testing suite (macOS only)
+make image           # syntax-check the image scripts
 make gate            # clean gate over the tracked files and the dependencies
 ```
 
@@ -61,7 +62,7 @@ The macOS package expects [swift-rfb](https://github.com/loomhand/swift-rfb) che
 
 - **api:** `api/deploy/api.yaml.example` lists every key; `api/deploy/cocoonbox-api.service` runs it under systemd behind a reverse proxy (`deploy/host/Caddyfile.cocoonbox`).
 - **sandboxd instance and host:** `deploy/cbsbx/` writes the instance config and units; `deploy/host/` holds the host bridge, gw config, state store, apt cache and backups.
-- **image:** `image/cut.sh` cuts a desktop template from the previous one on the sandboxd host; `image/export-rootfs.sh` exports it for `cocoon image import`.
+- **image:** `image/cut.sh` cuts a desktop template from the previous one on the sandboxd host and imports it; versions, pins and publishing are in [docs/image.md](docs/image.md).
 - **app:** `CB_ENDPOINT=https://<api host> macos/scripts/bundle.sh` builds `dist/CocoonBox.app`.
 
 ## Documentation
@@ -69,6 +70,7 @@ The macOS package expects [swift-rfb](https://github.com/loomhand/swift-rfb) che
 - [Design](docs/design.md)
 - [Contracts](docs/contracts.md)
 - [Boundaries](docs/boundaries.md)
+- [Box image](docs/image.md)
 - [Measurements and lessons](docs/bench.md)
 
 ## Related projects

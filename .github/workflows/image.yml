@@ -1,0 +1,65 @@
+# Cuts <family>:vN from the previous template and publishes the rootfs to ghcr; see docs/image.md.
+# It needs a self-hosted runner labelled cocoon on a host that runs the box's sandboxd instance.
+name: image
+
+on:
+  workflow_dispatch:
+    inputs:
+      family:
+        description: Image family
+        type: choice
+        options: [cbcore, cbdesk]
+        default: cbcore
+      base:
+        description: Base template, such as cbcore:v1
+        required: true
+      version:
+        description: New version, such as v2
+        required: true
+      release:
+        description: Release tag whose agent binary goes into the image
+        required: true
+      provision:
+        description: Rerun provision.sh
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: image
+  cancel-in-progress: false
+
+jobs:
+  cut:
+    runs-on: [self-hosted, cocoon]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ inputs.release }}
+
+      - name: Agent of the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ inputs.release }}" --repo "$GITHUB_REPOSITORY" --pattern cocoonbox-agent-linux-amd64 --pattern SHA256SUMS
+          grep cocoonbox-agent-linux-amd64 SHA256SUMS | sha256sum -c -
+          chmod +x cocoonbox-agent-linux-amd64
+
+      - name: Cut
+        run: sudo image/cut.sh ${{ inputs.provision && '-p' || '' }} -f "${{ inputs.family }}" -a "$PWD/cocoonbox-agent-linux-amd64" "${{ inputs.base }}" "${{ inputs.version }}"
+
+      - name: Publish
+        run: |
+          case "${{ inputs.family }}" in
+          cbcore) tarball=/srv/cb/sbx/build/cocoonbox-cbcore-${{ inputs.version }}.tar.gz ;;
+          cbdesk) tarball=/srv/cb/sbx/build/cocoonbox-desktop-${{ inputs.version }}.tar.gz ;;
+          esac
+          echo "${{ github.token }}" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+          oras push "ghcr.io/${{ github.repository }}/${{ inputs.family }}:${{ inputs.version }}" \
+            --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
+            --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            "$tarball:application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"

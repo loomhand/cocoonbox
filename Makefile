@@ -1,4 +1,4 @@
-.PHONY: all api agent deskhost macos app gate help
+.PHONY: all api agent deskhost macos app image gate help
 
 MACOS_TEST_ARGS ?=
 
@@ -18,6 +18,10 @@ macos: ## macOS app: build the app and run the swift-testing suite (needs ../swi
 
 app: ## macOS app bundle dist/CocoonBox.app for CB_ENDPOINT, ad hoc signed
 	cd macos && scripts/bundle.sh
+
+image: ## Syntax-check the image scripts
+	for f in image/*.sh image/desk/*.sh; do bash -n "$$f" || exit 1; done
+	python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" image/cut-proxy.py
 
 gate: ## Clean gate over the tracked files and the dependencies
 	scripts/clean-gate repo
