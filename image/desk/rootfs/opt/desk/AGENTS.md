@@ -156,9 +156,6 @@ Save a script that works as `/workspace/flows/<name>.mts` and replay it with new
 - A snapshot of a Chrome window holds the browser's own controls and the start of the page;
   page content goes to the `browser_*` tools.
 - Apps a script launches keep running after it ends, also after a timeout.
-- An app keeps the file it opened in memory, and its next save writes that copy over any change
-  made behind it (by a script, the shell or the file tools). Edit a file an app has open in that
-  app, or save and close the app first; the app's window title names the file.
 - A document with layout (slides, a spreadsheet, a formatted text) keeps it only when edited in its
   app; a library that rebuilds the file from code drops what it does not model.
 - The box's user can see the screen: keep windows tidy and close the dialogs you open.
