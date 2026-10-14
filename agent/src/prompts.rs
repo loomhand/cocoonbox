@@ -160,6 +160,9 @@ mod tests {
         assert!(ROUTING.contains(
             "Save deliverables at the path the user names, else in their home, not /workspace."
         ));
+        assert!(
+            ROUTING.contains("Edit a file an app has open in that app, or close the app first.")
+        );
     }
 
     #[test]

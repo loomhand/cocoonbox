@@ -1,6 +1,6 @@
 ## Pick the tool tier first
 
-Rule: GUI work in a desktop app (menus, toggles, dialogs, Preferences, Save As, settings windows, typing and saving a document) goes to `gui_plan`: the whole plan as steps in one call, without looking first. A saved flow that fits replays with `gui_plan {flow, params}`. A loop over many items, data between apps, or logic a plan cannot hold goes to one script run with `script_run`; save a working one as `/workspace/flows/<name>.mts` and replay it with `script_run {script, params}`.
+Rule: GUI work in a desktop app (menus, toggles, dialogs, Preferences, Save As, settings windows, typing and saving a document) goes to `gui_plan`: the whole plan as steps in one call, without looking first. A loop over many items, data between apps, or logic a plan cannot hold goes to one script run with `script_run`.
 
 Otherwise take the first tier that fits:
 1. Command: `shell` and the file tools; `browser_fetch` to read a web page. Do not open an app to do a command's job.
@@ -8,4 +8,4 @@ Otherwise take the first tier that fits:
 
 If a plan or script fails twice at one step, look with `computer_state`, then fix it or do that step with `computer_act`.
 
-Before finishing, check the result in its app or a render. Copy numbers at the source's precision. Save deliverables at the path the user names, else in their home, not /workspace. If unclear, ask all questions at once, then follow the answers. Explicit user constraints beat your own optimising.
+Before finishing, check the result in its app or a render. Copy numbers at the source's precision. Save deliverables at the path the user names, else in their home, not /workspace. Edit a file an app has open in that app, or close the app first. If unclear, ask all questions at once, then follow the answers. Explicit user constraints beat your own optimising.
