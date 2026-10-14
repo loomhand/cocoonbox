@@ -1,0 +1,48 @@
+# The package resolves swift-rfb at ../../swift-rfb from macos/, so both repos are checked out side by side.
+name: macos
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "macos/**"
+      - "deskhost/**"
+      - "proto/**"
+      - ".github/workflows/macos.yml"
+  pull_request:
+    paths:
+      - "macos/**"
+      - "deskhost/**"
+      - "proto/**"
+      - ".github/workflows/macos.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          path: cocoonbox
+
+      - name: Checkout swift-rfb
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: loomhand/swift-rfb
+          path: swift-rfb
+          ssh-key: ${{ secrets.SWIFT_RFB_DEPLOY_KEY }}
+
+      - name: Select the Command Line Tools
+        run: sudo xcode-select -s /Library/Developer/CommandLineTools
+
+      - name: App build and tests
+        working-directory: cocoonbox
+        run: make macos
+
+      - name: Desk host
+        working-directory: cocoonbox
+        run: make deskhost

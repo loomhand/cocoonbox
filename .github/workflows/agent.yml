@@ -1,0 +1,38 @@
+# The agent runs in a Linux guest; the offload tests need rsync and tmux, the Chrome tests skip with CB_NO_BROWSER=1.
+name: agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent/**"
+      - "proto/**"
+      - "image/desk/**"
+      - "docs/fixtures/**"
+      - ".github/workflows/agent.yml"
+  pull_request:
+    paths:
+      - "agent/**"
+      - "proto/**"
+      - "image/desk/**"
+      - "docs/fixtures/**"
+      - ".github/workflows/agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install protoc, rsync and tmux
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler rsync tmux
+
+      - name: fmt + clippy + test
+        env:
+          CB_NO_BROWSER: "1"
+        run: make agent

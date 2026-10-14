@@ -1,0 +1,76 @@
+# A v* tag builds cocoonbox-api (linux amd64, arm64) and cocoonbox-agent (linux x86_64) and publishes them as a release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  api:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - name: Build
+        env:
+          GOWORK: "off"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: make -C api build
+
+      - name: Upload
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: api-${{ matrix.goarch }}
+          path: api/bin/cocoonbox-api-linux-${{ matrix.goarch }}
+
+  agent:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
+      - name: Build
+        run: |
+          agent/build-release.sh
+          cp agent/target/release/cocoonbox-agent cocoonbox-agent-linux-amd64
+
+      - name: Upload
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: agent
+          path: cocoonbox-agent-linux-amd64
+
+  release:
+    needs: [api, agent]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download
+        uses: actions/download-artifact@v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum cocoonbox-* > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$GITHUB_REF_NAME" --generate-notes cocoonbox-* SHA256SUMS
