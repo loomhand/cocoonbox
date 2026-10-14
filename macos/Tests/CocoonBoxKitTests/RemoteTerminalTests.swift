@@ -63,7 +63,7 @@ final class Stdin: Sendable {
 // PasteFixture is a terminal in a window, focused, once its surface takes a paste, with "code#state-1" on a private pasteboard.
 @MainActor
 final class PasteFixture {
-    let pasteboard = NSPasteboard(name: .init("me.cmgs.cocoonbox.test.\(UUID().uuidString)"))
+    let pasteboard = NSPasteboard(name: .init("io.github.loomhand.cocoonbox.test.\(UUID().uuidString)"))
     let stdin = Stdin()
     let terminal: RemoteTerminal
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 640, height: 400), styleMask: [.titled], backing: .buffered, defer: false)

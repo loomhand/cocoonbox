@@ -353,7 +353,7 @@ These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `W
 | `cocoonbox setup claude\|codex\|cursor [--print]` | installs the plugin, or prints the manual config for that client |
 | `cocoonbox install` | links the CLI into `~/.local/bin` |
 
-**Keychain sharing with the app.** Both use service `me.cmgs.cocoonbox` with the endpoint URL as the account. With a Developer ID signature, app and CLI share one keychain access group, so neither prompts. Until then, builds are ad hoc signed and every rebuild has a new code hash. So `cocoonbox login` writes its own item, and `cocoonbox login --from-app` copies the app's token once, after a single "Always Allow".
+**Keychain sharing with the app.** Both use service `io.github.loomhand.cocoonbox` with the endpoint URL as the account. With a Developer ID signature, app and CLI share one keychain access group, so neither prompts. Until then, builds are ad hoc signed and every rebuild has a new code hash. So `cocoonbox login` writes its own item, and `cocoonbox login --from-app` copies the app's token once, after a single "Always Allow".
 
 ### 13.5 Plugin packaging
 

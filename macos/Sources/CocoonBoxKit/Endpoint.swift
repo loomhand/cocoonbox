@@ -41,7 +41,7 @@ public struct Endpoint: Sendable, Hashable {
 public enum Keychain {
     // CB_KEYCHAIN_SERVICE lets dev builds keep their token apart from the
     // installed app's item, whose ACL would prompt for a new binary.
-    public static let service = ProcessInfo.processInfo.environment["CB_KEYCHAIN_SERVICE"] ?? "me.cmgs.cocoonbox"
+    public static let service = ProcessInfo.processInfo.environment["CB_KEYCHAIN_SERVICE"] ?? "io.github.loomhand.cocoonbox"
 
     // CB_KEYCHAIN_FILE confines tests to a throwaway keychain file instead of the login keychain.
     nonisolated(unsafe) static let file: SecKeychain? = ProcessInfo.processInfo.environment["CB_KEYCHAIN_FILE"].flatMap { path in

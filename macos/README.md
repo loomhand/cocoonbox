@@ -51,7 +51,7 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 ### Copy-paste setup
 
 
-**Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for the three agent CLIs: `claude mcp add --scope user --transport http … --header 'Authorization: Bearer ${COCOONBOX_TOKEN}'`, `~/.codex/config.toml` with `bearer_token_env_var = "COCOONBOX_TOKEN"`, and `~/.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}`. No snippet contains the token, so none of it lands in a config file or shell history: every client expands `COCOONBOX_TOKEN` at runtime, and one more snippet sets it from the Keychain (`export COCOONBOX_TOKEN="$(security find-generic-password -s me.cmgs.cocoonbox -a <endpoint> -w)"`; macOS asks once whether `security` may read the CocoonBox item).
+**Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for the three agent CLIs: `claude mcp add --scope user --transport http … --header 'Authorization: Bearer ${COCOONBOX_TOKEN}'`, `~/.codex/config.toml` with `bearer_token_env_var = "COCOONBOX_TOKEN"`, and `~/.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}`. No snippet contains the token, so none of it lands in a config file or shell history: every client expands `COCOONBOX_TOKEN` at runtime, and one more snippet sets it from the Keychain (`export COCOONBOX_TOKEN="$(security find-generic-password -s io.github.loomhand.cocoonbox -a <endpoint> -w)"`; macOS asks once whether `security` may read the CocoonBox item).
 
 ## Sharing
 
@@ -65,7 +65,7 @@ Each guest's MCP session through the share (`mcp:<client>@<share id>[:<user id>]
 
 ```bash
 cocoonbox install                 # link into ~/.local/bin
-cocoonbox login                   # token from stdin or a prompt, into the Keychain (service me.cmgs.cocoonbox.cli)
+cocoonbox login                   # token from stdin or a prompt, into the Keychain (service io.github.loomhand.cocoonbox.cli)
 cocoonbox setup claude            # local marketplace + plugin: claude plugin marketplace add / install
 cocoonbox setup codex             # codex plugin marketplace add / codex plugin add
 cocoonbox setup cursor            # merges {"command": "<cli>", "args": ["mcp"]} into ~/.cursor/mcp.json
@@ -108,7 +108,7 @@ swift-rfb is a local path package (`../../swift-rfb`), so it must be checked out
 These environment variables serve test runs:
 
 - `CB_ENDPOINT`: the endpoint URL. It overrides the one `scripts/bundle.sh` wrote into the app. The app speaks plaintext `http://` only to loopback (`127.*`, `::1`, `localhost`), so a bearer token never crosses the network unencrypted.
-- `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `me.cmgs.cocoonbox`). Ad hoc signed dev builds use `me.cmgs.cocoonbox.dev`, so they never read the installed app's item and never raise its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s me.cmgs.cocoonbox.dev -a <endpoint url>`.
+- `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `io.github.loomhand.cocoonbox`). Ad hoc signed dev builds use `io.github.loomhand.cocoonbox.dev`, so they never read the installed app's item and never raise its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s io.github.loomhand.cocoonbox.dev -a <endpoint url>`.
 - `CB_KEYCHAIN_FILE`: a keychain file to use instead of the login keychain, so tests never touch the user's own. Create it with `security create-keychain` and unlock it with `security unlock-keychain`; `scripts/test-cli.sh` does this, and also runs with `HOME` set to a test directory.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.
@@ -116,12 +116,12 @@ These environment variables serve test runs:
 - `CB_NO_BROWSER=1`: log a box CLI's sign-in link (`signin_link`) instead of opening it in the Mac's browser.
 - `CB_RFB_RAW=1`: offer only Raw, for throughput baselines.
 - `CB_RFB_PACE=0`: turn off request pacing, for A/B runs.
-- `CB_RFB_EAGER=1`: send the whole client side of the RFB handshake before the server's banner. This saves a round trip, but works only with a server that speaks RFB 3.8 without a password. It overrides the `rfbEagerHandshake` default (`defaults write me.cmgs.cocoonbox rfbEagerHandshake -bool true`), which is off.
+- `CB_RFB_EAGER=1`: send the whole client side of the RFB handshake before the server's banner. This saves a round trip, but works only with a server that speaks RFB 3.8 without a password. It overrides the `rfbEagerHandshake` default (`defaults write io.github.loomhand.cocoonbox rfbEagerHandshake -bool true`), which is off.
 - `CB_SCREEN_TRACE=<n>`: log the first n Screen chunks each way (`screen_up`/`screen_down`, default 8). Autopilot's `reopen-screen` starts a new RFB session, which begins with a full frame.
 - `CB_RFB_PROBE=1`: count the RFB rectangle encodings the server uses. It logs `rfb_encodings` when the session ends, and adds a clock read per rectangle.
 
-Timings go to `~/Library/Logs/CocoonBox/debug.log` and to os_signpost (subsystem `me.cmgs.cocoonbox`), in milliseconds since process start. The key lines are `first_frame_presented`, `rfb_first_update`, `input_rtt` (from input to the decoded update) and `input_to_present` (from input to the frame on glass).
+Timings go to `~/Library/Logs/CocoonBox/debug.log` and to os_signpost (subsystem `io.github.loomhand.cocoonbox`), in milliseconds since process start. The key lines are `first_frame_presented`, `rfb_first_update`, `input_rtt` (from input to the decoded update) and `input_to_present` (from input to the frame on glass).
 
 Ad hoc signing gives every build a new code hash. After a rebuild, the Keychain asks before it lets the new binary read a token that an older build stored. A Developer ID signature removes the prompt.
 
-Tokens live in the login Keychain under service `me.cmgs.cocoonbox`, one item per endpoint URL.
+Tokens live in the login Keychain under service `io.github.loomhand.cocoonbox`, one item per endpoint URL.

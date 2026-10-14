@@ -29,7 +29,7 @@ cat >"$app/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleIdentifier</key><string>me.cmgs.cocoonbox</string>
+  <key>CFBundleIdentifier</key><string>io.github.loomhand.cocoonbox</string>
   <key>CFBundleName</key><string>CocoonBox</string>
   <key>CFBundleDisplayName</key><string>CocoonBox</string>
   <key>CFBundleExecutable</key><string>CocoonBox</string>
@@ -48,8 +48,8 @@ cat >"$app/Contents/Info.plist" <<PLIST
 PLIST
 
 strip -x "$app/Contents/MacOS/CocoonBox" "$app/Contents/Helpers/cocoonbox"
-codesign --force --sign - --identifier me.cmgs.cocoonbox.cli "$app/Contents/Helpers/cocoonbox"
-codesign --force --sign - --identifier me.cmgs.cocoonbox "$app"
+codesign --force --sign - --identifier io.github.loomhand.cocoonbox.cli "$app/Contents/Helpers/cocoonbox"
+codesign --force --sign - --identifier io.github.loomhand.cocoonbox "$app"
 codesign --verify --strict "$app"
 du -sh "$app"
 echo "built $app"
