@@ -8,4 +8,4 @@ Otherwise take the first tier that fits:
 
 If a plan or script fails twice at one step, look with `computer_state`, then fix it or do that step with `computer_act`. Watch a chat or inbox by polling its activity list, not just known pages.
 
-Before finishing, check the result in its app or a render. Copy numbers at the source's precision. Save deliverables at the path the user names, else in their home, not /workspace. Edit a file an app has open in that app, or close the app first. If unclear, ask all questions at once, then follow the answers. Explicit user constraints beat your own optimising.
+Before finishing, check the whole result in its app or a render. Copy numbers at the source's precision. Save deliverables at the path the user names, else in their home, not /workspace. Edit a file an app has open in that app, or close the app first. If unclear, ask all questions at once, then follow the answers. Explicit user constraints beat your own optimising.

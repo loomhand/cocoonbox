@@ -180,6 +180,7 @@ mod tests {
                 "Watch a chat or inbox by polling its activity list, not just known pages."
             )
         );
+        assert!(ROUTING.contains("Before finishing, check the whole result"));
     }
 
     #[test]

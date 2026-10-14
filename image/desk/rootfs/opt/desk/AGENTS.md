@@ -124,6 +124,15 @@ Save a script that works as `/workspace/flows/<name>.mts` and replay it with new
 - Open dialogs by their keyboard shortcut (`ctrl+s`, `ctrl+shift+s`): more reliable than toolbar clicks.
 - Get one step working, then join the steps into a flow.
 
+## Finish the work
+
+- Do what the user, a reviewer or the brief asks; name a doubt in your answer instead of refusing.
+- A number you add takes the format of the numbers next to it (decimals, separators, units).
+- Before the final answer, check the whole output against each point of the request, not only the
+  part you changed last.
+- `shell` stops a command after 120 s by default and resets its session: pass `timeout_s` (at most
+  600) for a longer install, build or conversion.
+
 ## Traps on this desktop
 
 - A modal dialog opened by an element's accessibility action blocks its app, and the first key
