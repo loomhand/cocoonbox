@@ -54,6 +54,16 @@ impl Placement {
     }
 }
 
+/// A modal dialog that is open where the screen does not show it.
+pub struct Modal {
+    pub title: String,
+    pub pid: Option<u32>,
+    /// The title of the window it blocks, which it is transient for.
+    pub owner: String,
+    /// `hidden`, `off the screen` or `behind "TITLE"`.
+    pub place: String,
+}
+
 /// One X connection and one shared segment the size of the root window.
 pub struct Grabber {
     conn: RustConnection,
@@ -70,6 +80,10 @@ pub struct Grabber {
     shell: Mutex<HashMap<Window, bool>>,
     net_wm_pid: Atom,
     net_wm_check: Atom,
+    net_stacking: Atom,
+    net_wm_state: Atom,
+    state_modal: Atom,
+    state_hidden: Atom,
 }
 
 // SAFETY: the segment is private to this Grabber and only read through `&self` after a reply.
@@ -102,12 +116,26 @@ impl Grabber {
             .map_err(|e| format!("MIT-SHM: {e}"))?;
         let seg = conn.generate_id().map_err(|e| format!("X id: {e}"))?;
         let _ = conn.xinput_xi_query_version(2, 2).map(|c| c.reply());
-        let [net_wm_name, utf8, net_active, net_wm_pid, net_wm_check] = [
+        let [
+            net_wm_name,
+            utf8,
+            net_active,
+            net_wm_pid,
+            net_wm_check,
+            net_stacking,
+            net_wm_state,
+            state_modal,
+            state_hidden,
+        ] = [
             &b"_NET_WM_NAME"[..],
             b"UTF8_STRING",
             b"_NET_ACTIVE_WINDOW",
             b"_NET_WM_PID",
             b"_NET_SUPPORTING_WM_CHECK",
+            b"_NET_CLIENT_LIST_STACKING",
+            b"_NET_WM_STATE",
+            b"_NET_WM_STATE_MODAL",
+            b"_NET_WM_STATE_HIDDEN",
         ]
         .map(|name| {
             conn.intern_atom(false, name)
@@ -146,6 +174,10 @@ impl Grabber {
             shell: Mutex::new(HashMap::new()),
             net_wm_pid,
             net_wm_check,
+            net_stacking,
+            net_wm_state,
+            state_modal,
+            state_hidden,
         };
         attached?;
         Ok(grabber)
@@ -412,6 +444,80 @@ impl Grabber {
         })
     }
 
+    /// The modal dialogs the screen does not show: hidden, centred off the screen, or under another
+    /// window at their centre.
+    pub fn modals(&self) -> Result<Vec<Modal>, String> {
+        let clients: Vec<Window> = self
+            .conn
+            .get_property(
+                false,
+                self.root,
+                self.net_stacking,
+                AtomEnum::WINDOW,
+                0,
+                1024,
+            )
+            .map_err(|e| format!("get _NET_CLIENT_LIST_STACKING: {e}"))?
+            .reply()
+            .map_err(|e| format!("get _NET_CLIENT_LIST_STACKING: {e}"))?
+            .value32()
+            .map(Iterator::collect)
+            .unwrap_or_default();
+        let states = clients
+            .iter()
+            .map(|&c| {
+                self.conn
+                    .get_property(false, c, self.net_wm_state, AtomEnum::ATOM, 0, 32)
+                    .map_err(|e| format!("get _NET_WM_STATE: {e}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut out = Vec::new();
+        for (&c, state) in clients.iter().zip(states) {
+            let Some(state) = alive(state.reply(), "get _NET_WM_STATE")? else {
+                continue;
+            };
+            let atoms: Vec<Atom> = state.value32().map(Iterator::collect).unwrap_or_default();
+            if !atoms.contains(&self.state_modal) {
+                continue;
+            }
+            let place = if atoms.contains(&self.state_hidden) {
+                "hidden".to_owned()
+            } else {
+                match self.unseen(c)? {
+                    Some(place) => place,
+                    None => continue,
+                }
+            };
+            let owner = self
+                .conn
+                .get_property(false, c, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, 0, 1)
+                .ok()
+                .and_then(|r| r.reply().ok())
+                .and_then(|r| r.value32().and_then(|mut v| v.next()))
+                .filter(|w| *w != 0)
+                .map(|w| self.title(w))
+                .unwrap_or_default();
+            out.push(Modal {
+                title: self.title(c),
+                pid: self.pid(c),
+                owner,
+                place,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Where the screen does not show the client `c`; `None` when it shows or is not mapped.
+    fn unseen(&self, c: Window) -> Result<Option<String>, String> {
+        let frame = self.top_level(c)?;
+        let screen = (i32::from(self.width), i32::from(self.height));
+        Ok(match cover(frame, &self.children(false)?, screen) {
+            Some(Cover::OffScreen) => Some("off the screen".to_owned()),
+            Some(Cover::Under(w)) => Some(format!("behind \"{}\"", self.title(w))),
+            None => None,
+        })
+    }
+
     /// The WM_CLASS class of `w`, such as `Google-chrome`, or of the client inside it when `w` is a window manager frame.
     pub fn class(&self, w: Window) -> String {
         let children = self
@@ -620,6 +726,13 @@ impl Grabber {
     }
 }
 
+/// How the screen hides a mapped window frame.
+#[derive(Debug, PartialEq)]
+enum Cover {
+    OffScreen,
+    Under(Window),
+}
+
 /// One hash per 16-pixel square of the BGRX rows `bgrx`, `width` pixels wide, so any changed pixel
 /// changes its square's hash; the padding byte and the panel and dock rows do not count.
 pub fn block_hashes(bgrx: &[u8], width: usize, height: usize) -> Vec<u64> {
@@ -661,6 +774,25 @@ pub fn visible(a: &[u8], b: &[u8], width: usize, height: usize, block: usize, st
             .enumerate()
             .any(|(k, (p, q))| k % 4 != 3 && p.abs_diff(*q) > step)
     })
+}
+
+/// How `mapped`, the drawn root children bottom to top, hide `frame` on a screen of `width` by
+/// `height`: centred off the screen, or under another managed window at its centre.
+fn cover(frame: Window, mapped: &[Placement], (width, height): (i32, i32)) -> Option<Cover> {
+    let own = mapped.iter().find(|p| p.id == frame)?;
+    let (cx, cy) = (
+        i32::from(own.x) + i32::from(own.width) / 2,
+        i32::from(own.y) + i32::from(own.height) / 2,
+    );
+    if !(0..width).contains(&cx) || !(0..height).contains(&cy) {
+        return Some(Cover::OffScreen);
+    }
+    mapped
+        .iter()
+        .rev()
+        .find(|p| p.drawn && !p.popup && p.contains(cx, cy))
+        .filter(|p| p.id != frame)
+        .map(|p| Cover::Under(p.id))
 }
 
 fn mix(h: u64, word: u64) -> u64 {
@@ -737,6 +869,46 @@ mod tests {
         assert!(visible(&frame, &seen, w, h, 3 * 3 + 2, 24));
         assert!(!visible(&frame, &seen, w, h, 3 * 3 + 1, 24));
         assert!(visible(&frame, &seen[4..], w, h, 0, 24));
+    }
+
+    #[test]
+    fn a_frame_is_hidden_when_centred_off_the_screen_or_under_another_window() {
+        let at = |id: Window, x: i16, y: i16, popup: bool| Placement {
+            id,
+            x,
+            y,
+            width: 400,
+            height: 300,
+            popup,
+            drawn: true,
+        };
+        let screen = (1280, 800);
+        let dialog = at(9, 100, 100, false);
+        assert_eq!(
+            cover(9, &[at(5, 0, 0, false), dialog.clone()], screen),
+            None
+        );
+        assert_eq!(
+            cover(9, &[dialog.clone(), at(5, 150, 150, false)], screen),
+            Some(Cover::Under(5))
+        );
+        assert_eq!(
+            cover(9, &[dialog.clone(), at(5, 150, 150, true)], screen),
+            None
+        );
+        assert_eq!(
+            cover(9, &[dialog.clone(), at(5, 600, 150, false)], screen),
+            None
+        );
+        assert_eq!(
+            cover(9, &[at(9, 1100, 100, false)], screen),
+            Some(Cover::OffScreen)
+        );
+        assert_eq!(
+            cover(9, &[at(9, -250, 100, false)], screen),
+            Some(Cover::OffScreen)
+        );
+        assert_eq!(cover(9, &[at(5, 0, 0, false)], screen), None);
     }
 
     #[test]

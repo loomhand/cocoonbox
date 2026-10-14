@@ -92,7 +92,7 @@ impl Desk {
     /// Runs desk tool `tool`; input, window and launch calls go through `cua`.
     pub async fn run(&self, cua: &Cua, tool: &str, args: Value) -> Result<Output, String> {
         let text = match tool {
-            "desk_windows" => self.windows().await?,
+            "desk_windows" => self.windows(cua).await?,
             "desk_snapshot" => self.snapshot(parse(args)?).await?,
             "desk_find" => self.find(parse(args)?).await?,
             "desk_read" => self.read(parse(args)?).await?,
@@ -138,11 +138,22 @@ impl Desk {
         Ok(Output::text(text))
     }
 
-    /// The accessible top-level windows, focused first.
-    async fn windows(&self) -> Result<String, String> {
+    /// The accessible top-level windows, focused first; a modal dialog the screen does not show says where it is.
+    async fn windows(&self, cua: &Cua) -> Result<String, String> {
         let mut frames = self.frames().await?;
         frames.sort_by_key(|f| !f.active());
-        let list: Vec<Value> = frames.iter().map(frame_json).collect();
+        let modals = cua.modals();
+        let list: Vec<Value> = frames
+            .iter()
+            .map(|f| {
+                let mut v = frame_json(f);
+                if let Some(m) = modals.iter().find(|m| m.title == f.name && m.pid == f.pid) {
+                    v["modal"] = m.place.as_str().into();
+                    v["blocks"] = m.owner.as_str().into();
+                }
+                v
+            })
+            .collect();
         Ok(Value::Array(list).to_string())
     }
 
