@@ -33,7 +33,7 @@ You operate the graphical desktop of an Ubuntu 24.04 XFCE machine (screen 1280x8
 
 Loop: observe, act, verify.
 - Start with computer_state. It returns a screenshot of the whole screen, the visible windows, and the accessibility elements of the frontmost application window (or of the pid and window_id you pass).
-- Act with computer_act. Prefer element actions (the [index] from the latest computer_state): they hit the exact control even when the layout moves. Use x,y only when no element fits. Coordinates are screen pixels of the 1280x800 screenshot, origin at the top-left.
+- Act with computer_act. Prefer element actions (the [index] from the latest computer_state): they hit the exact control even when the layout moves. Use x,y only when no element fits. {points}
 - Every computer_act returns a fresh screenshot. Check it before the next step: did the click land, did the text appear? Never type after a click you have not confirmed.
 - A menu or dialog that opens is a new window. Call computer_state again to get its elements.
 - A dialog that ignores clicks and keys may sit under a newer dialog of the same app: close the newest one first.
@@ -45,6 +45,11 @@ Loop: observe, act, verify.
 - Never write a card number, CVC or other payment value you see on the screen, in your notes or your report: say only which fields are filled.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
+
+const SCREEN_POINTS: &str =
+    "Coordinates are screen pixels of the 1280x800 screenshot, origin at the top-left.";
+
+const IMAGE_POINTS: &str = "Coordinates are pixels of the latest screenshot image as you see it, origin at the top-left; the box maps them to the screen, so never scale them yourself.";
 
 /// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
 pub const ROUTING: &str = include_str!("../../image/desk/routing.md");
@@ -77,9 +82,16 @@ pub fn main(model: &str, computer_model: &str, vision: bool, automation: Automat
     prompt
 }
 
-/// Renders the computer subagent's prompt: observe, act, verify on the desktop.
-pub fn computer(model: &str) -> String {
-    COMPUTER.replace("{model}", model)
+/// Renders the computer subagent's prompt: observe, act, verify on the desktop, with x,y in the space `automation` maps.
+pub fn computer(model: &str, automation: Automation) -> String {
+    let points = if automation.plans() {
+        IMAGE_POINTS
+    } else {
+        SCREEN_POINTS
+    };
+    COMPUTER
+        .replace("{model}", model)
+        .replace("{points}", points)
 }
 
 /// Renders the line that names the box's API keys from the records of [`KEYS_FILE`]; None without keys.
@@ -213,10 +225,20 @@ mod tests {
 
     #[test]
     fn computer_prompt_names_the_serving_model() {
-        let p = computer("anthropic/claude-sonnet-5");
+        let p = computer("anthropic/claude-sonnet-5", Automation::Plain);
         assert!(p.starts_with(
             "You are anthropic/claude-sonnet-5, served through the cocoonbox gateway."
         ));
         assert!(!p.contains('{'), "unrendered placeholder: {p}");
+    }
+
+    #[test]
+    fn computer_prompt_on_a_desk_box_takes_x_y_in_screenshot_pixels() {
+        let plain = computer("m", Automation::Plain);
+        assert!(plain.contains(SCREEN_POINTS), "{plain}");
+        let desk = computer("m", Automation::Desk);
+        assert!(desk.contains(IMAGE_POINTS), "{desk}");
+        assert!(!desk.contains("1280x800 screenshot"), "{desk}");
+        assert!(!desk.contains('{'), "unrendered placeholder: {desk}");
     }
 }

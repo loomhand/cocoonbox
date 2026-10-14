@@ -124,7 +124,7 @@ impl Runtime {
             main_tools: tools::main_tools(false, cfg.automation),
             main_vision_tools: tools::main_tools(true, cfg.automation),
             computer_tools: tools::computer_tools(cfg.automation),
-            computer_prompt: prompts::computer(&cfg.model_computer),
+            computer_prompt: prompts::computer(&cfg.model_computer, cfg.automation),
             screen: tokio::sync::Mutex::new(()),
             stop,
             connect,
