@@ -6,7 +6,7 @@ title: cocoonbox
 
 # cocoonbox
 
-A persistent cloud computer per user, with a resident agent that any model can drive and a native macOS client to watch it, talk to it, and take over. Local coding agents (Claude Code, Codex, Cursor) use the same box through MCP. Boxes are [cocoon](https://cocoonstack.github.io/cocoon/) microVMs claimed from [sandbox](https://cocoonstack.github.io/sandbox/) warm pools; model calls go through [gateway](https://cocoonstack.github.io/gateway/).
+A persistent cloud computer per user, with a resident agent that any model can drive and a native macOS client to watch it, talk to it, and take over. Local coding agents use the same box through MCP. Boxes are [cocoon](https://cocoonstack.github.io/cocoon/) microVMs claimed from [sandbox](https://cocoonstack.github.io/sandbox/) warm pools; model calls go through [gateway](https://cocoonstack.github.io/gateway/).
 
 ## Guides
 
