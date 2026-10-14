@@ -1,15 +1,10 @@
-# Cuts <family>:vN from the previous template and publishes the rootfs to ghcr; see docs/image.md.
+# Cuts cbcore:vN from the previous template and publishes its rootfs as ghcr.io/loomhand/cocoonbox/base:vN and :latest; see docs/image.md.
 # It needs a self-hosted runner labelled cocoon on a host that runs the box's sandboxd instance.
 name: image
 
 on:
   workflow_dispatch:
     inputs:
-      family:
-        description: Image family
-        type: choice
-        options: [cbcore, cbdesk]
-        default: cbcore
       base:
         description: Base template, such as cbcore:v1
         required: true
@@ -50,24 +45,27 @@ jobs:
           chmod +x cocoonbox-agent-linux-amd64
 
       - name: Cut
-        run: sudo image/cut.sh ${{ inputs.provision && '-p' || '' }} -f "${{ inputs.family }}" -a "$PWD/cocoonbox-agent-linux-amd64" "${{ inputs.base }}" "${{ inputs.version }}"
+        run: sudo image/cut.sh ${{ inputs.provision && '-p' || '' }} -f cbcore -a "$PWD/cocoonbox-agent-linux-amd64" "${{ inputs.base }}" "${{ inputs.version }}"
 
       - name: Publish
         run: |
           set -eu
-          case "${{ inputs.family }}" in
-          cbcore) tarball=/srv/cb/sbx/build/cocoonbox-cbcore-${{ inputs.version }}.tar.gz ;;
-          cbdesk) tarball=/srv/cb/sbx/build/cocoonbox-desktop-${{ inputs.version }}.tar.gz ;;
-          esac
+          image="ghcr.io/${{ github.repository }}/base"
+          version="${{ inputs.version }}"
+          tarball=/srv/cb/sbx/build/cocoonbox-cbcore-$version.tar.gz
           revision=$(git rev-parse HEAD)
           agent_rev=$(git rev-parse --short HEAD)
           agent_sha=$(sha256sum cocoonbox-agent-linux-amd64 | cut -d' ' -f1)
           cua_commit=$(sed -n 's/^COMMIT=${COMMIT:-\(.*\)}$/\1/p' image/cua-driver.sh)
           cua_version=$(sed -n 's/^VERSION=${VERSION:-\(.*\)}$/\1/p' image/cua-driver.sh)
           echo "${{ github.token }}" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+          if oras resolve "$image:$version" >/dev/null 2>&1; then
+            echo "$image:$version exists; a published version is never overwritten" >&2
+            exit 1
+          fi
           # oras refuses absolute paths, so it pushes the tarball's basename from its directory
           cd "$(dirname "$tarball")"
-          oras push "ghcr.io/${{ github.repository }}/${{ inputs.family }}:${{ inputs.version }}" \
+          oras push "$image:$version" \
             --annotation "org.opencontainers.image.revision=$revision" \
             --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --annotation "io.github.loomhand.cocoonbox.agent-sha256=$agent_sha" \
@@ -75,3 +73,4 @@ jobs:
             --annotation "io.github.loomhand.cocoonbox.cua-driver-version=$cua_version" \
             --annotation "io.github.loomhand.cocoonbox.cua-driver-commit=$cua_commit" \
             "$(basename "$tarball"):application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"
+          oras tag "$image:$version" latest

@@ -25,15 +25,17 @@ sudo image/cut.sh -f cbcore -a cocoonbox-agent-linux-amd64 [-p] cbcore:v(N-1) vN
 
 ## Versions and pins
 
-- `<family>:vN` counts up per family and is never re-cut: a fix is a new N.
+- `<family>:vN` counts up per family and is never re-cut: a fix is a new N. `cbcore:vN` is the template name on the sandboxd host; the published image is `base` (below).
 - A release tag `vX.Y.Z` of this repository publishes the agent and api binaries and `cocoonbox-image-recipe-vX.Y.Z.tar.gz`, the `image/` tree of that commit with `PINS` naming the agent binary's sha256 and the cua-driver commit and version. An image cut from a release uses that release's agent, so the pins name exactly what the image carries.
 - A new image becomes a pool default only after a full boot and the box acceptance on a host.
 
 ## Publishing
 
-cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/...`, built from Dockerfiles by Actions). The box is cut from a booted VM instead, so its publish step runs where the cut runs:
+cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/...`, built from Dockerfiles by Actions, such as `sandbox/base` with an immutable `24.04-<sha>` and a moving `24.04`). The box is cut from a booted VM instead, so its publish step runs where the cut runs:
 
-- each accepted `<family>:vN` rootfs tarball goes to `ghcr.io/loomhand/cocoonbox/<family>:vN` as an OCI artifact (`oras push`, one layer of type `application/vnd.loomhand.cocoonbox.rootfs.tar+gzip`);
+- an accepted `cbcore:vN` is published as `ghcr.io/loomhand/cocoonbox/base:vN`, an OCI artifact (`oras push`, one layer of type `application/vnd.loomhand.cocoonbox.rootfs.tar+gzip`), and `latest` moves to it;
+- `vN` is immutable: it is pushed once, never re-tagged, and stays available for a rollback; the workflow refuses a `vN` that already exists;
+- `latest` always names the newest accepted `vN`;
 - the manifest's annotations pin what the image carries:
 
   | Annotation | Value |
@@ -45,5 +47,5 @@ cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/.
   | `io.github.loomhand.cocoonbox.cua-driver-version` | the cua-driver build version |
   | `io.github.loomhand.cocoonbox.cua-driver-commit` | the [loomhand/cua](https://github.com/loomhand/cua) commit cua-driver is built from |
 
-- a host imports it with `oras pull ghcr.io/loomhand/cocoonbox/<family>:vN` and `cocoon image import <family>:vN <tarball>`;
-- `.github/workflows/image.yml` is the workflow for it. It needs a self-hosted runner labelled `cocoon` on a sandboxd host; until one is registered the workflow does not run.
+- a host imports a version as its template: `oras pull ghcr.io/loomhand/cocoonbox/base:vN` and `cocoon image import cbcore:vN cocoonbox-cbcore-vN.tar.gz`;
+- `.github/workflows/image.yml` cuts and publishes. It needs a self-hosted runner labelled `cocoon` on a sandboxd host; until one is registered the workflow does not run.
