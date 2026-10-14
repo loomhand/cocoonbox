@@ -447,22 +447,7 @@ impl Grabber {
     /// The modal dialogs the screen does not show: hidden, centred off the screen, or under another
     /// window at their centre.
     pub fn modals(&self) -> Result<Vec<Modal>, String> {
-        let clients: Vec<Window> = self
-            .conn
-            .get_property(
-                false,
-                self.root,
-                self.net_stacking,
-                AtomEnum::WINDOW,
-                0,
-                1024,
-            )
-            .map_err(|e| format!("get _NET_CLIENT_LIST_STACKING: {e}"))?
-            .reply()
-            .map_err(|e| format!("get _NET_CLIENT_LIST_STACKING: {e}"))?
-            .value32()
-            .map(Iterator::collect)
-            .unwrap_or_default();
+        let clients = self.clients()?;
         let states = clients
             .iter()
             .map(|&c| {
@@ -505,6 +490,48 @@ impl Grabber {
             });
         }
         Ok(out)
+    }
+
+    /// The titles of the windows the window manager manages, minimized ones too.
+    pub fn client_titles(&self) -> Result<Vec<String>, String> {
+        let names = self
+            .clients()?
+            .iter()
+            .map(|&c| {
+                self.conn
+                    .get_property(false, c, self.net_wm_name, self.utf8, 0, 64)
+                    .map_err(|e| format!("get _NET_WM_NAME: {e}"))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let mut titles = Vec::new();
+        for name in names {
+            if let Some(r) = alive(name.reply(), "get _NET_WM_NAME")?
+                && !r.value.is_empty()
+            {
+                titles.push(String::from_utf8_lossy(&r.value).into_owned());
+            }
+        }
+        Ok(titles)
+    }
+
+    /// The windows the window manager manages, bottom to top.
+    fn clients(&self) -> Result<Vec<Window>, String> {
+        Ok(self
+            .conn
+            .get_property(
+                false,
+                self.root,
+                self.net_stacking,
+                AtomEnum::WINDOW,
+                0,
+                1024,
+            )
+            .map_err(|e| format!("get _NET_CLIENT_LIST_STACKING: {e}"))?
+            .reply()
+            .map_err(|e| format!("get _NET_CLIENT_LIST_STACKING: {e}"))?
+            .value32()
+            .map(Iterator::collect)
+            .unwrap_or_default())
     }
 
     /// Where the screen does not show the client `c`; `None` when it shows or is not mapped.

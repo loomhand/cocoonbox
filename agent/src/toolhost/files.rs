@@ -16,6 +16,8 @@ const READ_LINES: usize = 2000;
 const LINE_CHARS: usize = 2000;
 const READ_BYTES: usize = 100_000;
 const LIST_ENTRIES: usize = 500;
+const BROWSERS: [&str; 3] = ["Chrome", "Chromium", "Firefox"];
+const NAME_EDGES: [char; 11] = ['/', ' ', '\t', '\n', '\'', '"', '=', '(', ')', ';', ','];
 
 #[derive(Deserialize)]
 struct ReadArgs {
@@ -223,6 +225,49 @@ pub async fn write_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
+/// A note for a call that names, in `text`, a file an app window shows in its title among `titles`: the
+/// app keeps its own copy, and its next save overwrites a change made outside it.
+pub fn held_note(text: &str, titles: &[String]) -> String {
+    let mut note = String::new();
+    for (title, name) in titles
+        .iter()
+        .filter_map(|t| Some((t, document(t)?)))
+        .filter(|(_, name)| names(text, name))
+    {
+        let _ = write!(
+            note,
+            "\nnote: the window \"{title}\" has {name} open, and its next save overwrites a change made here: close the file there before you change it, or reload it there after"
+        );
+    }
+    note
+}
+
+/// The file name in the title of a document window outside a browser, such as `answers.xlsx` of
+/// `answers.xlsx - LibreOffice Calc` or `*~/notes.txt - Mousepad`.
+fn document(title: &str) -> Option<&str> {
+    let (doc, app) = title.rsplit_once(" - ")?;
+    if BROWSERS.iter().any(|b| app.contains(b)) {
+        return None;
+    }
+    let path = doc.split(" (").next()?.trim().trim_start_matches('*');
+    let name = path.rsplit('/').next()?;
+    let (stem, ext) = name.rsplit_once('.')?;
+    let file = !stem.is_empty()
+        && (1..=5).contains(&ext.len())
+        && ext.chars().all(|c| c.is_ascii_alphanumeric());
+    file.then_some(name)
+}
+
+/// Whether `text` holds `name` as a whole path segment or word.
+fn names(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(i, _)| {
+        let before = text[..i].chars().next_back();
+        let after = text[i + name.len()..].chars().next();
+        before.is_none_or(|c| NAME_EDGES.contains(&c))
+            && after.is_none_or(|c| NAME_EDGES.contains(&c))
+    })
+}
+
 /// Opens `path` so that it resolves beneath `workspace` and outside `hidden`, `..` and symlinks included.
 fn open_beneath(
     workspace: &Path,
@@ -269,6 +314,39 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn a_call_naming_a_file_an_app_window_shows_gets_a_note() {
+        let titles: Vec<String> = [
+            "answers.xlsx - LibreOffice Calc",
+            "*~/notes.txt - Mousepad",
+            "report.md (~/Desktop) - gedit",
+            "example.com - Google Chrome",
+            "Desktop - Thunar",
+            "",
+        ]
+        .map(str::to_owned)
+        .into();
+        let held = held_note(
+            "python3 -c \"import openpyxl; wb = openpyxl.load_workbook('/home/user/answers.xlsx')\"",
+            &titles,
+        );
+        assert_eq!(
+            held,
+            "\nnote: the window \"answers.xlsx - LibreOffice Calc\" has answers.xlsx open, and its next save overwrites a change made here: close the file there before you change it, or reload it there after"
+        );
+        assert!(held_note("/home/user/notes.txt", &titles).contains("\"*~/notes.txt - Mousepad\""));
+        assert!(held_note("sed -i s/a/b/ report.md", &titles).contains("report.md open"));
+        for quiet in [
+            "curl -s example.com",
+            "ls Desktop",
+            "cat old_answers.xlsx",
+            "cp answers.xlsx.bak /tmp",
+            "",
+        ] {
+            assert_eq!(held_note(quiet, &titles), "", "{quiet}");
+        }
+    }
 
     #[tokio::test]
     async fn write_read_edit_list_round_trip() {

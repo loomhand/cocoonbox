@@ -88,20 +88,28 @@ impl Host {
     /// Executes one call; failures become error outputs for the model.
     pub async fn dispatch(&self, call: Call) -> Output {
         let result = match call.tool.as_str() {
-            "shell" => self
-                .shell(&call.agent_id, call.args)
-                .await
-                .map(Output::text),
+            "shell" => {
+                let note = self.held(call.args["command"].as_str().unwrap_or_default());
+                self.shell(&call.agent_id, call.args)
+                    .await
+                    .map(|out| Output::text(out + &note))
+            }
             "shell_close" => self.close_shell(&call.agent_id).await.map(Output::text),
             "read_file" => files::read(&self.workspace, self.hidden.as_deref(), call.args)
                 .await
                 .map(Output::text),
-            "write_file" => files::write(&self.workspace, call.args)
-                .await
-                .map(Output::text),
-            "edit_file" => files::edit(&self.workspace, call.args)
-                .await
-                .map(Output::text),
+            "write_file" => {
+                let note = self.held(call.args["path"].as_str().unwrap_or_default());
+                files::write(&self.workspace, call.args)
+                    .await
+                    .map(|out| Output::text(out + &note))
+            }
+            "edit_file" => {
+                let note = self.held(call.args["path"].as_str().unwrap_or_default());
+                files::edit(&self.workspace, call.args)
+                    .await
+                    .map(|out| Output::text(out + &note))
+            }
             "list_dir" => files::list(&self.workspace, self.hidden.as_deref(), call.args)
                 .await
                 .map(Output::text),
@@ -191,6 +199,11 @@ impl Host {
         }
         let shell = slot.as_mut().ok_or("shell missing")?;
         shell.run(command, timeout).await
+    }
+
+    /// With plans, a note on the files that `text` names and an app window has open (see [`files::held_note`]).
+    fn held(&self, text: &str) -> String {
+        files::held_note(text, &self.cua.window_titles())
     }
 
     async fn close_shell(&self, agent_id: &str) -> Result<String, String> {
