@@ -33,6 +33,7 @@ const FAKE_NODE: &str = r#"src=$(cat "$CB_SCRIPT")
 case "$src" in
 *boom*) echo "Error: boom" >&2; exit 1 ;;
 *hang*) sleep 300 & echo $! > grandchild.pid; sleep 300 ;;
+*leftover*) sleep 300 & echo $! > leftover.pid; echo left; printf 7 > "$CB_RESULT" ;;
 *) echo "ran $1 in $PWD"; printf '{"params":%s}' "$CB_PARAMS" > "$CB_RESULT"; printf outline > "$CB_SNAPSHOT" ;;
 esac"#;
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
@@ -3543,6 +3544,42 @@ async fn stops_a_run_past_its_timeout(h: &Harness, tool: &str) {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     assert!(!alive, "the script's child survived the timeout");
+}
+
+#[tokio::test]
+async fn mcp_script_run_returns_once_the_script_exits_and_kills_a_child_that_holds_its_output() {
+    let h = Harness::with_desk(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+
+    let started = std::time::Instant::now();
+    let out = mcp
+        .call(
+            "script_run",
+            json!({"code": "leftover", "timeout_s": 20, "screenshot": false}),
+        )
+        .await;
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    assert_eq!(out["isError"], false, "{out}");
+    let report: Value = serde_json::from_str(out["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(report["result"], 7, "{report}");
+    assert_eq!(report["logs"], "left", "{report}");
+    assert_eq!(report["exit_code"], 0, "{report}");
+    let pid = std::fs::read_to_string(h.workspace.join("leftover.pid")).unwrap();
+    let proc = PathBuf::from(format!("/proc/{}", pid.trim()));
+    let mut alive = true;
+    for _ in 0..50 {
+        let state = std::fs::read_to_string(proc.join("stat")).unwrap_or_default();
+        alive = !state.is_empty() && !state.contains(") Z ");
+        if !alive {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(!alive, "the child holding the script's output survived");
 }
 
 #[tokio::test]

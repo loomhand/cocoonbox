@@ -24,6 +24,7 @@ use crate::sys;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_TIMEOUT: Duration = Duration::from_secs(110);
 const TERM_GRACE: Duration = Duration::from_secs(2);
+const PIPE_GRACE: Duration = Duration::from_millis(500);
 const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_RESULT_BYTES: u64 = 256 << 10;
 const KEPT_SHOTS: usize = 20;
@@ -40,6 +41,7 @@ if (typeof mod.main === 'function') {
   writeFileSync(env.CB_RESULT, JSON.stringify(value ?? null) ?? 'null')
 }
 if (globalThis.$snapshot !== undefined) writeFileSync(env.CB_SNAPSHOT, String(globalThis.$snapshot))
+setTimeout(() => process.exit(), 500).unref()
 "#;
 
 /// Runs scripts with Node at `bin`, one scratch directory per run under `dir`.
@@ -231,11 +233,26 @@ impl Scripts {
         };
         let (mut logs, mut errs) = (Capture::default(), Capture::default());
         let ran = tokio::time::timeout(timeout, async {
-            let (_, _, status) = tokio::join!(
-                drain(stdout, &mut logs),
-                drain(stderr, &mut errs),
-                child.wait()
-            );
+            let drained = async {
+                tokio::join!(drain(stdout, &mut logs), drain(stderr, &mut errs));
+            };
+            tokio::pin!(drained);
+            let mut open = true;
+            let status = tokio::select! {
+                status = child.wait() => status,
+                () = &mut drained => {
+                    open = false;
+                    child.wait().await
+                }
+            };
+            if open
+                && tokio::time::timeout(PIPE_GRACE, &mut drained)
+                    .await
+                    .is_err()
+            {
+                guard.signal(libc::SIGKILL);
+                let _ = tokio::time::timeout(PIPE_GRACE, &mut drained).await;
+            }
             status
         })
         .await;
@@ -437,6 +454,37 @@ async fn prune(shots: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_run_ends_when_main_returns_though_a_timer_or_server_stays_open() {
+        let Some(node) = std::env::var_os("NODE_BIN") else {
+            eprintln!("SKIP: no Node; set NODE_BIN to run");
+            return;
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let scripts = Scripts::new(node.into(), dir.path().into());
+        for code in [
+            "setInterval(() => {}, 1000)\nexport function main(p) { console.log('tick'); return p.n }",
+            "import { createServer } from 'node:net'\ncreateServer().listen(0)\nexport async function main(p) { console.log('tick'); return p.n }",
+        ] {
+            let started = Instant::now();
+            let report = scripts
+                .run_script(
+                    Script::Code(code.to_owned()),
+                    r#"{"n":7}"#,
+                    dir.path(),
+                    Duration::from_secs(20),
+                    "run",
+                )
+                .await
+                .unwrap();
+            assert!(started.elapsed() < Duration::from_secs(5), "{report}");
+            assert_eq!(report["result"], 7, "{report}");
+            assert_eq!(report["logs"], "tick", "{report}");
+            assert_eq!(report["exit_code"], 0, "{report}");
+            assert!(report.get("error").is_none(), "{report}");
+        }
+    }
 
     #[test]
     fn failure_keeps_the_tail_of_stderr_without_info_lines() {
