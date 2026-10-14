@@ -1,4 +1,4 @@
-.PHONY: all api agent deskhost macos gate help
+.PHONY: all api agent deskhost macos app gate help
 
 MACOS_TEST_ARGS ?=
 
@@ -15,6 +15,9 @@ deskhost: ## deskhost: fmt check, clippy -D warnings, test (macOS or Windows)
 
 macos: ## macOS app: build the app and run the swift-testing suite (needs ../swift-rfb)
 	cd macos && bash -c 'source scripts/toolchain.sh && swift build --product CocoonBox' && scripts/test.sh $(MACOS_TEST_ARGS)
+
+app: ## macOS app bundle dist/CocoonBox.app for CB_ENDPOINT, ad hoc signed
+	cd macos && scripts/bundle.sh
 
 gate: ## Clean gate over the tracked files and the dependencies
 	scripts/clean-gate repo

@@ -49,6 +49,16 @@ jobs:
         working-directory: cocoonbox
         run: make macos MACOS_TEST_ARGS="--no-parallel --skip updateRateAcrossALongPath"
 
+      - name: App bundle carries the icon
+        working-directory: cocoonbox
+        env:
+          CB_ENDPOINT: https://box.example.com
+        run: |
+          make app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' macos/dist/CocoonBox.app/Contents/Info.plist)" = AppIcon
+          iconutil -c iconset -o "$RUNNER_TEMP/AppIcon.iconset" macos/dist/CocoonBox.app/Contents/Resources/AppIcon.icns
+          ls "$RUNNER_TEMP/AppIcon.iconset"
+
       - name: Desk host
         working-directory: cocoonbox
         run: make deskhost
