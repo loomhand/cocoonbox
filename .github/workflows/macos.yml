@@ -23,6 +23,7 @@ permissions:
 jobs:
   test:
     runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -42,9 +43,10 @@ jobs:
           sudo xcode-select -s /Library/Developer/CommandLineTools
           swift --version
 
+      # the suite runs serially: in parallel on the runner's three cores no test finished in 30 minutes
       - name: App build and tests
         working-directory: cocoonbox
-        run: make macos
+        run: make macos MACOS_TEST_ARGS=--no-parallel
 
       - name: Desk host
         working-directory: cocoonbox
