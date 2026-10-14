@@ -195,7 +195,7 @@ func TestOperationFails(t *testing.T) {
 		event  machines.Machine
 		detail string
 	}{
-		{name: "machine failed", event: machines.Machine{ID: aliceBox, State: machines.StateFailed, Reason: "push http://10.90.0.4:5000/x: refused", Detail: "vm=failed"}, detail: "machine failed to start"},
+		{name: "machine failed", event: machines.Machine{ID: aliceBox, State: machines.StateFailed, Reason: "push http://192.0.2.10:5000/x: refused", Detail: "vm=failed"}, detail: "machine failed to start"},
 		{name: "machine gone", event: machines.Machine{ID: aliceBox, State: machines.StateGone}, detail: "box was deleted"},
 		{name: "node at capacity", event: machines.Machine{ID: aliceBox, State: machines.StateFailed, Reason: machines.ErrCapacity.Error()}, detail: machines.ErrCapacity.Error()},
 	}
@@ -214,11 +214,11 @@ func TestOperationFails(t *testing.T) {
 				t.Errorf("last event = %v, want FAILED %q", last, tt.detail)
 			}
 			for _, ev := range events {
-				if strings.Contains(ev.GetDetail(), "10.90.0.4") || strings.Contains(ev.GetDetail(), "vm=") {
+				if strings.Contains(ev.GetDetail(), "192.0.2.10") || strings.Contains(ev.GetDetail(), "vm=") {
 					t.Errorf("event leaks a backend message: %q", ev.GetDetail())
 				}
 			}
-			if box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); err == nil && strings.Contains(box.GetFailureReason(), "10.90.0.4") {
+			if box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); err == nil && strings.Contains(box.GetFailureReason(), "192.0.2.10") {
 				t.Errorf("failure_reason leaks a backend message: %q", box.GetFailureReason())
 			}
 		})
