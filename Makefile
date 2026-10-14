@@ -13,7 +13,7 @@ agent: ## agent: fmt check, clippy -D warnings, test (CB_NO_BROWSER=1 skips the 
 deskhost: ## deskhost: fmt check, clippy -D warnings, test (macOS or Windows)
 	cd deskhost && cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
 
-macos: ## macOS app: build the app and run the swift-testing suite (needs ../swift-rfb)
+macos: ## macOS app: build the app and run the swift-testing suite
 	cd macos && bash -c 'source scripts/toolchain.sh && swift build --product CocoonBox' && scripts/test.sh $(MACOS_TEST_ARGS)
 
 app: ## macOS app bundle dist/CocoonBox.app for CB_ENDPOINT, ad hoc signed

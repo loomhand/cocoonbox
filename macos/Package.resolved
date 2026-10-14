@@ -1,5 +1,5 @@
 {
-  "originHash" : "a96a594ebac362a13b3281d602d0909d62c13c25d35b2841589579e5623ce193",
+  "originHash" : "2f4ae1aafc94cfe4f2acabc601e53237e502b13cf7a96bcc777b57cad9cc484e",
   "pins" : [
     {
       "identity" : "grpc-swift-2",
@@ -197,6 +197,15 @@
       "state" : {
         "revision" : "55d7a1cc5666b85c13464aea1c4b4a90feccb4c8",
         "version" : "1.38.1"
+      }
+    },
+    {
+      "identity" : "swift-rfb",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/loomhand/swift-rfb.git",
+      "state" : {
+        "revision" : "35fb79621add79b3e7f8bb89e733c06820540251",
+        "version" : "0.1.0"
       }
     },
     {

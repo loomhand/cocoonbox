@@ -22,7 +22,7 @@ let package = Package(
         .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.10.0"),
         .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.4.1"),
         .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.1"),
-        .package(path: "../../swift-rfb"),
+        .package(url: "https://github.com/loomhand/swift-rfb.git", from: "0.1.0"),
         .package(url: "https://github.com/Lakr233/libghostty-spm.git", exact: "1.6.20260929"),
     ],
     targets: [

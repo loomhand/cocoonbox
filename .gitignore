@@ -8,3 +8,5 @@
 /image/vendor/
 /dist/
 /dist-extra/
+/.build/
+/Package.resolved

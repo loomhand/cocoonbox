@@ -56,7 +56,7 @@ docker run --rm -v "$PWD":/w -w /w/agent -e CB_NO_BROWSER=1 rust:1.98.0 \
   sh -c 'cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked'
 ```
 
-The macOS package expects [swift-rfb](https://github.com/loomhand/swift-rfb) checked out next to this repository (`../swift-rfb`). Component details are in [agent/README.md](agent/README.md), [api/README.md](api/README.md), [macos/README.md](macos/README.md) and [deskhost/README.md](deskhost/README.md).
+The root `Package.swift` exports `CocoonBoxKit` and `CocoonBoxTerminal` for packages that build on them: `.package(url: "https://github.com/loomhand/cocoonbox.git", from: "<version>")`. Component details are in [agent/README.md](agent/README.md), [api/README.md](api/README.md), [macos/README.md](macos/README.md) and [deskhost/README.md](deskhost/README.md).
 
 ## Run
 
