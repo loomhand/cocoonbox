@@ -31,6 +31,7 @@ const SCREEN_POINT: &str = "or screen coordinates x,y.";
 const SHOT_POINT: &str = "or x,y in the pixels of your latest screenshot.";
 const SCALED_STATE: &str = "Screenshot of the whole screen, scaled to a long edge of 1024 pixels unless max_edge says otherwise, the visible windows (pid, window_id), and the accessibility elements [index] of the frontmost window or of the given pid.";
 const REGION_HINT: &str = "Only this part of the screen, at full resolution: x, y, w, h in the pixels of your last screenshot";
+const SHELL_HINT: &str = " Keep each command's wait well under the time left; save the required output early and improve it after.";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -196,6 +197,7 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
         with_tab(&mut tools);
         tools.extend([gui_plan_tool(), script, fetch_tool(), tabs_tool()]);
         with_scale(&mut tools);
+        with_budget(&mut tools);
     }
     tools
 }
@@ -233,6 +235,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
         ]);
         with_scale(&mut tools);
         with_region(&mut tools);
+        with_budget(&mut tools);
     }
     tools
 }
@@ -267,6 +270,13 @@ fn with_region(tools: &mut [ToolSpec]) {
                 "required": ["x", "y", "w", "h"]
             });
         }
+    }
+}
+
+/// Gives the `shell` of a box that runs GUI plans its time budget.
+fn with_budget(tools: &mut [ToolSpec]) {
+    for t in tools.iter_mut().filter(|t| t.name == "shell") {
+        t.description = Cow::Owned(format!("{}{SHELL_HINT}", t.description));
     }
 }
 

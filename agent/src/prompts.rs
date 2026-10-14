@@ -182,6 +182,7 @@ mod tests {
             )
         );
         assert!(ROUTING.contains("Before finishing, check the whole result"));
+        assert!(ROUTING.contains("If the task says an input changes later, wait and re-check."));
     }
 
     #[test]

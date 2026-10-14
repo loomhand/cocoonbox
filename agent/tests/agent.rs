@@ -3636,6 +3636,27 @@ async fn mcp_serves_the_desk_guide_as_a_resource() {
 }
 
 #[test]
+fn the_shell_of_a_box_that_runs_gui_plans_names_its_time_budget() {
+    use cocoonbox_agent::tools::{main_tools, remote_tools};
+    for (tools, budget) in [
+        (main_tools(false, Automation::Desk), true),
+        (remote_tools(Automation::Desk), true),
+        (main_tools(false, Automation::Plain), false),
+        (remote_tools(Automation::Plain), false),
+    ] {
+        let shell = tools.iter().find(|t| t.name == "shell").unwrap();
+        assert_eq!(
+            shell
+                .description
+                .ends_with("Keep each command's wait well under the time left; save the required output early and improve it after."),
+            budget,
+            "{}",
+            shell.description
+        );
+    }
+}
+
+#[test]
 fn screenshots_of_a_box_that_runs_gui_plans_name_the_default_scale_instead_of_the_screen_size() {
     let shots = ["screenshot", "computer_state"];
     let desk = cocoonbox_agent::tools::main_tools(true, Automation::Desk)
