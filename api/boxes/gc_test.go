@@ -12,10 +12,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
-	"github.com/CMGS/cocoonbox/api/users"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 func TestRetainKeepsTheTimeMachineSet(t *testing.T) {

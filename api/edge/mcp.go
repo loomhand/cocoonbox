@@ -16,10 +16,10 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	"github.com/CMGS/cocoonbox/api/credential"
-	"github.com/CMGS/cocoonbox/api/machines"
-	"github.com/CMGS/cocoonbox/api/oauth"
+	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/credential"
+	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
 const (

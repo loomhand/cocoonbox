@@ -7,7 +7,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/CMGS/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/store"
 )
 
 const purgeBatch = 1000

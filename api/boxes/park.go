@@ -10,9 +10,9 @@ import (
 
 	"github.com/projecteru2/core/log"
 
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 // metaSlept records when the api last hibernated a machine, in Unix milliseconds.

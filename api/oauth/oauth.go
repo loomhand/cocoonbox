@@ -15,7 +15,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 
-	"github.com/CMGS/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const (

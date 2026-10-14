@@ -18,7 +18,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 
-	"github.com/CMGS/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/keyring"
 )
 
 const (

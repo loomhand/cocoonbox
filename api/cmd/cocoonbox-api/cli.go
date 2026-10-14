@@ -13,10 +13,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/CMGS/cocoonbox/api/boxes"
-	"github.com/CMGS/cocoonbox/api/config"
-	"github.com/CMGS/cocoonbox/api/keyring"
-	"github.com/CMGS/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/config"
+	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const (

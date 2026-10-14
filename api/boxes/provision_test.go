@@ -13,11 +13,11 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	"github.com/CMGS/cocoonbox/api/credential"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
-	"github.com/CMGS/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/credential"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 func TestEnsureProvisionsBeforeRunning(t *testing.T) {

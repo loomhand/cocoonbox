@@ -18,9 +18,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	"github.com/CMGS/cocoonbox/api/credential"
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/credential"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const (

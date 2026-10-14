@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 // Tenants manages the instance's tenants with its root api token, each in one egress class.

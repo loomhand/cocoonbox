@@ -11,9 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*controlv1.Operation, error) {

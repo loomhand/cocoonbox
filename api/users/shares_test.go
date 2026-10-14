@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/auth"
 )
 
 func TestShareLifecycle(t *testing.T) {

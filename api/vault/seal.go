@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/CMGS/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/keyring"
 )
 
 // sealer seals key values with AES-256-GCM under a key derived from the owner's state key.

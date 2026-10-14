@@ -21,8 +21,8 @@ import (
 	"github.com/projecteru2/core/log"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/CMGS/cocoonbox/api/gwkeys"
-	"github.com/CMGS/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/gwkeys"
+	"github.com/loomhand/cocoonbox/api/keyring"
 )
 
 const (

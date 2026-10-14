@@ -16,11 +16,11 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/CMGS/cocoonbox/api/dialer"
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
-	"github.com/CMGS/cocoonbox/api/keyring"
-	"github.com/CMGS/cocoonbox/api/machines"
-	"github.com/CMGS/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/dialer"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/store"
 )
 
 const (

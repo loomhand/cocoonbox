@@ -21,8 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/CMGS/cocoonbox/api/gwkeys"
-	"github.com/CMGS/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/gwkeys"
+	"github.com/loomhand/cocoonbox/api/keyring"
 )
 
 const password = "correct horse battery"

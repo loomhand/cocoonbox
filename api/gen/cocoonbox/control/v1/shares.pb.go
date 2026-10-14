@@ -543,7 +543,7 @@ const file_cocoonbox_control_v1_shares_proto_rawDesc = "" +
 	"\bSetWrite\x12*.cocoonbox.control.v1.SetShareWriteRequest\x1a\x1b.cocoonbox.control.v1.Share\x12O\n" +
 	"\n" +
 	"Regenerate\x12\x1e.cocoonbox.control.v1.ShareRef\x1a!.cocoonbox.control.v1.ShareSecret\x12S\n" +
-	"\x06Revoke\x12\x1e.cocoonbox.control.v1.ShareRef\x1a).cocoonbox.control.v1.RevokeShareResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\x06Revoke\x12\x1e.cocoonbox.control.v1.ShareRef\x1a).cocoonbox.control.v1.RevokeShareResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_shares_proto_rawDescOnce sync.Once

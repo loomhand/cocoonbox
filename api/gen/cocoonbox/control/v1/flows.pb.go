@@ -516,7 +516,7 @@ const file_cocoonbox_control_v1_flows_proto_rawDesc = "" +
 	"\x04List\x12&.cocoonbox.control.v1.ListFlowsRequest\x1a'.cocoonbox.control.v1.ListFlowsResponse\x12]\n" +
 	"\x06Export\x12(.cocoonbox.control.v1.ExportFlowsRequest\x1a).cocoonbox.control.v1.ExportFlowsResponse\x12W\n" +
 	"\x04Save\x12&.cocoonbox.control.v1.SaveFlowsRequest\x1a'.cocoonbox.control.v1.SaveFlowsResponse\x12]\n" +
-	"\x06Delete\x12(.cocoonbox.control.v1.DeleteFlowsRequest\x1a).cocoonbox.control.v1.DeleteFlowsResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\x06Delete\x12(.cocoonbox.control.v1.DeleteFlowsRequest\x1a).cocoonbox.control.v1.DeleteFlowsResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_flows_proto_rawDescOnce sync.Once

@@ -1,4 +1,4 @@
-module github.com/CMGS/cocoonbox/api
+module github.com/loomhand/cocoonbox/api
 
 go 1.27.1
 

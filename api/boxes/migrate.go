@@ -10,7 +10,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/CMGS/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/store"
 )
 
 const migrateCopies = 16

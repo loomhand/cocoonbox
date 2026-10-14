@@ -17,9 +17,9 @@ import (
 
 	"github.com/projecteru2/core/log"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/oauth"
+	"github.com/loomhand/cocoonbox/api/auth"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
 const (

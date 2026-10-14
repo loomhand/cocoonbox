@@ -1527,7 +1527,7 @@ const file_cocoonbox_control_v1_connectors_proto_rawDesc = "" +
 	"\tSetPolicy\x12&.cocoonbox.control.v1.SetPolicyRequest\x1a\x1f.cocoonbox.control.v1.Connector\x12V\n" +
 	"\aApprove\x12$.cocoonbox.control.v1.ApproveRequest\x1a%.cocoonbox.control.v1.ApproveResponse\x12Y\n" +
 	"\bActivity\x12%.cocoonbox.control.v1.ActivityRequest\x1a&.cocoonbox.control.v1.ActivityResponse\x12h\n" +
-	"\rSpendRequests\x12*.cocoonbox.control.v1.SpendRequestsRequest\x1a+.cocoonbox.control.v1.SpendRequestsResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\rSpendRequests\x12*.cocoonbox.control.v1.SpendRequestsRequest\x1a+.cocoonbox.control.v1.SpendRequestsResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_connectors_proto_rawDescOnce sync.Once

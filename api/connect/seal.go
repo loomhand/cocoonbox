@@ -11,7 +11,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/CMGS/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/keyring"
 )
 
 type secrets struct {

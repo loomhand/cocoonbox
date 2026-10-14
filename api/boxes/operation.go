@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
 const (

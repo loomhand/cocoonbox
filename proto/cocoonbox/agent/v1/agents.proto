@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package cocoonbox.agent.v1;
 
-option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1";
+option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1";
 
 // Agents and Session are served by cocoonbox-agent inside the box. Clients
 // reach them through the edge with `authorization: Bearer <user token>` and

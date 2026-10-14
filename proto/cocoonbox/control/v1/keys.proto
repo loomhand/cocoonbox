@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package cocoonbox.control.v1;
 
-option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
+option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
 
 // Keys is served by cocoonbox-api for the caller's own API keys, with
 // `authorization: Bearer <user token>`. A key's value goes in once and never

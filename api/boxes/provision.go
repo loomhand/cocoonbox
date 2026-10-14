@@ -12,9 +12,9 @@ import (
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc/metadata"
 
-	"github.com/CMGS/cocoonbox/api/credential"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/credential"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const (

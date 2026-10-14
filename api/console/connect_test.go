@@ -12,13 +12,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	"github.com/CMGS/cocoonbox/api/boxes"
-	"github.com/CMGS/cocoonbox/api/connect"
-	"github.com/CMGS/cocoonbox/api/connect/connecttest"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/users"
-	"github.com/CMGS/cocoonbox/api/vault"
+	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/connect"
+	"github.com/loomhand/cocoonbox/api/connect/connecttest"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/vault"
 )
 
 func TestTheCallbackCompletesOnlyWithTheFlowsNonce(t *testing.T) {

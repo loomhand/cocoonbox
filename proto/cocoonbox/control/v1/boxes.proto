@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package cocoonbox.control.v1;
 
-option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
+option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
 
 // Boxes is served by cocoonbox-api (the edge). Callers authenticate with
 // `authorization: Bearer <user token>`.

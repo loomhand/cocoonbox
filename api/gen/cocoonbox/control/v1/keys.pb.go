@@ -473,7 +473,7 @@ const file_cocoonbox_control_v1_keys_proto_rawDesc = "" +
 	"\x03Add\x12#.cocoonbox.control.v1.AddKeyRequest\x1a\x19.cocoonbox.control.v1.Key\x12U\n" +
 	"\x04List\x12%.cocoonbox.control.v1.ListKeysRequest\x1a&.cocoonbox.control.v1.ListKeysResponse\x12K\n" +
 	"\x06Rotate\x12&.cocoonbox.control.v1.RotateKeyRequest\x1a\x19.cocoonbox.control.v1.Key\x12O\n" +
-	"\x06Delete\x12\x1c.cocoonbox.control.v1.KeyRef\x1a'.cocoonbox.control.v1.DeleteKeyResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\x06Delete\x12\x1c.cocoonbox.control.v1.KeyRef\x1a'.cocoonbox.control.v1.DeleteKeyResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_keys_proto_rawDescOnce sync.Once

@@ -4,8 +4,8 @@ import (
 	"context"
 	"net/http"
 
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/vault"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/vault"
 )
 
 const keysPage = "/cb/keys"

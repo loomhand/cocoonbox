@@ -21,11 +21,11 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	"github.com/CMGS/cocoonbox/api/boxes"
-	"github.com/CMGS/cocoonbox/api/credential"
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/credential"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const aliceToken = "alice-secret"

@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/CMGS/cocoonbox/api/users"
-	"github.com/CMGS/cocoonbox/api/vault"
+	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/vault"
 )
 
 func TestTheKeysPageAddsListsRotatesAndDeletesWithoutShowingAValue(t *testing.T) {

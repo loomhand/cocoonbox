@@ -2179,7 +2179,7 @@ const file_cocoonbox_control_v1_boxes_proto_rawDesc = "" +
 	"\x0fSetWakeSchedule\x12,.cocoonbox.control.v1.SetWakeScheduleRequest\x1a\".cocoonbox.control.v1.WakeSchedule\x12t\n" +
 	"\x11ListWakeSchedules\x12..cocoonbox.control.v1.ListWakeSchedulesRequest\x1a/.cocoonbox.control.v1.ListWakeSchedulesResponse\x12b\n" +
 	"\x11ClearWakeSchedule\x12\x1c.cocoonbox.control.v1.BoxRef\x1a/.cocoonbox.control.v1.ClearWakeScheduleResponse\x12P\n" +
-	"\x05Usage\x12\".cocoonbox.control.v1.UsageRequest\x1a#.cocoonbox.control.v1.UsageResponseBBZ@github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\x05Usage\x12\".cocoonbox.control.v1.UsageRequest\x1a#.cocoonbox.control.v1.UsageResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_boxes_proto_rawDescOnce sync.Once

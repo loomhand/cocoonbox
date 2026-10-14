@@ -17,7 +17,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 
-	"github.com/CMGS/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/store"
 )
 
 func TestPresignUsesPublicEndpointAndPrefix(t *testing.T) {

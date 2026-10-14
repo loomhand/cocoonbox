@@ -7,7 +7,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
 func (s *Service) Watch(_ *controlv1.WatchBoxesRequest, stream grpc.ServerStreamingServer[controlv1.ListBoxesResponse]) error {

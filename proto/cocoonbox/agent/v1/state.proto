@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package cocoonbox.agent.v1;
 
-option go_package = "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1";
+option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1";
 
 // State is called by cocoonbox-api (never by clients) to move the box's user
 // state to and from object storage. The api decides when; the agent decides

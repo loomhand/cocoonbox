@@ -1931,7 +1931,7 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\x06Cancel\x12!.cocoonbox.agent.v1.CancelRequest\x1a\".cocoonbox.agent.v1.CancelResponse\x12K\n" +
 	"\x06Rename\x12&.cocoonbox.agent.v1.RenameAgentRequest\x1a\x19.cocoonbox.agent.v1.Agent\x12Y\n" +
 	"\x06Delete\x12&.cocoonbox.agent.v1.DeleteAgentRequest\x1a'.cocoonbox.agent.v1.DeleteAgentResponse\x12F\n" +
-	"\x03End\x12\x1e.cocoonbox.agent.v1.EndRequest\x1a\x1f.cocoonbox.agent.v1.EndResponseB>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
+	"\x03End\x12\x1e.cocoonbox.agent.v1.EndRequest\x1a\x1f.cocoonbox.agent.v1.EndResponseBBZ@github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cocoonbox_agent_v1_agents_proto_rawDescOnce sync.Once

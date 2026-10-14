@@ -1,7 +1,7 @@
 .PHONY: all build test lint vet fmt fmt-check deps proto coverage clean help
 
 BINARY_NAME := cocoonbox-api
-GOIMPORTS_LOCAL_PREFIXES := github.com/CMGS/cocoonbox
+GOIMPORTS_LOCAL_PREFIXES := github.com/loomhand/cocoonbox
 PROTO_DIR := ../proto
 
 ## Target OSes for vet / lint
@@ -79,8 +79,8 @@ proto: protoc-gen-go protoc-gen-go-grpc ## Regenerate gen/ from ../proto (requir
 	rm -rf gen
 	protoc -I $(PROTO_DIR) \
 		--plugin=protoc-gen-go=$(PROTOCGENGO) --plugin=protoc-gen-go-grpc=$(PROTOCGENGOGRPC) \
-		--go_out=. --go_opt=module=github.com/CMGS/cocoonbox/api \
-		--go-grpc_out=. --go-grpc_opt=module=github.com/CMGS/cocoonbox/api \
+		--go_out=. --go_opt=module=github.com/loomhand/cocoonbox/api \
+		--go-grpc_out=. --go-grpc_opt=module=github.com/loomhand/cocoonbox/api \
 		$(shell cd $(PROTO_DIR) && find cocoonbox -name '*.proto')
 
 # --- Build ---

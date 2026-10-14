@@ -1867,7 +1867,7 @@ const file_cocoonbox_agent_v1_session_proto_rawDesc = "" +
 	"\x06Screen\x12%.cocoonbox.agent.v1.ScreenClientFrame\x1a%.cocoonbox.agent.v1.ScreenServerFrame(\x010\x01\x12a\n" +
 	"\fActiveOrigin\x12'.cocoonbox.agent.v1.ActiveOriginRequest\x1a(.cocoonbox.agent.v1.ActiveOriginResponse\x12g\n" +
 	"\x0eFillCredential\x12).cocoonbox.agent.v1.FillCredentialRequest\x1a*.cocoonbox.agent.v1.FillCredentialResponse\x12T\n" +
-	"\x04Exec\x12#.cocoonbox.agent.v1.ExecClientFrame\x1a#.cocoonbox.agent.v1.ExecServerFrame(\x010\x01B>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
+	"\x04Exec\x12#.cocoonbox.agent.v1.ExecClientFrame\x1a#.cocoonbox.agent.v1.ExecServerFrame(\x010\x01BBZ@github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cocoonbox_agent_v1_session_proto_rawDescOnce sync.Once

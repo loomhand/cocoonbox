@@ -26,16 +26,16 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	"github.com/CMGS/cocoonbox/api/boxes"
-	"github.com/CMGS/cocoonbox/api/console"
-	"github.com/CMGS/cocoonbox/api/controlmcp"
-	"github.com/CMGS/cocoonbox/api/edge"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/gwkeys"
-	"github.com/CMGS/cocoonbox/api/machines"
-	"github.com/CMGS/cocoonbox/api/oauth"
-	"github.com/CMGS/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/console"
+	"github.com/loomhand/cocoonbox/api/controlmcp"
+	"github.com/loomhand/cocoonbox/api/edge"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/gwkeys"
+	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/oauth"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const (

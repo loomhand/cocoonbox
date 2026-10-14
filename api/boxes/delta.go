@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/CMGS/cocoonbox/api/keyring"
-	"github.com/CMGS/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/store"
 )
 
 const (

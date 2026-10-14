@@ -9,7 +9,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 
-	"github.com/CMGS/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/auth"
 )
 
 const (

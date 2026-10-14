@@ -7,7 +7,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const wakePushTimeout = 30 * time.Second

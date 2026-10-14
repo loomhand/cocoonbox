@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const (

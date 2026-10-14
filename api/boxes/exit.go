@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 // ResidentialFunc reports whether user's boxes leave through the residential exit.

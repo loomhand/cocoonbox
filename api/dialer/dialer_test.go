@@ -14,9 +14,9 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/CMGS/cocoonbox/api/credential"
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/credential"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {

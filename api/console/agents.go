@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/CMGS/cocoonbox/api/oauth"
+	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
 const agentsPage = "/cb/agents"

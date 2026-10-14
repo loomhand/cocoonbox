@@ -6,9 +6,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/CMGS/cocoonbox/api/auth"
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/auth"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const vaultFlag = "COCOONBOX_VAULT"

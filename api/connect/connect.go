@@ -13,8 +13,8 @@ import (
 	"github.com/projecteru2/core/log"
 	"golang.org/x/sync/singleflight"
 
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/keyring"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/keyring"
 )
 
 const (

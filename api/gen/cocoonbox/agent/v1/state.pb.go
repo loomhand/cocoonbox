@@ -792,7 +792,7 @@ const file_cocoonbox_agent_v1_state_proto_rawDesc = "" +
 	"\x04Plan\x12\x1f.cocoonbox.agent.v1.PlanRequest\x1a .cocoonbox.agent.v1.PlanResponse\x12S\n" +
 	"\x06Upload\x12!.cocoonbox.agent.v1.UploadRequest\x1a$.cocoonbox.agent.v1.TransferProgress0\x01\x12W\n" +
 	"\aRestore\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01\x12\\\n" +
-	"\fRestorePaths\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01B>Z<github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
+	"\fRestorePaths\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01BBZ@github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
 
 var (
 	file_cocoonbox_agent_v1_state_proto_rawDescOnce sync.Once

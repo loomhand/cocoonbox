@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/CMGS/cocoonbox/api/migrate"
+	"github.com/loomhand/cocoonbox/api/migrate"
 )
 
 const (

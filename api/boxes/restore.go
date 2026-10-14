@@ -7,8 +7,8 @@ import (
 
 	"github.com/projecteru2/core/log"
 
-	controlv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/control/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 // restoreMissing fills m, created because user's box had no machine, from the box's latest saved state.

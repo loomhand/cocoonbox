@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	agentv1 "github.com/CMGS/cocoonbox/api/gen/cocoonbox/agent/v1"
-	"github.com/CMGS/cocoonbox/api/machines"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 func TestMigrateStateCopiesOnceAndNeverMovesTheHeadBack(t *testing.T) {
