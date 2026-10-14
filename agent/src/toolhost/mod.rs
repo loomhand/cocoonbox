@@ -92,7 +92,8 @@ impl Host {
     pub async fn dispatch(&self, call: Call) -> Output {
         let result = match call.tool.as_str() {
             "shell" => {
-                let note = self.held(call.args["command"].as_str().unwrap_or_default());
+                let command = call.args["command"].as_str().unwrap_or_default();
+                let note = self.held(|name| files::writes(command, name));
                 self.shell(&call.agent_id, call.args)
                     .await
                     .map(|out| Output::text(out + &note))
@@ -102,13 +103,15 @@ impl Host {
                 .await
                 .map(Output::text),
             "write_file" => {
-                let note = self.held(call.args["path"].as_str().unwrap_or_default());
+                let path = call.args["path"].as_str().unwrap_or_default();
+                let note = self.held(|name| files::names(path, name));
                 files::write(&self.workspace, call.args)
                     .await
                     .map(|out| Output::text(out + &note))
             }
             "edit_file" => {
-                let note = self.held(call.args["path"].as_str().unwrap_or_default());
+                let path = call.args["path"].as_str().unwrap_or_default();
+                let note = self.held(|name| files::names(path, name));
                 files::edit(&self.workspace, call.args)
                     .await
                     .map(|out| Output::text(out + &note))
@@ -209,9 +212,9 @@ impl Host {
         })
     }
 
-    /// With plans, a note on the files that `text` names and an app window has open (see [`files::held_note`]).
-    fn held(&self, text: &str) -> String {
-        files::held_note(text, &self.cua.window_titles())
+    /// With plans, a note on the files that a call `changes` and an app window has open (see [`files::held_note`]).
+    fn held(&self, changes: impl Fn(&str) -> bool) -> String {
+        files::held_note(&self.cua.window_titles(), changes)
     }
 
     async fn close_shell(&self, agent_id: &str) -> Result<String, String> {

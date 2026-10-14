@@ -17,7 +17,34 @@ const LINE_CHARS: usize = 2000;
 const READ_BYTES: usize = 100_000;
 const LIST_ENTRIES: usize = 500;
 const BROWSERS: [&str; 3] = ["Chrome", "Chromium", "Firefox"];
-const NAME_EDGES: [char; 11] = ['/', ' ', '\t', '\n', '\'', '"', '=', '(', ')', ';', ','];
+const NAME_EDGES: [char; 13] = [
+    '/', ' ', '\t', '\n', '\'', '"', '=', '(', ')', ';', ',', '>', '<',
+];
+const READERS: [&str; 22] = [
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "wc",
+    "file",
+    "stat",
+    "ls",
+    "du",
+    "diff",
+    "cmp",
+    "md5sum",
+    "sha256sum",
+    "xxd",
+    "hexdump",
+    "od",
+    "strings",
+];
+const WRAPPERS: [&str; 5] = ["sudo", "env", "command", "time", "nohup"];
 
 #[derive(Deserialize)]
 struct ReadArgs {
@@ -225,14 +252,14 @@ pub async fn write_bytes(path: &Path, data: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
-/// A note for a call that names, in `text`, a file an app window shows in its title among `titles`: the
-/// app keeps its own copy, and its next save overwrites a change made outside it.
-pub fn held_note(text: &str, titles: &[String]) -> String {
+/// A note for a call that changes, as `changes` tells from a file name, a file an app window shows in its title
+/// among `titles`: the app keeps its own copy, and its next save overwrites a change made outside it.
+pub fn held_note(titles: &[String], changes: impl Fn(&str) -> bool) -> String {
     let mut note = String::new();
     for (title, name) in titles
         .iter()
         .filter_map(|t| Some((t, document(t)?)))
-        .filter(|(_, name)| names(text, name))
+        .filter(|(_, name)| changes(name))
     {
         let _ = write!(
             note,
@@ -240,6 +267,36 @@ pub fn held_note(text: &str, titles: &[String]) -> String {
         );
     }
     note
+}
+
+/// Whether shell `command` can write the file `name`: a part of it names the file as a redirection target, or runs `tee`,
+/// `sed -i`, `cp` or `mv` onto it, or a program outside [`READERS`] that names it.
+pub fn writes(command: &str, name: &str) -> bool {
+    command
+        .split(['|', ';', '&', '\n'])
+        .filter(|part| names(part, name))
+        .any(|part| {
+            let words: Vec<&str> = part.split_whitespace().collect();
+            let program = words
+                .iter()
+                .map(|w| w.trim_start_matches(['(', '{', '!', '`', '$']))
+                .find(|w| !w.is_empty() && !w.contains('=') && !WRAPPERS.contains(w))
+                .map_or("", |w| w.rsplit('/').next().unwrap_or(w));
+            redirected(part, name)
+                || match program {
+                    "tee" => true,
+                    "sed" => words
+                        .iter()
+                        .any(|w| w.starts_with("-i") || w.starts_with("--in-place")),
+                    "cp" | "mv" => last(part, name),
+                    p => !READERS.contains(&p),
+                }
+        })
+}
+
+/// Whether `text` holds `name` as a whole path segment or word.
+pub fn names(text: &str, name: &str) -> bool {
+    spans(text, name).next().is_some()
 }
 
 /// The file name in the title of a document window outside a browser, such as `answers.xlsx` of
@@ -258,13 +315,33 @@ fn document(title: &str) -> Option<&str> {
     file.then_some(name)
 }
 
-/// Whether `text` holds `name` as a whole path segment or word.
-fn names(text: &str, name: &str) -> bool {
-    text.match_indices(name).any(|(i, _)| {
+/// Where `text` holds `name` as a whole path segment or word.
+fn spans<'a>(text: &'a str, name: &'a str) -> impl Iterator<Item = usize> + 'a {
+    text.match_indices(name).map(|(i, _)| i).filter(move |&i| {
         let before = text[..i].chars().next_back();
         let after = text[i + name.len()..].chars().next();
         before.is_none_or(|c| NAME_EDGES.contains(&c))
             && after.is_none_or(|c| NAME_EDGES.contains(&c))
+    })
+}
+
+/// Whether `name` in `part` follows a `>` past only its folders, quotes and spaces.
+fn redirected(part: &str, name: &str) -> bool {
+    spans(part, name).any(|i| {
+        part[..i]
+            .trim_end_matches(|c: char| !c.is_whitespace() && c != '>' && c != '"' && c != '\'')
+            .trim_end_matches(['"', '\'', ' ', '\t'])
+            .ends_with('>')
+    })
+}
+
+/// Whether `part` ends with `name` as a whole path segment or word, past closing quotes and slashes.
+fn last(part: &str, name: &str) -> bool {
+    let tail = part.trim_end().trim_end_matches(['"', '\'', '/']);
+    tail.strip_suffix(name).is_some_and(|head| {
+        head.chars()
+            .next_back()
+            .is_none_or(|c| NAME_EDGES.contains(&c))
     })
 }
 
@@ -316,7 +393,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_call_naming_a_file_an_app_window_shows_gets_a_note() {
+    fn a_call_that_changes_a_file_an_app_window_shows_gets_a_note() {
         let titles: Vec<String> = [
             "answers.xlsx - LibreOffice Calc",
             "*~/notes.txt - Mousepad",
@@ -327,25 +404,63 @@ mod tests {
         ]
         .map(str::to_owned)
         .into();
-        let held = held_note(
-            "python3 -c \"import openpyxl; wb = openpyxl.load_workbook('/home/user/answers.xlsx')\"",
-            &titles,
-        );
+        let shell = |command: &str| held_note(&titles, |name| writes(command, name));
         assert_eq!(
-            held,
+            shell(
+                "python3 -c \"import openpyxl; wb = openpyxl.load_workbook('/home/user/answers.xlsx')\""
+            ),
             "\nnote: the window \"answers.xlsx - LibreOffice Calc\" has answers.xlsx open, and its next save overwrites a change made here: close the file there before you change it, or reload it there after"
         );
-        assert!(held_note("/home/user/notes.txt", &titles).contains("\"*~/notes.txt - Mousepad\""));
-        assert!(held_note("sed -i s/a/b/ report.md", &titles).contains("report.md open"));
+        assert!(
+            held_note(&titles, |name| names("/home/user/notes.txt", name))
+                .contains("\"*~/notes.txt - Mousepad\"")
+        );
+        assert!(shell("sed -i s/a/b/ report.md").contains("report.md open"));
         for quiet in [
             "curl -s example.com",
             "ls Desktop",
             "cat old_answers.xlsx",
             "cp answers.xlsx.bak /tmp",
+            "cat ~/notes.txt",
             "",
         ] {
-            assert_eq!(held_note(quiet, &titles), "", "{quiet}");
+            assert_eq!(shell(quiet), "", "{quiet}");
         }
+    }
+
+    #[test]
+    fn only_a_shell_command_that_can_write_a_file_changes_it() {
+        for command in [
+            "echo hi >> notes.txt",
+            "echo hi>/home/user/notes.txt",
+            "cat a | tee -a notes.txt",
+            "sed -i.bak s/a/b/ ~/notes.txt",
+            "cp /tmp/new.txt notes.txt",
+            "mv draft.txt '/home/user/notes.txt'",
+            "python3 fix.py notes.txt",
+            "cd ~ && rm notes.txt",
+            "X=1 sudo truncate -s0 notes.txt",
+        ] {
+            assert!(writes(command, "notes.txt"), "{command}");
+        }
+        for command in [
+            "cat notes.txt",
+            "grep -n todo /home/user/notes.txt | head -5",
+            "head -c 100 notes.txt 2>&1",
+            "sed -n 1,5p notes.txt",
+            "cat notes.txt > /tmp/copy.txt",
+            "cp notes.txt /tmp/",
+            "mv notes.txt backup/",
+            "wc -l notes.txt && ls -la",
+            "echo hi > notes.txt.bak",
+        ] {
+            assert!(!writes(command, "notes.txt"), "{command}");
+        }
+        assert!(writes(
+            "printf x > \"/home/user/my notes.txt\"",
+            "my notes.txt"
+        ));
+        assert!(!writes("cat \"my notes.txt\"", "my notes.txt"));
     }
 
     #[tokio::test]
