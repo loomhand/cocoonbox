@@ -151,6 +151,10 @@ Save a script that works as `/workspace/flows/<name>.mts` and replay it with new
   Pattern, such as `*.png`) selects files; `ctrl+x` then `ctrl+v` in the target folder moves them;
   `ctrl+shift+n` makes a folder; `F2` renames the selected file, and with several files selected
   it opens Rename Multiple Files (search and replace, numbering) to rename them all at once.
+- Thunar moves: do them in one `gui_plan` (Select by Pattern, `ctrl+x`, the path bar, `ctrl+v`).
+  In a script, give the file view the focus after the pattern dialog and before `ctrl+x`: `act`
+  its `table` element with `'focus'` (a click changes the selection). First close a leftover
+  "File Operation Progress" or "already exists" dialog.
 - Menu toggles such as Mousepad's Word Wrap publish no checked state; check them in the app's
   preferences dialog or with `gsettings`.
 - A snapshot of a Chrome window holds the browser's own controls and the start of the page;
