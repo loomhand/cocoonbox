@@ -15,7 +15,7 @@ path = "src/main.rs"
 aes = { version = "0.8", features = ["zeroize"] }
 aes-gcm = { version = "0.10", features = ["zeroize"] }
 axum = { version = "0.8", default-features = false }
-base64 = "0.22"
+base64 = "0.23"
 bytes = "1"
 ed25519-dalek = "2"
 fastcdc = "3"

@@ -261,7 +261,7 @@ dependencies = [
  "aes",
  "aes-gcm",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "bytes",
  "ed25519-dalek",
  "fastcdc",
