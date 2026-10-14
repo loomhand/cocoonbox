@@ -23,6 +23,7 @@ const TAB_TOOLS: [&str; 5] = [
 const TAB_HINT: &str = "A tab the user already has open, instead of your own window: \"active\" for the tab in front, or an id from browser_tabs. Leave it out to work in your own window.";
 const NAVIGATE_TAB: &str =
     " It works in your own Chrome window; to act on a page the user already has open, pass tab.";
+const FRONT_HINT: &str = "true brings the page to the front of the desktop with the keyboard focus, for the desktop tools or the user to see it, and takes the focus from whatever the user types in. Leave it out to keep the page in the background.";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -226,7 +227,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
     tools
 }
 
-/// Gives the page tools of a box that runs GUI plans their `tab` argument.
+/// Gives the page tools of a box that runs GUI plans their `tab` argument, and browser_navigate its `front`.
 fn with_tab(tools: &mut [ToolSpec]) {
     for t in tools
         .iter_mut()
@@ -235,6 +236,8 @@ fn with_tab(tools: &mut [ToolSpec]) {
         t.parameters["properties"]["tab"] = json!({"type": "string", "description": TAB_HINT});
         if t.name == "browser_navigate" {
             t.description = Cow::Owned(format!("{}{NAVIGATE_TAB}", t.description));
+            t.parameters["properties"]["front"] =
+                json!({"type": "boolean", "description": FRONT_HINT});
         }
     }
 }

@@ -336,6 +336,7 @@ impl Browser {
         match tool {
             "browser_navigate" => {
                 let a: NavigateArgs = parse(args)?;
+                let front = self.plans && a.front;
                 let url = web_url(a.url);
                 if self.plans {
                     cdp.call("Network.enable", json!({})).await?;
@@ -350,6 +351,10 @@ impl Browser {
                 if self.plans {
                     cdp.settle(tokio::time::Instant::now() + SPA_WAIT).await;
                     timing::mark("settle");
+                }
+                if front {
+                    cdp.call("Page.bringToFront", json!({})).await?;
+                    timing::mark("front");
                 }
                 cdp.snapshot().await
             }
@@ -921,6 +926,8 @@ impl std::fmt::Display for Tab {
 #[derive(Deserialize)]
 struct NavigateArgs {
     url: String,
+    #[serde(default)]
+    front: bool,
 }
 
 #[derive(Deserialize)]
@@ -1813,6 +1820,54 @@ pub(super) mod tests {
         (port, log)
     }
 
+    /// Serves CDP on the returned port with one page, 1, which a new window opens as, logging every method called;
+    /// every script evaluation returns "complete".
+    async fn page_chrome() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let addr = ws.local_addr().unwrap();
+        let list = json!([{"id": "1", "type": "page", "url": AGENT_PAGE, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/1")}])
+            .to_string();
+        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
+            .to_string();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                let log = Arc::clone(&seen);
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        log.lock()
+                            .unwrap()
+                            .push(v["method"].as_str().unwrap().to_owned());
+                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "complete"}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    &version
+                } else {
+                    &list
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        (port, log)
+    }
+
     /// A stand-in Chrome binary in `dir` that lives 5 s.
     fn alive_chrome(dir: &std::path::Path) -> String {
         let chrome = dir.join("chrome");
@@ -2097,6 +2152,34 @@ pub(super) mod tests {
             chrome_page_title("_NET_WM_NAME(UTF8_STRING) = \"*notes.txt - Mousepad\""),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn navigate_brings_the_tab_to_the_front_only_when_asked_on_a_box_with_plans() {
+        for (plans, front, brought) in [
+            (true, false, false),
+            (true, true, true),
+            (false, true, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (port, log) = page_chrome().await;
+            let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, plans);
+            b.run(
+                "a",
+                "browser_navigate",
+                json!({"url": "a.test", "front": front}),
+            )
+            .await
+            .unwrap();
+            let log = log.lock().unwrap();
+            let at = |method: &str| log.iter().position(|m| m == method);
+            assert!(at("Page.navigate").is_some(), "{log:?}");
+            assert_eq!(at("Page.bringToFront").is_some(), brought, "{log:?}");
+            assert!(
+                !brought || at("Page.bringToFront") > at("Page.navigate"),
+                "{log:?}"
+            );
+        }
     }
 
     #[tokio::test]
