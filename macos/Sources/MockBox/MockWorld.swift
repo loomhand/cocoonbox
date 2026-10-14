@@ -683,7 +683,7 @@ actor MockWorld {
         append(agent: id, turn: turn, role: .assistant, body: .approval(.with {
             $0.approvalID = approval
             $0.kind = "connector"
-            $0.summary = "GitHub: create_issue repo=CMGS/cocoonbox title=Mock issue"
+            $0.summary = "GitHub: create_issue repo=loomhand/cocoonbox title=Mock issue"
         }))
         setStatus(agent: id, .waitingForUser)
         let answer = await withCheckedContinuation { approvals[approval] = $0 }
@@ -697,7 +697,7 @@ actor MockWorld {
         append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
             $0.callID = call
             $0.name = "github_create_issue"
-            $0.argumentsJson = #"{"repo":"CMGS/cocoonbox","title":"Mock issue"}"#
+            $0.argumentsJson = #"{"repo":"loomhand/cocoonbox","title":"Mock issue"}"#
         }))
         let decision = connect.take(approval)
         append(agent: id, turn: turn, role: .tool, body: .toolResult(.with {

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Acceptance of several boxes per user (design §19.5) against a deployed api, run on bench.
+"""Acceptance of several boxes per user (design §19.5) against a deployed api, run on the deployment host.
 
 A scratch user (CB_USER, default mb1) exists with max boxes 2 and exactly one box, main; its console password comes
-from <CB_USER>_PASSWORD. The script issues the user a fresh API token, never prints a secret, and refuses CMGS's and
-the other real users. It needs sudo for the sandboxd root token and the MinIO root credentials, which it only reads.
+from <CB_USER>_PASSWORD. The script issues the user a fresh API token, never prints a secret, and refuses the real
+users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd root token and the MinIO root credentials, which it only reads.
 """
 
 import hashlib
@@ -17,7 +17,7 @@ import urllib.request
 
 ENDPOINT = os.environ["CB_ENDPOINT"].rstrip("/")
 USER = os.environ.get("CB_USER", "mb1")
-REAL = {"test", "cmgs", "dev", "a tester"}
+REAL = set(os.environ.get("CB_REAL_USERS", "test,cmgs,dev").split(","))
 SANDBOXD = "http://127.0.0.1:17780"
 MAX_CLAIMS = int(os.environ.get("CB_MAX_CLAIMS", "6"))
 BUCKET = "cocoonbox-state"

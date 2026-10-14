@@ -19,8 +19,8 @@ GW_ADMIN_TOKEN = open("/etc/cocoonbox/gw-admin-token").read().strip()
 SMOKE_ID = "cb-5a0e00000001"
 GATEWAY = "10.203.0.1"
 PROXY = "http://127.0.0.1:3128"
-GRPCURL = os.environ.get("GRPCURL", "/home/builder/go/bin/grpcurl")
-PROTO = os.environ.get("PROTO", "/home/builder/cb-build/agent/proto")
+GRPCURL = os.environ.get("GRPCURL", "grpcurl")
+PROTO = os.environ.get("PROTO", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../proto"))
 
 failed = []
 CLAIM_TOKEN = {}

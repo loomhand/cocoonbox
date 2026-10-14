@@ -52,7 +52,7 @@ private struct NewShareForm: View {
                 Text("Only these users").tag(true)
             }
             if named {
-                TextField("User names", text: $users, prompt: Text("a tester, alice"))
+                TextField("User names", text: $users, prompt: Text("bob, alice"))
             }
             Toggle("Allow write", isOn: $write)
             Text(write ? "Guests' agents get every box tool: shell, files, browser and input." : "Guests' agents can take screenshots, read pages and read files under /workspace.")

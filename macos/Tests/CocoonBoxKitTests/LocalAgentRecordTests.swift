@@ -112,19 +112,19 @@ import Testing
             ["type": "user", "message": ["role": "user", "content": "<command-name>/model</command-name>"]],
             ["type": "user", "message": ["role": "user", "content": "<local-command-stdout>Set model to Sonnet</local-command-stdout>"]],
             ["type": "atis-latch", "atis": "6eca0b97ab47a726"],
-            ["type": "user", "origin": ["kind": "human"], "message": ["role": "user", "content": "开豆瓣"]],
+            ["type": "user", "origin": ["kind": "human"], "message": ["role": "user", "content": "Open the news site"]],
             ["type": "user", "message": ["role": "user", "content": [["type": "tool_result", "tool_use_id": "t1", "content": "ok"]]]],
         ])
         for frame in ["◐ Claude Code", "◑ Claude Code", "✳ Claude Code"] {
             claude.retitle(frame, home: home)
-            #expect(claude.title == "开豆瓣")
+            #expect(claude.title == "Open the news site")
         }
-        for frame in ["◑ Claude Code", "◐ Claude Code", "◐ 16 格子扫雷游戏", "◑ 16 格子扫雷游戏", "✳ 16 格子扫雷游戏"] {
+        for frame in ["◑ Claude Code", "◐ Claude Code", "◐ 16-cell minesweeper game", "◑ 16-cell minesweeper game", "✳ 16-cell minesweeper game"] {
             claude.retitle(frame, home: home)
         }
-        #expect(claude.title == "16 格子扫雷游戏")
+        #expect(claude.title == "16-cell minesweeper game")
         claude.settle(home: home)
-        #expect(claude.title == "16 格子扫雷游戏")
+        #expect(claude.title == "16-cell minesweeper game")
         claude.name = "Mine"
         claude.retitle("✳ Next topic", home: home)
         #expect(claude.displayName == "Mine")
@@ -154,7 +154,7 @@ import Testing
         (.claudeCode, "⠂ Fix the login bug", "Fix the login bug"),
         (.claudeCode, "✳ Claude Code", nil),
         (.claudeCode, "◐ Claude Code", nil),
-        (.claudeCode, "◑ 16 格扫雷游戏设计", "16 格扫雷游戏设计"),
+        (.claudeCode, "◑ 16-cell minesweeper design", "16-cell minesweeper design"),
         (.codex, "⠋ Rename the files | codex", "Rename the files"),
         (.codex, "[ ! ] Action Required | Rename the files | codex", "Rename the files"),
         (.codex, "codex", nil),

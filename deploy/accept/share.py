@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Acceptance of box sharing (design §23.3) against a deployed api and a v18 box, run on bench.
+"""Acceptance of box sharing (design §23.3) against a deployed api and a v18 box, run on the deployment host.
 
 Users qa1, qa2 and qa3 exist; qa1 has a box. Their console passwords come from QA1_PASSWORD, QA2_PASSWORD and
 QA3_PASSWORD; the script signs in, issues fresh API tokens for the three scratch users and never prints a secret.

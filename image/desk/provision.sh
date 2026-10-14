@@ -3,7 +3,7 @@
 # Runs as root inside the guest from an unpacked copy of image/desk (see cut.sh -f cbcore).
 set -euo pipefail
 
-# CMGS/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh brings it in as vendor/
+# loomhand/cua cmgs/x11-typing, built by cua-driver.sh; cut.sh brings it in as vendor/
 CUA_VERSION=0.34.0-cmgs.6
 CUA_SHA256=553a7cac7906a293f9ca6ebcf614bd7bc4d153de115f2fead68c7ee5fbf8907b
 CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
