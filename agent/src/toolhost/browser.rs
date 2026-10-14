@@ -33,6 +33,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
 const POKE: Duration = Duration::from_millis(100);
 const READ_CHARS: usize = 20_000;
+const SHELL_CHARS: usize = 300;
 const PAGE_TYPES: [&str; 7] = [
     "",
     "text/html",
@@ -1107,8 +1108,12 @@ impl Cdp {
         let here = self
             .eval("document.title + ' (' + location.href + ')'")
             .await?;
-        let text = self.eval(&format!("{READ_JS}(null)")).await?;
+        let mut text = self.eval(&format!("{READ_JS}(null)")).await?;
         timing::mark("read");
+        if ready && loading(text.as_str().unwrap_or_default()) {
+            text = self.filled(text).await;
+            timing::mark("fill");
+        }
         let mut out = format!("Page: {}", here.as_str().unwrap_or_default());
         if !ready {
             let _ = write!(
@@ -1224,6 +1229,25 @@ impl Cdp {
             }
             last = len.ok();
             tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + SPA_POLL)).await;
+        }
+    }
+
+    /// Reads the page text again every [`SPA_POLL`] while `text`, the last read, is a [`loading`] shell, until it is none
+    /// and kept its length over one poll, at most [`SPA_WAIT`]; returns the last text read.
+    async fn filled(&mut self, mut text: Value) -> Value {
+        let deadline = tokio::time::Instant::now() + SPA_WAIT;
+        let read = format!("{READ_JS}(null)");
+        loop {
+            tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + SPA_POLL)).await;
+            let Ok(Ok(next)) = tokio::time::timeout_at(deadline, self.eval(&read)).await else {
+                return text;
+            };
+            let len = |v: &Value| v.as_str().map_or(0, str::len);
+            let done = !loading(next.as_str().unwrap_or_default()) && len(&next) == len(&text);
+            text = next;
+            if done {
+                return text;
+            }
         }
     }
 
@@ -1439,6 +1463,13 @@ fn not_a_page(paused: &Value) -> Option<String> {
         return Some(format!("an attachment ({kind})"));
     }
     (!PAGE_TYPES.contains(&essence.as_str())).then_some(essence)
+}
+
+/// Whether page `text` looks like a shell whose content scripts still load: empty, or short and saying it is loading.
+fn loading(text: &str) -> bool {
+    let text = text.trim();
+    text.is_empty()
+        || (text.chars().count() <= SHELL_CHARS && text.to_lowercase().contains("loading"))
 }
 
 /// `text` cut to [`READ_CHARS`] characters, saying so when it was longer.
@@ -1658,7 +1689,8 @@ pub(super) mod tests {
     /// Serves CDP on the returned port with a hidden tab whose page text is `text`, logging every message;
     /// its navigation loads only with `loads`, else only the blank page's events come again. A page under
     /// `/spa` starts an XHR that ends at the 3rd text length read, after which the text grows; one under
-    /// `/spa-hang` never ends it, and the text of one under `/spa-grow` grows at every read.
+    /// `/spa-hang` never ends it, and the text of one under `/spa-grow` grows at every read. The text of a page
+    /// under `/shell` is a loading shell at the first two reads and `feed item one` after.
     async fn fetch_chrome(text: String, loads: bool) -> (u16, Arc<std::sync::Mutex<Vec<Value>>>) {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1676,6 +1708,7 @@ pub(super) mod tests {
                 tokio::spawn(async move {
                     let (mut retrying, mut late, mut held) = (false, false, false);
                     let (mut spa, mut hang, mut grow, mut reads) = (false, false, false, 0);
+                    let (mut shell, mut texts) = (false, 0);
                     while let Some(Ok(WsMessage::Text(msg))) = ws.next().await {
                         let v: Value = serde_json::from_str(&msg).unwrap();
                         log.lock().unwrap().push(v.clone());
@@ -1728,6 +1761,15 @@ pub(super) mod tests {
                             {
                                 json!({"result": {"value": "Doc (https://a.test/)"}})
                             }
+                            "Runtime.evaluate" if shell && read => {
+                                texts += 1;
+                                let page = if texts < 3 {
+                                    "Loading your feed…"
+                                } else {
+                                    "feed item one"
+                                };
+                                json!({"result": {"value": page}})
+                            }
                             "Runtime.evaluate" => json!({"result": {"value": text}}),
                             _ => json!({}),
                         };
@@ -1747,6 +1789,7 @@ pub(super) mod tests {
                                 url.ends_with("/spa-hang"),
                                 url.ends_with("/spa-grow"),
                             );
+                            shell = url.ends_with("/shell");
                             if spa {
                                 let xhr = json!({"method": "Network.requestWillBeSent", "sessionId": "s1",
                                     "params": {"requestId": "x1", "type": "XHR"}});
@@ -2462,20 +2505,72 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_does_not_wait_for_scripts_past_the_load() {
+    async fn fetch_reads_a_page_with_text_once_at_its_load() {
         let dir = tempfile::tempdir().unwrap();
-        let (port, log) = fetch_chrome("loading".into(), true).await;
+        let (port, log) = fetch_chrome("article".into(), true).await;
         let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
         let out = b
             .run("a", "browser_fetch", json!({"url": "https://a.test/spa"}))
             .await
             .unwrap();
-        assert_eq!(out, "Page: Doc (https://a.test/)\n\nloading");
+        assert_eq!(out, "Page: Doc (https://a.test/)\n\narticle");
         let log = log.lock().unwrap();
         assert!(
             !log.iter().any(
                 |m| m["method"] == "Network.enable" || m["params"]["expression"] == TEXT_LEN_JS
             )
         );
+        let read = format!("{READ_JS}(null)");
+        let reads = log
+            .iter()
+            .filter(|m| m["params"]["expression"] == read.as_str())
+            .count();
+        assert_eq!(reads, 1);
+    }
+
+    #[tokio::test]
+    async fn fetch_reads_a_loading_shell_again_until_its_content_is_in_or_its_wait_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = fetch_chrome(String::new(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        let asked = tokio::time::Instant::now();
+        let out = b
+            .run("a", "browser_fetch", json!({"url": "https://a.test/shell"}))
+            .await
+            .unwrap();
+        assert!(asked.elapsed() < SPA_WAIT, "{:?}", asked.elapsed());
+        assert_eq!(out, "Page: Doc (https://a.test/)\n\nfeed item one");
+        let read = format!("{READ_JS}(null)");
+        let reads = log
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|m| m["params"]["expression"] == read.as_str())
+            .count();
+        assert_eq!(reads, 4, "shell, shell, feed, feed");
+        let (port, _) = fetch_chrome("Loading…".into(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
+        let asked = tokio::time::Instant::now();
+        let out = b
+            .run("a", "browser_fetch", json!({"url": "https://a.test/"}))
+            .await
+            .unwrap();
+        assert!(
+            (SPA_WAIT..SPA_WAIT + Duration::from_millis(500)).contains(&asked.elapsed()),
+            "{:?}",
+            asked.elapsed()
+        );
+        assert_eq!(out, "Page: Doc (https://a.test/)\n\nLoading…");
+    }
+
+    #[test]
+    fn only_empty_or_short_text_that_says_it_is_loading_is_a_loading_shell() {
+        for shell in ["", " \n", "Loading your feed…", "Home\nLOADING..."] {
+            assert!(loading(shell), "{shell:?}");
+        }
+        let long = "Loading docks of the port".repeat(20);
+        for page in ["article", &long, "Just a moment..."] {
+            assert!(!loading(page), "{page:?}");
+        }
     }
 }
