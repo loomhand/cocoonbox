@@ -39,13 +39,13 @@ Source: Meta's engineering post "Security and safety for AI agents: our approach
 
 ## 2. Other products (brief)
 
-- **ChatGPT connectors and developer mode (E):**
-  - Custom remote MCP connectors, run from OpenAI's servers.
+- **A hosted assistant's connectors and developer mode (E):**
+  - Custom remote MCP connectors, run from the vendor's servers.
   - "Write actions by default require confirmation", and tools without `readOnlyHint` count as writes.
   - The agent's virtual computer gets website logins through browser takeover, not connector tokens (the latter is I).
-- **Claude connectors (E):** "the connection to your MCP server originates from Anthropic's servers". Tokens are held server-side, and each tool can be set to "Always allow" or "Blocked".
-- **Claude Managed Agents vaults (E)** combine both patterns:
-  - `mcp_oauth` credentials are injected by a proxy into the MCP connections, and Anthropic refreshes them.
+- **A second hosted assistant's connectors (E):** "the connection to your MCP server originates from [the vendor's] servers". Tokens are held server-side, and each tool can be set to "Always allow" or "Blocked".
+- **A model provider's managed-agent vaults (E)** combine both patterns:
+  - `mcp_oauth` credentials are injected by a proxy into the MCP connections, and the provider refreshes them.
   - `environment_variable` credentials are "stored in the sandbox as an opaque placeholder … substituted with the real secret at egress". They are scoped by `allowed_hosts` and by `injection_location` (header and/or body).
   - Documented limits: request signing such as SigV4 breaks, a token obtained by exchange "arrives in the sandbox unredacted", and a vault holds at most 20 credentials.
 - **Deno Sandbox (E):** "Secrets never enter the sandbox"; inside the sandbox the variable holds a placeholder, which is substituted on requests to approved hosts.
@@ -53,8 +53,8 @@ Source: Meta's engineering post "Security and safety for AI agents: our approach
 - **Manus (E):** 60+ OAuth connectors plus custom MCP; "your credentials are never shared with Manus directly". Nothing public on cloud-browser custody.
 
 **Two patterns, often used together:**
-1. **Server-side MCP client** (ChatGPT, Claude, Manus): the vendor runs the logic, the broker holds the token, and the approval sits on the tool call.
-2. **Placeholder plus egress substitution** (Managed Agents env credentials, Deno, Fly): generic code in the sandbox, no per-vendor code anywhere, and approval limited to host and header.
+1. **Server-side MCP client** (both hosted assistants, Manus): the vendor runs the logic, the broker holds the token, and the approval sits on the tool call.
+2. **Placeholder plus egress substitution** (managed-agent env credentials, Deno, Fly): generic code in the sandbox, no per-vendor code anywhere, and approval limited to host and header.
 
 Nobody gets per-action approval out of pattern 2. Muse gets it only because the semantic call goes to Sentinel before any network request.
 
@@ -109,7 +109,7 @@ Correction for §16.3: the non-flushing copy that stalls SSE on the box door is 
    - be persisted with the claim, redacted on read, and never delivered to the guest.
 
    Today, every new vendor is a node-config change on every node. That puts cocoonbox's catalog into infra config.
-2. **Placeholder substitution (optional).** Replace a registered placeholder string inside header values (Managed Agents' `injection_location: header`). Needed only where a client puts the token somewhere other than one fixed header. Query and body substitution is a larger change: it needs buffering and a `Content-Length` rewrite.
+2. **Placeholder substitution (optional).** Replace a registered placeholder string inside header values (the managed-agent vaults' `injection_location: header`). Needed only where a client puts the token somewhere other than one fixed header. Query and body substitution is a larger change: it needs buffering and a `Content-Length` rewrite.
 3. **SSE flush (small).** Flush per read when the response is `text/event-stream`. (A) needs it only if the box door ever streams, and (B) needs it only if the box speaks to a vendor's MCP server directly.
 4. **Path-prefix rules and path/status in telemetry (small).** Useful for audit, not as a write gate (see the GraphQL row).
 5. **Not needed:** h2 or WebSocket in the intercept, and a per-request authorization callout. The callout would be the only way to get `ask` in (B), and it puts an RPC on every intercepted request.
@@ -134,5 +134,5 @@ Keep (A) as the base, and use (B) instead of broker adapters. That is (C), with 
 
 What we copy, and from whom:
 - **From Muse:** the approval model (per-action ask on writes, scoped approvals) and the rule that vendor logic never runs with the real token beside the agent.
-- **From Claude and ChatGPT:** the scaling model (generic MCP client plus a catalog).
-- **From Managed Agents and Deno:** the long-tail model (placeholder plus egress injection), with custody on the host.
+- **From the two hosted assistants:** the scaling model (generic MCP client plus a catalog).
+- **From the managed-agent vaults and Deno:** the long-tail model (placeholder plus egress injection), with custody on the host.

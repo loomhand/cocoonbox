@@ -184,7 +184,7 @@ v3 smoke clone (probePort 7443) on NVMe:
 
 ## gw notes
 
-Prompt caching on the openai-chat wire (2026-10-06): gw moved from the v0.2.7 release to cocoonstack/gateway main 13a3d906 (#148), the only commit on top of v0.2.7. A `/v1/messages` client's `cache_control` breakpoints on system blocks, message blocks and `tool_result` now reach the openai-chat wire (OpenRouter) as content parts. Before, gw sent them as plain strings, so a long-prompt turn paid the full input rate on its whole prompt every time.
+Prompt caching on the `openai-chat` wire (2026-10-06): gw moved from the v0.2.7 release to cocoonstack/gateway main 13a3d906 (#148), the only commit on top of v0.2.7. A `/v1/messages` client's `cache_control` breakpoints on system blocks, message blocks and `tool_result` now reach the `openai-chat` wire (OpenRouter) as content parts. Before, gw sent them as plain strings, so a long-prompt turn paid the full input rate on its whole prompt every time.
 
 - Cache acceptance, a second gw tenant, model alias `claude-sonnet-5`:
   - `gw-fidelity.py`, 14/14 PASS (it failed only its cache check on v0.2.7): cache writes 6044/0/0, reads 0/6044/6044. Cost was 16430, 2528 and 2070 micros, against 13408, 13408 and 12950 at the full rate.
@@ -243,4 +243,4 @@ Two defects surfaced on hardware; unit tests missed both:
 ## Known gaps
 
 - Claims keep the golden's hostname, because they are memory clones of it (and, up to v11, its SSH host keys).
-- The Claude models reach OpenRouter through gw's messages→chat translation (the `openrouter` kind speaks only openai-chat).
+- The `anthropic/` models reach OpenRouter through gw's messages→chat translation (the `openrouter` kind speaks only `openai-chat`).

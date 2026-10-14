@@ -53,7 +53,7 @@ toolhost: shell · files · CDP browser · cua-driver
 
 ## MCP (mode B)
 
-External agents such as Claude Code, Codex or Cursor use the box through `POST|GET|DELETE /mcp`, with protocol 2025-03-26, 2025-06-18 or 2025-11-25. Every request needs the edge credential, which the edge adds; refusals are 401 and, before the box has an identity, 503.
+External agents, such as local coding agents, use the box through `POST|GET|DELETE /mcp`, with protocol 2025-03-26, 2025-06-18 or 2025-11-25. Every request needs the edge credential, which the edge adds; refusals are 401 and, before the box has an identity, 503.
 
 - `initialize` returns an `Mcp-Session-Id`. The session appears as an agent `mcp:<clientInfo.name>` whose status is RUNNING while the session lives.
 - Each tool call and its result go into that agent's transcript and onto `Session.Events`. `computer_act` also publishes a `ComputerAction` event.

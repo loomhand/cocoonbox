@@ -16,7 +16,7 @@ cocoonbox gives each user a persistent cloud computer with an agent living in it
 | Screen executor | **trycua cua-driver v0.30.4** (MIT, Rust), `serve` on its 0600 unix socket | AT-SPI element tree + element-token clicks + pixel input, one daemon for Linux/Windows/macOS | cua computer-server (a11y stub), OSWorld server (benchmark-shaped, no auth) |
 | Desktop in guest | **real Xorg** with `xserver-xorg-video-dummy` at 1280×800 + `/dev/uinput`, XFCE, AT-SPI on, x11vnc on loopback | cua-driver's focus-free pixel input needs real Xorg + uinput; TigerVNC Xvnc cannot hotplug the MPX devices (`linux-mpx-recovery.md:41-42`) | Xvnc (foreground-only input) |
 | Browser | Google Chrome (.deb), CDP on loopback, `--force-renderer-accessibility` | structured channel ahead of pixels | snap chromium |
-| Models | **gw v0.2.6** on the bench host, SQLite ledger, bridge-only bind | tenant caps, one endpoint for DeepSeek/Qwen/Kimi/Claude/GPT | |
+| Models | **gw v0.2.6** on the bench host, SQLite ledger, bridge-only bind | tenant caps, one endpoint for every model provider | |
 | Machines | the cbsbx sandboxd instance on the bench host (§14; K3s + vk-cocoon + CocoonSet until 2026-10-01) | a claim = persistent box with hibernate/wake, warm pools, egress proxy and per-claim secrets | eru (host-local snapshots, no migration) |
 
 Hot-path cost: none. No change to cocoon, sandboxd or gw code; all of it is configuration plus new cocoonbox repos.
@@ -51,8 +51,8 @@ Models (resolved per role in agent config, all via gw):
 
 | Role | Default | Wire |
 |---|---|---|
-| main | DeepSeek (text) | `/v1/chat/completions` |
-| computer subagent | Claude Sonnet 5 (vision) | `/v1/messages` when the upstream is Anthropic, else chat |
+| main | a text model | `/v1/chat/completions` |
+| computer subagent | a vision model | `/v1/messages` when the upstream is the model provider's own API, else chat |
 | summarize / memory | small cheap model | chat |
 
 Rule: the agent speaks the upstream's native wire; gw translation is not relied on (silent-distortion risk: cache_control, stop reasons, parallel tools). Images from tool results go into a following user image part for vision models and are replaced by text for text-only models.
@@ -147,16 +147,16 @@ The layout: the cbsbx sandboxd instance under `/srv/cb/sbx` (its own cocoon root
 |---|---|---|---|
 | M0 | isolated `cb` env, K3s, registry, vk-cocoon, operator, gw | `kubectl get node cocoon-cb` Ready; `curl 10.203.0.1:18090/health`; a real completion through gw with the new key | 0.5 d |
 | M1 | guest image v1 + cua-driver spike | VM from CocoonSet boots; `cua-driver doctor` clean; `get_window_state` on Mousepad and Chrome returns a non-empty AT-SPI tree; an element-token click and a background pixel click both land (visible in x11vnc); hibernate → registry `cb/<vm>:hibernate` → wake keeps a marker file | 1–1.5 d |
-| M2 | `cocoonbox-agent` v0 (Rust): gw client (chat + messages), shell/files, browser (CDP refs), computer subagent via cua-driver, Agents/Session gRPC, SQLite | from `grpcurl`: DeepSeek main agent runs Shell; delegates to the Claude computer subagent which opens Mousepad and types text; browser task reads example.com H1 via refs | 4–6 d |
+| M2 | `cocoonbox-agent` v0 (Rust): gw client (chat + messages), shell/files, browser (CDP refs), computer subagent via cua-driver, Agents/Session gRPC, SQLite | from `grpcurl`: the text-model main agent runs Shell; delegates to the vision computer subagent which opens Mousepad and types text; browser task reads example.com H1 via refs | 4–6 d |
 | M3 | `cocoonbox-api` (Go): Boxes on CocoonSet, WatchOperation, edge routing by box_id, user tokens | `Ensure` from zero to RUNNING; `Hibernate`/`Ensure` round trip with a resumable operation stream; agent RPCs reach the box through the edge only | 3 d |
 | M4 | macOS app v0: sign-in, box state, agent list, streaming transcript, live view + take-over | RoyalVNCKit spike first (encodings against x11vnc: ZRLE/Tight); app shows the desktop at 1280×800 and the transcript live; measured: app RSS, time to first frame, input RTT | 4–5 d |
 | M4.5 | sandbox line evaluation | docs/m45-sandbox-eval.md: measured lifecycle, relay, egress, density, failure model; recommendation | done |
 | M4.6 | state layer (§11): user data to object storage, SaveState, Rebase | SaveState twice on a box (second incremental); Rebase v6 → next image keeps /workspace, a logged-in Chrome cookie and agent.db; sizes and timings recorded | in progress |
-| M4.7 | native agents: a Claude Code / Codex / Cursor plugin (skill + commands + MCP config), a `cocoonbox` CLI (login, mcp-headers, box lifecycle), a control-plane MCP in the api (status, ensure, hibernate, save, rebase) | from each CLI, with the app closed: wake the box, do a GUI task, save, hibernate; no token in any config file | next |
+| M4.7 | native agents: a plugin for the local agent CLIs (skill + commands + MCP config), a `cocoonbox` CLI (login, mcp-headers, box lifecycle), a control-plane MCP in the api (status, ensure, hibernate, save, rebase) | from each CLI, with the app closed: wake the box, do a GUI task, save, hibernate; no token in any config file | next |
 | M4.8 | sandboxd as the machine backend (§14), after the upstream PRs (per-claim env, dead-VMM restart) land | §14.9: M3 acceptance plus live view, MCP, Rebase, H3, identity, crash, dead-api and lost-machine runs on the sandboxd backend; default flipped; cocoonset kept as fallback | after PRs |
 | M4.9 | proactive agents (§15): routines in the box, api alarms with wake-then-Tick, precheck, notices in the app, limits and kill switches, dual-meter budgets (§15.9, phases a–f) | §15.9 per phase; end to end: the HN digest routine wakes the hibernated box at 08:00, writes the digest, re-hibernates, and its notice shows in the app without a wake; per-run box-seconds and cost match sandboxd's and gw's own records | 8–10 d |
 | M5 | connect (§16): host-side broker with OAuth through the Mac, connector tools for both modes, per-tool policy and approvals; M5.2 git through egress injection. `cocoonboxd` local-exec (§4.2(c)) is tracked separately | §16.8: GitHub and Calendar connected; mode B with the box hibernated; mode A write approved in the app; no token in the guest, its hibernate image or the Mac's configs | 5–6 d, M5.2 2 d |
-| M6 | market (§17): pinned git catalog in the M4.7 plugin format, skills and secret-free stdio MCP servers in the box, visible in both modes; the catalog doubles as the local agents' marketplace | §17.8: a public Claude Code plugin installs unchanged and works in a box turn and through the bridge; tampered, symlinked and secret-needing plugins refused; survives Rebase | 3–4 d, M6.2 3 d |
+| M6 | market (§17): pinned git catalog in the M4.7 plugin format, skills and secret-free stdio MCP servers in the box, visible in both modes; the catalog doubles as the local agents' marketplace | §17.8: a public agent-CLI plugin installs unchanged and works in a box turn and through the bridge; tampered, symlinked and secret-needing plugins refused; survives Rebase | 3–4 d, M6.2 3 d |
 
 M0–M2 are the proof that "any model + our machines" works; M3–M4.8 make it a usable product; M5–M6 (connect, marketplace) come after the current stack runs end to end.
 
@@ -177,7 +177,7 @@ Open:
 | cua-driver is pre-release, ~1 release/day; open Linux bugs (#3774 background `type_text` silent drop, #3871 desktop freeze on Cinnamon) | pin 0.30.4; M1 spike is the gate; fall back to `delivery_mode: foreground` for typing; keep the executor behind our own `computer` tool so the backend can change |
 | Real Xorg + dummy + uinput in a cocoon guest unproven | M1 checks `/dev/uinput`, MPX device creation, x11vnc capture of the dummy screen before anything else |
 | RFB client cost on the hot path (resolved: RoyalVNCKit polled at 100 Hz; replaced by swift-rfb, idle 0.03% CPU) | spike encodings early in M4; our own Metal layer; H.264 (RFB encoding 50, done before in `cocoonstack/scrcpy-rfb`) later if bandwidth demands |
-| DeepSeek tool-calling quality under a long tool list | per-role model map; acceptance uses one Shell call first |
+| The main text model's tool-calling quality under a long tool list | per-role model map; acceptance uses one Shell call first |
 
 ## 11. State layer (user data in object storage)
 
@@ -284,7 +284,7 @@ A signature can't prove "request from box X" without a secret in X. The proof mu
 
 ## 13. Native agents without the app (M4.7)
 
-Proposed 2026-10-01, for review. The user's own Claude Code, Codex or Cursor drives their box with the app closed: it wakes the box, works on it through the box tools, saves and hibernates. The model subscription stays on the Mac (mode B); the box sees only MCP calls.
+Proposed 2026-10-01, for review. The user's own local coding agent drives their box with the app closed: it wakes the box, works on it through the box tools, saves and hibernates. The model subscription stays on the Mac (mode B); the box sees only MCP calls.
 
 Constraints:
 - Boundaries: the new pieces talk to the rest only through `proto/` gRPC and MCP via the edge. Nothing imports another component's code or reads its files.
@@ -295,7 +295,7 @@ Constraints:
 
 | Piece | Where | What |
 |---|---|---|
-| `cocoonbox` CLI | `macos/` (Swift, a new product next to the app, on CocoonBoxKit) | login and logout (Keychain), box lifecycle commands, the stdio MCP bridge, the Claude Code headers helper, per-client setup |
+| `cocoonbox` CLI | `macos/` (Swift, a new product next to the app, on CocoonBoxKit) | login and logout (Keychain), box lifecycle commands, the stdio MCP bridge, a `headersHelper` command, per-client setup |
 | Control MCP | api service layer, `https://<endpoint>/cocoonbox.mcp/control` | box lifecycle tools for the caller's own box, over the existing `Boxes` semantics |
 | Plugin | `plugins/cocoonbox/` (no code) | one directory with a manifest per client, a shared `.mcp.json` that runs `cocoonbox mcp`, a skill and slash commands |
 
@@ -312,9 +312,9 @@ Every client runs the same MCP server entry, with no URL and no token in it:
 `cocoonbox mcp` is a stdio MCP server. It reads the token from the Keychain at start and keeps it only in memory. It forwards each JSON-RPC message to the edge over MCP Streamable HTTP with `Authorization: Bearer`: box tools go to `/cocoonbox.mcp/<box id>`, and lifecycle tools go to the control MCP. It resolves the box id itself (`Boxes.List`), so a Rebase or a new box never breaks a client's config.
 
 Why a bridge rather than pointing clients at the HTTPS endpoint directly (what the app's Connect sheet does today):
-- **One recipe for all three clients.** Claude Code, Codex and Cursor all run stdio servers the same way. The direct recipes differ per client: `headersHelper` or `${VAR}` for Claude Code, `bearer_token_env_var` for Codex, `${env:VAR}` for Cursor. The last two need the token in an environment variable of the shell that starts the client.
+- **One recipe for all three clients.** The three agent CLIs all run stdio servers the same way. The direct recipes differ per client: `headersHelper` or `${VAR}` for `claude`, `bearer_token_env_var` for `codex`, `${env:VAR}` for `cursor-agent`. The last two need the token in an environment variable of the shell that starts the client.
 - **A hibernated box.** A client connects to its MCP servers at startup. A hibernated box has no `/mcp` to answer, so a direct client marks the server failed and never lists the box tools. The bridge answers `initialize` and `tools/list` itself (below) and wakes the box on the first box-tool call.
-- **Stable identity.** The bridge passes the client's `initialize` through unchanged, so the box still records the session as `mcp:claude-code` (or `codex-mcp-client`, `Cursor`) and the app shows it under External.
+- **Stable identity.** The bridge passes the client's `initialize` through unchanged, so the box still records the session as `mcp:claude-code` (or `codex-mcp-client`, or the third CLI's own name) and the app shows it under External.
 
 The cost is one local stdio hop per message, next to a 230 ms WAN round trip; the bridge holds one HTTP/2 connection for both endpoints.
 
@@ -324,7 +324,7 @@ The cost is one local stdio hop per message, next to a 230 ms WAN round trip; th
 
 **Waking on demand.** When a box tool is called and the box is not RUNNING, the bridge calls the control tool `box_ensure`. It reports the wake as MCP progress notifications ("waking: restoring memory snapshot"), then forwards the call. A wake takes 5–17 s today. A client whose tool timeout is shorter than that, or a user who does not want implicit wakes, uses `cocoonbox mcp --no-wake`: the call then fails with an error that tells the model to call `box_ensure`.
 
-**Direct fallback.** The Connect sheet recipes stay for users who don't install the CLI. Claude Code's may use `"headersHelper": "cocoonbox mcp-headers"`, which prints `{"Authorization":"Bearer …"}` to Claude Code's pipe, instead of `${COCOONBOX_TOKEN}`. There is no `cocoonbox env` command: an exported token lives in every child of that shell.
+**Direct fallback.** The Connect sheet recipes stay for users who don't install the CLI. The `claude` recipe may use `"headersHelper": "cocoonbox mcp-headers"`, which prints `{"Authorization":"Bearer …"}` to the CLI's pipe, instead of `${COCOONBOX_TOKEN}`. There is no `cocoonbox env` command: an exported token lives in every child of that shell.
 
 ### 13.3 Control MCP (api)
 
@@ -348,7 +348,7 @@ These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `W
 | `cocoonbox logout` | deletes the Keychain item |
 | `cocoonbox status` / `ensure` / `hibernate` / `save` / `upgrade [--yes]` | lifecycle, with progress on stderr and `--json` for scripts |
 | `cocoonbox mcp [--no-wake]` | the stdio bridge (13.2) |
-| `cocoonbox mcp-headers` | the headers helper for the direct Claude Code recipe |
+| `cocoonbox mcp-headers` | the headers helper for the direct `claude` recipe |
 | `cocoonbox rsh [--box B] [HOST] COMMAND…` | runs a command in the box with its stdin, stdout and stderr; rsync's and git's remote shell (13.7) |
 | `cocoonbox setup claude\|codex\|cursor [--print]` | installs the plugin, or prints the manual config for that client |
 | `cocoonbox install` | links the CLI into `~/.local/bin` |
@@ -358,20 +358,20 @@ These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `W
 ### 13.5 Plugin packaging
 
 `plugins/cocoonbox/`:
-- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` and `.cursor-plugin/plugin.json`. Cursor also reads the Claude manifest; its own manifest carries its interface fields. Each points at the shared `.mcp.json` above and at `skills/`.
+- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` and a third manifest for `cursor-agent`, which also reads `.claude-plugin/plugin.json`; its own manifest carries its interface fields. Each points at the shared `.mcp.json` above and at `skills/`.
 - `skills/cocoonbox/SKILL.md`: the computer is the user's cocoonbox cloud desktop, not this Mac. Check `box_status` first. Use `screenshot` to confirm GUI actions. Call `box_save` before long idle.
-- Claude Code commands `/cocoonbox:status`, `/cocoonbox:wake`, `/cocoonbox:save` and `/cocoonbox:sleep`, which tell the model to call the matching control tool.
+- `claude` commands `/cocoonbox:status`, `/cocoonbox:wake`, `/cocoonbox:save` and `/cocoonbox:sleep`, which tell the model to call the matching control tool.
 
-None of these files contains a URL or a token: the endpoint comes from `cocoonbox login` and the box from `Boxes.List`. Installation, per the installed CLIs' own help (Claude Code 2.1.285, Codex 0.159.2, Cursor Agent 2026.09.28):
-- **Claude Code:** `claude plugin marketplace add <path>` takes a local path, then `claude plugin install cocoonbox@<marketplace>`. `cocoonbox setup claude` runs both against the plugin directory it writes, then `claude plugin update cocoonbox@cocoonbox`: install leaves an installed plugin at its recorded version. A second run changes nothing and succeeds (Claude Code 2.1.288).
-- **Codex:** `codex plugin marketplace add` takes a local or Git marketplace, then `codex plugin add cocoonbox@<marketplace>`. `cocoonbox setup codex` runs both the same way.
-- **Cursor:** `agent plugin marketplace add` takes only a git repository URL, and the CLI has no plugin install command. Until the repository is public, `cocoonbox setup cursor` falls back to the MCP config: it merges the stdio entry above into `~/.cursor/mcp.json`, with no token or URL in it. `agent --plugin-dir <dir>` loads the full plugin (skill included) for one run.
+None of these files contains a URL or a token: the endpoint comes from `cocoonbox login` and the box from `Boxes.List`. Installation, per the installed CLIs' own help (`claude` 2.1.285, `codex` 0.159.2, `cursor-agent` 2026.09.28):
+- **`claude`:** `claude plugin marketplace add <path>` takes a local path, then `claude plugin install cocoonbox@<marketplace>`. `cocoonbox setup claude` runs both against the plugin directory it writes, then `claude plugin update cocoonbox@cocoonbox`: install leaves an installed plugin at its recorded version. A second run changes nothing and succeeds (`claude` 2.1.288).
+- **`codex`:** `codex plugin marketplace add` takes a local or Git marketplace, then `codex plugin add cocoonbox@<marketplace>`. `cocoonbox setup codex` runs both the same way.
+- **`cursor-agent`:** `agent plugin marketplace add` takes only a git repository URL, and the CLI has no plugin install command. Until the repository is public, `cocoonbox setup cursor` falls back to the MCP config: it merges the stdio entry above into `~/.cursor/mcp.json`, with no token or URL in it. `agent --plugin-dir <dir>` loads the full plugin (skill included) for one run.
 
 CI checks the directory with `claude plugin validate`.
 
 ### 13.6 Acceptance and work split
 
-Acceptance, from each of Claude Code, Codex and Cursor with the app closed and the box hibernated:
+Acceptance, from each of the three agent CLIs with the app closed and the box hibernated:
 1. Ask for a GUI task. The bridge wakes the box and the task completes; the app, when opened later, shows the session under External with the client's name.
 2. Ask it to save, then to hibernate; both finish and `cocoonbox status` agrees.
 3. Search the three clients' config and state directories and the shell history for the token: no match. The token is also absent from argv and the environment of every client and bridge process (`ps -E`).
@@ -641,7 +641,7 @@ Every step runs through the public edge, with the app or grpcurl, on the sandbox
    - a `Hibernate` / `Ensure` round trip on a resumable operation stream;
    - agent RPCs reach the box only through the edge.
 2. **Live view:** the app renders 1280×800 through `Session.Screen` over the relay. Record fps, time to first frame, input RTT, and sandboxd CPU per viewer.
-3. **MCP:** from Claude Code with the app closed, wake the box, do a GUI task, save, hibernate (M4.7's run).
+3. **MCP:** from a local agent CLI with the app closed, wake the box, do a GUI task, save, hibernate (M4.7's run).
 4. **State layer:**
    - SaveState, then Rebase vN → vN+1 on sandboxd;
    - `/workspace`, a logged-in Chrome cookie and `agent.db` are kept.
@@ -680,7 +680,7 @@ Constraints:
 
 ### 15.1 How others do it
 
-| | ChatGPT Tasks (public docs, not verified here) |
+| | A hosted assistant's scheduled tasks (public docs, not verified here) |
 |---|---|
 | Definition | a one-off or recurring prompt, about 10 active per user |
 | Where it lives | the vendor's cloud |
@@ -736,7 +736,7 @@ Hot path: none. The alarm index is a min-heap in the api's service layer, off th
   - `Tick` and `Deliver` sit on a separate service, `RoutineControl`, which the edge refuses by prefix as it refuses `State`.
   - Two services are needed because the agent cannot tell an api call from a client call: both carry the same edge-signed credential (`agent/src/identity.rs:56`). The edge's prefix rule (`api/edge/proxy.go:35`, `:81-83`) is the only gate.
 - **Mode B:** runs have no mode B, because the model and the subscription stay on the Mac, which is usually closed while the user is away.
-  - A mode-B client (Claude Code, Codex) can manage routines through three MCP tools: `routine_list`, `routine_create` and `routine_pause`.
+  - A mode-B client (a local agent CLI) can manage routines through three MCP tools: `routine_list`, `routine_create` and `routine_pause`.
   - The routines it creates then run in mode A with the box's model, under the same grant and budget.
 
 ### 15.4 Budget and limits
@@ -801,7 +801,7 @@ The api enforces every limit through the policy lease. The per-box gw key cap (�
 
 Measured on the bench host on 2026-09-30 and 2026-10-01 unless marked. Sources:
 - **Timings:** the api journal and the cbsbx `usage.jsonl`.
-- **Tokens:** gw's own ledger: 142 model calls in 22 turns from the SQLite ledger and the PostgreSQL one. Calls of one machine less than 90 s apart count as one turn. Cost is gw's `cost_micros` at the OpenRouter list prices in `deploy/host/gateway.yaml`: DeepSeek V4.1 Flash $0.30 / $1.20 per M input / output, with cache reads at 0.02×; Claude Sonnet 5 $2 / $10.
+- **Tokens:** gw's own ledger: 142 model calls in 22 turns from the SQLite ledger and the PostgreSQL one. Calls of one machine less than 90 s apart count as one turn. Cost is gw's `cost_micros` at the OpenRouter list prices in `deploy/host/gateway.yaml`: `deepseek/deepseek-v4.1-flash` $0.30 / $1.20 per M input / output, with cache reads at 0.02×; `anthropic/claude-sonnet-5` $2 / $10.
 - **Machine:** `c3-highcpu-4`, which is the box's exact shape (4 vCPU / 8 GB). C3 is the nested-virt family the bench host runs on (`c3-standard-22-lssd`). Prices come from gcloud-compute.com's copy of Google's price list, dated 2026-09-27:
   - list: $0.1701/h in us-central1 and in us-east4;
   - Spot: $0.0641/h in us-central1 and $0.0433/h in us-east4.
@@ -814,8 +814,8 @@ Pricing rule: a box holds its slot (4 vCPU, 8 GiB) from the wake call until its 
 |---|---|---|
 | wake: hibernated → `RUNNING` (memory restore, identity written) | about 1 s | wake op DONE in 1.0 s; 2026-10-01 sandboxd `wake` at 10:03:39.95, api "provisioned … as wake" at 10:03:40 |
 | run, precheck with unchanged output | about 2 s (limit 30 s) | estimate: `curl` plus `sha256sum` |
-| run, text turn (DeepSeek main agent) | model calls span a median of 4.5 s and at most 197 s; with tool time, planned at 45 s | gw ledger, 12 text turns |
-| run, GUI turn (Sonnet 5 computer subagent) | model calls span a median of 27.5 s and at most 92 s; planned at 150 s | gw ledger, 10 turns |
+| run, text turn (text-model main agent) | model calls span a median of 4.5 s and at most 197 s; with tool time, planned at 45 s | gw ledger, 12 text turns |
+| run, GUI turn (vision computer subagent) | model calls span a median of 27.5 s and at most 92 s; planned at 150 s | gw ledger, 10 turns |
 | hold: final Tick, then an incremental live save | about 1 s plus 1–3 s | api journal: Rebase saves "saved 1s", "2s", "3s" |
 | re-hibernate: write 8 GiB of memory to the local NVMe | 24 s (23–50 s) | api "hibernating box" at 10:03:09, sandboxd `hibernate` at 10:03:32.98 |
 
@@ -1159,7 +1159,7 @@ A user asked for a routine at 09:00 while the Mac is closed. This is the alarm o
 
 Proposed 2026-10-01, for review. It replaces §4.2(b), whose in-VM vault kept credentials at rest in the VM. The user links an external account (GitHub, Google, Notion, …) once in the app. After that, both kinds of agent can use it:
 - the box agent (mode A);
-- the user's own Claude Code, Codex or Cursor, through the bridge (mode B, §13).
+- the user's own local coding agent, through the bridge (mode B, §13).
 
 Local exec on the Mac (§4.2(c)) is not part of this section.
 
@@ -1513,7 +1513,7 @@ Acceptance, on the bench host through the public edge:
    - The consent page opens in the same browser, and the page shows the account as connected.
    - `Connectors.List` output has no token field.
    - Negative: a callback without the console session that started the flow (no cookie, another user's session, a replayed or expired `state`) is refused.
-2. **Mode B, box hibernated.** Claude Code, with the app closed, lists this week's Calendar events and the user's GitHub issues. `cocoonbox status` still says hibernated.
+2. **Mode B, box hibernated.** A local agent CLI, with the app closed, lists this week's Calendar events and the user's GitHub issues. `cocoonbox status` still says hibernated.
 3. **Mode A, on sandboxd.**
    - The box agent lists issues. This is a read, and nothing asks.
    - Then it creates an issue. The app asks, with the broker's summary. Approve → the issue is created.
@@ -1563,7 +1563,7 @@ What goes where:
 ### 17.1 Package: the M4.7 plugin format
 
 A plugin uses the agent-plugins layout that the three clients share (§13.5):
-- `.claude-plugin/plugin.json`, plus `.codex-plugin/` and `.cursor-plugin/`;
+- `.claude-plugin/plugin.json`, plus `.codex-plugin/` and the `cursor-agent` manifest;
 - `skills/`, `commands/`, `agents/`, `hooks/`;
 - `.mcp.json`.
 
@@ -1585,7 +1585,7 @@ Variables:
 ### 17.2 Catalog, integrity, trust
 
 - **Catalog.** One public git repository, `loomhand/cocoonbox-plugins` (open item below).
-  - It carries the M4.7 marketplace files, `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. So Claude Code and Codex use it as a marketplace unchanged, and Cursor can too once the repository is public.
+  - It carries the M4.7 marketplace files, `.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`. So `claude` and `codex` use it as a marketplace unchanged, and `cursor-agent` can too once the repository is public.
   - Each entry pins a commit SHA and the sha256 of the plugin's tarball.
   - The repository's history is the review log.
 - **Review.** Adding a plugin is a pull request to the catalog. The review reads:
@@ -1630,11 +1630,11 @@ Variables:
 
 ### 17.4 Runtime in the box
 
-- **Skills.** Each skill's name and description go into the main agent's system prompt. A loop-only tool, `load_skill(name)`, returns the body (Claude Code's pattern).
+- **Skills.** Each skill's name and description go into the main agent's system prompt. A loop-only tool, `load_skill(name)`, returns the body (the `claude` CLI's pattern).
 - **Commands** become prompt templates in the app's composer.
 - **Agent presets** (`agents/*.md`: prompt, tool allow-list, model role) are offered in the new-agent sheet and passed as `Agents.Create{preset}`.
 - **stdio MCP servers:**
-  - **Start.** The toolhost spawns each one as `user`, with the plugin's env plus the proxy variables and `${CLAUDE_PLUGIN_ROOT}` expanded. It relays the JSON-RPC over the toolhost socket.
+  - **Start.** The toolhost spawns each one as `user`, with the plugin's env plus the proxy variables and the plugin-root variable expanded. It relays the JSON-RPC over the toolhost socket.
   - **Lifetime:**
     - it starts on the first `tools/list` of a turn or an MCP session that needs it;
     - it stops after 10 min idle;
@@ -1718,11 +1718,11 @@ Hot-path cost: none on the claim or screen path.
 - Each running server costs its memory in the box.
 
 Acceptance, on the bench host:
-1. **Install in the box.** An existing public Claude Code plugin, made of a skill and a secret-free stdio MCP server, installs unchanged from the catalog.
+1. **Install in the box.** An existing public agent-CLI plugin, made of a skill and a secret-free stdio MCP server, installs unchanged from the catalog.
    - The permission sheet shows the server's command line.
    - In a box-agent turn, the skill loads and the MCP tool runs.
-2. **Mode B.** With the plugin installed, Claude Code (app closed, through the bridge) sees the plugin's tool after `list_changed`, and runs it in the box.
-3. **Local install.** The same plugin installs locally in Claude Code and in Codex, from the catalog used as a marketplace.
+2. **Mode B.** With the plugin installed, a local agent CLI (app closed, through the bridge) sees the plugin's tool after `list_changed`, and runs it in the box.
+3. **Local install.** The same plugin installs locally in `claude` and in `codex`, from the catalog used as a marketplace.
 4. **Refusals.** Each of these is refused with a message that says why:
    - a tampered tarball (sha256 mismatch);
    - an archive with a symlink;
@@ -1735,7 +1735,7 @@ Acceptance, on the bench host:
 7. **Memory.** Box memory with the plugin installed and idle is back at the baseline, because the server stopped. Measure how long the first call takes, including the server start.
 
 Open (deferred to the backlog):
-1. Whether the catalog repository is public: `loomhand/cocoonbox-plugins`. It must be public for Cursor.
+1. Whether the catalog repository is public: `loomhand/cocoonbox-plugins`. It must be public for `cursor-agent`.
 2. No hooks in the box in the first cut.
 
 ## 18. Backlog
@@ -1749,9 +1749,9 @@ Open (deferred to the backlog):
 - **Per-port internal allow in the sandboxd egress guard** (upstream sandbox mechanism; cocoonstack/sandbox#276). Done 2026-10-01: cbsbx runs sandboxd 90230c0 (#277) with `egress_internal_allow [10.203.0.1/32:18090,9000]`, so the proxy itself refuses any other port on 10.203.0.1; cb-host-net's `CB-OUTPUT` stays as the second layer.
 - **Reopen local agents after an app restart** (app). Quitting the app ended every local agent under On this Mac, and the next launch started none, although the CLIs keep their sessions on disk. Done 2026-10-01:
   - `~/Library/Application Support/CocoonBox/local-agents.json` lists each open local agent: kind, box id, the CLI's session id, workspace, start time, the automatic and the user's name. The app rewrites it on every change (start, End, rename, a new terminal title), so a killed app loses nothing.
-  - Session ids: Claude Code gets one from the app (`--session-id`). Codex and Cursor choose their own; the app claims the earliest session in the shared workspace that began after the agent started and before the next agent of the same kind started (Codex: the rollout's `session_meta` `cwd` and `timestamp`; Cursor: `~/.cursor/chats/<md5 of the workspace>/<chat id>/meta.json` with a conversation). Two agents of one kind started within the CLI's start-up time can still swap.
+  - Session ids: `claude` gets one from the app (`--session-id`). `codex` and `cursor-agent` choose their own; the app claims the earliest session in the shared workspace that began after the agent started and before the next agent of the same kind started (`codex`: the rollout's `session_meta` `cwd` and `timestamp`; `cursor-agent`: `~/.cursor/chats/<md5 of the workspace>/<chat id>/meta.json` with a conversation). Two agents of one kind started within the CLI's start-up time can still swap.
   - Once the box is running, the app reopens them with the box MCP config: `claude --resume <sid>` (a new `--session-id <sid>` when no conversation was written), `codex resume <sid>`, `cursor-agent --resume <chat id>`; an agent with no conversation yet starts fresh. End removes it from the file.
-  - Names: a local agent's automatic name is its terminal title without spinner, status and workspace name (Claude Code and Codex title the conversation; Cursor shows its chat title); a double-click renames it, and the user's name wins and is kept across restarts.
+  - Names: a local agent's automatic name is its terminal title without spinner, status and workspace name (`claude` and `codex` title the conversation; `cursor-agent` shows its chat title); a double-click renames it, and the user's name wins and is kept across restarts.
 - **Offload a coding session into the box:** designed in §27, contract in contracts.md "Offload". The entry is the user's own terminal session, not the app's local agents (§27.4).
 - **Allowlist the tools the mode-A runner forwards** (agent). The loop passes any tool name the model emits to the toolhost, so a model that guesses an internal call (`state_*`, `browser_close`, `desktop_save`) can invoke it. Since v10 the model's shell has sudo, so this adds no privilege inside the box, but the dispatcher should still forward only the tools it advertised. Found during the v10 acceptance (2026-10-01).
 - **M4.9 proactive agents** (§15): the whole build plan (9a–f) waits here, with its decisions settled in §15.12.
@@ -1762,7 +1762,7 @@ Open (deferred to the backlog):
 
 ## 19. Several boxes per user
 
-Proposed 2026-10-01. Direction: an agent in a box drives only that box, and a local agent (Claude Code, Codex, Cursor) may drive any of the user's boxes, told apart on the MCP side.
+Proposed 2026-10-01. Direction: an agent in a box drives only that box, and a local coding agent may drive any of the user's boxes, told apart on the MCP side.
 
 ### 19.1 Which agent drives which box
 
@@ -1814,7 +1814,7 @@ Hot path: none on the screen or edge path; the bridge adds one map lookup per ca
 
 Acceptance, on the bench host:
 1. Create `test` next to the existing box. Running a second box at once is refused, and works after hibernating the first.
-2. One Claude Code session, with no restart and no config change:
+2. One local agent CLI session, with no restart and no config change:
    - lists the boxes;
    - creates and wakes `test`;
    - runs `uname -n` in both boxes with `box` set;
@@ -1839,14 +1839,14 @@ Reconciled with §22–§26 before building:
 - **Control MCP.** New tools `box_list`, `box_create` (`name`, `wait`) and `box_delete` (`box`, `confirm`); every other tool takes an optional `box` (name or id) and defaults to the first box. A `box` that is not the caller's is refused as `You have no box "<box>"`; `box_delete` needs `box` and `confirm: true`. `box_status` gains `name`.
 - **Bridge.** `cocoonbox mcp [--box NAME|ID]`. A box tool's `box` argument is stripped and routes the call; without it the call goes to the default box: `--box`, else the newest running box when the bridge first needs one (it stays until that box is deleted). The bridge fills the default `box` into `box_status`, `box_ensure`, `box_hibernate`, `box_save` and `box_upgrade` when the call names none, never into `box_delete`. Names map to ids from `box_list`, cached and refreshed on a miss or after a create or delete; a `cb-` id passes as is, so the edge decides (404 for a box id the user does not own). One MCP session per box, opened on first use; a box is woken on its first call unless `--no-wake`. `tools/list` is the control tools plus the box tools once, each with `box`. Hot path: one map lookup per call.
 - **CLI.** `--box` picks the box of `status`, `ensure`, `hibernate`, `save` and `upgrade` (default the first box). `COCOONBOX_TOKEN`, when set, takes the place of the Keychain item: the app sets it for the agents it starts, which pass it on to the bridge.
-- **App.** A box switcher at the top of the sidebar (select, New Box, Rename, Delete). The screen, events, agents, share and lifecycle buttons follow the selected box; at launch it selects the newest running box, else the first. The sidebar lists every local agent (19.4, decided 2026-10-03); their records keep their `boxID`, now the agent's default box, and all records reopen once per launch at sign-in, a record whose box is gone with the selected box as its default. **+ → Local agent** now runs the agent CLI with the bridge as its stdio MCP server (`cocoonbox mcp --box <id> --endpoint <url>`, the CLI from `Contents/Helpers/cocoonbox`, or `cocoonbox-cli` next to a development build) instead of the direct HTTP config; the token stays in the child's environment as before (`COCOONBOX_TOKEN`), and Claude Code (`env`), Codex (`env_vars`) and Cursor (`${env:…}`) pass it to the bridge. The MCP server is still named `cocoonbox`, so the tool names a reopened conversation knows are unchanged. The Connect sheet's direct recipes stay.
-- **Local agents and the app's socket** (2026-10-03). The app listens on `~/Library/Application Support/CocoonBox/agents.sock` (mode 0600; the test HOME redirects it). It hands the bridge the socket path and the agent's id the way it hands it the token, as `COCOONBOX_APP_SOCKET` and `COCOONBOX_AGENT` in the CLI's environment, named in the MCP config (Claude Code `env`, Codex `env_vars`, Cursor `${env:…}`) and never in argv. The bridge connects at start and sends newline-delimited JSON: `{"agent"}` once, then `{"agent","box","at"}` for every call it routes to a box's MCP (the box id; `at` in Unix ms). Control tools (`box_status`, `box_list`, `box_create` and the rest) are not reported, so the row shows only real box work. The app answers the first line with the agent's default box, `{"box"}`, and sends `{"box"}` again whenever the user changes it; the bridge uses the latest one for calls with no `box`, in place of `--box`. So a bridge that restarts with an old `--box` still gets the current default. The agent's terminal pane has a Default box picker; when the box switcher selects another box, the pane says "Screen shows <box>" beside it and changes nothing. The row reads the agent's kind, and below it "↗ main · test2", the boxes it acted on in the last minute. A box stays in that label 60 s after the agent's last call there: longer than an agent's pause between two tool calls while it works, so it does not flicker, and short enough to clear within a minute of the agent stopping or moving on. A call on a box the app's list lacks (one the agent just created) refreshes the list. Best effort: both ends write non-blocking, and a line that does not fit the socket buffer is dropped (the rest of a line the buffer cut goes first on the next write, so lines stay whole). With no socket, an app that quit, or a path longer than `sun_path`, the bridge works as before with its `--box`. Hot path: one mutex read and one non-blocking local `write(2)` of about 100 bytes per call on the bridge; one read and a JSON parse on the app's main queue.
+- **App.** A box switcher at the top of the sidebar (select, New Box, Rename, Delete). The screen, events, agents, share and lifecycle buttons follow the selected box; at launch it selects the newest running box, else the first. The sidebar lists every local agent (19.4, decided 2026-10-03); their records keep their `boxID`, now the agent's default box, and all records reopen once per launch at sign-in, a record whose box is gone with the selected box as its default. **+ → Local agent** now runs the agent CLI with the bridge as its stdio MCP server (`cocoonbox mcp --box <id> --endpoint <url>`, the CLI from `Contents/Helpers/cocoonbox`, or `cocoonbox-cli` next to a development build) instead of the direct HTTP config; the token stays in the child's environment as before (`COCOONBOX_TOKEN`), and `claude` (`env`), `codex` (`env_vars`) and `cursor-agent` (`${env:…}`) pass it to the bridge. The MCP server is still named `cocoonbox`, so the tool names a reopened conversation knows are unchanged. The Connect sheet's direct recipes stay.
+- **Local agents and the app's socket** (2026-10-03). The app listens on `~/Library/Application Support/CocoonBox/agents.sock` (mode 0600; the test HOME redirects it). It hands the bridge the socket path and the agent's id the way it hands it the token, as `COCOONBOX_APP_SOCKET` and `COCOONBOX_AGENT` in the CLI's environment, named in the MCP config (`claude` `env`, `codex` `env_vars`, `cursor-agent` `${env:…}`) and never in argv. The bridge connects at start and sends newline-delimited JSON: `{"agent"}` once, then `{"agent","box","at"}` for every call it routes to a box's MCP (the box id; `at` in Unix ms). Control tools (`box_status`, `box_list`, `box_create` and the rest) are not reported, so the row shows only real box work. The app answers the first line with the agent's default box, `{"box"}`, and sends `{"box"}` again whenever the user changes it; the bridge uses the latest one for calls with no `box`, in place of `--box`. So a bridge that restarts with an old `--box` still gets the current default. The agent's terminal pane has a Default box picker; when the box switcher selects another box, the pane says "Screen shows <box>" beside it and changes nothing. The row reads the agent's kind, and below it "↗ main · test2", the boxes it acted on in the last minute. A box stays in that label 60 s after the agent's last call there: longer than an agent's pause between two tool calls while it works, so it does not flicker, and short enough to clear within a minute of the agent stopping or moving on. A call on a box the app's list lacks (one the agent just created) refreshes the list. Best effort: both ends write non-blocking, and a line that does not fit the socket buffer is dropped (the rest of a line the buffer cut goes first on the next write, so lines stay whole). With no socket, an app that quit, or a path longer than `sun_path`, the bridge works as before with its `--box`. Hot path: one mutex read and one non-blocking local `write(2)` of about 100 bytes per call on the bridge; one read and a JSON parse on the app's main queue.
 - **Console.** The user page lists boxes with name, id, state and image, and creates, renames and deletes them (`POST /cb/api/boxes`, `PATCH|DELETE /cb/api/boxes/{id}`); the share form picks the box.
 - **MockBox** plays several boxes with one shared desktop and agent set, the running limit of 1 and a quota of 3; its shell answer names the box (`on <name>`), so tests can tell where a call ran.
 
-Not built: per-box agents in MockBox, a CLI `list` command, per-box Cursor workspaces (two Cursor agents for different boxes share one `.cursor/mcp.json`, written just before each starts). A rename made elsewhere reaches a running bridge only on its next name miss, create or delete, so until then a box tool may still find the box under its old name.
+Not built: per-box agents in MockBox, a CLI `list` command, per-box `cursor-agent` workspaces (two `cursor-agent` agents for different boxes share one `.cursor/mcp.json`, written just before each starts). A rename made elsewhere reaches a running bridge only on its next name miss, create or delete, so until then a box tool may still find the box under its old name.
 
-Acceptance: `deploy/accept/multibox.sh` on the bench host with a scratch user (19.5 steps 1, 3, 4, 5 scripted, and step 2's routing checked over the edge by each box's identity file, since clones share a hostname; the Claude Code session itself stays manual and the script prints it. Step 2's per-box transcripts no longer apply, since the owner's sessions are not tracked).
+Acceptance: `deploy/accept/multibox.sh` on the bench host with a scratch user (19.5 steps 1, 3, 4, 5 scripted, and step 2's routing checked over the edge by each box's identity file, since clones share a hostname; the agent CLI session itself stays manual and the script prints it. Step 2's per-box transcripts no longer apply, since the owner's sessions are not tracked).
 
 ## 20. Sign in to a website with a password saved on the Mac
 
@@ -2050,7 +2050,7 @@ Acceptance on the bench host:
 
 ## 23. Sharing a box
 
-Decided 2026-10-02, revised 2026-10-03. A box owner shares one box through a share link. Whoever holds the link watches the screen in a web page and can connect their own TUI agents (Claude Code, Codex, Cursor) to the box over MCP. Nobody takes over the screen through a share. The same change stops tracking the owner's own MCP sessions as agents.
+Decided 2026-10-02, revised 2026-10-03. A box owner shares one box through a share link. Whoever holds the link watches the screen in a web page and can connect their own TUI coding agents to the box over MCP. Nobody takes over the screen through a share. The same change stops tracking the owner's own MCP sessions as agents.
 
 ### 23.1 Decisions
 
@@ -2083,10 +2083,10 @@ Hot path: the edge adds one share lookup (in memory, like the token index) per c
 
 ### 23.3 Acceptance on the bench host
 
-1. qa1 creates an open share of its box. With only the link, a browser shows qa1's screen and ignores mouse and keys. A Claude Code configured with the share lists only the read-only tools, and a shell call is refused.
-2. qa1 turns on write. The next shell call from that Claude Code runs. Lifecycle tools and FillCredential stay refused. Turning write off refuses the next shell call.
+1. qa1 creates an open share of its box. With only the link, a browser shows qa1's screen and ignores mouse and keys. An agent CLI configured with the share lists only the read-only tools, and a shell call is refused.
+2. qa1 turns on write. The next shell call from that agent CLI runs. Lifecycle tools and FillCredential stay refused. Turning write off refuses the next shell call.
 3. A named share for qa2 refuses the link without qa2's token and accepts it with qa2's token. qa3's token is refused.
-4. qa1's app lists the share session under External with its calls. qa1's own Claude Code session creates no agent on the box.
+4. qa1's app lists the share session under External with its calls. qa1's own agent CLI session creates no agent on the box.
 5. A Rebase of qa1's box waits for a share session's running `shell` call before it quiesces.
 6. Revoking, regenerating and expiry each cut the share's page and MCP sessions within a second, and the old link answers PermissionDenied afterwards.
 
@@ -2144,7 +2144,7 @@ Deploy:
 - **agent:** ships with the v18 cut; a share works only on a v18 box.
 - **Order:** the api before or with v18. A v17 box keeps working for its owner, and refuses shares.
 - **app:** needs the api with `Shares`; with an older api, the Share sheet reports the `UNIMPLEMENTED` error of `Shares.List`.
-- **Acceptance:** `deploy/accept/share.sh` on the bench host, with scratch users qa1 (with a v18 box), qa2 and qa3 and their console passwords in `QA1_PASSWORD`, `QA2_PASSWORD` and `QA3_PASSWORD`. It issues the three users fresh API tokens and never prints a secret. The browser view, Claude Code and the app's External list stay manual steps; the script prints them.
+- **Acceptance:** `deploy/accept/share.sh` on the bench host, with scratch users qa1 (with a v18 box), qa2 and qa3 and their console passwords in `QA1_PASSWORD`, `QA2_PASSWORD` and `QA3_PASSWORD`. It issues the three users fresh API tokens and never prints a secret. The browser view, the agent CLI and the app's External list stay manual steps; the script prints them.
 
 ### 23.5 The owner can see the link again
 
@@ -2163,7 +2163,7 @@ Deploy: migration 0006 runs at start. The api before this change (7a3c012) runs 
 
 ### 23.6 A read share reads files only under /workspace
 
-Decided 2026-10-03. A read share's `read_file` and `list_dir` reached every file the desktop user can read: the Chrome profile (cookies, Login Data) and the box agent CLIs' logins (`~/.claude`, `~/.codex`, `~/.config/cursor`). A link holder could take the owner's web sessions and agent subscriptions, far more than seeing the screen.
+Decided 2026-10-03. A read share's `read_file` and `list_dir` reached every file the desktop user can read: the Chrome profile (cookies, Login Data) and the box agent CLIs' logins (`~/.claude`, `~/.codex` and the third CLI's config directory). A link holder could take the owner's web sessions and agent subscriptions, far more than seeing the screen.
 
 - **Rule.** A read share reads and lists only paths that resolve beneath `/workspace`, with `..` and symlinks resolved when the file is opened. Every other path fails the call with `<path> is refused: a read-only share reads files only under /workspace`. A symlink in `/workspace` that leads out is refused, and so is any absolute symlink, even one that leads back in.
 - **Unchanged.** `screenshot`, `computer_state` and the browser page tools work as before. The owner and a write share read any path, as before.
@@ -2473,7 +2473,7 @@ Hot path: one map lookup per tool call in `serve` and in the toolhost; nothing p
 
 Decided 2026-10-03. The contract is contracts.md "Offload".
 
-The user is about to leave the Mac. The task a local Claude Code, Codex or Cursor session works on moves into the user's box, where the same kind of CLI, signed in inside the box, keeps working; on return the box's commits and hand-over come home, and the local session continues. This is mode C, beside mode A (the in-box loop) and mode B (a local CLI over MCP).
+The user is about to leave the Mac. The task a local coding agent session works on moves into the user's box, where the same kind of CLI, signed in inside the box, keeps working; on return the box's commits and hand-over come home, and the local session continues. This is mode C, beside mode A (the in-box loop) and mode B (a local CLI over MCP).
 
 ### 27.1 Model
 
@@ -2514,11 +2514,11 @@ The user is about to leave the Mac. The task a local Claude Code, Codex or Curso
 
 ### 27.4 Entry points
 
-Decided 2026-10-03. The app's own local agents (the Claude Code, Codex and Cursor it launches) drive boxes over MCP; their work target is already the box, so their pane has no "Move to box" or "Bring back". Offload is for the user's own terminal sessions: a Claude Code or Codex TUI in any repo.
+Decided 2026-10-03. The app's own local agents (the agent CLIs it launches) drive boxes over MCP; their work target is already the box, so their pane has no "Move to box" or "Bring back". Offload is for the user's own terminal sessions: a `claude` or `codex` TUI in any repo.
 
-- **Claude Code:** `/cocoonbox:offload` and `/cocoonbox:back` from the cocoonbox plugin. The skill runs the CLI at the path the plugin was generated with (`~/.local/bin/cocoonbox` when it links to this binary, else the app's `Contents/Helpers/cocoonbox`) in the user's working directory, and assumes no app session. One-time install: `cocoonbox setup claude`, or the app's File menu "Install Claude Code Plugin…" (also in the Offloaded section's menu), which runs it with the login shell's environment and shows its output. It is idempotent and also updates the plugin.
-- **Codex and others:** `cocoonbox offload --handover-prompt [--kind K]` prints the request to paste: write the hand-over to this repo's hand-over path with the template, then run `cocoonbox offload --kind K` (both outside Codex's sandbox, so Codex asks for approval), and report blocks and warnings. `cocoonbox offload` and `cocoonbox back` also work by hand.
-- **The app's Offloaded section** lists the offloads in flight across boxes from the Mac's records: repo, box, box CLI, status (working, idle, waiting for you, blocked, stopped, or the box's state when it is not running; a hibernated box is not woken to ask) and the time since the last activity (the newest of the last hook, the transcript's mtime and the tmux window's activity, else an event's arrival). Selecting one attaches the box CLI's terminal, with Reattach. The app only watches (decided 2026-10-04): offload and back start from the user's own TUI (`/cocoonbox:back` or `cocoonbox back`), and the app has no Bring back. A row stays until `back` or `end` removes its record, as the CLI keeps records; the pane shows one line of help, "Bring this back from your terminal: /cocoonbox:back (or cocoonbox back) in <repo path>", with a Copy button for the command. The section's menu opens "Install in box" and "Sign in in the box" for any box and CLI; a CLI preflight block on the box CLI names that menu. Sign in runs the CLI's own login with `BROWSER=true NO_OPEN_BROWSER=1`, so the box's browser stays shut and the user approves on the Mac: the app opens the first https link the CLI prints on that vendor's sign-in hosts (claude.ai, claude.com, anthropic.com; auth.openai.com, chatgpt.com; cursor.com) in the Mac's browser, once, and opens no other link from the box's output. ⌘V and Edit > Paste in a box terminal paste the Mac's text, bracketed when the program asks. Notifications for a question, back and blocked are unchanged.
+- **`claude`:** `/cocoonbox:offload` and `/cocoonbox:back` from the cocoonbox plugin. The skill runs the CLI at the path the plugin was generated with (`~/.local/bin/cocoonbox` when it links to this binary, else the app's `Contents/Helpers/cocoonbox`) in the user's working directory, and assumes no app session. One-time install: `cocoonbox setup claude`, or the app's File menu plugin install item (also in the Offloaded section's menu), which runs it with the login shell's environment and shows its output. It is idempotent and also updates the plugin.
+- **`codex` and others:** `cocoonbox offload --handover-prompt [--kind K]` prints the request to paste: write the hand-over to this repo's hand-over path with the template, then run `cocoonbox offload --kind K` (both outside the CLI's sandbox, so it asks for approval), and report blocks and warnings. `cocoonbox offload` and `cocoonbox back` also work by hand.
+- **The app's Offloaded section** lists the offloads in flight across boxes from the Mac's records: repo, box, box CLI, status (working, idle, waiting for you, blocked, stopped, or the box's state when it is not running; a hibernated box is not woken to ask) and the time since the last activity (the newest of the last hook, the transcript's mtime and the tmux window's activity, else an event's arrival). Selecting one attaches the box CLI's terminal, with Reattach. The app only watches (decided 2026-10-04): offload and back start from the user's own TUI (`/cocoonbox:back` or `cocoonbox back`), and the app has no Bring back. A row stays until `back` or `end` removes its record, as the CLI keeps records; the pane shows one line of help, "Bring this back from your terminal: /cocoonbox:back (or cocoonbox back) in <repo path>", with a Copy button for the command. The section's menu opens "Install in box" and "Sign in in the box" for any box and CLI; a CLI preflight block on the box CLI names that menu. Sign in runs the CLI's own login with `BROWSER=true NO_OPEN_BROWSER=1`, so the box's browser stays shut and the user approves on the Mac: the app opens the first https link the CLI prints on that vendor's sign-in hosts (`claude.ai`, `claude.com`, `anthropic.com`; `auth.openai.com`, `chatgpt.com`; `cursor.com`) in the Mac's browser, once, and opens no other link from the box's output. ⌘V and Edit > Paste in a box terminal paste the Mac's text, bracketed when the program asks. Notifications for a question, back and blocked are unchanged.
 
 Hot path: none. The edge and the api do not change; the inbox is idle between messages; the event is one bus publish per outbox entry or status change. The Offloaded section asks each running box with a record for `offload status` (one Exec) when the app connects, comes to the front or selects a row, never on a timer.
 
