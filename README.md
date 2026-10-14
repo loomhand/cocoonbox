@@ -1,3 +1,5 @@
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/loomhand-logo-horizontal.svg"><img src="docs/assets/loomhand-logo-mono-navy.svg" alt="loomhand" width="440"></picture>
+
 # cocoonbox
 
 A persistent cloud computer per user, with a resident agent that any model can drive and a native macOS client to watch it, talk to it, and take over. Local coding agents (Claude Code, Codex, Cursor) use the same box through MCP.
