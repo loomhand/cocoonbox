@@ -29,10 +29,21 @@ sudo image/cut.sh -f cbcore -a cocoonbox-agent-linux-amd64 [-p] cbcore:v(N-1) vN
 - A release tag `vX.Y.Z` of this repository publishes the agent and api binaries and `cocoonbox-image-recipe-vX.Y.Z.tar.gz`, the `image/` tree of that commit with `PINS` naming the agent binary's sha256 and the cua-driver commit and version. An image cut from a release uses that release's agent, so the pins name exactly what the image carries.
 - A new image becomes a pool default only after a full boot and the box acceptance on a host.
 
-## Publishing (planned)
+## Publishing
 
 cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/...`, built from Dockerfiles by Actions). The box is cut from a booted VM instead, so its publish step runs where the cut runs:
 
-- each accepted `<family>:vN` rootfs tarball goes to `ghcr.io/loomhand/cocoonbox/<family>:vN` as an OCI artifact (`oras push`, one layer, `org.opencontainers.image.revision` set to the release commit);
-- a host imports it with `oras pull` and `cocoon image import <family>:vN <tarball>`;
+- each accepted `<family>:vN` rootfs tarball goes to `ghcr.io/loomhand/cocoonbox/<family>:vN` as an OCI artifact (`oras push`, one layer of type `application/vnd.loomhand.cocoonbox.rootfs.tar+gzip`);
+- the manifest's annotations pin what the image carries:
+
+  | Annotation | Value |
+  |---|---|
+  | `org.opencontainers.image.revision` | the release commit the image was cut from |
+  | `org.opencontainers.image.source` | this repository |
+  | `io.github.loomhand.cocoonbox.agent-sha256` | sha256 of the `cocoonbox-agent` binary in the image |
+  | `io.github.loomhand.cocoonbox.agent-rev` | the revision the agent reports (`0.1.0+<rev>`) |
+  | `io.github.loomhand.cocoonbox.cua-driver-version` | the cua-driver build version |
+  | `io.github.loomhand.cocoonbox.cua-driver-commit` | the [loomhand/cua](https://github.com/loomhand/cua) commit cua-driver is built from |
+
+- a host imports it with `oras pull ghcr.io/loomhand/cocoonbox/<family>:vN` and `cocoon image import <family>:vN <tarball>`;
 - `.github/workflows/image.yml` is the workflow for it. It needs a self-hosted runner labelled `cocoon` on a sandboxd host; until one is registered the workflow does not run.

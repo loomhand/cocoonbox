@@ -45,8 +45,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "${{ inputs.release }}" --repo "$GITHUB_REPOSITORY" --pattern cocoonbox-agent-linux-amd64 --pattern SHA256SUMS
-          grep cocoonbox-agent-linux-amd64 SHA256SUMS | sha256sum -c -
+          gh release download "${{ inputs.release }}" --repo "$GITHUB_REPOSITORY" --pattern cocoonbox-agent-linux-amd64 --pattern checksums.txt
+          grep ' cocoonbox-agent-linux-amd64$' checksums.txt | sha256sum -c -
           chmod +x cocoonbox-agent-linux-amd64
 
       - name: Cut
@@ -54,12 +54,24 @@ jobs:
 
       - name: Publish
         run: |
+          set -eu
           case "${{ inputs.family }}" in
           cbcore) tarball=/srv/cb/sbx/build/cocoonbox-cbcore-${{ inputs.version }}.tar.gz ;;
           cbdesk) tarball=/srv/cb/sbx/build/cocoonbox-desktop-${{ inputs.version }}.tar.gz ;;
           esac
+          revision=$(git rev-parse HEAD)
+          agent_rev=$(git rev-parse --short HEAD)
+          agent_sha=$(sha256sum cocoonbox-agent-linux-amd64 | cut -d' ' -f1)
+          cua_commit=$(sed -n 's/^COMMIT=${COMMIT:-\(.*\)}$/\1/p' image/cua-driver.sh)
+          cua_version=$(sed -n 's/^VERSION=${VERSION:-\(.*\)}$/\1/p' image/cua-driver.sh)
           echo "${{ github.token }}" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
+          # oras refuses absolute paths, so it pushes the tarball's basename from its directory
+          cd "$(dirname "$tarball")"
           oras push "ghcr.io/${{ github.repository }}/${{ inputs.family }}:${{ inputs.version }}" \
-            --annotation "org.opencontainers.image.revision=${{ github.sha }}" \
+            --annotation "org.opencontainers.image.revision=$revision" \
             --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
-            "$tarball:application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"
+            --annotation "io.github.loomhand.cocoonbox.agent-sha256=$agent_sha" \
+            --annotation "io.github.loomhand.cocoonbox.agent-rev=$agent_rev" \
+            --annotation "io.github.loomhand.cocoonbox.cua-driver-version=$cua_version" \
+            --annotation "io.github.loomhand.cocoonbox.cua-driver-commit=$cua_commit" \
+            "$(basename "$tarball"):application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"
