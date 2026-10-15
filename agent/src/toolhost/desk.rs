@@ -364,6 +364,19 @@ impl Desk {
         Ok(json!({"ok": ok}).to_string())
     }
 
+    /// The element of the focused window at the screen point `(x, y)`, as the `at` op answers.
+    pub async fn at_point(&self, x: i32, y: i32) -> Result<Value, String> {
+        let text = self
+            .at(AtArgs {
+                x,
+                y,
+                window: None,
+                pid: None,
+            })
+            .await?;
+        serde_json::from_str(&text).map_err(|e| format!("at: {e}"))
+    }
+
     /// The element at the screen point `(x, y)` of a window, with the names and roles above it.
     async fn at(&self, a: AtArgs) -> Result<String, String> {
         let frame = pick(self.frames().await?, a.window.as_deref(), a.pid)?;

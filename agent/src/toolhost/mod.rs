@@ -7,6 +7,7 @@ pub mod desk;
 pub mod exec;
 pub mod files;
 pub mod flows;
+pub mod ground;
 pub mod rpc;
 pub mod scope;
 pub mod script;
@@ -147,6 +148,16 @@ impl Host {
                 .await
                 .map(Output::text),
             "computer_state" => self.cua.state(call.args).await,
+            "computer_act" if call.args.get("target").is_some_and(|t| !t.is_null()) => {
+                ground::act(
+                    &self.cua,
+                    &self.desk,
+                    &self.scripts,
+                    &self.workspace,
+                    call.args,
+                )
+                .await
+            }
             "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
             t if t.starts_with("desk_") => self.desk.run(&self.cua, t, call.args).await,

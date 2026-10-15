@@ -26,6 +26,7 @@ const MAX_TIMEOUT: Duration = Duration::from_secs(110);
 const TERM_GRACE: Duration = Duration::from_secs(2);
 const PIPE_GRACE: Duration = Duration::from_millis(500);
 const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
+const LOCATE_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_RESULT_BYTES: u64 = 256 << 10;
 const KEPT_SHOTS: usize = 20;
 const ERROR_LINES: usize = 12;
@@ -144,6 +145,31 @@ impl Scripts {
         }
         out.text = body.to_string();
         Ok(out)
+    }
+
+    /// The plan executor's resolve of `target` in the focused window, pressed by action when `press`; its result.
+    pub async fn locate(
+        &self,
+        workspace: &Path,
+        target: &str,
+        press: bool,
+    ) -> Result<Value, String> {
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let params = json!({"locate": {"target": target, "press": press}}).to_string();
+        let mut report = self
+            .run_script(
+                &self.bin,
+                Script::File(PathBuf::from(DESK_PLAN)),
+                &params,
+                workspace,
+                LOCATE_TIMEOUT,
+                &id,
+            )
+            .await?;
+        if let Some(error) = report.get("error") {
+            return Err(format!("locate: {error}"));
+        }
+        Ok(report["result"].take())
     }
 
     /// Rebuilds the flow index with the plan executor after the library sync changed flows.

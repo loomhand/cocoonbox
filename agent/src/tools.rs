@@ -9,6 +9,7 @@ use crate::llm::ToolSpec;
 use crate::plugins::Plugin;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
+const TARGET_HINT: &str = "With action click or locate, in place of element or x,y: the element by its accessibility name in the focused window, else by a unique match of text on the screen. Returns the tier, the point in screenshot pixels and a crop around it; locate does not click. Not found returns the screenshot for x,y.";
 const PLAN_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
 const DESK_OPS: [&str; 15] = [
     "windows", "snapshot", "find", "read", "press", "act", "at", "key", "type", "click", "focus",
@@ -222,6 +223,15 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
                 props.remove("max_edge");
             }
             act.parameters["properties"]["actions"] = json!({"type": "array", "items": step});
+            if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
+                actions.push("locate".into());
+            }
+            act.parameters["properties"]["target"] = json!({
+                "type": "object",
+                "description": TARGET_HINT,
+                "properties": {"description": {"type": "string"}, "text": {"type": "string", "description": "the element's visible text, for an element without an accessibility name"}},
+                "required": ["description"]
+            });
             if let Some(schema) = act.parameters.as_object_mut() {
                 schema.remove("required");
             }
