@@ -1,5 +1,6 @@
 //! Tier router of a box that runs GUI plans: asks gw's decisions model which tool tier fits a task.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -9,11 +10,14 @@ use crate::llm::Usage;
 const DESK_ROUTE: &str = include_str!("../../image/desk/route.json");
 const TASK: &str = "\"__TASK__\"";
 const TIMEOUT: Duration = Duration::from_secs(2);
+const BUILDS: &str = "typesafe/jev-1.14-";
 const BUILD: &str = "typesafe/jev-1.14-20261014";
 const ERROR_BODY_CHARS: usize = 300;
 
 /// Lowest confidence at which a route is followed rather than left to the caller.
 pub const CONFIDENT: f64 = 0.8;
+
+static WARNED: AtomicBool = AtomicBool::new(false);
 
 /// The tiers with what each one means for the tools to use.
 pub const TIERS: &[(&str, &str)] = &[
@@ -102,11 +106,15 @@ impl Router {
         }
         let reply: Value =
             serde_json::from_str(&text).map_err(|e| format!("decode decisions reply: {e}"))?;
-        if reply["model"] != BUILD {
+        let served = reply["model"].as_str().unwrap_or_default();
+        if !is_build(served) {
             return Err(format!(
                 "gw decisions served {} for {}",
                 reply["model"], self.model
             ));
+        }
+        if served != BUILD && !WARNED.swap(true, Ordering::Relaxed) {
+            eprintln!("router: jev answers from build {served}, not the tested {BUILD}");
         }
         let usage = Some(Usage {
             input: reply["usage"]["input_tokens"].as_u64().unwrap_or(0),
@@ -161,6 +169,13 @@ pub fn leads(tier: &str, tool: &str) -> bool {
     }
 }
 
+/// Whether `model` names a dated build of the router's jev version.
+fn is_build(model: &str) -> bool {
+    model
+        .strip_prefix(BUILDS)
+        .is_some_and(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
+}
+
 /// What tier `tier` means for the tools to use.
 pub fn meaning(tier: &str) -> Option<&'static str> {
     TIERS.iter().find(|(t, _)| *t == tier).map(|(_, m)| *m)
@@ -183,6 +198,21 @@ mod tests {
         offered.sort_unstable();
         known.sort_unstable();
         assert_eq!(offered, known);
+    }
+
+    #[test]
+    fn any_dated_build_of_the_router_version_answers_and_nothing_else() {
+        assert!(is_build(BUILD) && is_build("typesafe/jev-1.14-20270101"));
+        for other in [
+            "typesafe/jev-1.13-20260917",
+            "typesafe/jev-1.14",
+            "~typesafe/jev-latest",
+            "typesafe/jev-preview",
+            "typesafe/jev-1.14-2026",
+            "typesafe/jev-1.141-20261014",
+        ] {
+            assert!(!is_build(other), "{other}");
+        }
     }
 
     #[test]
