@@ -23,9 +23,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7.0.1
 
-      - name: Select the Command Line Tools
+      - name: Select Xcode
         run: |
-          sudo xcode-select -s /Library/Developer/CommandLineTools
+          ls -d /Applications/Xcode*.app
+          sudo xcode-select -s /Applications/Xcode_26.0.app
           swift --version
 
       # the suite runs serially: in parallel on the runner's three cores no test finished in 30 minutes;
