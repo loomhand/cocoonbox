@@ -143,8 +143,7 @@ pub async fn act(
     Ok(finish(cua, &mut out, Some(*rect)))
 }
 
-/// The box to point at for the found element, else why it gives none: hidden, unbounded, or a LibreOffice control outside a menu
-/// whose `shift`, the height its extents sit above the drawn control, the plan executor could not tell.
+/// The box to point at for the found element, else why none: hidden, unbounded, or a LibreOffice control without a `shift`.
 fn placed(found: &Value, office: impl Fn(i64) -> bool) -> Result<[f64; 4], &'static str> {
     if found["shown"] == false {
         return Err("it does not show, like an entry of a closed menu");
