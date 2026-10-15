@@ -1,6 +1,6 @@
 //! `computer_act` on a described target: the plan executor's AT-SPI resolve, pressed by action, then a
-//! unique OCR match of the target's visible text; neither finding it, or either failing, leaves the
-//! grounding to the caller.
+//! unique OCR match of the target's visible text, or of the label its description names; neither finding
+//! it, or either failing, leaves the grounding to the caller.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -22,6 +22,35 @@ const CROP: [f64; 2] = [320.0, 200.0];
 const FIELD_WORDS: [&str; 5] = ["field", "input", "box", "entry", "textbox"];
 const TEXT_ROLES: [&str; 3] = ["text", "label", "static"];
 const MIN_PREFIX: usize = 3;
+const SAYS: [&str; 6] = [
+    "that shows ",
+    "that says ",
+    "labelled ",
+    "labeled ",
+    "named ",
+    "called ",
+];
+const PLACES: [&str; 13] = [
+    " in ",
+    " on ",
+    " at ",
+    " of ",
+    " from ",
+    " inside ",
+    " next to ",
+    " near ",
+    " under ",
+    " that ",
+    " which ",
+    " with ",
+    " for ",
+];
+const ARTICLES: [&str; 3] = ["the", "a", "an"];
+const ROLE_WORDS: [&str; 22] = [
+    "button", "menu", "tab", "link", "field", "box", "icon", "item", "dropdown", "checkbox",
+    "option", "entry", "input", "toggle", "list", "clip", "folder", "file", "label", "textbox",
+    "combobox", "tool",
+];
 
 #[derive(Deserialize)]
 struct Target {
@@ -103,9 +132,13 @@ pub async fn act(
     if found["served"].is_array() {
         out["a11y"]["served"] = found["served"].take();
     }
-    let Some(text) = a.target.text.as_deref().filter(|t| !norm(t).is_empty()) else {
-        return not_found(cua, out, a.max_edge, start).await;
+    let texts = match a.target.text.as_deref().filter(|t| !norm(t).is_empty()) {
+        Some(text) => vec![text.to_owned()],
+        None => texts_from(&a.target.description),
     };
+    if texts.is_empty() {
+        return not_found(cua, out, a.max_edge, start).await;
+    }
     let t0 = Instant::now();
     let words = match ocr(cua).await {
         Ok(words) => words,
@@ -115,8 +148,11 @@ pub async fn act(
         }
     };
     timing::mark("ocr");
-    let hits = matches(&words, text);
-    out["ocr"] = json!({"matches": hits.len(), "ms": t0.elapsed().as_millis()});
+    let (text, hits) = first_read(&words, &texts).unwrap_or((texts[0].as_str(), Vec::new()));
+    out["ocr"] = json!({"text": text, "matches": hits.len(), "ms": t0.elapsed().as_millis()});
+    if a.target.text.is_none() {
+        out["ocr"]["from"] = "description".into();
+    }
     let [rect] = hits.as_slice() else {
         return not_found(cua, out, a.max_edge, start).await;
     };
@@ -133,6 +169,7 @@ pub async fn act(
     out = json!({
         "tier": "ocr",
         "text": text,
+        "text_from": if a.target.text.is_some() { "text" } else { "description" },
         "point": [cx / k, cy / k],
         "scale": k,
         "pressed": press,
@@ -249,6 +286,66 @@ fn parse_tsv(tsv: &str, scale: f64) -> Vec<Word> {
             })
         })
         .collect()
+}
+
+/// The labels a description names, most likely first: quoted text, the text after "that shows" or "labelled",
+/// the words before the first place phrase without articles and role words, and their capitalised run.
+fn texts_from(description: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut add = |t: &str| {
+        let t = t.trim().trim_end_matches(',').trim();
+        if !norm(t).is_empty() && !out.iter().any(|o| norm(o) == norm(t)) {
+            out.push(t.to_owned());
+        }
+    };
+    for pair in description
+        .split(['"', '\u{201c}', '\u{201d}'])
+        .skip(1)
+        .step_by(2)
+    {
+        add(pair);
+    }
+    let lower = description.to_lowercase();
+    for say in SAYS {
+        if let Some(i) = lower.find(say) {
+            add(&description[i + say.len()..]);
+        }
+    }
+    let head = PLACES
+        .iter()
+        .filter_map(|p| lower.find(p))
+        .min()
+        .map_or(description, |i| &description[..i]);
+    let mut words: Vec<&str> = head.split_whitespace().collect();
+    while words
+        .first()
+        .is_some_and(|w| ARTICLES.contains(&w.to_lowercase().as_str()))
+    {
+        words.remove(0);
+    }
+    while words
+        .last()
+        .is_some_and(|w| ROLE_WORDS.contains(&w.to_lowercase().as_str()))
+    {
+        words.pop();
+    }
+    add(&words.join(" "));
+    let capital = words
+        .iter()
+        .skip_while(|w| !w.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit()))
+        .take_while(|w| w.starts_with(|c: char| c.is_uppercase() || c.is_ascii_digit()))
+        .copied()
+        .collect::<Vec<_>>();
+    add(&capital.join(" "));
+    out
+}
+
+/// The first of `texts` read on the screen and its matches.
+fn first_read<'a>(words: &[Word], texts: &'a [String]) -> Option<(&'a str, Vec<[f64; 4]>)> {
+    texts
+        .iter()
+        .map(|t| (t.as_str(), matches(words, t)))
+        .find(|(_, hits)| !hits.is_empty())
 }
 
 /// The boxes of every run of consecutive words on one line that spells `label`; its last word may be cut off.
@@ -435,6 +532,63 @@ mod tests {
         assert!(placed(&closed, none).is_err());
         assert!(placed(&unbounded, none).is_err());
         assert!(placed(&drawn, none).is_ok());
+    }
+
+    #[test]
+    fn a_description_names_the_text_to_read() {
+        let first = |d: &str| texts_from(d).into_iter().next();
+        assert_eq!(
+            first("the Data menu in the menu bar").as_deref(),
+            Some("Data")
+        );
+        assert_eq!(
+            first("the paragraph style box that shows Default Paragraph Style").as_deref(),
+            Some("Default Paragraph Style")
+        );
+        assert_eq!(
+            first("the slide Format dropdown that shows Screen 16:9").as_deref(),
+            Some("Screen 16:9")
+        );
+        assert_eq!(
+            first("Rename... in the right-click menu").as_deref(),
+            Some("Rename...")
+        );
+        assert_eq!(
+            first("the crab.mp4 clip in the timeline").as_deref(),
+            Some("crab.mp4")
+        );
+        assert_eq!(
+            first("the hide all link in the Property Browser").as_deref(),
+            Some("hide all")
+        );
+        assert_eq!(first("the interview folder").as_deref(), Some("interview"));
+        assert_eq!(first("the Save button").as_deref(), Some("Save"));
+        assert_eq!(
+            first("the button labelled \"Save as PDF\"").as_deref(),
+            Some("Save as PDF")
+        );
+        assert!(texts_from("the slide Format dropdown").contains(&"Format".to_owned()));
+        assert!(texts_from("the button").is_empty());
+    }
+
+    #[test]
+    fn the_first_text_read_on_screen_decides() {
+        let words = [
+            word("Slide", "1.1.1.1", 0.0),
+            word("Show", "1.1.1.1", 30.0),
+            word("Format", "1.1.2.1", 0.0),
+            word("Format", "1.1.3.1", 0.0),
+        ];
+        let texts = [
+            "Nothing".to_owned(),
+            "Slide Show".to_owned(),
+            "Format".to_owned(),
+        ];
+        let (text, hits) = first_read(&words, &texts).unwrap();
+        assert_eq!((text, hits.len()), ("Slide Show", 1));
+        let (text, hits) = first_read(&words, &texts[2..]).unwrap();
+        assert_eq!((text, hits.len()), ("Format", 2));
+        assert!(first_read(&words, &texts[..1]).is_none());
     }
 
     #[test]
