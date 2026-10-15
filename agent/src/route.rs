@@ -17,8 +17,6 @@ const ERROR_BODY_CHARS: usize = 300;
 /// Lowest confidence at which a route is followed rather than left to the caller.
 pub const CONFIDENT: f64 = 0.8;
 
-static WARNED: AtomicBool = AtomicBool::new(false);
-
 /// The tiers with what each one means for the tools to use.
 pub const TIERS: &[(&str, &str)] = &[
     ("command", "use shell and the file tools"),
@@ -39,6 +37,8 @@ pub const TIERS: &[(&str, &str)] = &[
         "a pure judgment from the given text: no action on the computer is needed",
     ),
 ];
+
+static WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Client of gw's `/v1/decisions` with the V4 tier prompt.
 pub struct Router {
@@ -169,16 +169,16 @@ pub fn leads(tier: &str, tool: &str) -> bool {
     }
 }
 
+/// What tier `tier` means for the tools to use.
+pub fn meaning(tier: &str) -> Option<&'static str> {
+    TIERS.iter().find(|(t, _)| *t == tier).map(|(_, m)| *m)
+}
+
 /// Whether `model` names a dated build of the router's jev version.
 fn is_build(model: &str) -> bool {
     model
         .strip_prefix(BUILDS)
         .is_some_and(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))
-}
-
-/// What tier `tier` means for the tools to use.
-pub fn meaning(tier: &str) -> Option<&'static str> {
-    TIERS.iter().find(|(t, _)| *t == tier).map(|(_, m)| *m)
 }
 
 #[cfg(test)]
