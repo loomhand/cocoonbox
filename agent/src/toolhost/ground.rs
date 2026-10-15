@@ -137,9 +137,7 @@ pub async fn act(
     Ok(finish(cua, &mut out, Some(*rect)))
 }
 
-/// Why the found element's bounds give no point to click, if they do not: an element that does not show,
-/// such as an entry of a closed menu, or has no bounds; and a LibreOffice control outside a menu, whose
-/// extents can sit a menu bar's height above the drawn control. Such an element is pressed by its action only.
+/// Why the found element gives no point to click: hidden, unbounded, or a LibreOffice control outside a menu.
 fn no_point(found: &Value, office: impl Fn(i64) -> bool) -> Option<&'static str> {
     let role = found["role"].as_str().unwrap_or_default();
     if found["shown"] == false {
