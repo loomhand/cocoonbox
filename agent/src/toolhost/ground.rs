@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-use super::cua::Cua;
+use super::cua::{Cua, libreoffice};
 use super::desk::Desk;
 use super::rpc::Output;
 use super::script::Scripts;
@@ -67,22 +67,34 @@ pub async fn act(
         .await?;
     timing::mark("a11y");
     let a11y_ms = start.elapsed().as_millis();
-    if found["found"] == true {
-        let rect = rect_of(&found["bounds"]);
+    let element = format!(
+        "{} \"{}\"",
+        found["role"].as_str().unwrap_or_default(),
+        found["name"].as_str().unwrap_or_default()
+    );
+    let unplaced = no_point(&found, libreoffice);
+    if found["found"] == true && (press || unplaced.is_none()) {
+        let rect = rect_of(&found["bounds"]).filter(|_| unplaced.is_none());
         let point = rect.map(|[x, y, w, h]| [(x + w / 2.0) / k, (y + h / 2.0) / k]);
         let mut out = json!({
             "tier": "a11y",
             "how": found["how"],
-            "element": format!("{} \"{}\"", found["role"].as_str().unwrap_or_default(), found["name"].as_str().unwrap_or_default()),
+            "element": element,
             "window": found["window"],
             "point": point,
             "scale": k,
             "pressed": press.then(|| found["via"].clone()),
             "ms": start.elapsed().as_millis(),
         });
+        if let Some(why) = unplaced {
+            out["no_point"] = why.into();
+        }
         return Ok(finish(cua, &mut out, rect));
     }
-    let mut out = json!({"a11y": {"why": found["why"], "ms": a11y_ms}});
+    let mut out = match unplaced.filter(|_| found["found"] == true) {
+        Some(why) => json!({"a11y": {"element": element, "no_point": why, "ms": a11y_ms}}),
+        None => json!({"a11y": {"why": found["why"], "ms": a11y_ms}}),
+    };
     let Some(text) = a.target.text.as_deref().filter(|t| !norm(t).is_empty()) else {
         return not_found(cua, out, a.max_edge, start).await;
     };
@@ -115,6 +127,14 @@ pub async fn act(
         "ms": start.elapsed().as_millis(),
     });
     Ok(finish(cua, &mut out, Some(*rect)))
+}
+
+/// Why the found element's bounds give no point to click, if they do not: a LibreOffice control outside a
+/// menu, whose extents can sit a menu bar's height above the drawn control, is pressed by its action only.
+fn no_point(found: &Value, office: impl Fn(i64) -> bool) -> Option<&'static str> {
+    let role = found["role"].as_str().unwrap_or_default();
+    (!role.starts_with("menu") && found["pid"].as_i64().is_some_and(office))
+        .then_some("LibreOffice's extents can sit a menu bar's height above the drawn control")
 }
 
 /// The result line and a full-resolution crop of [`CROP`] around `rect`, else no image.
@@ -350,6 +370,16 @@ mod tests {
         assert_eq!(matches(&words, "Save").len(), 2);
         assert!(matches(&words, "Paragraph Save").is_empty());
         assert_eq!(matches(&words, "Insert Image...").len(), 0);
+    }
+
+    #[test]
+    fn a_libreoffice_control_outside_a_menu_has_no_point() {
+        let office = |pid: i64| pid == 7;
+        let button = json!({"role": "button", "pid": 7});
+        assert!(no_point(&button, office).is_some());
+        assert!(no_point(&json!({"role": "menuitem", "pid": 7}), office).is_none());
+        assert!(no_point(&json!({"role": "button", "pid": 8}), office).is_none());
+        assert!(no_point(&json!({"role": "button"}), office).is_none());
     }
 
     #[test]
