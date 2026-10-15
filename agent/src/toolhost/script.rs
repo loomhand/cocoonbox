@@ -384,7 +384,7 @@ struct RunGuard {
 impl RunGuard {
     fn signal(&self, signal: i32) {
         if let Some(pgid) = self.pgid {
-            let _ = sys::signal_group(pgid, signal);
+            signal_run(pgid, signal);
         }
     }
 }
@@ -395,6 +395,50 @@ impl Drop for RunGuard {
             self.signal(libc::SIGKILL);
         }
     }
+}
+
+/// Signals the processes of group `pgid` but the apps the run started in app scopes of their own.
+fn signal_run(pgid: u32, signal: i32) {
+    let (Ok(own), Ok(entries)) = (
+        std::fs::read_to_string("/proc/self/cgroup"),
+        std::fs::read_dir("/proc"),
+    ) else {
+        let _ = sys::signal_group(pgid, signal);
+        return;
+    };
+    for pid in entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+    {
+        let in_group = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| process_group(&stat))
+            == Some(pgid);
+        if in_group
+            && !std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
+                .is_ok_and(|cgroup| launched(&own, &cgroup))
+        {
+            let _ = sys::signal_process(pid, signal);
+        }
+    }
+}
+
+/// The process group field of a `/proc/<pid>/stat` line, read after the parenthesized command name.
+fn process_group(stat: &str) -> Option<u32> {
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(2)?
+        .parse()
+        .ok()
+}
+
+/// Whether `cgroup` is an app scope other than `own`, the toolhost's cgroup that a run inherits.
+fn launched(own: &str, cgroup: &str) -> bool {
+    cgroup != own
+        && cgroup
+            .lines()
+            .any(|l| l.contains("/app.slice/") && l.trim_end().ends_with(".scope"))
 }
 
 fn default_screenshot() -> bool {
@@ -502,6 +546,32 @@ mod tests {
             assert_eq!(report["exit_code"], 0, "{report}");
             assert!(report.get("error").is_none(), "{report}");
         }
+    }
+
+    #[test]
+    fn process_group_reads_past_a_command_name_with_spaces_and_parens() {
+        assert_eq!(
+            process_group("4242 (node (x) y) S 1 777 777 0 -1"),
+            Some(777)
+        );
+        assert_eq!(process_group("garbage"), None);
+    }
+
+    #[test]
+    fn a_run_spares_only_the_apps_in_app_scopes_of_their_own() {
+        let own = "0::/system.slice/cocoonbox-toolhost.service\n";
+        let app =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/x-app-mousepad-1.scope\n";
+        let session =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-term-1.scope\n";
+        assert!(launched(own, app));
+        assert!(!launched(own, own));
+        assert!(!launched(session, session));
+        assert!(launched(session, app));
+        assert!(!launched(
+            own,
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/cua-driver.service\n"
+        ));
     }
 
     #[test]
