@@ -58,6 +58,17 @@ impl Scripts {
 
     /// Runs one script and reports it as JSON text, with a screenshot taken after the run unless turned off.
     pub async fn run(&self, cua: &Cua, workspace: &Path, args: Value) -> Result<Output, String> {
+        self.run_with(&self.bin, cua, workspace, args).await
+    }
+
+    /// Runs one script as [`Scripts::run`] does, with the program at `bin` in place of Node.
+    pub async fn run_with(
+        &self,
+        bin: &Path,
+        cua: &Cua,
+        workspace: &Path,
+        args: Value,
+    ) -> Result<Output, String> {
         let RunArgs {
             code,
             script,
@@ -74,7 +85,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let params = Value::Object(params.unwrap_or_default()).to_string();
         let mut report = self
-            .run_script(script, &params, workspace, timeout_of(timeout_s), &id)
+            .run_script(bin, script, &params, workspace, timeout_of(timeout_s), &id)
             .await?;
         let mut out = Output::default();
         if screenshot {
@@ -112,6 +123,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let mut report = self
             .run_script(
+                &self.bin,
                 Script::File(PathBuf::from(DESK_PLAN)),
                 &Value::Object(params).to_string(),
                 workspace,
@@ -139,6 +151,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let report = self
             .run_script(
+                &self.bin,
                 Script::File(PathBuf::from(DESK_PLAN)),
                 r#"{"reindex":true}"#,
                 workspace,
@@ -162,6 +175,7 @@ impl Scripts {
     /// Runs one script in its own scratch directory.
     async fn run_script(
         &self,
+        bin: &Path,
         script: Script,
         params: &str,
         workspace: &Path,
@@ -174,7 +188,7 @@ impl Scripts {
             .map_err(|e| format!("create {}: {e}", run_dir.display()))?;
         let _ = tokio::fs::set_permissions(&self.dir, std::fs::Permissions::from_mode(0o700)).await;
         let report = self
-            .execute(script, params, workspace, &run_dir, timeout)
+            .execute(bin, script, params, workspace, &run_dir, timeout)
             .await;
         let _ = tokio::fs::remove_dir_all(&run_dir).await;
         report
@@ -182,6 +196,7 @@ impl Scripts {
 
     async fn execute(
         &self,
+        bin: &Path,
         script: Script,
         params: &str,
         workspace: &Path,
@@ -208,7 +223,7 @@ impl Scripts {
         let started = Instant::now();
         timing::mark("prepare");
         let path = std::env::var("PATH").unwrap_or_default() + GAMES_PATH;
-        let mut node = Command::new(&self.bin);
+        let mut node = Command::new(bin);
         node.arg(&entry)
             .current_dir(workspace)
             .env("PATH", path)
@@ -224,7 +239,7 @@ impl Scripts {
         sys::unprotect(&mut node);
         let mut child = node
             .spawn()
-            .map_err(|e| format!("start {}: {e}", self.bin.display()))?;
+            .map_err(|e| format!("start {}: {e}", bin.display()))?;
         timing::mark("spawn");
         let mut guard = RunGuard {
             pgid: child.id(),
@@ -472,6 +487,7 @@ mod tests {
             let started = Instant::now();
             let report = scripts
                 .run_script(
+                    &scripts.bin,
                     Script::Code(code.to_owned()),
                     r#"{"n":7}"#,
                     dir.path(),

@@ -283,7 +283,8 @@ pub fn writes(name: &str) -> bool {
     )
 }
 
-fn runs_flow(args: &Value) -> bool {
+/// Whether a script call's `script` is a saved flow under `flows/`.
+pub fn runs_flow(args: &Value) -> bool {
     args["script"]
         .as_str()
         .is_some_and(|s| s.trim_start_matches("/workspace/").starts_with("flows/"))

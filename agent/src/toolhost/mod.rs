@@ -55,6 +55,8 @@ pub struct Host {
     cua: Cua,
     desk: Desk,
     scripts: Scripts,
+    /// The program of each plugin script tool, on a box that runs GUI plans.
+    plugins: HashMap<String, PathBuf>,
     session_save: PathBuf,
     home: PathBuf,
     /// A box that runs GUI plans.
@@ -80,6 +82,12 @@ impl Host {
             cua: Cua::new(cfg.cua_socket.clone(), cfg.automation.plans()),
             desk: Desk::default(),
             scripts: Scripts::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
+            plugins: cfg
+                .plugins
+                .iter()
+                .filter(|_| cfg.automation.plans())
+                .map(|p| (p.name.clone(), p.bin.clone()))
+                .collect(),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
             plans: cfg.automation.plans(),
@@ -177,7 +185,14 @@ impl Host {
                 .await
                 .map(Output::text),
             "screenshot" => self.cua.look(&call.args).await,
-            other => Err(format!("unknown tool {other}")),
+            other => match self.plugins.get(other) {
+                Some(bin) => {
+                    self.scripts
+                        .run_with(bin, &self.cua, &self.workspace, call.args)
+                        .await
+                }
+                None => Err(format!("unknown tool {other}")),
+            },
         };
         let out = result.unwrap_or_else(Output::error);
         timing::note("error", out.is_error);
