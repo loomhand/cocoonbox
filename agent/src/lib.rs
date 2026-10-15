@@ -12,6 +12,7 @@ pub mod journal;
 pub mod llm;
 pub mod mcp;
 pub mod offload;
+pub mod plugins;
 pub mod prompts;
 pub mod route;
 pub mod runner;

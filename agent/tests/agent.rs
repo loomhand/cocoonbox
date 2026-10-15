@@ -36,6 +36,7 @@ case "$src" in
 *leftover*) sleep 300 & echo $! > leftover.pid; echo left; printf 7 > "$CB_RESULT" ;;
 *) echo "ran $1 in $PWD"; printf '{"params":%s}' "$CB_PARAMS" > "$CB_RESULT"; printf outline > "$CB_SNAPSHOT" ;;
 esac"#;
+const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
 const THUMB: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=";
@@ -84,6 +85,7 @@ impl Harness {
             None,
             None,
             Automation::Plain,
+            false,
         )
         .await
     }
@@ -99,6 +101,7 @@ impl Harness {
             Some(chrome),
             None,
             Automation::Plain,
+            false,
         )
         .await
     }
@@ -114,6 +117,23 @@ impl Harness {
             None,
             Some(connect_url),
             Automation::Plain,
+            false,
+        )
+        .await
+    }
+
+    /// A desk box whose image adds the plugin `demo_run`, its guide resource and a routing.d paragraph.
+    async fn with_plugin(script: Vec<(&'static str, String)>) -> Self {
+        let day = Duration::from_secs(24 * 3600);
+        Self::boot(
+            script,
+            false,
+            Duration::from_secs(600),
+            day,
+            None,
+            None,
+            Automation::Desk,
+            true,
         )
         .await
     }
@@ -129,10 +149,12 @@ impl Harness {
             None,
             None,
             Automation::Desk,
+            false,
         )
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn boot(
         script: Vec<(&'static str, String)>,
         anthropic_messages: bool,
@@ -141,6 +163,7 @@ impl Harness {
         chrome: Option<&Path>,
         connect_url: Option<String>,
         automation: Automation,
+        plugin: bool,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -157,6 +180,24 @@ impl Harness {
         write_script(&session_save, "echo saved >> \"$0.log\"");
         let script_bin = dir.path().join("script-bin");
         write_script(&script_bin, FAKE_NODE);
+        let tools_dir = dir.path().join("tools.d");
+        let routing_dir = dir.path().join("routing.d");
+        if plugin {
+            let plugin_bin = dir.path().join("demo-bin");
+            write_script(
+                &plugin_bin,
+                &format!("echo \"$1\" >> plugin.log\n{FAKE_NODE}"),
+            );
+            let guide = dir.path().join("DEMO.md");
+            std::fs::write(&guide, "demo guide").unwrap();
+            std::fs::create_dir_all(&tools_dir).unwrap();
+            let spec = json!({"name": "demo_run", "description": "Run a demo script.", "bin": plugin_bin,
+                "resources": [{"uri": "cocoonbox://demo/DEMO.md", "path": guide, "mime": "text/markdown", "description": "The demo guide"}]});
+            std::fs::write(tools_dir.join("demo.json"), spec.to_string()).unwrap();
+            std::fs::create_dir_all(&routing_dir).unwrap();
+            std::fs::write(routing_dir.join("demo.md"), DEMO_ROUTING).unwrap();
+        }
+        let plugins = cocoonbox_agent::plugins::load(&tools_dir);
         let toolhost_socket = dir.path().join("toolhost.sock");
         let (chrome_bin, cdp_port) = match chrome {
             Some(bin) => {
@@ -184,6 +225,7 @@ impl Harness {
             session_save: session_save.clone(),
             home: home.clone(),
             automation,
+            plugins: plugins.clone(),
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -206,6 +248,8 @@ impl Harness {
             desktop_unit: None,
             connect_url,
             automation,
+            plugins,
+            routing_extra: cocoonbox_agent::config::routing_extra(&routing_dir),
             state_roots: vec![
                 Root {
                     name: "home".into(),
@@ -3510,6 +3554,134 @@ async fn mcp_script_run_stops_a_run_past_its_timeout_with_its_children() {
     stops_a_run_past_its_timeout(&Harness::with_desk(Vec::new()).await, "script_run").await;
 }
 
+#[tokio::test]
+async fn mcp_plugin_runs_its_scripts_with_its_own_program() {
+    let h = Harness::with_plugin(Vec::new()).await;
+    reports_result_logs_and_a_screenshot(&h, "demo_run").await;
+    let ran = std::fs::read_to_string(h.workspace.join("plugin.log")).unwrap();
+    assert_eq!(ran.lines().count(), 2, "{ran}");
+    assert!(ran.lines().all(|l| l.ends_with("entry.mjs")), "{ran}");
+}
+
+#[tokio::test]
+async fn mcp_plugin_stops_a_run_past_its_timeout_with_its_children() {
+    stops_a_run_past_its_timeout(&Harness::with_plugin(Vec::new()).await, "demo_run").await;
+}
+
+#[tokio::test]
+async fn mcp_lists_a_plugin_after_the_script_tool_with_its_resource() {
+    let h = Harness::with_plugin(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let tools = listed["result"]["tools"].as_array().unwrap();
+    let at = |name: &str| tools.iter().position(|t| t["name"] == name).unwrap();
+    assert_eq!(at("demo_run"), at("script_run") + 1);
+    let (plugin, script) = (&tools[at("demo_run")], &tools[at("script_run")]);
+    assert_eq!(plugin["description"], "Run a demo script.");
+    assert_eq!(plugin["inputSchema"], script["inputSchema"]);
+    assert_eq!(plugin["_meta"]["anthropic/alwaysLoad"], true);
+
+    let listed = mcp.rpc("resources/list", json!({})).await;
+    let uris: Vec<&str> = listed["result"]["resources"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        uris,
+        ["cocoonbox://desk/AGENTS.md", "cocoonbox://demo/DEMO.md"]
+    );
+    let read = mcp
+        .rpc("resources/read", json!({"uri": "cocoonbox://demo/DEMO.md"}))
+        .await;
+    assert_eq!(
+        read["result"]["contents"][0]["text"], "demo guide",
+        "{read}"
+    );
+}
+
+#[tokio::test]
+async fn a_plain_box_ignores_its_plugins() {
+    let day = Duration::from_secs(24 * 3600);
+    let h = Harness::boot(
+        Vec::new(),
+        false,
+        Duration::from_secs(600),
+        day,
+        None,
+        None,
+        Automation::Plain,
+        true,
+    )
+    .await;
+    let mut mcp = McpClient::connect(&h).await;
+
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let names: Vec<&str> = listed["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert!(!names.contains(&"demo_run"), "{names:?}");
+    let out = mcp
+        .rpc(
+            "tools/call",
+            json!({"name": "demo_run", "arguments": {"code": "1"}}),
+        )
+        .await;
+    assert_eq!(out["error"]["message"], "unknown tool: demo_run", "{out}");
+    assert!(!h.workspace.join("plugin.log").exists());
+}
+
+#[tokio::test]
+async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
+    let run = json!({"code": "export function main(p) { return p }", "params": {"n": 2}, "screenshot": false});
+    let h = Harness::with_plugin(vec![
+        ("decisions", decision("plan", 0.93)),
+        (
+            "chat/completions",
+            chat_tool_call("call_p", "demo_run", &run),
+        ),
+        ("chat/completions", chat_text("Done.")),
+    ])
+    .await;
+    let routing = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../image/desk/routing.md"),
+    )
+    .unwrap();
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "run the demo loop", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    let offered: Vec<&str> = chats[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["function"]["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        offered[..3],
+        ["gui_plan", "script_run", "demo_run"],
+        "{offered:?}"
+    );
+    let system = chats[0]["messages"][0]["content"].as_str().unwrap();
+    assert!(
+        system.ends_with(&format!("{routing}\n\n{DEMO_ROUTING}")),
+        "{system}"
+    );
+    let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
+    let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
+    assert_eq!(report["result"], json!({"params": {"n": 2}}), "{report}");
+    assert!(h.workspace.join("plugin.log").exists());
+}
+
 async fn stops_a_run_past_its_timeout(h: &Harness, tool: &str) {
     let mut mcp = McpClient::connect(h).await;
 
@@ -3528,10 +3700,7 @@ async fn stops_a_run_past_its_timeout(h: &Harness, tool: &str) {
     assert_eq!(out["isError"], true, "{out}");
     let report: Value = serde_json::from_str(out["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(report["error"]["kind"], "timeout", "{report}");
-    assert_eq!(
-        h.workspace.join("released.log").exists(),
-        tool != "script_run"
-    );
+    assert!(!h.workspace.join("released.log").exists());
     let pid = std::fs::read_to_string(h.workspace.join("grandchild.pid")).unwrap();
     let proc = PathBuf::from(format!("/proc/{}", pid.trim()));
     let mut alive = true;
@@ -4923,6 +5092,7 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
         Some(&chrome),
         None,
         Automation::Desk,
+        false,
     )
     .await;
     let mut mcp = McpClient::connect(&h).await;
@@ -4989,6 +5159,7 @@ async fn a_desk_box_waits_for_the_content_a_page_script_loads() {
         Some(&chrome),
         None,
         Automation::Desk,
+        false,
     )
     .await;
     let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();

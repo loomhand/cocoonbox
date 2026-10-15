@@ -6,6 +6,7 @@ use serde_json::json;
 
 use crate::config::Automation;
 use crate::llm::ToolSpec;
+use crate::plugins::Plugin;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 const PLAN_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
@@ -238,6 +239,20 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
         with_budget(&mut tools);
     }
     tools
+}
+
+/// Adds `plugins` after the script tool, each with that tool's parameters; a box without one gets none.
+pub fn with_plugins(tools: &mut Vec<ToolSpec>, plugins: &[Plugin]) {
+    let Some(at) = tools.iter().position(|t| t.name == "script_run") else {
+        return;
+    };
+    let parameters = tools[at].parameters.clone();
+    let specs = plugins.iter().map(|p| ToolSpec {
+        name: Cow::Owned(p.name.clone()),
+        description: Cow::Owned(p.description.clone()),
+        parameters: parameters.clone(),
+    });
+    tools.splice(at + 1..at + 1, specs);
 }
 
 /// Gives the screenshots of a box that runs GUI plans their default scale in place of the screen size.

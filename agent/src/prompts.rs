@@ -61,8 +61,14 @@ const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; li
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
 /// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a box that
-/// runs GUI plans adds the [`ROUTING`].
-pub fn main(model: &str, computer_model: &str, vision: bool, automation: Automation) -> String {
+/// runs GUI plans adds the [`ROUTING`] and the image's `routing_extra`.
+pub fn main(
+    model: &str,
+    computer_model: &str,
+    vision: bool,
+    automation: Automation,
+    routing_extra: &str,
+) -> String {
     let eyes = if vision {
         "You can also call screenshot to look at the screen yourself."
     } else {
@@ -77,6 +83,7 @@ pub fn main(model: &str, computer_model: &str, vision: bool, automation: Automat
         Automation::Desk => {
             prompt.push_str("\n\nThis box runs GUI plans and desk scripts.\n\n");
             prompt.push_str(ROUTING);
+            prompt.push_str(routing_extra);
         }
     }
     prompt
@@ -141,6 +148,7 @@ mod tests {
             "anthropic/claude-sonnet-5",
             false,
             Automation::Plain,
+            "",
         );
         assert!(p.starts_with(
             "You are deepseek/deepseek-v4.1-flash, served through the cocoonbox gateway."
@@ -156,15 +164,21 @@ mod tests {
             assert!(!without_subagent.contains(vendor), "mentions {vendor}");
         }
         assert!(
-            main("anthropic/claude-sonnet-5", "x", true, Automation::Plain)
-                .contains("call screenshot")
+            main(
+                "anthropic/claude-sonnet-5",
+                "x",
+                true,
+                Automation::Plain,
+                ""
+            )
+            .contains("call screenshot")
         );
     }
 
     #[test]
     fn main_prompt_on_a_desk_box_ends_with_its_routing() {
-        let plain = main("m", "c", false, Automation::Plain);
-        let p = main("m", "c", false, Automation::Desk);
+        let plain = main("m", "c", false, Automation::Plain, "");
+        let p = main("m", "c", false, Automation::Desk, "");
         assert!(p.starts_with(&plain), "{p}");
         assert!(p.ends_with(ROUTING), "{p}");
         assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
@@ -183,6 +197,14 @@ mod tests {
         );
         assert!(ROUTING.contains("Before finishing, check the whole result"));
         assert!(ROUTING.contains("If the task says an input changes later, wait and re-check."));
+    }
+
+    #[test]
+    fn main_prompt_on_a_desk_box_ends_with_the_images_routing_extra() {
+        let extra = "\n\nUse x_run for x.";
+        let p = main("m", "c", false, Automation::Desk, extra);
+        assert!(p.ends_with(&format!("{ROUTING}{extra}")), "{p}");
+        assert!(!main("m", "c", false, Automation::Plain, extra).contains("x_run"));
     }
 
     #[test]

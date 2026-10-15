@@ -82,6 +82,8 @@ pub struct Dispatcher {
     tools: Arc<dyn Tools>,
     journal: Arc<Journal>,
     flows: Option<Arc<Syncer>>,
+    /// Plugin script tools, which read and write flows as `script_run` does.
+    plugins: Vec<String>,
 }
 
 impl Dispatcher {
@@ -91,6 +93,7 @@ impl Dispatcher {
             tools,
             journal,
             flows: None,
+            plugins: Vec::new(),
         }
     }
 
@@ -98,6 +101,13 @@ impl Dispatcher {
     #[must_use]
     pub fn with_flows(mut self, flows: Option<Arc<Syncer>>) -> Self {
         self.flows = flows;
+        self
+    }
+
+    /// Treats the tools named `plugins` as script tools for the flow sync.
+    #[must_use]
+    pub fn with_plugins(mut self, plugins: Vec<String>) -> Self {
+        self.plugins = plugins;
         self
     }
 
@@ -175,11 +185,12 @@ impl Dispatcher {
         let Some(sync) = &self.flows else {
             return self.tools.run(owner, name, args).await;
         };
-        if flows::reads(name, &args) {
+        let plugin = self.plugins.iter().any(|p| p == name);
+        if flows::reads(name, &args) || (plugin && flows::runs_flow(&args)) {
             sync.pull().await;
         }
         let out = self.tools.run(owner, name, args).await;
-        if flows::writes(name) {
+        if flows::writes(name) || plugin {
             sync.kick();
         }
         out

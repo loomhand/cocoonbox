@@ -58,6 +58,17 @@ impl Scripts {
 
     /// Runs one script and reports it as JSON text, with a screenshot taken after the run unless turned off.
     pub async fn run(&self, cua: &Cua, workspace: &Path, args: Value) -> Result<Output, String> {
+        self.run_with(&self.bin, cua, workspace, args).await
+    }
+
+    /// Runs one script as [`Scripts::run`] does, with the program at `bin` in place of Node.
+    pub async fn run_with(
+        &self,
+        bin: &Path,
+        cua: &Cua,
+        workspace: &Path,
+        args: Value,
+    ) -> Result<Output, String> {
         let RunArgs {
             code,
             script,
@@ -74,7 +85,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let params = Value::Object(params.unwrap_or_default()).to_string();
         let mut report = self
-            .run_script(script, &params, workspace, timeout_of(timeout_s), &id)
+            .run_script(bin, script, &params, workspace, timeout_of(timeout_s), &id)
             .await?;
         let mut out = Output::default();
         if screenshot {
@@ -112,6 +123,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let mut report = self
             .run_script(
+                &self.bin,
                 Script::File(PathBuf::from(DESK_PLAN)),
                 &Value::Object(params).to_string(),
                 workspace,
@@ -139,6 +151,7 @@ impl Scripts {
         let id = uuid::Uuid::new_v4().simple().to_string();
         let report = self
             .run_script(
+                &self.bin,
                 Script::File(PathBuf::from(DESK_PLAN)),
                 r#"{"reindex":true}"#,
                 workspace,
@@ -162,6 +175,7 @@ impl Scripts {
     /// Runs one script in its own scratch directory.
     async fn run_script(
         &self,
+        bin: &Path,
         script: Script,
         params: &str,
         workspace: &Path,
@@ -174,7 +188,7 @@ impl Scripts {
             .map_err(|e| format!("create {}: {e}", run_dir.display()))?;
         let _ = tokio::fs::set_permissions(&self.dir, std::fs::Permissions::from_mode(0o700)).await;
         let report = self
-            .execute(script, params, workspace, &run_dir, timeout)
+            .execute(bin, script, params, workspace, &run_dir, timeout)
             .await;
         let _ = tokio::fs::remove_dir_all(&run_dir).await;
         report
@@ -182,6 +196,7 @@ impl Scripts {
 
     async fn execute(
         &self,
+        bin: &Path,
         script: Script,
         params: &str,
         workspace: &Path,
@@ -208,7 +223,7 @@ impl Scripts {
         let started = Instant::now();
         timing::mark("prepare");
         let path = std::env::var("PATH").unwrap_or_default() + GAMES_PATH;
-        let mut node = Command::new(&self.bin);
+        let mut node = Command::new(bin);
         node.arg(&entry)
             .current_dir(workspace)
             .env("PATH", path)
@@ -224,7 +239,7 @@ impl Scripts {
         sys::unprotect(&mut node);
         let mut child = node
             .spawn()
-            .map_err(|e| format!("start {}: {e}", self.bin.display()))?;
+            .map_err(|e| format!("start {}: {e}", bin.display()))?;
         timing::mark("spawn");
         let mut guard = RunGuard {
             pgid: child.id(),
@@ -369,7 +384,7 @@ struct RunGuard {
 impl RunGuard {
     fn signal(&self, signal: i32) {
         if let Some(pgid) = self.pgid {
-            let _ = sys::signal_group(pgid, signal);
+            signal_run(pgid, signal);
         }
     }
 }
@@ -380,6 +395,50 @@ impl Drop for RunGuard {
             self.signal(libc::SIGKILL);
         }
     }
+}
+
+/// Signals the processes of group `pgid` but the apps the run started in app scopes of their own.
+fn signal_run(pgid: u32, signal: i32) {
+    let (Ok(own), Ok(entries)) = (
+        std::fs::read_to_string("/proc/self/cgroup"),
+        std::fs::read_dir("/proc"),
+    ) else {
+        let _ = sys::signal_group(pgid, signal);
+        return;
+    };
+    for pid in entries
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.parse::<u32>().ok())
+    {
+        let in_group = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| process_group(&stat))
+            == Some(pgid);
+        if in_group
+            && !std::fs::read_to_string(format!("/proc/{pid}/cgroup"))
+                .is_ok_and(|cgroup| launched(&own, &cgroup))
+        {
+            let _ = sys::signal_process(pid, signal);
+        }
+    }
+}
+
+/// The process group field of a `/proc/<pid>/stat` line, read after the parenthesized command name.
+fn process_group(stat: &str) -> Option<u32> {
+    stat.rsplit_once(')')?
+        .1
+        .split_whitespace()
+        .nth(2)?
+        .parse()
+        .ok()
+}
+
+/// Whether `cgroup` is an app scope other than `own`, the toolhost's cgroup that a run inherits.
+fn launched(own: &str, cgroup: &str) -> bool {
+    cgroup != own
+        && cgroup
+            .lines()
+            .any(|l| l.contains("/app.slice/") && l.trim_end().ends_with(".scope"))
 }
 
 fn default_screenshot() -> bool {
@@ -472,6 +531,7 @@ mod tests {
             let started = Instant::now();
             let report = scripts
                 .run_script(
+                    &scripts.bin,
                     Script::Code(code.to_owned()),
                     r#"{"n":7}"#,
                     dir.path(),
@@ -486,6 +546,32 @@ mod tests {
             assert_eq!(report["exit_code"], 0, "{report}");
             assert!(report.get("error").is_none(), "{report}");
         }
+    }
+
+    #[test]
+    fn process_group_reads_past_a_command_name_with_spaces_and_parens() {
+        assert_eq!(
+            process_group("4242 (node (x) y) S 1 777 777 0 -1"),
+            Some(777)
+        );
+        assert_eq!(process_group("garbage"), None);
+    }
+
+    #[test]
+    fn a_run_spares_only_the_apps_in_app_scopes_of_their_own() {
+        let own = "0::/system.slice/cocoonbox-toolhost.service\n";
+        let app =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/x-app-mousepad-1.scope\n";
+        let session =
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-term-1.scope\n";
+        assert!(launched(own, app));
+        assert!(!launched(own, own));
+        assert!(!launched(session, session));
+        assert!(launched(session, app));
+        assert!(!launched(
+            own,
+            "0::/user.slice/user-1000.slice/user@1000.service/app.slice/cua-driver.service\n"
+        ));
     }
 
     #[test]

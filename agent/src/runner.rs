@@ -119,10 +119,14 @@ impl Runtime {
         let rt = Arc::new(Self {
             model,
             router,
-            dispatcher: Arc::new(Dispatcher::new(tools, Arc::clone(&journal)).with_flows(flows)),
+            dispatcher: Arc::new(
+                Dispatcher::new(tools, Arc::clone(&journal))
+                    .with_flows(flows)
+                    .with_plugins(cfg.plugins.iter().map(|p| p.name.clone()).collect()),
+            ),
             journal,
-            main_tools: tools::main_tools(false, cfg.automation),
-            main_vision_tools: tools::main_tools(true, cfg.automation),
+            main_tools: loop_tools(false, &cfg),
+            main_vision_tools: loop_tools(true, &cfg),
             computer_tools: tools::computer_tools(cfg.automation),
             computer_prompt: prompts::computer(&cfg.model_computer, cfg.automation),
             screen: tokio::sync::Mutex::new(()),
@@ -628,6 +632,7 @@ impl Runtime {
             &self.cfg.model_computer,
             vision,
             self.cfg.automation,
+            &self.cfg.routing_extra,
         );
         if let Some(keys) = tokio::fs::read_to_string(prompts::KEYS_FILE)
             .await
@@ -654,9 +659,20 @@ impl Runtime {
                 Some(c) => c.tools().await,
                 None => Arc::default(),
             };
-            let mut offered: Vec<&ToolSpec> = tools.iter().chain(connectors.iter()).collect();
+            let mut offered: Vec<&ToolSpec> = tools
+                .iter()
+                .chain(
+                    connectors
+                        .iter()
+                        .filter(|c| !tools.iter().any(|t| t.name == c.name)),
+                )
+                .collect();
             if let Some(tier) = tier {
-                offered.sort_by_key(|t| !route::leads(tier, &t.name));
+                offered.sort_by_key(|t| {
+                    let plugin =
+                        tier == "plan" && self.cfg.plugins.iter().any(|p| p.name == t.name);
+                    !(route::leads(tier, &t.name) || plugin)
+                });
             }
             let req = Request {
                 model: &ctx.model,
@@ -1090,6 +1106,13 @@ pub fn history_messages(entries: Vec<TranscriptEntry>) -> Vec<Message> {
     }
     close_open(&mut out, &mut open);
     out
+}
+
+/// The main agent's tools: those of `cfg`'s automation and its plugins.
+fn loop_tools(vision: bool, cfg: &ServeConfig) -> Vec<ToolSpec> {
+    let mut tools = tools::main_tools(vision, cfg.automation);
+    tools::with_plugins(&mut tools, &cfg.plugins);
+    tools
 }
 
 fn close_open(out: &mut Vec<Message>, open: &mut Vec<String>) {

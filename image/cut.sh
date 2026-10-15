@@ -1,25 +1,28 @@
 #!/bin/bash
 # Cuts desktop template <family>:<vN> on the cbsbx cocoon root: boot <base template>, provision, seal, stop, export, import.
-# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f cbdesk|cbcore] <base template> <vN>
-#   -p reruns provision.sh; -f cbcore adds the desk runtime of image/desk and checks the guest with image/clean-gate.sh
-#   after the agent step; every step goes to ~/ops-audit.md
+# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f <family>] [-r <runtime dir>]... <base template> <vN>
+#   -p reruns provision.sh; each -r adds a runtime: the directory goes into the guest and its provision.sh runs, in order;
+#   -f cbcore without -r adds image/desk and checks the guest with image/clean-gate.sh after the agent step;
+#   every step goes to ~/ops-audit.md
 set -Eeuo pipefail
 export LC_ALL=C
 
 PROVISION=0
 AGENT=""
 FAMILY=cbdesk
-while getopts pa:f: o; do
+RUNTIMES=()
+while getopts pa:f:r: o; do
 	case $o in
 	p) PROVISION=1 ;;
 	a) AGENT=$OPTARG ;;
 	f) FAMILY=$OPTARG ;;
+	r) RUNTIMES+=("$(realpath "$OPTARG")") ;;
 	*) exit 2 ;;
 	esac
 done
 shift $((OPTIND - 1))
-BASE=${1:?usage: cut.sh [-p] [-a agent] [-f family] <base template> <vN>}
-V=${2:?usage: cut.sh [-p] [-a agent] [-f family] <base template> <vN>}
+BASE=${1:?usage: cut.sh [-p] [-a agent] [-f family] [-r runtime]... <base template> <vN>}
+V=${2:?usage: cut.sh [-p] [-a agent] [-f family] [-r runtime]... <base template> <vN>}
 S=/srv/cb/sbx
 COCOON=$S/bin/cocoon-cbsbx
 PROXY=http://127.0.0.1:3128
@@ -28,11 +31,17 @@ EGRESS_PORT=2049
 AUDIT=${AUDIT:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/ops-audit.md}
 case $FAMILY in
 cbdesk) VM=cbcut-$V TARBALL=$S/build/cocoonbox-desktop-$V.tar.gz ;;
-cbcore) VM=cbcut-cbcore-$V TARBALL=$S/build/cocoonbox-cbcore-$V.tar.gz ;;
-*) echo "unknown family $FAMILY" >&2; exit 2 ;;
+*[!a-z0-9]* | [!a-z]*) echo "family $FAMILY is not [a-z][a-z0-9]*" >&2; exit 2 ;;
+*) VM=cbcut-$FAMILY-$V TARBALL=$S/build/cocoonbox-$FAMILY-$V.tar.gz ;;
 esac
 TEMPLATE=$FAMILY:$V
 SRC="$(cd "$(dirname "$0")" && pwd)"
+if [ "$FAMILY" = cbcore ] && [ ${#RUNTIMES[@]} = 0 ]; then
+	RUNTIMES=("$SRC/desk")
+fi
+for R in "${RUNTIMES[@]}"; do
+	[ -f "$R/provision.sh" ] || { echo "runtime $R has no provision.sh" >&2; exit 2; }
+done
 STEP=start
 PROXY_PID=""
 
@@ -68,7 +77,7 @@ step "boot $BASE as $VM"
 for _ in $(seq 180); do active && break; sleep 1; done
 active
 
-if [ "$PROVISION" = 1 ] || [ "$FAMILY" = cbcore ]; then
+if [ "$PROVISION" = 1 ] || [ ${#RUNTIMES[@]} -gt 0 ]; then
 	VSOCK=$("$COCOON" vm inspect "$VM" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d[0] if isinstance(d,list) else d)["vsock_socket"])')
 	python3 "$SRC/cut-proxy.py" "${VSOCK}_$EGRESS_PORT" &
 	PROXY_PID=$!
@@ -79,12 +88,13 @@ if [ "$PROVISION" = 1 ]; then
 	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/provision.sh
 	guest "$VM" -- rm -rf /tmp/cb-image
 fi
-if [ "$FAMILY" = cbcore ]; then
-	step "desk"
-	tar -C "$SRC" -cf - desk | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
-	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/desk/provision.sh
+for R in "${RUNTIMES[@]}"; do
+	N=$(basename "$R")
+	step "runtime $N"
+	tar -C "$(dirname "$R")" -cf - "$N" | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
+	guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash "/tmp/cb-image/$N/provision.sh"
 	guest "$VM" -- rm -rf /tmp/cb-image
-fi
+done
 stop_proxy
 if [ -n "$AGENT" ]; then
 	step "agent $(sha256sum "$AGENT" | cut -c1-16)"

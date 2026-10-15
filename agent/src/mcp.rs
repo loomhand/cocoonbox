@@ -61,10 +61,12 @@ const NUDGE_STREAK: u32 = 2;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
 const MAX_FLOWS: usize = 30;
 const DESK_RESOURCES: [Resource; 1] = [Resource {
-    uri: "cocoonbox://desk/AGENTS.md",
-    path: "/opt/desk/AGENTS.md",
-    mime: "text/markdown",
-    description: "How to write, run and replay desk scripts on this box, with the desk API",
+    uri: Cow::Borrowed("cocoonbox://desk/AGENTS.md"),
+    path: Cow::Borrowed("/opt/desk/AGENTS.md"),
+    mime: Cow::Borrowed("text/markdown"),
+    description: Cow::Borrowed(
+        "How to write, run and replay desk scripts on this box, with the desk API",
+    ),
 }];
 
 /// MCP sessions of external agents.
@@ -72,6 +74,8 @@ pub struct Mcp {
     rt: Arc<Runtime>,
     gate: Arc<Gate>,
     tools: Vec<(Cow<'static, str>, Value)>,
+    /// The guide of the box's automation first, then its plugins' files.
+    resources: Vec<Resource>,
     automation: Automation,
     idle: Duration,
     sessions: Mutex<HashMap<String, Arc<Session>>>,
@@ -83,21 +87,39 @@ impl Mcp {
     /// Creates the server behind `gate`; sessions idle for `idle` are closed.
     pub fn new(rt: Arc<Runtime>, idle: Duration, gate: Arc<Gate>) -> Arc<Self> {
         let automation = rt.cfg.automation;
-        let tools = tools::remote_tools(automation)
+        let plugins = &rt.cfg.plugins;
+        let mut specs = tools::remote_tools(automation);
+        tools::with_plugins(&mut specs, plugins);
+        let tools = specs
             .into_iter()
             .map(|t| {
                 let mut tool = json!({"name": t.name, "description": t.description});
                 tool["inputSchema"] = t.parameters;
-                if automation.plans() && ALWAYS_LOAD.contains(&t.name.as_ref()) {
+                let always = ALWAYS_LOAD.contains(&t.name.as_ref())
+                    || plugins.iter().any(|p| p.name == t.name);
+                if automation.plans() && always {
                     tool["_meta"] = json!({"anthropic/alwaysLoad": true});
                 }
                 (t.name, tool)
             })
             .collect();
+        let mut resources = match automation {
+            Automation::Plain => Vec::new(),
+            Automation::Desk => DESK_RESOURCES.to_vec(),
+        };
+        if automation.plans() {
+            resources.extend(plugins.iter().flat_map(|p| &p.resources).map(|r| Resource {
+                uri: Cow::Owned(r.uri.clone()),
+                path: Cow::Owned(r.path.display().to_string()),
+                mime: Cow::Owned(r.mime.clone()),
+                description: Cow::Owned(r.description.clone()),
+            }));
+        }
         Arc::new(Self {
             rt,
             gate,
             tools,
+            resources,
             automation,
             idle,
             sessions: Mutex::new(HashMap::new()),
@@ -407,11 +429,11 @@ impl Mcp {
             ("ping", _) => Ok(json!({})),
             ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
             ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
-            ("resources/list", _) if self.automation.plans() => Ok(list_resources(self.automation)),
+            ("resources/list", _) if self.automation.plans() => Ok(list_resources(&self.resources)),
             ("resources/read", _) if self.automation.plans() => {
                 let mut flows = String::new();
                 let reads_flows = !matches!(principal, Principal::Share { write: false, .. });
-                let guide = resources(self.automation).first().map(|r| r.uri);
+                let guide = self.resources.first().map(|r| r.uri.as_ref());
                 if reads_flows && msg["params"]["uri"].as_str() == guide {
                     let index = self
                         .rt
@@ -422,7 +444,7 @@ impl Mcp {
                         flows = index.text;
                     }
                 }
-                read_resource(self.automation, &msg["params"], &flows).await
+                read_resource(&self.resources, &msg["params"], &flows).await
             }
             ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
@@ -688,11 +710,12 @@ impl Drop for StreamGuard {
 }
 
 /// A file of the box served as an MCP resource.
+#[derive(Clone)]
 struct Resource {
-    uri: &'static str,
-    path: &'static str,
-    mime: &'static str,
-    description: &'static str,
+    uri: Cow<'static, str>,
+    path: Cow<'static, str>,
+    mime: Cow<'static, str>,
+    description: Cow<'static, str>,
 }
 
 async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) -> Response {
@@ -899,18 +922,11 @@ fn machine_line(info: &Value) -> String {
     line
 }
 
-fn resources(automation: Automation) -> &'static [Resource] {
-    match automation {
-        Automation::Plain => &[],
-        Automation::Desk => &DESK_RESOURCES,
-    }
-}
-
-fn list_resources(automation: Automation) -> Value {
-    let resources: Vec<Value> = resources(automation)
+fn list_resources(resources: &[Resource]) -> Value {
+    let resources: Vec<Value> = resources
         .iter()
         .map(|r| {
-            let name = r.uri.rsplit('/').next().unwrap_or(r.uri);
+            let name = r.uri.rsplit('/').next().unwrap_or(&r.uri);
             json!({"uri": r.uri, "name": name, "mimeType": r.mime, "description": r.description})
         })
         .collect();
@@ -919,15 +935,15 @@ fn list_resources(automation: Automation) -> Value {
 
 /// Reads a resource; the guide gains a "Saved flows" section from `flows`, the flow index, up to [`MAX_FLOWS`] lines.
 async fn read_resource(
-    automation: Automation,
+    resources: &[Resource],
     params: &Value,
     flows: &str,
 ) -> Result<Value, (i64, String)> {
     let uri = params["uri"].as_str().unwrap_or_default();
-    let Some(r) = resources(automation).iter().find(|r| r.uri == uri) else {
+    let Some(r) = resources.iter().find(|r| r.uri == uri) else {
         return Err((-32002, format!("resource not found: {uri}")));
     };
-    let mut text = tokio::fs::read_to_string(r.path)
+    let mut text = tokio::fs::read_to_string(r.path.as_ref())
         .await
         .map_err(|e| (-32002, format!("read {}: {e}", r.path)))?;
     let saved: Vec<&str> = flows

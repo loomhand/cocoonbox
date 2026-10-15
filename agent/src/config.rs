@@ -5,6 +5,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::plugins::{self, Plugin};
 use crate::toolhost::state::Root;
 
 const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
@@ -19,6 +20,8 @@ const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
 const NODE_BIN: &str = "/usr/local/bin/node";
 const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
+const TOOLS_DIR: &str = "/etc/cocoonbox/tools.d";
+const ROUTING_DIR: &str = "/etc/cocoonbox/routing.d";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
@@ -77,6 +80,10 @@ pub struct ServeConfig {
     pub connect_url: Option<String>,
     /// The box's desktop automation, which adds GUI plans, a script tool and its guide to MCP.
     pub automation: Automation,
+    /// Script tools the image adds; a box that runs GUI plans offers them.
+    pub plugins: Vec<Plugin>,
+    /// Text the image appends to the routing of the box's own agent.
+    pub routing_extra: String,
 }
 
 impl std::fmt::Debug for ServeConfig {
@@ -102,6 +109,8 @@ impl std::fmt::Debug for ServeConfig {
             .field("desktop_unit", &self.desktop_unit)
             .field("connect_url", &self.connect_url)
             .field("automation", &self.automation)
+            .field("plugins", &self.plugins)
+            .field("routing_extra", &self.routing_extra)
             .finish()
     }
 }
@@ -133,6 +142,8 @@ impl ServeConfig {
             desktop_unit: Some(DESKTOP_UNIT.to_owned()),
             connect_url: env::var("CONNECT_URL").ok().filter(|v| !v.is_empty()),
             automation: Automation::detect(),
+            plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),
+            routing_extra: routing_extra(Path::new(&optional("ROUTING_DIR", ROUTING_DIR))),
         })
     }
 }
@@ -153,6 +164,8 @@ pub struct ToolhostConfig {
     pub home: PathBuf,
     /// The box's desktop automation.
     pub automation: Automation,
+    /// Script tools the image adds, each run by its own program.
+    pub plugins: Vec<Plugin>,
 }
 
 impl ToolhostConfig {
@@ -179,8 +192,33 @@ impl ToolhostConfig {
             session_save: SESSION_SAVE.into(),
             home: home.into(),
             automation: Automation::detect(),
+            plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),
         })
     }
+}
+
+/// The `*.md` files in `dir` in file-name order, each led by a blank line; empty without any.
+pub fn routing_extra(dir: &Path) -> String {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return String::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == "md"))
+        .collect();
+    files.sort();
+    let mut text = String::new();
+    for file in files {
+        match std::fs::read_to_string(&file) {
+            Ok(part) => {
+                text.push_str("\n\n");
+                text.push_str(part.trim_end());
+            }
+            Err(e) => eprintln!("routing: skip {}: {e}", file.display()),
+        }
+    }
+    text
 }
 
 fn required(key: &str) -> Result<String, String> {
@@ -224,6 +262,8 @@ mod tests {
             desktop_unit: None,
             connect_url: None,
             automation: Automation::Plain,
+            plugins: Vec::new(),
+            routing_extra: String::new(),
         };
         let shown = format!("{cfg:?}");
         assert!(
@@ -234,5 +274,15 @@ mod tests {
             shown.contains("<redacted>") && shown.contains("http://gw/v1"),
             "{shown}"
         );
+    }
+
+    #[test]
+    fn routing_extra_joins_the_md_files_in_file_name_order() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("20-b.md"), "second\n").unwrap();
+        std::fs::write(dir.path().join("10-a.md"), "first").unwrap();
+        std::fs::write(dir.path().join("30-c.txt"), "ignored").unwrap();
+        assert_eq!(routing_extra(dir.path()), "\n\nfirst\n\nsecond");
+        assert_eq!(routing_extra(Path::new("/nonexistent/routing.d")), "");
     }
 }
