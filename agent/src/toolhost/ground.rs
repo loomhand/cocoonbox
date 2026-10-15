@@ -1,5 +1,6 @@
 //! `computer_act` on a described target: the plan executor's AT-SPI resolve, pressed by action, then a
-//! unique OCR match of the target's visible text; neither finding it leaves the grounding to the caller.
+//! unique OCR match of the target's visible text; neither finding it, or either failing, leaves the
+//! grounding to the caller.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -64,7 +65,8 @@ pub async fn act(
     let start = Instant::now();
     let found = scripts
         .locate(workspace, &a.target.description, press)
-        .await?;
+        .await
+        .unwrap_or_else(|e| json!({"found": false, "why": e}));
     timing::mark("a11y");
     let a11y_ms = start.elapsed().as_millis();
     let element = format!(
@@ -99,7 +101,13 @@ pub async fn act(
         return not_found(cua, out, a.max_edge, start).await;
     };
     let t0 = Instant::now();
-    let words = ocr(cua).await?;
+    let words = match ocr(cua).await {
+        Ok(words) => words,
+        Err(e) => {
+            out["ocr"] = json!({"error": e, "ms": t0.elapsed().as_millis()});
+            return not_found(cua, out, a.max_edge, start).await;
+        }
+    };
     timing::mark("ocr");
     let hits = matches(&words, text);
     out["ocr"] = json!({"matches": hits.len(), "ms": t0.elapsed().as_millis()});
