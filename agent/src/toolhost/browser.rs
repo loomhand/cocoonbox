@@ -57,7 +57,7 @@ const TEXT_LEN_JS: &str = "document.body ? document.body.textContent.length : 0"
 const TAB_JS: &str = "[document.visibilityState, document.title, location.href]";
 const NOT_A_FIELD: &str = "focus a card field on the checkout page first: the focused element of the page is not a text field; nothing was typed";
 
-const SNAPSHOT_JS: &str = r#"(() => {
+const SNAPSHOT_JS: &str = r#"((plans) => {
   const MAX = 300;
   const refs = new Map();
   window.__cbRefs = refs;
@@ -124,6 +124,7 @@ const SNAPSHOT_JS: &str = r#"(() => {
           else if (el.value && CARD.test([el.autocomplete, el.name, el.id, nameOf(el)].join(' '))) line += ' value="[masked]"';
           else if (el.value) line += ` value="${clip(el.value, 60)}"`;
         }
+        if (plans && el.tagName === 'SELECT') line += ` options="${clip([...el.options].filter((o) => !o.disabled).map((o) => o.label).filter(Boolean).join(' | '), 300)}"`;
         const href = el.tagName === 'A' ? el.getAttribute('href') : null;
         if (href && !href.startsWith('javascript:')) line += ` href="${clip(href, 100)}"`;
         out.push(line);
@@ -151,7 +152,7 @@ const SNAPSHOT_JS: &str = r#"(() => {
   if (!headings && !truncated) out.splice(1, 0, '(this page has no headings)');
   if (truncated) out.push(`[snapshot truncated at ${MAX} lines; use browser_read for page text]`);
   return out.join('\n');
-})()"#;
+})"#;
 
 const POINT_JS: &str = r#"((ref) => {
   const el = window.__cbRefs && window.__cbRefs.get(ref);
@@ -189,6 +190,25 @@ const FIELD_JS: &str = r#"(() => {
   if (el.isContentEditable || el.tagName === 'TEXTAREA') return 'field';
   return el.tagName === 'INPUT' && ['text', 'tel', 'number', 'password'].includes(el.type) ? 'field' : 'other';
 })()"#;
+
+const CHOOSE_JS: &str = r#"((ref, text) => {
+  const el = window.__cbRefs && window.__cbRefs.get(ref);
+  if (!el || !el.isConnected) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
+  if (el.tagName !== 'SELECT') return null;
+  const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const want = norm(text);
+  const opts = [...el.options].filter((o) => !o.disabled);
+  const part = opts.filter((o) => norm(o.label).includes(want));
+  const opt = opts.find((o) => norm(o.label) === want) || opts.find((o) => norm(o.value) === want) || (part.length === 1 ? part[0] : null);
+  if (!opt) throw new Error(`no option of ${ref} is "${text}"; its options: ${opts.map((o) => o.label).filter(Boolean).join(', ')}`);
+  el.scrollIntoView({ block: 'center' });
+  el.focus();
+  if (el.multiple) opt.selected = true;
+  else Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(el, opt.value);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return opt.label;
+})"#;
 
 const READ_JS: &str = r#"((ref) => {
   const el = ref ? window.__cbRefs && window.__cbRefs.get(ref) : document.body;
@@ -359,9 +379,9 @@ impl Browser {
                     cdp.call("Page.bringToFront", json!({})).await?;
                     timing::mark("front");
                 }
-                cdp.snapshot().await
+                cdp.snapshot(self.plans).await
             }
-            "browser_snapshot" => cdp.snapshot().await,
+            "browser_snapshot" => cdp.snapshot(self.plans).await,
             "browser_show" => {
                 cdp.call("Page.bringToFront", json!({})).await?;
                 let title = cdp.eval("document.title || location.href").await?;
@@ -391,6 +411,18 @@ impl Browser {
             }
             "browser_type" => {
                 let a: TypeArgs = parse(args)?;
+                if self.plans {
+                    let chosen = cdp
+                        .eval(&format!(
+                            "{CHOOSE_JS}({}, {})",
+                            js_str(&a.element),
+                            js_str(&a.text)
+                        ))
+                        .await?;
+                    if let Some(label) = chosen.as_str() {
+                        return Ok(format!("selected \"{label}\" in {}", a.element));
+                    }
+                }
                 cdp.eval(&format!("{FOCUS_JS}({}, {})", js_str(&a.element), a.clear))
                     .await?;
                 cdp.call("Input.insertText", json!({"text": a.text}))
@@ -1378,8 +1410,8 @@ impl Cdp {
         }
     }
 
-    async fn snapshot(&mut self) -> Result<String, String> {
-        let v = self.eval(SNAPSHOT_JS).await?;
+    async fn snapshot(&mut self, plans: bool) -> Result<String, String> {
+        let v = self.eval(&format!("{SNAPSHOT_JS}({plans})")).await?;
         let snapshot = v.as_str().unwrap_or_default().to_owned();
         timing::mark("snapshot");
         timing::note("snapshot_bytes", snapshot.len());
@@ -2612,6 +2644,117 @@ pub(super) mod tests {
             asked.elapsed()
         );
         assert_eq!(out, "Page: Doc (https://a.test/)\n\nLoading…");
+    }
+
+    /// A wrapper in `dir` that runs `CHROME_BIN` headless; none when no Chrome is set and CB_NO_BROWSER allows the skip.
+    fn headless_chrome(dir: &std::path::Path) -> Option<String> {
+        let Some(chrome) = std::env::var("CHROME_BIN").ok().filter(|b| !b.is_empty()) else {
+            assert!(
+                cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
+                "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
+            );
+            eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
+            return None;
+        };
+        let wrapper = dir.join("chrome");
+        std::fs::write(
+            &wrapper,
+            format!("#!/bin/sh\nexec \"{chrome}\" --headless=new --use-mock-keychain \"$@\"\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(
+            &wrapper,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        Some(wrapper.display().to_string())
+    }
+
+    /// Serves `page` for every request on the returned port.
+    async fn page_server(page: &'static str) -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    page.len()
+                );
+                let _ = s.write_all(format!("{head}{page}").as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    #[tokio::test]
+    async fn on_a_box_with_plans_browser_type_picks_a_select_option_that_snapshots_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(bin) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let url = format!(
+            "http://127.0.0.1:{}/",
+            page_server(
+                "<!doctype html><title>order</title><form><label>Customer <input name=c></label><label>Item <select name=item>\
+                 <option></option><option>lamp</option><option value=dk>desk</option><option disabled>sofa</option></select></label></form>",
+            )
+            .await
+        );
+        for plans in [true, false] {
+            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            let b = Browser::new(
+                bin.clone(),
+                dir.path().join(format!("p{plans}")),
+                cdp,
+                plans,
+            );
+            let snap = b
+                .run("a", "browser_navigate", json!({"url": url}))
+                .await
+                .unwrap();
+            assert!(
+                snap.contains("combobox \"Item lamp desk sofa\" [ref=e2]"),
+                "{snap}"
+            );
+            assert_eq!(snap.contains(r#" options="lamp | desk""#), plans, "{snap}");
+            if plans {
+                for (text, want) in [
+                    ("Desk", "selected \"desk\" in e2"),
+                    ("lamp", "selected \"lamp\" in e2"),
+                    ("dk", "selected \"desk\" in e2"),
+                ] {
+                    assert_eq!(
+                        b.run("a", "browser_type", json!({"ref": "e2", "text": text}))
+                            .await
+                            .unwrap(),
+                        want
+                    );
+                }
+                let snap = b.run("a", "browser_snapshot", json!({})).await.unwrap();
+                assert!(snap.contains(r#"[ref=e2] value="dk" options="#), "{snap}");
+                let err = b
+                    .run("a", "browser_type", json!({"ref": "e2", "text": "sofa"}))
+                    .await
+                    .unwrap_err();
+                assert_eq!(
+                    err,
+                    r#"Error: no option of e2 is "sofa"; its options: lamp, desk"#
+                );
+            }
+            assert_eq!(
+                b.run("a", "browser_type", json!({"ref": "e1", "text": "Ada"}))
+                    .await
+                    .unwrap(),
+                "typed 3 characters into e1"
+            );
+            b.run("a", "browser_close", json!({})).await.unwrap();
+        }
     }
 
     #[test]

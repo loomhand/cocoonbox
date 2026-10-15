@@ -25,6 +25,7 @@ const TAB_TOOLS: [&str; 5] = [
 const TAB_HINT: &str = "A tab the user already has open, instead of your own window: \"active\" for the tab in front, or an id from browser_tabs. Leave it out to work in your own window.";
 const NAVIGATE_TAB: &str =
     " It works in your own Chrome window; to act on a page the user already has open, pass tab.";
+const SELECT_HINT: &str = " On a select (a combobox with options in the snapshot), text picks the option with that label or value.";
 const FRONT_HINT: &str = "true brings the page to the front of the desktop with the keyboard focus, for the desktop tools or the user to see it, and takes the focus from whatever the user types in. Leave it out to keep the page in the background.";
 const SHOT_HINT: &str = "Look at the desktop: a read-only screenshot of the whole 1280x800 screen, scaled to 1024x640 unless max_edge says otherwise; the result gives its size and input tokens. To look again, prefer a desk snapshot (text, no image) or a region at full resolution to another full screenshot.";
 const EDGE_HINT: &str = "Scale the screenshot so its long edge is at most this many pixels, default 1024, 0 for full size; x,y then refer to the scaled image";
@@ -197,6 +198,7 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     }
     if let Some(script) = script_tool(automation) {
         with_tab(&mut tools);
+        with_select(&mut tools);
         tools.extend([gui_plan_tool(), script, fetch_tool(), tabs_tool()]);
         with_scale(&mut tools);
         with_budget(&mut tools);
@@ -237,6 +239,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
             }
         }
         with_tab(&mut tools);
+        with_select(&mut tools);
         tools.extend([
             script,
             gui_plan_tool(),
@@ -317,6 +320,12 @@ fn with_tab(tools: &mut [ToolSpec]) {
             t.parameters["properties"]["front"] =
                 json!({"type": "boolean", "description": FRONT_HINT});
         }
+    }
+}
+
+fn with_select(tools: &mut [ToolSpec]) {
+    if let Some(t) = tools.iter_mut().find(|t| t.name == "browser_type") {
+        t.description = Cow::Owned(format!("{}{SELECT_HINT}", t.description));
     }
 }
 
