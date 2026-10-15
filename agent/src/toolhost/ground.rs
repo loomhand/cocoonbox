@@ -63,7 +63,7 @@ pub async fn act(
         other => return Err(format!("target takes action click or locate, not {other}")),
     };
     let start = Instant::now();
-    let found = scripts
+    let mut found = scripts
         .locate(workspace, &a.target.description, press)
         .await
         .unwrap_or_else(|e| json!({"found": false, "why": e}));
@@ -92,7 +92,7 @@ pub async fn act(
             out["no_point"] = why.into();
         }
         if found["served"].is_array() {
-            out["served"] = found["served"].clone();
+            out["served"] = found["served"].take();
         }
         return Ok(finish(cua, &mut out, rect));
     }
@@ -101,7 +101,7 @@ pub async fn act(
         None => json!({"a11y": {"why": found["why"], "ms": a11y_ms}}),
     };
     if found["served"].is_array() {
-        out["a11y"]["served"] = found["served"].clone();
+        out["a11y"]["served"] = found["served"].take();
     }
     let Some(text) = a.target.text.as_deref().filter(|t| !norm(t).is_empty()) else {
         return not_found(cua, out, a.max_edge, start).await;
