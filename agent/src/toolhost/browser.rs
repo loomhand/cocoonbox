@@ -31,6 +31,7 @@ const XHR_STALE: Duration = Duration::from_millis(1500);
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(250);
+const NAV_START: Duration = Duration::from_millis(200);
 const POKE: Duration = Duration::from_millis(100);
 const READ_CHARS: usize = 20_000;
 const SHELL_CHARS: usize = 300;
@@ -375,9 +376,9 @@ impl Browser {
                     p["x"].as_f64().unwrap_or(0.0),
                     p["y"].as_f64().unwrap_or(0.0),
                 );
+                cdp.watch_load().await?;
                 cdp.click(x, y).await?;
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                cdp.wait_loaded().await;
+                cdp.opened_page().await;
                 let here = cdp
                     .eval("document.title + ' (' + location.href + ')'")
                     .await?;
@@ -963,6 +964,14 @@ struct Cdp {
     /// The flat session of an attached target, which then receives every call.
     session: Option<String>,
     xhr: Xhr,
+    /// The page's frame loads since [`Cdp::watch_load`], from its Page events.
+    load: Load,
+}
+
+#[derive(Default)]
+struct Load {
+    started: bool,
+    stopped: bool,
 }
 
 /// The XHR and fetch requests of a page, from the Network events of its connection.
@@ -1001,6 +1010,7 @@ impl Cdp {
             next_id: 0,
             session: None,
             xhr: Xhr::default(),
+            load: Load::default(),
         })
     }
 
@@ -1030,7 +1040,7 @@ impl Cdp {
                 let mut v: Value =
                     serde_json::from_str(&text).map_err(|e| format!("cdp decode: {e}"))?;
                 if v["id"].as_u64() != Some(id) {
-                    self.xhr.note(&v);
+                    self.note(&v);
                     continue;
                 }
                 if let Some(err) = v.get("error") {
@@ -1060,6 +1070,47 @@ impl Cdp {
             return Err(msg.lines().next().unwrap_or(msg).to_owned());
         }
         Ok(r["result"]["value"].take())
+    }
+
+    fn note(&mut self, v: &Value) {
+        self.xhr.note(v);
+        match v["method"].as_str() {
+            Some("Page.frameStartedLoading") => self.load.started = true,
+            Some("Page.frameStoppedLoading") => self.load.stopped = true,
+            _ => {}
+        }
+    }
+
+    /// Turns on the Page events of the connection and forgets the loads seen so far, before an input that may open a page.
+    async fn watch_load(&mut self) -> Result<(), String> {
+        self.call("Page.enable", json!({})).await?;
+        self.load = Load::default();
+        Ok(())
+    }
+
+    /// Waits for the page an input opened: at most [`NAV_START`] for a frame to start loading, then up to [`LOAD_WAIT`]
+    /// for the loads to stop and the document to be complete.
+    async fn opened_page(&mut self) {
+        let start = tokio::time::Instant::now();
+        while !self.load.started || !self.load.stopped {
+            let wait = if self.load.started {
+                LOAD_WAIT
+            } else {
+                NAV_START
+            };
+            match tokio::time::timeout_at(start + wait, self.ws.next()).await {
+                Ok(Some(Ok(WsMessage::Text(text)))) => {
+                    if let Ok(v) = serde_json::from_str::<Value>(&text) {
+                        self.note(&v);
+                    }
+                }
+                Ok(Some(Ok(_))) => {}
+                _ => break,
+            }
+        }
+        if self.load.started {
+            self.wait_loaded().await;
+        }
     }
 
     async fn wait_loaded(&mut self) {
@@ -1263,6 +1314,7 @@ impl Cdp {
     }
 
     async fn press_enter(&mut self) -> Result<(), String> {
+        self.watch_load().await?;
         for kind in ["keyDown", "keyUp"] {
             self.call(
                 "Input.dispatchKeyEvent",
@@ -1271,8 +1323,7 @@ impl Cdp {
             )
             .await?;
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        self.wait_loaded().await;
+        self.opened_page().await;
         Ok(())
     }
 

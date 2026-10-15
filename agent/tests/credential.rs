@@ -436,18 +436,17 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     );
 }
 
-#[tokio::test]
-async fn snapshots_mask_the_values_of_card_fields() {
+/// Starts a toolhost on a headless Chrome in `dir`; None when no Chrome is found where the test may skip.
+async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client)> {
     let Some(chrome) = find_chrome() else {
         assert!(
             cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
             "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
         );
         eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
-        return;
+        return None;
     };
-    let dir = tempfile::tempdir().unwrap();
-    let wrapper = dir.path().join("chrome");
+    let wrapper = dir.join("chrome");
     std::fs::write(
         &wrapper,
         format!(
@@ -461,26 +460,34 @@ async fn snapshots_mask_the_values_of_card_fields() {
         std::os::unix::fs::PermissionsExt::from_mode(0o755),
     )
     .unwrap();
-    std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
-    let _chrome = ChromeGuard(dir.path().join("profile"));
-    let socket = dir.path().join("toolhost.sock");
-    let mut toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
+    std::fs::create_dir_all(dir.join("workspace")).unwrap();
+    let guard = ChromeGuard(dir.join("profile"));
+    let socket = dir.join("toolhost.sock");
+    let toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
         .arg("toolhost")
-        .env("HOME", dir.path())
+        .env("HOME", dir)
         .env("TOOLHOST_SOCKET", &socket)
         .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
-        .env("CB_WORKSPACE", dir.path().join("workspace"))
+        .env("CB_WORKSPACE", dir.join("workspace"))
         .env("CHROME_BIN", &wrapper)
-        .env("CHROME_PROFILE", dir.path().join("profile"))
+        .env("CHROME_PROFILE", dir.join("profile"))
         .env("CDP_PORT", free_port().await.to_string())
-        .env("CUA_DRIVER_SOCKET", dir.path().join("cua.sock"))
+        .env("CUA_DRIVER_SOCKET", dir.join("cua.sock"))
         .kill_on_drop(true)
         .spawn()
         .unwrap();
     while !socket.exists() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    let th = Client::new(socket);
+    Some((guard, toolhost, Client::new(socket)))
+}
+
+#[tokio::test]
+async fn snapshots_mask_the_values_of_card_fields() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some((_chrome, mut toolhost, th)) = chrome_toolhost(dir.path()).await else {
+        return;
+    };
     let site_port = site(Posts::default()).await;
 
     let snapshot = tool(
@@ -538,6 +545,52 @@ async fn snapshots_mask_the_values_of_card_fields() {
             );
         }
     }
+
+    tool(&th, "browser_close", json!({})).await;
+    toolhost.start_kill().unwrap();
+    toolhost.wait().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_click_waits_for_the_page_it_opens_and_not_for_a_click_that_opens_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some((_chrome, mut toolhost, th)) = chrome_toolhost(dir.path()).await else {
+        return;
+    };
+    let posts = Posts::default();
+    let origin = format!("http://127.0.0.1:{}", site(Arc::clone(&posts)).await);
+
+    let page = tool(
+        &th,
+        "browser_navigate",
+        json!({"url": format!("{origin}/search")}),
+    )
+    .await;
+    assert!(page.contains("button \"Search\" [ref=e2]"), "{page}");
+    let clicked = tool(&th, "browser_click", json!({"ref": "e2"})).await;
+    assert!(
+        clicked.ends_with(&format!("page is now signed in ({origin}/search)")),
+        "{clicked}"
+    );
+    assert_eq!(wait_post(&posts, "/search").await, "q=");
+
+    tool(
+        &th,
+        "browser_navigate",
+        json!({"url": format!("{origin}/card")}),
+    )
+    .await;
+    let asked = std::time::Instant::now();
+    let clicked = tool(&th, "browser_click", json!({"ref": "e6"})).await;
+    assert!(
+        clicked.ends_with(&format!("page is now checkout ({origin}/card)")),
+        "{clicked}"
+    );
+    assert!(
+        asked.elapsed() < Duration::from_millis(500),
+        "{:?}",
+        asked.elapsed()
+    );
 
     tool(&th, "browser_close", json!({})).await;
     toolhost.start_kill().unwrap();
