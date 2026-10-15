@@ -17,8 +17,8 @@ aes-gcm = { version = "0.11", features = ["zeroize"] }
 axum = { version = "0.8", default-features = false }
 base64 = "0.23"
 bytes = "1"
-ed25519-dalek = "2"
-fastcdc = "3"
+ed25519-dalek = "3"
+fastcdc = "5"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 hex = "0.4"
 hmac = "0.12"
@@ -40,10 +40,10 @@ tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 tonic = { version = "0.14", default-features = false, features = ["transport", "router", "codegen"] }
 tonic-prost = "0.14"
 uuid = { version = "1", features = ["v4"] }
-x11rb = { version = "0.13", features = ["shm", "shape", "xinput", "xtest"] }
+x11rb = { version = "0.14", features = ["shm", "shape", "xinput", "xtest"] }
 zbus = { version = "5", default-features = false, features = ["tokio"] }
 zeroize = "1"
-zstd = { version = "0.13", default-features = false }
+zstd = { version = "0.14", default-features = false }
 
 [build-dependencies]
 tonic-prost-build = "0.14"

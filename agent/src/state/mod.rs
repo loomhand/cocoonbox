@@ -1248,9 +1248,14 @@ impl Chunker<'_> {
                 }
             }
             let mut consumed = 0;
-            let cuts: Vec<(usize, usize)> = FastCDC::new(&buf, CHUNK_MIN, CHUNK_AVG, CHUNK_MAX)
-                .map(|c| (c.offset, c.length))
-                .collect();
+            let cuts: Vec<(usize, usize)> = FastCDC::new(
+                &buf,
+                CHUNK_MIN as usize,
+                CHUNK_AVG as usize,
+                CHUNK_MAX as usize,
+            )
+            .map(|c| (c.offset, c.length))
+            .collect();
             for (offset, length) in cuts {
                 if !eof && offset + length == buf.len() {
                     break;
