@@ -35,8 +35,8 @@ jobs:
       - name: App build and tests
         run: make macos MACOS_TEST_ARGS="--no-parallel --skip updateRateAcrossALongPath"
 
-      - name: Root package builds the Kit
-        run: bash -c 'source macos/scripts/toolchain.sh && swift build --product CocoonBoxKit && swift build --product CocoonBoxTerminal'
+      - name: Root package builds the Kit and the CLI
+        run: bash -c 'source macos/scripts/toolchain.sh && swift build --product CocoonBoxKit && swift build --product CocoonBoxTerminal && swift build --product cocoonbox-cli'
 
       - name: App bundle carries the icon
         env:

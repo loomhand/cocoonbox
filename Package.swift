@@ -2,13 +2,14 @@
 
 import PackageDescription
 
-// The macOS client's libraries for packages that build on them; the app, MockBox, the CLI and the tests build from macos/Package.swift.
+// The macOS client's libraries and CLI for packages that build on them; the app, MockBox and the tests build from macos/Package.swift.
 let package = Package(
     name: "cocoonbox",
     platforms: [.macOS(.v15)],
     products: [
         .library(name: "CocoonBoxKit", targets: ["CocoonBoxKit"]),
         .library(name: "CocoonBoxTerminal", targets: ["CocoonBoxTerminal"]),
+        .executable(name: "cocoonbox-cli", targets: ["CocoonBoxCLI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.4.3"),
@@ -35,6 +36,16 @@ let package = Package(
             name: "CocoonBoxTerminal",
             dependencies: [.product(name: "GhosttyTerminal", package: "libghostty-spm")],
             path: "macos/Sources/CocoonBoxTerminal"
+        ),
+        .target(
+            name: "CocoonBoxBridge",
+            dependencies: ["CocoonBoxKit"],
+            path: "macos/Sources/CocoonBoxBridge"
+        ),
+        .executableTarget(
+            name: "CocoonBoxCLI",
+            dependencies: ["CocoonBoxKit", "CocoonBoxBridge"],
+            path: "macos/Sources/CocoonBoxCLI"
         ),
     ]
 )
