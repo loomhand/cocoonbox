@@ -76,6 +76,7 @@ pub async fn act(
             "element": format!("{} \"{}\"", found["role"].as_str().unwrap_or_default(), found["name"].as_str().unwrap_or_default()),
             "window": found["window"],
             "point": point,
+            "scale": k,
             "pressed": press.then(|| found["via"].clone()),
             "ms": start.elapsed().as_millis(),
         });
@@ -107,6 +108,7 @@ pub async fn act(
         "tier": "ocr",
         "text": text,
         "point": [cx / k, cy / k],
+        "scale": k,
         "pressed": press,
         "ocr_ms": t0.elapsed().as_millis(),
         "a11y": out["a11y"],
