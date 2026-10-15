@@ -46,6 +46,7 @@ pub const FOCUSED: u32 = 12;
 /// The state of a node drawn on the screen.
 pub const SHOWING: u32 = 25;
 const MANAGES_DESCENDANTS: u32 = 31;
+const LABELLED_BY: u32 = 2;
 const STATE_NAMES: [(u32, &str); 16] = [
     (1, "active"),
     (4, "checked"),
@@ -535,9 +536,10 @@ impl Atspi {
     }
 
     async fn extras(&self, nodes: &mut [Node], extras: Extras) {
+        let all = &*nodes;
         let reads = join_all(nodes.iter().map(|n| async move {
             let Some(obj) = n.obj.as_ref() else {
-                return (None, None, None);
+                return (None, None, None, None);
             };
             let role = n.role();
             let value = async {
@@ -565,13 +567,32 @@ impl Atspi {
                 }
                 self.key_binding(obj).await.ok().filter(|k| !k.is_empty())
             };
-            tokio::join!(value, bounds, keys)
+            let label = async {
+                if !(extras.values && n.name.is_empty() && n.has(SHOWING) && is_field(role)) {
+                    return None;
+                }
+                let set: Vec<(u32, Vec<(String, OwnedObjectPath)>)> = self
+                    .call(obj, ACCESSIBLE, "GetRelationSet", &())
+                    .await
+                    .ok()?;
+                let by = labelled_by(set)?;
+                match all.iter().find(|m| m.obj.as_ref() == Some(&by)) {
+                    Some(m) => Some(m.name.clone()),
+                    None => self.name(&by).await.ok(),
+                }
+                .map(|s| s.trim().to_owned())
+                .filter(|s| !s.is_empty())
+            };
+            tokio::join!(value, bounds, keys, label)
         }))
         .await;
-        for (n, (value, bounds, keys)) in nodes.iter_mut().zip(reads) {
+        for (n, (value, bounds, keys, label)) in nodes.iter_mut().zip(reads) {
             n.value = value;
             n.bounds = bounds;
             n.keys = keys;
+            if let Some(label) = label {
+                n.name = label;
+            }
         }
     }
 
@@ -1127,6 +1148,16 @@ fn format_number(v: f64) -> String {
     }
 }
 
+/// The first object an AT-SPI relation set names as the label of its owner.
+fn labelled_by(set: Vec<(u32, Vec<(String, OwnedObjectPath)>)>) -> Option<Obj> {
+    set.into_iter()
+        .find(|(kind, _)| *kind == LABELLED_BY)?
+        .1
+        .into_iter()
+        .next()
+        .map(Obj::of)
+}
+
 fn not_responding(bus: &str) -> String {
     format!("AT-SPI peer {bus} is not responding")
 }
@@ -1154,6 +1185,30 @@ mod tests {
         };
         assert_eq!(Obj::parse(&other.id()).unwrap(), other);
         assert!(Obj::parse("nope").is_err());
+    }
+
+    #[test]
+    fn a_field_takes_the_first_label_of_its_labelled_by_relation_and_no_other_relation() {
+        let to = |p: &str| {
+            (
+                ":1.6".to_owned(),
+                OwnedObjectPath::try_from(p.to_owned()).unwrap(),
+            )
+        };
+        let set = vec![
+            (1, vec![to("/org/a11y/atspi/accessible/980")]),
+            (
+                LABELLED_BY,
+                vec![
+                    to("/org/a11y/atspi/accessible/978"),
+                    to("/org/a11y/atspi/accessible/981"),
+                ],
+            ),
+        ];
+        assert_eq!(labelled_by(set).unwrap().id(), "1.6/978");
+        assert!(labelled_by(vec![(1, vec![to("/org/a11y/atspi/accessible/977")])]).is_none());
+        assert!(labelled_by(vec![(LABELLED_BY, vec![])]).is_none());
+        assert!(labelled_by(Vec::new()).is_none());
     }
 
     #[test]
