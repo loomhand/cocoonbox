@@ -74,9 +74,9 @@ pub async fn act(
         found["role"].as_str().unwrap_or_default(),
         found["name"].as_str().unwrap_or_default()
     );
-    let unplaced = no_point(&found, libreoffice);
-    if found["found"] == true && (press || unplaced.is_none()) {
-        let rect = rect_of(&found["bounds"]).filter(|_| unplaced.is_none());
+    let place = placed(&found, libreoffice);
+    if found["found"] == true && (press || place.is_ok()) {
+        let rect = place.ok();
         let point = rect.map(|[x, y, w, h]| [(x + w / 2.0) / k, (y + h / 2.0) / k]);
         let mut out = json!({
             "tier": "a11y",
@@ -88,7 +88,7 @@ pub async fn act(
             "pressed": press.then(|| found["via"].clone()),
             "ms": start.elapsed().as_millis(),
         });
-        if let Some(why) = unplaced {
+        if let Err(why) = place {
             out["no_point"] = why.into();
         }
         if found["served"].is_array() {
@@ -96,7 +96,7 @@ pub async fn act(
         }
         return Ok(finish(cua, &mut out, rect));
     }
-    let mut out = match unplaced.filter(|_| found["found"] == true) {
+    let mut out = match place.err().filter(|_| found["found"] == true) {
         Some(why) => json!({"a11y": {"element": element, "no_point": why, "ms": a11y_ms}}),
         None => json!({"a11y": {"why": found["why"], "ms": a11y_ms}}),
     };
@@ -143,17 +143,21 @@ pub async fn act(
     Ok(finish(cua, &mut out, Some(*rect)))
 }
 
-/// Why the found element gives no point to click: hidden, unbounded, or a LibreOffice control outside a menu.
-fn no_point(found: &Value, office: impl Fn(i64) -> bool) -> Option<&'static str> {
-    let role = found["role"].as_str().unwrap_or_default();
+/// The box to point at for the found element, else why it gives none: hidden, unbounded, or a LibreOffice control outside a menu
+/// whose `shift`, the height its extents sit above the drawn control, the plan executor could not tell.
+fn placed(found: &Value, office: impl Fn(i64) -> bool) -> Result<[f64; 4], &'static str> {
     if found["shown"] == false {
-        return Some("it does not show, like an entry of a closed menu");
+        return Err("it does not show, like an entry of a closed menu");
     }
-    if rect_of(&found["bounds"]).is_none() {
-        return Some("it has no bounds");
+    let [x, y, w, h] = rect_of(&found["bounds"]).ok_or("it has no bounds")?;
+    let role = found["role"].as_str().unwrap_or_default();
+    if role.starts_with("menu") || !found["pid"].as_i64().is_some_and(office) {
+        return Ok([x, y, w, h]);
     }
-    (!role.starts_with("menu") && found["pid"].as_i64().is_some_and(office))
-        .then_some("LibreOffice's extents can sit a menu bar's height above the drawn control")
+    let dy = found["shift"]
+        .as_f64()
+        .ok_or("LibreOffice's extents can sit a menu bar's height above the drawn control")?;
+    Ok([x, y + dy, w, h])
 }
 
 /// The result line and a full-resolution crop of [`CROP`] around `rect`, else no image.
@@ -401,13 +405,26 @@ mod tests {
     }
 
     #[test]
-    fn a_libreoffice_control_outside_a_menu_has_no_point() {
+    fn a_libreoffice_control_outside_a_menu_is_placed_by_its_shift_else_has_no_point() {
         let office = |pid: i64| pid == 7;
-        let at = |role: &str, pid: Option<i64>| json!({"role": role, "pid": pid, "shown": true, "bounds": [10, 20, 30, 30]});
-        assert!(no_point(&at("button", Some(7)), office).is_some());
-        assert!(no_point(&at("menuitem", Some(7)), office).is_none());
-        assert!(no_point(&at("button", Some(8)), office).is_none());
-        assert!(no_point(&at("button", None), office).is_none());
+        let at = |role: &str, pid: Option<i64>, shift: Value| json!({"role": role, "pid": pid, "shown": true, "bounds": [10, 20, 30, 30], "shift": shift});
+        assert!(placed(&at("button", Some(7), Value::Null), office).is_err());
+        assert_eq!(
+            placed(&at("button", Some(7), json!(25)), office),
+            Ok([10.0, 45.0, 30.0, 30.0])
+        );
+        assert_eq!(
+            placed(&at("button", Some(7), json!(0)), office),
+            Ok([10.0, 20.0, 30.0, 30.0])
+        );
+        assert_eq!(
+            placed(&at("menuitem", Some(7), Value::Null), office),
+            Ok([10.0, 20.0, 30.0, 30.0])
+        );
+        assert_eq!(
+            placed(&at("button", Some(8), Value::Null), office),
+            Ok([10.0, 20.0, 30.0, 30.0])
+        );
     }
 
     #[test]
@@ -416,9 +433,9 @@ mod tests {
         let closed = json!({"role": "menuitem", "shown": false, "bounds": [0, -400, 80, 20]});
         let unbounded = json!({"role": "button", "shown": true, "bounds": null});
         let drawn = json!({"role": "button", "shown": true, "bounds": [1, 2, 3, 4]});
-        assert!(no_point(&closed, none).is_some());
-        assert!(no_point(&unbounded, none).is_some());
-        assert!(no_point(&drawn, none).is_none());
+        assert!(placed(&closed, none).is_err());
+        assert!(placed(&unbounded, none).is_err());
+        assert!(placed(&drawn, none).is_ok());
     }
 
     #[test]
