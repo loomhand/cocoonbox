@@ -6,6 +6,7 @@
 # the toolchain is clean.
 
 CLT=/Library/Developer/CommandLineTools
+[ "$(xcode-select -p 2>/dev/null)" = "$CLT" ] || return 0
 FIX_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/.build/toolchain-fix"
 
 stale_modulemap="$CLT/usr/include/swift/module.modulemap"

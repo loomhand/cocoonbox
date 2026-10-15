@@ -25,8 +25,9 @@ jobs:
 
       - name: Select Xcode
         run: |
-          ls -d /Applications/Xcode*.app
-          sudo xcode-select -s /Applications/Xcode_26.0.app
+          sudo xcode-select -s /Applications/Xcode_26.6.app
+          echo "CB_TESTING_FRAMEWORKS=$(xcode-select -p)/Platforms/MacOSX.platform/Developer/Library/Frameworks" >> "$GITHUB_ENV"
+          echo "CB_TESTING_INTEROP=$(xcode-select -p)/Platforms/MacOSX.platform/Developer/usr/lib" >> "$GITHUB_ENV"
           swift --version
 
       # the suite runs serially: in parallel on the runner's three cores no test finished in 30 minutes;

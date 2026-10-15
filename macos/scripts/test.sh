@@ -13,5 +13,6 @@ HOME="$home" security create-keychain -p test "$keychain"
 HOME="$home" security set-keychain-settings "$keychain"
 HOME="$home" security unlock-keychain -p test "$keychain"
 # newer Command Line Tools link Testing against lib_TestingInterop, which an older macOS does not carry
-interop=/Library/Developer/CommandLineTools/Library/Developer/usr/lib
-CFFIXED_USER_HOME="$home" CB_KEYCHAIN_FILE="$keychain" CB_KEYCHAIN_SERVICE=io.github.loomhand.cocoonbox.test DYLD_FRAMEWORK_PATH=/Library/Developer/CommandLineTools/Library/Developer/Frameworks DYLD_LIBRARY_PATH="$interop" .build/debug/CocoonBoxKitTests "$@"
+frameworks=${CB_TESTING_FRAMEWORKS:-/Library/Developer/CommandLineTools/Library/Developer/Frameworks}
+interop=${CB_TESTING_INTEROP:-/Library/Developer/CommandLineTools/Library/Developer/usr/lib}
+CFFIXED_USER_HOME="$home" CB_KEYCHAIN_FILE="$keychain" CB_KEYCHAIN_SERVICE=io.github.loomhand.cocoonbox.test DYLD_FRAMEWORK_PATH="$frameworks" DYLD_LIBRARY_PATH="$interop" .build/debug/CocoonBoxKitTests "$@"
