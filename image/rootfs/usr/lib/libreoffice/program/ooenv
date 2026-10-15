@@ -1,0 +1,2 @@
+# sourced by LibreOffice's soffice launcher: its gen VCL plugin crashes at start with SESSION_MANAGER set
+unset SESSION_MANAGER
