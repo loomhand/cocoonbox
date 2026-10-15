@@ -389,7 +389,7 @@ fn chat_tool_call(id: &str, name: &str, args: &Value) -> String {
 }
 
 fn decision(tier: &str, confidence: f64) -> String {
-    json!({"answers": {"tier": {"type": "choice", "choice": tier, "confidence": confidence, "probabilities": {tier: confidence}}}, "usage": {"cost": 0.00004, "input_tokens": 1000, "output_tokens": 50}}).to_string()
+    json!({"model": "typesafe/jev-1.14-20261014", "answers": {"tier": {"type": "choice", "choice": tier, "confidence": confidence, "probabilities": {tier: confidence}}}, "usage": {"cost": 0.00004, "input_tokens": 1000, "output_tokens": 50}}).to_string()
 }
 
 fn chat_text(text: &str) -> String {
@@ -3942,7 +3942,7 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     let asked = gw_bodies(&h.gw_log, "decisions");
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0]["state"]["task"], "save a note in mousepad");
-    assert_eq!(asked[0]["model"], "typesafe/jev-1.13");
+    assert_eq!(asked[0]["model"], "typesafe/jev-1.14");
     let request = &chats[0]["messages"][1]["content"];
     assert_eq!(
         request[0]["text"],
@@ -3975,7 +3975,7 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     models.sort_unstable();
     let mut want = vec![
         (chats[0]["model"].as_str().unwrap(), 2, 250, 15, 100),
-        ("typesafe/jev-1.13", 1, 1000, 50, 0),
+        ("typesafe/jev-1.14", 1, 1000, 50, 0),
     ];
     want.sort_unstable();
     assert_eq!(models, want);

@@ -9,6 +9,7 @@ use crate::llm::Usage;
 const DESK_ROUTE: &str = include_str!("../../image/desk/route.json");
 const TASK: &str = "\"__TASK__\"";
 const TIMEOUT: Duration = Duration::from_secs(2);
+const BUILD: &str = "typesafe/jev-1.14-20261014";
 const ERROR_BODY_CHARS: usize = 300;
 
 /// Lowest confidence at which a route is followed rather than left to the caller.
@@ -101,6 +102,12 @@ impl Router {
         }
         let reply: Value =
             serde_json::from_str(&text).map_err(|e| format!("decode decisions reply: {e}"))?;
+        if reply["model"] != BUILD {
+            return Err(format!(
+                "gw decisions served {} for {}",
+                reply["model"], self.model
+            ));
+        }
         let usage = Some(Usage {
             input: reply["usage"]["input_tokens"].as_u64().unwrap_or(0),
             output: reply["usage"]["output_tokens"].as_u64().unwrap_or(0),
@@ -167,7 +174,8 @@ mod tests {
     fn the_prompt_offers_exactly_the_tiers_and_takes_one_task() {
         assert_eq!(DESK_ROUTE.matches(TASK).count(), 1);
         let body: Value = serde_json::from_str(&DESK_ROUTE.replacen(TASK, "\"x\"", 1)).unwrap();
-        assert_eq!(body["model"], "typesafe/jev-1.13");
+        assert_eq!(body["model"], "typesafe/jev-1.14");
+        assert!(BUILD.starts_with(body["model"].as_str().unwrap()));
         assert_eq!(body["state"]["task"], "x");
         let criteria = body["questions"]["tier"]["criteria"].as_object().unwrap();
         let mut offered: Vec<&str> = criteria.keys().map(String::as_str).collect();

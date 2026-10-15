@@ -1,5 +1,5 @@
 {
- "model": "typesafe/jev-1.13",
+ "model": "typesafe/jev-1.14",
  "state": {
   "environment": "一个 AI 智能体在 Linux 云桌面上工作（XFCE、Mousepad、Thunar 文件管理器、网页浏览器、LibreOffice）。它的工具：shell 和文件工具；一次看屏幕或一次 GUI 操作（screenshot、computer_act）；操作网页的 browser_* 工具；gui_plan，一次调用跑完整个桌面应用 GUI 计划；script_run，运行用 desk API 写的桌面自动化脚本；以及一个只做判断、不执行操作的决策模型。",
   "task": "__TASK__"
