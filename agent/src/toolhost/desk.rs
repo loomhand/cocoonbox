@@ -13,7 +13,7 @@ use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask};
 
 use super::atspi::{Atspi, Extras, FOCUSED, Frame, Node, Obj, SHOWING, key_combos};
-use super::cua::Cua;
+use super::cua::{Cua, libreoffice};
 use super::files;
 use super::rpc::{Call, Client, Output};
 
@@ -243,7 +243,8 @@ impl Desk {
     }
 
     /// Presses an element the way a user would: selects a tab or list row, opens the menus above a hidden
-    /// menu entry, clicks the element's centre when the element is what lies there, else runs its action.
+    /// menu entry, clicks the element's centre when the element is what lies there and no LibreOffice
+    /// control outside a menu, whose extents can sit above it, else runs its action.
     async fn press(&self, cua: &Cua, id: String) -> Result<String, String> {
         let obj = Obj::parse(&id)?;
         let shown = Extras {
@@ -267,7 +268,13 @@ impl Desk {
                 tokio::time::sleep(MENU_POLL).await;
             }
         }
-        if let Some((x, y)) = self.reachable(&obj, &node, &chain).await {
+        let pixel = role.starts_with("menu")
+            || !self
+                .atspi
+                .pid(&obj.bus)
+                .await
+                .is_ok_and(|p| libreoffice(p.into()));
+        if pixel && let Some((x, y)) = self.reachable(&obj, &node, &chain).await {
             cua.desk_input("click", json!({"x": x, "y": y})).await?;
             return Ok(json!({"ok": true, "how": "click", "x": x, "y": y}).to_string());
         }

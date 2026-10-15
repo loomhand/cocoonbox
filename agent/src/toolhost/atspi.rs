@@ -757,7 +757,8 @@ impl Atspi {
         Ok(state_bits(&bits))
     }
 
-    async fn pid(&self, bus: &str) -> Result<u32, String> {
+    /// The process id behind the accessibility bus name `bus`.
+    pub async fn pid(&self, bus: &str) -> Result<u32, String> {
         let dbus = Obj {
             bus: DBUS.to_owned(),
             path: DBUS_PATH.to_owned(),
