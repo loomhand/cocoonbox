@@ -3946,7 +3946,7 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     let request = &chats[0]["messages"][1]["content"];
     assert_eq!(
         request[0]["text"],
-        "Router: this task is tier plan (0.93): run desktop-app GUI work as one gui_plan call with the whole plan, or write one script on the desk API and run it with script_run for loops and logic."
+        "Router: this task is tier plan (0.93): run desktop-app GUI work as one gui_plan call with the whole plan, also a batch of files moved, copied or renamed in a file manager (select them by pattern, not one by one); write one script on the desk API for script_run only for logic a plan cannot hold."
     );
     assert_eq!(request[1]["text"], "save a note in mousepad");
     assert!(entries.iter().any(|e| e.role == i32::from(pb::Role::System)

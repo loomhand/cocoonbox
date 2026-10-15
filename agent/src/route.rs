@@ -27,7 +27,7 @@ pub const TIERS: &[(&str, &str)] = &[
     ),
     (
         "plan",
-        "run desktop-app GUI work as one gui_plan call with the whole plan, or write one script on the desk API and run it with script_run for loops and logic",
+        "run desktop-app GUI work as one gui_plan call with the whole plan, also a batch of files moved, copied or renamed in a file manager (select them by pattern, not one by one); write one script on the desk API for script_run only for logic a plan cannot hold",
     ),
     (
         "jev",
