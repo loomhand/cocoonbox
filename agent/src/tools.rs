@@ -231,15 +231,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
                 props.remove("max_edge");
             }
             act.parameters["properties"]["actions"] = json!({"type": "array", "items": step});
-            if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
-                actions.push("locate".into());
-            }
-            act.parameters["properties"]["target"] = json!({
-                "type": "object",
-                "description": TARGET_HINT,
-                "properties": {"description": {"type": "string"}, "text": {"type": "string", "description": "the element's visible text, for an element without an accessibility name"}},
-                "required": ["description"]
-            });
+            with_target(&mut act.parameters);
             if let Some(schema) = act.parameters.as_object_mut() {
                 schema.remove("required");
             }
@@ -394,9 +386,25 @@ pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
         },
     ];
     if automation.plans() {
+        if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
+            with_target(&mut act.parameters);
+        }
         with_scale(&mut tools);
     }
     tools
+}
+
+/// Gives `computer_act` of a box that runs GUI plans the `locate` action and the described `target`.
+fn with_target(parameters: &mut serde_json::Value) {
+    if let Some(actions) = parameters["properties"]["action"]["enum"].as_array_mut() {
+        actions.push("locate".into());
+    }
+    parameters["properties"]["target"] = json!({
+        "type": "object",
+        "description": TARGET_HINT,
+        "properties": {"description": {"type": "string"}, "text": {"type": "string", "description": "the element's visible text, for an element without an accessibility name"}},
+        "required": ["description"]
+    });
 }
 
 fn desk_script_tool() -> ToolSpec {
