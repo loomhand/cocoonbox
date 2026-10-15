@@ -23,6 +23,7 @@ PACKAGES=(
 	at-spi2-core libatk-adaptor dbus-user-session dconf-cli
 	gnome-themes-extra-data mousepad nftables sudo libnss-myhostname libnss3-tools rsync git gh tmux unzip
 	build-essential ncurses-bin
+	libreoffice-calc libreoffice-writer libreoffice-impress libreoffice-gtk3
 	locales fonts-noto-cjk fonts-noto-color-emoji
 )
 

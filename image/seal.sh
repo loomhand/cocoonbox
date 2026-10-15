@@ -8,10 +8,12 @@ rm -rf /var/lib/cocoonbox/* /run/cocoonbox/*
 
 pkill -u user -x chrome || true
 pkill -u user -x mousepad || true
+pkill -u user -x soffice.bin || true
 sleep 2
 rm -rf /workspace/* /workspace/.[!.]* \
 	/home/user/.config/cocoonbox-chrome /home/user/.config/google-chrome /home/user/.cache/google-chrome /home/user/.cache/fontconfig \
 	/home/user/.config/Mousepad /home/user/.local/share/Mousepad /home/user/.cache/Mousepad /home/user/.local/share/recently-used.xbel \
+	/home/user/.config/libreoffice \
 	/home/user/.local/state/xfce4-session /home/user/.config/cocoonbox /home/user/.local/share/cocoonbox \
 	/home/user/.bash_history /root/.bash_history
 runuser -u user -- env DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus dconf reset -f /org/xfce/mousepad/

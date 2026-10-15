@@ -1,6 +1,7 @@
 # Desk scripts on this box
 
 This box is a Linux desktop (Ubuntu 24.04, XFCE, 1280x800, user `user`, home `/home/user`).
+LibreOffice 24.2 (Calc, Writer, Impress) is installed; office files open in it, `.txt` in Mousepad.
 Desk scripts drive it from inside: you write a script, the box runs it next to the screen, and
 you get its result, its logs and a screenshot back. You plan; the script only executes.
 
