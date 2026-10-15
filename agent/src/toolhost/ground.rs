@@ -91,12 +91,18 @@ pub async fn act(
         if let Some(why) = unplaced {
             out["no_point"] = why.into();
         }
+        if found["served"].is_array() {
+            out["served"] = found["served"].clone();
+        }
         return Ok(finish(cua, &mut out, rect));
     }
     let mut out = match unplaced.filter(|_| found["found"] == true) {
         Some(why) => json!({"a11y": {"element": element, "no_point": why, "ms": a11y_ms}}),
         None => json!({"a11y": {"why": found["why"], "ms": a11y_ms}}),
     };
+    if found["served"].is_array() {
+        out["a11y"]["served"] = found["served"].clone();
+    }
     let Some(text) = a.target.text.as_deref().filter(|t| !norm(t).is_empty()) else {
         return not_found(cua, out, a.max_edge, start).await;
     };
