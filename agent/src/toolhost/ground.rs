@@ -253,7 +253,7 @@ fn matches(words: &[Word], label: &str) -> Vec<[f64; 4]> {
             let spelled = run.iter().zip(&want).enumerate().all(|(j, (w, t))| {
                 w.norm == *t
                     || (j + 1 == want.len()
-                        && w.norm.len() >= MIN_PREFIX
+                        && w.norm.len().min(t.len()) >= MIN_PREFIX
                         && (t.starts_with(&w.norm) || w.norm.starts_with(t.as_str())))
             });
             (line && spelled).then(|| {
@@ -377,6 +377,15 @@ mod tests {
         assert_eq!(matches(&words, "Save").len(), 2);
         assert!(matches(&words, "Paragraph Save").is_empty());
         assert_eq!(matches(&words, "Insert Image...").len(), 0);
+    }
+
+    #[test]
+    fn a_short_label_needs_the_whole_word() {
+        let words = [word("Okay", "1.1.1.1", 0.0), word("Google", "1.1.2.1", 0.0)];
+        assert!(matches(&words, "OK").is_empty());
+        assert!(matches(&words, "Go").is_empty());
+        assert_eq!(matches(&words, "Okay").len(), 1);
+        assert_eq!(matches(&words, "Goog").len(), 1);
     }
 
     #[test]
