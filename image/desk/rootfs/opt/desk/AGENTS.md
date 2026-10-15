@@ -155,6 +155,10 @@ Save a script that works as `/workspace/flows/<name>.mts` and replay it with new
   In a script, give the file view the focus after the pattern dialog and before `ctrl+x`: `act`
   its `table` element with `'focus'` (a click changes the selection). First close a leftover
   "File Operation Progress" or "already exists" dialog.
+- LibreOffice 24.2 crashes once the accessibility tree of a dialog such as Format Cells has been read
+  in several of its openings (the 6th to 9th, also with one snapshot per opening). Work in its
+  dialogs by keys (`ctrl+Page_Down` for the next tab), read one only when no key does the step, and
+  save the document before you open its dialogs again and again.
 - Menu toggles such as Mousepad's Word Wrap publish no checked state; check them in the app's
   preferences dialog or with `gsettings`.
 - A snapshot of a Chrome window holds the browser's own controls and the start of the page;
