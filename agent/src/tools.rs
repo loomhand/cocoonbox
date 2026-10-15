@@ -199,7 +199,13 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     if let Some(script) = script_tool(automation) {
         with_tab(&mut tools);
         with_select(&mut tools);
-        tools.extend([gui_plan_tool(), script, fetch_tool(), tabs_tool()]);
+        tools.extend([
+            gui_plan_tool(),
+            script,
+            fetch_tool(),
+            fill_tool(),
+            tabs_tool(),
+        ]);
         with_scale(&mut tools);
         with_budget(&mut tools);
     }
@@ -244,6 +250,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
             script,
             gui_plan_tool(),
             fetch_tool(),
+            fill_tool(),
             tabs_tool(),
             desk_tool(),
         ]);
@@ -479,6 +486,23 @@ fn fetch_tool() -> ToolSpec {
             "type": "object",
             "properties": {"url": {"type": "string"}},
             "required": ["url"]
+        }),
+    }
+}
+
+fn fill_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("browser_fill"),
+        description: Cow::Borrowed(
+            "Fill a web form in one call: types each field's text by ref from the latest snapshot (a select takes an option's label or value), then, with click, clicks that ref, such as the submit button, waits for the page it opens, and returns that page's snapshot. For a form filled once per row, call it once per row.",
+        ),
+        parameters: json!({
+            "type": "object",
+            "properties": {
+                "fields": {"type": "array", "items": {"type": "object", "properties": {"ref": {"type": "string"}, "text": {"type": "string"}}, "required": ["ref", "text"]}, "description": "In order; each replaces the field's value"},
+                "click": {"type": "string", "description": "A ref to click after filling, such as the submit button"}
+            },
+            "required": ["fields"]
         }),
     }
 }

@@ -389,25 +389,32 @@ impl Browser {
             }
             "browser_click" => {
                 let a: RefArgs = parse(args)?;
-                let p = cdp
-                    .eval(&format!("{POINT_JS}({})", js_str(&a.element)))
-                    .await?;
-                let (x, y) = (
-                    p["x"].as_f64().unwrap_or(0.0),
-                    p["y"].as_f64().unwrap_or(0.0),
-                );
-                cdp.watch_load().await?;
-                cdp.click(x, y).await?;
-                cdp.opened_page().await;
-                let here = cdp
-                    .eval("document.title + ' (' + location.href + ')'")
-                    .await?;
-                Ok(format!(
-                    "clicked {} \"{}\"; page is now {}",
-                    a.element,
-                    p["label"].as_str().unwrap_or_default(),
-                    here.as_str().unwrap_or_default()
-                ))
+                cdp.click_ref(&a.element).await
+            }
+            "browser_fill" if self.plans => {
+                let a: FillArgs = parse(args)?;
+                let mut filled = Vec::with_capacity(a.fields.len());
+                for f in &a.fields {
+                    let chosen = cdp
+                        .eval(&format!(
+                            "{CHOOSE_JS}({}, {})",
+                            js_str(&f.element),
+                            js_str(&f.text)
+                        ))
+                        .await?;
+                    if chosen.is_null() {
+                        cdp.eval(&format!("{FOCUS_JS}({}, true)", js_str(&f.element)))
+                            .await?;
+                        cdp.call("Input.insertText", json!({"text": f.text}))
+                            .await?;
+                    }
+                    filled.push(f.element.as_str());
+                }
+                let mut out = format!("filled {}", filled.join(", "));
+                if let Some(element) = &a.click {
+                    out = format!("{out}; {}", cdp.click_ref(element).await?);
+                }
+                Ok(format!("{out}\n{}", cdp.snapshot(true).await?))
             }
             "browser_type" => {
                 let a: TypeArgs = parse(args)?;
@@ -985,6 +992,20 @@ struct TypeArgs {
 }
 
 #[derive(Deserialize)]
+struct FillArgs {
+    fields: Vec<FillField>,
+    #[serde(default)]
+    click: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FillField {
+    #[serde(rename = "ref")]
+    element: String,
+    text: String,
+}
+
+#[derive(Deserialize)]
 struct ReadArgs {
     #[serde(rename = "ref", default)]
     element: Option<String>,
@@ -1143,6 +1164,28 @@ impl Cdp {
         if self.load.started {
             self.wait_loaded().await;
         }
+    }
+
+    /// Clicks the element of `element` and waits for the page the click opens; reports the label and the page.
+    async fn click_ref(&mut self, element: &str) -> Result<String, String> {
+        let p = self
+            .eval(&format!("{POINT_JS}({})", js_str(element)))
+            .await?;
+        let (x, y) = (
+            p["x"].as_f64().unwrap_or(0.0),
+            p["y"].as_f64().unwrap_or(0.0),
+        );
+        self.watch_load().await?;
+        self.click(x, y).await?;
+        self.opened_page().await;
+        let here = self
+            .eval("document.title + ' (' + location.href + ')'")
+            .await?;
+        Ok(format!(
+            "clicked {element} \"{}\"; page is now {}",
+            p["label"].as_str().unwrap_or_default(),
+            here.as_str().unwrap_or_default()
+        ))
     }
 
     async fn wait_loaded(&mut self) {
@@ -2755,6 +2798,48 @@ pub(super) mod tests {
             );
             b.run("a", "browser_close", json!({})).await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn browser_fill_types_the_fields_picks_options_clicks_and_returns_the_page_it_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(bin) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let url = format!(
+            "http://127.0.0.1:{}/",
+            page_server(
+                "<!doctype html><title>order</title><script>if (location.search) document.title = 'saved ' + location.search</script>\
+                 <form><label>Customer <input name=c value=old></label><label>Item <select name=item><option></option><option>lamp</option>\
+                 <option value=dk>desk</option></select></label><button>Save order</button></form>",
+            )
+            .await
+        );
+        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let b = Browser::new(bin, dir.path().join("p"), cdp, true);
+        b.run("a", "browser_navigate", json!({"url": url}))
+            .await
+            .unwrap();
+        let out = b
+            .run(
+                "a",
+                "browser_fill",
+                json!({"fields": [{"ref": "e1", "text": "Ada"}, {"ref": "e2", "text": "desk"}], "click": "e3"}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            out.starts_with(&format!(
+                "filled e1, e2; clicked e3 \"Save order\"; page is now saved ?c=Ada&item=dk ({url}?c=Ada&item=dk)\n"
+            )),
+            "{out}"
+        );
+        assert!(out.contains("textbox \"Customer\""), "{out}");
+        b.run("a", "browser_close", json!({})).await.unwrap();
     }
 
     #[test]
