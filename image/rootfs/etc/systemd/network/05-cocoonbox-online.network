@@ -3,4 +3,5 @@ Name=cbonline
 
 [Network]
 LinkLocalAddressing=ipv6
+Address=169.254.1.1/32
 LLMNR=no
