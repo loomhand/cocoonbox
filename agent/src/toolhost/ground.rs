@@ -18,8 +18,8 @@ const OCR_SCALE: usize = 2;
 const OCR_TIMEOUT: Duration = Duration::from_secs(10);
 const TESSERACT: &str = "tesseract";
 const CROP: [f64; 2] = [320.0, 200.0];
-const FIELD_WORDS: [&str; 6] = ["field", "input", "box", "entry", "textbox", "text area"];
-const FIELD_ROLES: [&str; 5] = ["textbox", "searchbox", "spinbutton", "slider", "combobox"];
+const FIELD_WORDS: [&str; 5] = ["field", "input", "box", "entry", "textbox"];
+const TEXT_ROLES: [&str; 3] = ["text", "label", "static"];
 const MIN_PREFIX: usize = 3;
 
 #[derive(Deserialize)]
@@ -95,7 +95,7 @@ pub async fn act(
         return not_found(cua, out, a.max_edge, start).await;
     };
     let (cx, cy) = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
-    if let Some(why) = label_of_field(desk, &a.target.description, cx, cy).await {
+    if let Some(why) = label_of_field(desk, &a.target.description, text, cx, cy).await {
         out["ocr"]["refused"] = why.into();
         return not_found(cua, out, a.max_edge, start).await;
     }
@@ -246,13 +246,22 @@ fn matches(words: &[Word], label: &str) -> Vec<[f64; 4]> {
         .collect()
 }
 
-/// Why a match at `(x, y)` is a field's label rather than the field the description names, if it is.
-async fn label_of_field(desk: &Desk, description: &str, x: f64, y: f64) -> Option<String> {
+/// Why a match of `text` at `(x, y)` is a field's label rather than the field the description names, if it
+/// is: the description names a field in words outside the text, and the point holds plain text.
+async fn label_of_field(
+    desk: &Desk,
+    description: &str,
+    text: &str,
+    x: f64,
+    y: f64,
+) -> Option<String> {
+    let own: Vec<String> = text.split_whitespace().map(norm).collect();
     let d = description.to_lowercase();
-    if !FIELD_WORDS.iter().any(|w| {
-        d.split(|c: char| !c.is_alphanumeric()).any(|t| t == *w)
-            || (w.contains(' ') && d.contains(w))
-    }) {
+    let words: Vec<&str> = d
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !own.iter().any(|o| o == t))
+        .collect();
+    if !FIELD_WORDS.iter().any(|w| words.contains(w)) {
         return None;
     }
     let at = desk
@@ -261,13 +270,9 @@ async fn label_of_field(desk: &Desk, description: &str, x: f64, y: f64) -> Optio
         .ok()?;
     let found = at.get("found").filter(|f| !f.is_null())?;
     let role = found["role"].as_str().unwrap_or_default();
-    let within = at["path"].as_array().is_some_and(|p| {
-        p.iter()
-            .any(|n| FIELD_ROLES.contains(&n["role"].as_str().unwrap_or_default()))
-    });
-    (!FIELD_ROLES.contains(&role) && !within).then(|| {
+    TEXT_ROLES.contains(&role).then(|| {
         format!(
-            "the text is on {role} \"{}\", not on a field",
+            "the text is {role} \"{}\" beside a field, not the field",
             found["name"].as_str().unwrap_or_default()
         )
     })
