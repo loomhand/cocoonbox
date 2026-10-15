@@ -1,0 +1,6 @@
+[Match]
+Name=cbonline
+
+[Network]
+LinkLocalAddressing=ipv6
+LLMNR=no
