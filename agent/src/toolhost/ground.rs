@@ -129,10 +129,17 @@ pub async fn act(
     Ok(finish(cua, &mut out, Some(*rect)))
 }
 
-/// Why the found element's bounds give no point to click, if they do not: a LibreOffice control outside a
-/// menu, whose extents can sit a menu bar's height above the drawn control, is pressed by its action only.
+/// Why the found element's bounds give no point to click, if they do not: an element that does not show,
+/// such as an entry of a closed menu, or has no bounds; and a LibreOffice control outside a menu, whose
+/// extents can sit a menu bar's height above the drawn control. Such an element is pressed by its action only.
 fn no_point(found: &Value, office: impl Fn(i64) -> bool) -> Option<&'static str> {
     let role = found["role"].as_str().unwrap_or_default();
+    if found["shown"] == false {
+        return Some("it does not show, like an entry of a closed menu");
+    }
+    if rect_of(&found["bounds"]).is_none() {
+        return Some("it has no bounds");
+    }
     (!role.starts_with("menu") && found["pid"].as_i64().is_some_and(office))
         .then_some("LibreOffice's extents can sit a menu bar's height above the drawn control")
 }
@@ -375,11 +382,22 @@ mod tests {
     #[test]
     fn a_libreoffice_control_outside_a_menu_has_no_point() {
         let office = |pid: i64| pid == 7;
-        let button = json!({"role": "button", "pid": 7});
-        assert!(no_point(&button, office).is_some());
-        assert!(no_point(&json!({"role": "menuitem", "pid": 7}), office).is_none());
-        assert!(no_point(&json!({"role": "button", "pid": 8}), office).is_none());
-        assert!(no_point(&json!({"role": "button"}), office).is_none());
+        let at = |role: &str, pid: Option<i64>| json!({"role": role, "pid": pid, "shown": true, "bounds": [10, 20, 30, 30]});
+        assert!(no_point(&at("button", Some(7)), office).is_some());
+        assert!(no_point(&at("menuitem", Some(7)), office).is_none());
+        assert!(no_point(&at("button", Some(8)), office).is_none());
+        assert!(no_point(&at("button", None), office).is_none());
+    }
+
+    #[test]
+    fn a_hidden_or_unbounded_element_has_no_point() {
+        let none = |_: i64| false;
+        let closed = json!({"role": "menuitem", "shown": false, "bounds": [0, -400, 80, 20]});
+        let unbounded = json!({"role": "button", "shown": true, "bounds": null});
+        let drawn = json!({"role": "button", "shown": true, "bounds": [1, 2, 3, 4]});
+        assert!(no_point(&closed, none).is_some());
+        assert!(no_point(&unbounded, none).is_some());
+        assert!(no_point(&drawn, none).is_none());
     }
 
     #[test]
