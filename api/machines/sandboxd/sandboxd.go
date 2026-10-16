@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -578,16 +579,15 @@ func (b *Backend) refresh(ctx context.Context) error {
 		}
 	}
 	b.mu.Unlock()
-	var wg sync.WaitGroup
-	slots := make(chan struct{}, probeFanout)
+	var g errgroup.Group
+	g.SetLimit(probeFanout)
 	for _, id := range unready {
-		slots <- struct{}{}
-		wg.Go(func() {
-			defer func() { <-slots }()
+		g.Go(func() error {
 			b.probe(ctx, id)
+			return nil
 		})
 	}
-	wg.Wait()
+	_ = g.Wait()
 	b.mu.Lock()
 	b.publishLocked()
 	b.mu.Unlock()
