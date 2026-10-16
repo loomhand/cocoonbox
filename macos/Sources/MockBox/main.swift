@@ -27,7 +27,7 @@ let boot = Int(options["--boot-ms"] ?? "") ?? 2000
 let animate = Int(options["--animate"] ?? "") ?? 0
 let external = Int(options["--external-ms"] ?? "").map { Duration.milliseconds($0) }
 
-let world = MockWorld(token: token, bootDelay: .milliseconds(boot), animateFPS: animate, externalDelay: external, externalHistory: options["--external-history"] == "1", restoreOnWake: options["--restore-on-wake"] == "1", connect: MockConnect(base: "http://127.0.0.1:\(port)"))
+let world = MockWorld(bootDelay: .milliseconds(boot), animateFPS: animate, externalDelay: external, externalHistory: options["--external-history"] == "1", restoreOnWake: options["--restore-on-wake"] == "1", connect: MockConnect(base: "http://127.0.0.1:\(port)"))
 let boxID = await world.box.id
 let transport = HTTP2ServerTransport.TransportServices(
     address: .ipv4(host: "127.0.0.1", port: 0),

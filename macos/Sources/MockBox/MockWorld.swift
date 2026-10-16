@@ -62,7 +62,6 @@ actor MockWorld {
         $0.remainingTodayMicros = 998_500
     }
 
-    let token: String
     let bootDelay: Duration
     // boxes is oldest first, as the api lists them.
     private(set) var boxes: [Box] {
@@ -98,8 +97,7 @@ actor MockWorld {
     private let restoreOnWake: Bool
     nonisolated let connect: MockConnect
 
-    init(token: String, bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false, restoreOnWake: Bool = false, connect: MockConnect) {
-        self.token = token
+    init(bootDelay: Duration, animateFPS: Int, externalDelay: Duration?, externalHistory: Bool = false, restoreOnWake: Bool = false, connect: MockConnect) {
         self.connect = connect
         self.bootDelay = bootDelay
         self.animateFPS = animateFPS

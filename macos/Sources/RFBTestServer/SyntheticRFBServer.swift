@@ -41,7 +41,6 @@ public final class SyntheticRFBServer: @unchecked Sendable {
     private var dirty: CGRect?
     private var pendingRequest = false
     private var text = ""
-    private var clicks: [CGPoint] = []
     private var animationFrame = 0
     private var animation: DispatchSourceTimer?
     private var control = false
@@ -110,7 +109,6 @@ public final class SyntheticRFBServer: @unchecked Sendable {
 
     public func click(x: Int, y: Int) {
         lock.withLock {
-            clicks.append(CGPoint(x: x, y: y))
             drawClick(CGPoint(x: x, y: y))
             flush()
         }
@@ -211,7 +209,6 @@ public final class SyntheticRFBServer: @unchecked Sendable {
             let x = Int(bytes[2]) << 8 | Int(bytes[3])
             let y = Int(bytes[4]) << 8 | Int(bytes[5])
             if bytes[1] & 1 == 1 {
-                clicks.append(CGPoint(x: x, y: y))
                 drawClick(CGPoint(x: x, y: y))
                 flush()
             }
