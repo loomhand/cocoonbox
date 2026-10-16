@@ -84,6 +84,8 @@ pub struct Grabber {
     net_wm_state: Atom,
     state_modal: Atom,
     state_hidden: Atom,
+    net_wm_type: Atom,
+    type_dialog: Atom,
 }
 
 // SAFETY: the segment is private to this Grabber and only read through `&self` after a reply.
@@ -126,6 +128,8 @@ impl Grabber {
             net_wm_state,
             state_modal,
             state_hidden,
+            net_wm_type,
+            type_dialog,
         ] = [
             &b"_NET_WM_NAME"[..],
             b"UTF8_STRING",
@@ -136,6 +140,8 @@ impl Grabber {
             b"_NET_WM_STATE",
             b"_NET_WM_STATE_MODAL",
             b"_NET_WM_STATE_HIDDEN",
+            b"_NET_WM_WINDOW_TYPE",
+            b"_NET_WM_WINDOW_TYPE_DIALOG",
         ]
         .map(|name| {
             conn.intern_atom(false, name)
@@ -178,6 +184,8 @@ impl Grabber {
             net_wm_state,
             state_modal,
             state_hidden,
+            net_wm_type,
+            type_dialog,
         };
         attached?;
         Ok(grabber)
@@ -397,17 +405,7 @@ impl Grabber {
     }
 
     pub fn dialog(&self, w: Window) -> bool {
-        let atom = |name: &[u8]| {
-            self.conn
-                .intern_atom(false, name)
-                .ok()
-                .and_then(|c| c.reply().ok())
-                .map_or(u32::from(AtomEnum::NONE), |r| r.atom)
-        };
-        let (kind, dialog) = (
-            atom(b"_NET_WM_WINDOW_TYPE"),
-            atom(b"_NET_WM_WINDOW_TYPE_DIALOG"),
-        );
+        let (kind, dialog) = (self.net_wm_type, self.type_dialog);
         let children = self.kids(w);
         std::iter::once(w).chain(children).any(|c| {
             let get = |property: u32, kind: u32| {
