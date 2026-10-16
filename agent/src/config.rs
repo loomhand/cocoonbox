@@ -82,8 +82,8 @@ pub struct ServeConfig {
     pub automation: Automation,
     /// Script tools the image adds; a box that runs GUI plans offers them.
     pub plugins: Vec<Plugin>,
-    /// Text the image appends to the routing of the box's own agent.
-    pub routing_extra: String,
+    /// Paragraphs the image appends to the box agent's routing and, within their cap, to the MCP instructions.
+    pub routing_extra: Vec<String>,
 }
 
 impl std::fmt::Debug for ServeConfig {
@@ -197,10 +197,10 @@ impl ToolhostConfig {
     }
 }
 
-/// The `*.md` files in `dir` in file-name order, each led by a blank line; empty without any.
-pub fn routing_extra(dir: &Path) -> String {
+/// The `*.md` files in `dir` in file-name order, each trimmed at its end; none without any.
+pub fn routing_extra(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return String::new();
+        return Vec::new();
     };
     let mut files: Vec<PathBuf> = entries
         .flatten()
@@ -208,17 +208,14 @@ pub fn routing_extra(dir: &Path) -> String {
         .filter(|p| p.extension().is_some_and(|x| x == "md"))
         .collect();
     files.sort();
-    let mut text = String::new();
+    let mut parts = Vec::new();
     for file in files {
         match std::fs::read_to_string(&file) {
-            Ok(part) => {
-                text.push_str("\n\n");
-                text.push_str(part.trim_end());
-            }
+            Ok(part) => parts.push(part.trim_end().to_owned()),
             Err(e) => eprintln!("routing: skip {}: {e}", file.display()),
         }
     }
-    text
+    parts
 }
 
 fn required(key: &str) -> Result<String, String> {
@@ -263,7 +260,7 @@ mod tests {
             connect_url: None,
             automation: Automation::Plain,
             plugins: Vec::new(),
-            routing_extra: String::new(),
+            routing_extra: Vec::new(),
         };
         let shown = format!("{cfg:?}");
         assert!(
@@ -282,7 +279,7 @@ mod tests {
         std::fs::write(dir.path().join("20-b.md"), "second\n").unwrap();
         std::fs::write(dir.path().join("10-a.md"), "first").unwrap();
         std::fs::write(dir.path().join("30-c.txt"), "ignored").unwrap();
-        assert_eq!(routing_extra(dir.path()), "\n\nfirst\n\nsecond");
-        assert_eq!(routing_extra(Path::new("/nonexistent/routing.d")), "");
+        assert_eq!(routing_extra(dir.path()), ["first", "second"]);
+        assert!(routing_extra(Path::new("/nonexistent/routing.d")).is_empty());
     }
 }

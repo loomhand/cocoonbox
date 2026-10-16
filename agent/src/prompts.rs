@@ -67,7 +67,7 @@ pub fn main(
     computer_model: &str,
     vision: bool,
     automation: Automation,
-    routing_extra: &str,
+    routing_extra: &[String],
 ) -> String {
     let eyes = if vision {
         "You can also call screenshot to look at the screen yourself."
@@ -83,7 +83,10 @@ pub fn main(
         Automation::Desk => {
             prompt.push_str("\n\nThis box runs GUI plans and desk scripts.\n\n");
             prompt.push_str(ROUTING);
-            prompt.push_str(routing_extra);
+            for part in routing_extra {
+                prompt.push_str("\n\n");
+                prompt.push_str(part);
+            }
         }
     }
     prompt
@@ -148,7 +151,7 @@ mod tests {
             "anthropic/claude-sonnet-5",
             false,
             Automation::Plain,
-            "",
+            &[],
         );
         assert!(p.starts_with(
             "You are deepseek/deepseek-v4.1-flash, served through the cocoonbox gateway."
@@ -169,7 +172,7 @@ mod tests {
                 "x",
                 true,
                 Automation::Plain,
-                ""
+                &[]
             )
             .contains("call screenshot")
         );
@@ -177,8 +180,8 @@ mod tests {
 
     #[test]
     fn main_prompt_on_a_desk_box_ends_with_its_routing() {
-        let plain = main("m", "c", false, Automation::Plain, "");
-        let p = main("m", "c", false, Automation::Desk, "");
+        let plain = main("m", "c", false, Automation::Plain, &[]);
+        let p = main("m", "c", false, Automation::Desk, &[]);
         assert!(p.starts_with(&plain), "{p}");
         assert!(p.ends_with(ROUTING), "{p}");
         assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
@@ -201,10 +204,13 @@ mod tests {
 
     #[test]
     fn main_prompt_on_a_desk_box_ends_with_the_images_routing_extra() {
-        let extra = "\n\nUse x_run for x.";
-        let p = main("m", "c", false, Automation::Desk, extra);
-        assert!(p.ends_with(&format!("{ROUTING}{extra}")), "{p}");
-        assert!(!main("m", "c", false, Automation::Plain, extra).contains("x_run"));
+        let extra = ["Use x_run for x.".to_owned()];
+        let p = main("m", "c", false, Automation::Desk, &extra);
+        assert!(
+            p.ends_with(&format!("{ROUTING}\n\nUse x_run for x.")),
+            "{p}"
+        );
+        assert!(!main("m", "c", false, Automation::Plain, &extra).contains("x_run"));
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -58,6 +58,7 @@ const ALWAYS_LOAD: &[&str] = &[
     "browser_fetch",
 ];
 const NUDGE_STREAK: u32 = 2;
+const MAX_INSTRUCTIONS: usize = 1600;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
 const MAX_FLOWS: usize = 30;
 const DESK_RESOURCES: [Resource; 1] = [Resource {
@@ -81,6 +82,7 @@ pub struct Mcp {
     sessions: Mutex<HashMap<String, Arc<Session>>>,
     /// The line that names the box's OS, desktop and screen, once the toolhost has read all three.
     machine: tokio::sync::OnceCell<String>,
+    routing_capped: AtomicBool,
 }
 
 impl Mcp {
@@ -124,6 +126,7 @@ impl Mcp {
             idle,
             sessions: Mutex::new(HashMap::new()),
             machine: tokio::sync::OnceCell::new(),
+            routing_capped: AtomicBool::new(false),
         })
     }
 
@@ -344,8 +347,14 @@ impl Mcp {
         if self.automation.plans() {
             result["capabilities"]["resources"] = json!({});
             let machine = self.machine().await;
-            result["instructions"] =
-                format!("{machine} {PLAN_HEAD}\n\n{}", prompts::ROUTING).into();
+            let head = format!("{machine} {PLAN_HEAD}\n\n{}", prompts::ROUTING);
+            let (text, skipped) = with_routing(head, &self.rt.cfg.routing_extra);
+            if !skipped.is_empty() && !self.routing_capped.swap(true, Ordering::Relaxed) {
+                eprintln!(
+                    "mcp: initialize leaves out {skipped:?} of routing.d, past the {MAX_INSTRUCTIONS}-character cap"
+                );
+            }
+            result["instructions"] = text.into();
         }
         Ok((session, result))
     }
@@ -909,6 +918,22 @@ async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response
 
 /// `These tools act on a cloud computer: Ubuntu 24.04 with the XFCE desktop at 1280x800.`, without
 /// the parts `info` lacks.
+fn with_routing(mut text: String, extra: &[String]) -> (String, Vec<usize>) {
+    let mut skipped = Vec::new();
+    let mut len = text.chars().count();
+    for (i, part) in extra.iter().enumerate() {
+        let add = 2 + part.chars().count();
+        if len + add > MAX_INSTRUCTIONS {
+            skipped.push(i);
+            continue;
+        }
+        text.push_str("\n\n");
+        text.push_str(part);
+        len += add;
+    }
+    (text, skipped)
+}
+
 fn machine_line(info: &Value) -> String {
     let os = info["os"].as_str().unwrap_or("Linux");
     let mut line = format!("These tools act on a cloud computer: {os}");
@@ -989,6 +1014,24 @@ fn rpc_failure(status: StatusCode, code: i64, message: &str) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn routing_extra_joins_the_instructions_until_the_cap() {
+        let head = "h".repeat(1500);
+        let extra = [
+            "a".repeat(40),
+            "b".repeat(100),
+            "c".repeat(50),
+            "d".repeat(10),
+        ];
+        let (text, skipped) = with_routing(head.clone(), &extra);
+        assert_eq!(text, format!("{head}\n\n{}\n\n{}", extra[0], extra[2]));
+        assert_eq!(skipped, [1, 3]);
+        assert!(text.chars().count() <= MAX_INSTRUCTIONS);
+        let (text, skipped) = with_routing("h".repeat(MAX_INSTRUCTIONS), &extra);
+        assert_eq!(text.len(), MAX_INSTRUCTIONS);
+        assert_eq!(skipped, [0, 1, 2, 3]);
+    }
 
     async fn body(resp: Response) -> String {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)

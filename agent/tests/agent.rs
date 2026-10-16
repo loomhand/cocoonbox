@@ -3637,6 +3637,31 @@ async fn a_plain_box_ignores_its_plugins() {
 }
 
 #[tokio::test]
+async fn a_plugin_box_keeps_its_mcp_instructions_within_the_cap() {
+    let h = Harness::with_plugin(Vec::new()).await;
+    let init: Value = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .header("accept", "application/json, text/event-stream")
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    let extra = format!("\n\n{DEMO_ROUTING}");
+    let base = instructions.strip_suffix(&extra).unwrap_or(instructions);
+    assert_eq!(
+        instructions.ends_with(&extra),
+        base.chars().count() + extra.chars().count() <= 1600,
+        "{instructions}"
+    );
+    assert!(instructions.chars().count() <= 1600, "{instructions}");
+}
+
+#[tokio::test]
 async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let run = json!({"code": "export function main(p) { return p }", "params": {"n": 2}, "screenshot": false});
     let h = Harness::with_plugin(vec![
