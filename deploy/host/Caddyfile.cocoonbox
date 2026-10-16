@@ -1,3 +1,4 @@
+	header Strict-Transport-Security "max-age=31536000"
 	@cocoonboxconsole path /cb /cb/*
 	handle @cocoonboxconsole {
 		reverse_proxy 127.0.0.1:18201
