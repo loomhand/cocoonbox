@@ -17,6 +17,18 @@ permissions:
 jobs:
   api:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16.14@sha256:95206741a5b214807675e14165369d05b93a9cf692223b616d07cca227e74b0b
+        env:
+          POSTGRES_PASSWORD: cbtest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -30,4 +42,5 @@ jobs:
       - name: Format, lint, test, build
         env:
           GOWORK: "off"
+          COCOONBOX_TEST_DSN: postgres://postgres:cbtest@localhost:5432/postgres?sslmode=disable
         run: make api
