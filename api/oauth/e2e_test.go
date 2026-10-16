@@ -10,6 +10,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -155,9 +156,13 @@ func TestTokenEndpointRefusesABadRedemption(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			code, verifier, redirect := e.code(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
 			v := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {redirect}, "code_verifier": {verifier}}
-			tt.mutate(v)
-			if status, body := e.tokenError(t, v); status != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
+			bad := maps.Clone(v)
+			tt.mutate(bad)
+			if status, body := e.tokenError(t, bad); status != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
 				t.Errorf("%d %s, want invalid_grant", status, body)
+			}
+			if status, body := e.tokenError(t, v); status != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
+				t.Errorf("the right redemption after a refused one: %d %s, want invalid_grant", status, body)
 			}
 		})
 	}

@@ -1,6 +1,7 @@
 package oauth
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"embed"
@@ -92,11 +93,12 @@ func (s *store) addCode(ctx context.Context, c code) error {
 	})
 }
 
-// redeem takes the code once and, when check accepts it, issues tokens on a new grant, or on the client's live grant of the
-// user, which takes the new consent's caps and expiry, so a client that signs in again keeps its boxes. A first-party
-// client's code gets no grant: the caller issues its device token.
+// redeem takes the code once, even when check refuses it, and, when check accepts it, issues tokens on a new grant, or on the
+// client's live grant of the user, which takes the new consent's caps and expiry, so a client that signs in again keeps its
+// boxes. A first-party client's code gets no grant: the caller issues its device token.
 func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens issued, check func(code) error) (code, error) {
 	stored := code{codeSHA256: codeSHA256}
+	var refused error
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `DELETE FROM oauth_codes WHERE code_sha256 = $1 RETURNING user_id, client_id, client_name, client_host,
 			redirect_uri, code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label`, codeSHA256).Scan(
@@ -108,8 +110,8 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 		if err != nil {
 			return fmt.Errorf("take code: %w", err)
 		}
-		if err = check(stored); err != nil || stored.client.firstParty {
-			return err
+		if refused = check(stored); refused != nil || stored.client.firstParty {
+			return nil
 		}
 		if _, err = tx.Exec(ctx, "SELECT id FROM users WHERE id = $1 FOR UPDATE", stored.user); err != nil {
 			return fmt.Errorf("lock user: %w", err)
@@ -132,7 +134,7 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 		}
 		return insertTokens(ctx, tx, grantID, tokens, stored.grantExpires)
 	})
-	return stored, err
+	return stored, cmp.Or(err, refused)
 }
 
 // refresh spends the refresh token and issues tokens in its place; a spent one revokes its grant, as a replay shows a leak.
