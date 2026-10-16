@@ -20,7 +20,7 @@ use tokio::sync::{Mutex, OnceCell, OwnedRwLockWriteGuard, RwLock, Semaphore, mps
 use crate::store::Store;
 use crate::toolhost::rpc::{self, Call, FileReader, FileWriter};
 use crate::toolhost::state::{Entry, Excludes, Kind, Listed, Root, SQLITE_MAGIC};
-use crate::{Preempt, pb};
+use crate::{Preempt, new_id, pb};
 use crypto::Keys;
 use manifest::{Blob, FileRecord, Manifest};
 
@@ -356,9 +356,7 @@ impl StateEngine {
     }
 
     async fn cache(&self) -> Result<PathBuf, String> {
-        let cache = self
-            .work
-            .join(format!("restore-{}", uuid::Uuid::new_v4().simple()));
+        let cache = self.work.join(new_id("restore"));
         tokio::fs::create_dir_all(&cache)
             .await
             .map_err(|e| format!("create {}: {e}", cache.display()))?;
@@ -665,9 +663,7 @@ impl StateEngine {
         parent: &str,
         quiesced: bool,
     ) -> Result<(Pinned, pb::PlanResponse), StateError> {
-        let spool = self
-            .work
-            .join(format!("spool-{}", uuid::Uuid::new_v4().simple()));
+        let spool = self.work.join(new_id("spool"));
         tokio::fs::create_dir_all(&spool)
             .await
             .map_err(|e| format!("create {}: {e}", spool.display()))?;
@@ -983,49 +979,24 @@ impl StateEngine {
                 .map_err(|e| format!("read {}: {e}", path.display()))?,
         );
         let size = body.len() as u64;
-        let mut attempt = 0;
-        loop {
+        send_retrying(&format!("put {}", put.chunk_id), || {
             let mut req = self.http.put(&put.url).body(body.clone());
             for (k, v) in &put.headers {
                 req = req.header(k, v);
             }
-            let failure = match req.send().await {
-                Ok(r) if r.status().is_success() => return Ok(size),
-                Ok(r) if !retryable(r.status()) => {
-                    return Err(format!("put {}: {}", put.chunk_id, r.status()));
-                }
-                Ok(r) => format!("put {}: {}", put.chunk_id, r.status()),
-                Err(e) => format!("put {}: {e}", put.chunk_id),
-            };
-            attempt += 1;
-            if attempt >= ATTEMPTS {
-                return Err(failure);
-            }
-            tokio::time::sleep(RETRY_BASE * 2u32.pow(attempt - 1)).await;
-        }
+            req
+        })
+        .await?;
+        Ok(size)
     }
 
     async fn get(&self, url: &str) -> Result<Vec<u8>, String> {
-        let mut attempt = 0;
-        loop {
-            let failure = match self.http.get(url).send().await {
-                Ok(r) if r.status().is_success() => {
-                    return r
-                        .bytes()
-                        .await
-                        .map(|b| b.to_vec())
-                        .map_err(|e| format!("get body: {e}"));
-                }
-                Ok(r) if !retryable(r.status()) => return Err(format!("get: {}", r.status())),
-                Ok(r) => format!("get: {}", r.status()),
-                Err(e) => format!("get: {e}"),
-            };
-            attempt += 1;
-            if attempt >= ATTEMPTS {
-                return Err(failure);
-            }
-            tokio::time::sleep(RETRY_BASE * 2u32.pow(attempt - 1)).await;
-        }
+        send_retrying("get", || self.http.get(url))
+            .await?
+            .bytes()
+            .await
+            .map(|b| b.to_vec())
+            .map_err(|e| format!("get body: {e}"))
     }
 
     async fn fetch_chunk(
@@ -1493,6 +1464,26 @@ async fn read_cached(cache: &Path, id: &str) -> Result<Vec<u8>, String> {
     tokio::fs::read(cache.join(id))
         .await
         .map_err(|e| format!("read cached chunk {id}: {e}"))
+}
+
+async fn send_retrying(
+    label: &str,
+    build: impl Fn() -> reqwest::RequestBuilder,
+) -> Result<reqwest::Response, String> {
+    let mut attempt = 0;
+    loop {
+        let failure = match build().send().await {
+            Ok(r) if r.status().is_success() => return Ok(r),
+            Ok(r) if !retryable(r.status()) => return Err(format!("{label}: {}", r.status())),
+            Ok(r) => format!("{label}: {}", r.status()),
+            Err(e) => format!("{label}: {e}"),
+        };
+        attempt += 1;
+        if attempt >= ATTEMPTS {
+            return Err(failure);
+        }
+        tokio::time::sleep(RETRY_BASE * 2u32.pow(attempt - 1)).await;
+    }
 }
 
 fn retryable(status: reqwest::StatusCode) -> bool {
