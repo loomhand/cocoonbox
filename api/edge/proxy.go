@@ -70,9 +70,9 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	if strings.HasPrefix(method, stateServicePrefix) {
 		return status.Errorf(codes.PermissionDenied, "%s is internal to the control plane", method)
 	}
-	user := auth.User(ctx)
-	if user == "" {
-		return status.Error(codes.Unauthenticated, "unauthenticated")
+	user, err := auth.Caller(ctx)
+	if err != nil {
+		return err
 	}
 	md, _ := metadata.FromIncomingContext(ctx)
 	boxes := md.Get(HeaderBox)

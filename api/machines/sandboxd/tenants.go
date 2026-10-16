@@ -26,13 +26,11 @@ func NewTenants(rawURL, token, egressClass string) (*Tenants, error) {
 	return &Tenants{api: api, egressClass: egressClass}, nil
 }
 
-// PutTenant adds or changes tenant name with its claim cap and the egress class; an empty token keeps the stored one.
 func (t *Tenants) PutTenant(ctx context.Context, name, token string, maxClaims int) error {
 	req := tenantRequest{Token: token, MaxClaims: maxClaims, EgressClass: t.egressClass}
 	return t.api.do(ctx, http.MethodPut, "/v1/tenants/"+url.PathEscape(name), nil, req, nil)
 }
 
-// DeleteTenant removes tenant name; removing an absent tenant succeeds.
 func (t *Tenants) DeleteTenant(ctx context.Context, name string) error {
 	if err := t.api.do(ctx, http.MethodDelete, "/v1/tenants/"+url.PathEscape(name), nil, nil, nil); err != nil && !errors.Is(err, machines.ErrNotFound) {
 		return err

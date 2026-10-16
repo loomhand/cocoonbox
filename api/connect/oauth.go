@@ -157,7 +157,7 @@ func (s *Service) challenge(ctx context.Context, mcpURL string) (string, string,
 		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Accept", "application/json, "+mcpwire.EventStream)
 	resp, err := s.http.Do(req)
 	if err != nil {
 		return "", "", fmt.Errorf("reach %s: %w", mcpURL, err)
@@ -226,12 +226,7 @@ func (s *Service) register(ctx context.Context, endpoint string) (client, error)
 func (s *Service) token(ctx context.Context, c client, form url.Values) (*tokens, error) {
 	ctx, cancel := context.WithTimeout(ctx, tokenTimeout)
 	defer cancel()
-	if c.AuthMethod != authSecretBasic {
-		form.Set("client_id", c.ID)
-		if c.Secret != "" {
-			form.Set("client_secret", c.Secret)
-		}
-	}
+	clientForm(form, c)
 	if c.Resource != "" {
 		form.Set("resource", c.Resource)
 	}
@@ -274,12 +269,7 @@ func (s *Service) revoke(ctx context.Context, kind revokeKind, c client, sec sec
 		if sec.RefreshToken != "" {
 			form.Set("token_type_hint", grantRefreshToken)
 		}
-		if c.AuthMethod != authSecretBasic {
-			form.Set("client_id", c.ID)
-			if c.Secret != "" {
-				form.Set("client_secret", c.Secret)
-			}
-		}
+		clientForm(form, c)
 		if req, err = http.NewRequestWithContext(ctx, http.MethodPost, c.RevokeURL, strings.NewReader(form.Encode())); err != nil {
 			return false, err
 		}
@@ -340,6 +330,15 @@ func setClientAuth(req *http.Request, c client) {
 		req.SetBasicAuth(url.QueryEscape(c.ID), url.QueryEscape(c.Secret))
 	case c.Key != "":
 		req.Header.Set(headerAuthorization, "Bearer "+c.Key)
+	}
+}
+
+func clientForm(form url.Values, c client) {
+	if c.AuthMethod != authSecretBasic {
+		form.Set("client_id", c.ID)
+		if c.Secret != "" {
+			form.Set("client_secret", c.Secret)
+		}
 	}
 }
 

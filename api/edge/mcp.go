@@ -35,15 +35,6 @@ const (
 // errNoBox answers a box its grant did not create as the resolver answers another user's box.
 var errNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
 
-type jsonRPCError struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      any    `json:"id"`
-	Error   struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
-}
-
 // Grants checks the OAuth access tokens of agents and lists the boxes each grant created.
 type Grants interface {
 	Authenticate(ctx context.Context, header string) (oauth.Grant, error)
@@ -263,10 +254,14 @@ func newH2CTransport(dial func(ctx context.Context, network, addr string) (net.C
 	}
 }
 
+type jsonRPCError struct {
+	JSONRPC string        `json:"jsonrpc"`
+	ID      any           `json:"id"`
+	Error   mcpwire.Error `json:"error"`
+}
+
 func writeJSONRPCError(w http.ResponseWriter, err error) {
-	body := jsonRPCError{JSONRPC: mcpwire.Version}
-	body.Error.Code = jsonRPCServer
-	body.Error.Message = status.Convert(err).Message()
+	body := jsonRPCError{JSONRPC: mcpwire.Version, Error: mcpwire.Error{Code: jsonRPCServer, Message: status.Convert(err).Message()}}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus(status.Code(err)))
 	enc := json.NewEncoder(w)

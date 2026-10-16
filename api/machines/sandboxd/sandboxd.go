@@ -330,8 +330,7 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 	}
 	var v *envVar
 	if upstream != "" {
-		hostOnly := false
-		v = &envVar{Value: upstream, Guest: &hostOnly}
+		v = &envVar{Value: upstream, Guest: new(false)}
 	}
 	if err := b.api.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
 		return fmt.Errorf("set egress upstream: %w", err)
@@ -733,7 +732,6 @@ func send(ctx context.Context, out chan<- machines.Machine, m machines.Machine) 
 	}
 }
 
-// fingerprint identifies an env entry without keeping its value; nil has none.
 func secretVar(sec *machines.Secret) *envVar {
 	if sec == nil {
 		return nil
@@ -745,6 +743,7 @@ func secretVar(sec *machines.Secret) *envVar {
 	return v
 }
 
+// fingerprint identifies an env entry without keeping its value; nil has none.
 func fingerprint(v *envVar) string {
 	if v == nil {
 		return ""

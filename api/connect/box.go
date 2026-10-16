@@ -9,6 +9,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -81,7 +82,7 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 
 // BoxCaller maps a box door key to its machine's owner and the machine.
 func (s *Service) BoxCaller(ctx context.Context, header string) (string, string, error) {
-	key, ok := strings.CutPrefix(header, "Bearer ")
+	key, ok := auth.Bearer(header)
 	if !ok || key == "" {
 		return "", "", errNoDoorKey
 	}

@@ -33,7 +33,6 @@ type Call struct {
 type codeGrant struct {
 	challenge   string
 	redirectURI string
-	resource    string
 	clientID    string
 }
 
@@ -179,7 +178,7 @@ func (v *Vendor) authorize(w http.ResponseWriter, r *http.Request) {
 	}
 	code := token()
 	v.mu.Lock()
-	v.codes[code] = codeGrant{challenge: q.Get("code_challenge"), redirectURI: q.Get("redirect_uri"), resource: q.Get("resource"), clientID: q.Get("client_id")}
+	v.codes[code] = codeGrant{challenge: q.Get("code_challenge"), redirectURI: q.Get("redirect_uri"), clientID: q.Get("client_id")}
 	v.mu.Unlock()
 	http.Redirect(w, r, q.Get("redirect_uri")+"?"+url.Values{"code": {code}, "state": {q.Get("state")}}.Encode(), http.StatusFound)
 }

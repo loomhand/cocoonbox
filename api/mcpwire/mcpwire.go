@@ -11,10 +11,11 @@ const (
 	Version = "2.0"
 
 	// Latest is the newest MCP protocol version, answered to a client that asks for one this side lacks.
-	Latest        = "2025-11-25"
-	SessionHeader = "Mcp-Session-Id"
-	EventStream   = "text/event-stream"
-	MaxBody       = 1 << 20
+	Latest           = "2025-11-25"
+	SessionHeader    = "Mcp-Session-Id"
+	EventStream      = "text/event-stream"
+	KeepaliveComment = ": keepalive\n\n"
+	MaxBody          = 1 << 20
 	// Keepalive spaces the comments that keep an idle event stream open through proxies.
 	Keepalive = 25 * time.Second
 

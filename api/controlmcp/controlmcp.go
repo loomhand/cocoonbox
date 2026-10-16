@@ -220,7 +220,7 @@ type eventStream struct {
 }
 
 func newEventStream(w http.ResponseWriter, token json.RawMessage) *eventStream {
-	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Content-Type", mcpwire.EventStream)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	e := &eventStream{w: w, rc: http.NewResponseController(w), token: token, stop: make(chan struct{})}
@@ -259,7 +259,7 @@ func (e *eventStream) keepalive() {
 		case <-e.stop:
 			return
 		case <-ticker.C:
-			e.write([]byte(": keepalive\n\n"))
+			e.write([]byte(mcpwire.KeepaliveComment))
 		}
 	}
 }

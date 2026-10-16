@@ -235,7 +235,7 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 			msg = listChanged
 		case msg = <-watch.answered:
 		case <-tick:
-			msg = []byte(": keepalive\n\n")
+			msg = []byte(mcpwire.KeepaliveComment)
 		}
 		if _, err := w.Write(msg); err != nil || rc.Flush() != nil {
 			return

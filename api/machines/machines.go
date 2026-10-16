@@ -156,6 +156,8 @@ type Machines interface {
 
 // Tenants manages each owner's backend tenant, named by the owner.
 type Tenants interface {
+	// PutTenant adds or changes tenant name with its claim cap; an empty token keeps the stored one.
 	PutTenant(ctx context.Context, name, token string, maxClaims int) error
+	// DeleteTenant removes tenant name; removing an absent tenant succeeds.
 	DeleteTenant(ctx context.Context, name string) error
 }
