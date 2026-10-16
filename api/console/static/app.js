@@ -59,6 +59,7 @@ async function load() {
   const u = me.user;
   $("whoami").textContent = u.name + (u.admin ? " (admin)" : "");
   $("logout").hidden = false;
+  $("connect-link").hidden = !me.connect;
   $("token-state").textContent = u.has_token ? "A token is set." : "No token yet: generate one for the app.";
   const form = $("settings-form");
   form.max_boxes.value = u.max_boxes;

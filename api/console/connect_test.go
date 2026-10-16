@@ -190,6 +190,24 @@ func TestDeleteRevokesTheGrantsAndLeavesNoRowOfTheUser(t *testing.T) {
 	}
 }
 
+func TestTheConsoleOffersConnectOnlyWhenItIsEnabled(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	if body := env.do(t, http.MethodGet, "api/me", root, "").Body.String(); !strings.Contains(body, `"connect":false`) {
+		t.Errorf("me with Connect off = %s", body)
+	}
+	rec := httptest.NewRecorder()
+	env.srv.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, connect.ConsolePath, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("Connect page with Connect off = %d, want 404", rec.Code)
+	}
+	env, _ = newConnectEnv(t)
+	root = env.login(t, "root")
+	if body := env.do(t, http.MethodGet, "api/me", root, "").Body.String(); !strings.Contains(body, `"connect":true`) {
+		t.Errorf("me with Connect on = %s", body)
+	}
+}
+
 func newConnectEnv(t *testing.T) (*env, *connecttest.Vendor) {
 	t.Helper()
 	e := newEnv(t)

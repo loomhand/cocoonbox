@@ -211,7 +211,8 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		DefaultRunning  int            `json:"default_max_running"`
 		SpentToday      int64          `json:"spent_today_micros"`
 		OwnBoxes        int            `json:"own_boxes"`
-	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning}
+		Connect         bool           `json:"connect"`
+	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning, Connect: s.connect != nil}
 	for _, b := range s.users.Boxes(u.ID) {
 		if !b.Agent {
 			resp.OwnBoxes++
