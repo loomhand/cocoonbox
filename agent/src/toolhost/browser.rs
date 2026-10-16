@@ -30,6 +30,7 @@ const SPA_POLL: Duration = Duration::from_millis(150);
 const XHR_STALE: Duration = Duration::from_millis(1500);
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
+const ENABLE_WAIT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(250);
 const NAV_START: Duration = Duration::from_millis(200);
 const POKE: Duration = Duration::from_millis(100);
@@ -55,6 +56,7 @@ const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the 
 const SHARE_TAB: &str = "a read-only share reads only its own window, so it takes no tab";
 const TEXT_LEN_JS: &str = "document.body ? document.body.textContent.length : 0";
 const TAB_JS: &str = "[document.visibilityState, document.title, location.href]";
+const NO_ANSWER: &str = "the page does not answer, so it may show a dialog that opened before this call: close the dialog on the screen and retry";
 const NOT_A_FIELD: &str = "focus a card field on the checkout page first: the focused element of the page is not a text field; nothing was typed";
 
 const SNAPSHOT_JS: &str = r#"((plans) => {
@@ -354,8 +356,17 @@ impl Browser {
         self.act(&mut cdp, tool, args).await
     }
 
-    /// Runs a page tool of `run` in the tab of `cdp`.
+    /// Runs a page tool of `run` in the tab of `cdp` and reports the dialogs the page opened.
     async fn act(&self, cdp: &mut Cdp, tool: &str, args: Value) -> Result<String, String> {
+        cdp.enable_page().await?;
+        let mut out = self.page_tool(cdp, tool, args).await?;
+        for d in &cdp.dialogs {
+            let _ = write!(out, "\n{d}");
+        }
+        Ok(out)
+    }
+
+    async fn page_tool(&self, cdp: &mut Cdp, tool: &str, args: Value) -> Result<String, String> {
         match tool {
             "browser_navigate" => {
                 let a: NavigateArgs = parse(args)?;
@@ -1019,6 +1030,11 @@ struct Cdp {
     xhr: Xhr,
     /// The page's frame loads since [`Cdp::watch_load`], from its Page events.
     load: Load,
+    page_events: bool,
+    /// The type and message of the dialog the page opened, from its Page events.
+    dialog: Option<(String, String)>,
+    /// What became of the dialogs the page opened during this connection.
+    dialogs: Vec<String>,
 }
 
 #[derive(Default)]
@@ -1064,6 +1080,9 @@ impl Cdp {
             session: None,
             xhr: Xhr::default(),
             load: Load::default(),
+            page_events: false,
+            dialog: None,
+            dialogs: Vec::new(),
         })
     }
 
@@ -1083,6 +1102,7 @@ impl Cdp {
     }
 
     async fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.handle_dialog().await?;
         let id = self.send(method, params).await?;
         let wait = async {
             while let Some(frame) = self.ws.next().await {
@@ -1094,6 +1114,7 @@ impl Cdp {
                     serde_json::from_str(&text).map_err(|e| format!("cdp decode: {e}"))?;
                 if v["id"].as_u64() != Some(id) {
                     self.note(&v);
+                    self.handle_dialog().await?;
                     continue;
                 }
                 if let Some(err) = v.get("error") {
@@ -1130,22 +1151,60 @@ impl Cdp {
         match v["method"].as_str() {
             Some("Page.frameStartedLoading") => self.load.started = true,
             Some("Page.frameStoppedLoading") => self.load.stopped = true,
+            Some("Page.javascriptDialogOpening") => {
+                let p = &v["params"];
+                self.dialog = Some((
+                    p["type"].as_str().unwrap_or_default().to_owned(),
+                    p["message"].as_str().unwrap_or_default().to_owned(),
+                ));
+            }
             _ => {}
         }
     }
 
     /// Turns on the Page events of the connection and forgets the loads seen so far, before an input that may open a page.
     async fn watch_load(&mut self) -> Result<(), String> {
-        self.call("Page.enable", json!({})).await?;
+        self.enable_page().await?;
         self.load = Load::default();
         Ok(())
+    }
+
+    /// Turns on the Page events of the connection once; a dialog open before the call blocks it, so it waits [`ENABLE_WAIT`] at most.
+    async fn enable_page(&mut self) -> Result<(), String> {
+        if !self.page_events {
+            tokio::time::timeout(ENABLE_WAIT, self.call("Page.enable", json!({})))
+                .await
+                .map_err(|_| NO_ANSWER.to_owned())??;
+            self.page_events = true;
+        }
+        Ok(())
+    }
+
+    /// Accepts the alert the page opened, else dismisses its dialog and fails.
+    async fn handle_dialog(&mut self) -> Result<(), String> {
+        let Some((kind, message)) = self.dialog.take() else {
+            return Ok(());
+        };
+        let alert = kind == "alert";
+        self.send("Page.handleJavaScriptDialog", json!({"accept": alert}))
+            .await?;
+        if alert {
+            self.dialogs
+                .push(format!("the page showed an alert: \"{message}\""));
+            return Ok(());
+        }
+        let err = format!(
+            "the page opened a {kind} dialog \"{message}\" and the browser tools dismissed it; to accept one, do the action on the screen"
+        );
+        self.dialogs.push(err.clone());
+        Err(err)
     }
 
     /// Waits for the page an input opened: at most [`NAV_START`] for a frame to start loading, then up to [`LOAD_WAIT`]
     /// for the loads to stop and the document to be complete.
     async fn opened_page(&mut self) {
         let start = tokio::time::Instant::now();
-        while !self.load.started || !self.load.stopped {
+        while self.dialog.is_none() && (!self.load.started || !self.load.stopped) {
             let wait = if self.load.started {
                 LOAD_WAIT
             } else {
@@ -2840,6 +2899,146 @@ pub(super) mod tests {
         );
         assert!(out.contains("textbox \"Customer\""), "{out}");
         b.run("a", "browser_close", json!({})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_alert_is_accepted_and_reported_and_one_open_before_the_call_fails_it_soon() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(bin) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let url = format!(
+            "http://127.0.0.1:{}/",
+            page_server(
+                "<!doctype html><title>draft</title><button onclick=\"alert('Draft saved')\">Save</button>\
+                 <button onclick=\"setTimeout(() => alert('Saved later'), 1500)\">Later</button>",
+            )
+            .await
+        );
+        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let b = Browser::new(bin, dir.path().join("p"), cdp, true);
+        b.run("a", "browser_navigate", json!({"url": url}))
+            .await
+            .unwrap();
+        let asked = Instant::now();
+        let out = b
+            .run("a", "browser_click", json!({"ref": "e1"}))
+            .await
+            .unwrap();
+        assert!(
+            asked.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            asked.elapsed()
+        );
+        assert_eq!(
+            out,
+            format!(
+                "clicked e1 \"Save\"; page is now draft ({url})\nthe page showed an alert: \"Draft saved\""
+            )
+        );
+        let out = b
+            .run("a", "browser_click", json!({"ref": "e2"}))
+            .await
+            .unwrap();
+        assert!(!out.contains("alert"), "{out}");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let asked = Instant::now();
+        assert_eq!(
+            b.run("a", "browser_snapshot", json!({})).await.unwrap_err(),
+            NO_ANSWER
+        );
+        assert!(
+            (ENABLE_WAIT..ENABLE_WAIT + Duration::from_secs(1)).contains(&asked.elapsed()),
+            "{:?}",
+            asked.elapsed()
+        );
+        b.run("a", "browser_close", json!({})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_confirm_prompt_or_beforeunload_dialog_is_dismissed_and_fails_the_call_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(bin) = headless_chrome(dir.path()) else {
+            return;
+        };
+        for (kind, page, open, title) in [
+            (
+                "confirm",
+                "<button onclick=\"document.title = confirm('Delete the draft?')\">Delete</button>",
+                "browser_click",
+                "false",
+            ),
+            (
+                "prompt",
+                "<button onclick=\"document.title = prompt('Name the draft?')\">Name</button>",
+                "browser_click",
+                "null",
+            ),
+            (
+                "beforeunload",
+                "<script>onbeforeunload = (e) => { e.preventDefault(); e.returnValue = ''; }</script>\
+                 <button onclick=\"document.title = 'edited'\">Edit</button>",
+                "browser_navigate",
+                "edited",
+            ),
+        ] {
+            let url = format!(
+                "http://127.0.0.1:{}/",
+                page_server(format!("<!doctype html><title>draft</title>{page}").leak()).await
+            );
+            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            let b = Browser::new(bin.clone(), dir.path().join(kind), cdp, true);
+            b.run("a", "browser_navigate", json!({"url": url}))
+                .await
+                .unwrap();
+            if kind == "beforeunload" {
+                b.run("a", "browser_click", json!({"ref": "e1"}))
+                    .await
+                    .unwrap();
+            }
+            let asked = Instant::now();
+            let err = b
+                .run(
+                    "a",
+                    open,
+                    json!({"ref": "e1", "url": format!("{url}?next")}),
+                )
+                .await
+                .unwrap_err();
+            assert!(
+                asked.elapsed() < Duration::from_secs(5),
+                "{kind}: {:?}",
+                asked.elapsed()
+            );
+            assert!(
+                err.starts_with(&format!("the page opened a {kind} dialog \""))
+                    && err.ends_with(
+                        "\" and the browser tools dismissed it; to accept one, do the action on the screen"
+                    ),
+                "{err}"
+            );
+            let asked = Instant::now();
+            let snap = b.run("a", "browser_snapshot", json!({})).await.unwrap();
+            assert!(
+                asked.elapsed() < Duration::from_secs(2),
+                "{kind}: {:?}",
+                asked.elapsed()
+            );
+            assert!(
+                snap.starts_with(&format!("Page: {title} ({url})\n")),
+                "{snap}"
+            );
+            assert!(!snap.contains("dialog"), "{snap}");
+            b.run("a", "browser_close", json!({})).await.unwrap();
+        }
     }
 
     #[test]
