@@ -146,8 +146,8 @@ type Machines interface {
 	Delete(ctx context.Context, id string) error
 	// SetMeta stores value under key in the machine's Meta.
 	SetMeta(ctx context.Context, id, key, value string) error
-	// Deliver hands the running machine's agent its identity and installs gwKey and connectKey where set.
-	Deliver(ctx context.Context, id string, identity Identity, gwKey, connectKey string) error
+	// Deliver installs keys as host-only secrets on the running machine, then hands its agent the identity.
+	Deliver(ctx context.Context, id string, identity Identity, keys map[string]*Secret) error
 	// SetCredentials applies c to the machine; flags change only while it runs.
 	SetCredentials(ctx context.Context, id string, c Credentials) error
 	// SetEgress sends the machine's new connections through the proxy at upstream, or direct when upstream is empty.

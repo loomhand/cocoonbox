@@ -283,7 +283,7 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	claimRunning(t, b)
 	identity := machines.Identity{BoxID: boxID, WakeID: "w1", KeyID: "k1", PublicKey: "pk", Name: "desk_1"}
 
-	if err := b.Deliver(t.Context(), boxID, identity, "sk-box", "door-key"); err != nil {
+	if err := b.Deliver(t.Context(), boxID, identity, map[string]*machines.Secret{"GW_KEY": {Value: "Bearer sk-box"}, "CB_CONNECT_KEY": {Value: "Bearer door-key"}}); err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}
 	for name, want := range map[string]string{"GW_KEY": "Bearer sk-box", "CB_CONNECT_KEY": "Bearer door-key"} {
@@ -299,7 +299,7 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	if err := json.Unmarshal([]byte(exec.Env["CB_STDIN"]), &file); err != nil || file != identity || !slices.Equal(exec.Argv, writeIdentity) {
 		t.Errorf("identity exec = %+v (%v)", exec, err)
 	}
-	if err := b.Deliver(t.Context(), boxID, identity, "", ""); err != nil || fake.count("patch") != 1 {
+	if err := b.Deliver(t.Context(), boxID, identity, nil); err != nil || fake.count("patch") != 1 {
 		t.Errorf("Deliver without a gw key: %v, env patches %d", err, fake.count("patch"))
 	}
 	if err := b.SetMeta(t.Context(), boxID, "wake", "inc|w1"); err != nil {
@@ -323,21 +323,21 @@ func TestDeliverFailures(t *testing.T) {
 	identity := machines.Identity{BoxID: boxID, WakeID: "w1"}
 
 	fake.execExit = 1
-	if err := b.Deliver(t.Context(), boxID, identity, "", ""); err == nil || !strings.Contains(err.Error(), "exit 1: mkdir failed") {
+	if err := b.Deliver(t.Context(), boxID, identity, nil); err == nil || !strings.Contains(err.Error(), "exit 1: mkdir failed") {
 		t.Errorf("Deliver with a failing exec = %v", err)
 	}
 	fake.execExit, fake.execStatus = 0, http.StatusBadGateway
-	if err := b.Deliver(t.Context(), boxID, identity, "", ""); err == nil || !strings.Contains(err.Error(), "write identity") {
+	if err := b.Deliver(t.Context(), boxID, identity, nil); err == nil || !strings.Contains(err.Error(), "write identity") {
 		t.Errorf("Deliver with an unreachable guest = %v", err)
 	}
 	fake.execStatus = 0
 	h, _ := b.Hibernate(t.Context(), boxID)
 	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
 	execs := fake.count("exec")
-	if err := b.Deliver(t.Context(), boxID, identity, "", ""); !isNotRunning(err, machines.StateHibernated) || fake.count("exec") != execs {
+	if err := b.Deliver(t.Context(), boxID, identity, nil); !isNotRunning(err, machines.StateHibernated) || fake.count("exec") != execs {
 		t.Errorf("Deliver to a hibernated box = %v, execs %d -> %d", err, execs, fake.count("exec"))
 	}
-	if err := b.Deliver(t.Context(), "cb-missing", identity, "", ""); !errors.Is(err, machines.ErrNotFound) {
+	if err := b.Deliver(t.Context(), "cb-missing", identity, nil); !errors.Is(err, machines.ErrNotFound) {
 		t.Errorf("Deliver to an unknown machine = %v", err)
 	}
 }

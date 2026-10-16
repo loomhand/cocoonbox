@@ -16,8 +16,6 @@ const (
 
 	envMetaPrefix = "CB_META_"
 	envWakes      = "CB_WAKES"
-	envGWKey      = "GW_KEY"
-	envConnectKey = "CB_CONNECT_KEY"
 	envUpstream   = "EGRESS_UPSTREAM"
 
 	opClaim     = "claim"

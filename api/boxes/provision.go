@@ -21,6 +21,9 @@ const (
 	metaWake = "wake"
 	metaGW   = "gw"
 
+	gwKeyEnv      = "GW_KEY"
+	connectKeyEnv = "CB_CONNECT_KEY"
+
 	provisionAttempts = 5
 	provisionBackoff  = 2 * time.Second
 )
@@ -107,13 +110,15 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	if err := s.syncExit(ctx, m); err != nil {
 		return "", fmt.Errorf("exit: %w", err)
 	}
-	var gwKey string
+	keys := map[string]*machines.Secret{}
 	if s.accounts != nil && m.Meta[metaGW] == "" {
 		key, err := s.accounts.GWKey(m.Owner)
 		if err != nil {
 			return "", fmt.Errorf("gw key: %w", err)
 		}
-		gwKey = key
+		if key != "" {
+			keys[gwKeyEnv] = &machines.Secret{Value: "Bearer " + key}
+		}
 	}
 	raw := make([]byte, 16)
 	if _, err := rand.Read(raw); err != nil {
@@ -122,15 +127,16 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 	box := boxOfMachine(m.ID)
 	identity := machines.Identity{BoxID: box, WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
 	owned := !s.agentBox(m.Owner, box)
-	var connectKey string
 	if s.connect != nil && owned {
 		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)
 		if err != nil {
 			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "issue the box door key: %v", err)
 		}
-		connectKey = key
+		if key != "" {
+			keys[connectKeyEnv] = &machines.Secret{Value: "Bearer " + key}
+		}
 	}
-	if err := s.machines.Deliver(ctx, m.ID, identity, gwKey, connectKey); err != nil {
+	if err := s.machines.Deliver(ctx, m.ID, identity, keys); err != nil {
 		return "", err
 	}
 	if s.connect != nil && owned {
@@ -141,7 +147,7 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 			log.WithFunc("boxes.Service.provisionOnce").WithField("machine", m.ID).Warnf(ctx, "push keys: %v", err)
 		}
 	}
-	if gwKey != "" {
+	if keys[gwKeyEnv] != nil {
 		if err := s.machines.SetMeta(ctx, m.ID, metaGW, "1"); err != nil {
 			return "", err
 		}

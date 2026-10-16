@@ -277,7 +277,7 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	return nil
 }
 
-func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, gwKey, connectKey string) error {
+func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, keys map[string]*machines.Secret) error {
 	sandbox, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
@@ -289,15 +289,12 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 	if m.State != machines.StateRunning {
 		return &machines.NotRunningError{State: m.State}
 	}
-	keys := map[string]*envVar{}
-	if gwKey != "" {
-		keys[envGWKey] = &envVar{Value: "Bearer " + gwKey, Guest: new(false)}
-	}
-	if connectKey != "" {
-		keys[envConnectKey] = &envVar{Value: "Bearer " + connectKey, Guest: new(false)}
-	}
 	if len(keys) > 0 {
-		if err = b.api.patchEnv(ctx, sandbox, keys); err != nil {
+		vars := make(map[string]*envVar, len(keys))
+		for name, sec := range keys {
+			vars[name] = secretVar(sec)
+		}
+		if err = b.api.patchEnv(ctx, sandbox, vars); err != nil {
 			return fmt.Errorf("install host keys: %w", err)
 		}
 	}
@@ -360,14 +357,7 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 		changes[name], sums[name] = v, sum
 	}
 	for name, sec := range c.Secrets {
-		var v *envVar
-		if sec != nil {
-			v = &envVar{Value: sec.Value, Guest: new(false)}
-			if len(sec.Hosts) > 0 {
-				v.Inject = &inject{Hosts: sec.Hosts, Header: sec.Header, Query: sec.Query, Placeholder: sec.Placeholder}
-			}
-		}
-		add(name, v)
+		add(name, secretVar(sec))
 	}
 	if c.Prune != "" {
 		for name := range e.env {
@@ -737,6 +727,17 @@ func send(ctx context.Context, out chan<- machines.Machine, m machines.Machine) 
 }
 
 // fingerprint identifies an env entry without keeping its value; nil has none.
+func secretVar(sec *machines.Secret) *envVar {
+	if sec == nil {
+		return nil
+	}
+	v := &envVar{Value: sec.Value, Guest: new(false)}
+	if len(sec.Hosts) > 0 {
+		v.Inject = &inject{Hosts: sec.Hosts, Header: sec.Header, Query: sec.Query, Placeholder: sec.Placeholder}
+	}
+	return v
+}
+
 func fingerprint(v *envVar) string {
 	if v == nil {
 		return ""

@@ -571,13 +571,20 @@ func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {
 	return nil
 }
 
-func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity, gwKey, connectKey string) error {
+func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity, keys map[string]*machines.Secret) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.execErr != nil {
 		return f.execErr
 	}
-	f.execs = append(f.execs, execCall{machine: id, identity: identity, gwKey: gwKey, connectKey: connectKey})
+	call := execCall{machine: id, identity: identity}
+	if k := keys[gwKeyEnv]; k != nil {
+		call.gwKey = strings.TrimPrefix(k.Value, "Bearer ")
+	}
+	if k := keys[connectKeyEnv]; k != nil {
+		call.connectKey = strings.TrimPrefix(k.Value, "Bearer ")
+	}
+	f.execs = append(f.execs, call)
 	return nil
 }
 
