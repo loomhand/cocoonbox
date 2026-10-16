@@ -2,14 +2,7 @@ package connect
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hkdf"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/json/v2"
-	"errors"
-	"fmt"
 
 	"github.com/loomhand/cocoonbox/api/keyring"
 )
@@ -29,55 +22,25 @@ type flowSecrets struct {
 	Scopes   []string `json:"scopes,omitzero"`
 }
 
-// sealer seals grant and flow secrets with AES-256-GCM under a key derived from the owner's state key.
+// sealer seals grant and flow secrets as JSON with keyring.Sealer.
 type sealer struct {
-	keys keyring.Keyring
+	keyring.Sealer
 }
 
 func (s *sealer) seal(ctx context.Context, user string, v any, ad string) ([]byte, error) {
-	aead, err := s.aead(ctx, user)
-	if err != nil {
-		return nil, err
-	}
 	plain, err := json.Marshal(v)
 	if err != nil {
 		return nil, err
 	}
-	nonce := make([]byte, aead.NonceSize(), aead.NonceSize()+len(plain)+aead.Overhead())
-	_, _ = rand.Read(nonce)
-	return aead.Seal(nonce, nonce, plain, []byte(ad)), nil
+	return s.Seal(ctx, user, plain, ad)
 }
 
 func (s *sealer) open(ctx context.Context, user string, sealed []byte, ad string, v any) error {
-	aead, err := s.aead(ctx, user)
+	plain, err := s.Open(ctx, user, sealed, ad)
 	if err != nil {
 		return err
 	}
-	n := aead.NonceSize()
-	if len(sealed) < n {
-		return errors.New("sealed value is truncated")
-	}
-	plain, err := aead.Open(nil, sealed[:n], sealed[n:], []byte(ad))
-	if err != nil {
-		return fmt.Errorf("open %s: %w", ad, err)
-	}
 	return json.Unmarshal(plain, v)
-}
-
-func (s *sealer) aead(ctx context.Context, user string) (cipher.AEAD, error) {
-	k, err := s.keys.StateKey(ctx, user)
-	if err != nil {
-		return nil, fmt.Errorf("state key of %s: %w", user, err)
-	}
-	key, err := hkdf.Key(sha256.New, k.Secret, nil, grantKeyInfo, keyring.KeySize)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
 }
 
 func grantData(id, user, connector string) string {

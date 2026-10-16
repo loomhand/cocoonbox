@@ -32,7 +32,7 @@ func (s *Service) Add(ctx context.Context, req *controlv1.AddKeyRequest) (*contr
 		id: idPrefix + randomHex(idBytes), owner: owner, name: req.GetName(), hosts: sp.hosts, header: sp.header, template: sp.template,
 		query: sp.query, placeholder: newPlaceholder(value), hint: valueHint(value), fingerprint: fingerprint(value), valueLen: len(value), version: 1,
 	}
-	if sec.sealed, err = s.seal.seal(ctx, owner, value, valueData(sec.id, owner)); err != nil {
+	if sec.sealed, err = s.seal.Seal(ctx, owner, []byte(value), valueData(sec.id, owner)); err != nil {
 		return nil, keyStatus(ctx, err, "add key")
 	}
 	if err := s.store.insert(ctx, sec, func(others []*secret) error { return fits(append(others, sec)) }); err != nil {
@@ -69,7 +69,7 @@ func (s *Service) Rotate(ctx context.Context, req *controlv1.RotateKeyRequest) (
 		return nil, keyStatus(ctx, err, "rotate key")
 	}
 	sec, err := s.store.rotate(ctx, owner, req.GetName(), func(sec *secret) error {
-		sealed, sealErr := s.seal.seal(ctx, owner, value, valueData(sec.id, owner))
+		sealed, sealErr := s.seal.Seal(ctx, owner, []byte(value), valueData(sec.id, owner))
 		if sealErr != nil {
 			return sealErr
 		}

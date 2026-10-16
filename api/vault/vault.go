@@ -99,7 +99,7 @@ type Service struct {
 	controlv1.UnimplementedKeysServer
 
 	store    *store
-	seal     *sealer
+	seal     keyring.Sealer
 	onChange ChangeFunc
 }
 
@@ -109,7 +109,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Service{store: st, seal: &sealer{keys: opts.Keys}}, nil
+	return &Service{store: st, seal: keyring.Sealer{Keys: opts.Keys, Info: sealInfo}}, nil
 }
 
 // Close releases the database pool.
@@ -142,11 +142,11 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 	out := machines.Credentials{Secrets: map[string]*machines.Secret{}, Flags: map[string]string{guestEnv: ""}, Prune: envPrefix}
 	records, versions := make([]string, 0, len(list)), make([]string, 0, len(list))
 	for _, sec := range list {
-		value, err := s.seal.open(ctx, owner, sec.sealed, valueData(sec.id, owner))
+		value, err := s.seal.Open(ctx, owner, sec.sealed, valueData(sec.id, owner))
 		if err != nil {
 			return machines.Credentials{}, "", fmt.Errorf("open key %s: %w", sec.name, err)
 		}
-		out.Secrets[envName(sec.id)] = sec.entry(value)
+		out.Secrets[envName(sec.id)] = sec.entry(string(value))
 		records = append(records, sec.record())
 		versions = append(versions, fmt.Sprintf("%s:%d", sec.id, sec.version))
 	}
@@ -270,4 +270,8 @@ func randomHex(n int) string {
 	raw := make([]byte, n)
 	_, _ = rand.Read(raw)
 	return hex.EncodeToString(raw)
+}
+
+func valueData(id, owner string) string {
+	return "vault_secrets|" + id + "|" + owner + "|value"
 }

@@ -144,7 +144,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	}
 	return &Service{
 		store:        st,
-		seal:         &sealer{keys: opts.Keys},
+		seal:         &sealer{keyring.Sealer{Keys: opts.Keys, Info: grantKeyInfo}},
 		sessions:     opts.Sessions,
 		catalog:      newCatalog(opts),
 		publicURL:    opts.PublicURL,

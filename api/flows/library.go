@@ -5,9 +5,6 @@ package flows
 import (
 	"cmp"
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/hkdf"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -70,7 +67,7 @@ type Origin struct {
 // Library keeps every user's flows in the state store, sealed under a key derived from the user's state key.
 type Library struct {
 	store store.Store
-	keys  keyring.Keyring
+	seal  keyring.Sealer
 
 	mu    sync.Mutex
 	users map[string]*sync.Mutex
@@ -78,7 +75,7 @@ type Library struct {
 
 // NewLibrary keeps flows in st under each user's prefix.
 func NewLibrary(st store.Store, keys keyring.Keyring) *Library {
-	return &Library{store: st, keys: keys, users: map[string]*sync.Mutex{}}
+	return &Library{store: st, seal: keyring.Sealer{Keys: keys, Info: sealInfo}, users: map[string]*sync.Mutex{}}
 }
 
 // List returns user's library rev and flows, newest first.
@@ -114,7 +111,7 @@ func (l *Library) Get(ctx context.Context, user, name string) (Entry, []byte, er
 	if err != nil {
 		return Entry{}, nil, fmt.Errorf("read flow object: %w", err)
 	}
-	content, err := l.open(ctx, user, sealed, objectData(user, f.Object))
+	content, err := l.seal.Open(ctx, user, sealed, objectData(user, f.Object))
 	if err != nil {
 		return Entry{}, nil, err
 	}
@@ -150,7 +147,7 @@ func (l *Library) Put(ctx context.Context, user, name string, content []byte, o 
 		return Entry{}, fmt.Errorf("%w: at most %d flows and %d bytes", ErrFull, MaxFlows, MaxBytes)
 	}
 	object := randomHex(objectLen)
-	sealed, err := l.seal(ctx, user, content, objectData(user, object))
+	sealed, err := l.seal.Seal(ctx, user, content, objectData(user, object))
 	if err != nil {
 		return Entry{}, err
 	}
@@ -224,7 +221,7 @@ func (l *Library) index(ctx context.Context, user string) (*index, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read flow index: %w", err)
 	}
-	plain, err := l.open(ctx, user, sealed, indexData(user))
+	plain, err := l.seal.Open(ctx, user, sealed, indexData(user))
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +237,7 @@ func (l *Library) writeIndex(ctx context.Context, user string, idx *index) error
 	if err != nil {
 		return err
 	}
-	sealed, err := l.seal(ctx, user, plain, indexData(user))
+	sealed, err := l.seal.Seal(ctx, user, plain, indexData(user))
 	if err != nil {
 		return err
 	}
@@ -259,48 +256,6 @@ func (l *Library) dropObjects(ctx context.Context, user string, objects []string
 	if err := l.store.Delete(ctx, keys); err != nil {
 		log.WithFunc("flows.Library.dropObjects").Warnf(ctx, "remove %d replaced flow objects of %s: %v", len(keys), user, err)
 	}
-}
-
-func (l *Library) seal(ctx context.Context, user string, plain []byte, ad string) ([]byte, error) {
-	aead, err := l.aead(ctx, user)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, aead.NonceSize(), aead.NonceSize()+len(plain)+aead.Overhead())
-	_, _ = rand.Read(nonce)
-	return aead.Seal(nonce, nonce, plain, []byte(ad)), nil
-}
-
-func (l *Library) open(ctx context.Context, user string, sealed []byte, ad string) ([]byte, error) {
-	aead, err := l.aead(ctx, user)
-	if err != nil {
-		return nil, err
-	}
-	n := aead.NonceSize()
-	if len(sealed) < n {
-		return nil, errors.New("sealed flow is truncated")
-	}
-	plain, err := aead.Open(nil, sealed[:n], sealed[n:], []byte(ad))
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", ad, err)
-	}
-	return plain, nil
-}
-
-func (l *Library) aead(ctx context.Context, user string) (cipher.AEAD, error) {
-	k, err := l.keys.StateKey(ctx, user)
-	if err != nil {
-		return nil, fmt.Errorf("state key of %s: %w", user, err)
-	}
-	key, err := hkdf.Key(sha256.New, k.Secret, nil, sealInfo, keyring.KeySize)
-	if err != nil {
-		return nil, err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
 }
 
 // Check refuses a name that is no plain .json or .mts file name, and content that is too large or not UTF-8.
