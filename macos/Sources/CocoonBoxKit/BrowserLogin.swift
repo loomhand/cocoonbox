@@ -1,6 +1,7 @@
 import CryptoKit
 import Darwin
 import Foundation
+import Synchronization
 
 // BrowserLogin signs a first-party client in through the browser (RFC 8252): it opens the console's
 // consent page, takes the answer on a loopback port of its own, and redeems the code with PKCE for a
@@ -48,7 +49,8 @@ public struct BrowserLogin: Sendable {
         self.deviceName = name
     }
 
-    // run hands the consent page's URL to open and returns the device token once the browser brings the answer back.
+    // run hands the consent page's URL to open and returns the device token once the browser brings the answer back;
+    // cancelling the task ends the wait within a poll interval and frees the port.
     public func run(timeout: Duration = .seconds(600), open: @Sendable (URL) -> Void) async throws -> String {
         let listener = try Loopback()
         defer { listener.close() }
@@ -57,7 +59,13 @@ public struct BrowserLogin: Sendable {
         let redirect = "http://127.0.0.1:\(listener.port)/callback"
         open(authorizeURL(redirect: redirect, challenge: Self.challenge(verifier), state: state))
         let deadline = ContinuousClock.now + timeout
-        let answer = try await Task.detached { try listener.answer(by: deadline) }.value
+        let answer = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (waiting: CheckedContinuation<[URLQueryItem], any Error>) in
+                DispatchQueue.global().async { waiting.resume(with: Result { try listener.answer(by: deadline) }) }
+            }
+        } onCancel: {
+            listener.cancel()
+        }
         func item(_ name: String) -> String? { answer.first { $0.name == name }?.value }
         guard item("state") == state else { throw Failure.refused("the browser brought back an answer to another sign-in") }
         guard item("iss")?.lowercased() == endpoint.url.lowercased() else { throw Failure.refused("the answer came from \(item("iss") ?? "an unnamed issuer"), not \(endpoint.url)") }
@@ -139,8 +147,11 @@ public struct BrowserLogin: Sendable {
 final class Loopback: Sendable {
     static let page = "<!doctype html><meta charset=utf-8><title>cocoonbox</title><p>cocoonbox has the answer. You can close this tab and return to the terminal."
 
+    static let pollMillis: Int64 = 200
+
     let socket: Int32
     let port: Int
+    private let cancelled = Atomic(false)
 
     init() throws {
         let fd = Darwin.socket(AF_INET, SOCK_STREAM, 0)
@@ -168,14 +179,19 @@ final class Loopback: Sendable {
         Darwin.close(socket)
     }
 
-    // answer serves requests until a GET of /callback arrives by deadline and returns its query.
+    func cancel() {
+        cancelled.store(true, ordering: .relaxed)
+    }
+
+    // answer serves requests until a GET of /callback arrives by deadline and returns its query; it blocks, so it runs off the cooperative pool.
     func answer(by deadline: ContinuousClock.Instant) throws -> [URLQueryItem] {
         while true {
+            if cancelled.load(ordering: .relaxed) { throw CancellationError() }
             let left = deadline - ContinuousClock.now
             guard left > .zero else { throw BrowserLogin.Failure.timedOut }
             var ready = pollfd(fd: socket, events: Int16(POLLIN), revents: 0)
             let millis = left.components.seconds * 1000 + left.components.attoseconds / 1_000_000_000_000_000
-            guard poll(&ready, 1, Int32(min(millis, 1000))) > 0 else { continue }
+            guard poll(&ready, 1, Int32(min(millis, Self.pollMillis))) > 0 else { continue }
             let connection = accept(socket, nil, nil)
             guard connection >= 0 else { continue }
             defer { Darwin.close(connection) }

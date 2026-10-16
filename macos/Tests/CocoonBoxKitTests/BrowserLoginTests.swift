@@ -1,5 +1,6 @@
 import CocoonBoxKit
 import Foundation
+import Synchronization
 import Testing
 
 // BrowserLoginTests plays the browser: it follows the consent page's URL to MockBox, which allows at once,
@@ -57,6 +58,23 @@ import Testing
         await #expect(throws: BrowserLogin.Failure.self) {
             try await BrowserLogin(endpoint: Self.unreachable, client: BrowserLogin.cliClient).run(timeout: .milliseconds(300)) { _ in }
         }
+    }
+
+    @Test func cancellingEndsTheWaitAtOnceAndFreesThePort() async throws {
+        let port = Mutex<Int?>(nil)
+        let login = Task {
+            try await BrowserLogin(endpoint: Self.unreachable, client: BrowserLogin.appClient).run(timeout: .seconds(60)) { url in
+                port.withLock { $0 = URLComponents(string: Self.query(url)["redirect_uri"]!)?.port }
+            }
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let start = ContinuousClock.now
+        login.cancel()
+        await #expect(throws: CancellationError.self) { try await login.value }
+        #expect(ContinuousClock.now - start < .seconds(2))
+        let freed = try #require(port.withLock { $0 })
+        let answer = try? await URLSession(configuration: .ephemeral).data(from: URL(string: "http://127.0.0.1:\(freed)/callback")!)
+        #expect(answer == nil)
     }
 
     @Test func theDeviceNameIsCutToSixtyFourBytesOnACharacter() {

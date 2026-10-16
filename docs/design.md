@@ -345,7 +345,7 @@ These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `W
 | Command | Does |
 |---|---|
 | `cocoonbox login [--endpoint URL] [--browser \| --token - \| --from-app]` | on a terminal (or with `--browser`), signs in through the browser and gets a device token of its own (contracts "Browser sign-in and device tokens"); with `--token -`, over SSH, or with stdin not a terminal, reads a token from stdin or a hidden prompt. Stores it in the Keychain and checks it with `Boxes.List` |
-| `cocoonbox logout` | revokes the token at `/cocoonbox.oauth/revoke` (a device token ends; a personal token is left alone), then deletes the Keychain item, also when the api is unreachable |
+| `cocoonbox logout` | deletes the Keychain item, also when the api is unreachable; first revokes the token at `/cocoonbox.oauth/revoke` when the CLI got it through the browser. A token copied from the app (`--from-app` or the implicit copy) is the app's device and is not revoked. `cli.json` records where each endpoint's token came from |
 | `cocoonbox status` / `ensure` / `hibernate` / `save` / `upgrade [--yes]` | lifecycle, with progress on stderr and `--json` for scripts |
 | `cocoonbox mcp [--no-wake]` | the stdio bridge (13.2) |
 | `cocoonbox mcp-headers` | the headers helper for the direct `claude` recipe |

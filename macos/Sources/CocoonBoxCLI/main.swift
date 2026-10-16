@@ -15,7 +15,8 @@ usage: cocoonbox <command> [options]
                                         own, revoked under Devices there. --token - reads a token you paste
                                         (also what a login over SSH or with stdin not a terminal does).
                                         The token goes into the Keychain
-  logout                                revoke this Mac's browser sign-in and delete the stored token
+  logout                                delete the stored token, and revoke it when the CLI got it through the
+                                        browser (a token copied from the app stays the app's)
   status [--json]                       show the box
   ensure | save                         wake or save the box, with progress
   hibernate [--yes]                     hibernate the box, with progress
@@ -128,9 +129,26 @@ let settingsFile = support.appendingPathComponent("cli.json")
 // Ad hoc builds of the CLI and the app are different code, so each keeps its own Keychain item.
 let service = Keychain.service + ".cli"
 
+func settings() -> [String: String] {
+    guard let data = try? Data(contentsOf: settingsFile), let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
+    return object
+}
+
+func saveSettings(_ changes: [String: String?]) throws {
+    var object = settings()
+    for (key, value) in changes { object[key] = value }
+    try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
+    try JSONSerialization.data(withJSONObject: object, options: [.withoutEscapingSlashes, .sortedKeys]).write(to: settingsFile, options: .atomic)
+}
+
 func savedEndpoint() -> String? {
-    guard let data = try? Data(contentsOf: settingsFile), let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
-    return object["endpoint"]
+    settings()["endpoint"]
+}
+
+// sourceKey names where the CLI's token for endpoint came from: browser (a device token of the CLI's own), paste or app.
+// Only a browser token is the CLI's to revoke; one copied from the app is the app's device.
+func sourceKey(_ endpoint: Endpoint) -> String {
+    "token_source:" + endpoint.url
 }
 
 func endpoint(_ flag: String? = value(of: "--endpoint")) -> Endpoint {
@@ -153,6 +171,7 @@ func token(_ endpoint: Endpoint) -> String {
 func appToken(_ endpoint: Endpoint) -> String? {
     guard let token = Keychain.token(for: endpoint), !token.isEmpty else { return nil }
     try? Keychain.setToken(token, for: endpoint, service: service)
+    try? saveSettings([sourceKey(endpoint): "app"])
     FileHandle.standardError.write(Data("cocoonbox: using the CocoonBox app's sign-in\n".utf8))
     return token
 }
@@ -607,25 +626,27 @@ func login() async {
     }
     guard !token.isEmpty else { fail("no token given") }
     let previous = Keychain.token(for: endpoint, service: service)
+    let previousSource = settings()[sourceKey(endpoint)]
     do {
         let connection = try BoxConnection(endpoint: endpoint, token: token)
         defer { connection.close() }
         _ = try await connection.firstBox()
         try Keychain.setToken(token, for: endpoint, service: service)
-        try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: ["endpoint": endpoint.url], options: [.withoutEscapingSlashes]).write(to: settingsFile, options: .atomic)
+        try saveSettings(["endpoint": endpoint.url, sourceKey(endpoint): flags.contains("--from-app") ? "app" : fromBrowser ? "browser" : "paste"])
     } catch {
         if fromBrowser { try? await BrowserLogin.revoke(token: token, endpoint: endpoint, client: BrowserLogin.cliClient) }
         fail(BoxConnection.describe(error))
     }
     // A replaced device token would otherwise stay live with nothing holding it.
-    if let previous, previous != token { try? await BrowserLogin.revoke(token: previous, endpoint: endpoint, client: BrowserLogin.cliClient) }
+    if let previous, previous != token, previousSource == "browser" {
+        try? await BrowserLogin.revoke(token: previous, endpoint: endpoint, client: BrowserLogin.cliClient)
+    }
     print("signed in to \(endpoint.url)")
 }
 
 func logout() async {
     let endpoint = endpoint()
-    if let token = Keychain.token(for: endpoint, service: service) {
+    if let token = Keychain.token(for: endpoint, service: service), settings()[sourceKey(endpoint)] == "browser" {
         do {
             try await BrowserLogin.revoke(token: token, endpoint: endpoint, client: BrowserLogin.cliClient)
         } catch {
@@ -633,6 +654,7 @@ func logout() async {
         }
     }
     Keychain.deleteToken(for: endpoint, service: service)
+    try? saveSettings([sourceKey(endpoint): nil])
     print("signed out")
 }
 

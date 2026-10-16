@@ -722,6 +722,13 @@ r = run("logout")
 check("logout revokes the token at the server", r.returncode == 0 and "revoked=mock-token" in open(mocklog).read()[seen:], r.stderr)
 r = run("status", "--json")
 check("after logout the CLI is signed out", r.returncode != 0 and "run cocoonbox login" in r.stderr, r.stderr)
+# A token copied from the app is the app's device: the CLI's logout deletes its own item and revokes nothing.
+for how in ("login --from-app", "an implicit copy"):
+    service = app_service("revoke-" + how.split()[-1])
+    seen = len(open(mocklog).read())
+    copied = as_service(service, *(["login", "--from-app"] if how.startswith("login") else ["status", "--json"]))
+    out = as_service(service, "logout")
+    check("logout after " + how + " revokes nothing", copied.returncode == 0 and out.returncode == 0 and "revoked=" not in open(mocklog).read()[seen:], copied.stderr + out.stderr)
 r = subprocess.run([cli, "login", "--token", "abc"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
 check("login --token takes only -", r.returncode != 0 and "--token takes -" in r.stderr, r.stderr)
 r = subprocess.run([cli, "login", "--token", "-"], input="mock-token\n", capture_output=True, text=True, timeout=30)

@@ -67,7 +67,7 @@ Each guest's MCP session through the share (`mcp:<client>@<share id>[:<user id>]
 cocoonbox install                 # link into ~/.local/bin
 cocoonbox login                   # through the browser: allow this Mac on the console; a device token into the Keychain (service io.github.loomhand.cocoonbox.cli)
 cocoonbox login --token -         # a pasted token from stdin or a prompt (also over SSH, or when stdin is not a terminal)
-cocoonbox logout                  # revoke this Mac's device token, then delete the Keychain item
+cocoonbox logout                  # delete the Keychain item; a token the CLI got through the browser is revoked first, one copied from the app is left to the app
 cocoonbox setup claude            # local marketplace + plugin: claude plugin marketplace add / install
 cocoonbox setup codex             # codex plugin marketplace add / codex plugin add
 cocoonbox setup cursor            # merges {"command": "<cli>", "args": ["mcp"]} into ~/.cursor/mcp.json
