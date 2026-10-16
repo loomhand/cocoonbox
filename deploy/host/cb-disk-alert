@@ -1,0 +1,11 @@
+#!/bin/sh
+# usage: cb-disk-alert; warns in the journal when / or /srv/cb is at or above LIMIT percent
+LIMIT=80
+for m in / /srv/cb; do
+	pct=$(df --output=pcent "$m" | tail -1 | tr -dc 0-9)
+	if [ "$pct" -ge "$LIMIT" ]; then
+		logger -p user.warning -t cb-disk-alert "$m at ${pct}% (limit ${LIMIT}%)"
+	else
+		logger -p user.info -t cb-disk-alert "$m at ${pct}%"
+	fi
+done

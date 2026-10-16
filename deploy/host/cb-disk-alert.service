@@ -1,0 +1,6 @@
+[Unit]
+Description=Warn when / or /srv/cb is 80% full
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cb-disk-alert

@@ -1,0 +1,10 @@
+#!/bin/sh
+# Installs the daily journal warning when / or /srv/cb is 80% full; idempotent.
+# usage: sudo deploy/host/install-disk-alert
+set -eu
+SRC="$(cd "$(dirname "$0")" && pwd)"
+install -m 0755 "$SRC/cb-disk-alert" /usr/local/sbin/cb-disk-alert
+install -m 0644 "$SRC/cb-disk-alert.service" "$SRC/cb-disk-alert.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now cb-disk-alert.timer >/dev/null
+systemctl start cb-disk-alert.service
