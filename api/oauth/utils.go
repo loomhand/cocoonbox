@@ -10,6 +10,8 @@ import (
 	"net/netip"
 	"strings"
 	"syscall"
+
+	"github.com/loomhand/cocoonbox/api/auth"
 )
 
 // sharedAddressSpace is carrier-grade NAT space (RFC 6598), which IsPrivate does not cover.
@@ -17,15 +19,8 @@ var sharedAddressSpace = netip.MustParsePrefix("100.64.0.0/10")
 
 // IsAccessToken reports whether an Authorization header carries one of this server's access tokens.
 func IsAccessToken(header string) bool {
-	token, ok := bearer(header)
+	token, ok := auth.Bearer(header)
 	return ok && strings.HasPrefix(token, AccessPrefix)
-}
-
-func bearer(header string) (string, bool) {
-	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
-		return "", false
-	}
-	return header[len(bearerPrefix):], true
 }
 
 func refusePrivate(_, address string, _ syscall.RawConn) error {

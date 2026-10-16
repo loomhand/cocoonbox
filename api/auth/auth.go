@@ -138,10 +138,11 @@ func (a *Authenticator) Stream(srv any, ss grpc.ServerStream, _ *grpc.StreamServ
 
 // Authenticate maps an Authorization header value to its user; the error is a gRPC status.
 func (a *Authenticator) Authenticate(ctx context.Context, header string) (string, error) {
-	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
+	token, ok := Bearer(header)
+	if !ok {
 		return "", status.Error(codes.Unauthenticated, "missing bearer token")
 	}
-	user, ok := a.byToken(ctx, header[len(bearerPrefix):])
+	user, ok := a.byToken(ctx, token)
 	if !ok {
 		return "", status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
@@ -188,11 +189,15 @@ func (s *authedStream) Context() context.Context { return s.ctx }
 
 // ShareSecret returns the share secret an Authorization header carries.
 func ShareSecret(header string) (string, bool) {
+	secret, ok := Bearer(header)
+	return secret, ok && strings.HasPrefix(secret, SecretPrefix)
+}
+
+func Bearer(header string) (string, bool) {
 	if len(header) <= len(bearerPrefix) || !strings.EqualFold(header[:len(bearerPrefix)], bearerPrefix) {
 		return "", false
 	}
-	secret := header[len(bearerPrefix):]
-	return secret, strings.HasPrefix(secret, SecretPrefix)
+	return header[len(bearerPrefix):], true
 }
 
 // User returns the authenticated user id, "" when ctx did not pass the interceptors.

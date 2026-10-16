@@ -10,6 +10,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/signup"
 )
 
@@ -22,7 +23,6 @@ const (
 	queuePage   = Prefix + "queue"
 	invitesPath = Prefix + "api/invites"
 	codeKey     = "code"
-	bearer      = "bearer "
 	loginLimit  = 20
 
 	failedCode   = "failed"
@@ -422,12 +422,8 @@ func InviteTokenGate(next http.Handler) http.Handler {
 
 // inviteBearer returns the invite-scoped token of the request's Authorization header.
 func inviteBearer(r *http.Request) (string, bool) {
-	header := r.Header.Get("Authorization")
-	if len(header) <= len(bearer) || !strings.EqualFold(header[:len(bearer)], bearer) {
-		return "", false
-	}
-	token := header[len(bearer):]
-	return token, strings.HasPrefix(token, signup.InviteTokenPrefix)
+	token, ok := auth.Bearer(r.Header.Get("Authorization"))
+	return token, ok && strings.HasPrefix(token, signup.InviteTokenPrefix)
 }
 
 // loginRefused sends the browser to the sign-in page with a reason code, which the page turns into text, so a link cannot put words on it.

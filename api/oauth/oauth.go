@@ -15,6 +15,7 @@ import (
 
 	"github.com/projecteru2/core/log"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
@@ -59,7 +60,6 @@ const (
 	schemeHTTP             = "http"
 	refreshPrefix          = "cbr_"
 	grantPrefix            = "oag_"
-	bearerPrefix           = "bearer "
 	secretBytes            = 32
 	grantIDBytes           = 8
 	accessTTL              = time.Hour
@@ -217,7 +217,7 @@ func (s *Service) ServeServerMetadata(w http.ResponseWriter, _ *http.Request) {
 
 // Authenticate returns the live grant of the access token in an Authorization header.
 func (s *Service) Authenticate(ctx context.Context, header string) (Grant, error) {
-	token, ok := bearer(header)
+	token, ok := auth.Bearer(header)
 	if !ok || !strings.HasPrefix(token, AccessPrefix) {
 		return Grant{}, ErrInvalidToken
 	}
