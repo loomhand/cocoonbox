@@ -174,6 +174,32 @@ func TestDailyCapsWalksEveryPage(t *testing.T) {
 	}
 }
 
+func TestSetEnabledExpiresAndRestoresOnlyThatOwnersKeys(t *testing.T) {
+	gw, c := newFakeGW(t)
+	gw.put("gw-k1", owner)
+	gw.put("gw-k2", owner)
+	gw.put("gw-other", other)
+	if err := c.SetEnabled(t.Context(), owner, false); err != nil {
+		t.Fatalf("SetEnabled false: %v", err)
+	}
+	for _, ak := range []string{"gw-k1", "gw-k2"} {
+		if got := gw.key(akID(ak))["expires_at_epoch_secs"]; got != 0.0 {
+			t.Errorf("expiry of %s = %v, want 0", ak, got)
+		}
+	}
+	if _, set := gw.key(akID("gw-other"))["expires_at_epoch_secs"]; set {
+		t.Errorf("another owner's key got an expiry")
+	}
+	if err := c.SetEnabled(t.Context(), owner, true); err != nil {
+		t.Fatalf("SetEnabled true: %v", err)
+	}
+	for _, ak := range []string{"gw-k1", "gw-k2"} {
+		if got, set := gw.key(akID(ak))["expires_at_epoch_secs"]; !set || got != nil {
+			t.Errorf("expiry of %s = %v (set %t), want null", ak, got, set)
+		}
+	}
+}
+
 func TestNewRejectsBadURL(t *testing.T) {
 	for _, base := range []string{"", "10.203.0.1:18090", "unix:///run/gw.sock"} {
 		if _, err := New(base, adminToken); err == nil {
@@ -322,6 +348,15 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 			panic(http.ErrAbortHandler)
 		}
 		_, _ = w.Write([]byte(resp))
+	case r.Method == http.MethodPatch && hasID:
+		if g.keys[id] == nil {
+			writeError(w, http.StatusNotFound, "key "+id+" not found")
+			return
+		}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		maps.Copy(g.keys[id], body)
+		_ = json.NewEncoder(w).Encode(g.keys[id])
 	case r.Method == http.MethodDelete && hasID:
 		if !idFormat.MatchString(id) {
 			writeError(w, http.StatusBadRequest, "the client deleted by raw key")

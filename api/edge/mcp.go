@@ -50,9 +50,10 @@ type Grants interface {
 	Challenge(invalid bool) string
 }
 
-// route is where one MCP exchange goes and as whom: the caller for the log, and the grant of a share call.
+// route is where one MCP exchange goes and as whom: the caller for the log, the user whose disabling ends it, and the grant of a share call.
 type route struct {
 	caller string
+	user   string
 	ep     machines.Endpoint
 	wake   string
 	grant  *auth.Grant
@@ -105,6 +106,11 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rt.left()
+	if rt.user != "" {
+		ctx, stop := m.authn.Bind(r.Context(), rt.user)
+		defer stop()
+		r = r.WithContext(ctx)
+	}
 	if rt.grant != nil {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
@@ -137,12 +143,12 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 			return rt, err
 		}
 		rt.grant, owner = &grant, grant.Owner
-		rt.caller = grant.Principal()
+		rt.caller, rt.user = grant.Principal(), guest
 	} else {
 		if err != nil {
 			return rt, err
 		}
-		rt.caller = owner
+		rt.caller, rt.user = owner, owner
 	}
 	if boxID == "" {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
@@ -163,7 +169,7 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 		log.WithFunc("edge.MCP.grantRoute").Error(r.Context(), err, "check access token")
 		return rt, status.Error(codes.Unavailable, "checking the access token failed")
 	}
-	rt.caller = g.User + " grant=" + g.ID
+	rt.caller, rt.user = g.User+" grant="+g.ID, g.User
 	ids, err := m.grants.Boxes(r.Context(), g.ID)
 	switch {
 	case err != nil:

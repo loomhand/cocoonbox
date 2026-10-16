@@ -32,9 +32,10 @@ const (
 
 type userKey struct{}
 
-// Users resolves the sha256 of an API token, in lowercase hex, to an enabled user id.
+// Users resolves the sha256 of an API token, in lowercase hex, to an enabled user id, and gives the context that ends when the user is disabled or deleted.
 type Users interface {
 	ByTokenSHA256(ctx context.Context, sum string) (string, bool)
+	Lifetime(user string) context.Context
 }
 
 // Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.
@@ -118,7 +119,6 @@ func (a *Authenticator) Guest(ctx context.Context, token string) (string, error)
 	return user, nil
 }
 
-// Unary authenticates unary calls.
 func (a *Authenticator) Unary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	ctx, err := a.authenticate(ctx)
 	if err != nil {
@@ -127,12 +127,14 @@ func (a *Authenticator) Unary(ctx context.Context, req any, _ *grpc.UnaryServerI
 	return handler(ctx, req)
 }
 
-// Stream authenticates streaming calls, including those served by the unknown-service handler.
+// Stream authenticates streaming calls, including those served by the unknown-service handler, and ends each when its user is disabled or deleted.
 func (a *Authenticator) Stream(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	ctx, err := a.authenticate(ss.Context())
 	if err != nil {
 		return err
 	}
+	ctx, stop := a.Bind(ctx, User(ctx))
+	defer stop()
 	return handler(srv, &authedStream{ServerStream: ss, ctx: ctx})
 }
 
@@ -147,6 +149,15 @@ func (a *Authenticator) Authenticate(ctx context.Context, header string) (string
 		return "", status.Error(codes.Unauthenticated, "invalid bearer token")
 	}
 	return user, nil
+}
+
+func (a *Authenticator) Bind(ctx context.Context, user string) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(a.users.Lifetime(user), cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 func (a *Authenticator) Identify(ctx context.Context) string {

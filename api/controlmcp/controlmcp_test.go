@@ -639,3 +639,5 @@ func (u staticUsers) ByTokenSHA256(_ context.Context, sum string) (string, bool)
 	id, ok := u[sum]
 	return id, ok
 }
+
+func (staticUsers) Lifetime(string) context.Context { return context.Background() }

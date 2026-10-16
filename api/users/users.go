@@ -104,6 +104,7 @@ type Settings struct {
 type GWKeys interface {
 	Add(ctx context.Context, owner string) (string, string, error)
 	Revoke(ctx context.Context, owner string) error
+	SetEnabled(ctx context.Context, owner string, enabled bool) error
 	Usage(ctx context.Context, owner string, since time.Time) ([]gwkeys.Usage, error)
 	DailyCap(ctx context.Context, owner string) (*int64, error)
 	DailyCaps(ctx context.Context) (map[string]int64, error)
@@ -150,6 +151,9 @@ type Service struct {
 	shareSecrets  map[string]string
 	onResidential []func(context.Context, string, bool)
 	onShareEnd    []func(context.Context, Share)
+
+	lifeMu sync.Mutex
+	lives  map[string]life
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -169,7 +173,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	}
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
-		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{},
+		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
@@ -226,6 +230,11 @@ func (s *Service) Load(ctx context.Context) error {
 	if s.boxGen == gen {
 		s.boxes = byOwner
 	}
+	for id := range s.lives {
+		if r, ok := byID[id]; !ok || r.Disabled {
+			s.end(id)
+		}
+	}
 	return nil
 }
 
@@ -251,7 +260,7 @@ func (s *Service) Notify(ctx context.Context) error {
 	return s.store.notify(ctx)
 }
 
-// Reconcile writes every user's tenant with its token and cap, so sandboxd matches the table, and lifts the gw cap of admins on the default.
+// Reconcile writes every user's tenant with its token and cap, so sandboxd matches the table, turns off disabled users' gw keys and lifts the gw cap of admins on the default.
 func (s *Service) Reconcile(ctx context.Context) error {
 	var errs []error
 	for _, r := range s.records() {
@@ -261,6 +270,11 @@ func (s *Service) Reconcile(ctx context.Context) error {
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("tenant of %s: %w", r.Name, err))
+		}
+		if r.Disabled {
+			if err = s.gw.SetEnabled(ctx, r.ID, false); err != nil {
+				errs = append(errs, fmt.Errorf("gw key of %s: %w", r.Name, err))
+			}
 		}
 		if !r.Admin {
 			continue
@@ -412,10 +426,11 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	s.boxGen++
 	delete(s.boxes, id)
 	s.cutOwner(id, true)
+	s.end(id)
 	return nil
 }
 
-// Update applies set to user id; the tenant's cap follows MaxBoxes.
+// Update applies set to user id; the tenant's cap follows MaxBoxes, and a disabled user's gw key and open streams stop.
 func (s *Service) Update(ctx context.Context, id string, set Settings) (User, error) {
 	r, err := s.record(id)
 	if err != nil {
@@ -459,6 +474,11 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			return User{}, fmt.Errorf("set tenant cap: %w", err)
 		}
 	}
+	if r.Disabled != old.Disabled {
+		if err := s.gw.SetEnabled(ctx, id, !r.Disabled); err != nil {
+			return User{}, fmt.Errorf("set gw key: %w", err)
+		}
+	}
 	if err := s.store.update(ctx, r); err != nil {
 		return User{}, err
 	}
@@ -471,6 +491,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	if r.Disabled && !old.Disabled {
 		s.mu.Lock()
 		s.cutOwner(id, false)
+		s.end(id)
 		s.mu.Unlock()
 	}
 	if r.Residential != old.Residential {
@@ -691,6 +712,24 @@ func (s *Service) Residential(id string) bool {
 	return err == nil && r.Residential
 }
 
+func (s *Service) Lifetime(id string) context.Context {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if r, ok := s.byID[id]; !ok || r.Disabled {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		return ctx
+	}
+	s.lifeMu.Lock()
+	defer s.lifeMu.Unlock()
+	l, ok := s.lives[id]
+	if !ok {
+		l.ctx, l.cancel = context.WithCancel(context.Background())
+		s.lives[id] = l
+	}
+	return l.ctx
+}
+
 // OnResidential registers fn to run after a user's residential setting changes.
 func (s *Service) OnResidential(fn func(ctx context.Context, id string, on bool)) {
 	s.mu.Lock()
@@ -753,6 +792,13 @@ func (s *Service) moveAdmin(ctx context.Context, old, r record) error {
 	return nil
 }
 
+func (s *Service) end(id string) {
+	if l, ok := s.lives[id]; ok {
+		l.cancel()
+		delete(s.lives, id)
+	}
+}
+
 func (s *Service) records() []record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -781,6 +827,11 @@ type record struct {
 	tenantToken []byte
 	stateKeyID  string
 	stateKey    []byte
+}
+
+type life struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 // tokenOwner is the user a token serves and, for a device token, its device id.

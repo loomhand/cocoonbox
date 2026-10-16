@@ -864,6 +864,8 @@ func (fakeBoxes) Delete(context.Context, *controlv1.BoxRef) (*controlv1.Operatio
 
 func (fakeBoxes) Release(context.Context, string) error { return nil }
 
+func (fakeBoxes) HibernateAll(context.Context, string) error { return nil }
+
 func (fakeBoxes) DeleteState(context.Context, string) error { return nil }
 
 type fakeGW struct {
@@ -873,6 +875,7 @@ type fakeGW struct {
 
 func (*fakeGW) Add(context.Context, string) (string, string, error)              { return "gw-key", "ak", nil }
 func (*fakeGW) Revoke(context.Context, string) error                             { return nil }
+func (*fakeGW) SetEnabled(context.Context, string, bool) error                   { return nil }
 func (*fakeGW) Usage(context.Context, string, time.Time) ([]gwkeys.Usage, error) { return nil, nil }
 
 func (g *fakeGW) DailyCap(_ context.Context, owner string) (*int64, error) {

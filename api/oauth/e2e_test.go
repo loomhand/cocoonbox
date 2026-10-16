@@ -663,6 +663,8 @@ func (f *fakeBoxes) WatchOperation(_ *controlv1.WatchOperationRequest, stream co
 
 func (f *fakeBoxes) Release(context.Context, string) error { return nil }
 
+func (f *fakeBoxes) HibernateAll(context.Context, string) error { return nil }
+
 func (f *fakeBoxes) DeleteState(context.Context, string) error { return nil }
 
 func (f *fakeBoxes) start(id, name string) *controlv1.EnsureResponse {
@@ -703,6 +705,7 @@ type fakeGW struct{}
 
 func (*fakeGW) Add(context.Context, string) (string, string, error)              { return "gw-key", "ak", nil }
 func (*fakeGW) Revoke(context.Context, string) error                             { return nil }
+func (*fakeGW) SetEnabled(context.Context, string, bool) error                   { return nil }
 func (*fakeGW) Usage(context.Context, string, time.Time) ([]gwkeys.Usage, error) { return nil, nil }
 
 func (*fakeGW) DailyCap(context.Context, string) (*int64, error) { return nil, nil }

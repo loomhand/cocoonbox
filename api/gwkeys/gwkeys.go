@@ -29,6 +29,8 @@ const (
 	Unlimited     = -1
 	unlimitedWire = "unlimited"
 
+	pastExpiry = 0
+
 	pageSize       = 10_000
 	requestTimeout = 30 * time.Second
 	maxErrorBody   = 4 << 10
@@ -90,6 +92,23 @@ func (c *Client) Revoke(ctx context.Context, owner string) error {
 	}
 	for _, id := range ids {
 		if err := c.delete(ctx, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (c *Client) SetEnabled(ctx context.Context, owner string, enabled bool) error {
+	var expires any = pastExpiry
+	if enabled {
+		expires = nil
+	}
+	ids, err := c.keysOf(ctx, owner)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := c.request(ctx, http.MethodPatch, keysPath+"/"+id, nil, map[string]any{"expires_at_epoch_secs": expires}, nil); err != nil {
 			return err
 		}
 	}

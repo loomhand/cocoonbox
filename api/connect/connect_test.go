@@ -876,7 +876,7 @@ func TestABoxDoorStreamReplaysTheAnswersNotYetUsed(t *testing.T) {
 func TestBoxDoorTakesOnlyTheCurrentKeyOfAMachine(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
-	srv := httptest.NewServer(env.svc.NewBoxDoor())
+	srv := httptest.NewServer(env.svc.NewBoxDoor(fakeAuthn{}))
 	t.Cleanup(srv.Close)
 	old, err := env.svc.DoorKey(t.Context(), "cb-m1", alice, "inc1")
 	if err != nil {
@@ -1113,6 +1113,10 @@ func (f *fakeSessions) end(sum string) {
 }
 
 type fakeAuthn struct{}
+
+func (fakeAuthn) Bind(ctx context.Context, _ string) (context.Context, context.CancelFunc) {
+	return context.WithCancel(ctx)
+}
 
 func (fakeAuthn) Authenticate(_ context.Context, header string) (string, error) {
 	if header == "Bearer alice" {

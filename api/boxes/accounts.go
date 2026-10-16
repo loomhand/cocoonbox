@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/loomhand/cocoonbox/api/auth"
+	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -31,6 +33,23 @@ func (s *Service) Release(ctx context.Context, user string) error {
 		}
 	}
 	return nil
+}
+
+func (s *Service) HibernateAll(ctx context.Context, user string) error {
+	current, err := s.currentMachines(ctx, user)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for box, m := range current {
+		if m.State != machines.StateRunning || !s.registry.HasBox(user, box) || s.parking(box) || s.deleting(box) {
+			continue
+		}
+		if _, err := s.Hibernate(auth.WithUser(ctx, user), &controlv1.BoxRef{BoxId: box}); err != nil {
+			errs = append(errs, fmt.Errorf("hibernate box %s: %w", box, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // tenantOf returns user's tenant token, empty without accounts.

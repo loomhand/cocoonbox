@@ -427,6 +427,8 @@ func (f *fakeBoxes) Release(_ context.Context, user string) error {
 	return nil
 }
 
+func (*fakeBoxes) HibernateAll(context.Context, string) error { return nil }
+
 func (f *fakeBoxes) DeleteState(_ context.Context, user string) error {
 	f.stateGone = user
 	return nil
@@ -452,6 +454,8 @@ func (g *fakeGW) Revoke(_ context.Context, owner string) error {
 	delete(g.keys, owner)
 	return nil
 }
+
+func (*fakeGW) SetEnabled(context.Context, string, bool) error { return nil }
 
 func (g *fakeGW) Usage(_ context.Context, _ string, since time.Time) ([]gwkeys.Usage, error) {
 	g.mu.Lock()

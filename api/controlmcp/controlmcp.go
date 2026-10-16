@@ -100,7 +100,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	ctx := auth.WithUser(r.Context(), user)
+	ctx, stop := s.authn.Bind(auth.WithUser(r.Context(), user), user)
+	defer stop()
 	caller := user
 	if grant != nil {
 		ctx = context.WithValue(ctx, grantKey{}, grant)

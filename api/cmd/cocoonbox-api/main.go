@@ -182,7 +182,7 @@ func main() {
 		httpMux.Handle(connect.MCPPath, broker.NewDoor(authn, connect.DoorMCP))
 		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
 		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)
-		enableBoxConnect(ctx, cfg, svc, broker, library)
+		enableBoxConnect(ctx, cfg, svc, broker, authn, library)
 	}
 	if grants != nil {
 		control.EnableGrants(grants)
@@ -265,7 +265,7 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 
 // enableBoxConnect gives every box its door key and its owner's credentials, and serves the box door on connect.box_listen,
 // with the flow library when there is one.
-func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service, library *flows.Library) {
+func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service, authn *auth.Authenticator, library *flows.Library) {
 	logger := log.WithFunc("main.enableBoxConnect")
 	svc.EnableConnect(broker)
 	if err := svc.PruneDoorKeys(ctx); err != nil {
@@ -285,7 +285,7 @@ func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Servic
 		return
 	}
 	door := http.NewServeMux()
-	door.Handle("/", broker.NewBoxDoor())
+	door.Handle("/", broker.NewBoxDoor(authn))
 	if library != nil {
 		origin := func(ctx context.Context, _, machine string) flows.Origin {
 			box, image := svc.MachineOrigin(ctx, machine)

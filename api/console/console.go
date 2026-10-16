@@ -54,13 +54,14 @@ var (
 	static embed.FS
 )
 
-// Boxes lists, creates, renames and deletes a user's boxes, and releases them and deletes their saved state when the user is deleted.
+// Boxes lists, creates, renames and deletes a user's boxes, hibernates them when the user is disabled, and releases them and deletes their saved state when the user is deleted.
 type Boxes interface {
 	List(ctx context.Context, req *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error)
 	Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error)
 	Rename(ctx context.Context, req *controlv1.RenameBoxRequest) (*controlv1.Box, error)
 	Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error)
 	Release(ctx context.Context, user string) error
+	HibernateAll(ctx context.Context, user string) error
 	DeleteState(ctx context.Context, user string) error
 }
 
@@ -407,6 +408,12 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	if u.Disabled && set.Disabled != nil {
+		if err := s.boxes.HibernateAll(r.Context(), id); err != nil {
+			s.fail(w, r, err)
+			return
+		}
 	}
 	if before.Admin && !u.Admin && u.IDP == signup.GitHub && s.signup != nil {
 		if err := s.signupCap(r.Context(), id); err != nil {
