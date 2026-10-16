@@ -16,8 +16,8 @@ use x11rb::protocol::xproto::{
 };
 use x11rb::rust_connection::RustConnection;
 
-use super::cua::{PANEL_APP, SHELL_APPS};
-
+const PANEL_APP: &str = "Xfce4-panel";
+pub(super) const SHELL_APPS: [&str; 2] = [PANEL_APP, "Xfdesktop"];
 const OVERLAY_NAME: &[u8] = b"Cua.AgentCursorOverlay";
 const THUMB_BLOCK: usize = 8;
 const BLOCK: usize = 16;

@@ -11,8 +11,6 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::UnixStream;
 use zeroize::Zeroize;
 
-use super::state::Stamp;
-
 /// Tag of a command's stdout data, from the toolhost.
 pub const STDOUT: u8 = 1;
 /// Tag of a command's stderr data, from the toolhost.
@@ -69,6 +67,18 @@ impl Output {
             ..Self::default()
         }
     }
+}
+
+/// Size and mtime of a file before or after it was streamed.
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct Stamp {
+    pub size: u64,
+    pub mtime_ms: i64,
+    /// The bytes come from an SQLite online backup, consistent by construction.
+    #[serde(default)]
+    pub backup: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Client side of the toolhost socket.
@@ -143,7 +153,7 @@ impl Client {
     }
 
     /// Sends `call` and hands back the connection for a streamed exchange.
-    pub async fn open(&self, call: &Call) -> Result<UnixStream, String> {
+    async fn open(&self, call: &Call) -> Result<UnixStream, String> {
         let mut stream = UnixStream::connect(&self.socket)
             .await
             .map_err(|e| format!("connect toolhost {}: {e}", self.socket.display()))?;

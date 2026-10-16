@@ -23,7 +23,6 @@ const COMPONENT: &str = "org.a11y.atspi.Component";
 const TEXT: &str = "org.a11y.atspi.Text";
 const VALUE: &str = "org.a11y.atspi.Value";
 const SELECTION: &str = "org.a11y.atspi.Selection";
-const EDITABLE_TEXT: &str = "org.a11y.atspi.EditableText";
 const PROPERTIES: &str = "org.freedesktop.DBus.Properties";
 const DBUS: &str = "org.freedesktop.DBus";
 const DBUS_PATH: &str = "/org/freedesktop/DBus";
@@ -678,12 +677,6 @@ impl Atspi {
         );
         let parent = Obj::of(parent?);
         self.call(&parent, SELECTION, "SelectChild", &(index?,))
-            .await
-    }
-
-    /// Replaces the text of an editable text node.
-    pub async fn set_text(&self, obj: &Obj, text: &str) -> Result<bool, String> {
-        self.call(obj, EDITABLE_TEXT, "SetTextContents", &(text,))
             .await
     }
 

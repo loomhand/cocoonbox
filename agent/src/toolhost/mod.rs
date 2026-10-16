@@ -1,22 +1,22 @@
 //! The tool host: runs every tool as the desktop user behind a unix socket.
 
-pub mod atspi;
-pub mod browser;
-pub mod cua;
+mod atspi;
+mod browser;
+mod cua;
 pub mod desk;
-pub mod exec;
-pub mod files;
-pub mod flows;
-pub mod ground;
+mod exec;
+mod files;
+pub(crate) mod flows;
+mod ground;
 pub mod rpc;
-pub mod scope;
-pub mod script;
-pub mod shell;
+mod scope;
+mod script;
+mod shell;
 pub mod state;
-pub mod timing;
-pub mod volatile;
-pub mod xshm;
-pub mod xtest;
+mod timing;
+mod volatile;
+mod xshm;
+mod xtest;
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
@@ -48,7 +48,7 @@ const OS_RELEASE: &str = "/etc/os-release";
 const DESKTOP_VAR: &str = "XDG_CURRENT_DESKTOP";
 
 /// Shared tool state for all connections.
-pub struct Host {
+struct Host {
     workspace: PathBuf,
     scratch: PathBuf,
     shells: Mutex<HashMap<String, Arc<Mutex<Option<Shell>>>>>,
@@ -69,7 +69,7 @@ pub struct Host {
 
 impl Host {
     /// Creates a host from its configuration.
-    pub fn new(cfg: &ToolhostConfig) -> Self {
+    fn new(cfg: &ToolhostConfig) -> Self {
         Self {
             workspace: cfg.workspace.clone(),
             scratch: PathBuf::from(SCRATCH_DIR),
@@ -98,7 +98,7 @@ impl Host {
     }
 
     /// Executes one call; failures become error outputs for the model.
-    pub async fn dispatch(&self, call: Call) -> Output {
+    async fn dispatch(&self, call: Call) -> Output {
         let result = match call.tool.as_str() {
             "shell" => {
                 let command = call.args["command"].as_str().unwrap_or_default();
@@ -321,7 +321,7 @@ pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
 }
 
 /// Serves one request; the client closing its end cancels the tool.
-pub async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
+async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
     let (mut rd, mut wr) = stream.into_split();
     let call: Call = match rpc::read_frame(&mut rd).await {
         Ok(c) => c,

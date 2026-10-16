@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use super::rpc::{self, Output};
+use super::rpc::{self, Output, Stamp};
 
 pub const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 
@@ -78,18 +78,6 @@ pub enum Kind {
     File,
     Dir,
     Symlink,
-}
-
-/// Size and mtime of a file before or after it was streamed.
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct Stamp {
-    pub size: u64,
-    pub mtime_ms: i64,
-    /// The bytes come from an SQLite online backup, consistent by construction.
-    #[serde(default)]
-    pub backup: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 /// A file listing absolute paths to leave out, one per line; only lines under the root named `root` count.
