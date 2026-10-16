@@ -3659,6 +3659,11 @@ async fn a_plugin_box_keeps_its_mcp_instructions_within_the_cap() {
         "{instructions}"
     );
     assert!(instructions.chars().count() <= 1600, "{instructions}");
+    assert!(
+        base.chars().count() + 150 <= 1600,
+        "{} chars leave under 150 for routing.d",
+        base.chars().count()
+    );
 }
 
 #[tokio::test]
