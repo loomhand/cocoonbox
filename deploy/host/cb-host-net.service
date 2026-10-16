@@ -7,6 +7,7 @@ Before=gw.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+EnvironmentFile=-/etc/default/cb-host-net
 ExecStart=/usr/local/sbin/cb-host-net up
 ExecStop=/usr/local/sbin/cb-host-net down
 

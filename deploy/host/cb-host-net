@@ -2,20 +2,20 @@
 # usage: cb-host-net up|down
 set -eu
 
-UPLINK=ens8
+UPLINK=${CB_UPLINK:-$(ip -4 route show default | awk '{print $5; exit}')}
 HOST_IP=$(ip -4 -o addr show dev "$UPLINK" | awk '{print $4}' | cut -d/ -f1)
 BRIDGE=cbc0
 BRIDGE_ADDR=10.203.0.1/24
 BRIDGE_IP=${BRIDGE_ADDR%/*}
 GW_PORT=18090
 CONNECT_PORT=18091
-STATE_PORT=9000
 APT_PORT=3142
 RES_IF=cbres0
 RES_ADDR=10.203.1.2/32
 RES_PORT=8823
 
 up() {
+	[ -n "$UPLINK" ] || { echo "cb-host-net: no default route; set CB_UPLINK" >&2; exit 1; }
 	ip link show "$BRIDGE" >/dev/null 2>&1 || ip link add "$BRIDGE" type bridge
 	ip -4 addr show dev "$BRIDGE" | grep -q "inet $BRIDGE_ADDR" || ip addr add "$BRIDGE_ADDR" dev "$BRIDGE"
 	ip link set "$BRIDGE" up
@@ -24,14 +24,19 @@ up() {
 	ip link set "$RES_IF" up
 
 	iptables -N CB-INPUT 2>/dev/null || iptables -F CB-INPUT
-	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports $STATE_PORT,9001,$GW_PORT,$CONNECT_PORT,$APT_PORT,18200,18201 ! -s "$HOST_IP" -j DROP
+	iptables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports $GW_PORT,$CONNECT_PORT,$APT_PORT,18200,18201 ! -s "$HOST_IP" -j DROP
 	iptables -A CB-INPUT -p tcp --dport $RES_PORT ! -i lo -j DROP
 	iptables -C INPUT -j CB-INPUT 2>/dev/null || iptables -I INPUT 1 -j CB-INPUT
 
-	# host-originated traffic to the bridge gateway (the sandboxd egress proxy) reaches gw, the connect box door, the state store and the apt cache only
+	ip6tables -N CB-INPUT 2>/dev/null || ip6tables -F CB-INPUT
+	ip6tables -A CB-INPUT -i "$UPLINK" -p tcp -m multiport --dports $GW_PORT,$CONNECT_PORT,$APT_PORT,18200,18201 -j DROP
+	ip6tables -A CB-INPUT -p tcp --dport $RES_PORT ! -i lo -j DROP
+	ip6tables -C INPUT -j CB-INPUT 2>/dev/null || ip6tables -I INPUT 1 -j CB-INPUT
+
+	# host-originated traffic to the bridge gateway (the sandboxd egress proxy) reaches gw, the connect box door and the apt cache only
 	iptables -N CB-OUTPUT 2>/dev/null || iptables -F CB-OUTPUT
 	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
-	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -m multiport --dports "$GW_PORT,$CONNECT_PORT,$STATE_PORT,$APT_PORT" -j RETURN
+	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -m multiport --dports "$GW_PORT,$CONNECT_PORT,$APT_PORT" -j RETURN
 	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -p tcp -j REJECT --reject-with tcp-reset
 	iptables -A CB-OUTPUT -d "$BRIDGE_IP" -j REJECT
 	iptables -C OUTPUT -j CB-OUTPUT 2>/dev/null || iptables -I OUTPUT 1 -j CB-OUTPUT
@@ -40,6 +45,8 @@ up() {
 down() {
 	while iptables -D INPUT -j CB-INPUT 2>/dev/null; do :; done
 	iptables -F CB-INPUT 2>/dev/null && iptables -X CB-INPUT || true
+	while ip6tables -D INPUT -j CB-INPUT 2>/dev/null; do :; done
+	ip6tables -F CB-INPUT 2>/dev/null && ip6tables -X CB-INPUT || true
 	while iptables -D OUTPUT -j CB-OUTPUT 2>/dev/null; do :; done
 	iptables -F CB-OUTPUT 2>/dev/null && iptables -X CB-OUTPUT || true
 }
