@@ -18,6 +18,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 func TestImportStateKeyTakesTheBoxKeyOrDrawsOne(t *testing.T) {
@@ -78,6 +80,34 @@ func TestOperatorSocketActsAsTheNamedUser(t *testing.T) {
 	}
 }
 
+func TestDeleteUserRevokesConnectionsBeforeTheRow(t *testing.T) {
+	st := &memStore{objects: map[string]bool{"u-1/boxes/cb-1/head.json": true, "u-2/boxes/cb-2/head.json": true}}
+	var calls []string
+	revoker := &fakeConnections{calls: &calls}
+	accounts := &fakeAccounts{calls: &calls}
+	removed, err := deleteUser(t.Context(), st, revoker, accounts, users.User{ID: "u-1", Name: "alice"})
+	if err != nil || removed != 1 {
+		t.Fatalf("deleteUser = %d, %v", removed, err)
+	}
+	if strings.Join(calls, " ") != "revoke u-1 delete u-1" {
+		t.Errorf("calls = %v, want the revoke before the delete", calls)
+	}
+	if st.objects["u-1/boxes/cb-1/head.json"] || !st.objects["u-2/boxes/cb-2/head.json"] {
+		t.Errorf("objects left = %v", st.objects)
+	}
+
+	calls = nil
+	revoker.err = errors.New("vendor down")
+	if _, err := deleteUser(t.Context(), st, revoker, accounts, users.User{ID: "u-2", Name: "bob"}); err == nil || strings.Join(calls, " ") != "revoke u-2" {
+		t.Errorf("deleteUser after a failed revoke = %v, calls %v; want an error and no delete", err, calls)
+	}
+
+	calls = nil
+	if _, err := deleteUser(t.Context(), st, nil, accounts, users.User{ID: "u-3", Name: "carol"}); err != nil || strings.Join(calls, " ") != "delete u-3" {
+		t.Errorf("deleteUser without Connect = %v, calls %v", err, calls)
+	}
+}
+
 type fakeBoxes struct {
 	controlv1.UnimplementedBoxesServer
 
@@ -117,5 +147,60 @@ func (f *fakeStateKeys) StateKey(_ context.Context, user string) (keyring.Key, e
 func (f *fakeStateKeys) SetStateKey(_ context.Context, user string, k keyring.Key) error {
 	f.sets++
 	f.held[user] = k
+	return nil
+}
+
+type fakeConnections struct {
+	calls *[]string
+	err   error
+}
+
+func (f *fakeConnections) RevokeAll(_ context.Context, user string) error {
+	*f.calls = append(*f.calls, "revoke "+user)
+	return f.err
+}
+
+type fakeAccounts struct {
+	calls *[]string
+}
+
+func (f *fakeAccounts) Delete(_ context.Context, id string) error {
+	*f.calls = append(*f.calls, "delete "+id)
+	return nil
+}
+
+type memStore struct {
+	objects map[string]bool
+}
+
+func (m *memStore) PresignPut(context.Context, string) (store.Presigned, error) {
+	return store.Presigned{}, errors.ErrUnsupported
+}
+
+func (m *memStore) PresignGet(context.Context, string) (store.Presigned, error) {
+	return store.Presigned{}, errors.ErrUnsupported
+}
+
+func (m *memStore) Get(context.Context, string) ([]byte, error) { return nil, store.ErrNotFound }
+
+func (m *memStore) Put(_ context.Context, key string, _ []byte) error {
+	m.objects[key] = true
+	return nil
+}
+
+func (m *memStore) List(_ context.Context, prefix string) ([]store.Object, error) {
+	var out []store.Object
+	for key, ok := range m.objects {
+		if ok && strings.HasPrefix(key, prefix) {
+			out = append(out, store.Object{Key: key})
+		}
+	}
+	return out, nil
+}
+
+func (m *memStore) Delete(_ context.Context, keys []string) error {
+	for _, key := range keys {
+		delete(m.objects, key)
+	}
 	return nil
 }

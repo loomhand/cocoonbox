@@ -16,6 +16,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/config"
 	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/store"
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
@@ -35,6 +36,14 @@ const (
 type stateKeys interface {
 	StateKey(ctx context.Context, user string) (keyring.Key, error)
 	SetStateKey(ctx context.Context, user string, k keyring.Key) error
+}
+
+type connections interface {
+	RevokeAll(ctx context.Context, user string) error
+}
+
+type accountDeleter interface {
+	Delete(ctx context.Context, id string) error
 }
 
 // runCLI serves the operator commands; secrets arrive on stdin and never on the command line.
@@ -87,16 +96,9 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		if u.HasToken {
 			return errors.New("the user has an API token and may own a box: delete it in the console, which releases its boxes")
 		}
-		st, storeErr := newStore(cfg)
-		if storeErr != nil {
-			return storeErr
-		}
-		removed, stateErr := boxes.DeleteState(ctx, st, u.ID)
-		if stateErr != nil {
-			return fmt.Errorf("delete state of %s: %w", u.Name, stateErr)
-		}
-		if err = accounts.Delete(ctx, u.ID); err != nil {
-			return err
+		removed, deleteErr := removeUser(ctx, cfg, accounts, u)
+		if deleteErr != nil {
+			return deleteErr
 		}
 		return written("deleted user %s and %d state objects\n", u.Name, removed)
 	}
@@ -120,6 +122,36 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return err
 	}
 	return written("%s of user %s updated\n", verb, u.Name)
+}
+
+func removeUser(ctx context.Context, cfg *config.Config, accounts *users.Service, u users.User) (int, error) {
+	st, err := newStore(cfg)
+	if err != nil {
+		return 0, err
+	}
+	var revoker connections
+	if cfg.Connect.PublicURL != "" {
+		broker, err := openConnect(ctx, cfg, accounts)
+		if err != nil {
+			return 0, err
+		}
+		defer broker.Close()
+		revoker = broker
+	}
+	return deleteUser(ctx, st, revoker, accounts, u)
+}
+
+func deleteUser(ctx context.Context, st store.Store, revoker connections, accounts accountDeleter, u users.User) (int, error) {
+	removed, err := boxes.DeleteState(ctx, st, u.ID)
+	if err != nil {
+		return 0, fmt.Errorf("delete state of %s: %w", u.Name, err)
+	}
+	if revoker != nil {
+		if err := revoker.RevokeAll(ctx, u.ID); err != nil {
+			return removed, fmt.Errorf("revoke connections of %s: %w", u.Name, err)
+		}
+	}
+	return removed, accounts.Delete(ctx, u.ID)
 }
 
 // migrateState gives every user a state key in the users table and copies its box into the per-user store layout; a rerun is safe.
