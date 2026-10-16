@@ -1,0 +1,25 @@
+#!/bin/bash
+# Installs a node's egress CA material for sandboxd's HTTPS intercept: the cluster root certificate and this node's
+# intermediate certificate and key (from sandboxd ca issue-intermediate on the operator machine; the root key never comes
+# here). It checks that the intermediate chains to the root, is a CA of path length 0 and matches its key; idempotent.
+# Then run deploy/cbsbx/cbsbx-conf with CB_EGRESS_INTERMEDIATE=<node>.
+# usage: sudo deploy/host/install-egress-ca <root.crt> <node>.crt <node>.key
+set -euo pipefail
+export LC_ALL=C
+
+ROOT=${1:?usage: install-egress-ca <root.crt> <node>.crt <node>.key}
+CRT=${2:?usage: install-egress-ca <root.crt> <node>.crt <node>.key}
+KEY=${3:?usage: install-egress-ca <root.crt> <node>.crt <node>.key}
+DIR=/etc/cocoonbox/egress-ca
+NODE=$(basename "$CRT" .crt)
+
+[ "$(basename "$KEY" .key)" = "$NODE" ] || { echo "$CRT and $KEY name different nodes" >&2; exit 1; }
+openssl verify -CAfile "$ROOT" "$CRT" >/dev/null
+openssl x509 -in "$CRT" -noout -ext basicConstraints | grep -q 'CA:TRUE, pathlen:0' || { echo "$CRT is not a CA of path length 0" >&2; exit 1; }
+[ "$(openssl x509 -in "$CRT" -noout -pubkey | openssl pkey -pubin -outform DER | sha256sum)" = "$(openssl pkey -in "$KEY" -pubout -outform DER | sha256sum)" ] ||
+	{ echo "$KEY is not the key of $CRT" >&2; exit 1; }
+install -d -m 0700 /etc/cocoonbox "$DIR"
+install -m 0644 "$ROOT" "$DIR/root.crt"
+install -m 0644 "$CRT" "$DIR/$NODE.crt"
+install -m 0600 "$KEY" "$DIR/$NODE.key"
+echo "egress CA of $NODE installed: root $(openssl x509 -in "$DIR/root.crt" -noout -fingerprint -sha256 | cut -d= -f2)"

@@ -1,0 +1,35 @@
+#!/bin/bash
+# Installs gw on the cb bridge (10.203.0.1:18090) with its PostgreSQL store, seeded from deploy/host/gateway.yaml; idempotent.
+# /etc/gw/env (root 0600) must hold OPENROUTER_API_KEY_1, GW_ADMIN_TOKEN and CB_BOXES_ADMIN_TOKEN; the admin tokens are also
+# written to /etc/gw/admin-token (install-gw-config) and /etc/cocoonbox/gw-admin-token (the api's tenant admin token).
+# Needs cb-host-net and install-pg first.
+# usage: sudo deploy/host/install-gw <gw binary>
+set -euo pipefail
+export LC_ALL=C
+
+BIN=${1:?usage: install-gw <gw binary>}
+ENV=/etc/gw/env
+SRC="$(cd "$(dirname "$0")" && pwd)"
+
+[ "$(stat -c '%U %a' "$ENV" 2>/dev/null)" = "root 600" ] || { echo "$ENV must exist, root 0600" >&2; exit 1; }
+get() { sed -n "s/^$1=//p" "$ENV" | tail -1; }
+for k in OPENROUTER_API_KEY_1 GW_ADMIN_TOKEN CB_BOXES_ADMIN_TOKEN; do
+	[ -n "$(get "$k")" ] || { echo "$ENV sets no $k" >&2; exit 1; }
+done
+id gw >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin gw
+install -m 0755 "$BIN" /usr/local/bin/gw
+install -d -m 0755 /etc/gw
+install -d -m 0700 /etc/cocoonbox
+(umask 077
+ get GW_ADMIN_TOKEN | tr -d '\n' > /etc/gw/admin-token
+ get CB_BOXES_ADMIN_TOKEN | tr -d '\n' > /etc/cocoonbox/gw-admin-token)
+[ -e /etc/gw/gateway.yaml ] || install -o root -g gw -m 0640 "$SRC/gateway.yaml" /etc/gw/gateway.yaml
+install -m 0755 "$SRC/install-gw-config" /usr/local/sbin/install-gw-config
+install -m 0644 "$SRC/gw.service" /etc/systemd/system/gw.service
+install -d -m 0755 /etc/systemd/system/gw.service.d
+printf '[Service]\nOOMScoreAdjust=-900\n' > /etc/systemd/system/gw.service.d/oom.conf
+systemctl daemon-reload
+systemctl enable --now gw.service >/dev/null
+admin() { printf 'header = "Authorization: Bearer %s"\n' "$(cat /etc/gw/admin-token)" | curl -fsS --noproxy '*' -K - http://10.203.0.1:18090/admin/config; }
+for _ in $(seq 1 20); do admin >/dev/null 2>&1 && break; sleep 0.5; done
+admin | python3 -c 'import json, sys; print("gw config version", json.load(sys.stdin)["version"])'

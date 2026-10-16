@@ -1,0 +1,100 @@
+#!/bin/bash
+# Installs cocoonbox-api with its unit and drop-ins; idempotent. A missing /etc/cocoonbox/api.yaml is written from the
+# environment, and a missing master.key, edge-signing.key and pg.dsn are made fresh. Needs install-pg, install-gw and
+# deploy/cbsbx/install first, and /etc/cocoonbox/store.env (STORE_ACCESS_KEY, STORE_SECRET_KEY of the state bucket).
+# Connect is on when /etc/cocoonbox/connect.env exists, sign-in with GitHub when /etc/cocoonbox/login.env does.
+#   CB_PUBLIC_URL      the api's public https origin (required)
+#   CB_IMAGE           the default sandboxd template (required)
+#   CB_STATE_ENDPOINT  the state store's S3 host:port (required); CB_STATE_BUCKET (cocoonbox-state), CB_STATE_REGION (us-east-1)
+#   CB_PARK_AFTER      parks boxes hibernated this long (12h); CB_RESIDENTIAL the residential forwarder's proxy URL (none)
+# The first admin is made with: cocoonbox-api -config /etc/cocoonbox/api.yaml user add NAME -admin; ... user passwd NAME -stdin
+# usage: sudo CB_PUBLIC_URL=https://... CB_IMAGE=... CB_STATE_ENDPOINT=... deploy/host/install-api <cocoonbox-api binary>
+set -euo pipefail
+export LC_ALL=C
+
+BIN=${1:?usage: install-api <cocoonbox-api binary>}
+E=/etc/cocoonbox
+SRC="$(cd "$(dirname "$0")" && pwd)"
+D=/etc/systemd/system/cocoonbox-api.service.d
+
+for f in store.env sandboxd-token gw-admin-token; do
+	[ -s "$E/$f" ] || { echo "$E/$f is missing" >&2; exit 1; }
+done
+id cocoonbox-api >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin cocoonbox-api
+install -m 0755 "$BIN" /usr/local/bin/cocoonbox-api
+
+umask 077
+[ -s "$E/master.key" ] || head -c 32 /dev/urandom > "$E/master.key"
+[ -s "$E/edge-signing.key" ] || openssl genpkey -algorithm ed25519 -out "$E/edge-signing.key" 2>/dev/null
+[ -s "$E/pg.dsn" ] || echo 'postgres:///cocoonbox?host=/var/run/postgresql&user=cocoonbox-api' > "$E/pg.dsn"
+if [ ! -s "$E/api.yaml" ]; then
+	: "${CB_PUBLIC_URL:?CB_PUBLIC_URL is required}" "${CB_IMAGE:?CB_IMAGE is required}" "${CB_STATE_ENDPOINT:?CB_STATE_ENDPOINT is required}"
+	{
+		cat <<EOF
+sandboxd:
+  url: http://127.0.0.1:17780
+  token_file: sandboxd-token
+  tenant_egress_class: cbdesk
+listen: 127.0.0.1:18200
+mcp_listen: 127.0.0.1:18201
+image: $CB_IMAGE
+rebase_images: [$CB_IMAGE]
+image_owners: {}
+agent_port: 7443
+flavor:
+  vcpus: 4
+  memory_mib: 8192
+  disk_gib: 40
+flavors: []
+state:
+  endpoint: $CB_STATE_ENDPOINT
+  public_endpoint: $CB_STATE_ENDPOINT
+  secure: true
+  bucket: ${CB_STATE_BUCKET:-cocoonbox-state}
+  region: ${CB_STATE_REGION:-us-east-1}
+  credentials_file: store.env
+  interval: 15m
+  presign_ttl: 10m
+  park_after: ${CB_PARK_AFTER:-12h}
+  park_owners: []
+  delta_users: []
+  gc:
+    interval: 24h
+    dry_run: false
+    users: []
+provision:
+  signing_key_file: edge-signing.key
+  gw_admin:
+    url: http://10.203.0.1:18090
+    token_file: gw-admin-token
+EOF
+		[ -z "${CB_RESIDENTIAL:-}" ] || echo "  residential_upstream: $CB_RESIDENTIAL"
+		cat <<EOF
+accounts:
+  dsn_file: pg.dsn
+  master_key_file: master.key
+  default_daily_cap_micros: 5000000
+EOF
+		[ ! -e "$E/connect.env" ] || printf 'connect:\n  public_url: %s\n  box_listen: 10.203.0.1:18091\n' "$CB_PUBLIC_URL"
+		cat <<EOF
+operator_socket: /var/lib/cocoonbox-api/operator.sock
+oauth:
+  public_url: $CB_PUBLIC_URL
+  idle_hibernate: 30m
+EOF
+	} > "$E/api.yaml"
+fi
+chmod 0600 "$E"/*
+umask 022
+
+install -m 0644 "$SRC/../../api/deploy/cocoonbox-api.service" /etc/systemd/system/cocoonbox-api.service
+install -d -m 0755 "$D"
+printf '[Unit]\nAfter=postgresql.service gw.service cbsbx-sandboxd.service\nWants=postgresql.service\n\n[Service]\nOOMScoreAdjust=-900\n' > "$D/cb.conf"
+for f in connect login; do
+	if [ -e "$E/$f.env" ]; then printf '[Service]\nEnvironmentFile=%s/%s.env\n' "$E" "$f" > "$D/$f.conf"; else rm -f "$D/$f.conf"; fi
+done
+systemctl daemon-reload
+systemctl enable cocoonbox-api.service >/dev/null
+systemctl restart cocoonbox-api.service
+for _ in $(seq 1 20); do curl -fs --noproxy '*' -o /dev/null http://127.0.0.1:18201/cb/ && break; sleep 0.5; done
+curl -s --noproxy '*' -o /dev/null -w 'cocoonbox-api: console %{http_code}\n' http://127.0.0.1:18201/cb/
