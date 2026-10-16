@@ -407,6 +407,19 @@ func (s *Server) admit(ctx context.Context) {
 	}
 }
 
+// InviteTokenGate refuses, with 403, every request that carries an invite-scoped token except the two invite calls, whatever
+// handler next routes it to: the console, the MCP endpoints, the callbacks and the OAuth endpoints.
+func InviteTokenGate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, scoped := inviteBearer(r); scoped && (r.URL.Path != invitesPath || r.Method != http.MethodGet && r.Method != http.MethodPost) {
+			w.Header().Set("Cache-Control", "no-store")
+			writeError(w, http.StatusForbidden, "an invite token may only create invites and list its own")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // inviteBearer returns the invite-scoped token of the request's Authorization header.
 func inviteBearer(r *http.Request) (string, bool) {
 	header := r.Header.Get("Authorization")

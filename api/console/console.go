@@ -154,10 +154,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		csp = fmt.Sprintf(shareCSP, r.Host)
 	}
 	w.Header().Set("Content-Security-Policy", csp)
-	if _, scoped := inviteBearer(r); scoped && (r.URL.Path != invitesPath || r.Method != http.MethodGet && r.Method != http.MethodPost) {
-		writeError(w, http.StatusForbidden, "an invite token may only create invites and list its own")
-		return
-	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		// A JSON body is not a simple request, so a cross-site form or fetch cannot send one without a preflight.
 		if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {

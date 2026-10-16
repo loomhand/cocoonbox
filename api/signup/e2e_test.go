@@ -546,6 +546,16 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 		{http.MethodPost, "/cb/api/oauth/check"},
 		{http.MethodPost, "/cb/api/oauth/approve"},
 		{http.MethodGet, "/cb/api/agents"},
+		{http.MethodGet, "/cb/api/keys"},
+		{http.MethodPost, "/cb/api/keys"},
+		{http.MethodPost, "/cocoonbox.mcp/control"},
+		{http.MethodPost, "/cocoonbox.mcp/cb-x"},
+		{http.MethodPost, "/cocoonbox.mcp/connect"},
+		{http.MethodGet, "/cocoonbox.connect/callback"},
+		{http.MethodGet, signup.CallbackPath},
+		{http.MethodPost, oauth.TokenPath},
+		{http.MethodPost, "/cocoonbox.oauth/register"},
+		{http.MethodGet, "/.well-known/oauth-authorization-server"},
 	} {
 		var body any
 		if route.method != http.MethodGet {
@@ -554,6 +564,9 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 		if status, _ := e.bearer(t, minted.Token, route.method, route.path, body); status != http.StatusForbidden {
 			t.Errorf("%s %s with an invite token: %d, want 403", route.method, route.path, status)
 		}
+	}
+	if status, body := e.bearer(t, "cb_"+strings.Repeat("0", 64), http.MethodPost, "/cocoonbox.mcp/control", map[string]any{}); status != http.StatusOK || body != "reached" {
+		t.Errorf("a request without an invite token passes the gate: %d %q", status, body)
 	}
 	tokenSum := sha256.Sum256([]byte(minted.Token))
 	if _, ok := e.users.ByTokenSHA256(t.Context(), hex.EncodeToString(tokenSum[:])); ok {
@@ -622,7 +635,10 @@ func newEnv(t *testing.T) *env {
 	}
 	e.github = newFakeGitHub(t)
 	mux := http.NewServeMux()
-	e.srv = httptest.NewTLSServer(mux)
+	for _, path := range []string{"/cocoonbox.mcp/", "/cocoonbox.connect/", "/cocoonbox.oauth/register", "/.well-known/oauth-authorization-server"} {
+		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("reached")) })
+	}
+	e.srv = httptest.NewTLSServer(console.InviteTokenGate(mux))
 	t.Cleanup(e.srv.Close)
 	e.signup = e.openSignup(t)
 	grants, err := oauth.Open(t.Context(), oauth.Options{DSN: e.dsn, Issuer: e.srv.URL, Resource: e.srv.URL + "/cocoonbox.mcp", Accounts: us})

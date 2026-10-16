@@ -7,11 +7,13 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/loomhand/cocoonbox/api/auth"
 )
 
 const (
 	// InviteTokenPrefix starts every invite-scoped token, which no user token check accepts.
-	InviteTokenPrefix = "cbit_"
+	InviteTokenPrefix = auth.InviteTokenPrefix
 
 	tokenInviteDays    = 2
 	maxTokenInviteDays = 7

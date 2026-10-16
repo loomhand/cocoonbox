@@ -24,6 +24,8 @@ const (
 	HeaderOperatorUser = "x-cocoonbox-operator-user"
 	// SecretPrefix starts every share secret; a bearer is tried as a share secret only when no user token matches it.
 	SecretPrefix = "cbs_"
+	// InviteTokenPrefix starts every invite-scoped token, which is never a user token.
+	InviteTokenPrefix = "cbit_"
 
 	bearerPrefix = "bearer "
 )
@@ -157,6 +159,9 @@ func (a *Authenticator) Identify(ctx context.Context) string {
 }
 
 func (a *Authenticator) byToken(ctx context.Context, token string) (string, bool) {
+	if strings.HasPrefix(token, InviteTokenPrefix) {
+		return "", false
+	}
 	sum := sha256.Sum256([]byte(token))
 	return a.users.ByTokenSHA256(ctx, hex.EncodeToString(sum[:]))
 }

@@ -208,7 +208,7 @@ func main() {
 	protocols.SetUnencryptedHTTP2(true)
 	httpServer := &http.Server{
 		Addr:              cfg.MCPListen,
-		Handler:           httpMux,
+		Handler:           console.InviteTokenGate(httpMux),
 		Protocols:         &protocols,
 		ReadHeaderTimeout: readHeaderTimeout,
 	}
