@@ -3,6 +3,7 @@ import CocoonBoxKit
 import CocoonBoxTerminal
 import Foundation
 import Observation
+import SystemConfiguration
 
 typealias Box = Cocoonbox_Control_V1_Box
 typealias BoxState = Cocoonbox_Control_V1_BoxState
@@ -81,6 +82,9 @@ final class AppModel {
     // localCalls is each local agent's last box-tool call per box id.
     var localCalls: [UUID: [String: Date]] = [:]
     var share: Share?
+    // browserSignIn is the sign-in through the browser while it waits for the console's answer.
+    var browserSignIn: Task<Void, Never>?
+    var browserSignInError: String?
     var connectors: [Cocoonbox_Control_V1_Connector] = []
     var capsule = CapsuleBrowser()
     // offloads is the offloads in flight, from the records on this Mac, oldest first.
@@ -530,13 +534,54 @@ final class AppModel {
         } catch {
             return "Keychain: \(error.localizedDescription)"
         }
+        UserDefaults.standard.removeObject(forKey: Self.browserTokenKey(endpoint))
         showSignIn = false
         connect(endpoint: endpoint, token: token)
         return nil
     }
 
+    // signInWithBrowser opens the console's consent page and, once the user allows this Mac, signs in with a device token of the app's own.
+    func signInWithBrowser() -> String? {
+        guard let endpoint = Endpoint(url: endpointURL) else { return "Endpoint must be an http(s) URL" }
+        guard endpoint.usesTLS || endpoint.isLoopback else { return "Use https: over http the token would travel in plaintext" }
+        browserSignInError = nil
+        let login = BrowserLogin(endpoint: endpoint, client: BrowserLogin.appClient,
+                                 deviceName: SCDynamicStoreCopyComputerName(nil, nil).map { $0 as String } ?? BrowserLogin.hostName())
+        browserSignIn = Task {
+            defer { browserSignIn = nil }
+            do {
+                let token = try await login.run { url in
+                    Task { @MainActor in NSWorkspace.shared.open(url) }
+                }
+                do {
+                    try Keychain.setToken(token, for: endpoint)
+                } catch {
+                    try? await BrowserLogin.revoke(token: token, endpoint: endpoint, client: BrowserLogin.appClient)
+                    browserSignInError = "Keychain: \(error.localizedDescription)"
+                    return
+                }
+                UserDefaults.standard.set(true, forKey: Self.browserTokenKey(endpoint))
+                showSignIn = false
+                connect(endpoint: endpoint, token: token)
+            } catch is CancellationError {
+                return
+            } catch {
+                browserSignInError = "\(error)"
+            }
+        }
+        return nil
+    }
+
+    func cancelBrowserSignIn() {
+        browserSignIn?.cancel()
+    }
+
     func signOut() {
         if let endpoint = Endpoint(url: endpointURL) {
+            if UserDefaults.standard.bool(forKey: Self.browserTokenKey(endpoint)), let token = Keychain.token(for: endpoint) {
+                Task { try? await BrowserLogin.revoke(token: token, endpoint: endpoint, client: BrowserLogin.appClient) }
+            }
+            UserDefaults.standard.removeObject(forKey: Self.browserTokenKey(endpoint))
             Keychain.deleteToken(for: endpoint)
         }
         disconnect()
@@ -545,6 +590,11 @@ final class AppModel {
         share = nil
         connectors = []
         showSignIn = true
+    }
+
+    // browserTokenKey marks that the app's token for endpoint is a device token it got through the browser, which sign-out revokes.
+    private static func browserTokenKey(_ endpoint: Endpoint) -> String {
+        "browserToken." + endpoint.url
     }
 
     private func connect(endpoint: Endpoint, token: String) {

@@ -685,7 +685,25 @@ struct SignInSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Sign in to CocoonBox").font(.title2.bold())
-            Text("The token is stored in your login Keychain.")
+            if model.browserSignIn != nil {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Waiting for the browser: allow this Mac on the console page it opened.")
+                    Spacer()
+                    Button("Cancel") { model.cancelBrowserSignIn() }
+                }
+                .font(.callout)
+            } else {
+                Button("Sign in with browser") {
+                    error = model.signInWithBrowser()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            if let failed = model.browserSignInError {
+                Text(failed).foregroundStyle(.red).font(.callout)
+            }
+            Divider()
+            Text("Or paste a token. It is stored in your login Keychain.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             SecureField("Token", text: $token)

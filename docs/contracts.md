@@ -66,6 +66,8 @@ The CLI and the app sign in through the same authorization server, as first-part
 
 **Device tokens** are shaped as the personal token (`cb_` + 64 hex) and work wherever it does: gRPC, the box and control MCP, the screen, `rsh`, `COCOONBOX_TOKEN`. They stay in `user_tokens` (users migration 0009: id `dev_` + 16 hex, user, sha256, client, label, created and last-used times) and in the same in-memory index as the personal token, so a call costs one map lookup; the last use is written at most once a minute per device. A device token has no expiry. It ends when the user revokes it, when the client sends it to `POST /cocoonbox.oauth/revoke` (`token`; 200 for an unknown token, and a personal token is left alone), or with its user's disable (until re-enabled) or delete. Regenerating the personal token or changing the password leaves device tokens alone. A revoke notifies `cocoonbox_users`, so every api drops the token from its index.
 
+**The clients.** `cocoonbox login` uses `cocoonbox-cli`; the app's sign-in sheet has "Sign in with browser" with `cocoonbox-app` (device name: the Mac's computer name) above the paste field, and a Cancel that ends the wait and frees the port. Each revokes on sign-out only the device token it got through the browser: the CLI keeps the token's source per endpoint in `cli.json` (`browser`, `paste` or `app`), the app in its defaults, so `cocoonbox logout` leaves a token copied from the app alone. A new CLI login revokes the browser token it replaces.
+
 **The user.** The console's Devices section lists them (`GET /cb/api/devices`: `id`, `client`, `label`, `created_at`, `used_at`) and `DELETE /cb/api/devices/{id}` revokes one at once (404 for a device of another user or one already gone).
 
 ## Client (macos) ↔ edge
