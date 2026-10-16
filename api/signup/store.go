@@ -284,9 +284,9 @@ func (s *store) takeFlow(ctx context.Context, nonceSHA256, state string) (flow, 
 	return f, nil
 }
 
-func (s *store) identityUser(ctx context.Context, idp, subject string) (string, error) {
+func (s *store) identityUser(ctx context.Context, q querier, idp, subject string) (string, error) {
 	var user string
-	err := s.pool.QueryRow(ctx, "SELECT user_id FROM identities WHERE idp = $1 AND subject = $2", idp, subject).Scan(&user)
+	err := q.QueryRow(ctx, "SELECT user_id FROM identities WHERE idp = $1 AND subject = $2", idp, subject).Scan(&user)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	}

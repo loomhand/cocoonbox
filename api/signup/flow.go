@@ -82,7 +82,7 @@ func (s *Service) Complete(ctx context.Context, nonce, state, code string) (Outc
 	if f.linkUser != "" {
 		return s.link(ctx, f.linkUser, id)
 	}
-	user, err := s.store.identityUser(ctx, GitHub, id.subject)
+	user, err := s.store.identityUser(ctx, s.store.pool, GitHub, id.subject)
 	switch {
 	case err == nil:
 		if u, getErr := s.accounts.Get(user); getErr != nil || u.Disabled {
