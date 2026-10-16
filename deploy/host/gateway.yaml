@@ -11,7 +11,6 @@ providers:
 
 accounts:
   - {name: openrouter, provider: openrouter, priority: 1, api_key_env: OPENROUTER_API_KEY_1, protocols: ["openai-chat"]}
-  - {name: openrouter-2, provider: openrouter, priority: 1, api_key_env: OPENROUTER_API_KEY_2, protocols: ["openai-chat"]}
 
 # prices = OpenRouter list prices on 2026-09-30, micros per 1k tokens
 models:
