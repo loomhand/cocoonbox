@@ -1,4 +1,4 @@
-# gw v0.2.6 for the cocoonbox env; published by install-gw-config (root:gw 0640 copy in /etc/gw/gateway.yaml).
+# gw seed config for the cocoonbox env; published by install-gw-config (root:gw 0640 copy in /etc/gw/gateway.yaml).
 listen:
   host: 10.203.0.1
   port: 18090
@@ -10,7 +10,7 @@ providers:
   - {name: openrouter, kind: openrouter, api_key_env: OPENROUTER_API_KEY_1, timeout_seconds: 300}
 
 accounts:
-  - {name: openrouter, provider: openrouter, priority: 1, api_key_env: OPENROUTER_API_KEY_1, protocols: ["openai-chat"]}
+  - {name: openrouter, provider: openrouter, priority: 1, api_key_env: OPENROUTER_API_KEY_1, protocols: ["openai-chat", "decisions"]}
 
 # prices = OpenRouter list prices on 2026-09-30, micros per 1k tokens
 models:
@@ -18,6 +18,8 @@ models:
   - {name: anthropic/claude-sonnet-5, provider: openrouter, input_price_per_1k_micros: 2000, output_price_per_1k_micros: 10000, token_rate: {read_cache: 0.1, write_cache: 1.25, write_cache_1h: 2.0}}
   - {name: anthropic/claude-sonnet-4.6, provider: openrouter, input_price_per_1k_micros: 3000, output_price_per_1k_micros: 15000, token_rate: {read_cache: 0.1, write_cache: 1.25, write_cache_1h: 2.0}}
   - {name: qwen/qwen3-vl-235b-a22b-instruct, provider: openrouter, input_price_per_1k_micros: 210, output_price_per_1k_micros: 1900, token_rate: {read_cache: 0.476}}
+  # a decisions reply carries its own cost
+  - {name: typesafe/jev-1.14, provider: openrouter, protocol: decisions}
 
 tenants:
   - name: cocoonbox-boxes
@@ -31,6 +33,7 @@ tenants:
       - anthropic/claude-sonnet-5
       - anthropic/claude-sonnet-4.6
       - qwen/qwen3-vl-235b-a22b-instruct
+      - typesafe/jev-1.14
 
 admin:
   token_env: GW_ADMIN_TOKEN
