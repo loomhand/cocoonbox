@@ -2175,7 +2175,7 @@ Decided 2026-10-03. A read share's `read_file` and `list_dir` reached every file
   - `read_file`, `list_dir`: confined as above.
   - `screenshot`: pixels only.
   - `computer_state`: the screenshot, the titles of the windows on screen, and the accessibility tree of one window, the frontmost or any `pid` the guest names. A title can carry a file path, and a covered window's tree can carry text the screen does not show, such as an editor's whole document. It reads only what the owner has open, and it opens no file. Kept by this decision.
-  - `browser_snapshot`, `browser_read`: they read the guest's own Chrome window, which opens at `about:blank`. A read share cannot navigate, click or type, so it cannot load a `file://` page. Its window shows another page only when the same session had write before (with `shell` already) or the owner navigated that window by hand. No `file://` block is added.
+  - `browser_snapshot`, `browser_read`: they read only the Chrome window that the same session opened while it had write. A read share opens no window and starts no Chrome, so it cannot close another agent's window past the window cap; without such a window the call fails with `a read-only share opens no Chrome window: …`. A read share cannot navigate, click or type, so it cannot load a `file://` page. Its window shows a page only when the session had write before (with `shell` already) or the owner navigated that window by hand. No `file://` block is added.
 - **Accepted.** A hard link or a bind mount in `/workspace` to a file elsewhere is read as a file in `/workspace`; only the owner or a write session can make one.
 
 Hot path: owner and write calls add one match on the principal. A read share's file call adds one open of `/workspace`.

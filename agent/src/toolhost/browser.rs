@@ -54,6 +54,7 @@ const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
 const MAX_WINDOWS: usize = 8;
 const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the keyboard focus is in no web page of the agent's Chrome, so it may be in the address bar, a find bar, DevTools, another app or a Chrome the browser tools do not drive; use browser_navigate to open the checkout in the agent's Chrome, then focus the card field; nothing was typed";
 const SHARE_TAB: &str = "a read-only share reads only its own window, so it takes no tab";
+const SHARE_WINDOW: &str = "a read-only share opens no Chrome window: it reads only the window its session opened with write";
 const TEXT_LEN_JS: &str = "document.body ? document.body.textContent.length : 0";
 const TAB_JS: &str = "[document.visibilityState, document.title, location.href]";
 const NO_ANSWER: &str = "the page does not answer, so it may show a dialog that opened before this call: close the dialog on the screen and retry";
@@ -341,6 +342,18 @@ impl Browser {
             }
             let mut cdp = self.tab(tab).await?;
             timing::mark("connect");
+            return self.act(&mut cdp, tool, args).await;
+        }
+        if args["workspace_only"] == true {
+            let slot = self
+                .windows
+                .lock()
+                .await
+                .get(agent_id)
+                .map(|s| Arc::clone(&s.window));
+            let slot = slot.ok_or(SHARE_WINDOW)?;
+            let window = slot.lock().await;
+            let mut cdp = Cdp::open(&window.as_ref().ok_or(SHARE_WINDOW)?.ws_url).await?;
             return self.act(&mut cdp, tool, args).await;
         }
         let (slot, evicted) = self.slot(agent_id).await;
@@ -2427,6 +2440,45 @@ pub(super) mod tests {
         assert_eq!(windows.len(), MAX_WINDOWS);
         assert!(windows.contains_key("a0") && windows.contains_key("new"));
         assert!(!windows.contains_key("a1"));
+    }
+
+    #[tokio::test]
+    async fn a_read_share_opens_no_window_and_evicts_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = page_chrome().await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        for i in 0..MAX_WINDOWS {
+            assert!(b.slot(&format!("a{i}")).await.1.is_none());
+        }
+        let read = json!({"workspace_only": true});
+        for tool in ["browser_snapshot", "browser_read"] {
+            assert_eq!(
+                b.run("guest", tool, read.clone()).await.unwrap_err(),
+                SHARE_WINDOW
+            );
+        }
+        assert!(log.lock().unwrap().is_empty(), "{:?}", log.lock().unwrap());
+        assert!(!dir.path().join(AGENT_MARKER).exists());
+        let windows = b.windows.lock().await;
+        assert_eq!(windows.len(), MAX_WINDOWS);
+        assert!(!windows.contains_key("guest"));
+    }
+
+    #[tokio::test]
+    async fn a_read_share_reads_the_window_its_session_opened_with_write() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = page_chrome().await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        b.run("guest", "browser_snapshot", json!({})).await.unwrap();
+        let opened = log.lock().unwrap().len();
+        b.run("guest", "browser_snapshot", json!({"workspace_only": true}))
+            .await
+            .unwrap();
+        let log = log.lock().unwrap();
+        assert!(
+            !log[opened..].iter().any(|m| m == "Target.createTarget"),
+            "{log:?}"
+        );
     }
 
     #[test]
