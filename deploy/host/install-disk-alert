@@ -1,5 +1,5 @@
 #!/bin/sh
-# Installs the daily journal warning when / or /srv/cb is 80% full; idempotent.
+# Installs the daily journal warning when /, /srv/cb or a /srv/cb project quota is 80% full; idempotent.
 # usage: sudo deploy/host/install-disk-alert
 set -eu
 SRC="$(cd "$(dirname "$0")" && pwd)"

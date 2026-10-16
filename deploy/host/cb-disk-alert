@@ -1,11 +1,20 @@
 #!/bin/sh
-# usage: cb-disk-alert; warns in the journal when / or /srv/cb is at or above LIMIT percent
+# usage: cb-disk-alert; warns in the journal when / or /srv/cb, or an XFS project quota on /srv/cb, is at or above LIMIT percent
 LIMIT=80
-for m in / /srv/cb; do
-	pct=$(df --output=pcent "$m" | tail -1 | tr -dc 0-9)
-	if [ "$pct" -ge "$LIMIT" ]; then
-		logger -p user.warning -t cb-disk-alert "$m at ${pct}% (limit ${LIMIT}%)"
+
+report() {
+	if [ "$2" -ge "$LIMIT" ]; then
+		logger -p user.warning -t cb-disk-alert "$1 at ${2}% (limit ${LIMIT}%)"
 	else
-		logger -p user.info -t cb-disk-alert "$m at ${pct}%"
+		logger -p user.info -t cb-disk-alert "$1 at ${2}%"
+	fi
+}
+
+for m in / /srv/cb; do
+	report "$m" "$(df --output=pcent "$m" | tail -1 | tr -dc 0-9)"
+done
+xfs_quota -x -c 'report -p -b -N' /srv/cb 2>/dev/null | while read -r name used _ hard _; do
+	if [ "$hard" -gt 0 ] 2>/dev/null; then
+		report "project $name" $((used * 100 / hard))
 	fi
 done
