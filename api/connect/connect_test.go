@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc/codes"
@@ -736,6 +737,16 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 	n, _ := stream.Body.Read(buf)
 	if !strings.Contains(string(buf[:n]), "notifications/tools/list_changed") {
 		t.Errorf("stream = %q", buf[:n])
+	}
+}
+
+func TestDoorKeepsAShortClientName(t *testing.T) {
+	door := (&Service{}).NewDoor(fakeAuthn{}, DoorMCP)
+	srv := httptest.NewServer(door)
+	t.Cleanup(srv.Close)
+	resp := post(t, srv.URL, "Bearer alice", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"`+strings.Repeat("é", 4096)+`"}}}`)
+	if got := door.client(resp.Header.Get(headerSession)); len(got) > maxClientName+len("…") || !utf8.ValidString(got) {
+		t.Errorf("kept client name of %d bytes, valid UTF-8 %t", len(got), utf8.ValidString(got))
 	}
 }
 

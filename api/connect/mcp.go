@@ -27,6 +27,7 @@ const (
 	maxRequestBody  = 1 << 20
 	keepalive       = 25 * time.Second
 	sessionTTL      = 24 * time.Hour
+	maxClientName   = 64
 	answersQueued   = 8
 
 	codeParse          = -32700
@@ -189,7 +190,7 @@ func (d *Door) initialize(w http.ResponseWriter, params jsontext.Value) map[stri
 			delete(d.clients, k)
 		}
 	}
-	d.clients[id] = session{client: cmp.Or(req.ClientInfo.Name, "unknown"), at: now}
+	d.clients[id] = session{client: shorten(cmp.Or(req.ClientInfo.Name, "unknown"), maxClientName), at: now}
 	d.mu.Unlock()
 	w.Header().Set(headerSession, id)
 	version := fallbackVersion
