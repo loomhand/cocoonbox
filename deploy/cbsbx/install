@@ -1,13 +1,14 @@
 #!/bin/bash
 # Stages the cocoonbox sandboxd instance under /srv/cb/sbx; idempotent, starts nothing.
 # usage: sudo deploy/cbsbx/install <dir with sandboxd, silkd, cocoon, cloud-hypervisor, firecracker and SHA256SUMS>
+# CB_SBX_QUOTA sets the XFS project quota (default 200g), CB_VM_CPUS the VMs' cpuset (default: every online CPU but the cores of cpu0 and cpu1).
 set -euo pipefail
 export LC_ALL=C
 
 BIN_SRC=${1:?usage: install <binary dir>}
 S=/srv/cb/sbx
 QUOTA_ID=44
-QUOTA=200g
+QUOTA=${CB_SBX_QUOTA:-200g}
 TOKEN=/etc/cocoonbox/sandboxd-token
 SRC="$(cd "$(dirname "$0")" && pwd)"
 
@@ -22,7 +23,29 @@ for b in sandboxd silkd cocoon cloud-hypervisor firecracker; do
 	[ -e "$S/bin/$b" ] && cp -p "$S/bin/$b" "$S/bin/$b.prev"
 	install -m 0755 "$BIN_SRC/$b" "$S/bin/$b"
 done
-install -m 0644 "$SRC/cocoon.yaml" "$S/cocoon.yaml"
+cpus=${CB_VM_CPUS:-$(python3 - <<'PY'
+from pathlib import Path
+
+def parse(text):
+    out = set()
+    for part in text.strip().split(","):
+        lo, _, hi = part.partition("-")
+        out.update(range(int(lo), int(hi or lo) + 1))
+    return out
+
+cpu = Path("/sys/devices/system/cpu")
+host = parse((cpu / "cpu0/topology/thread_siblings_list").read_text()) | parse((cpu / "cpu1/topology/thread_siblings_list").read_text())
+runs = []
+for c in sorted(parse((cpu / "online").read_text()) - host):
+    if runs and c == runs[-1][1] + 1:
+        runs[-1][1] = c
+    else:
+        runs.append([c, c])
+print(",".join(f"{a}-{b}" if a != b else str(a) for a, b in runs))
+PY
+)}
+sed "s/^cgroup_cpus: .*/cgroup_cpus: \"$cpus\"/" "$SRC/cocoon.yaml" > "$S/cocoon.yaml"
+chmod 0644 "$S/cocoon.yaml"
 printf '#!/bin/sh\nexec %s/bin/cocoon --config %s/cocoon.yaml "$@"\n' "$S" "$S" > "$S/bin/cocoon-cbsbx"
 chmod 0755 "$S/bin/cocoon-cbsbx"
 
