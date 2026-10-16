@@ -26,9 +26,6 @@ const (
 
 var (
 	ErrNotFound = errors.New("machine not found")
-	ErrDeleting = errors.New("machine is being deleted")
-	// ErrNoAddress reports a running machine whose address is not yet known.
-	ErrNoAddress = errors.New("machine has no address yet")
 	// ErrConflict reports a concurrent change; the caller may retry.
 	ErrConflict = errors.New("concurrent machine change")
 	// ErrRefused reports a request the backend refused as invalid; a retry with the same values fails again.
@@ -71,7 +68,6 @@ type Machine struct {
 	Reason string
 	// Detail summarizes the backend's raw status for logs; it may name internal hosts.
 	Detail    string
-	Waiting   bool
 	CreatedAt time.Time
 	// Revision increases with every lifecycle request; Watch judges state no older than it.
 	Revision int64

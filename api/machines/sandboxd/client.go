@@ -82,10 +82,9 @@ type inject struct {
 
 type claimRequest struct {
 	poolKey
-	TTLSeconds int                `json:"ttl_seconds"`
-	OnExpire   string             `json:"on_expire"`
-	Metadata   map[string]string  `json:"metadata"`
-	Env        map[string]*envVar `json:"env,omitempty"`
+	TTLSeconds int               `json:"ttl_seconds"`
+	OnExpire   string            `json:"on_expire"`
+	Metadata   map[string]string `json:"metadata"`
 }
 
 type renewRequest struct {
@@ -105,7 +104,6 @@ type execResponse struct {
 	Stderr   string `json:"stderr"`
 }
 
-// tenantRequest omits an empty egress class, which sandboxd before egress classes refuses as an unknown field.
 type tenantRequest struct {
 	Token       string `json:"token,omitempty"`
 	MaxClaims   int    `json:"max_claims"`

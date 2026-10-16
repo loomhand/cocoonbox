@@ -91,7 +91,7 @@ func toBox(box string, m machines.Machine) *controlv1.Box {
 }
 
 func toObservation(m machines.Machine, phase controlv1.Phase) observation {
-	obs := observation{state: boxStates[m.State], detail: progressWords(m)}
+	obs := observation{state: boxStates[m.State], detail: stateWords[m.State]}
 	switch {
 	case atCapacity(m):
 		obs.reason = machines.ErrCapacity.Error()
@@ -99,13 +99,6 @@ func toObservation(m machines.Machine, phase controlv1.Phase) observation {
 		obs.reason = cmp.Or(failureWords[phase], "machine failed")
 	}
 	return obs
-}
-
-func progressWords(m machines.Machine) string {
-	if m.Waiting {
-		return "waiting for capacity"
-	}
-	return stateWords[m.State]
 }
 
 func failureReason(m machines.Machine) string {

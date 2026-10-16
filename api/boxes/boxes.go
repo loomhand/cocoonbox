@@ -328,8 +328,6 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 		return none, "", ErrNoBox
 	case errors.As(err, &notRunning):
 		return none, "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
-	case errors.Is(err, machines.ErrNoAddress):
-		return none, "", status.Error(codes.Unavailable, "box has no address yet")
 	default:
 		log.WithFunc("boxes.Service.Resolve").WithField("box", boxID).Error(ctx, err, "resolve box")
 		return none, "", status.Error(codes.Unavailable, "resolve box failed")
@@ -518,8 +516,6 @@ func serviceError(ctx context.Context, logger *log.Fields, err error, action str
 	switch {
 	case errors.Is(err, machines.ErrNotFound):
 		return ErrNoBox
-	case errors.Is(err, machines.ErrDeleting):
-		return status.Error(codes.FailedPrecondition, "box is being deleted")
 	case errors.Is(err, machines.ErrConflict):
 		logger.Error(ctx, err, action)
 		return status.Errorf(codes.Aborted, "%s: concurrent change, retry", action)

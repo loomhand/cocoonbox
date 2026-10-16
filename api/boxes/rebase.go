@@ -119,7 +119,7 @@ func (s *Service) waitRunning(op *operation, m machines.Machine) (machines.Machi
 		case machines.StateGone:
 			return machines.Machine{}, fmt.Errorf("machine %s was deleted", m.ID)
 		}
-		op.note(controlv1.Phase_PHASE_CREATING, boxStates[cur.State], progressWords(cur))
+		op.note(controlv1.Phase_PHASE_CREATING, boxStates[cur.State], stateWords[cur.State])
 	}
 	return machines.Machine{}, fmt.Errorf("machine %s did not start: %w", m.ID, op.ctx.Err())
 }

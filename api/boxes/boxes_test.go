@@ -130,7 +130,7 @@ func TestEnsureCreatesBox(t *testing.T) {
 		t.Errorf("second Ensure = %v, %v, want operation %s", again.GetOperation(), err, resp.GetOperation().GetId())
 	}
 
-	fake.push(machines.Machine{ID: aliceBox, State: machines.StateStarting, Detail: "vm=creating", Waiting: true})
+	fake.push(machines.Machine{ID: aliceBox, State: machines.StateStarting, Detail: "vm=creating"})
 	fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning, Detail: "vm=ready"})
 	events := watch(t, svc, ctx, resp.GetOperation().GetId(), "")
 	last := events[len(events)-1]
@@ -138,8 +138,8 @@ func TestEnsureCreatesBox(t *testing.T) {
 		t.Errorf("last event = %v, want DONE/RUNNING", last)
 	}
 	for i, ev := range events[:len(events)-1] {
-		if ev.GetPhase() != controlv1.Phase_PHASE_CREATING || ev.GetDetail() != "waiting for capacity" {
-			t.Errorf("event %d = %s %q, want CREATING waiting for capacity", i, ev.GetPhase(), ev.GetDetail())
+		if ev.GetPhase() != controlv1.Phase_PHASE_CREATING || ev.GetDetail() != "starting" {
+			t.Errorf("event %d = %s %q, want CREATING starting", i, ev.GetPhase(), ev.GetDetail())
 		}
 	}
 	if got := fake.watchRevision(); got != 1 {
@@ -298,7 +298,6 @@ func TestEnsureErrors(t *testing.T) {
 		{name: "flavor not offered", flavor: &controlv1.Flavor{Vcpus: 64, MemoryMib: 1 << 20, DiskGib: 10000}, want: codes.InvalidArgument, message: "flavor vcpus:64 memory_mib:1048576 disk_gib:10000 is not offered"},
 		{name: "offered flavor", flavor: &controlv1.Flavor{Vcpus: 2, MemoryMib: 4096, DiskGib: 40}, want: codes.OK},
 		{name: "default flavor spelled out", stored: &machines.Machine{ID: aliceBox, Owner: alice, Flavor: defaultFlavor, State: machines.StateRunning}, flavor: &controlv1.Flavor{Vcpus: 4}, want: codes.OK},
-		{name: "deleting", ensure: machines.ErrDeleting, want: codes.FailedPrecondition, message: "box is being deleted"},
 		{name: "conflict", ensure: machines.ErrConflict, want: codes.Aborted, message: "ensure box: concurrent change, retry"},
 		{name: "backend down", ensure: errors.New("apiserver unreachable"), want: codes.Unavailable, message: "ensure box failed"},
 	}
@@ -328,7 +327,6 @@ func TestResolve(t *testing.T) {
 		{name: "running", want: codes.OK},
 		{name: "machine vanished", addrErr: machines.ErrNotFound, want: codes.NotFound, message: "no such box for this user (it may have been deleted)"},
 		{name: "hibernated", addrErr: &machines.NotRunningError{State: machines.StateHibernated}, want: codes.Unavailable, message: "box is BOX_STATE_HIBERNATED"},
-		{name: "no address", addrErr: machines.ErrNoAddress, want: codes.Unavailable, message: "box has no address yet"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
