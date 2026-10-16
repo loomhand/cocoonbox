@@ -1035,21 +1035,6 @@ struct ReadArgs {
     element: Option<String>,
 }
 
-struct Cdp {
-    ws: Ws,
-    next_id: u64,
-    /// The flat session of an attached target, which then receives every call.
-    session: Option<String>,
-    xhr: Xhr,
-    /// The page's frame loads since [`Cdp::watch_load`], from its Page events.
-    load: Load,
-    page_events: bool,
-    /// The type and message of the dialog the page opened, from its Page events.
-    dialog: Option<(String, String)>,
-    /// What became of the dialogs the page opened during this connection.
-    dialogs: Vec<String>,
-}
-
 #[derive(Default)]
 struct Load {
     started: bool,
@@ -1080,6 +1065,21 @@ impl Xhr {
             _ => {}
         }
     }
+}
+
+struct Cdp {
+    ws: Ws,
+    next_id: u64,
+    /// The flat session of an attached target, which then receives every call.
+    session: Option<String>,
+    xhr: Xhr,
+    /// The page's frame loads since [`Cdp::watch_load`], from its Page events.
+    load: Load,
+    page_events: bool,
+    /// The type and message of the dialog the page opened, from its Page events.
+    dialog: Option<(String, String)>,
+    /// What became of the dialogs the page opened during this connection.
+    dialogs: Vec<String>,
 }
 
 impl Cdp {

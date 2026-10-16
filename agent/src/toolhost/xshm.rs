@@ -791,6 +791,15 @@ impl Grabber {
     }
 }
 
+impl Drop for Grabber {
+    fn drop(&mut self) {
+        let _ = self.conn.shm_detach(self.seg);
+        let _ = self.conn.flush();
+        // SAFETY: `addr` came from shmat and is not used after this.
+        unsafe { libc::shmdt(self.addr.as_ptr().cast()) };
+    }
+}
+
 /// How the screen hides a mapped window frame.
 #[derive(Debug, PartialEq)]
 enum Cover {
@@ -870,15 +879,6 @@ fn alive<T>(reply: Result<T, ReplyError>, what: &str) -> Result<Option<T>, Strin
         Ok(v) => Ok(Some(v)),
         Err(ReplyError::X11Error(e)) if e.error_kind == ErrorKind::Window => Ok(None),
         Err(e) => Err(format!("{what}: {e}")),
-    }
-}
-
-impl Drop for Grabber {
-    fn drop(&mut self) {
-        let _ = self.conn.shm_detach(self.seg);
-        let _ = self.conn.flush();
-        // SAFETY: `addr` came from shmat and is not used after this.
-        unsafe { libc::shmdt(self.addr.as_ptr().cast()) };
     }
 }
 
