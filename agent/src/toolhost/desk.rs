@@ -157,12 +157,18 @@ impl Desk {
         Ok(Value::Array(list).to_string())
     }
 
-    /// The element tree of one window, the focused one unless `window` names another.
+    /// The element tree of one window: the one `id` names, else the focused one unless `window` names another.
     async fn snapshot(&self, a: SnapArgs) -> Result<String, String> {
         let started = Instant::now();
         let frames = self.frames().await?;
         let found = started.elapsed().as_micros();
-        let frame = pick(frames, a.window.as_deref(), a.pid)?;
+        let frame = match a.id.as_deref() {
+            Some(id) => frames
+                .into_iter()
+                .find(|f| f.obj.id() == id)
+                .ok_or_else(|| format!("no window {id}"))?,
+            None => pick(frames, a.window.as_deref(), a.pid)?,
+        };
         let extras = Extras {
             values: true,
             bounds: a.bounds.unwrap_or(true),
@@ -714,6 +720,8 @@ fn cli_args(rest: &[String]) -> Result<Value, String> {
 struct SnapArgs {
     #[serde(default)]
     window: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
     #[serde(default)]
     pid: Option<u32>,
     #[serde(default)]
