@@ -12,8 +12,8 @@ use tokio::io::AsyncBufReadExt;
 use super::env::{self, Spec};
 use super::handover::{self, MAX_BODY};
 use super::{
-    Args, Copy, Fail, Layout, call, git, git_env, home_shell, locked, read_index, with_index,
-    write_atomic,
+    Args, Copy, Fail, Layout, call, git, git_env, home_shell, is_hex, locked, read_index,
+    snapshot_ref, tmux_session, with_index, write_atomic,
 };
 
 /// How long `send` waits for the CLI to take its first prompt.
@@ -300,7 +300,7 @@ pub async fn end(layout: &Layout, repo: &str) -> Result<Value, Fail> {
     let status = call(layout, &json!({"op": "status", "repo": repo})).await?;
     if let Some(s) = status["sessions"].as_array().and_then(|s| s.first()) {
         let cli = s["cli"].as_str().unwrap_or_default();
-        let session = format!("cb-off-{repo}-{cli}");
+        let session = tmux_session(repo, cli);
         if s["tmux_alive"] == true {
             quit(layout, &session, cli).await;
         }
@@ -429,7 +429,7 @@ impl Offload<'_> {
         }
         trust(&self.layout.home, self.kind, dir).await?;
         lap("trust", timings);
-        let base = format!("refs/cocoonbox/offload/{}", self.id);
+        let base = snapshot_ref(self.id);
         let mut prompt = handover::preamble(dir, self.repo, &self.layout.state, &base);
         prompt.push_str(handover.unwrap_or_default());
         if !self.no_repo {
@@ -515,7 +515,7 @@ impl Offload<'_> {
     /// The copy equals S: its snapshot's tree is S's tree and HEAD is S's parent.
     async fn check_snapshot(&self) -> Result<(), Fail> {
         let dir = &self.copy.dir;
-        let s = format!("refs/cocoonbox/offload/{}", self.id);
+        let s = snapshot_ref(self.id);
         let want = git(
             dir,
             &["rev-parse", "-q", "--verify", &format!("{s}^{{tree}}")],
@@ -1191,7 +1191,7 @@ fn valid_name(name: &str) -> Result<(), Fail> {
 
 fn offload_id(a: &Args) -> Result<String, Fail> {
     let id = a.required("id")?;
-    if id.len() == 12 && id.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+    if is_hex(&id, 12) {
         Ok(id)
     } else {
         Err(Fail::Usage(format!("invalid offload id {id:?}")))

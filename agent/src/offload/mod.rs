@@ -153,9 +153,7 @@ pub struct Args {
 }
 
 impl Args {
-    const VALUED: [&str; 9] = [
-        "repo", "name", "kind", "id", "since", "wait", "cli", "hook", "box",
-    ];
+    const VALUED: [&str; 8] = ["repo", "name", "kind", "id", "since", "wait", "cli", "hook"];
 
     /// Parses `args`; a valued flag without a value is a usage error.
     pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Self, Fail> {
@@ -235,10 +233,7 @@ impl Args {
 
 /// A repo key: 12 lowercase hex, or `agent-` and 8 lowercase hex.
 pub fn valid_key(key: &str) -> Result<(), Fail> {
-    let hex = |s: &str, n: usize| {
-        s.len() == n && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-    };
-    if hex(key, 12) || key.strip_prefix("agent-").is_some_and(|k| hex(k, 8)) {
+    if is_hex(key, 12) || key.strip_prefix("agent-").is_some_and(|k| is_hex(k, 8)) {
         Ok(())
     } else {
         Err(Fail::Usage(format!("invalid repo key {key:?}")))
@@ -537,6 +532,18 @@ async fn stdin_text() -> Result<String, Fail> {
 
 fn one_line(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn is_hex(s: &str, n: usize) -> bool {
+    s.len() == n && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn tmux_session(repo: &str, cli: &str) -> String {
+    format!("cb-off-{repo}-{cli}")
+}
+
+fn snapshot_ref(id: &str) -> String {
+    format!("refs/cocoonbox/offload/{id}")
 }
 
 #[cfg(test)]

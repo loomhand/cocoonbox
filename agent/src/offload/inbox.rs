@@ -19,7 +19,9 @@ use tokio_util::sync::CancellationToken;
 use super::env::{self, Spec};
 use super::handover::{self, MAX_BODY};
 use super::packer::ACCEPT_WAIT;
-use super::{Copy, Layout, read_index, with_index, write_atomic};
+use super::{
+    Copy, Layout, MAX_WAIT_S, read_index, snapshot_ref, tmux_session, with_index, write_atomic,
+};
 use crate::journal::Journal;
 use crate::pb::{self, event};
 
@@ -32,7 +34,6 @@ const RESCAN: Duration = Duration::from_secs(5);
 const RELAY_RETRY: Duration = Duration::from_secs(2);
 const CHANGES: usize = 256;
 const TRANSCRIPT_TAIL: u64 = 256 << 10;
-const MAX_WAIT_MS: u64 = 600_000;
 const SOCKET_GROUP: &str = "cbagent";
 const RECORD_FILE: &str = "session.json";
 const INBOX_FILE: &str = "inbox.jsonl";
@@ -473,7 +474,7 @@ impl Inbox {
                     &rec.dir,
                     &rec.repo,
                     &self.layout.state,
-                    &format!("refs/cocoonbox/offload/{}", rec.offload_id)
+                    &snapshot_ref(&rec.offload_id)
                 ),
                 e.body
             ),
@@ -569,7 +570,7 @@ impl Inbox {
     async fn read(&self, repo: &str, since: u64, wait_ms: u64) -> Result<Value, Refusal> {
         let mut changes = self.changes.subscribe();
         let deadline =
-            tokio::time::Instant::now() + Duration::from_millis(wait_ms.min(MAX_WAIT_MS));
+            tokio::time::Instant::now() + Duration::from_millis(wait_ms.min(MAX_WAIT_S * 1000));
         let path = self.layout.repo_dir(repo).join(OUTBOX_FILE);
         loop {
             let (entries, status) = {
@@ -927,7 +928,7 @@ struct Record {
 
 impl Record {
     fn tmux(&self) -> String {
-        format!("cb-off-{}-{}", self.repo, self.cli)
+        tmux_session(&self.repo, &self.cli)
     }
 
     /// No hook of the claude session arrived within `ACCEPT_WAIT` of its start.
