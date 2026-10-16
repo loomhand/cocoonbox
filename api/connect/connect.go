@@ -42,7 +42,6 @@ const (
 	policyAsk   = "ask"
 	policyOff   = "off"
 
-	decisionPending  = "pending"
 	decisionOnce     = "once"
 	decisionAlways   = "always"
 	decisionDeny     = "deny"
