@@ -151,7 +151,7 @@ struct PlaceArgs {
 
 /// `state_walk`: every file, directory and symlink under the roots, sorted, minus exclusions.
 pub async fn walk(args: Value) -> Result<String, String> {
-    let a: WalkArgs = parse(args)?;
+    let a: WalkArgs = rpc::parse(args)?;
     let entries = tokio::task::spawn_blocking(move || {
         let mut out = Vec::new();
         for root in &a.roots {
@@ -173,7 +173,7 @@ pub async fn walk(args: Value) -> Result<String, String> {
 /// `state_read`: a stamp frame, the file as data frames, then a stamp taken after the read.
 /// With `sqlite_backup`, an SQLite database is streamed from an online backup instead.
 pub async fn read<W: AsyncWrite + Unpin>(args: Value, w: &mut W) -> Result<(), String> {
-    let a: ReadArgs = parse(args)?;
+    let a: ReadArgs = rpc::parse(args)?;
     if a.sqlite_backup
         && let Some(copy) = sqlite_backup(&a.path).await
     {
@@ -260,7 +260,7 @@ async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
 
 /// `state_write`: data frames into a new file at `path`, then mode and mtime.
 pub async fn write<R: AsyncRead + Unpin>(args: Value, r: &mut R) -> Output {
-    let a: WriteArgs = match parse(args) {
+    let a: WriteArgs = match rpc::parse(args) {
         Ok(a) => a,
         Err(e) => return Output::error(e),
     };
@@ -272,7 +272,7 @@ pub async fn write<R: AsyncRead + Unpin>(args: Value, r: &mut R) -> Output {
 
 /// `state_apply`: creates directories and symlinks, then sets directory modes.
 pub async fn apply(args: Value) -> Result<String, String> {
-    let mut a: ApplyArgs = parse(args)?;
+    let mut a: ApplyArgs = rpc::parse(args)?;
     tokio::task::spawn_blocking(move || {
         for d in &a.dirs {
             fs::create_dir_all(&d.path).map_err(|e| format!("mkdir {}: {e}", d.path.display()))?;
@@ -308,7 +308,7 @@ pub async fn apply(args: Value) -> Result<String, String> {
 /// `state_swap`: replaces each top-level entry of `root` by its staged copy with one rename,
 /// removes entries absent from the snapshot except `keep`, then deletes the staging dir.
 pub async fn swap(args: Value) -> Result<String, String> {
-    let a: SwapArgs = parse(args)?;
+    let a: SwapArgs = rpc::parse(args)?;
     tokio::task::spawn_blocking(move || swap_blocking(&a))
         .await
         .map_err(|e| format!("swap task: {e}"))?
@@ -352,7 +352,7 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
 /// `state_place`: renames `staging` to `dir/name`, or `name-2`, `name-3`, ... when that exists,
 /// and returns the name it took; it never replaces an existing entry.
 pub async fn place(args: Value) -> Result<String, String> {
-    let a: PlaceArgs = parse(args)?;
+    let a: PlaceArgs = rpc::parse(args)?;
     tokio::task::spawn_blocking(move || {
         for n in 1..=PLACE_TRIES {
             let name = if n == 1 {
@@ -502,10 +502,6 @@ fn stamp_of(path: &Path) -> Stamp {
 fn mtime_ms(t: Option<SystemTime>) -> i64 {
     t.and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
-}
-
-fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
-    serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
 }
 
 #[cfg(test)]

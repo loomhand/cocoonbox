@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use tokio::io::AsyncReadExt;
 
+use super::rpc;
 use crate::sys;
 
 const READ_LINES: usize = 2000;
@@ -96,7 +97,7 @@ pub async fn read(
     hidden: Option<&Path>,
     args: serde_json::Value,
 ) -> Result<String, String> {
-    let a: ReadArgs = parse(args)?;
+    let a: ReadArgs = rpc::parse(args)?;
     let path = resolve(workspace, &a.path);
     let data = if a.workspace_only {
         let mut data = Vec::new();
@@ -153,7 +154,7 @@ pub async fn read(
 
 /// `write_file`: creates parent directories and replaces the file.
 pub async fn write(workspace: &Path, args: serde_json::Value) -> Result<String, String> {
-    let a: WriteArgs = parse(args)?;
+    let a: WriteArgs = rpc::parse(args)?;
     let path = resolve(workspace, &a.path);
     write_bytes(&path, a.content.as_bytes()).await?;
     Ok(format!(
@@ -165,7 +166,7 @@ pub async fn write(workspace: &Path, args: serde_json::Value) -> Result<String, 
 
 /// `edit_file`: exact string replacement; the match must be unique unless `replace_all`.
 pub async fn edit(workspace: &Path, args: serde_json::Value) -> Result<String, String> {
-    let a: EditArgs = parse(args)?;
+    let a: EditArgs = rpc::parse(args)?;
     if a.old_string.is_empty() {
         return Err("old_string must not be empty".to_owned());
     }
@@ -198,7 +199,7 @@ pub async fn list(
     hidden: Option<&Path>,
     args: serde_json::Value,
 ) -> Result<String, String> {
-    let a: ListArgs = parse(args)?;
+    let a: ListArgs = rpc::parse(args)?;
     let path = resolve(workspace, a.path.as_deref().unwrap_or("."));
     let beneath = if a.workspace_only {
         Some(open_beneath(workspace, hidden, &path, libc::O_DIRECTORY)?)
@@ -380,10 +381,6 @@ fn open_beneath(
         ));
     }
     Ok(file)
-}
-
-fn parse<T: serde::de::DeserializeOwned>(args: serde_json::Value) -> Result<T, String> {
-    serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
 }
 
 #[cfg(test)]

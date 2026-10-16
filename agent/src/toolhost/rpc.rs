@@ -4,7 +4,9 @@
 
 use std::path::{Path, PathBuf};
 
-use serde::de::DeserializeOwned;
+pub use desk_core::args::parse;
+use desk_core::wire::MAX_FRAME;
+pub use desk_core::wire::{Call, Output, read_frame, write_frame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
@@ -25,49 +27,6 @@ pub const EOF: u8 = 5;
 pub const SIGNAL: u8 = 6;
 /// Tag of a terminal size, big-endian u16 rows and cols, to the toolhost.
 pub const RESIZE: u8 = 7;
-
-const MAX_FRAME: usize = 64 << 20;
-
-/// A tool invocation forwarded from the agent loop.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Call {
-    pub agent_id: String,
-    pub tool: String,
-    #[serde(default)]
-    pub args: Value,
-}
-
-/// A tool result; `image_b64` carries a screenshot when the tool produced one, and `secrets`
-/// the card fields it typed from a file, as (field, value).
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct Output {
-    pub text: String,
-    #[serde(default)]
-    pub is_error: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub image_b64: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub secrets: Vec<(String, String)>,
-}
-
-impl Output {
-    /// A successful text result.
-    pub fn text(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            ..Self::default()
-        }
-    }
-
-    /// A failed result carrying `text` as the reason.
-    pub fn error(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            is_error: true,
-            ..Self::default()
-        }
-    }
-}
 
 /// Size and mtime of a file before or after it was streamed.
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -199,47 +158,6 @@ impl FileWriter {
         let out: Output = read_frame(&mut self.stream).await?;
         if out.is_error { Err(out.text) } else { Ok(()) }
     }
-}
-
-/// Writes `msg` as a big-endian u32 length followed by JSON.
-pub async fn write_frame<W, T>(w: &mut W, msg: &T) -> Result<(), String>
-where
-    W: AsyncWrite + Unpin,
-    T: Serialize,
-{
-    let mut body = serde_json::to_vec(msg).map_err(|e| format!("encode frame: {e}"))?;
-    let len = u32::try_from(body.len()).map_err(|_| "frame too large".to_owned())?;
-    let written = async {
-        w.write_all(&len.to_be_bytes()).await?;
-        w.write_all(&body).await?;
-        w.flush().await
-    }
-    .await;
-    body.zeroize();
-    written.map_err(|e| format!("write frame: {e}"))
-}
-
-/// Reads one frame written by [`write_frame`].
-pub async fn read_frame<R, T>(r: &mut R) -> Result<T, String>
-where
-    R: AsyncRead + Unpin,
-    T: DeserializeOwned,
-{
-    let mut len = [0u8; 4];
-    r.read_exact(&mut len)
-        .await
-        .map_err(|e| format!("read frame length: {e}"))?;
-    let len = u32::from_be_bytes(len) as usize;
-    if len > MAX_FRAME {
-        return Err(format!("frame of {len} bytes exceeds {MAX_FRAME}"));
-    }
-    let mut body = vec![0u8; len];
-    r.read_exact(&mut body)
-        .await
-        .map_err(|e| format!("read frame body: {e}"))?;
-    let msg = serde_json::from_slice(&body);
-    body.zeroize();
-    msg.map_err(|e| format!("decode frame: {e}"))
 }
 
 /// Zeroes the string fields of `args`, which may carry a credential.

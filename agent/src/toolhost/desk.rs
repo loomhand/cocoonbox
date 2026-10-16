@@ -7,10 +7,17 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use futures_util::future::join_all;
-use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use x11rb::connection::Connection as _;
 use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, EventMask};
+
+use desk_core::args::{
+    ActArgs, AtArgs, ClickArgs, FindArgs, IdArgs, KeyArgs, LaunchArgs, ReadArgs, ShotArgs,
+    SnapArgs, TypeArgs, WindowArgs, parse,
+};
+use desk_core::press::{MENU_POLL, MENU_POLLS, SELECTED_ROLES};
+use desk_core::text::{MAX_FOUND, NAME_CHARS, Named, cli_args, matches, ms, quote};
+use desk_core::window::{self, TITLE_TIERS, Window, app_window, title_matches};
 
 use super::atspi::{Atspi, Extras, FOCUSED, Frame, Node, Obj, SHOWING, key_combos};
 use super::cua::{Cua, libreoffice};
@@ -21,17 +28,10 @@ const FRAME_ROLES: [u32; 5] = [2, 16, 19, 23, WINDOW_ROLE];
 const WINDOW_ROLE: u32 = 69;
 const DEFAULT_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
 const CLI_USAGE: &str = "usage: desk VERB [key=value ...|JSON]; verbs: windows, snapshot, find, read, press, act, at, key, type, click, focus, close, launch, shot, screen";
-const NAME_CHARS: usize = 80;
 const READ_CHARS: i32 = 64 << 10;
-const MAX_FOUND: usize = 20;
-const MENU_POLL: Duration = Duration::from_millis(30);
-const MENU_POLLS: u32 = 10;
-const SELECTED_ROLES: [&str; 5] = ["tab", "option", "radio", "listitem", "treeitem"];
-const TITLE_TIERS: usize = 3;
 const TYPE_SETTLE: Duration = Duration::from_millis(100);
 const TYPE_POLL: Duration = Duration::from_millis(10);
 const TYPE_TAIL: usize = 16;
-const TITLE_SEPARATORS: [&str; 2] = [" - ", " — "];
 const KEY_ALIASES: [(&str, &str); 47] = [
     ("control", "ctrl"),
     ("primary", "ctrl"),
@@ -167,7 +167,7 @@ impl Desk {
                 .into_iter()
                 .find(|f| f.obj.id() == id)
                 .ok_or_else(|| format!("no window {id}"))?,
-            None => pick(frames, a.window.as_deref(), a.pid)?,
+            None => window::pick(frames, a.window.as_deref(), a.pid)?,
         };
         let extras = Extras {
             values: true,
@@ -196,37 +196,17 @@ impl Desk {
 
     /// The elements of one window whose name is `name`, else those that contain it, ignoring case and punctuation.
     async fn find(&self, a: FindArgs) -> Result<String, String> {
-        let frame = pick(self.frames().await?, a.window.as_deref(), a.pid)?;
+        let frame = window::pick(self.frames().await?, a.window.as_deref(), a.pid)?;
         let extras = Extras {
             values: true,
             bounds: true,
             keys: false,
         };
         let tree = self.atspi.tree(frame, extras).await?;
-        let want = norm(&a.name);
-        let pool: Vec<(usize, &Node)> = tree
-            .nodes
-            .iter()
-            .enumerate()
-            .filter(|(_, n)| {
-                a.role
-                    .as_deref()
-                    .is_none_or(|r| r.split('|').any(|r| r == n.role()))
-            })
-            .collect();
-        let exact: Vec<&(usize, &Node)> =
-            pool.iter().filter(|(_, n)| norm(&n.name) == want).collect();
-        let hits = if exact.is_empty() {
-            pool.iter()
-                .filter(|(_, n)| !want.is_empty() && norm(&n.name).contains(&want))
-                .collect()
-        } else {
-            exact
-        };
-        let found: Vec<Value> = hits
-            .iter()
+        let found: Vec<Value> = matches(&tree.nodes, &a.name, a.role.as_deref())
+            .into_iter()
             .take(MAX_FOUND)
-            .map(|(i, n)| node_json((*i, n)))
+            .map(|i| node_json((i, &tree.nodes[i])))
             .collect();
         Ok(json!({"window": frame_json(&tree.frame), "found": found}).to_string())
     }
@@ -385,7 +365,7 @@ impl Desk {
 
     /// The element at the screen point `(x, y)` of a window, with the names and roles above it.
     async fn at(&self, a: AtArgs) -> Result<String, String> {
-        let frame = pick(self.frames().await?, a.window.as_deref(), a.pid)?;
+        let frame = window::pick(self.frames().await?, a.window.as_deref(), a.pid)?;
         let Some(hit) = self.atspi.at_point(&frame.obj, a.x, a.y).await? else {
             return Ok(json!({"found": null, "window": frame_json(&frame)}).to_string());
         };
@@ -409,7 +389,7 @@ impl Desk {
             return;
         };
         let _ = tokio::time::timeout(TYPE_SETTLE, async {
-            let frame = pick(self.frames().await?, None, None)?;
+            let frame = window::pick(self.frames().await?, None, None)?;
             let tree = self.atspi.tree(frame, Extras::default()).await?;
             let Some((obj, ifaces)) = tree
                 .nodes
@@ -455,6 +435,38 @@ impl Desk {
                 Err(e)
             }
         }
+    }
+}
+
+impl Window for Frame {
+    fn title(&self) -> &str {
+        &self.name
+    }
+
+    fn active(&self) -> bool {
+        Frame::active(self)
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.pid
+    }
+
+    fn listed(&self) -> bool {
+        FRAME_ROLES.contains(&self.role)
+    }
+
+    fn focusable(&self) -> bool {
+        self.role != WINDOW_ROLE || !self.name.is_empty()
+    }
+}
+
+impl Named for Node {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn role(&self) -> &str {
+        Node::role(self)
     }
 }
 
@@ -649,17 +661,6 @@ fn text_of(v: &Value) -> String {
         .join("\n")
 }
 
-/// Lower case without the punctuation that labels add: underscores, ellipses, a trailing colon.
-fn norm(s: &str) -> String {
-    let s = s.to_lowercase().replace(['_', '…'], "").replace("...", "");
-    let s = s.trim().trim_end_matches(':');
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
-    serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
-}
-
 /// `cocoonbox-agent desk VERB [key=value ...|JSON]`: calls the toolhost's `desk_VERB` and prints its result.
 pub async fn cli(args: Vec<String>) -> u8 {
     let Some((verb, rest)) = args.split_first() else {
@@ -694,197 +695,6 @@ pub async fn cli(args: Vec<String>) -> u8 {
         Err(e) => {
             eprintln!("desk {verb}: {e}");
             1
-        }
-    }
-}
-
-/// One JSON object, or `key=value` pairs whose values parse as JSON when they can.
-fn cli_args(rest: &[String]) -> Result<Value, String> {
-    if let [one] = rest
-        && one.trim_start().starts_with('{')
-    {
-        return serde_json::from_str(one).map_err(|e| format!("arguments: {e}"));
-    }
-    let mut args = Map::new();
-    for pair in rest {
-        let (k, v) = pair
-            .split_once('=')
-            .ok_or_else(|| format!("{pair:?} is not key=value"))?;
-        let v = serde_json::from_str(v).unwrap_or_else(|_| Value::String(v.to_owned()));
-        args.insert(k.to_owned(), v);
-    }
-    Ok(Value::Object(args))
-}
-
-#[derive(Deserialize)]
-struct SnapArgs {
-    #[serde(default)]
-    window: Option<String>,
-    #[serde(default)]
-    id: Option<String>,
-    #[serde(default)]
-    pid: Option<u32>,
-    #[serde(default)]
-    text: bool,
-    #[serde(default)]
-    keys: bool,
-    #[serde(default)]
-    bounds: Option<bool>,
-    #[serde(default)]
-    max_chars: Option<usize>,
-}
-
-#[derive(Deserialize)]
-struct FindArgs {
-    name: String,
-    #[serde(default)]
-    role: Option<String>,
-    #[serde(default)]
-    window: Option<String>,
-    #[serde(default)]
-    pid: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct ReadArgs {
-    id: String,
-    #[serde(default)]
-    text: bool,
-}
-
-#[derive(Deserialize)]
-struct IdArgs {
-    id: String,
-}
-
-#[derive(Deserialize)]
-struct ActArgs {
-    id: String,
-    action: String,
-}
-
-#[derive(Deserialize)]
-struct AtArgs {
-    x: i32,
-    y: i32,
-    #[serde(default)]
-    window: Option<String>,
-    #[serde(default)]
-    pid: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct KeyArgs {
-    keys: String,
-}
-
-#[derive(Deserialize)]
-struct TypeArgs {
-    text: String,
-}
-
-#[derive(Deserialize)]
-struct ClickArgs {
-    x: f64,
-    y: f64,
-    #[serde(default)]
-    button: Option<String>,
-    #[serde(default)]
-    count: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct WindowArgs {
-    window: String,
-    #[serde(default)]
-    pid: Option<u32>,
-}
-
-#[derive(Deserialize)]
-struct LaunchArgs {
-    app: String,
-}
-
-#[derive(Deserialize)]
-struct ShotArgs {
-    #[serde(default)]
-    x: Option<f64>,
-    #[serde(default)]
-    y: Option<f64>,
-    #[serde(default)]
-    w: Option<f64>,
-    #[serde(default)]
-    h: Option<f64>,
-    #[serde(default)]
-    path: Option<String>,
-}
-
-/// The window named `want` (by [`title_matches`] tiers), else the focused one; among equals the active one, else the newest.
-fn pick(frames: Vec<Frame>, want: Option<&str>, pid: Option<u32>) -> Result<Frame, String> {
-    let frames: Vec<Frame> = frames
-        .into_iter()
-        .filter(|f| FRAME_ROLES.contains(&f.role) && pid.is_none_or(|p| f.pid == Some(p)))
-        .collect();
-    let best = |c: Vec<&Frame>| {
-        c.iter()
-            .rev()
-            .find(|f| f.active())
-            .or_else(|| c.last())
-            .map(|f| (*f).clone())
-    };
-    let Some(want) = want else {
-        let active: Vec<&Frame> = frames
-            .iter()
-            .filter(|f| f.active() && (f.role != WINDOW_ROLE || !f.name.is_empty()))
-            .collect();
-        return best(active).ok_or_else(|| "no focused window".to_owned());
-    };
-    for tier in 0..TITLE_TIERS {
-        let hits: Vec<&Frame> = frames
-            .iter()
-            .filter(|f| title_matches(tier, &f.name, want))
-            .collect();
-        if let Some(f) = best(hits) {
-            return Ok(f);
-        }
-    }
-    app_window(&frames, want)
-}
-
-/// Whether window title `title` matches `want` at `tier`: 0 the same, 1 the same ignoring case and outer
-/// spaces, 2 containing it ignoring case.
-fn title_matches(tier: usize, title: &str, want: &str) -> bool {
-    let lower = want.trim().to_lowercase();
-    match tier {
-        0 => title == want,
-        1 => title.trim().to_lowercase() == lower,
-        _ => title.to_lowercase().contains(&lower),
-    }
-}
-
-/// The window whose title ends with the app part of `want`, such as ` - Thunar` of `inbox - Thunar`:
-/// the only one, else the active one among several; more than one and none active is an error naming them.
-fn app_window(frames: &[Frame], want: &str) -> Result<Frame, String> {
-    let lower = want.trim().to_lowercase();
-    let app = TITLE_SEPARATORS
-        .iter()
-        .filter_map(|s| lower.rfind(s))
-        .max()
-        .map(|i| &lower[i..]);
-    let hits: Vec<&Frame> = frames
-        .iter()
-        .filter(|f| app.is_some_and(|app| f.name.trim_end().to_lowercase().ends_with(app)))
-        .collect();
-    let active: Vec<&Frame> = hits.iter().copied().filter(|f| f.active()).collect();
-    match (hits.as_slice(), active.as_slice()) {
-        ([one], _) | (_, [one]) => Ok(Frame::clone(one)),
-        ([], _) => {
-            let names: Vec<&str> = frames.iter().map(|f| f.name.as_str()).collect();
-            Err(format!("no window {want:?}; windows: {names:?}"))
-        }
-        _ => {
-            let names: Vec<&str> = hits.iter().map(|f| f.name.as_str()).collect();
-            Err(format!("no window {want:?}; windows of its app: {names:?}"))
         }
     }
 }
@@ -962,17 +772,6 @@ pub fn outline(nodes: &[Node], max_chars: usize) -> String {
     out
 }
 
-fn quote(s: &str, max: usize) -> String {
-    let cut: String = s.chars().take(max).collect();
-    cut.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-}
-
-fn ms(us: u128) -> Value {
-    json!((us as f64 / 100.0).round() / 10.0)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -999,25 +798,29 @@ mod tests {
             frame("xfce4-panel", 35, true, 3),
         ];
         assert_eq!(
-            pick(frames.clone(), None, None).unwrap().name,
+            window::pick(frames.clone(), None, None).unwrap().name,
             "Mousepad Preferences"
         );
         assert_eq!(
-            pick(frames.clone(), Some("settings"), None).unwrap().name,
+            window::pick(frames.clone(), Some("settings"), None)
+                .unwrap()
+                .name,
             "Settings"
         );
         assert_eq!(
-            pick(frames.clone(), Some("Mousepad"), None).unwrap().name,
-            "Mousepad Preferences"
-        );
-        assert_eq!(
-            pick(frames.clone(), Some("Mousepad"), Some(7))
+            window::pick(frames.clone(), Some("Mousepad"), None)
                 .unwrap()
                 .name,
             "Mousepad Preferences"
         );
-        assert!(pick(frames.clone(), Some("Mousepad"), Some(9)).is_err());
-        assert!(pick(frames, Some("xfce4-panel"), None).is_err());
+        assert_eq!(
+            window::pick(frames.clone(), Some("Mousepad"), Some(7))
+                .unwrap()
+                .name,
+            "Mousepad Preferences"
+        );
+        assert!(window::pick(frames.clone(), Some("Mousepad"), Some(9)).is_err());
+        assert!(window::pick(frames, Some("xfce4-panel"), None).is_err());
     }
 
     #[test]
@@ -1028,7 +831,7 @@ mod tests {
             frame("notes.txt - Mousepad", 23, false, 7),
             frame("Mousepad Preferences", 16, false, 7),
         ];
-        let named = |want: &str| pick(frames.clone(), Some(want), None).map(|f| f.name);
+        let named = |want: &str| window::pick(frames.clone(), Some(want), None).map(|f| f.name);
         assert_eq!(named("inbox - Thunar").unwrap(), "docs - Thunar");
         assert_eq!(named("images - Thunar").unwrap(), "images - Thunar");
         assert_eq!(
@@ -1046,7 +849,8 @@ mod tests {
 
     #[test]
     fn a_stale_title_takes_its_app_window_only_when_that_is_unambiguous() {
-        let named = |frames: Vec<Frame>, want: &str| pick(frames, Some(want), None).map(|f| f.name);
+        let named =
+            |frames: Vec<Frame>, want: &str| window::pick(frames, Some(want), None).map(|f| f.name);
         let one = vec![
             frame("images - Thunar", 23, false, 4),
             frame("notes.txt - Mousepad", 23, true, 7),
@@ -1105,32 +909,6 @@ mod tests {
         assert_eq!(key_names("+").unwrap(), ["plus"]);
         assert!(key_names("ctrl+").is_err());
         assert!(key_names("").is_err());
-    }
-
-    #[test]
-    fn names_compare_without_label_punctuation() {
-        assert_eq!(norm("  _Save As...  "), "save as");
-        assert_eq!(norm("Tab width:"), "tab width");
-        assert_eq!(norm("Long  line\tmargin…"), "long line margin");
-    }
-
-    #[test]
-    fn cli_arguments_are_json_or_pairs_with_json_values() {
-        let pairs = cli_args(&[
-            "window=Mousepad Preferences".into(),
-            "text=true".into(),
-            "pid=7".into(),
-        ])
-        .unwrap();
-        assert_eq!(
-            pairs,
-            json!({"window": "Mousepad Preferences", "text": true, "pid": 7})
-        );
-        assert_eq!(
-            cli_args(&[r#"{"id": "1.2/3"}"#.into()]).unwrap(),
-            json!({"id": "1.2/3"})
-        );
-        assert!(cli_args(&["nope".into()]).is_err());
     }
 
     #[test]

@@ -15,7 +15,7 @@ use tokio::process::Command;
 
 use super::cua::Cua;
 use super::files;
-use super::rpc::Output;
+use super::rpc::{self, Output};
 use super::shell::Capture;
 use super::timing;
 use crate::llm::image_mime;
@@ -76,7 +76,7 @@ impl Scripts {
             timeout_s,
             screenshot,
             max_edge,
-        } = serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
+        } = rpc::parse(args)?;
         let script = match (code, script) {
             (Some(code), None) => Script::Code(code),
             (None, Some(path)) => Script::File(files::resolve(workspace, &path)),
@@ -111,7 +111,7 @@ impl Scripts {
             timeout_s,
             screenshot,
             max_edge,
-        } = serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
+        } = rpc::parse(args)?;
         if params.get("flows") == Some(&Value::Bool(true)) {
             let index = Self::flows(workspace).await;
             return Ok(Output::text(if index.trim().is_empty() {

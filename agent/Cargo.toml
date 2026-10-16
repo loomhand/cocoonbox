@@ -17,6 +17,7 @@ aes-gcm = { version = "0.11", features = ["zeroize"] }
 axum = { version = "0.8", default-features = false }
 base64 = "0.23"
 bytes = "1"
+cocoonbox-desk-core = { path = "../desk-core" }
 ed25519-dalek = "3"
 fastcdc = "5"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }

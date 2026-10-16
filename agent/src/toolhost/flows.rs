@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tokio::sync::watch;
 
-use super::files;
+use super::{files, rpc};
 
 /// The largest flow the library takes, in bytes.
 pub const MAX_BYTES: u64 = 128 << 10;
@@ -93,7 +93,7 @@ pub async fn scan(workspace: &Path) -> Result<String, String> {
 
 /// `flows_read {name}`: the flow's text.
 pub async fn read(workspace: &Path, args: Value) -> Result<String, String> {
-    let NameArgs { name } = parse(args)?;
+    let NameArgs { name } = rpc::parse(args)?;
     let path = path_of(workspace, &name)?;
     tokio::fs::read_to_string(&path)
         .await
@@ -102,7 +102,7 @@ pub async fn read(workspace: &Path, args: Value) -> Result<String, String> {
 
 /// `flows_write {name, content}`: replaces the flow through a temporary file, so a reader never sees half of it.
 pub async fn write(workspace: &Path, args: Value) -> Result<String, String> {
-    let WriteArgs { name, content } = parse(args)?;
+    let WriteArgs { name, content } = rpc::parse(args)?;
     let path = path_of(workspace, &name)?;
     let tmp = path.with_file_name(format!(".{name}.sync"));
     files::write_bytes(&tmp, content.as_bytes()).await?;
@@ -114,7 +114,7 @@ pub async fn write(workspace: &Path, args: Value) -> Result<String, String> {
 
 /// `flows_remove {name}`: deletes the flow; a missing one is no error.
 pub async fn remove(workspace: &Path, args: Value) -> Result<String, String> {
-    let NameArgs { name } = parse(args)?;
+    let NameArgs { name } = rpc::parse(args)?;
     let path = path_of(workspace, &name)?;
     match tokio::fs::remove_file(&path).await {
         Ok(()) => Ok(json!({"removed": name}).to_string()),
@@ -127,7 +127,7 @@ pub async fn remove(workspace: &Path, args: Value) -> Result<String, String> {
 
 /// `flows_mark {id}`: the folder's id, first written as `id` into a folder that has none; empty without a folder.
 pub async fn mark(workspace: &Path, args: Value) -> Result<String, String> {
-    let MarkArgs { id } = parse(args)?;
+    let MarkArgs { id } = rpc::parse(args)?;
     let path = dir(workspace).join(MARK);
     match tokio::fs::read_to_string(&path).await {
         Ok(id) => return Ok(id),
@@ -270,10 +270,6 @@ fn path_of(workspace: &Path, name: &str) -> Result<PathBuf, String> {
         return Err(format!("{name:?} is no flow name"));
     }
     Ok(dir(workspace).join(name))
-}
-
-fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
-    serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
 }
 
 #[cfg(test)]

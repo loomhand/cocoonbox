@@ -17,7 +17,7 @@ use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use zeroize::Zeroizing;
 
-use super::timing;
+use super::{rpc, timing};
 use crate::sys;
 
 const LAUNCH_WAIT: Duration = Duration::from_secs(60);
@@ -382,7 +382,7 @@ impl Browser {
     async fn page_tool(&self, cdp: &mut Cdp, tool: &str, args: Value) -> Result<String, String> {
         match tool {
             "browser_navigate" => {
-                let a: NavigateArgs = parse(args)?;
+                let a: NavigateArgs = rpc::parse(args)?;
                 let front = self.plans && a.front;
                 let url = web_url(a.url);
                 if self.plans {
@@ -412,11 +412,11 @@ impl Browser {
                 Ok(title.as_str().unwrap_or_default().to_owned())
             }
             "browser_click" => {
-                let a: RefArgs = parse(args)?;
+                let a: RefArgs = rpc::parse(args)?;
                 cdp.click_ref(&a.element).await
             }
             "browser_fill" if self.plans => {
-                let a: FillArgs = parse(args)?;
+                let a: FillArgs = rpc::parse(args)?;
                 let mut filled = Vec::with_capacity(a.fields.len());
                 for f in &a.fields {
                     let chosen = cdp
@@ -441,7 +441,7 @@ impl Browser {
                 Ok(format!("{out}\n{}", cdp.snapshot(true).await?))
             }
             "browser_type" => {
-                let a: TypeArgs = parse(args)?;
+                let a: TypeArgs = rpc::parse(args)?;
                 if self.plans {
                     let chosen = cdp
                         .eval(&format!(
@@ -469,7 +469,7 @@ impl Browser {
                 ))
             }
             "browser_read" => {
-                let a: ReadArgs = parse(args)?;
+                let a: ReadArgs = rpc::parse(args)?;
                 let arg = a
                     .element
                     .as_deref()
@@ -562,7 +562,7 @@ impl Browser {
 
     /// Reads `url` in a hidden tab, out of every window, and closes the tab.
     async fn fetch(&self, args: Value) -> Result<String, String> {
-        let a: NavigateArgs = parse(args)?;
+        let a: NavigateArgs = rpc::parse(args)?;
         let url = web_url(a.url);
         self.running().await?;
         let mut cdp = self.browser().await?;
@@ -1700,10 +1700,6 @@ fn js_secret(s: &str) -> Zeroizing<String> {
     }
     out.push('"');
     out
-}
-
-fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {
-    serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))
 }
 
 #[cfg(test)]

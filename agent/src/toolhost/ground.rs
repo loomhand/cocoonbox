@@ -11,7 +11,7 @@ use tokio::process::Command;
 
 use super::cua::{self, Cua, libreoffice};
 use super::desk::Desk;
-use super::rpc::Output;
+use super::rpc::{self, Output};
 use super::script::Scripts;
 use super::timing;
 
@@ -85,8 +85,7 @@ pub async fn act(
     args: Value,
 ) -> Result<Output, String> {
     let k = cua.screenshot_scale(&args);
-    let a: TargetArgs =
-        serde_json::from_value(args).map_err(|e| format!("invalid arguments: {e}"))?;
+    let a: TargetArgs = rpc::parse(args)?;
     let press = match a.action.as_str() {
         "click" => true,
         "locate" => false,

@@ -264,6 +264,7 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bytes",
+ "cocoonbox-desk-core",
  "ed25519-dalek",
  "fastcdc",
  "futures-util",
@@ -293,6 +294,16 @@ dependencies = [
  "zbus",
  "zeroize",
  "zstd",
+]
+
+[[package]]
+name = "cocoonbox-desk-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "zeroize",
 ]
 
 [[package]]
