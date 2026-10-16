@@ -42,25 +42,6 @@ public enum OffloadKind: String, CaseIterable, Codable, Sendable {
         return "BROWSER=true NO_OPEN_BROWSER=1 \(command)"
     }
 
-    // resume continues the newest conversation of the CLI in the working directory, on the Mac.
-    public var resume: String {
-        switch self {
-        case .claude: "claude --continue"
-        case .codex: "codex resume --last"
-        case .cursor: "cursor-agent resume"
-        }
-    }
-
-    // probe prints `version` and exits 10 when the CLI is missing, 11 when it is signed out.
-    public var probe: String {
-        let status = switch self {
-        case .claude: "claude auth status"
-        case .codex: "codex login status"
-        case .cursor: "cursor-agent status"
-        }
-        return "command -v \(executable) >/dev/null || exit 10; \(executable) --version; \(status) >/dev/null 2>&1 || exit 11"
-    }
-
     // current is the kind of the coding agent this process runs under; only Claude Code says so.
     public static func current(_ environment: [String: String]) -> OffloadKind? {
         environment["CLAUDECODE"] == "1" ? .claude : nil

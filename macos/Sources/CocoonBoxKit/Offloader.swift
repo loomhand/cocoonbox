@@ -363,7 +363,7 @@ public struct Offloader: Sendable {
 
     public func read(_ key: String, since: UInt64, wait: Int? = nil) async throws -> ([OutboxEntry], String) {
         let reply = try await verb(["read", "--repo", key, "--since", String(since)] + (wait.map { ["--wait", String($0)] } ?? []))
-        let status = reply["status"] as? String ?? (reply["status"] as? [String: Any])?["status"] as? String ?? ""
+        let status = reply["status"] as? String ?? ""
         return ((reply["entries"] as? [[String: Any]] ?? []).map(OutboxEntry.init), status)
     }
 
@@ -384,13 +384,6 @@ public struct Offloader: Sendable {
     }
 
     // MARK: box CLI
-
-    // probe reports whether kind's CLI is installed and signed in, in the box.
-    public func probe(_ kind: OffloadKind) async throws -> (installed: Bool, signedIn: Bool, version: String) {
-        let (code, out, _) = try await exec(kind.probe)
-        let version = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-        return (code != 10, code == 0, version)
-    }
 
     // run runs a command in the box with no input, passing its output on as it comes.
     public func run(_ command: String, output: @escaping @Sendable (Data) -> Void) async throws -> Int32 {
