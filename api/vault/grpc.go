@@ -13,7 +13,7 @@ import (
 )
 
 func (s *Service) Add(ctx context.Context, req *controlv1.AddKeyRequest) (*controlv1.Key, error) {
-	owner, err := callerID(ctx)
+	owner, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +44,7 @@ func (s *Service) Add(ctx context.Context, req *controlv1.AddKeyRequest) (*contr
 }
 
 func (s *Service) List(ctx context.Context, _ *controlv1.ListKeysRequest) (*controlv1.ListKeysResponse, error) {
-	owner, err := callerID(ctx)
+	owner, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (s *Service) List(ctx context.Context, _ *controlv1.ListKeysRequest) (*cont
 }
 
 func (s *Service) Rotate(ctx context.Context, req *controlv1.RotateKeyRequest) (*controlv1.Key, error) {
-	owner, err := callerID(ctx)
+	owner, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func (s *Service) Rotate(ctx context.Context, req *controlv1.RotateKeyRequest) (
 }
 
 func (s *Service) Delete(ctx context.Context, ref *controlv1.KeyRef) (*controlv1.DeleteKeyResponse, error) {
-	owner, err := callerID(ctx)
+	owner, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -106,14 +106,6 @@ func (s *Service) audit(ctx context.Context, sec *secret, op string) {
 		logger.Error(ctx, err, "write the audit record")
 	}
 	logger.Infof(ctx, "user %s: %s key %s (%s) from %s", sec.owner, op, sec.name, sec.id, actor)
-}
-
-func callerID(ctx context.Context) (string, error) {
-	user := auth.User(ctx)
-	if user == "" {
-		return "", status.Error(codes.Unauthenticated, "missing user")
-	}
-	return user, nil
 }
 
 func keyStatus(ctx context.Context, err error, action string) error {

@@ -122,7 +122,7 @@ func New(backend machines.Machines, defaults Defaults, registry Registry) *Servi
 }
 
 func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*contr
 
 // List returns the caller's boxes, oldest first; a box without a machine is BOX_STATE_UNSPECIFIED.
 func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +273,7 @@ func (s *Service) Hibernate(ctx context.Context, ref *controlv1.BoxRef) (*contro
 
 func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream grpc.ServerStreamingServer[controlv1.OperationEvent]) error {
 	ctx := stream.Context()
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return err
 	}
@@ -495,7 +495,7 @@ func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machin
 
 // ownerOf returns the caller when it owns boxID.
 func (s *Service) ownerOf(ctx context.Context, boxID string) (string, error) {
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -503,13 +503,6 @@ func (s *Service) ownerOf(ctx context.Context, boxID string) (string, error) {
 		return "", ErrNoBox
 	}
 	return user, nil
-}
-
-func callerUser(ctx context.Context) (string, error) {
-	if user := auth.User(ctx); user != "" {
-		return user, nil
-	}
-	return "", status.Error(codes.Unauthenticated, "unauthenticated")
 }
 
 func serviceError(ctx context.Context, logger *log.Fields, err error, action string) error {

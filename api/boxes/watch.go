@@ -7,12 +7,13 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
 func (s *Service) Watch(_ *controlv1.WatchBoxesRequest, stream grpc.ServerStreamingServer[controlv1.ListBoxesResponse]) error {
 	ctx := stream.Context()
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return err
 	}

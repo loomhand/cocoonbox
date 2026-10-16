@@ -88,7 +88,7 @@ func (s *Service) SetWakeSchedule(ctx context.Context, req *controlv1.SetWakeSch
 }
 
 func (s *Service) ListWakeSchedules(ctx context.Context, _ *controlv1.ListWakeSchedulesRequest) (*controlv1.ListWakeSchedulesResponse, error) {
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}

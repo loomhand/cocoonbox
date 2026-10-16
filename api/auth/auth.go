@@ -217,6 +217,13 @@ func User(ctx context.Context) string {
 	return user
 }
 
+func Caller(ctx context.Context) (string, error) {
+	if user := User(ctx); user != "" {
+		return user, nil
+	}
+	return "", status.Error(codes.Unauthenticated, "unauthenticated")
+}
+
 // WithUser returns ctx carrying user, as the interceptors do.
 func WithUser(ctx context.Context, user string) context.Context {
 	return context.WithValue(ctx, userKey{}, user)

@@ -27,7 +27,7 @@ func NewServer(lib *Library) *Server {
 }
 
 func (s *Server) List(ctx context.Context, _ *controlv1.ListFlowsRequest) (*controlv1.ListFlowsResponse, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -43,7 +43,7 @@ func (s *Server) List(ctx context.Context, _ *controlv1.ListFlowsRequest) (*cont
 }
 
 func (s *Server) Export(ctx context.Context, req *controlv1.ExportFlowsRequest) (*controlv1.ExportFlowsResponse, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -69,7 +69,7 @@ func (s *Server) Export(ctx context.Context, req *controlv1.ExportFlowsRequest) 
 }
 
 func (s *Server) Save(ctx context.Context, req *controlv1.SaveFlowsRequest) (*controlv1.SaveFlowsResponse, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func (s *Server) Save(ctx context.Context, req *controlv1.SaveFlowsRequest) (*co
 }
 
 func (s *Server) Delete(ctx context.Context, req *controlv1.DeleteFlowsRequest) (*controlv1.DeleteFlowsResponse, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -100,14 +100,6 @@ func (s *Server) Delete(ctx context.Context, req *controlv1.DeleteFlowsRequest) 
 		return nil, libraryError(ctx, err, "delete flows")
 	}
 	return &controlv1.DeleteFlowsResponse{Deleted: deleted}, nil
-}
-
-func caller(ctx context.Context) (string, error) {
-	user := auth.User(ctx)
-	if user == "" {
-		return "", status.Error(codes.Unauthenticated, "no user on the call")
-	}
-	return user, nil
 }
 
 func libraryError(ctx context.Context, err error, what string) error {

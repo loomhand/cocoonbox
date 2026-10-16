@@ -39,7 +39,7 @@ func New(store Store) *Server {
 }
 
 func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) (*controlv1.ShareSecret, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func (s *Server) Create(ctx context.Context, req *controlv1.CreateShareRequest) 
 }
 
 func (s *Server) List(ctx context.Context, _ *controlv1.ListSharesRequest) (*controlv1.ListSharesResponse, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +71,7 @@ func (s *Server) List(ctx context.Context, _ *controlv1.ListSharesRequest) (*con
 }
 
 func (s *Server) SetWrite(ctx context.Context, req *controlv1.SetShareWriteRequest) (*controlv1.Share, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -84,7 +84,7 @@ func (s *Server) SetWrite(ctx context.Context, req *controlv1.SetShareWriteReque
 }
 
 func (s *Server) Regenerate(ctx context.Context, ref *controlv1.ShareRef) (*controlv1.ShareSecret, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (s *Server) Regenerate(ctx context.Context, ref *controlv1.ShareRef) (*cont
 }
 
 func (s *Server) Revoke(ctx context.Context, ref *controlv1.ShareRef) (*controlv1.RevokeShareResponse, error) {
-	user, err := caller(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -106,13 +106,6 @@ func (s *Server) Revoke(ctx context.Context, ref *controlv1.ShareRef) (*controlv
 	}
 	log.WithFunc("shares.Server.Revoke").Infof(ctx, "user %s revoked share %s", user, ref.GetShareId())
 	return &controlv1.RevokeShareResponse{}, nil
-}
-
-func caller(ctx context.Context) (string, error) {
-	if user := auth.User(ctx); user != "" {
-		return user, nil
-	}
-	return "", status.Error(codes.Unauthenticated, "unauthenticated")
 }
 
 func toShare(sh users.Share) *controlv1.Share {

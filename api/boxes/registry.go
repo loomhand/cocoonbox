@@ -10,6 +10,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -17,7 +18,7 @@ import (
 )
 
 func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}

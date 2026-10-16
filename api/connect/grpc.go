@@ -50,7 +50,7 @@ func (s *Service) Catalog(context.Context, *controlv1.CatalogRequest) (*controlv
 }
 
 func (s *Service) List(ctx context.Context, req *controlv1.ListConnectorsRequest) (*controlv1.ListConnectorsResponse, error) {
-	user, err := callerID(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (s *Service) List(ctx context.Context, req *controlv1.ListConnectorsRequest
 }
 
 func (s *Service) Begin(ctx context.Context, req *controlv1.BeginConnectRequest) (*controlv1.BeginConnectResponse, error) {
-	if _, err := callerID(ctx); err != nil {
+	if _, err := auth.Caller(ctx); err != nil {
 		return nil, err
 	}
 	e := s.entry(req.GetConnectorId())
@@ -77,7 +77,7 @@ func (s *Service) Begin(ctx context.Context, req *controlv1.BeginConnectRequest)
 }
 
 func (s *Service) Disconnect(ctx context.Context, ref *controlv1.ConnectorRef) (*controlv1.DisconnectResponse, error) {
-	user, err := callerID(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (s *Service) Disconnect(ctx context.Context, ref *controlv1.ConnectorRef) (
 }
 
 func (s *Service) SetPolicy(ctx context.Context, req *controlv1.SetPolicyRequest) (*controlv1.Connector, error) {
-	user, err := callerID(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -106,7 +106,7 @@ func (s *Service) SetPolicy(ctx context.Context, req *controlv1.SetPolicyRequest
 }
 
 func (s *Service) Approve(ctx context.Context, req *controlv1.ApproveRequest) (*controlv1.ApproveResponse, error) {
-	user, err := callerID(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +137,7 @@ func (s *Service) Approve(ctx context.Context, req *controlv1.ApproveRequest) (*
 }
 
 func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) (*controlv1.ActivityResponse, error) {
-	user, err := callerID(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) 
 }
 
 func (s *Service) SpendRequests(ctx context.Context, _ *controlv1.SpendRequestsRequest) (*controlv1.SpendRequestsResponse, error) {
-	user, err := callerID(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -319,14 +319,6 @@ func (s *Service) connector(ctx context.Context, g *grant, withTools bool) *cont
 		})
 	}
 	return out
-}
-
-func callerID(ctx context.Context) (string, error) {
-	user := auth.User(ctx)
-	if user == "" {
-		return "", status.Error(codes.Unauthenticated, "missing user")
-	}
-	return user, nil
 }
 
 func grantStatus(err error) error {

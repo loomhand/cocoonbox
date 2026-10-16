@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 )
@@ -21,7 +22,7 @@ func (s *Service) EnableUsage(meter Meter, defaultCap int64) {
 }
 
 func (s *Service) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*controlv1.UsageResponse, error) {
-	user, err := callerUser(ctx)
+	user, err := auth.Caller(ctx)
 	if err != nil {
 		return nil, err
 	}
