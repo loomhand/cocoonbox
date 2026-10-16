@@ -295,7 +295,7 @@ func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Servic
 		door.Handle(flows.DoorPath, flowsDoor)
 		door.Handle(flows.DoorPath+"/", flowsDoor)
 	}
-	srv := &http.Server{Addr: cfg.Connect.BoxListen, Handler: door, ReadHeaderTimeout: readHeaderTimeout}
+	srv := &http.Server{Addr: cfg.Connect.BoxListen, Handler: console.InviteTokenGate(door), ReadHeaderTimeout: readHeaderTimeout}
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()

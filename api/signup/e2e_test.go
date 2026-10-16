@@ -505,6 +505,16 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 		InviteToken signup.InviteToken `json:"invite_token"`
 	}
 	admin.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "dora"}, &minted)
+	minted0 := func() string {
+		t.Helper()
+		var users, tokens, invites, sessions, devices int
+		if err := query(t, e.dsn, `SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM invite_tokens), (SELECT count(*) FROM signup_invites),
+			(SELECT count(*) FROM sessions), (SELECT count(*) FROM user_tokens)`).Scan(&users, &tokens, &invites, &sessions, &devices); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return fmt.Sprint(users, tokens, invites, sessions, devices)
+	}
+	before := minted0()
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/cb/"},
 		{http.MethodGet, "/cb/oauth/authorize"},
@@ -556,6 +566,15 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 		{http.MethodPost, oauth.TokenPath},
 		{http.MethodPost, "/cocoonbox.oauth/register"},
 		{http.MethodGet, "/.well-known/oauth-authorization-server"},
+		{http.MethodGet, "/.well-known/oauth-protected-resource/cocoonbox.mcp"},
+		{http.MethodPost, "/cocoonbox.oauth/revoke"},
+		{http.MethodGet, "/cocoonbox.connect/client-metadata.json"},
+		{http.MethodGet, "/cb/connect"},
+		{http.MethodGet, "/cb/api/connect"},
+		{http.MethodPost, "/cb/api/connect/github/begin"},
+		{http.MethodGet, "/cb/s/ws"},
+		{http.MethodGet, "/cb/agents"},
+		{http.MethodGet, "/cb/keys"},
 	} {
 		var body any
 		if route.method != http.MethodGet {
@@ -564,6 +583,9 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 		if status, _ := e.bearer(t, minted.Token, route.method, route.path, body); status != http.StatusForbidden {
 			t.Errorf("%s %s with an invite token: %d, want 403", route.method, route.path, status)
 		}
+	}
+	if after := minted0(); after != before {
+		t.Errorf("users, invite tokens, invites, sessions, device tokens = %s after the refused calls, %s before; an invite token minted something", after, before)
 	}
 	if status, body := e.bearer(t, "cb_"+strings.Repeat("0", 64), http.MethodPost, "/cocoonbox.mcp/control", map[string]any{}); status != http.StatusOK || body != "reached" {
 		t.Errorf("a request without an invite token passes the gate: %d %q", status, body)
@@ -635,7 +657,7 @@ func newEnv(t *testing.T) *env {
 	}
 	e.github = newFakeGitHub(t)
 	mux := http.NewServeMux()
-	for _, path := range []string{"/cocoonbox.mcp/", "/cocoonbox.connect/", "/cocoonbox.oauth/register", "/.well-known/oauth-authorization-server"} {
+	for _, path := range []string{"/cocoonbox.mcp/", "/cocoonbox.connect/", "/cocoonbox.oauth/register", "/cocoonbox.oauth/revoke", "/.well-known/"} {
 		mux.HandleFunc(path, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("reached")) })
 	}
 	e.srv = httptest.NewTLSServer(console.InviteTokenGate(mux))
