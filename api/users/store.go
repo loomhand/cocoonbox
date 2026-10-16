@@ -177,6 +177,11 @@ func (s *store) remove(ctx context.Context, id string) error {
 	return s.exec(ctx, "DELETE FROM users WHERE id = $1", id)
 }
 
+func (s *store) update(ctx context.Context, r record) error {
+	return s.exec(ctx, `UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0),
+		max_agent_boxes = $7, admin = $8 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes, r.Admin)
+}
+
 func (s *store) setPassword(ctx context.Context, id, hash string) error {
 	return s.exec(ctx, "UPDATE users SET password_hash = $2 WHERE id = $1", id, hash)
 }

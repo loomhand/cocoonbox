@@ -459,8 +459,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			return User{}, fmt.Errorf("set tenant cap: %w", err)
 		}
 	}
-	if err := s.store.exec(ctx, `UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0),
-		max_agent_boxes = $7, admin = $8 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes, r.Admin); err != nil {
+	if err := s.store.update(ctx, r); err != nil {
 		return User{}, err
 	}
 	if r.Disabled && !old.Disabled {
@@ -520,8 +519,7 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 // RegenerateToken gives user id a new API token, returned once; the old one stops working at once.
 func (s *Service) RegenerateToken(ctx context.Context, id string) (string, error) {
 	token := TokenPrefix + randomHex(secretBytes)
-	sum := sha256.Sum256([]byte(token))
-	if err := s.SetTokenSHA256(ctx, id, hex.EncodeToString(sum[:])); err != nil {
+	if err := s.SetTokenSHA256(ctx, id, hashHex(token)); err != nil {
 		return "", err
 	}
 	return token, nil
