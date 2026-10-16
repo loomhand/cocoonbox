@@ -101,7 +101,8 @@ and take the default box the app sets.
 let arguments = Array(CommandLine.arguments.dropFirst())
 let command = arguments.first ?? "help"
 let flags = Set(arguments.dropFirst().filter { $0.hasPrefix("--") })
-let words = arguments.dropFirst().filter { !$0.hasPrefix("--") }
+let valuedFlags: Set = ["--awake-for", "--box", "--cron", "--days", "--dir", "--endpoint", "--handover", "--invite", "--kind", "--token", "--token-file", "--tz", "--wait"]
+let words = positional(arguments.dropFirst())
 
 // rsh exits 255 on its own failures, so they differ from the command's exit codes.
 let failureStatus: Int32 = command == "rsh" ? 255 : 1
@@ -1059,11 +1060,15 @@ func offloadKey(inFlight: Bool = false) -> String {
 
 // positional is the words after sub that are neither options nor their values.
 func positional(after sub: String) -> [String] {
+    positional(arguments.drop { $0 != sub }.dropFirst())
+}
+
+func positional(_ arguments: ArraySlice<String>) -> [String] {
     var words: [String] = []
-    var rest = arguments.drop { $0 != sub }.dropFirst()[...]
+    var rest = arguments
     while let word = rest.first {
         rest = rest.dropFirst()
-        if ["--box", "--dir", "--endpoint", "--wait", "--kind", "--handover", "--cron", "--tz", "--awake-for"].contains(word) {
+        if valuedFlags.contains(word) {
             rest = rest.dropFirst()
         } else if !word.hasPrefix("--") {
             words.append(word)
