@@ -2,6 +2,15 @@
 # apt hook: lists the packages installed by hand beyond the image baseline in the desktop user's package file
 set -eu
 base=/etc/cocoonbox/packages.baseline
+pending=/etc/cocoonbox/packages.pending
 [ -f "$base" ] || exit 0
-apt-mark showmanual | LC_ALL=C sort -u | LC_ALL=C comm -23 - "$base" |
+keep=""
+if [ -f "$pending" ]; then
+	for p in $(cat "$pending"); do
+		[ "$(dpkg-query -W -f='${db:Status-Status}' "$p" 2>/dev/null)" = installed ] || keep="$keep $p"
+	done
+	printf '%s\n' $keep | grep . > "$pending.tmp" || true
+	mv -f "$pending.tmp" "$pending"
+fi
+{ apt-mark showmanual; printf '%s\n' $keep; } | grep . | LC_ALL=C sort -u | LC_ALL=C comm -23 - "$base" |
 	runuser -u user -- sh -c 'd=/home/user/.config/cocoonbox; mkdir -p "$d" && cat > "$d/.packages.tmp" && mv -f "$d/.packages.tmp" "$d/packages"'
