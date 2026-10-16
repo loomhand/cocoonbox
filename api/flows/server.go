@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc/codes"
@@ -46,7 +47,7 @@ func (s *Server) Export(ctx context.Context, req *controlv1.ExportFlowsRequest) 
 	if err != nil {
 		return nil, err
 	}
-	names := req.GetNames()
+	names := slices.Compact(slices.Sorted(slices.Values(req.GetNames())))
 	if len(names) == 0 {
 		_, entries, err := s.lib.List(ctx, user)
 		if err != nil {

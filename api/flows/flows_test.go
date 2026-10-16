@@ -175,6 +175,9 @@ func TestServerExportsAndImportsTheCallersFlowsOnly(t *testing.T) {
 	if err != nil || len(exported.GetFlows()) != 1 || string(exported.GetFlows()[0].GetContent()) != `{"v":1}` {
 		t.Fatalf("Export = %v, %v", exported, err)
 	}
+	if again, err := srv.Export(alice, &controlv1.ExportFlowsRequest{Names: slices.Repeat([]string{"save.json"}, 3)}); err != nil || len(again.GetFlows()) != 1 {
+		t.Errorf("Export of one name sent 3 times = %v, %v", again, err)
+	}
 	if _, err := srv.Export(alice, &controlv1.ExportFlowsRequest{Names: []string{"none.json"}}); status.Code(err) != codes.NotFound {
 		t.Errorf("Export of a missing flow: %v", err)
 	}
