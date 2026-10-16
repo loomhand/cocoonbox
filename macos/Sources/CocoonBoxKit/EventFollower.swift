@@ -21,8 +21,8 @@ public struct Backoff: Sendable {
     }
 
     public func delay(attempt: Int) -> Duration {
-        let scaled = initial * pow(multiplier, Double(Swift.max(0, attempt)))
-        return Swift.min(scaled, max)
+        let factor = pow(multiplier, Double(Swift.max(0, attempt)))
+        return factor < max / initial ? initial * factor : max
     }
 }
 

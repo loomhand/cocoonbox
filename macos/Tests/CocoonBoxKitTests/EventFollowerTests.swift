@@ -89,6 +89,15 @@ final class Script: Sendable {
         ])
     }
 
+    @Test func delaySaturatesAtTheCapForAnyAttempt() {
+        let backoff = Backoff()
+        #expect([0, 1, 70, 1000, Int.max].map(backoff.delay) == [
+            .milliseconds(250), .milliseconds(500), .seconds(10), .seconds(10), .seconds(10),
+        ])
+        let delays = (0...100).map(backoff.delay)
+        #expect(zip(delays, delays.dropFirst()).allSatisfy { $0 <= $1 })
+    }
+
     @Test func outOfWindowOffsetRestartsFromLive() async {
         let script = Script([
             { _, _ in throw RPCError(code: .outOfRange, message: "offset 42 is outside the replay window") },
