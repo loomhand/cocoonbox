@@ -20,7 +20,7 @@ use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entr
 use crate::route::Router;
 use crate::secrets::SECRETS;
 use crate::store::Store;
-use crate::{computer, flows, lock, new_id, prompts, route, tools};
+use crate::{Preempt, computer, flows, lock, new_id, prompts, route, tools};
 
 const QUEUE_DEPTH: usize = 32;
 const DOOR_ANSWERS: usize = 64;
@@ -1139,22 +1139,6 @@ async fn worker(
         let _turn = slot.turn.lock().await;
         let turn = rt.run_turn(&agent_id, Arc::clone(&slot), turn_id);
         rt.tasks.track_future(turn).await;
-    }
-}
-
-/// Hands out tokens that one [`Preempt::fire`] cancels together.
-#[derive(Default)]
-pub struct Preempt(Mutex<CancellationToken>);
-
-impl Preempt {
-    /// The token the next [`Preempt::fire`] cancels.
-    pub fn token(&self) -> CancellationToken {
-        lock(&self.0).clone()
-    }
-
-    /// Cancels every token handed out so far; later tokens are fresh.
-    pub fn fire(&self) {
-        std::mem::take(&mut *lock(&self.0)).cancel();
     }
 }
 

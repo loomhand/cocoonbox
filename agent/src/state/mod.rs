@@ -17,11 +17,10 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, OnceCell, OwnedRwLockWriteGuard, RwLock, Semaphore, mpsc};
 
-use crate::pb;
-use crate::runner::Preempt;
 use crate::store::Store;
 use crate::toolhost::rpc::{self, Call, FileReader, FileWriter};
 use crate::toolhost::state::{Entry, Excludes, Kind, Listed, Root, SQLITE_MAGIC};
+use crate::{Preempt, pb};
 use crypto::Keys;
 use manifest::{Blob, FileRecord, Manifest};
 
