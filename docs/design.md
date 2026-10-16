@@ -549,7 +549,7 @@ Hot-path cost against today's direct h2c to the pod IP:
 
 ### 14.5 Provisioning on sandboxd: `Deliver`, gw key, identity, meta
 
-The service layer computes each incarnation's identity and hands it to the backend with `Deliver(ctx, id, machines.Identity, gwKey)`. It never gets a root exec into the guest and never knows guest paths or scripts. The sandboxd backend implements the same interface:
+The service layer computes each incarnation's identity and hands it to the backend with `Deliver(ctx, id, machines.Identity, keys)`, where `keys` are the gw key and the door key as named host-only secrets. It never gets a root exec into the guest and never knows guest paths or scripts. The sandboxd backend implements the same interface:
 
 | `machines` | sandboxd |
 |---|---|
@@ -941,8 +941,8 @@ Left out: the api side, the precheck, notices.
 
 Scope:
 - New `api/boxes/routines.go`: `RunAlarms(ctx, cfg)`, a min-heap of `{box, next_wake_at_ms}` in the service layer. `main.go` starts it next to `RunScheduler` (:198).
-- `RoutineAgents` is an interface beside `StateAgents` (`statelayer.go:25-29`). The dialer implements it as a sibling of `state(ep)` (`dialer/dialer.go:90-107`), on the same connection cache.
-- Routines need the state layer. The dialer is built only when `state.bucket` is set (`main.go:71-77`), and the notices of 9d live in the store, so `validate` refuses `routines` without the state layer.
+- `RoutineAgents` is an interface beside `StateAgents`. The dialer implements it as a sibling of `Dialer.state`, on the shared `dialer.Pool`.
+- Routines need the state layer. The dialer is built only when `state.bucket` is set (`enableState` in `main.go`), and the notices of 9d live in the store, so `validate` refuses `routines` without the state layer.
 - **Per-box record** `<box>/proactive.json` in the state store, written only by the api through `putJSON` and `getJSON` (`statelayer.go:359-376`):
   - fields: `next_wake_at_ms`, `paused`, the day counters, `last_seen_ms` and the away state;
   - at start, the api rebuilds the heap from `machines.List("")` and these objects;
@@ -996,7 +996,7 @@ Scope:
   - The summary has at most 140 characters.
   - The model writes it as the run's last line; the agent writes it for failures.
 - **api:**
-  - Notices live in `<user>/boxes/<box>/notices.json`, encrypted with AES-256-GCM under the user's state key (`keyring.Keyring.StateKey`, §22.5). The api has no cipher today, so this is new code in `boxes`.
+  - Notices live in `<user>/boxes/<box>/notices.json`, encrypted with AES-256-GCM under the user's state key (`keyring.Keyring.StateKey`, §22.5). They are sealed with `keyring.Sealer` under an `Info` string of their own.
   - They are kept 7 days, and the api is the only writer.
   - `ListNotices`, `WatchNotices` and `DismissNotice` serve them.
   - The api adds its own notices for what only it sees: a box that did not wake, a run stopped at the api's guard (15.10).
