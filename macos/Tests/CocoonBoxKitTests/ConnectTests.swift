@@ -82,6 +82,8 @@ import Testing
 
         let running = try await BridgeClient(mock, box: "core1")
         #expect(running.instructions == Bridge.instructions + " The default box's own instructions follow. Mock cbcore box: write one script with script_run for a multi-step task.")
+        let prefix = running.instructions.count - "Mock cbcore box: write one script with script_run for a multi-step task.".count
+        #expect(prefix <= 384, "\(prefix) chars: docs/contracts.md budgets 384 for the bridge prefix and 1664 for the box under Claude Code's 2048 cap")
         _ = try await running.tool("box_hibernate", ["box": "core1"])
         running.close()
         let hibernated = try await BridgeClient(mock, box: "core1")

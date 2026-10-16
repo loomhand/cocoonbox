@@ -4031,10 +4031,14 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
         machine.starts_with("These tools act on a cloud computer: ") && machine.contains(&version),
         "{machine}"
     );
+    let (_, rest) = instructions.split_once(". ").unwrap();
+    let widest = format!(
+        "These tools act on a cloud computer: Ubuntu 22.04 with the GNOME desktop at 1920x1080. {rest}"
+    );
     assert!(
-        instructions.chars().count() <= 1600,
-        "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",
-        instructions.chars().count()
+        widest.chars().count() <= 1664,
+        "{} chars: docs/contracts.md budgets 1664 for the box and 384 for the bridge prefix under Claude Code's 2048 cap",
+        widest.chars().count()
     );
 }
 

@@ -48,7 +48,7 @@ Prefer shell and file tools, then browser_* (pages as ref-tagged element lists),
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
 const PLAN_HEAD: &str = "Relative file paths resolve under /workspace, and shell is one persistent bash session. \
-The user watches the screen live and sees every call.";
+To click a named element, pass computer_act a target {description} instead of x,y; the box finds it.";
 const ALWAYS_LOAD: &[&str] = &[
     "script_run",
     "gui_plan",
