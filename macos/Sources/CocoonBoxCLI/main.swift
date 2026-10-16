@@ -182,8 +182,7 @@ func appToken(_ endpoint: Endpoint) -> String? {
     return token
 }
 
-func connection() -> BoxConnection {
-    let endpoint = endpoint()
+func connection(_ endpoint: Endpoint = endpoint()) -> BoxConnection {
     do {
         return try BoxConnection(endpoint: endpoint, token: token(endpoint))
     } catch {
@@ -208,6 +207,10 @@ func stateName(_ state: Cocoonbox_Control_V1_BoxState) -> String {
 func selectedBox(_ connection: BoxConnection) async throws -> Cocoonbox_Control_V1_Box? {
     let boxes = try await connection.listBoxes()
     guard let ref = value(of: "--box") else { return boxes.first }
+    return box(ref, in: boxes)
+}
+
+func box(_ ref: String, in boxes: [Cocoonbox_Control_V1_Box]) -> Cocoonbox_Control_V1_Box {
     guard let box = boxes.first(where: { $0.id == ref || $0.name == ref }) else { fail("you have no box \(ref)") }
     return box
 }
@@ -336,13 +339,9 @@ func scheduleCommand() async {
     do {
         let boxes = try await connection.listBoxes()
         let names = Dictionary(boxes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
-        func box(_ ref: String) -> Cocoonbox_Control_V1_Box {
-            guard let box = boxes.first(where: { $0.id == ref || $0.name == ref }) else { fail("you have no box \(ref)") }
-            return box
-        }
         switch action {
         case "set":
-            let target = box(args[1])
+            let target = box(args[1], in: boxes)
             guard let cron = value(of: "--cron"), let tz = value(of: "--tz") else { fail(scheduleUsage) }
             var awakeFor: UInt32 = 0
             if let text = value(of: "--awake-for") {
@@ -352,7 +351,7 @@ func scheduleCommand() async {
             let schedule = try await connection.setWakeSchedule(boxID: target.id, cron: cron, tz: tz, awakeForSeconds: awakeFor)
             json ? printJSON(scheduleObject(schedule, name: target.name)) : print(scheduleLine(schedule, name: target.name))
         case "clear":
-            let target = box(args[1])
+            let target = box(args[1], in: boxes)
             try await connection.clearWakeSchedule(boxID: target.id)
             json ? printJSON(["box_id": target.id, "name": target.name, "cleared": true]) : print("cleared the wake schedule of \(target.name)")
         default:
@@ -933,13 +932,7 @@ func rsh() async {
         options[option] = rest[rest.index(after: rest.startIndex)]
         rest = rest.dropFirst(2)
     }
-    let endpoint = endpoint(options["--endpoint"])
-    let connection: BoxConnection
-    do {
-        connection = try BoxConnection(endpoint: endpoint, token: token(endpoint))
-    } catch {
-        fail("\(error)")
-    }
+    let connection = connection(endpoint(options["--endpoint"]))
     var words = Array(rest)
     do {
         let boxes = try await connection.listBoxes()
@@ -949,8 +942,7 @@ func rsh() async {
         }
         var box: Cocoonbox_Control_V1_Box
         if let ref = options["--box"] {
-            guard let pinned = boxes.first(where: { $0.id == ref || $0.name == ref }) else { fail("you have no box \(ref)") }
-            box = pinned
+            box = CocoonBoxCLI.box(ref, in: boxes)
             if let host = words.first, host.split(separator: "@").last == "box" || named(host) != nil { words.removeFirst() }
         } else {
             guard let host = words.first, let hosted = named(host) else { fail("name the box with --box or as the host\n\(rshUsage)") }
@@ -1041,7 +1033,7 @@ func offloader(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) -> 
 // runningBox is the box ref names, else the first box, woken when it does not run.
 func runningBox(_ connection: BoxConnection, _ ref: String?) async throws -> Cocoonbox_Control_V1_Box {
     let boxes = try await connection.listBoxes()
-    guard let box = ref.map({ ref in boxes.first { $0.id == ref || $0.name == ref } }) ?? boxes.first else { fail(ref.map { "you have no box \($0)" } ?? "no box yet") }
+    guard let box = ref.map({ CocoonBoxCLI.box($0, in: boxes) }) ?? boxes.first else { fail("no box yet") }
     guard box.state != .running else { return box }
     FileHandle.standardError.write(Data("cocoonbox: waking \(box.name)\n".utf8))
     let response = try await connection.ensure(boxID: box.id)
@@ -1076,12 +1068,6 @@ func positional(_ arguments: ArraySlice<String>) -> [String] {
     }
     return words
 }
-
-func printJSON(_ object: [String: Any]) {
-    let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
-    print(String(decoding: data, as: UTF8.self))
-}
-
 func findingObjects(_ findings: [Finding]) -> [[String: String]] {
     findings.map { ["check": $0.check, "outcome": $0.outcome.rawValue, "detail": $0.detail] }
 }
