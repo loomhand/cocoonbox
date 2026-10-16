@@ -19,6 +19,8 @@ import (
 
 	"github.com/projecteru2/core/log"
 	"golang.org/x/sync/errgroup"
+
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 )
 
 const (
@@ -108,14 +110,14 @@ func (s *Service) doorTools(ctx context.Context, c caller) ([]map[string]jsontex
 func (s *Service) doorCall(ctx context.Context, c caller, name string, args jsontext.Value, approvalID string) (any, error) {
 	connector, toolName, ok := strings.Cut(name, "_")
 	if !ok || !connectorPattern.MatchString(connector) {
-		return nil, &rpcError{Code: codeInvalidParams, Message: "unknown tool: " + name}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + name}
 	}
 	if len(args) == 0 || string(args) == "null" {
 		args = jsontext.Value("{}")
 	}
 	canonical := args.Clone()
 	if err := canonical.Canonicalize(jsontext.CanonicalizeRawInts(false)); err != nil {
-		return nil, &rpcError{Code: codeInvalidParams, Message: "arguments are not valid JSON"}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "arguments are not valid JSON"}
 	}
 	sum := sha256.Sum256(canonical)
 	rec := &record{user: c.user, connector: connector, tool: toolName, door: c.door, caller: c.name, argsSHA256: hex.EncodeToString(sum[:])}
@@ -129,7 +131,7 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 	g, err := s.store.grant(ctx, c.user, connector)
 	if errors.Is(err, errNoGrant) {
 		rec.decision, rec.outcome = policyOff, outcomeError
-		return nil, &rpcError{Code: codeInvalidParams, Message: "unknown tool: " + name}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + name}
 	}
 	if err != nil {
 		rec.outcome = outcomeError
@@ -147,7 +149,7 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 	i := slices.IndexFunc(tools, func(t tool) bool { return t.Name == toolName })
 	if i < 0 {
 		rec.decision, rec.outcome = policyOff, outcomeError
-		return nil, &rpcError{Code: codeInvalidParams, Message: "unknown tool: " + name}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + name}
 	}
 	t := tools[i]
 	switch policy := t.effective(g.policy[t.Name]); {
@@ -183,7 +185,7 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 			outcomeUnknown, s.vendorName(g), err)), nil
 	case err != nil:
 		rec.outcome = outcomeError
-		if rpcErr, ok := errors.AsType[*rpcError](err); ok {
+		if rpcErr, ok := errors.AsType[*mcpwire.Error](err); ok {
 			return nil, rpcErr
 		}
 		return s.failureText(g, err), nil
@@ -465,7 +467,7 @@ func uncertain(err error, ex exchange) bool {
 	if opErr, ok := errors.AsType[*net.OpError](err); ok && opErr.Op == "dial" {
 		return false
 	}
-	_, answered := errors.AsType[*rpcError](err)
+	_, answered := errors.AsType[*mcpwire.Error](err)
 	return ex.status == 0 || ex.status/100 == 5 || (ex.status/100 == 2 && !answered)
 }
 

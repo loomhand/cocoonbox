@@ -17,6 +17,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 )
 
 const (
@@ -149,7 +151,7 @@ func (s *Service) discover(ctx context.Context, mcpURL string, preset client) (*
 
 // challenge sends the MCP server an unauthenticated initialize and reads its WWW-Authenticate answer.
 func (s *Service) challenge(ctx context.Context, mcpURL string) (string, string, error) {
-	body, _ := json.Marshal(rpcRequest{JSONRPC: jsonRPCVersion, ID: 1, Method: methodInitialize, Params: initializeParams()})
+	body, _ := json.Marshal(rpcRequest{JSONRPC: mcpwire.Version, ID: 1, Method: methodInitialize, Params: initializeParams()})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mcpURL, bytes.NewReader(body))
 	if err != nil {
 		return "", "", err

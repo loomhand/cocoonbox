@@ -16,6 +16,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/boxes"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
@@ -207,7 +208,7 @@ type upgradeResult struct {
 }
 
 // call runs one tool as the user in ctx; progress receives each event of the operation it waits on.
-func (s *Server) call(ctx context.Context, call *callParams, progress progressFunc) (*toolResult, *rpcError) {
+func (s *Server) call(ctx context.Context, call *callParams, progress progressFunc) (*toolResult, *mcpwire.Error) {
 	switch call.Name {
 	case "box_list":
 		return withArguments(call.Arguments, &struct{}{}, func() (any, error) { return s.list(ctx) })
@@ -255,7 +256,7 @@ func (s *Server) call(ctx context.Context, call *callParams, progress progressFu
 	case "usage":
 		return withArguments(call.Arguments, &struct{}{}, func() (any, error) { return s.usage(ctx) })
 	default:
-		return nil, &rpcError{Code: codeInvalidParams, Message: "unknown tool: " + call.Name}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "unknown tool: " + call.Name}
 	}
 }
 
@@ -548,12 +549,12 @@ func (w *watchStream) Send(ev *controlv1.OperationEvent) error {
 }
 
 // withArguments decodes raw into dst, refusing names outside the input schema, and runs fn.
-func withArguments(raw json.RawMessage, dst any, fn toolFunc) (*toolResult, *rpcError) {
+func withArguments(raw json.RawMessage, dst any, fn toolFunc) (*toolResult, *mcpwire.Error) {
 	if len(raw) != 0 && string(raw) != "null" {
 		dec := json.NewDecoder(bytes.NewReader(raw))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(dst); err != nil {
-			return nil, &rpcError{Code: codeInvalidParams, Message: "invalid arguments: " + err.Error()}
+			return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}
 		}
 	}
 	out, err := fn()
@@ -562,13 +563,13 @@ func withArguments(raw json.RawMessage, dst any, fn toolFunc) (*toolResult, *rpc
 	case errors.As(err, &refusal):
 		return errorText(refusal.Error()), nil
 	case internal(err):
-		return nil, &rpcError{Code: codeInternal, Message: status.Convert(err).Message()}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: status.Convert(err).Message()}
 	case err != nil:
 		return errorText(status.Convert(err).Message()), nil
 	}
 	data, err := marshal(out)
 	if err != nil {
-		return nil, &rpcError{Code: codeInternal, Message: "encode result"}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "encode result"}
 	}
 	return &toolResult{Content: []textContent{{Type: "text", Text: string(bytes.TrimSpace(data))}}, StructuredContent: out}, nil
 }

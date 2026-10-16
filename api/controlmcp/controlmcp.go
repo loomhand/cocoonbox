@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/debug"
-	"slices"
 	"sync"
 	"time"
 
@@ -19,6 +18,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
@@ -26,21 +26,8 @@ const (
 	// Path is the control MCP endpoint, next to the per-box MCP paths that the edge proxies.
 	Path = "/cocoonbox.mcp/control"
 
-	jsonRPCVersion  = "2.0"
-	fallbackVersion = "2025-11-25"
-	sessionHeader   = "Mcp-Session-Id"
-	revisionLen     = 12
-	maxBody         = 1 << 20
-	keepalive       = 25 * time.Second
-
-	codeParse          = -32700
-	codeInvalidRequest = -32600
-	codeMethodNotFound = -32601
-	codeInvalidParams  = -32602
-	codeInternal       = -32603
+	revisionLen = 12
 )
-
-var protocolVersions = []string{"2025-11-25", "2025-06-18"}
 
 // Grants checks the OAuth access tokens of agents and keeps the boxes each grant created.
 type Grants interface {
@@ -84,16 +71,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	body, err := readBody(w, r)
 	if err != nil {
-		writeFailure(w, http.StatusBadRequest, codeParse, err.Error())
+		writeFailure(w, http.StatusBadRequest, mcpwire.CodeParse, err.Error())
 		return
 	}
 	var req request
 	if err := json.Unmarshal(body, &req); err != nil {
 		if typeErr := (*json.UnmarshalTypeError)(nil); errors.As(err, &typeErr) {
-			writeFailure(w, http.StatusBadRequest, codeInvalidRequest, "expected one JSON-RPC message")
+			writeFailure(w, http.StatusBadRequest, mcpwire.CodeInvalidRequest, "expected one JSON-RPC message")
 			return
 		}
-		writeFailure(w, http.StatusBadRequest, codeParse, "parse error")
+		writeFailure(w, http.StatusBadRequest, mcpwire.CodeParse, "parse error")
 		return
 	}
 	if req.ID == nil {
@@ -110,20 +97,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var (
 		call   callParams
 		result any
-		rpcErr *rpcError
+		rpcErr *mcpwire.Error
 	)
 	defer func() {
 		log.WithFunc("controlmcp.Server.ServeHTTP").Infof(ctx, "%s %s user=%s code=%d in %s",
-			req.Method, cmp.Or(call.Name, "-"), caller, rpcErr.code(), time.Since(start).Round(time.Millisecond))
+			req.Method, cmp.Or(call.Name, "-"), caller, mcpwire.CodeOf(rpcErr), time.Since(start).Round(time.Millisecond))
 	}()
 	switch {
 	case req.Method == "initialize":
-		w.Header().Set(sessionHeader, rand.Text())
+		w.Header().Set(mcpwire.SessionHeader, rand.Text())
 		result = initializeResult(req.Params)
 	case req.Method != "tools/call":
 		result, rpcErr = handle(req.Method)
 	case json.Unmarshal(req.Params, &call) != nil:
-		rpcErr = &rpcError{Code: codeInvalidParams, Message: "invalid tools/call params"}
+		rpcErr = &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid tools/call params"}
 	case call.Meta.ProgressToken != nil:
 		stream := newEventStream(w, call.Meta.ProgressToken)
 		defer stream.close()
@@ -199,26 +186,14 @@ type response struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Result  any             `json:"result,omitempty"`
-	Error   *rpcError       `json:"error,omitempty"`
+	Error   *mcpwire.Error  `json:"error,omitempty"`
 }
 
-func newResponse(id json.RawMessage, result any, rpcErr *rpcError) response {
+func newResponse(id json.RawMessage, result any, rpcErr *mcpwire.Error) response {
 	if rpcErr != nil {
-		return response{JSONRPC: jsonRPCVersion, ID: id, Error: rpcErr}
+		return response{JSONRPC: mcpwire.Version, ID: id, Error: rpcErr}
 	}
-	return response{JSONRPC: jsonRPCVersion, ID: id, Result: result}
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func (e *rpcError) code() int {
-	if e == nil {
-		return 0
-	}
-	return e.Code
+	return response{JSONRPC: mcpwire.Version, ID: id, Result: result}
 }
 
 type notification struct {
@@ -256,7 +231,7 @@ func newEventStream(w http.ResponseWriter, token json.RawMessage) *eventStream {
 func (e *eventStream) progress(message string) {
 	e.sent++
 	e.send(notification{
-		JSONRPC: jsonRPCVersion,
+		JSONRPC: mcpwire.Version,
 		Method:  "notifications/progress",
 		Params:  progressParams{ProgressToken: e.token, Progress: e.sent, Message: message},
 	})
@@ -267,7 +242,7 @@ func (e *eventStream) send(msg any) {
 	if err != nil {
 		return
 	}
-	e.write(fmt.Appendf(nil, "event: message\ndata: %s\n\n", bytes.TrimSpace(data)))
+	e.write(mcpwire.Event(bytes.TrimSpace(data)))
 }
 
 func (e *eventStream) close() {
@@ -277,7 +252,7 @@ func (e *eventStream) close() {
 
 // keepalive writes an SSE comment while a long operation reports nothing, so idle proxies keep the stream.
 func (e *eventStream) keepalive() {
-	ticker := time.NewTicker(keepalive)
+	ticker := time.NewTicker(mcpwire.Keepalive)
 	defer ticker.Stop()
 	for {
 		select {
@@ -302,10 +277,7 @@ func initializeResult(params json.RawMessage) map[string]any {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
 	_ = json.Unmarshal(params, &req)
-	version := fallbackVersion
-	if slices.Contains(protocolVersions, req.ProtocolVersion) {
-		version = req.ProtocolVersion
-	}
+	version := mcpwire.Negotiate(req.ProtocolVersion)
 	var settings []debug.BuildSetting
 	if info, ok := debug.ReadBuildInfo(); ok {
 		settings = info.Settings
@@ -339,28 +311,28 @@ func buildVersion(settings []debug.BuildSetting) string {
 }
 
 // handle answers the methods other than initialize and tools/call.
-func handle(method string) (any, *rpcError) {
+func handle(method string) (any, *mcpwire.Error) {
 	switch method {
 	case "ping":
 		return struct{}{}, nil
 	case "tools/list":
 		return map[string]any{"tools": toolSpecs}, nil
 	default:
-		return nil, &rpcError{Code: codeMethodNotFound, Message: "method not found: " + method}
+		return nil, &mcpwire.Error{Code: mcpwire.CodeMethodNotFound, Message: "method not found: " + method}
 	}
 }
 
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	var buf bytes.Buffer
-	_, err := buf.ReadFrom(http.MaxBytesReader(w, r.Body, maxBody))
+	_, err := buf.ReadFrom(http.MaxBytesReader(w, r.Body, mcpwire.MaxBody))
 	if maxErr := (*http.MaxBytesError)(nil); errors.As(err, &maxErr) {
-		return nil, fmt.Errorf("body exceeds %d bytes", maxBody)
+		return nil, fmt.Errorf("body exceeds %d bytes", mcpwire.MaxBody)
 	}
 	return buf.Bytes(), err
 }
 
 func writeFailure(w http.ResponseWriter, httpStatus, code int, message string) {
-	writeJSON(w, httpStatus, response{JSONRPC: jsonRPCVersion, Error: &rpcError{Code: code, Message: message}})
+	writeJSON(w, httpStatus, response{JSONRPC: mcpwire.Version, Error: &mcpwire.Error{Code: code, Message: message}})
 }
 
 func writeJSON(w http.ResponseWriter, httpStatus int, body any) {

@@ -11,36 +11,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
+
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 )
 
 const (
 	// MCPPath is the mode B door, next to the control MCP on the edge's MCP listener.
 	MCPPath = "/cocoonbox.mcp/connect"
 
-	fallbackVersion = "2025-11-25"
-	maxRequestBody  = 1 << 20
-	keepalive       = 25 * time.Second
-	sessionTTL      = 24 * time.Hour
-	maxClientName   = 64
-	answersQueued   = 8
-
-	codeParse          = -32700
-	codeInvalidRequest = -32600
-	codeMethodNotFound = -32601
-	codeInvalidParams  = -32602
-	codeInternal       = -32603
+	sessionTTL    = 24 * time.Hour
+	maxClientName = 64
+	answersQueued = 8
 )
 
-var (
-	protocolVersions = []string{"2025-11-25", "2025-06-18"}
-	listChanged      = []byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n")
-)
+var listChanged = mcpwire.Event([]byte(`{"jsonrpc":"2.0","method":"notifications/tools/list_changed"}`))
 
 // Authenticator maps an Authorization header value to its user and binds a call to the user, so it ends when the user is disabled or deleted.
 type Authenticator interface {
@@ -65,7 +54,7 @@ type response struct {
 	JSONRPC string         `json:"jsonrpc"`
 	ID      jsontext.Value `json:"id,omitzero"`
 	Result  any            `json:"result,omitzero"`
-	Error   *rpcError      `json:"error,omitzero"`
+	Error   *mcpwire.Error `json:"error,omitzero"`
 }
 
 // Door serves the connector tools of the bearer's user over MCP Streamable HTTP for one door.
@@ -92,7 +81,7 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPost:
 	case http.MethodGet:
-		if !strings.Contains(r.Header.Get("Accept"), eventStreamMedia) {
+		if !strings.Contains(r.Header.Get("Accept"), mcpwire.EventStream) {
 			http.Error(w, "accept text/event-stream", http.StatusNotAcceptable)
 			return
 		}
@@ -100,7 +89,7 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case http.MethodDelete:
 		d.mu.Lock()
-		delete(d.clients, r.Header.Get(headerSession))
+		delete(d.clients, r.Header.Get(mcpwire.SessionHeader))
 		d.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -109,9 +98,9 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxRequestBody))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, mcpwire.MaxBody))
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, response{JSONRPC: jsonRPCVersion, Error: &rpcError{Code: codeParse, Message: fmt.Sprintf("read body: %v", err)}})
+		writeJSON(w, http.StatusBadRequest, response{JSONRPC: mcpwire.Version, Error: &mcpwire.Error{Code: mcpwire.CodeParse, Message: fmt.Sprintf("read body: %v", err)}})
 		return
 	}
 	var req struct {
@@ -120,14 +109,14 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Params jsontext.Value `json:"params"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
-		writeJSON(w, http.StatusBadRequest, response{JSONRPC: jsonRPCVersion, Error: &rpcError{Code: codeInvalidRequest, Message: "expected one JSON-RPC message"}})
+		writeJSON(w, http.StatusBadRequest, response{JSONRPC: mcpwire.Version, Error: &mcpwire.Error{Code: mcpwire.CodeInvalidRequest, Message: "expected one JSON-RPC message"}})
 		return
 	}
 	if len(req.ID) == 0 {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	c := caller{user: user, door: d.door, name: d.door + ":" + cmp.Or(machine, d.client(r.Header.Get(headerSession)))}
+	c := caller{user: user, door: d.door, name: d.door + ":" + cmp.Or(machine, d.client(r.Header.Get(mcpwire.SessionHeader)))}
 	var (
 		call struct {
 			Name      string         `json:"name"`
@@ -137,11 +126,11 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			} `json:"_meta"`
 		}
 		result any
-		rpcErr *rpcError
+		rpcErr *mcpwire.Error
 	)
 	defer func() {
 		log.WithFunc("connect.Door.ServeHTTP").Infof(r.Context(), "%s %s %s user=%s code=%d in %s",
-			d.door, req.Method, cmp.Or(call.Name, "-"), user, rpcErr.code(), time.Since(start).Round(time.Millisecond))
+			d.door, req.Method, cmp.Or(call.Name, "-"), user, mcpwire.CodeOf(rpcErr), time.Since(start).Round(time.Millisecond))
 	}()
 	switch req.Method {
 	case methodInitialize:
@@ -157,7 +146,7 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result = map[string]any{"tools": tools}
 	case "tools/call":
 		if err := json.Unmarshal(req.Params, &call); err != nil || call.Name == "" {
-			rpcErr = &rpcError{Code: codeInvalidParams, Message: "invalid tools/call params"}
+			rpcErr = &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid tools/call params"}
 			break
 		}
 		out, err := d.svc.doorCall(r.Context(), c, call.Name, call.Arguments, call.Meta.ApprovalID)
@@ -170,9 +159,9 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		result = out
 	default:
-		rpcErr = &rpcError{Code: codeMethodNotFound, Message: "method not found: " + req.Method}
+		rpcErr = &mcpwire.Error{Code: mcpwire.CodeMethodNotFound, Message: "method not found: " + req.Method}
 	}
-	resp := response{JSONRPC: jsonRPCVersion, ID: req.ID, Result: result}
+	resp := response{JSONRPC: mcpwire.Version, ID: req.ID, Result: result}
 	if rpcErr != nil {
 		resp.Result, resp.Error = nil, rpcErr
 	}
@@ -197,13 +186,9 @@ func (d *Door) initialize(w http.ResponseWriter, params jsontext.Value) map[stri
 	}
 	d.clients[id] = session{client: shorten(cmp.Or(req.ClientInfo.Name, "unknown"), maxClientName), at: now}
 	d.mu.Unlock()
-	w.Header().Set(headerSession, id)
-	version := fallbackVersion
-	if slices.Contains(protocolVersions, req.ProtocolVersion) {
-		version = req.ProtocolVersion
-	}
+	w.Header().Set(mcpwire.SessionHeader, id)
 	return map[string]any{
-		"protocolVersion": version,
+		"protocolVersion": mcpwire.Negotiate(req.ProtocolVersion),
 		"capabilities":    map[string]any{"tools": map[string]any{"listChanged": true}},
 		"serverInfo":      implementation{Name: clientName, Version: "1"},
 	}
@@ -230,7 +215,7 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 			return
 		}
 	}
-	w.Header().Set("Content-Type", eventStreamMedia)
+	w.Header().Set("Content-Type", mcpwire.EventStream)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
 	for _, a := range replay {
@@ -240,7 +225,7 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 	}
 	rc := http.NewResponseController(w)
 	_ = rc.Flush()
-	tick := time.Tick(keepalive)
+	tick := time.Tick(mcpwire.Keepalive)
 	for {
 		var msg []byte
 		select {
@@ -332,15 +317,15 @@ func approvalAnswered(id, decision string) []byte {
 			Decision   string `json:"decision"`
 		} `json:"params"`
 	}
-	msg.JSONRPC, msg.Method = jsonRPCVersion, "notifications/cocoonbox/approval_answered"
+	msg.JSONRPC, msg.Method = mcpwire.Version, "notifications/cocoonbox/approval_answered"
 	msg.Params.ApprovalID, msg.Params.Decision = id, decision
 	data, _ := json.Marshal(msg)
-	return fmt.Appendf(nil, "event: message\ndata: %s\n\n", data)
+	return mcpwire.Event(data)
 }
 
-func internalError(r *http.Request, err error) *rpcError {
+func internalError(r *http.Request, err error) *mcpwire.Error {
 	log.WithFunc("connect.internalError").Errorf(r.Context(), err, "%s %s", r.Method, r.URL.Path)
-	return &rpcError{Code: codeInternal, Message: "internal error"}
+	return &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "internal error"}
 }
 
 func writeJSON(w http.ResponseWriter, httpStatus int, body any) {

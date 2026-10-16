@@ -19,6 +19,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/credential"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
@@ -28,7 +29,6 @@ const (
 
 	agentMCPPath     = "/mcp"
 	agentIdleTimeout = time.Minute
-	jsonRPCVersion   = "2.0"
 	jsonRPCServer    = -32000
 )
 
@@ -264,7 +264,7 @@ func newH2CTransport(dial func(ctx context.Context, network, addr string) (net.C
 }
 
 func writeJSONRPCError(w http.ResponseWriter, err error) {
-	body := jsonRPCError{JSONRPC: jsonRPCVersion}
+	body := jsonRPCError{JSONRPC: mcpwire.Version}
 	body.Error.Code = jsonRPCServer
 	body.Error.Message = status.Convert(err).Message()
 	w.Header().Set("Content-Type", "application/json")

@@ -16,18 +16,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 )
 
 const (
-	jsonRPCVersion   = "2.0"
-	protocolVersion  = "2025-11-25"
-	headerSession    = "Mcp-Session-Id"
-	headerProtocol   = "MCP-Protocol-Version"
-	maxUpstreamBody  = 8 << 20
-	maxToolPages     = 20
-	maxErrorExcerpt  = 300
-	clientName       = "cocoonbox-connect"
-	eventStreamMedia = "text/event-stream"
+	headerProtocol  = "MCP-Protocol-Version"
+	maxUpstreamBody = 8 << 20
+	maxToolPages    = 20
+	maxErrorExcerpt = 300
+	clientName      = "cocoonbox-connect"
 )
 
 var (
@@ -51,21 +49,7 @@ type rpcResponse struct {
 	ID     jsontext.Value `json:"id"`
 	Method string         `json:"method"`
 	Result jsontext.Value `json:"result"`
-	Error  *rpcError      `json:"error"`
-}
-
-type rpcError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-func (e *rpcError) Error() string { return fmt.Sprintf("JSON-RPC error %d: %s", e.Code, e.Message) }
-
-func (e *rpcError) code() int {
-	if e == nil {
-		return 0
-	}
-	return e.Code
+	Error  *mcpwire.Error `json:"error"`
 }
 
 type statusError struct {
@@ -110,14 +94,14 @@ func (u *upstream) call(ctx context.Context, method string, params any) (jsontex
 	if err != nil {
 		return nil, exchange{}, err
 	}
-	result, ex, err := u.post(ctx, session, version, rpcRequest{JSONRPC: jsonRPCVersion, ID: u.ids.Add(1), Method: method, Params: params})
+	result, ex, err := u.post(ctx, session, version, rpcRequest{JSONRPC: mcpwire.Version, ID: u.ids.Add(1), Method: method, Params: params})
 	if !errors.Is(err, errSessionGone) {
 		return result, ex, err
 	}
 	if session, version, err = u.session(ctx, session); err != nil {
 		return nil, exchange{}, err
 	}
-	return u.post(ctx, session, version, rpcRequest{JSONRPC: jsonRPCVersion, ID: u.ids.Add(1), Method: method, Params: params})
+	return u.post(ctx, session, version, rpcRequest{JSONRPC: mcpwire.Version, ID: u.ids.Add(1), Method: method, Params: params})
 }
 
 func (u *upstream) session(ctx context.Context, gone string) (string, string, error) {
@@ -126,7 +110,7 @@ func (u *upstream) session(ctx context.Context, gone string) (string, string, er
 	if u.conn.version != "" && u.conn.session != gone {
 		return u.conn.session, u.conn.version, nil
 	}
-	result, session, _, err := u.send(ctx, "", "", rpcRequest{JSONRPC: jsonRPCVersion, ID: u.ids.Add(1), Method: methodInitialize, Params: initializeParams()})
+	result, session, _, err := u.send(ctx, "", "", rpcRequest{JSONRPC: mcpwire.Version, ID: u.ids.Add(1), Method: methodInitialize, Params: initializeParams()})
 	if err != nil {
 		return "", "", err
 	}
@@ -136,7 +120,7 @@ func (u *upstream) session(ctx context.Context, gone string) (string, string, er
 	if err := json.Unmarshal(result, &init); err != nil || init.ProtocolVersion == "" {
 		return "", "", errors.New("the MCP server sent no protocol version")
 	}
-	if _, _, _, err := u.send(ctx, session, init.ProtocolVersion, rpcRequest{JSONRPC: jsonRPCVersion, Method: "notifications/initialized"}); err != nil {
+	if _, _, _, err := u.send(ctx, session, init.ProtocolVersion, rpcRequest{JSONRPC: mcpwire.Version, Method: "notifications/initialized"}); err != nil {
 		return "", "", err
 	}
 	u.conn.session, u.conn.version = session, init.ProtocolVersion
@@ -166,12 +150,12 @@ func (u *upstream) send(ctx context.Context, session, version string, msg rpcReq
 		return nil, "", ex, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, "+eventStreamMedia)
+	req.Header.Set("Accept", "application/json, "+mcpwire.EventStream)
 	if u.cred.header != "" {
 		req.Header.Set(u.cred.header, u.cred.value)
 	}
 	if session != "" {
-		req.Header.Set(headerSession, session)
+		req.Header.Set(mcpwire.SessionHeader, session)
 	}
 	if version != "" {
 		req.Header.Set(headerProtocol, version)
@@ -197,10 +181,10 @@ func (u *upstream) send(ctx context.Context, session, version string, msg rpcReq
 		_, _ = io.Copy(io.Discard, counted)
 		return nil, "", ex, nil
 	}
-	newSession = resp.Header.Get(headerSession)
+	newSession = resp.Header.Get(mcpwire.SessionHeader)
 	media, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	answer := &rpcResponse{}
-	if media == eventStreamMedia {
+	if media == mcpwire.EventStream {
 		answer, err = readEvents(counted, msg.ID)
 	} else {
 		err = json.UnmarshalRead(counted, answer)
@@ -287,7 +271,7 @@ func readEvents(r io.Reader, id int64) (*rpcResponse, error) {
 
 func initializeParams() map[string]any {
 	return map[string]any{
-		"protocolVersion": protocolVersion,
+		"protocolVersion": mcpwire.Latest,
 		"capabilities":    map[string]any{},
 		"clientInfo":      implementation{Name: clientName, Version: "1"},
 	}

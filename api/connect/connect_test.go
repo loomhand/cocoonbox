@@ -25,6 +25,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/connect/connecttest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 )
 
 const (
@@ -690,7 +691,7 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 		t.Errorf("no token = %d", resp.StatusCode)
 	}
 	resp := post(t, srv.URL, "Bearer alice", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","clientInfo":{"name":"claude-code"}}}`)
-	session := resp.Header.Get(headerSession)
+	session := resp.Header.Get(mcpwire.SessionHeader)
 	var init struct {
 		Result struct {
 			ProtocolVersion string `json:"protocolVersion"`
@@ -706,7 +707,7 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 	}
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, strings.NewReader(`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"mock_list_items","arguments":{}}}`))
 	req.Header.Set("Authorization", "Bearer alice")
-	req.Header.Set(headerSession, session)
+	req.Header.Set(mcpwire.SessionHeader, session)
 	callResp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("call: %v", err)
@@ -744,7 +745,7 @@ func TestDoorKeepsAShortClientName(t *testing.T) {
 	srv := httptest.NewServer(door)
 	t.Cleanup(srv.Close)
 	resp := post(t, srv.URL, "Bearer alice", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"`+strings.Repeat("é", 4096)+`"}}}`)
-	if got := door.client(resp.Header.Get(headerSession)); len(got) > maxClientName+len("…") || !utf8.ValidString(got) {
+	if got := door.client(resp.Header.Get(mcpwire.SessionHeader)); len(got) > maxClientName+len("…") || !utf8.ValidString(got) {
 		t.Errorf("kept client name of %d bytes, valid UTF-8 %t", len(got), utf8.ValidString(got))
 	}
 }

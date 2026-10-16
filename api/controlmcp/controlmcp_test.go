@@ -21,6 +21,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/mcpwire"
 )
 
 const (
@@ -111,17 +112,17 @@ func TestUnknownMethodAndTool(t *testing.T) {
 	srv, fake := newTestServer(t)
 
 	for body, want := range map[string]int{
-		`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`:                                                       codeMethodNotFound,
-		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id"}}}`:    codeInvalidParams,
-		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"box_ensure","arguments":{"wait":"yes"}}}`: codeInvalidParams,
-		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_status","arguments":[]}}`:             codeInvalidParams,
+		`{"jsonrpc":"2.0","id":1,"method":"resources/list"}`:                                                       mcpwire.CodeMethodNotFound,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id"}}}`:    mcpwire.CodeInvalidParams,
+		`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"box_ensure","arguments":{"wait":"yes"}}}`: mcpwire.CodeInvalidParams,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_status","arguments":[]}}`:             mcpwire.CodeInvalidParams,
 	} {
 		rec := serve(srv, http.MethodPost, aliceToken, body)
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 			t.Fatalf("decode %s: %v", rec.Body, err)
 		}
-		var rpcErr rpcError
+		var rpcErr mcpwire.Error
 		if _, hasResult := raw["result"]; hasResult || json.Unmarshal(raw["error"], &rpcErr) != nil || rpcErr.Code != want {
 			t.Errorf("%s = %s, want error %d without a result", body, rec.Body, want)
 		}
@@ -182,7 +183,7 @@ func TestToolsActOnlyOnCallersBox(t *testing.T) {
 		`{"name":"box_upgrade","arguments":{"confirm":true,"image":"img:1"}}`,
 	} {
 		resp := post(t, srv, bobToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":`+call+`}`)
-		if resp.Error == nil || resp.Error.Code != codeInvalidParams {
+		if resp.Error == nil || resp.Error.Code != mcpwire.CodeInvalidParams {
 			t.Fatalf("bob %s = %+v, want invalid params", call, resp)
 		}
 	}
@@ -340,7 +341,7 @@ func TestSaveReportsBytesAndRefusals(t *testing.T) {
 	}
 
 	fake.ensureErr = status.Error(codes.Unavailable, "ensure box failed")
-	if resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"box_ensure"}}`); resp.Error == nil || resp.Error.Code != codeInternal {
+	if resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"box_ensure"}}`); resp.Error == nil || resp.Error.Code != mcpwire.CodeInternal {
 		t.Fatalf("ensure on a failing backend = %+v", resp)
 	}
 }
@@ -359,10 +360,10 @@ func TestUsageReportsTheCallersMeter(t *testing.T) {
 	if calls := fake.recorded(); len(calls) != 1 || calls[0] != (fakeCall{method: "Usage", user: "alice"}) {
 		t.Fatalf("calls = %v, want one Usage as alice", calls)
 	}
-	if resp := post(t, srv, bobToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"usage"}}`); resp.Error == nil || resp.Error.Code != codeInternal {
+	if resp := post(t, srv, bobToken, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"usage"}}`); resp.Error == nil || resp.Error.Code != mcpwire.CodeInternal {
 		t.Fatalf("usage while gw is down = %+v", resp)
 	}
-	if resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"usage","arguments":{"box":"x"}}}`); resp.Error == nil || resp.Error.Code != codeInvalidParams {
+	if resp := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"usage","arguments":{"box":"x"}}}`); resp.Error == nil || resp.Error.Code != mcpwire.CodeInvalidParams {
 		t.Fatalf("usage with a box = %+v", resp)
 	}
 }
@@ -370,7 +371,7 @@ func TestUsageReportsTheCallersMeter(t *testing.T) {
 type rpcReply struct {
 	ID     any            `json:"id"`
 	Result map[string]any `json:"result"`
-	Error  *rpcError      `json:"error"`
+	Error  *mcpwire.Error `json:"error"`
 }
 
 type fakeCall struct {
