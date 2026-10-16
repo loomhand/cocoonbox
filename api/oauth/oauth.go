@@ -16,6 +16,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/publicnet"
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
@@ -152,7 +153,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		st.close()
 		return nil, err
 	}
-	dialer := &net.Dialer{Timeout: fetchTimeout, Control: refusePrivate}
+	dialer := &net.Dialer{Timeout: fetchTimeout, Control: publicnet.RefusePrivate}
 	fetch := &http.Client{
 		Transport:     &http.Transport{DialContext: dialer.DialContext, ForceAttemptHTTP2: true, TLSHandshakeTimeout: fetchTimeout},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
