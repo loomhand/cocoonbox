@@ -207,6 +207,24 @@ async function loadSignup() {
       await load();
     }, true));
   }
+  const tokens = await api("GET", "invite-tokens");
+  const tbody = $("invite-tokens");
+  tbody.replaceChildren();
+  for (const t of tokens) {
+    const row = tbody.insertRow();
+    cell(row, t.label);
+    cell(row, t.id);
+    cell(row, when(t.created_at));
+    cell(row, when(t.used_at));
+    cell(row, t.invites);
+    cell(row, "").appendChild(button("Revoke", async () => {
+      if (!confirm("Revoke the invite token " + t.label + "? The invites it made stay usable.")) return;
+      await api("DELETE", "invite-tokens/" + encodeURIComponent(t.id));
+      notice("Revoked the invite token " + t.label + ".");
+      await load();
+    }, true));
+  }
+  if (!tokens.length) cell(tbody.insertRow(), "No invite token.");
 }
 
 function list(text) {
@@ -510,6 +528,16 @@ submit("signup-form", async (f) => {
   await load();
 });
 
+submit("invite-token-form", async (f) => {
+  const { invite_token: t, token } = await api("POST", "invite-tokens", { label: f.label.value });
+  f.reset();
+  const pre = $("invite-token");
+  pre.textContent = token;
+  pre.hidden = false;
+  notice("Invite token " + t.label + " minted. Copy it now; it is not shown again. Its holder sets COCOONBOX_INVITE_TOKEN or a token file, never a command line argument.");
+  await load();
+});
+
 submit("invite-form", async (f) => {
   const { invite: inv, code } = await api("POST", "invites", { uses: Number(f.uses.value), days: Number(f.days.value) });
   const link = $("invite-link");
@@ -526,6 +554,10 @@ $("logout").addEventListener("click", async () => {
   $("share-mcp").textContent = "";
   $("token").hidden = true;
   $("token").textContent = "";
+  for (const id of ["invite-link", "invite-token"]) {
+    $(id).hidden = true;
+    $(id).textContent = "";
+  }
   await load();
 });
 

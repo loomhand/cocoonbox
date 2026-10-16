@@ -197,7 +197,7 @@ final class MCPServer: Sendable {
         let auth = authorization == "Bearer \(token)" ? "ok" : authorization.contains("${") ? "unexpanded" : authorization.isEmpty ? "missing" : "bad"
         var line = "mcp \(method) \(path) auth=\(auth) ua=\(headers["user-agent"]?.split(separator: " ").first ?? "-")"
         defer { print(line) }
-        if let response = oauth.handle(method: method, path: path, body: body, line: &line) {
+        if let response = oauth.handle(method: method, path: path, headers: headers, body: body, line: &line) {
             return response
         }
         let target = path.split(separator: "?").first.map(String.init) ?? ""

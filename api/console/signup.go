@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -19,6 +20,9 @@ const (
 	queueCookie = "cb_queue"
 	queueAge    = 90 * 24 * time.Hour
 	queuePage   = Prefix + "queue"
+	invitesPath = Prefix + "api/invites"
+	codeKey     = "code"
+	bearer      = "bearer "
 	loginLimit  = 20
 
 	failedCode   = "failed"
@@ -28,6 +32,9 @@ const (
 )
 
 var errTooManyLogins = errors.New("too many sign-ins from this address; try again later")
+
+// tokenHandler serves a call of the invite-scoped token whose id it gets.
+type tokenHandler func(w http.ResponseWriter, r *http.Request, token string)
 
 // EnableSignup serves sign-in with GitHub, linking, self-delete, the queue page and the admin's signup calls over sig, and the
 // callback through LoginCallback.
@@ -48,9 +55,12 @@ func (s *Server) EnableSignup(sig *signup.Service) {
 	s.mux.HandleFunc("PUT "+Prefix+"api/signup", s.admin(s.setSignup))
 	s.mux.HandleFunc("GET "+Prefix+"api/queue", s.admin(s.listQueue))
 	s.mux.HandleFunc("POST "+Prefix+"api/queue/{id}/{action}", s.admin(s.actOnQueue))
-	s.mux.HandleFunc("GET "+Prefix+"api/invites", s.admin(s.listInvites))
-	s.mux.HandleFunc("POST "+Prefix+"api/invites", s.admin(s.createInvite))
-	s.mux.HandleFunc("DELETE "+Prefix+"api/invites/{id}", s.admin(s.revokeInvite))
+	s.mux.HandleFunc("GET "+invitesPath, s.inviter(s.listInvites, s.listTokenInvites))
+	s.mux.HandleFunc("POST "+invitesPath, s.inviter(s.createInvite, s.createTokenInvite))
+	s.mux.HandleFunc("DELETE "+invitesPath+"/{id}", s.admin(s.revokeInvite))
+	s.mux.HandleFunc("GET "+Prefix+"api/invite-tokens", s.admin(s.listInviteTokens))
+	s.mux.HandleFunc("POST "+Prefix+"api/invite-tokens", s.admin(s.mintInviteToken))
+	s.mux.HandleFunc("DELETE "+Prefix+"api/invite-tokens/{id}", s.admin(s.revokeInviteToken))
 }
 
 // LoginCallback finishes a sign-in with GitHub only in the browser that began it; a forged answer leaves the sign-in to its real one.
@@ -290,7 +300,93 @@ func (s *Server) createInvite(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, map[string]any{"invite": inv, "code": code})
+	writeJSON(w, map[string]any{"invite": inv, codeKey: code})
+}
+
+func (s *Server) listTokenInvites(w http.ResponseWriter, r *http.Request, token string) {
+	invites, err := s.signup.TokenInvites(r.Context(), token)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, append([]signup.Invite{}, invites...))
+}
+
+// createTokenInvite makes a one-use invite for an invite-scoped token; uses, when sent, must be 1.
+func (s *Server) createTokenInvite(w http.ResponseWriter, r *http.Request, token string) {
+	var req struct {
+		Uses int `json:"uses"`
+		Days int `json:"days"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.Uses != 0 && req.Uses != 1 {
+		writeError(w, http.StatusBadRequest, "an invite made with a token has one use")
+		return
+	}
+	code, inv, err := s.signup.CreateTokenInvite(r.Context(), token, req.Days)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	log.WithFunc("console.Server.createTokenInvite").Infof(r.Context(), "invite token %s made invite %s", token, inv.ID)
+	writeJSON(w, map[string]any{"invite": inv, codeKey: code})
+}
+
+func (s *Server) listInviteTokens(w http.ResponseWriter, r *http.Request) {
+	tokens, err := s.signup.InviteTokens(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, append([]signup.InviteToken{}, tokens...))
+}
+
+func (s *Server) mintInviteToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Label string `json:"label"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	token, t, err := s.signup.MintInviteToken(r.Context(), caller(r).ID, req.Label)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	log.WithFunc("console.Server.mintInviteToken").Infof(r.Context(), "admin %s minted invite token %s", caller(r).Name, t.ID)
+	writeJSON(w, map[string]any{"invite_token": t, "token": token})
+}
+
+func (s *Server) revokeInviteToken(w http.ResponseWriter, r *http.Request) {
+	if err := s.signup.RevokeInviteToken(r.Context(), r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	log.WithFunc("console.Server.revokeInviteToken").Infof(r.Context(), "admin %s revoked invite token %s", caller(r).Name, r.PathValue("id"))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// inviter runs scoped for a request with an invite-scoped bearer token, which it resolves here, and admin for an admin session.
+func (s *Server) inviter(admin http.HandlerFunc, scoped tokenHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token, ok := inviteBearer(r)
+		if !ok {
+			s.admin(admin)(w, r)
+			return
+		}
+		id, err := s.signup.Inviter(r.Context(), token)
+		if errors.Is(err, signup.ErrNotFound) {
+			writeError(w, http.StatusUnauthorized, "invalid invite token")
+			return
+		}
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		scoped(w, r, id)
+	}
 }
 
 func (s *Server) revokeInvite(w http.ResponseWriter, r *http.Request) {
@@ -309,6 +405,16 @@ func (s *Server) admit(ctx context.Context) {
 	if err := s.signup.Admit(ctx); err != nil {
 		log.WithFunc("console.Server.admit").Warnf(ctx, "admit after a freed seat: %v", err)
 	}
+}
+
+// inviteBearer returns the invite-scoped token of the request's Authorization header.
+func inviteBearer(r *http.Request) (string, bool) {
+	header := r.Header.Get("Authorization")
+	if len(header) <= len(bearer) || !strings.EqualFold(header[:len(bearer)], bearer) {
+		return "", false
+	}
+	token := header[len(bearer):]
+	return token, strings.HasPrefix(token, signup.InviteTokenPrefix)
 }
 
 // loginRefused sends the browser to the sign-in page with a reason code, which the page turns into text, so a link cannot put words on it.

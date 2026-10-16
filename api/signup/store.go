@@ -231,24 +231,72 @@ func (s *store) reject(ctx context.Context, id string) error {
 }
 
 func (s *store) addInvite(ctx context.Context, inv Invite, codeSHA256 string) (Invite, error) {
-	err := s.pool.QueryRow(ctx, `INSERT INTO signup_invites (id, code_sha256, uses_left, expires_at, created_by) VALUES ($1, $2, $3, $4, $5)
-		RETURNING created_at`, inv.ID, codeSHA256, inv.UsesLeft, inv.ExpiresAt, inv.CreatedBy).Scan(&inv.CreatedAt)
+	err := s.pool.QueryRow(ctx, `INSERT INTO signup_invites (id, code_sha256, uses_left, expires_at, created_by, token_id) VALUES ($1, $2, $3, $4, $5, nullif($6, ''))
+		RETURNING created_at`, inv.ID, codeSHA256, inv.UsesLeft, inv.ExpiresAt, inv.CreatedBy, inv.TokenID).Scan(&inv.CreatedAt)
 	if err != nil {
 		return Invite{}, fmt.Errorf("add invite: %w", err)
 	}
 	return inv, nil
 }
 
-func (s *store) invites(ctx context.Context) ([]Invite, error) {
-	rows, err := s.pool.Query(ctx, "SELECT id, uses_left, expires_at, created_by, created_at FROM signup_invites ORDER BY created_at DESC LIMIT $1", maxListed)
+// invites lists the invites, only token's when it is not empty.
+func (s *store) invites(ctx context.Context, token string) ([]Invite, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, uses_left, expires_at, created_by, coalesce(token_id, ''), created_at FROM signup_invites
+		WHERE $1 = '' OR token_id = $1 ORDER BY created_at DESC LIMIT $2`, token, maxListed)
 	if err != nil {
 		return nil, fmt.Errorf("list invites: %w", err)
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Invite, error) {
 		var inv Invite
-		err := row.Scan(&inv.ID, &inv.UsesLeft, &inv.ExpiresAt, &inv.CreatedBy, &inv.CreatedAt)
+		err := row.Scan(&inv.ID, &inv.UsesLeft, &inv.ExpiresAt, &inv.CreatedBy, &inv.TokenID, &inv.CreatedAt)
 		return inv, err
 	})
+}
+
+func (s *store) addInviteToken(ctx context.Context, t InviteToken, sha string) (InviteToken, error) {
+	err := s.pool.QueryRow(ctx, "INSERT INTO invite_tokens (id, sha256, label, created_by) VALUES ($1, $2, $3, $4) RETURNING created_at",
+		t.ID, sha, t.Label, t.CreatedBy).Scan(&t.CreatedAt)
+	if err != nil {
+		return InviteToken{}, fmt.Errorf("add invite token: %w", err)
+	}
+	return t, nil
+}
+
+func (s *store) inviteTokens(ctx context.Context) ([]InviteToken, error) {
+	rows, err := s.pool.Query(ctx, `SELECT t.id, t.label, t.created_by, t.created_at, t.used_at, (SELECT count(*) FROM signup_invites i WHERE i.token_id = t.id)
+		FROM invite_tokens t ORDER BY t.created_at DESC LIMIT $1`, maxListed)
+	if err != nil {
+		return nil, fmt.Errorf("list invite tokens: %w", err)
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (InviteToken, error) {
+		var t InviteToken
+		err := row.Scan(&t.ID, &t.Label, &t.CreatedBy, &t.CreatedAt, &t.UsedAt, &t.Invites)
+		return t, err
+	})
+}
+
+func (s *store) inviteTokenBySHA256(ctx context.Context, sha string) (string, string, *time.Time, error) {
+	var id, admin string
+	var used *time.Time
+	err := s.pool.QueryRow(ctx, "SELECT id, created_by, used_at FROM invite_tokens WHERE sha256 = $1", sha).Scan(&id, &admin, &used)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil, ErrNotFound
+	}
+	if err != nil {
+		return "", "", nil, fmt.Errorf("read invite token: %w", err)
+	}
+	return id, admin, used, nil
+}
+
+func (s *store) touchInviteToken(ctx context.Context, id string) error {
+	if _, err := s.pool.Exec(ctx, "UPDATE invite_tokens SET used_at = now() WHERE id = $1", id); err != nil {
+		return fmt.Errorf("record the use of invite token: %w", err)
+	}
+	return nil
+}
+
+func (s *store) removeInviteToken(ctx context.Context, id string) error {
+	return s.one(ctx, "DELETE FROM invite_tokens WHERE id = $1", id)
 }
 
 func (s *store) removeInvite(ctx context.Context, id string) error {

@@ -154,6 +154,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		csp = fmt.Sprintf(shareCSP, r.Host)
 	}
 	w.Header().Set("Content-Security-Policy", csp)
+	if _, scoped := inviteBearer(r); scoped && (r.URL.Path != invitesPath || r.Method != http.MethodGet && r.Method != http.MethodPost) {
+		writeError(w, http.StatusForbidden, "an invite token may only create invites and list its own")
+		return
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		// A JSON body is not a simple request, so a cross-site form or fetch cannot send one without a preflight.
 		if ct, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type")); ct != "application/json" {
@@ -577,7 +581,7 @@ func (s *Server) viewShare(ws *websocket.Conn) {
 	grant, err := s.authn.Admit(secret, "", guest)
 	if err != nil {
 		logger.Infof(r.Context(), "share page refused from %s: %s", clientAddr(r), status.Code(err))
-		_ = websocket.JSON.Send(ws, map[string]string{"error": status.Convert(err).Message(), "code": strings.ToLower(status.Code(err).String())})
+		_ = websocket.JSON.Send(ws, map[string]string{"error": status.Convert(err).Message(), codeKey: strings.ToLower(status.Code(err).String())})
 		return
 	}
 	if websocket.JSON.Send(ws, map[string]bool{"ok": true}) != nil {

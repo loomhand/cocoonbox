@@ -136,6 +136,14 @@
         <button>Create an invite</button>
       </form>
       <pre id="invite-link" hidden></pre>
+      <h3>Invite tokens</h3>
+      <p>An invite token only makes one-use invites that last at most 7 days (<code>cocoonbox invite create</code>) and lists the invites it made; every other call refuses it. It stops when you revoke it, or when you stop being an admin.</p>
+      <table><thead><tr><th>Label</th><th>Id</th><th>Made</th><th>Last used</th><th>Invites</th><th></th></tr></thead><tbody id="invite-tokens"></tbody></table>
+      <form id="invite-token-form">
+        <label>Label <input name="label" required maxlength="100" placeholder="who holds it"></label>
+        <button>Mint an invite token</button>
+      </form>
+      <pre id="invite-token" hidden></pre>
     </div>
   </section>
 </main>

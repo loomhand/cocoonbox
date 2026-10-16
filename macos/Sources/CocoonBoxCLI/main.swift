@@ -15,6 +15,11 @@ usage: cocoonbox <command> [options]
                                         own, revoked under Devices there. --token - reads a token you paste
                                         (also what a login over SSH or with stdin not a terminal does).
                                         The token goes into the Keychain
+  login --invite CODE                   sign up through the browser with an invite code, and sign in
+  invite create [--days N] [--json]     make a one-use invite link that lasts N days (default 2, at most 7)
+  invite list [--json]                  list the invites your invite token made; both read an admin's
+                                        invite token from COCOONBOX_INVITE_TOKEN, else from --token-file PATH
+                                        or COCOONBOX_INVITE_TOKEN_FILE, never from the command line
   logout                                delete the stored token, and revoke it when the CLI got it through the
                                         browser (a token copied from the app stays the app's)
   status [--json]                       show the box
@@ -520,6 +525,77 @@ func keyLine(_ key: Cocoonbox_Control_V1_Key) -> String {
     return "\(key.name)  \(key.hosts.joined(separator: ","))  \(sent)  \(key.hint.isEmpty ? "-" : "…" + key.hint)  \(created)"
 }
 
+// MARK: invite
+
+// inviteToken reads the invite-scoped token from COCOONBOX_INVITE_TOKEN, else a file, so it never sits in argv.
+func inviteToken() -> String {
+    let environment = ProcessInfo.processInfo.environment
+    if let token = environment["COCOONBOX_INVITE_TOKEN"], !token.isEmpty { return token }
+    guard let path = value(of: "--token-file") ?? environment["COCOONBOX_INVITE_TOKEN_FILE"] else {
+        fail("no invite token: set COCOONBOX_INVITE_TOKEN or pass --token-file PATH; an admin mints one on the console's admin page")
+    }
+    guard let data = FileManager.default.contents(atPath: path),
+          let token = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !token.isEmpty
+    else { fail("cannot read an invite token from \(path)") }
+    return token
+}
+
+func inviteCall(_ endpoint: Endpoint, _ token: String, _ body: [String: Any]?) async throws -> (Any, Int) {
+    var request = URLRequest(url: URL(string: endpoint.url + "/cb/api/invites")!)
+    request.timeoutInterval = 15
+    request.setValue("Bearer " + token, forHTTPHeaderField: "Authorization")
+    if let body {
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+    }
+    let session = URLSession(configuration: .ephemeral)
+    defer { session.finishTasksAndInvalidate() }
+    let (data, response) = try await session.data(for: request)
+    return ((try? JSONSerialization.jsonObject(with: data)) ?? [:], (response as? HTTPURLResponse)?.statusCode ?? 0)
+}
+
+func inviteFailure(_ object: Any, _ status: Int) -> Never {
+    fail((object as? [String: Any])?["error"] as? String ?? "the api answered HTTP \(status)")
+}
+
+func inviteLine(_ invite: [String: Any]) -> String {
+    "\(invite["id"] as? String ?? "?")  uses left \(invite["uses_left"] as? Int ?? 0)  expires \(invite["expires_at"] as? String ?? "?")"
+}
+
+func inviteCommand() async {
+    let endpoint = endpoint()
+    let token = inviteToken()
+    do {
+        switch words.first ?? "list" {
+        case "create":
+            var body: [String: Any] = [:]
+            if let days = value(of: "--days") {
+                guard let n = Int(days) else { fail("--days takes a number of days, 1 to 7") }
+                body["days"] = n
+            }
+            let (object, status) = try await inviteCall(endpoint, token, body)
+            guard status == 200, let made = object as? [String: Any], let code = made["code"] as? String, let invite = made["invite"] as? [String: Any] else {
+                inviteFailure(object, status)
+            }
+            let link = endpoint.url + "/cb/?invite=" + code
+            if flags.contains("--json") { return printJSON(["link": link, "code": code, "invite": invite]) }
+            print(link)
+            print("one use, \(inviteLine(invite))")
+        case "list", "ls":
+            let (object, status) = try await inviteCall(endpoint, token, nil)
+            guard status == 200, let invites = object as? [[String: Any]] else { inviteFailure(object, status) }
+            if flags.contains("--json") { return printJSON(["invites": invites]) }
+            if invites.isEmpty { return print("no invites") }
+            invites.forEach { print(inviteLine($0)) }
+        default:
+            fail("usage: cocoonbox invite create [--days N] [--json] | invite list [--json]")
+        }
+    } catch {
+        fail("\(error)")
+    }
+}
+
 func keysCommand() async {
     let (words, values) = keyOptions()
     let verb = words.first ?? "ls"
@@ -576,6 +652,10 @@ func readToken() -> String {
 
 // pastesToken keeps today's paste for --token -, an SSH session and a stdin that is no terminal, unless --browser.
 func pastesToken() -> Bool {
+    if flags.contains("--invite") {
+        guard !flags.contains("--token"), !flags.contains("--from-app") else { fail("--invite signs up through the browser; it takes neither --token nor --from-app") }
+        return false
+    }
     if flags.contains("--token") {
         guard value(of: "--token") == "-" else { fail("--token takes -: paste the token on stdin or at the prompt") }
         return true
@@ -586,7 +666,7 @@ func pastesToken() -> Bool {
 
 func browserToken(_ endpoint: Endpoint) async -> String {
     do {
-        return try await BrowserLogin(endpoint: endpoint, client: BrowserLogin.cliClient).run { url in
+        return try await BrowserLogin(endpoint: endpoint, client: BrowserLogin.cliClient, invite: value(of: "--invite") ?? "").run { url in
             FileHandle.standardError.write(Data("cocoonbox: allow this Mac in the browser; if no page opened, open\n  \(url)\n".utf8))
             openBrowser(url)
         }
@@ -1267,6 +1347,8 @@ case "flows":
     await flowsCommand()
 case "keys":
     await keysCommand()
+case "invite":
+    await inviteCommand()
 case "mcp":
     await serve()
 case "mcp-headers":

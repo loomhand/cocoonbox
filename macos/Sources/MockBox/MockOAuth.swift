@@ -9,6 +9,8 @@ final class MockOAuth: Sendable {
     static let authorizePath = "/cb/oauth/authorize"
     static let tokenPath = "/cocoonbox.oauth/token"
     static let revokePath = "/cocoonbox.oauth/revoke"
+    static let invitesPath = "/cb/api/invites"
+    static let inviteToken = "mock-invite-token"
     static let clients: Set = ["cocoonbox-cli", "cocoonbox-app"]
 
     private struct Code {
@@ -27,9 +29,11 @@ final class MockOAuth: Sendable {
     }
 
     // handle answers a request for one of the three paths, nil for any other.
-    func handle(method: String, path: String, body: Data, line: inout String) -> HTTPResponse? {
+    func handle(method: String, path: String, headers: [String: String], body: Data, line: inout String) -> HTTPResponse? {
         let components = URLComponents(string: path)
         switch (method, components?.path) {
+        case (_, Self.invitesPath):
+            return invites(method: method, authorization: headers["authorization"] ?? "", body: body, line: &line)
         case ("GET", Self.authorizePath):
             return authorize(components?.queryItems ?? [], line: &line)
         case ("POST", Self.tokenPath):
@@ -54,8 +58,29 @@ final class MockOAuth: Sendable {
         let code = UUID().uuidString.lowercased()
         codes.withLock { $0[code] = Code(client: item("client_id"), redirect: redirect, challenge: item("code_challenge")) }
         back.queryItems = [URLQueryItem(name: "code", value: code), URLQueryItem(name: "state", value: item("state")), URLQueryItem(name: "iss", value: issuer)]
-        line += " authorize=allowed device=\(item("device_name"))"
+        line += " authorize=allowed device=\(item("device_name"))" + (item("invite").isEmpty ? "" : " invite=yes")
         return HTTPResponse(status: 302, reason: "Found", headers: ["Location": back.string ?? redirect])
+    }
+
+    // invites plays the api's invite calls for an invite-scoped token: one-use invites of 1 to 7 days, listed back.
+    private func invites(method: String, authorization: String, body: Data, line: inout String) -> HTTPResponse {
+        guard authorization == "Bearer \(Self.inviteToken)" else {
+            line += " invites=refused"
+            return Self.json(401, ["error": "invalid invite token"])
+        }
+        let invite: [String: Any] = ["id": "inv_mock", "uses_left": 1, "expires_at": "2026-10-18T00:00:00Z", "token_id": "itk_mock"]
+        if method == "GET" {
+            line += " invites=listed"
+            return HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: (try? JSONSerialization.data(withJSONObject: [invite])) ?? Data())
+        }
+        let days = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["days"] as? Int ?? 2
+        guard (1...7).contains(days) else {
+            line += " invites=bad-days"
+            return Self.json(400, ["error": "invalid request: an invite made with a token lasts 1 to 7 days"])
+        }
+        line += " invites=created days=\(days)"
+        let made: [String: Any] = ["code": "cbi_mock", "invite": invite]
+        return HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: (try? JSONSerialization.data(withJSONObject: made)) ?? Data())
     }
 
     private func redeem(_ form: [String: String], line: inout String) -> HTTPResponse {

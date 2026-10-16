@@ -2,6 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const query = location.search.slice(1);
+const invite = new URLSearchParams(location.search).get("invite") || "";
 
 async function api(method, path, body) {
   const resp = await fetch("/cb/api/" + path, {
@@ -50,7 +51,10 @@ async function load() {
       show("login");
       fetch("/cb/api/auth/providers", { credentials: "same-origin" })
         .then((r) => (r.ok ? r.json() : null))
-        .then((p) => { $("github-login").hidden = !(p && p.github); })
+        .then((p) => {
+          $("github-login").hidden = !(p && p.github);
+          $("invite-note").hidden = !invite;
+        })
         .catch(() => {});
       return;
     }
@@ -82,7 +86,7 @@ async function load() {
 }
 
 $("github-button").addEventListener("click", () => {
-  api("POST", "auth/github/begin", { return_to: location.pathname + location.search })
+  api("POST", "auth/github/begin", { return_to: location.pathname + location.search, invite })
     .then(({ url }) => location.assign(url))
     .catch((e) => notice(e.message, true));
 });

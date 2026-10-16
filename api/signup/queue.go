@@ -47,12 +47,13 @@ type Place struct {
 	Since    time.Time `json:"since"`
 }
 
-// Invite is an admin's invite as the admin page lists it; the code is shown only when it is made.
+// Invite is an invite as the admin page lists it, with the invite-scoped token that made it; the code is shown only when it is made.
 type Invite struct {
 	ID        string    `json:"id"`
 	UsesLeft  int       `json:"uses_left"`
 	ExpiresAt time.Time `json:"expires_at"`
 	CreatedBy string    `json:"created_by"`
+	TokenID   string    `json:"token_id,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -138,20 +139,24 @@ func (s *Service) CreateInvite(ctx context.Context, by string, uses, days int) (
 	if uses < 1 || uses > maxInviteUses || days < 1 || days > maxInviteDays {
 		return "", Invite{}, fmt.Errorf("%w: an invite has 1 to %d uses and lasts 1 to %d days", ErrInvalid, maxInviteUses, maxInviteDays)
 	}
-	code := invitePrefix + randomHex(secretBytes)
-	inv := Invite{ID: "inv_" + randomHex(idBytes), UsesLeft: uses, ExpiresAt: time.Now().AddDate(0, 0, days).Truncate(time.Microsecond), CreatedBy: by}
-	created, err := s.store.addInvite(ctx, inv, hashHex(code))
-	return code, created, err
+	return s.createInvite(ctx, Invite{UsesLeft: uses, CreatedBy: by}, days)
 }
 
 // Invites lists the invites, newest first.
 func (s *Service) Invites(ctx context.Context) ([]Invite, error) {
-	return s.store.invites(ctx)
+	return s.store.invites(ctx, "")
 }
 
 // RevokeInvite deletes invite id; the people it queued keep their places.
 func (s *Service) RevokeInvite(ctx context.Context, id string) error {
 	return s.store.removeInvite(ctx, id)
+}
+
+func (s *Service) createInvite(ctx context.Context, inv Invite, days int) (string, Invite, error) {
+	code := invitePrefix + randomHex(secretBytes)
+	inv.ID, inv.ExpiresAt = "inv_"+randomHex(idBytes), time.Now().AddDate(0, 0, days).Truncate(time.Microsecond)
+	created, err := s.store.addInvite(ctx, inv, hashHex(code))
+	return code, created, err
 }
 
 // admit makes e's account with the signup defaults under the first free username, links its identity and marks e admitted.

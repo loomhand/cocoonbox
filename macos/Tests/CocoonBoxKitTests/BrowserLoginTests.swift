@@ -77,6 +77,17 @@ import Testing
         #expect(answer == nil)
     }
 
+    @Test func anInviteRidesOnTheConsentPageURLOnlyWhenGiven() async throws {
+        for invite in ["cbi_code", ""] {
+            let seen = Mutex<[String: String]>([:])
+            _ = try? await BrowserLogin(endpoint: Self.unreachable, client: BrowserLogin.cliClient, invite: invite).run(timeout: .milliseconds(200)) { url in
+                seen.withLock { $0 = Self.query(url) }
+            }
+            #expect(seen.withLock { $0["invite"] } == (invite.isEmpty ? nil : invite))
+            #expect(seen.withLock { $0["client_id"] } == "cocoonbox-cli")
+        }
+    }
+
     @Test func theDeviceNameIsCutToSixtyFourBytesOnACharacter() {
         let name = BrowserLogin(endpoint: Self.unreachable, client: BrowserLogin.cliClient, deviceName: "a" + String(repeating: "é", count: 40)).deviceName
         #expect(name == "a" + String(repeating: "é", count: 31))

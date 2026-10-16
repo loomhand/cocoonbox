@@ -37,10 +37,13 @@ public struct BrowserLogin: Sendable {
     public let endpoint: Endpoint
     public let client: String
     public let deviceName: String
+    // invite is an invite code the consent page passes on to a GitHub signup, empty for none.
+    public let invite: String
 
-    public init(endpoint: Endpoint, client: String, deviceName: String = BrowserLogin.hostName()) {
+    public init(endpoint: Endpoint, client: String, deviceName: String = BrowserLogin.hostName(), invite: String = "") {
         self.endpoint = endpoint
         self.client = client
+        self.invite = invite
         var name = ""
         for character in deviceName {
             guard name.utf8.count + character.utf8.count <= Self.maxDeviceName else { break }
@@ -100,6 +103,7 @@ public struct BrowserLogin: Sendable {
             URLQueryItem(name: "state", value: state),
             URLQueryItem(name: "device_name", value: deviceName),
         ]
+        if !invite.isEmpty { components.queryItems?.append(URLQueryItem(name: "invite", value: invite)) }
         return components.url!
     }
 

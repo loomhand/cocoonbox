@@ -729,6 +729,33 @@ for how in ("login --from-app", "an implicit copy"):
     copied = as_service(service, *(["login", "--from-app"] if how.startswith("login") else ["status", "--json"]))
     out = as_service(service, "logout")
     check("logout after " + how + " revokes nothing", copied.returncode == 0 and out.returncode == 0 and "revoked=" not in open(mocklog).read()[seen:], copied.stderr + out.stderr)
+# --invite signs up through the browser: the consent page's URL carries the code on to the GitHub signup.
+seen = len(open(mocklog).read())
+r = subprocess.run([cli, "login", "--invite", "cbi_test"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL, env=dict(os.environ, BROWSER=stub))
+log = open(mocklog).read()[seen:]
+check("login --invite carries the invite on the consent page", r.returncode == 0 and "signed in to" in r.stdout and "authorize=allowed" in log and "invite=yes" in log and "&invite=cbi_test" in log, r.stdout + r.stderr + log)
+r = subprocess.run([cli, "login", "--invite", "cbi_test", "--token", "-"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+check("login --invite refuses --token", r.returncode != 0 and "--invite signs up through the browser" in r.stderr, r.stderr)
+
+# invite create and list read an invite-scoped token from the environment or a file, never from argv.
+noenv = {k: v for k, v in os.environ.items() if not k.startswith("COCOONBOX_INVITE_TOKEN")}
+def invite(*args, extra=None):
+    return subprocess.run([cli, "invite", *args], capture_output=True, text=True, timeout=30, env=dict(noenv, **(extra or {})))
+seen = len(open(mocklog).read())
+r = invite("create", "--days", "3", extra={"COCOONBOX_INVITE_TOKEN": "mock-invite-token"})
+check("invite create prints a one-use link", r.returncode == 0 and r.stdout.splitlines()[0] == os.environ["COCOONBOX_ENDPOINT"] + "/cb/?invite=cbi_mock" and "one use" in r.stdout and "invites=created days=3" in open(mocklog).read()[seen:], r.stdout + r.stderr)
+tokenfile = os.path.join(os.path.dirname(mocklog), "invite-token")
+open(tokenfile, "w").write("mock-invite-token\n")
+r = invite("list", "--token-file", tokenfile)
+check("invite list with a token file", r.returncode == 0 and "inv_mock" in r.stdout and "uses left 1" in r.stdout, r.stdout + r.stderr)
+r = invite("create", "--json", extra={"COCOONBOX_INVITE_TOKEN_FILE": tokenfile})
+check("invite create --json with the token file from the environment", r.returncode == 0 and json.loads(r.stdout)["code"] == "cbi_mock", r.stdout + r.stderr)
+r = invite("create")
+check("invite create without a token says where to put one", r.returncode != 0 and "no invite token" in r.stderr, r.stderr)
+r = invite("create", extra={"COCOONBOX_INVITE_TOKEN": "cbit_wrong"})
+check("invite create with a wrong token shows the api's refusal", r.returncode != 0 and "invalid invite token" in r.stderr, r.stderr)
+r = invite("create", "--days", "9", extra={"COCOONBOX_INVITE_TOKEN": "mock-invite-token"})
+check("invite create past 7 days shows the api's refusal", r.returncode != 0 and "1 to 7 days" in r.stderr, r.stderr)
 r = subprocess.run([cli, "login", "--token", "abc"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
 check("login --token takes only -", r.returncode != 0 and "--token takes -" in r.stderr, r.stderr)
 r = subprocess.run([cli, "login", "--token", "-"], input="mock-token\n", capture_output=True, text=True, timeout=30)

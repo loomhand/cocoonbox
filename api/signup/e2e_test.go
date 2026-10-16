@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json/v2"
 	"fmt"
@@ -24,6 +26,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/console"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
+	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/signup"
 	"github.com/loomhand/cocoonbox/api/users"
 )
@@ -373,6 +376,216 @@ func TestDemotingASignupAccountRestoresTheSignupCap(t *testing.T) {
 	}
 }
 
+func TestAnInviteOnTheConsentPageSignsUpAndSignsTheCLIInInOnePass(t *testing.T) {
+	e := newEnv(t)
+	admin := e.browser(t)
+	admin.password(t, "admin", adminPassword)
+	admin.setSignup(t, signup.Settings{Enabled: true, InviteOnly: true, Seats: 10, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
+	var made struct {
+		Code string `json:"code"`
+	}
+	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 1, "days": 1}, &made)
+	verifier := strings.Repeat("v", 43)
+	sum := sha256.Sum256([]byte(verifier))
+	authorize := url.Values{
+		"response_type": {"code"}, "client_id": {oauth.CLIClient}, "redirect_uri": {"http://127.0.0.1:50123/callback"}, "scope": {oauth.AccountScope},
+		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}, "state": {"st"}, "device_name": {"bob-mac"},
+	}
+	if loc := e.browser(t).githubAs(t, "carol", "/cb/api/auth/github/begin", map[string]string{"return_to": "/cb/oauth/authorize?" + authorize.Encode()}); loc != "/cb/?login_error=invite_required" {
+		t.Fatalf("the consent page's sign-in without an invite ends at %q", loc)
+	}
+	var accounts int
+	if err := query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 0 {
+		t.Fatalf("accounts after the refusal = %d, %v", accounts, err)
+	}
+	withInvite := url.Values{}
+	for k, v := range authorize {
+		withInvite[k] = v
+	}
+	withInvite.Set("invite", made.Code)
+	page := "/cb/oauth/authorize?" + withInvite.Encode()
+	bob := e.browser(t)
+	if loc := bob.githubAs(t, "bob", "/cb/api/auth/github/begin", map[string]string{"return_to": page, "invite": withInvite.Get("invite")}); loc != page {
+		t.Fatalf("the consent page's sign-in with an invite ends at %q, want back on the consent page", loc)
+	}
+	var consent oauth.Consent
+	bob.json(t, http.MethodPost, "oauth/check", map[string]string{"query": withInvite.Encode()}, &consent)
+	if !consent.Account || consent.DeviceName != "bob-mac" {
+		t.Fatalf("consent for the new account = %+v", consent)
+	}
+	var approved struct {
+		Redirect string `json:"redirect"`
+	}
+	bob.json(t, http.MethodPost, "oauth/approve", map[string]string{"query": withInvite.Encode()}, &approved)
+	back, _ := url.Parse(approved.Redirect)
+	resp, err := e.srv.Client().PostForm(e.srv.URL+oauth.TokenPath, url.Values{
+		"grant_type": {"authorization_code"}, "code": {back.Query().Get("code")}, "client_id": {oauth.CLIClient},
+		"redirect_uri": {authorize.Get("redirect_uri")}, "code_verifier": {verifier},
+	})
+	if err != nil {
+		t.Fatalf("token: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &tok) != nil {
+		t.Fatalf("token: %d", resp.StatusCode)
+	}
+	device := sha256.Sum256([]byte(tok.AccessToken))
+	b, err := e.users.ByName("bob")
+	if user, ok := e.users.ByTokenSHA256(t.Context(), hex.EncodeToString(device[:])); err != nil || !ok || user != b.ID || b.IDP != "github" {
+		t.Errorf("the device token resolves to %q, %t; bob = %+v, %v", user, ok, b, err)
+	}
+}
+
+func TestAnInviteTokenMakesOnlyOneUseInvitesAndListsOnlyItsOwn(t *testing.T) {
+	e := newEnv(t)
+	admin := e.browser(t)
+	admin.password(t, "admin", adminPassword)
+	admin.setSignup(t, signup.Settings{Enabled: true, InviteOnly: true, Seats: 10, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
+	var minted struct {
+		Token       string             `json:"token"`
+		InviteToken signup.InviteToken `json:"invite_token"`
+	}
+	admin.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "dora"}, &minted)
+	if !strings.HasPrefix(minted.Token, signup.InviteTokenPrefix) || minted.InviteToken.Label != "dora" {
+		t.Fatalf("minted = %+v", minted)
+	}
+	mintedSum := sha256.Sum256([]byte(minted.Token))
+	var hashed, clear int
+	if err := query(t, e.dsn, "SELECT count(*) FILTER (WHERE sha256 = $1), count(*) FILTER (WHERE sha256 = $2 OR label = $2) FROM invite_tokens",
+		hex.EncodeToString(mintedSum[:]), minted.Token).Scan(&hashed, &clear); err != nil || hashed != 1 || clear != 0 {
+		t.Errorf("stored as its sha256: %d, in the clear: %d, %v", hashed, clear, err)
+	}
+	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 3, "days": 30}, &struct{}{})
+	var made struct {
+		Code   string        `json:"code"`
+		Invite signup.Invite `json:"invite"`
+	}
+	status, body := e.bearer(t, minted.Token, http.MethodPost, "/cb/api/invites", map[string]any{})
+	if status != http.StatusOK || json.Unmarshal([]byte(body), &made) != nil {
+		t.Fatalf("a token's invite: %d %s", status, body)
+	}
+	if made.Invite.UsesLeft != 1 || made.Invite.TokenID != minted.InviteToken.ID || time.Until(made.Invite.ExpiresAt) < 47*time.Hour || time.Until(made.Invite.ExpiresAt) > 49*time.Hour {
+		t.Errorf("a token's invite = %+v, want one use for two days", made.Invite)
+	}
+	for _, bad := range []map[string]int{{"days": 8}, {"uses": 2}, {"days": -1}} {
+		if status, body := e.bearer(t, minted.Token, http.MethodPost, "/cb/api/invites", bad); status != http.StatusBadRequest {
+			t.Errorf("a token's invite with %v: %d %s, want 400", bad, status, body)
+		}
+	}
+	if status, _ := e.bearer(t, minted.Token, http.MethodPost, "/cb/api/invites", map[string]int{"days": 7}); status != http.StatusOK {
+		t.Errorf("a token's invite of 7 days: %d", status)
+	}
+	var own []signup.Invite
+	status, body = e.bearer(t, minted.Token, http.MethodGet, "/cb/api/invites", nil)
+	if status != http.StatusOK || json.Unmarshal([]byte(body), &own) != nil || len(own) != 2 || own[0].TokenID != minted.InviteToken.ID || own[1].TokenID != minted.InviteToken.ID {
+		t.Fatalf("the token's list = %d %s, want its two invites and not the admin's", status, body)
+	}
+	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", map[string]string{"invite": made.Code}); loc != "/cb/" {
+		t.Errorf("a token's invite signs up to %q", loc)
+	}
+	if loc := e.browser(t).githubAs(t, "carol", "/cb/api/auth/github/begin", map[string]string{"invite": made.Code}); loc != "/cb/?login_error=invite_required" {
+		t.Errorf("a token's invite used twice ends at %q", loc)
+	}
+	var tokens []signup.InviteToken
+	admin.json(t, http.MethodGet, "invite-tokens", nil, &tokens)
+	if len(tokens) != 1 || tokens[0].Invites != 2 || tokens[0].UsedAt == nil {
+		t.Errorf("tokens = %+v", tokens)
+	}
+}
+
+func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) {
+	e := newEnv(t)
+	admin := e.browser(t)
+	admin.password(t, "admin", adminPassword)
+	var minted struct {
+		Token       string             `json:"token"`
+		InviteToken signup.InviteToken `json:"invite_token"`
+	}
+	admin.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "dora"}, &minted)
+	for _, route := range []struct{ method, path string }{
+		{http.MethodGet, "/cb/"},
+		{http.MethodGet, "/cb/oauth/authorize"},
+		{http.MethodGet, "/cb/queue"},
+		{http.MethodPost, "/cb/api/login"},
+		{http.MethodPost, "/cb/api/logout"},
+		{http.MethodGet, "/cb/api/me"},
+		{http.MethodPatch, "/cb/api/me"},
+		{http.MethodPost, "/cb/api/me/token"},
+		{http.MethodPost, "/cb/api/me/password"},
+		{http.MethodPost, "/cb/api/me/delete"},
+		{http.MethodGet, "/cb/api/me/identities"},
+		{http.MethodPost, "/cb/api/me/identities/github"},
+		{http.MethodDelete, "/cb/api/me/identities/github"},
+		{http.MethodGet, "/cb/api/devices"},
+		{http.MethodDelete, "/cb/api/devices/dev_x"},
+		{http.MethodPost, "/cb/api/boxes"},
+		{http.MethodPatch, "/cb/api/boxes/cb-x"},
+		{http.MethodDelete, "/cb/api/boxes/cb-x"},
+		{http.MethodGet, "/cb/api/users"},
+		{http.MethodPost, "/cb/api/users"},
+		{http.MethodPatch, "/cb/api/users/u-x"},
+		{http.MethodPost, "/cb/api/users/u-x/password"},
+		{http.MethodPut, "/cb/api/users/u-x/daily-cap"},
+		{http.MethodDelete, "/cb/api/users/u-x"},
+		{http.MethodGet, "/cb/api/signup"},
+		{http.MethodPut, "/cb/api/signup"},
+		{http.MethodGet, "/cb/api/queue"},
+		{http.MethodPost, "/cb/api/queue/sq_x/admit"},
+		{http.MethodGet, "/cb/api/queue/me"},
+		{http.MethodDelete, "/cb/api/queue/me"},
+		{http.MethodDelete, "/cb/api/invites/inv_x"},
+		{http.MethodPut, "/cb/api/invites"},
+		{http.MethodGet, "/cb/api/invite-tokens"},
+		{http.MethodPost, "/cb/api/invite-tokens"},
+		{http.MethodDelete, "/cb/api/invite-tokens/" + minted.InviteToken.ID},
+		{http.MethodGet, "/cb/api/auth/providers"},
+		{http.MethodPost, "/cb/api/auth/github/begin"},
+		{http.MethodPost, "/cb/api/oauth/check"},
+		{http.MethodPost, "/cb/api/oauth/approve"},
+		{http.MethodGet, "/cb/api/agents"},
+	} {
+		var body any
+		if route.method != http.MethodGet {
+			body = map[string]any{}
+		}
+		if status, _ := e.bearer(t, minted.Token, route.method, route.path, body); status != http.StatusForbidden {
+			t.Errorf("%s %s with an invite token: %d, want 403", route.method, route.path, status)
+		}
+	}
+	tokenSum := sha256.Sum256([]byte(minted.Token))
+	if _, ok := e.users.ByTokenSHA256(t.Context(), hex.EncodeToString(tokenSum[:])); ok {
+		t.Error("an invite token passes the user token check")
+	}
+	if status, _ := e.bearer(t, signup.InviteTokenPrefix+strings.Repeat("0", 64), http.MethodPost, "/cb/api/invites", map[string]any{}); status != http.StatusUnauthorized {
+		t.Errorf("an unknown invite token: %d, want 401", status)
+	}
+	other := e.browser(t)
+	other.password(t, "alice", alicePassword)
+	alice, _ := e.users.ByName("alice")
+	if status, _ := admin.call(t, http.MethodPatch, "users/"+alice.ID, map[string]bool{"admin": true}); status != http.StatusOK {
+		t.Fatalf("promote alice: %d", status)
+	}
+	var second struct {
+		Token string `json:"token"`
+	}
+	other.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "alice's"}, &second)
+	if status, _ := admin.call(t, http.MethodPatch, "users/"+alice.ID, map[string]bool{"admin": false}); status != http.StatusOK {
+		t.Fatalf("demote alice: %d", status)
+	}
+	if status, _ := e.bearer(t, second.Token, http.MethodPost, "/cb/api/invites", map[string]any{}); status != http.StatusUnauthorized {
+		t.Errorf("the token of a demoted admin: %d, want 401", status)
+	}
+	if status, _ := admin.call(t, http.MethodDelete, "invite-tokens/"+minted.InviteToken.ID, map[string]any{}); status != http.StatusNoContent {
+		t.Fatalf("revoke: %d", status)
+	}
+	if status, _ := e.bearer(t, minted.Token, http.MethodPost, "/cb/api/invites", map[string]any{}); status != http.StatusUnauthorized {
+		t.Errorf("a revoked invite token: %d, want 401", status)
+	}
+}
+
 type person struct {
 	id       int64
 	login    string
@@ -412,11 +625,40 @@ func newEnv(t *testing.T) *env {
 	e.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(e.srv.Close)
 	e.signup = e.openSignup(t)
+	grants, err := oauth.Open(t.Context(), oauth.Options{DSN: e.dsn, Issuer: e.srv.URL, Resource: e.srv.URL + "/cocoonbox.mcp", Accounts: us})
+	if err != nil {
+		t.Fatalf("open oauth: %v", err)
+	}
+	t.Cleanup(grants.Close)
 	web := console.New(us, fakeBoxes{}, 0, 1)
 	web.EnableSignup(e.signup)
+	web.EnableAgents(grants)
 	mux.Handle(console.Prefix, web)
 	mux.HandleFunc("GET "+signup.CallbackPath, web.LoginCallback)
+	mux.HandleFunc("POST "+oauth.TokenPath, grants.ServeToken)
 	return e
+}
+
+// bearer sends a call under /cb/ with token as its bearer and no cookies.
+func (e *env) bearer(t *testing.T, token, method, path string, body any) (int, string) {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		data, _ := json.Marshal(body)
+		reader = strings.NewReader(string(data))
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), method, e.srv.URL+path, reader)
+	req.Header.Set("Authorization", "Bearer "+token)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := e.srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(data)
 }
 
 func (e *env) openSignup(t *testing.T) *signup.Service {
