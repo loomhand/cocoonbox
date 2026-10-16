@@ -402,15 +402,31 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you cannot disable yourself")
 		return
 	}
+	before, _ := s.users.Get(id)
 	u, err := s.users.Update(r.Context(), id, set)
 	if err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	if u.Disabled {
+	if before.Admin && !u.Admin && u.IDP == signup.GitHub && s.signup != nil {
+		if err := s.signupCap(r.Context(), id); err != nil {
+			s.fail(w, r, err)
+			return
+		}
+	}
+	if u.Disabled || u.Admin != before.Admin {
 		s.admit(r.Context())
 	}
 	writeJSON(w, u)
+}
+
+// signupCap gives a signup account the signup settings' daily cap.
+func (s *Server) signupCap(ctx context.Context, id string) error {
+	st, err := s.signup.Settings(ctx)
+	if err != nil {
+		return err
+	}
+	return s.users.SetDailyCap(ctx, id, new(st.DailyCapMicros))
 }
 
 func (s *Server) setDailyCap(w http.ResponseWriter, r *http.Request) {

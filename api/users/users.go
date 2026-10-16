@@ -89,8 +89,9 @@ type NewUser struct {
 }
 
 // Settings changes a user's settings; a nil field keeps its value, MaxRunning 0 returns the user to the api's default and
-// MaxAgentBoxes 0 drops the user's agent box cap.
+// MaxAgentBoxes 0 drops the user's agent box cap. Admin gives the user no gw cap, or the tenant's default when it ends.
 type Settings struct {
+	Admin         *bool `json:"admin,omitempty"`
 	Disabled      *bool `json:"disabled,omitempty"`
 	Residential   *bool `json:"residential,omitempty"`
 	MaxBoxes      *int  `json:"max_boxes,omitempty"`
@@ -435,6 +436,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			r.MaxAgentBoxes = new(*set.MaxAgentBoxes)
 		}
 	}
+	r.Admin = deref(set.Admin, r.Admin)
 	r.Disabled = deref(set.Disabled, r.Disabled)
 	r.Residential = deref(set.Residential, r.Residential)
 	switch {
@@ -449,13 +451,16 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	case r.MaxAgentBoxes != nil && (*r.MaxAgentBoxes < 1 || *r.MaxAgentBoxes > maxBoxesCap):
 		return User{}, fmt.Errorf("%w: max agent boxes must be in 1..%d, or 0 for no cap", ErrInvalid, maxBoxesCap)
 	}
+	if err := s.moveAdmin(ctx, old, r); err != nil {
+		return User{}, err
+	}
 	if s.claimCap(r) != s.claimCap(old) {
 		if err := s.tenants.Put(ctx, id, "", s.claimCap(r)); err != nil {
 			return User{}, fmt.Errorf("set tenant cap: %w", err)
 		}
 	}
 	if err := s.store.exec(ctx, `UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0),
-		max_agent_boxes = $7 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes); err != nil {
+		max_agent_boxes = $7, admin = $8 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes, r.Admin); err != nil {
 		return User{}, err
 	}
 	if r.Disabled && !old.Disabled {
@@ -731,6 +736,23 @@ func (s *Service) indexedToken(sum string) (tokenOwner, bool) {
 func (s *Service) allowMiss() bool {
 	now, next := time.Now().UnixNano(), s.nextMiss.Load()
 	return now >= next && s.nextMiss.CompareAndSwap(next, now+int64(tokenMissInterval))
+}
+
+// moveAdmin refuses demoting the last enabled admin and gives a promoted user no gw cap, a demoted one the tenant's default.
+func (s *Service) moveAdmin(ctx context.Context, old, r record) error {
+	if r.Admin == old.Admin {
+		return nil
+	}
+	var daily *int64
+	if r.Admin {
+		daily = new(int64(gwkeys.Unlimited))
+	} else if !slices.ContainsFunc(s.records(), func(o record) bool { return o.Admin && !o.Disabled && o.ID != r.ID }) {
+		return fmt.Errorf("%w: the last admin stays an admin", ErrInvalid)
+	}
+	if err := s.gw.SetDailyCap(ctx, r.ID, daily); err != nil {
+		return fmt.Errorf("set gw cap: %w", err)
+	}
+	return nil
 }
 
 func (s *Service) records() []record {

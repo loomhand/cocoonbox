@@ -338,6 +338,41 @@ func TestInviteCodeOnlySignupMakesAnAccountOnlyWithAValidInviteAndWritesNothingW
 	}
 }
 
+func TestDemotingASignupAccountRestoresTheSignupCap(t *testing.T) {
+	e := newEnv(t)
+	admin := e.browser(t)
+	admin.password(t, "admin", adminPassword)
+	admin.setSignup(t, signup.Settings{Enabled: true, Seats: 2, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
+	signedIn := e.browser(t)
+	if loc := signedIn.githubAs(t, "bob", "/cb/api/auth/github/begin", nil); loc != "/cb/" {
+		t.Fatalf("bob's signup ends at %q", loc)
+	}
+	bob, _ := e.users.ByName("bob")
+	if status, _ := signedIn.call(t, http.MethodPatch, "users/"+bob.ID, map[string]bool{"admin": true}); status != http.StatusForbidden {
+		t.Errorf("bob promoting himself: %d, want 403", status)
+	}
+	var before, after struct {
+		Seats struct {
+			Used int `json:"used"`
+		} `json:"seats"`
+	}
+	admin.json(t, http.MethodGet, "signup", nil, &before)
+	if status, body := admin.call(t, http.MethodPatch, "users/"+bob.ID, map[string]bool{"admin": true}); status != http.StatusOK || e.gw.cap(bob.ID) != gwkeys.Unlimited {
+		t.Fatalf("promote: %d %s; gw cap %d", status, body, e.gw.cap(bob.ID))
+	}
+	admin.json(t, http.MethodGet, "signup", nil, &after)
+	if after.Seats.Used != before.Seats.Used-1 {
+		t.Errorf("seats used %d with bob an admin, %d before; an admin takes no seat", after.Seats.Used, before.Seats.Used)
+	}
+	if status, body := admin.call(t, http.MethodPatch, "users/"+bob.ID, map[string]bool{"admin": false}); status != http.StatusOK || e.gw.cap(bob.ID) != 1_000_000 {
+		t.Fatalf("demote: %d %s; gw cap %d, want the signup cap", status, body, e.gw.cap(bob.ID))
+	}
+	root, _ := e.users.ByName("admin")
+	if status, _ := admin.call(t, http.MethodPatch, "users/"+root.ID, map[string]bool{"admin": false}); status != http.StatusBadRequest {
+		t.Errorf("demoting the last admin: %d, want 400", status)
+	}
+}
+
 type person struct {
 	id       int64
 	login    string

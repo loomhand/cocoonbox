@@ -408,6 +408,33 @@ func TestReconcileLiftsTheCapOfAdminsOnTheDefaultOnly(t *testing.T) {
 	}
 }
 
+func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
+	svc, gw, _, dsn := newTestService(t)
+	root, _ := svc.Create(t.Context(), NewUser{Name: "root", Admin: true})
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if got, err := svc.Update(t.Context(), u.ID, Settings{Admin: new(true)}); err != nil || !got.Admin || gw.caps[u.ID] != gwkeys.Unlimited {
+		t.Fatalf("promote = %+v, %v; gw cap %v", got, err, gw.caps[u.ID])
+	}
+	if got, err := openTestService(t, dsn, gw, &fakeTenants{tenants: map[string]tenant{}}).Get(u.ID); err != nil || !got.Admin {
+		t.Errorf("a fresh service reads %+v, %v; want the promotion stored", got, err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if _, err := svc.Update(t.Context(), root.ID, Settings{Admin: new(false)}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("demoting the last enabled admin = %v, want ErrInvalid", err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(false)}); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+	if got, err := svc.Update(t.Context(), root.ID, Settings{Admin: new(false)}); err != nil || got.Admin {
+		t.Fatalf("demote with another admin = %+v, %v", got, err)
+	}
+	if _, ok := gw.caps[root.ID]; ok {
+		t.Errorf("a demoted admin keeps gw cap %d, want the tenant's default", gw.caps[root.ID])
+	}
+}
+
 type fakeGW struct {
 	mu   sync.Mutex
 	keys map[string]string
