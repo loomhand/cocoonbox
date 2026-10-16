@@ -966,7 +966,7 @@ func newFakeAgent(st *fakeStore) *fakeAgent {
 	return &fakeAgent{store: st, known: map[string]knownChunks{}, pinned: map[string]pinnedPlan{}}
 }
 
-func (a *fakeAgent) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
+func (a *fakeAgent) Plan(ctx context.Context, _ string, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.planCred = outgoingCredential(ctx)
@@ -1003,7 +1003,7 @@ func (a *fakeAgent) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1
 	return resp, nil
 }
 
-func (a *fakeAgent) Upload(_ context.Context, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) Upload(_ context.Context, _ string, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	a.mu.Lock()
 	a.uploads = append(a.uploads, req)
 	plan, planned := a.pinned[ep.Key]
@@ -1046,11 +1046,11 @@ func (a *fakeAgent) Upload(_ context.Context, ep machines.Endpoint, req *agentv1
 	return final, nil
 }
 
-func (a *fakeAgent) Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) Restore(ctx context.Context, _ string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	return a.serveRestore(ctx, ep, reqs, progress, &a.restores)
 }
 
-func (a *fakeAgent) RestorePaths(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) RestorePaths(ctx context.Context, _ string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	return a.serveRestore(ctx, ep, reqs, progress, &a.pathRestores)
 }
 

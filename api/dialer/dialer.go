@@ -1,4 +1,4 @@
-// Package dialer calls box agents on behalf of the control plane.
+// Package dialer holds the connections to box agents and calls their State service for the control plane.
 package dialer
 
 import (
@@ -7,47 +7,31 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"net"
-	"sync"
-	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/credentials/insecure"
 
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
-
-const (
-	idleTimeout    = time.Minute
-	maxMessageSize = 64 << 20
-)
-
-var connectParams = grpc.ConnectParams{
-	Backoff:           backoff.Config{BaseDelay: 100 * time.Millisecond, Multiplier: 1.6, Jitter: 0.2, MaxDelay: time.Second},
-	MinConnectTimeout: 5 * time.Second,
-}
 
 // ProgressFunc receives each progress message of a transfer.
 type ProgressFunc func(*agentv1.TransferProgress)
 
 type restoreCall func(agentv1.StateClient, context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[agentv1.RestoreRequest, agentv1.TransferProgress], error)
 
-// Dialer keeps one connection per agent endpoint.
+// Dialer calls the agents' State service over pool's connections.
 type Dialer struct {
-	mu    sync.Mutex
-	conns map[string]*grpc.ClientConn
+	pool *Pool
 }
 
 // New returns a Dialer; callers put the box credential in each call's context.
-func New() *Dialer {
-	return &Dialer{conns: map[string]*grpc.ClientConn{}}
+func New(pool *Pool) *Dialer {
+	return &Dialer{pool: pool}
 }
 
 // Plan calls State.Plan on the agent at ep.
-func (d *Dialer) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
-	client, err := d.state(ep)
+func (d *Dialer) Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
+	client, err := d.state(box, ep)
 	if err != nil {
 		return nil, err
 	}
@@ -55,8 +39,8 @@ func (d *Dialer) Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.Pl
 }
 
 // Upload calls State.Upload and returns the final progress message.
-func (d *Dialer) Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.UploadRequest, progress ProgressFunc) (*agentv1.TransferProgress, error) {
-	client, err := d.state(ep)
+func (d *Dialer) Upload(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.UploadRequest, progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	client, err := d.state(box, ep)
 	if err != nil {
 		return nil, err
 	}
@@ -68,27 +52,17 @@ func (d *Dialer) Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.
 }
 
 // Restore sends reqs as the request stream of State.Restore and returns the final progress message; an error from reqs ends the call with it.
-func (d *Dialer) Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
-	return d.restore(ctx, ep, agentv1.StateClient.Restore, reqs, progress)
+func (d *Dialer) Restore(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	return d.restore(ctx, box, ep, agentv1.StateClient.Restore, reqs, progress)
 }
 
 // RestorePaths sends reqs as the request stream of State.RestorePaths, like Restore.
-func (d *Dialer) RestorePaths(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
-	return d.restore(ctx, ep, agentv1.StateClient.RestorePaths, reqs, progress)
+func (d *Dialer) RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	return d.restore(ctx, box, ep, agentv1.StateClient.RestorePaths, reqs, progress)
 }
 
-// Close closes every connection.
-func (d *Dialer) Close() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	for key, conn := range d.conns {
-		_ = conn.Close()
-		delete(d.conns, key)
-	}
-}
-
-func (d *Dialer) restore(ctx context.Context, ep machines.Endpoint, open restoreCall, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
-	client, err := d.state(ep)
+func (d *Dialer) restore(ctx context.Context, box string, ep machines.Endpoint, open restoreCall, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress ProgressFunc) (*agentv1.TransferProgress, error) {
+	client, err := d.state(box, ep)
 	if err != nil {
 		return nil, err
 	}
@@ -108,22 +82,11 @@ func (d *Dialer) restore(ctx context.Context, ep machines.Endpoint, open restore
 	return final, err
 }
 
-func (d *Dialer) state(ep machines.Endpoint) (agentv1.StateClient, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if conn := d.conns[ep.Key]; conn != nil {
-		return agentv1.NewStateClient(conn), nil
-	}
-	conn, err := grpc.NewClient("passthrough:///"+ep.Key,
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return ep.Dial(ctx) }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMessageSize), grpc.MaxCallSendMsgSize(maxMessageSize)),
-		grpc.WithConnectParams(connectParams),
-		grpc.WithIdleTimeout(idleTimeout))
+func (d *Dialer) state(box string, ep machines.Endpoint) (agentv1.StateClient, error) {
+	conn, err := d.pool.Conn(box, ep)
 	if err != nil {
 		return nil, fmt.Errorf("dial agent %s: %w", ep.Key, err)
 	}
-	d.conns[ep.Key] = conn
 	return agentv1.NewStateClient(conn), nil
 }
 

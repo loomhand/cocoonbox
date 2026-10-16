@@ -26,9 +26,10 @@ const (
 	// MCPPrefix starts every remote-tools path: MCPPrefix + <box id> [+ subpath].
 	MCPPrefix = "/cocoonbox.mcp/"
 
-	agentMCPPath   = "/mcp"
-	jsonRPCVersion = "2.0"
-	jsonRPCServer  = -32000
+	agentMCPPath     = "/mcp"
+	agentIdleTimeout = time.Minute
+	jsonRPCVersion   = "2.0"
+	jsonRPCServer    = -32000
 )
 
 // errNoBox answers a box its grant did not create as the resolver answers another user's box.

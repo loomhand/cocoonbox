@@ -36,10 +36,10 @@ var objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // StateAgents is the agents' State service as the control plane calls it.
 type StateAgents interface {
-	Plan(ctx context.Context, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error)
-	Upload(ctx context.Context, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
-	Restore(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
-	RestorePaths(ctx context.Context, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error)
+	Upload(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	Restore(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
+	RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 }
 
 type chunk struct {
@@ -172,7 +172,7 @@ func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint
 }
 
 func (l *stateLayer) snapshot(ctx context.Context, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	plan, err := l.agents.Plan(ctx, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent})
+	plan, err := l.agents.Plan(ctx, p.box, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent})
 	if err != nil {
 		return nil, fmt.Errorf("plan: %w", err)
 	}
@@ -227,7 +227,7 @@ func (l *stateLayer) upload(ctx context.Context, p statePath, ep machines.Endpoi
 			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
 		}
 		offset, size := sent, batchBytes(batch)
-		final, err := l.agents.Upload(ctx, ep, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
+		final, err := l.agents.Upload(ctx, p.box, ep, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
 			p.DoneBytes += offset
 			p.TotalBytes = rec.UploadedBytes
 			p.Finished = p.Finished && last
@@ -297,7 +297,7 @@ func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpo
 		total += c.Size
 		ids = append(ids, c.ID)
 	}
-	if _, err := l.agents.Restore(ctx, ep, l.restorePages(ctx, p, first, ids), plaintextProgress(total, progress)); err != nil {
+	if _, err := l.agents.Restore(ctx, p.box, ep, l.restorePages(ctx, p, first, ids), plaintextProgress(total, progress)); err != nil {
 		return nil, fmt.Errorf("restore: %w", err)
 	}
 	return rec, nil

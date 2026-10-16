@@ -275,7 +275,7 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 	}
 	log.WithFunc("boxes.stateLayer.restorePaths").WithField("box", p.box).Infof(ctx, "restoring %s of snapshot %s: %d entries, %d files, %d chunks presigned",
 		strings.Join(scope.Paths, ", "), e.ID, len(files), done.files, len(ids))
-	final, err := l.agents.RestorePaths(ctx, ep, l.restorePages(ctx, p, first, ids), plaintextProgress(total, progress))
+	final, err := l.agents.RestorePaths(ctx, p.box, ep, l.restorePages(ctx, p, first, ids), plaintextProgress(total, progress))
 	if err != nil {
 		return done, fmt.Errorf("restore paths: %w", err)
 	}

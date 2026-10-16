@@ -24,6 +24,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/credential"
+	"github.com/loomhand/cocoonbox/api/dialer"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -321,8 +322,8 @@ func newProxyEnvAt(t *testing.T, agentAddr string) *proxyEnv {
 
 	sum := sha256.Sum256([]byte(aliceToken))
 	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice"}, &fakeShares{})
-	proxy := NewProxy(resolver, fakeCreds{})
-	t.Cleanup(proxy.Close)
+	proxy := NewProxy(resolver, fakeCreds{}, dialer.NewPool())
+	t.Cleanup(proxy.pool.Close)
 	edgeSrv := grpc.NewServer(
 		grpc.ForceServerCodecV2(NewCodec()),
 		grpc.UnknownServiceHandler(proxy.Handle),

@@ -79,6 +79,8 @@ func main() {
 	for _, f := range cfg.Flavors {
 		flavors = append(flavors, machineFlavor(f))
 	}
+	pool := dialer.NewPool()
+	defer pool.Close()
 	backend, err := newBackend(ctx, cfg, flavors)
 	if err != nil {
 		logger.Fatalf(ctx, err, "start sandboxd backend")
@@ -132,9 +134,7 @@ func main() {
 		if st, err = newStore(cfg); err != nil {
 			logger.Fatalf(ctx, err, "open the state store")
 		}
-		agents := dialer.New()
-		defer agents.Close()
-		enableState(ctx, cfg, svc, agents, st, accounts)
+		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts)
 		library = flows.NewLibrary(st, accounts)
 	}
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts)
@@ -146,8 +146,7 @@ func main() {
 		logger.Fatalf(ctx, err, "open the vault")
 	}
 	defer keys.Close()
-	proxy := edge.NewProxy(svc, signer)
-	defer proxy.Close()
+	proxy := edge.NewProxy(svc, signer, pool)
 	accounts.OnShareEnd(func(ctx context.Context, sh users.Share) { go endShare(ctx, proxy, sh) })
 
 	authn := auth.New(accounts, accounts)

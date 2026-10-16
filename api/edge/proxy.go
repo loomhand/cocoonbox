@@ -5,21 +5,18 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/credential"
+	"github.com/loomhand/cocoonbox/api/dialer"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -29,22 +26,13 @@ const (
 	// HeaderEdgeToken names the retired shared agent secret; the edge strips it from clients.
 	HeaderEdgeToken = "x-cocoonbox-edge-token" //nolint:gosec // a header name, not a credential
 	// MaxMessageSize bounds one proxied frame in either direction.
-	MaxMessageSize = 64 << 20
+	MaxMessageSize = dialer.MaxMessageSize
 
 	agentServicePrefix = "/cocoonbox.agent.v1."
 	stateServicePrefix = "/cocoonbox.agent.v1.State/"
-	agentIdleTimeout   = time.Minute
 )
 
-var (
-	droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, credential.Header, "content-type", "user-agent", "te"}
-
-	// agentConnectParams caps redial backoff at 1s so an agent that starts after a refused dial is reachable at once.
-	agentConnectParams = grpc.ConnectParams{
-		Backoff:           backoff.Config{BaseDelay: 100 * time.Millisecond, Multiplier: 1.6, Jitter: 0.2, MaxDelay: time.Second},
-		MinConnectTimeout: 5 * time.Second,
-	}
-)
+var droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, credential.Header, "content-type", "user-agent", "te"}
 
 // Resolver maps a caller and box id to the box agent's endpoint and the wake id its credential names.
 type Resolver interface {
@@ -64,14 +52,12 @@ type Proxy struct {
 	resolver Resolver
 	creds    Credentials
 	codec    Codec
-
-	mu    sync.Mutex
-	conns map[string]*boxConn
+	pool     *dialer.Pool
 }
 
-// NewProxy builds a Proxy that authenticates to agents with box credentials from creds.
-func NewProxy(resolver Resolver, creds Credentials) *Proxy {
-	return &Proxy{resolver: resolver, creds: creds, codec: NewCodec(), conns: map[string]*boxConn{}}
+// NewProxy builds a Proxy that reaches agents over pool and authenticates to them with box credentials from creds.
+func NewProxy(resolver Resolver, creds Credentials, pool *dialer.Pool) *Proxy {
+	return &Proxy{resolver: resolver, creds: creds, codec: NewCodec(), pool: pool}
 }
 
 // Handle proxies one call; install it with grpc.UnknownServiceHandler.
@@ -115,16 +101,6 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	return err
 }
 
-// Close closes every agent connection.
-func (p *Proxy) Close() {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for id, bc := range p.conns {
-		_ = bc.conn.Close()
-		delete(p.conns, id)
-	}
-}
-
 func (p *Proxy) pump(ctx context.Context, down grpc.ServerStream, up grpc.ClientStream, cancel context.CancelFunc) error {
 	sent := make(chan error, 1)
 	received := make(chan error, 1)
@@ -156,26 +132,11 @@ func (p *Proxy) pump(ctx context.Context, down grpc.ServerStream, up grpc.Client
 }
 
 func (p *Proxy) conn(ctx context.Context, boxID string, ep machines.Endpoint) (*grpc.ClientConn, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if bc := p.conns[boxID]; bc != nil {
-		if bc.key == ep.Key {
-			return bc.conn, nil
-		}
-		_ = bc.conn.Close()
-		delete(p.conns, boxID)
-	}
-	conn, err := grpc.NewClient("passthrough:///"+ep.Key,
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return ep.Dial(ctx) }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(MaxMessageSize)),
-		grpc.WithConnectParams(agentConnectParams),
-		grpc.WithIdleTimeout(agentIdleTimeout))
+	conn, err := p.pool.Conn(boxID, ep)
 	if err != nil {
 		log.WithFunc("edge.Proxy.conn").Errorf(ctx, err, "dial box %s at %s", boxID, ep.Key)
 		return nil, status.Error(codes.Internal, "dial box")
 	}
-	p.conns[boxID] = &boxConn{key: ep.Key, conn: conn}
 	return conn, nil
 }
 
@@ -194,11 +155,6 @@ func (p *Proxy) outgoing(in metadata.MD, box, wake string) metadata.MD {
 		out.Set(credential.Header, p.creds.Credential(box, wake))
 	}
 	return out
-}
-
-type boxConn struct {
-	key  string
-	conn *grpc.ClientConn
 }
 
 // forwardRequests copies client frames upstream until the client half-closes (io.EOF) or fails.

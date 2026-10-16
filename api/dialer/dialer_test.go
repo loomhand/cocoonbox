@@ -21,43 +21,45 @@ import (
 
 func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	d := New()
-	t.Cleanup(d.Close)
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	d := New(pool)
 	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
 
-	plan, err := d.Plan(ctx, ep, &agentv1.PlanRequest{})
+	plan, err := d.Plan(ctx, "cb-1", ep, &agentv1.PlanRequest{})
 	if err != nil || plan.GetSnapshotId() != "s1" {
 		t.Fatalf("Plan = %v, %v", plan, err)
 	}
 	var seen int
-	final, err := d.Upload(ctx, ep, &agentv1.UploadRequest{SnapshotId: "s1", Manifest: &agentv1.PresignedPut{ChunkId: "s1"}}, func(*agentv1.TransferProgress) { seen++ })
+	final, err := d.Upload(ctx, "cb-1", ep, &agentv1.UploadRequest{SnapshotId: "s1", Manifest: &agentv1.PresignedPut{ChunkId: "s1"}}, func(*agentv1.TransferProgress) { seen++ })
 	if err != nil || !final.GetFinished() || final.GetManifestId() != "s1" || seen != 3 {
 		t.Errorf("Upload = %v, %v after %d messages", final, err, seen)
 	}
-	if batch, err := d.Upload(ctx, ep, &agentv1.UploadRequest{SnapshotId: "s1"}, nil); err != nil || batch.GetFinished() {
+	if batch, err := d.Upload(ctx, "cb-1", ep, &agentv1.UploadRequest{SnapshotId: "s1"}, nil); err != nil || batch.GetFinished() {
 		t.Errorf("Upload of a batch without the manifest = %v, %v", batch, err)
 	}
-	if _, err := d.Restore(ctx, ep, pages(nil, &agentv1.RestoreRequest{}), nil); err == nil {
+	if _, err := d.Restore(ctx, "cb-1", ep, pages(nil, &agentv1.RestoreRequest{}), nil); err == nil {
 		t.Error("Restore without a final message succeeded")
 	}
 }
 
 func TestDialerStreamsRestorePagesAndEndsOnAPageError(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	d := New()
-	t.Cleanup(d.Close)
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	d := New(pool)
 	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
 	reqs := []*agentv1.RestoreRequest{
 		{Manifest: &agentv1.PresignedGet{ChunkId: "m"}},
 		{Gets: []*agentv1.PresignedGet{{ChunkId: "a"}, {ChunkId: "b"}}},
 		{Gets: []*agentv1.PresignedGet{{ChunkId: "c"}}},
 	}
-	final, err := d.Restore(ctx, ep, pages(nil, reqs...), nil)
+	final, err := d.Restore(ctx, "cb-1", ep, pages(nil, reqs...), nil)
 	if err != nil || !final.GetFinished() || final.GetDoneChunks() != 3 || final.GetManifestId() != "m" {
 		t.Errorf("Restore of three pages = %v, %v", final, err)
 	}
 	presign := errors.New("presign failed")
-	if _, err := d.Restore(ctx, ep, pages(presign, reqs...), nil); !errors.Is(err, presign) {
+	if _, err := d.Restore(ctx, "cb-1", ep, pages(presign, reqs...), nil); !errors.Is(err, presign) {
 		t.Errorf("Restore with a failing page = %v, want %v", err, presign)
 	}
 }
@@ -65,18 +67,20 @@ func TestDialerStreamsRestorePagesAndEndsOnAPageError(t *testing.T) {
 func TestDialerDialsTheEndpointNotItsKey(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
 	ep.Key = "box.invalid:1"
-	d := New()
-	t.Cleanup(d.Close)
-	if _, err := d.Plan(metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1"), ep, &agentv1.PlanRequest{}); err != nil {
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	d := New(pool)
+	if _, err := d.Plan(metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1"), "cb-1", ep, &agentv1.PlanRequest{}); err != nil {
 		t.Errorf("Plan through an endpoint whose key resolves nowhere: %v", err)
 	}
 }
 
 func TestDialerAddsNoCredentialOfItsOwn(t *testing.T) {
 	ep := machines.TCPEndpoint(serveState(t, &fakeState{}))
-	d := New()
-	t.Cleanup(d.Close)
-	if _, err := d.Plan(t.Context(), ep, &agentv1.PlanRequest{}); status.Code(err) != codes.Unauthenticated {
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	d := New(pool)
+	if _, err := d.Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Plan without a credential: %v, want Unauthenticated", err)
 	}
 }

@@ -21,6 +21,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/dialer"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 )
 
@@ -186,8 +187,8 @@ func TestScreenFiltersBothDirections(t *testing.T) {
 	agentSrv := grpc.NewServer()
 	agentv1.RegisterSessionServer(agentSrv, box)
 	resolver := &fakeResolver{addr: serve(t, agentSrv)}
-	proxy := NewProxy(resolver, fakeCreds{})
-	t.Cleanup(proxy.Close)
+	proxy := NewProxy(resolver, fakeCreds{}, dialer.NewPool())
+	t.Cleanup(proxy.pool.Close)
 	cut := make(chan struct{})
 	grant := auth.Grant{Share: auth.Share{ID: "sh-open", Owner: "alice", Box: boxes.BoxID("alice"), Cut: cut}}
 	viewer, client := net.Pipe()
