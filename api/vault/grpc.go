@@ -18,25 +18,25 @@ func (s *Service) Add(ctx context.Context, req *controlv1.AddKeyRequest) (*contr
 		return nil, err
 	}
 	if err = checkName(req.GetName()); err != nil {
-		return nil, keyStatus(err)
+		return nil, keyStatus(ctx, err, "add key")
 	}
 	sp, err := checkSpec(req.GetHosts(), req.GetHeader(), req.GetTemplate(), req.GetQuery())
 	if err != nil {
-		return nil, keyStatus(err)
+		return nil, keyStatus(ctx, err, "add key")
 	}
 	value := req.GetValue()
 	if err = checkValue(value); err != nil {
-		return nil, keyStatus(err)
+		return nil, keyStatus(ctx, err, "add key")
 	}
 	sec := &secret{
 		id: idPrefix + randomHex(idBytes), owner: owner, name: req.GetName(), hosts: sp.hosts, header: sp.header, template: sp.template,
 		query: sp.query, placeholder: newPlaceholder(value), hint: valueHint(value), fingerprint: fingerprint(value), valueLen: len(value), version: 1,
 	}
 	if sec.sealed, err = s.seal.seal(ctx, owner, value, valueData(sec.id, owner)); err != nil {
-		return nil, err
+		return nil, keyStatus(ctx, err, "add key")
 	}
 	if err := s.store.insert(ctx, sec, func(others []*secret) error { return fits(append(others, sec)) }); err != nil {
-		return nil, keyStatus(err)
+		return nil, keyStatus(ctx, err, "add key")
 	}
 	s.audit(ctx, sec, opCreate)
 	s.changed(ctx, owner)
@@ -50,7 +50,7 @@ func (s *Service) List(ctx context.Context, _ *controlv1.ListKeysRequest) (*cont
 	}
 	list, err := s.store.secrets(ctx, owner)
 	if err != nil {
-		return nil, err
+		return nil, keyStatus(ctx, err, "list keys")
 	}
 	out := &controlv1.ListKeysResponse{Keys: make([]*controlv1.Key, 0, len(list))}
 	for _, sec := range list {
@@ -66,7 +66,7 @@ func (s *Service) Rotate(ctx context.Context, req *controlv1.RotateKeyRequest) (
 	}
 	value := req.GetValue()
 	if err = checkValue(value); err != nil {
-		return nil, keyStatus(err)
+		return nil, keyStatus(ctx, err, "rotate key")
 	}
 	sec, err := s.store.rotate(ctx, owner, req.GetName(), func(sec *secret) error {
 		sealed, sealErr := s.seal.seal(ctx, owner, value, valueData(sec.id, owner))
@@ -77,7 +77,7 @@ func (s *Service) Rotate(ctx context.Context, req *controlv1.RotateKeyRequest) (
 		return nil
 	})
 	if err != nil {
-		return nil, keyStatus(err)
+		return nil, keyStatus(ctx, err, "rotate key")
 	}
 	s.audit(ctx, sec, opRotate)
 	s.changed(ctx, owner)
@@ -91,7 +91,7 @@ func (s *Service) Delete(ctx context.Context, ref *controlv1.KeyRef) (*controlv1
 	}
 	id, err := s.store.remove(ctx, owner, ref.GetName())
 	if err != nil {
-		return nil, keyStatus(err)
+		return nil, keyStatus(ctx, err, "delete key")
 	}
 	s.audit(ctx, &secret{id: id, owner: owner, name: ref.GetName()}, opDelete)
 	s.changed(ctx, owner)
@@ -116,7 +116,7 @@ func callerID(ctx context.Context) (string, error) {
 	return user, nil
 }
 
-func keyStatus(err error) error {
+func keyStatus(ctx context.Context, err error, action string) error {
 	switch {
 	case errors.Is(err, errInvalid):
 		return status.Error(codes.InvalidArgument, err.Error())
@@ -127,5 +127,6 @@ func keyStatus(err error) error {
 	case errors.Is(err, errQuota):
 		return status.Error(codes.ResourceExhausted, err.Error())
 	}
-	return err
+	log.WithFunc("vault.keyStatus").Error(ctx, err, action)
+	return status.Error(codes.Internal, action+" failed")
 }

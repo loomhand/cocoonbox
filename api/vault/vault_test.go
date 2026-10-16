@@ -154,6 +154,20 @@ func TestDeletingAUserDropsItsKeysAndAudit(t *testing.T) {
 	}
 }
 
+func TestKeysAnswerAStoreFailureWithoutItsText(t *testing.T) {
+	svc := newService(t)
+	svc.store.pool.Close()
+	ctx := auth.WithUser(t.Context(), alice)
+	_, listErr := svc.List(ctx, &controlv1.ListKeysRequest{})
+	_, addErr := svc.Add(ctx, &controlv1.AddKeyRequest{Name: "K", Hosts: []string{"a.example.com"}, Value: synthetic})
+	_, deleteErr := svc.Delete(ctx, &controlv1.KeyRef{Name: "K"})
+	for _, err := range []error{listErr, addErr, deleteErr} {
+		if st := status.Convert(err); st.Code() != codes.Internal || !strings.HasSuffix(st.Message(), " failed") || strings.Contains(st.Message(), "pool") {
+			t.Errorf("err = %v, want Internal with a generic message", err)
+		}
+	}
+}
+
 func onlyName(t *testing.T, m map[string]*machines.Secret) string {
 	t.Helper()
 	if len(m) != 1 {
