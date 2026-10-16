@@ -1,15 +1,16 @@
-# Cuts cbcore:vN from the previous template and publishes its rootfs as ghcr.io/loomhand/cocoonbox/base:vN and :latest; see docs/image.md.
-# It needs a self-hosted runner labelled cocoon on a host that runs the box's sandboxd instance.
+# Cuts cbcore:vN from a release on the runner labelled cocoon (deploy/runner), then, after the box acceptance on that host and an approval
+# in the ghcr-publish environment, publishes its rootfs as ghcr.io/loomhand/cocoonbox/base:vN and :latest; see docs/image.md.
+# The runner's job-started hook refuses every job but CMGS's dispatch of this file on main.
 name: image
 
 on:
   workflow_dispatch:
     inputs:
       base:
-        description: Base template, such as cbcore:v1
+        description: Base template, such as cbcore:v9
         required: true
       version:
-        description: New version, such as v2
+        description: New version, such as v19
         required: true
       release:
         description: Release tag whose agent binary goes into the image
@@ -17,11 +18,10 @@ on:
       provision:
         description: Rerun provision.sh
         type: boolean
-        default: false
+        default: true
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
   group: image
@@ -31,41 +31,61 @@ jobs:
   cut:
     runs-on: [self-hosted, cocoon]
     steps:
+      - name: Cut
+        env:
+          BASE: ${{ inputs.base }}
+          VERSION: ${{ inputs.version }}
+          RELEASE: ${{ inputs.release }}
+          PROVISION: ${{ inputs.provision }}
+        run: |
+          args=()
+          if [ "$PROVISION" = true ]; then args=(-p); fi
+          sudo /usr/local/sbin/cb-image-cut "${args[@]}" "$RELEASE" "$BASE" "$VERSION"
+
+  publish:
+    needs: cut
+    runs-on: [self-hosted, cocoon]
+    environment: ghcr-publish
+    permissions:
+      contents: read
+      packages: write
+    steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.release }}
 
-      - name: Agent of the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release download "${{ inputs.release }}" --repo "$GITHUB_REPOSITORY" --pattern cocoonbox-agent-linux-amd64 --pattern checksums.txt
-          grep ' cocoonbox-agent-linux-amd64$' checksums.txt | sha256sum -c -
-          chmod +x cocoonbox-agent-linux-amd64
-
-      - name: Cut
-        run: sudo image/cut.sh ${{ inputs.provision && '-p' || '' }} -f cbcore -a "$PWD/cocoonbox-agent-linux-amd64" "${{ inputs.base }}" "${{ inputs.version }}"
-
       - name: Publish
+        env:
+          VERSION: ${{ inputs.version }}
+          RELEASE: ${{ inputs.release }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
           image="ghcr.io/${{ github.repository }}/base"
-          version="${{ inputs.version }}"
-          tarball=/srv/cb/sbx/build/cocoonbox-cbcore-$version.tar.gz
+          tarball=/srv/cb/sbx/build/cocoonbox-cbcore-$VERSION.tar.gz
+          cfg="$RUNNER_TEMP/oras.json"
           revision=$(git rev-parse HEAD)
-          agent_rev=$(git rev-parse --short HEAD)
-          agent_sha=$(sha256sum cocoonbox-agent-linux-amd64 | cut -d' ' -f1)
+          curl -fsSL -o "$RUNNER_TEMP/checksums.txt" "${{ github.server_url }}/${{ github.repository }}/releases/download/$RELEASE/checksums.txt"
+          want=$(awk '$2 == "cocoonbox-agent-linux-amd64" {print $1}' "$RUNNER_TEMP/checksums.txt")
+          tar -xzf "$tarball" -C "$RUNNER_TEMP" ./usr/local/bin/cocoonbox-agent
+          agent_sha=$(sha256sum "$RUNNER_TEMP/usr/local/bin/cocoonbox-agent" | cut -d' ' -f1)
+          if [ -z "$want" ] || [ "$agent_sha" != "$want" ]; then
+            echo "image agent $agent_sha is not $RELEASE's cocoonbox-agent-linux-amd64 ${want:-(missing)}" >&2
+            exit 1
+          fi
+          agent_rev=$("$RUNNER_TEMP/usr/local/bin/cocoonbox-agent" --version)
+          agent_rev=${agent_rev##*+}
           cua_commit=$(sed -n 's/^COMMIT=${COMMIT:-\(.*\)}$/\1/p' image/cua-driver.sh)
           cua_version=$(sed -n 's/^VERSION=${VERSION:-\(.*\)}$/\1/p' image/cua-driver.sh)
-          echo "${{ github.token }}" | oras login ghcr.io --username "${{ github.actor }}" --password-stdin
-          if oras resolve "$image:$version" >/dev/null 2>&1; then
-            echo "$image:$version exists; a published version is never overwritten" >&2
+          echo "$GH_TOKEN" | oras login ghcr.io --registry-config "$cfg" --username "${{ github.actor }}" --password-stdin
+          if oras resolve --registry-config "$cfg" "$image:$VERSION" >/dev/null 2>&1; then
+            echo "$image:$VERSION exists; a published version is never overwritten" >&2
             exit 1
           fi
           # oras refuses absolute paths, so it pushes the tarball's basename from its directory
           cd "$(dirname "$tarball")"
-          oras push "$image:$version" \
+          oras push --registry-config "$cfg" "$image:$VERSION" \
             --annotation "org.opencontainers.image.revision=$revision" \
             --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
             --annotation "io.github.loomhand.cocoonbox.agent-sha256=$agent_sha" \
@@ -73,4 +93,11 @@ jobs:
             --annotation "io.github.loomhand.cocoonbox.cua-driver-version=$cua_version" \
             --annotation "io.github.loomhand.cocoonbox.cua-driver-commit=$cua_commit" \
             "$(basename "$tarball"):application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"
-          oras tag "$image:$version" latest
+          oras tag --registry-config "$cfg" "$image:$VERSION" latest
+          digest=$(oras resolve --registry-config "$cfg" "$image:$VERSION")
+          test "$(oras resolve --registry-config "$cfg" "$image:latest")" = "$digest"
+          echo "$image:$VERSION = latest = $digest"
+
+      - name: Drop the registry login
+        if: always()
+        run: rm -rf "${RUNNER_TEMP:?}/oras.json" "${RUNNER_TEMP:?}/usr"

@@ -1,0 +1,56 @@
+#!/bin/bash
+# Installs the image workflow's runner on a cbsbx host: user cbrunner, oras, the runner as cb-runner.service with the job-started hook,
+# and sudo for cb-image-cut only; idempotent. The registration token is read from stdin while the runner is not configured yet.
+# usage: gh api -X POST repos/loomhand/cocoonbox/actions/runners/registration-token --jq .token | ssh <host> sudo deploy/runner/install <audit file>
+set -euo pipefail
+export LC_ALL=C
+
+AUDIT=${1:?usage: install <audit file>}
+RUNNER_VERSION=2.338.0
+RUNNER_SHA256=af4b794c1bc41d73d40535e3fe092a39f9679cd8d965954c2aca25a05ca41d32
+ORAS_VERSION=1.3.4
+ORAS_SHA256=f27adb935022d94df8dc77719c322dda592c78a0d57a6f7dcdd8d900b248c454
+RUNNER_USER=cbrunner
+RUNNER_HOME=/var/lib/cbrunner
+RUNNER_DIR=$RUNNER_HOME/runner
+IMAGE_ROOT=/var/lib/cb-image
+URL=https://github.com/loomhand/cocoonbox
+SRC="$(cd "$(dirname "$0")" && pwd)"
+TMP=$(mktemp -d)
+
+trap 'rm -rf "$TMP"' EXIT
+id "$RUNNER_USER" >/dev/null 2>&1 || useradd --system --create-home --home-dir "$RUNNER_HOME" --shell /usr/sbin/nologin "$RUNNER_USER"
+
+if ! oras version 2>/dev/null | grep -q "^Version: *$ORAS_VERSION$"; then
+	curl -fsSL -o "$TMP/oras.tar.gz" "https://github.com/oras-project/oras/releases/download/v$ORAS_VERSION/oras_${ORAS_VERSION}_linux_amd64.tar.gz"
+	echo "$ORAS_SHA256  $TMP/oras.tar.gz" | sha256sum -c --quiet -
+	tar -xzf "$TMP/oras.tar.gz" -C "$TMP" oras
+	install -m 0755 "$TMP/oras" /usr/local/bin/oras
+fi
+
+if [ ! -x "$RUNNER_DIR/run.sh" ]; then
+	curl -fsSL -o "$TMP/runner.tar.gz" "https://github.com/actions/runner/releases/download/v$RUNNER_VERSION/actions-runner-linux-x64-$RUNNER_VERSION.tar.gz"
+	echo "$RUNNER_SHA256  $TMP/runner.tar.gz" | sha256sum -c --quiet -
+	install -d -m 0750 "$RUNNER_DIR"
+	tar -xzf "$TMP/runner.tar.gz" -C "$RUNNER_DIR"
+	chown -R "$RUNNER_USER:$RUNNER_USER" "$RUNNER_DIR"
+	"$RUNNER_DIR/bin/installdependencies.sh" >/dev/null
+fi
+
+install -m 0755 "$SRC/cb-image-cut" /usr/local/sbin/cb-image-cut
+install -d -m 0755 /usr/local/lib/cb-runner "$IMAGE_ROOT" "$IMAGE_ROOT/vendor"
+install -m 0755 "$SRC/job-started.sh" /usr/local/lib/cb-runner/job-started.sh
+printf '%s\n' "$AUDIT" > /etc/cocoonbox/image-audit
+printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/cb-image-cut\n' "$RUNNER_USER" > "$TMP/sudoers"
+visudo -cqf "$TMP/sudoers"
+install -m 0440 "$TMP/sudoers" /etc/sudoers.d/90-cbrunner
+
+if [ ! -f "$RUNNER_DIR/.runner" ]; then
+	read -r token
+	(cd "$RUNNER_DIR" && HOME=$RUNNER_HOME ACTIONS_RUNNER_INPUT_TOKEN=$token runuser -u "$RUNNER_USER" -- \
+		./config.sh --unattended --url "$URL" --name "$(hostname)" --labels cocoon --work _work)
+fi
+install -m 0644 "$SRC/cb-runner.service" /etc/systemd/system/cb-runner.service
+systemctl daemon-reload
+systemctl enable --now cb-runner.service
+systemctl is-active cb-runner.service

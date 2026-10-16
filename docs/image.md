@@ -50,4 +50,7 @@ cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/.
   | `io.github.loomhand.cocoonbox.cua-driver-commit` | the [loomhand/cua](https://github.com/loomhand/cua) commit cua-driver is built from |
 
 - a host imports a version as its template: `oras pull ghcr.io/loomhand/cocoonbox/base:vN` and `cocoon image import cbcore:vN cocoonbox-cbcore-vN.tar.gz`;
-- `.github/workflows/image.yml` cuts and publishes. It needs a self-hosted runner labelled `cocoon` on a sandboxd host; until one is registered the workflow does not run.
+- `.github/workflows/image.yml` cuts and publishes on a self-hosted runner labelled `cocoon` on the sandboxd host, installed by `deploy/runner/install`:
+  - the runner's job-started hook (`deploy/runner/job-started.sh`) fails every job before its first step unless it is CMGS's dispatch of `image.yml` on main, so no pull request reaches the host;
+  - the runner user may run only `cb-image-cut` with sudo; it cuts from a root-owned tree of the release tag, which must be on main, with the release's agent checked against `checksums.txt`, and refuses a `cbcore:vN` that exists or a cbsbx headroom under 35G;
+  - the `cut` job leaves `cbcore:vN` and its tarball for the box acceptance on that host; the `publish` job waits for an approval in the `ghcr-publish` environment, checks the tarball's agent against the release again and pushes with the job's `GITHUB_TOKEN` through a registry config under `RUNNER_TEMP`.

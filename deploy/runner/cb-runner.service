@@ -1,0 +1,20 @@
+[Unit]
+Description=GitHub Actions runner for the loomhand/cocoonbox image workflow (label cocoon)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cbrunner
+Group=cbrunner
+WorkingDirectory=/var/lib/cbrunner/runner
+Environment=ACTIONS_RUNNER_HOOK_JOB_STARTED=/usr/local/lib/cb-runner/job-started.sh
+ExecStart=/var/lib/cbrunner/runner/run.sh
+Restart=always
+RestartSec=10s
+KillMode=process
+KillSignal=SIGTERM
+TimeoutStopSec=5min
+
+[Install]
+WantedBy=multi-user.target
