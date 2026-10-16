@@ -157,7 +157,7 @@ func TestATokenAnotherProcessSetWorksAtOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	token := tokenPrefix + randomHex(secretBytes)
+	token := TokenPrefix + randomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(token)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	old := tokenPrefix + randomHex(secretBytes)
+	old := TokenPrefix + randomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(old)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
@@ -191,7 +191,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 		t.Fatalf("old token resolves to %q, %t", id, ok)
 	}
 
-	replaced := tokenPrefix + randomHex(secretBytes)
+	replaced := TokenPrefix + randomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(replaced)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
 		t.Fatalf("end the listening connection: %v", err)
 	}
-	missed := tokenPrefix + randomHex(secretBytes)
+	missed := TokenPrefix + randomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(missed)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}

@@ -175,11 +175,13 @@ final class MCPServer: Sendable {
     private let token: String
     private let sessions = Mutex<Set<String>>([])
     private let control: ControlMCP
+    private let oauth: MockOAuth
 
-    init(world: MockWorld, token: String) {
+    init(world: MockWorld, token: String, issuer: String) {
         self.world = world
         self.token = token
         control = ControlMCP(world: world)
+        oauth = MockOAuth(token: token, issuer: issuer)
     }
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: String]) -> [String: Any] {
@@ -195,6 +197,9 @@ final class MCPServer: Sendable {
         let auth = authorization == "Bearer \(token)" ? "ok" : authorization.contains("${") ? "unexpanded" : authorization.isEmpty ? "missing" : "bad"
         var line = "mcp \(method) \(path) auth=\(auth) ua=\(headers["user-agent"]?.split(separator: " ").first ?? "-")"
         defer { print(line) }
+        if let response = oauth.handle(method: method, path: path, body: body, line: &line) {
+            return response
+        }
         let target = path.split(separator: "?").first.map(String.init) ?? ""
         let boxID = target.hasPrefix(Self.prefix) && target != ControlMCP.path && target != MockConnect.path ? String(target.dropFirst(Self.prefix.count)) : ""
         guard target == ControlMCP.path || target == MockConnect.path || !boxID.isEmpty else {

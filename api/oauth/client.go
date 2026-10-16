@@ -34,15 +34,21 @@ var (
 	errUnknownClient = errors.New("client_id is neither a client metadata document URL nor a client this server registered")
 
 	loopbackHosts = []string{"localhost", "127.0.0.1", "::1"}
+	// firstParty are the clients fixed in the server: each redirects to a loopback listener it opens for the sign-in.
+	firstParty = map[string]client{
+		CLIClient: {id: CLIClient, name: "cocoonbox CLI", redirects: []string{"http://127.0.0.1/callback"}, firstParty: true},
+		AppClient: {id: AppClient, name: "CocoonBox app", redirects: []string{"http://127.0.0.1/callback"}, firstParty: true},
+	}
 )
 
 // client is a client as the server trusts it: its id, the name it gives, the verified host of its metadata document
-// (empty for a registered client) and the redirect URIs it may use.
+// (empty for a registered client), the redirect URIs it may use, and whether it is a first-party client of the account scope.
 type client struct {
-	id        string
-	name      string
-	host      string
-	redirects []string
+	id         string
+	name       string
+	host       string
+	redirects  []string
+	firstParty bool
 }
 
 // allows reports whether uri is one of the client's redirect URIs; a loopback one matches on any port (RFC 8252 §7.3).
@@ -94,8 +100,11 @@ func (d *documents) put(c client) {
 	d.entries[c.id] = cachedDocument{client: c, fetchedAt: time.Now()}
 }
 
-// client resolves a client_id: an https URL is a metadata document to fetch, dcr_ a client this server registered.
+// client resolves a client_id: a first-party client, an https URL is a metadata document to fetch, dcr_ a client this server registered.
 func (s *Service) client(ctx context.Context, id string) (client, error) {
+	if c, ok := firstParty[id]; ok {
+		return c, nil
+	}
 	switch {
 	case strings.HasPrefix(id, "https://"):
 		return s.document(ctx, id)

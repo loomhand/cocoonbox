@@ -29,11 +29,15 @@
   </section>
 
   <section id="me" hidden>
-    <h2>API token</h2>
-    <p>The app signs in with this token. It is shown once; regenerating it signs the app out until you paste the new one.</p>
+    <h2>Personal token</h2>
+    <p>Scripts, and an app or CLI you signed in by pasting, use this token. It is shown once; regenerating it signs out whatever holds the old one. Devices signed in through the browser keep their own tokens.</p>
     <p id="token-state"></p>
     <pre id="token" hidden></pre>
     <button id="regenerate">Regenerate token</button>
+
+    <h2>Devices</h2>
+    <p>Each sign-in through the browser (<code>cocoonbox login</code>) has its own token with your whole account. Revoke one you no longer use; the others stay signed in.</p>
+    <table><thead><tr><th>Client</th><th>Device</th><th>Signed in</th><th>Last used</th><th></th></tr></thead><tbody id="devices"></tbody></table>
 
     <h2>Settings</h2>
     <form id="settings-form">

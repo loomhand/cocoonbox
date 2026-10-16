@@ -29,8 +29,14 @@ const (
 	RegisterPath = "/cocoonbox.oauth/register"
 	// RevokePath takes RFC 7009 revocations.
 	RevokePath = "/cocoonbox.oauth/revoke"
-	// Scope is the one scope: manage the boxes the grant creates.
+	// Scope is the one scope of an agent: manage the boxes the grant creates.
 	Scope = "boxes"
+	// AccountScope is the scope of a first-party client: the whole account, through a device token.
+	AccountScope = "account"
+	// CLIClient is the first-party client id of the cocoonbox CLI.
+	CLIClient = "cocoonbox-cli"
+	// AppClient is the first-party client id of the CocoonBox app.
+	AppClient = "cocoonbox-app"
 	// AccessPrefix starts every access token.
 	AccessPrefix = "cba_"
 
@@ -45,6 +51,8 @@ const (
 	codeParam              = "code"
 	errorParam             = "error"
 	errorDescriptionParam  = "error_description"
+	scopeParam             = "scope"
+	invalidRequest         = "invalid_request"
 	authorizationCode      = "authorization_code"
 	refreshToken           = "refresh_token"
 	authNone               = "none"
@@ -58,6 +66,7 @@ const (
 	codeTTL                = time.Minute
 	usedEvery              = time.Minute
 	maxBoxesLimit          = 16
+	maxDeviceName          = 64
 )
 
 var (
@@ -71,9 +80,11 @@ var (
 	grantTypes = []string{authorizationCode, refreshToken}
 )
 
-// Accounts returns a user, so a disabled or deleted user's tokens stop working.
+// Accounts returns a user, so a disabled or deleted user's tokens stop working, and issues and revokes the device tokens of first-party clients.
 type Accounts interface {
 	Get(id string) (users.User, error)
+	IssueDevice(ctx context.Context, user, client, label string) (string, error)
+	RevokeDeviceSHA256(ctx context.Context, sum string) error
 }
 
 // Options names the database, the public origin, the protected resource and the users.

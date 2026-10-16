@@ -28,12 +28,12 @@ function notice(text, isError) {
 }
 
 function show(id) {
-  for (const s of ["login", "consent"]) $(s).hidden = s !== id;
+  for (const s of ["login", "device", "consent"]) $(s).hidden = s !== id;
 }
 
 function refused(e) {
   if (e.redirect) {
-    notice("The request was refused: " + e.message + ". Returning to the agent.", true);
+    notice("The request was refused: " + e.message + ". Returning to the client.", true);
     location.assign(e.redirect);
     return;
   }
@@ -54,6 +54,13 @@ async function load() {
     return;
   }
   $("whoami").textContent = c.user;
+  if (c.account) {
+    $("device-client").textContent = c.client_name;
+    $("device-name").textContent = c.device_name || "this computer";
+    $("device-redirect").textContent = "The answer goes to " + c.redirect_host + " on this computer. Allow it only if you started this sign-in on this computer just now.";
+    show("device");
+    return;
+  }
   $("client-name").textContent = c.client_name;
   $("client-id").textContent = "Client id: " + c.client_id;
   $("client-trust").textContent = c.client_host
@@ -94,14 +101,27 @@ $("consent-form").addEventListener("submit", (ev) => {
     .catch((e) => (e.redirect ? refused(e) : notice(e.message, true)));
 });
 
-$("deny").addEventListener("click", () => {
+$("device-allow").addEventListener("click", () => {
+  api("POST", "oauth/approve", { query })
+    .then(({ redirect }) => {
+      show("");
+      notice("Allowed. Returning to the sign-in; you can close this tab.");
+      location.assign(redirect);
+    })
+    .catch((e) => (e.redirect ? refused(e) : notice(e.message, true)));
+});
+
+function deny() {
   api("POST", "oauth/deny", { query })
     .then(({ redirect }) => {
       show("");
-      notice("Denied. Returning to the agent.");
+      notice("Denied.");
       location.assign(redirect);
     })
     .catch(refused);
-});
+}
+
+$("deny").addEventListener("click", deny);
+$("device-deny").addEventListener("click", deny);
 
 load();

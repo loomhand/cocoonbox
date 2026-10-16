@@ -65,7 +65,9 @@ Each guest's MCP session through the share (`mcp:<client>@<share id>[:<user id>]
 
 ```bash
 cocoonbox install                 # link into ~/.local/bin
-cocoonbox login                   # token from stdin or a prompt, into the Keychain (service io.github.loomhand.cocoonbox.cli)
+cocoonbox login                   # through the browser: allow this Mac on the console; a device token into the Keychain (service io.github.loomhand.cocoonbox.cli)
+cocoonbox login --token -         # a pasted token from stdin or a prompt (also over SSH, or when stdin is not a terminal)
+cocoonbox logout                  # revoke this Mac's device token, then delete the Keychain item
 cocoonbox setup claude            # local marketplace + plugin: claude plugin marketplace add / install
 cocoonbox setup codex             # codex plugin marketplace add / codex plugin add
 cocoonbox setup cursor            # merges {"command": "<cli>", "args": ["mcp"]} into ~/.cursor/mcp.json
@@ -76,7 +78,7 @@ Every client runs `cocoonbox mcp`, a stdio MCP server. It reads the token from t
 
 The endpoint comes from `login` (`~/Library/Application Support/CocoonBox/cli.json`), not from the environment, because `codex` passes MCP servers only a fixed set of variables. The CLI keeps its own Keychain item while builds are ad hoc signed. Each rebuild has a new code hash, so the first read after a rebuild raises a Keychain prompt, and the bridge waits on it, which a client may count as a failed start; run `cocoonbox login` again after rebuilding. `cocoonbox login --from-app` copies the app's token after one "Always Allow".
 
-`scripts/test-cli.sh` runs the CLI and the bridge against MockBox, which also serves the control MCP.
+`scripts/test-cli.sh` runs the CLI and the bridge against MockBox, which also serves the control MCP and the browser sign-in (it allows at once; `BROWSER` names a stub that follows the consent URL).
 
 
 

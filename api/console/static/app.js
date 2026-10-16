@@ -94,6 +94,7 @@ async function load() {
   $("box-form").hidden = me.own_boxes >= u.max_boxes;
 
   await loadShares(me.boxes);
+  await loadDevices();
 
   const usage = $("usage");
   usage.replaceChildren();
@@ -113,6 +114,28 @@ async function load() {
   show(u.admin ? ["me", "admin"] : ["me"]);
   await loadAgents();
   if (u.admin) await loadUsers(u);
+}
+
+async function loadDevices() {
+  const devices = await api("GET", "devices");
+  const body = $("devices");
+  body.replaceChildren();
+  for (const d of devices) {
+    const row = body.insertRow();
+    cell(row, d.client);
+    cell(row, d.label || "-");
+    cell(row, new Date(d.created_at).toLocaleString());
+    cell(row, d.used_at ? new Date(d.used_at).toLocaleString() : "never");
+    const actions = cell(row, "");
+    actions.className = "actions";
+    actions.appendChild(button("Revoke", async () => {
+      if (!confirm("Revoke " + d.client + (d.label ? " on " + d.label : "") + "? It is signed out at once.")) return;
+      await api("DELETE", "devices/" + encodeURIComponent(d.id));
+      notice("Revoked " + d.client + (d.label ? " on " + d.label : "") + ".");
+      await loadDevices();
+    }, true));
+  }
+  if (!devices.length) cell(body.insertRow(), "No device signed in through the browser.");
 }
 
 async function loadAgents() {
@@ -325,12 +348,12 @@ submit("password-form", async (f) => {
 submit("create-form", async (f) => {
   const u = await api("POST", "users", { name: f.name.value, password: f.password.value });
   f.reset();
-  notice("Created " + u.name + ". They sign in here and generate their own API token.");
+  notice("Created " + u.name + ". They sign in here, then sign in the app and the CLI through the browser.");
   await load();
 });
 
 $("regenerate").addEventListener("click", async () => {
-  if (!confirm("Regenerate the API token? The old one stops working at once.")) return;
+  if (!confirm("Regenerate the personal token? The old one stops working at once; devices signed in through the browser stay signed in.")) return;
   try {
     const { token } = await api("POST", "me/token");
     const pre = $("token");

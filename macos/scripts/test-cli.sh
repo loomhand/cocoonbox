@@ -6,8 +6,8 @@
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
 # and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, and a release-built
-# bridge naming the keys at initialize. Nothing touches
+# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, a release-built
+# bridge naming the keys at initialize, and login through the browser and logout. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
 set -euo pipefail
@@ -707,6 +707,25 @@ if shutil.which("claude"):
     check("and the CLI keeps it without the app's item", signed_in_alone(service))
 else:
     print("SKIP claude plugin validate: Claude Code is not installed")
+
+# Browser sign-in: BROWSER plays the browser. It follows the consent page's URL to MockBox, which allows at once and
+# sends it back to the CLI's loopback port with a code, which the CLI redeems with PKCE; logout revokes the token.
+stub = os.path.join(os.path.dirname(mocklog), "stub-browser")
+open(stub, "w").write('#!/bin/sh\nexec curl -fsSL -o /dev/null "$1"\n')
+os.chmod(stub, 0o755)
+seen = len(open(mocklog).read())
+r = subprocess.run([cli, "login", "--browser"], capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL, env=dict(os.environ, BROWSER=stub))
+log = open(mocklog).read()[seen:]
+check("login --browser signs in through the consent page", r.returncode == 0 and "signed in to" in r.stdout and "authorize=allowed device=" in log and "token=issued" in log, r.stdout + r.stderr + log)
+check("the browser sign-in's token works", run("status", "--json").returncode == 0)
+r = run("logout")
+check("logout revokes the token at the server", r.returncode == 0 and "revoked=mock-token" in open(mocklog).read()[seen:], r.stderr)
+r = run("status", "--json")
+check("after logout the CLI is signed out", r.returncode != 0 and "run cocoonbox login" in r.stderr, r.stderr)
+r = subprocess.run([cli, "login", "--token", "abc"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+check("login --token takes only -", r.returncode != 0 and "--token takes -" in r.stderr, r.stderr)
+r = subprocess.run([cli, "login", "--token", "-"], input="mock-token\n", capture_output=True, text=True, timeout=30)
+check("login --token - reads a pasted token", r.returncode == 0 and "signed in to" in r.stdout, r.stderr)
 
 print(f"{len(failures)} failed" if failures else "all passed")
 sys.exit(1 if failures else 0)

@@ -9,8 +9,13 @@ import Synchronization
 let usage = """
 usage: cocoonbox <command> [options]
 
-  login [--endpoint URL] [--from-app]   store your token in the Keychain (read from stdin or a prompt)
-  logout                                delete the stored token
+  login [--endpoint URL] [--browser | --token - | --from-app]
+                                        sign in: on a terminal (and with --browser) through the browser,
+                                        where you allow this Mac on the console; the CLI gets a token of its
+                                        own, revoked under Devices there. --token - reads a token you paste
+                                        (also what a login over SSH or with stdin not a terminal does).
+                                        The token goes into the Keychain
+  logout                                revoke this Mac's browser sign-in and delete the stored token
   status [--json]                       show the box
   ensure | save                         wake or save the box, with progress
   hibernate [--yes]                     hibernate the box, with progress
@@ -81,6 +86,7 @@ blocks, and 4 when it warns and --yes was not given: ask the user, then run agai
 hibernate and upgrade ask for --yes while a box agent works on an offloaded task.
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
+BROWSER, a command, opens login's consent page in place of open(1);
 COCOONBOX_TOKEN, which the app sets for the agents it starts, the token in the Keychain;
 COCOONBOX_APP_SOCKET and COCOONBOX_AGENT, also set by the app, let mcp report its calls to the app
 and take the default box the app sets.
@@ -549,16 +555,58 @@ func readToken() -> String {
     return String(cString: line).trimmingCharacters(in: .whitespaces)
 }
 
+// pastesToken keeps today's paste for --token -, an SSH session and a stdin that is no terminal, unless --browser.
+func pastesToken() -> Bool {
+    if flags.contains("--token") {
+        guard value(of: "--token") == "-" else { fail("--token takes -: paste the token on stdin or at the prompt") }
+        return true
+    }
+    if flags.contains("--browser") { return false }
+    return isatty(STDIN_FILENO) == 0 || ProcessInfo.processInfo.environment["SSH_CONNECTION"] != nil
+}
+
+func browserToken(_ endpoint: Endpoint) async -> String {
+    do {
+        return try await BrowserLogin(endpoint: endpoint, client: BrowserLogin.cliClient).run { url in
+            FileHandle.standardError.write(Data("cocoonbox: allow this Mac in the browser; if no page opened, open\n  \(url)\n".utf8))
+            openBrowser(url)
+        }
+    } catch {
+        fail("\(error)")
+    }
+}
+
+func openBrowser(_ url: URL) {
+    let process = Process()
+    if let browser = ProcessInfo.processInfo.environment["BROWSER"], !browser.isEmpty {
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [browser, url.absoluteString]
+    } else {
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = [url.absoluteString]
+    }
+    process.standardOutput = FileHandle.nullDevice
+    do {
+        try process.run()
+    } catch {
+        FileHandle.standardError.write(Data("cocoonbox: cannot open the browser: \(error)\n".utf8))
+    }
+}
+
 func login() async {
     let endpoint = endpoint()
+    let fromBrowser = !flags.contains("--from-app") && !pastesToken()
     let token: String
     if flags.contains("--from-app") {
         guard let app = Keychain.token(for: endpoint) else { fail("the app has no token for \(endpoint.url)") }
         token = app
+    } else if fromBrowser {
+        token = await browserToken(endpoint)
     } else {
         token = readToken()
     }
     guard !token.isEmpty else { fail("no token given") }
+    let previous = Keychain.token(for: endpoint, service: service)
     do {
         let connection = try BoxConnection(endpoint: endpoint, token: token)
         defer { connection.close() }
@@ -567,9 +615,25 @@ func login() async {
         try FileManager.default.createDirectory(at: support, withIntermediateDirectories: true)
         try JSONSerialization.data(withJSONObject: ["endpoint": endpoint.url], options: [.withoutEscapingSlashes]).write(to: settingsFile, options: .atomic)
     } catch {
+        if fromBrowser { try? await BrowserLogin.revoke(token: token, endpoint: endpoint, client: BrowserLogin.cliClient) }
         fail(BoxConnection.describe(error))
     }
+    // A replaced device token would otherwise stay live with nothing holding it.
+    if let previous, previous != token { try? await BrowserLogin.revoke(token: previous, endpoint: endpoint, client: BrowserLogin.cliClient) }
     print("signed in to \(endpoint.url)")
+}
+
+func logout() async {
+    let endpoint = endpoint()
+    if let token = Keychain.token(for: endpoint, service: service) {
+        do {
+            try await BrowserLogin.revoke(token: token, endpoint: endpoint, client: BrowserLogin.cliClient)
+        } catch {
+            FileHandle.standardError.write(Data("cocoonbox: could not revoke the token at \(endpoint.url) (\(error)); revoke it under Devices on the console\n".utf8))
+        }
+    }
+    Keychain.deleteToken(for: endpoint, service: service)
+    print("signed out")
 }
 
 // MARK: mcp
@@ -1170,8 +1234,7 @@ switch command {
 case "login":
     await login()
 case "logout":
-    Keychain.deleteToken(for: endpoint(), service: service)
-    print("signed out")
+    await logout()
 case "status", "ensure", "wake", "hibernate", "save", "upgrade":
     await lifecycle(command)
 case "box":

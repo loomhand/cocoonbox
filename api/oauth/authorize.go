@@ -4,8 +4,10 @@ import (
 	"context"
 	"maps"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const challengeLen = 43
@@ -20,6 +22,8 @@ type Request struct {
 	ChallengeMethod string
 	Scope           string
 	Resource        string
+	// DeviceName names the device a first-party client signs in, as the consent page shows it.
+	DeviceName string
 }
 
 // ParseRequest reads an authorization request from its query.
@@ -31,12 +35,14 @@ func ParseRequest(q url.Values) Request {
 		State:           q.Get("state"),
 		CodeChallenge:   q.Get("code_challenge"),
 		ChallengeMethod: q.Get("code_challenge_method"),
-		Scope:           q.Get("scope"),
+		Scope:           q.Get(scopeParam),
 		Resource:        q.Get("resource"),
+		DeviceName:      strings.TrimSpace(q.Get("device_name")),
 	}
 }
 
-// Consent is what the consent page shows of a request it may approve; Existing marks a client that already holds a live grant of the user, which an approval renews.
+// Consent is what the consent page shows of a request it may approve; Existing marks a client that already holds a live grant of the user,
+// which an approval renews, and Account a first-party client that signs in to the whole account.
 type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
@@ -45,6 +51,8 @@ type Consent struct {
 	RedirectHost string `json:"redirect_host"`
 	Loopback     bool   `json:"loopback"`
 	Existing     bool   `json:"existing"`
+	Account      bool   `json:"account"`
+	DeviceName   string `json:"device_name"`
 	Defaults     Caps   `json:"defaults"`
 }
 
@@ -64,30 +72,34 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 	if err != nil {
 		return Consent{}, err
 	}
-	existing, err := s.store.liveGrant(ctx, user, c.id)
-	if err != nil {
-		return Consent{}, err
+	existing := ""
+	if !c.firstParty {
+		if existing, err = s.store.liveGrant(ctx, user, c.id); err != nil {
+			return Consent{}, err
+		}
 	}
 	host, loopback := redirectHost(req.RedirectURI)
 	return Consent{
 		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "",
-		Defaults: Caps{MaxBoxes: DefaultMaxBoxes, MaxRunning: DefaultMaxRunning, Days: DefaultDays},
+		Account: c.firstParty, DeviceName: req.DeviceName, Defaults: Caps{MaxBoxes: DefaultMaxBoxes, MaxRunning: DefaultMaxRunning, Days: DefaultDays},
 	}, nil
 }
 
-// Approve records user's consent to req within caps and returns where the browser takes the code.
+// Approve records user's consent to req within caps, which a first-party client goes without, and returns where the browser takes the code.
 func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps) (string, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {
 		return "", err
 	}
-	if err := caps.check(); err != nil {
+	if c.firstParty {
+		caps = Caps{}
+	} else if err := caps.check(); err != nil {
 		return "", err
 	}
 	value := randomHex(secretBytes)
 	now := time.Now()
 	if err := s.store.addCode(ctx, code{
-		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps,
+		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, label: req.DeviceName,
 		grantExpires: now.AddDate(0, 0, caps.Days), expiresAt: now.Add(codeTTL), codeSHA256: hashHex(value),
 	}); err != nil {
 		return "", err
@@ -110,16 +122,20 @@ func (s *Service) check(ctx context.Context, req Request) (client, error) {
 		return client{}, &AuthorizeError{Code: "invalid_client", Description: err.Error()}
 	}
 	if req.RedirectURI == "" || !c.allows(req.RedirectURI) {
-		return client{}, &AuthorizeError{Code: "invalid_request", Description: "redirect_uri is not one the client registered"}
+		return client{}, &AuthorizeError{Code: invalidRequest, Description: "redirect_uri is not one the client registered"}
 	}
 	var refusal *AuthorizeError
 	switch {
 	case req.ResponseType != codeParam:
 		refusal = &AuthorizeError{Code: "unsupported_response_type", Description: "response_type must be code"}
 	case req.ChallengeMethod != "S256" || len(req.CodeChallenge) != challengeLen:
-		refusal = &AuthorizeError{Code: "invalid_request", Description: "PKCE with code_challenge_method S256 is required"}
-	case !scopeAllowed(req.Scope):
+		refusal = &AuthorizeError{Code: invalidRequest, Description: "PKCE with code_challenge_method S256 is required"}
+	case c.firstParty && req.Scope != AccountScope:
+		refusal = &AuthorizeError{Code: "invalid_scope", Description: "the scope of " + c.id + " is " + AccountScope}
+	case !c.firstParty && !scopeAllowed(req.Scope):
 		refusal = &AuthorizeError{Code: "invalid_scope", Description: "the only scope is " + Scope}
+	case len(req.DeviceName) > maxDeviceName || !utf8.ValidString(req.DeviceName):
+		refusal = &AuthorizeError{Code: invalidRequest, Description: "device_name is at most " + strconv.Itoa(maxDeviceName) + " bytes of UTF-8"}
 	case req.Resource != "" && !s.covers(req.Resource):
 		refusal = &AuthorizeError{Code: "invalid_target", Description: "resource must be " + s.resource}
 	default:

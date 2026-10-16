@@ -344,8 +344,8 @@ These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `W
 
 | Command | Does |
 |---|---|
-| `cocoonbox login [--endpoint URL]` | reads the token from stdin or a hidden prompt, stores it in the Keychain, and checks it with `Boxes.List` |
-| `cocoonbox logout` | deletes the Keychain item |
+| `cocoonbox login [--endpoint URL] [--browser \| --token - \| --from-app]` | on a terminal (or with `--browser`), signs in through the browser and gets a device token of its own (contracts "Browser sign-in and device tokens"); with `--token -`, over SSH, or with stdin not a terminal, reads a token from stdin or a hidden prompt. Stores it in the Keychain and checks it with `Boxes.List` |
+| `cocoonbox logout` | revokes the token at `/cocoonbox.oauth/revoke` (a device token ends; a personal token is left alone), then deletes the Keychain item, also when the api is unreachable |
 | `cocoonbox status` / `ensure` / `hibernate` / `save` / `upgrade [--yes]` | lifecycle, with progress on stderr and `--json` for scripts |
 | `cocoonbox mcp [--no-wake]` | the stdio bridge (13.2) |
 | `cocoonbox mcp-headers` | the headers helper for the direct `claude` recipe |
@@ -2005,7 +2005,7 @@ Decided and built:
   - Password checks (sign-in and password change) are limited to 5 per username and 20 per client address in 15 minutes (in memory). An attempt is reserved under the limiter's lock before bcrypt runs and given back on a correct password, so parallel requests cannot pass the check together.
   - Deleting a user disables it first (its token and sessions stop at once), then releases its claims, deletes every object under its state prefix `<user id>/`, removes the tenant, revokes the gw key and drops the row.
 - **Accounts come only from an admin**: the console's admin page (create with an initial password, disable or enable, reset the password, delete, per-user settings) or the root CLI on the host (`cocoonbox-api user add|passwd|token-sha256`, secrets on stdin). No sign-up.
-- **One API token per user.** The app pastes it into its single token field; there is no new login API. The console shows it once on regenerate, which invalidates the old one. Only its sha256 is stored.
+- **One personal token per user, plus device tokens.** The personal token (once "API token") is what a user pastes; the console shows it once on regenerate, which invalidates the old one. A browser sign-in of the CLI or the app gets a device token of its own instead, so a regenerate no longer signs those out (contracts "Browser sign-in and device tokens"). Only sha256 values are stored.
 - **User id = owner key.** One opaque id is the machine owner (`cb_owner`), the box id input (`cb-<12 hex of sha256(id)>`), the gw key owner and the sandboxd tenant name. New users get `u-<12 hex>`, never reused, since a reused tenant name inherits the old tenant's claims and templates. The migrated users kept their old name as id, so their box ids and state keys did not change. Their token hashes were imported from api.yaml, so neither app had to sign in again.
 - **Sealing.** The gw key and the tenant token are sealed with AES-256-GCM directly under one 32-byte master key file (root 0600, `LoadCredential`), with additional data `users|<id>|<column>`, so a value copied onto another row does not open. There is no envelope and no rotation path yet: rotating the master key means resealing both columns of every row. The 16.1.1 per-user data key envelope replaces it when Connect lands.
 - **gw key per user:** issued at creation (owner = user id, tenant `cocoonbox-boxes`), revoked at deletion, installed as the claim's `guest: false` `GW_KEY` on each new machine's first boot. A machine made before the switch keeps its per-machine key until it is replaced; the api no longer revokes those, so they are revoked by hand.

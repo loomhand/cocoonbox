@@ -189,8 +189,74 @@ func (s *store) setToken(ctx context.Context, id, sha string) error {
 
 func (s *store) tokenServes(ctx context.Context, sha string) (bool, error) {
 	var serves bool
-	err := s.pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM users WHERE token_sha256 = $1 AND NOT disabled)", sha).Scan(&serves)
+	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE token_sha256 = $1 AND NOT disabled)
+		OR EXISTS (SELECT 1 FROM user_tokens t JOIN users u ON u.id = t.user_id WHERE t.sha256 = $1 AND NOT u.disabled)`, sha).Scan(&serves)
 	return serves, err
+}
+
+// allDevices returns every device token by user id.
+func (s *store) allDevices(ctx context.Context) (map[string][]deviceToken, error) {
+	rows, err := s.pool.Query(ctx, "SELECT user_id, id, sha256 FROM user_tokens ORDER BY created_at, id")
+	if err != nil {
+		return nil, fmt.Errorf("list device tokens: %w", err)
+	}
+	byUser := map[string][]deviceToken{}
+	var user string
+	var d deviceToken
+	_, err = pgx.ForEachRow(rows, []any{&user, &d.id, &d.sha256}, func() error {
+		byUser[user] = append(byUser[user], d)
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list device tokens: %w", err)
+	}
+	return byUser, nil
+}
+
+func (s *store) insertDevice(ctx context.Context, user string, d deviceToken, client, label string) error {
+	return s.exec(ctx, "INSERT INTO user_tokens (id, user_id, sha256, client, label) VALUES ($1, $2, $3, $4, $5)", d.id, user, d.sha256, client, label)
+}
+
+func (s *store) devices(ctx context.Context, user string) ([]Device, error) {
+	rows, err := s.pool.Query(ctx, "SELECT id, client, label, created_at, used_at FROM user_tokens WHERE user_id = $1 ORDER BY created_at DESC, id", user)
+	if err != nil {
+		return nil, fmt.Errorf("list devices: %w", err)
+	}
+	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (Device, error) {
+		var d Device
+		err := row.Scan(&d.ID, &d.Client, &d.Label, &d.CreatedAt, &d.UsedAt)
+		return d, err
+	})
+}
+
+// removeDevice deletes user's device id and returns its token's sha256.
+func (s *store) removeDevice(ctx context.Context, user, id string) (string, error) {
+	var sum string
+	err := s.pool.QueryRow(ctx, "DELETE FROM user_tokens WHERE id = $1 AND user_id = $2 RETURNING sha256", id, user).Scan(&sum)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("delete device: %w", err)
+	}
+	return sum, nil
+}
+
+// removeDeviceBySHA256 deletes the device token that hashes to sum and returns its user and device id, both empty when none does.
+func (s *store) removeDeviceBySHA256(ctx context.Context, sum string) (string, string, error) {
+	var user, id string
+	err := s.pool.QueryRow(ctx, "DELETE FROM user_tokens WHERE sha256 = $1 RETURNING user_id, id", sum).Scan(&user, &id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", fmt.Errorf("delete device: %w", err)
+	}
+	return user, id, nil
+}
+
+func (s *store) touchDevice(ctx context.Context, id string) error {
+	return s.exec(ctx, "UPDATE user_tokens SET used_at = now() WHERE id = $1", id)
 }
 
 func (s *store) setStateKey(ctx context.Context, r record) error {

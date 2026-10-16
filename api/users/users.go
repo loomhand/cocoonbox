@@ -26,9 +26,11 @@ import (
 )
 
 const (
+	// TokenPrefix starts every API token and device token.
+	TokenPrefix = "cb_"
+
 	idPrefix     = "u-"
 	idBytes      = 6
-	tokenPrefix  = "cb_"
 	secretBytes  = 32
 	sessionTTL   = 12 * time.Hour
 	minPassword  = 8
@@ -131,7 +133,8 @@ type Service struct {
 
 	mu            sync.RWMutex
 	byID          map[string]record
-	byToken       map[string]string
+	byToken       map[string]tokenOwner
+	deviceUse     sync.Map
 	boxes         map[string][]Box
 	boxGen        int
 	shares        map[string]*shareRecord
@@ -189,6 +192,10 @@ func (s *Service) Load(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	devices, err := s.store.allDevices(ctx)
+	if err != nil {
+		return err
+	}
 	boxes, err := s.store.allBoxes(ctx)
 	if err != nil {
 		return err
@@ -198,12 +205,11 @@ func (s *Service) Load(ctx context.Context) error {
 		byOwner[b.Owner] = append(byOwner[b.Owner], b)
 	}
 	byID := make(map[string]record, len(records))
-	byToken := make(map[string]string, len(records))
+	byToken := make(map[string]tokenOwner, len(records))
 	for _, r := range records {
+		r.devices = devices[r.ID]
 		byID[r.ID] = r
-		if r.serves() {
-			byToken[r.tokenSHA256] = r.ID
-		}
+		addTokens(byToken, r)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -261,15 +267,19 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// ByTokenSHA256 returns the enabled user whose API token hashes to sum; an index miss checks the table at most once per tokenMissInterval.
+// ByTokenSHA256 returns the enabled user whose API token or device token hashes to sum; an index miss checks the tables
+// at most once per tokenMissInterval.
 func (s *Service) ByTokenSHA256(ctx context.Context, sum string) (string, bool) {
-	if id, ok := s.indexedToken(sum); ok || !s.allowMiss() {
-		return id, ok
+	owner, ok := s.indexedToken(sum)
+	if !ok && s.allowMiss() {
+		if serves, err := s.store.tokenServes(ctx, sum); err == nil && serves && s.Load(ctx) == nil {
+			owner, ok = s.indexedToken(sum)
+		}
 	}
-	if serves, err := s.store.tokenServes(ctx, sum); err != nil || !serves || s.Load(ctx) != nil {
-		return "", false
+	if ok && owner.device != "" {
+		s.touchDevice(ctx, owner.device)
 	}
-	return s.indexedToken(sum)
+	return owner.user, ok
 }
 
 // Get returns user id.
@@ -381,7 +391,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.byID[id]; ok {
-		delete(s.byToken, r.tokenSHA256)
+		dropTokens(s.byToken, r)
 		delete(s.byID, id)
 	}
 	s.boxGen++
@@ -482,7 +492,7 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 
 // RegenerateToken gives user id a new API token, returned once; the old one stops working at once.
 func (s *Service) RegenerateToken(ctx context.Context, id string) (string, error) {
-	token := tokenPrefix + randomHex(secretBytes)
+	token := TokenPrefix + randomHex(secretBytes)
 	sum := sha256.Sum256([]byte(token))
 	if err := s.SetTokenSHA256(ctx, id, hex.EncodeToString(sum[:])); err != nil {
 		return "", err
@@ -689,11 +699,11 @@ func (s *Service) record(id string) (record, error) {
 	return r, nil
 }
 
-func (s *Service) indexedToken(sum string) (string, bool) {
+func (s *Service) indexedToken(sum string) (tokenOwner, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	id, ok := s.byToken[sum]
-	return id, ok
+	owner, ok := s.byToken[sum]
+	return owner, ok
 }
 
 func (s *Service) allowMiss() bool {
@@ -707,23 +717,23 @@ func (s *Service) records() []record {
 	return slices.SortedFunc(maps.Values(s.byID), func(a, b record) int { return strings.Compare(a.Name, b.Name) })
 }
 
-// put stores r in the index in place of its previous version.
+// put stores r in the index in place of its previous version; the device tokens stay those of the index.
 func (s *Service) put(r record) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if old, ok := s.byID[r.ID]; ok {
-		delete(s.byToken, old.tokenSHA256)
+		r.devices = old.devices
+		dropTokens(s.byToken, old)
 	}
 	s.byID[r.ID] = r
-	if r.serves() {
-		s.byToken[r.tokenSHA256] = r.ID
-	}
+	addTokens(s.byToken, r)
 }
 
 // record is a user row with the values the console never sees.
 type record struct {
 	User
 	tokenSHA256 string
+	devices     []deviceToken
 	gwAKID      string
 	gwKey       []byte
 	tenantToken []byte
@@ -731,7 +741,30 @@ type record struct {
 	stateKey    []byte
 }
 
-func (r record) serves() bool { return r.tokenSHA256 != "" && !r.Disabled }
+// tokenOwner is the user a token serves and, for a device token, its device id.
+type tokenOwner struct {
+	user   string
+	device string
+}
+
+func addTokens(byToken map[string]tokenOwner, r record) {
+	if r.Disabled {
+		return
+	}
+	if r.tokenSHA256 != "" {
+		byToken[r.tokenSHA256] = tokenOwner{user: r.ID}
+	}
+	for _, d := range r.devices {
+		byToken[d.sha256] = tokenOwner{user: r.ID, device: d.id}
+	}
+}
+
+func dropTokens(byToken map[string]tokenOwner, r record) {
+	delete(byToken, r.tokenSHA256)
+	for _, d := range r.devices {
+		delete(byToken, d.sha256)
+	}
+}
 
 func hashPassword(password string) ([]byte, error) {
 	if len(password) < minPassword || len(password) > maxPassword {

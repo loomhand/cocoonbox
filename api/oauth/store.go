@@ -24,13 +24,14 @@ const (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// code is an authorization code's consent, kept until the client redeems it once.
+// code is an authorization code's consent, kept until the client redeems it once; label names a first-party client's device.
 type code struct {
 	user         string
 	client       client
 	redirectURI  string
 	challenge    string
 	caps         Caps
+	label        string
 	grantExpires time.Time
 	expiresAt    time.Time
 	codeSHA256   string
@@ -84,9 +85,10 @@ func (s *store) addCode(ctx context.Context, c code) error {
 			return fmt.Errorf("prune codes: %w", err)
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO oauth_codes (code_sha256, user_id, client_id, client_name, client_host, redirect_uri,
-			code_challenge, max_boxes, max_running, grant_expires_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+			code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 			c.codeSHA256, c.user, c.client.id, c.client.name, c.client.host, c.redirectURI, c.challenge, c.caps.MaxBoxes, c.caps.MaxRunning,
-			c.grantExpires, c.expiresAt)
+			c.grantExpires, c.expiresAt, c.client.firstParty, c.label)
 		if err != nil {
 			return fmt.Errorf("add code: %w", err)
 		}
@@ -95,21 +97,22 @@ func (s *store) addCode(ctx context.Context, c code) error {
 }
 
 // redeem takes the code once and, when check accepts it, issues tokens on a new grant, or on the client's live grant of the
-// user, which takes the new consent's caps and expiry, so a client that signs in again keeps its boxes.
-func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens issued, check func(code) error) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		stored := code{codeSHA256: codeSHA256}
+// user, which takes the new consent's caps and expiry, so a client that signs in again keeps its boxes. A first-party
+// client's code gets no grant: the caller issues its device token.
+func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens issued, check func(code) error) (code, error) {
+	stored := code{codeSHA256: codeSHA256}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `DELETE FROM oauth_codes WHERE code_sha256 = $1 RETURNING user_id, client_id, client_name, client_host,
-			redirect_uri, code_challenge, max_boxes, max_running, grant_expires_at, expires_at`, codeSHA256).Scan(
+			redirect_uri, code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label`, codeSHA256).Scan(
 			&stored.user, &stored.client.id, &stored.client.name, &stored.client.host, &stored.redirectURI, &stored.challenge,
-			&stored.caps.MaxBoxes, &stored.caps.MaxRunning, &stored.grantExpires, &stored.expiresAt)
+			&stored.caps.MaxBoxes, &stored.caps.MaxRunning, &stored.grantExpires, &stored.expiresAt, &stored.client.firstParty, &stored.label)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errInvalidGrant
 		}
 		if err != nil {
 			return fmt.Errorf("take code: %w", err)
 		}
-		if err = check(stored); err != nil {
+		if err = check(stored); err != nil || stored.client.firstParty {
 			return err
 		}
 		if _, err = tx.Exec(ctx, "SELECT id FROM users WHERE id = $1 FOR UPDATE", stored.user); err != nil {
@@ -133,6 +136,7 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 		}
 		return insertTokens(ctx, tx, grantID, tokens, stored.grantExpires)
 	})
+	return stored, err
 }
 
 // refresh spends the refresh token and issues tokens in its place; a spent one revokes its grant, as a replay shows a leak.

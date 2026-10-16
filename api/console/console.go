@@ -118,6 +118,8 @@ func New(us *users.Service, boxes Boxes, defaultDailyCap int64, defaultMaxRunnin
 	s.mux.HandleFunc("PATCH "+Prefix+"api/me", s.signedIn(s.updateMe))
 	s.mux.HandleFunc("POST "+Prefix+"api/me/token", s.signedIn(s.regenerateToken))
 	s.mux.HandleFunc("POST "+Prefix+"api/me/password", s.signedIn(s.changePassword))
+	s.mux.HandleFunc("GET "+Prefix+"api/devices", s.signedIn(s.listDevices))
+	s.mux.HandleFunc("DELETE "+Prefix+"api/devices/{id}", s.signedIn(s.revokeDevice))
 	s.mux.HandleFunc("POST "+Prefix+"api/boxes", s.signedIn(s.createBox))
 	s.mux.HandleFunc("PATCH "+Prefix+"api/boxes/{id}", s.signedIn(s.renameBox))
 	s.mux.HandleFunc("DELETE "+Prefix+"api/boxes/{id}", s.signedIn(s.deleteBox))
@@ -310,6 +312,23 @@ func (s *Server) regenerateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]string{"token": token})
+}
+
+func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
+	devices, err := s.users.Devices(r.Context(), caller(r).ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	writeJSON(w, append([]users.Device{}, devices...))
+}
+
+func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
+	if err := s.users.RevokeDevice(r.Context(), caller(r).ID, r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {

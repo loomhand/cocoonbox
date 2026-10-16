@@ -3,25 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cocoonbox · Allow an agent</title>
+<title>cocoonbox · Allow access</title>
 <link rel="stylesheet" href="/cb/style.css">
 <script src="/cb/authorize.js" defer></script>
 </head>
 <body>
 <header>
-  <h1>cocoonbox · Allow an agent</h1>
+  <h1>cocoonbox · Allow access</h1>
   <span id="whoami"></span>
 </header>
 <main>
   <p id="notice" hidden></p>
 
   <section id="login" hidden>
-    <h2>Sign in to answer an agent's request</h2>
+    <h2>Sign in to answer this request</h2>
     <form id="login-form">
       <label>Username <input name="name" autocomplete="username" required></label>
       <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
       <button>Sign in</button>
     </form>
+  </section>
+
+  <section id="device" hidden>
+    <h2>Sign in the <span id="device-client"></span> on <span id="device-name"></span>?</h2>
+    <p>If you allow it, it gets your whole account, as your personal token does: every box, your keys, your connected accounts and your shares. It stays signed in until you revoke it under Devices on the <a href="/cb/">console</a>, or sign it out with <code>cocoonbox logout</code>.</p>
+    <p id="device-redirect"></p>
+    <button id="device-allow">Allow</button>
+    <button type="button" id="device-deny" class="danger">Deny</button>
   </section>
 
   <section id="consent" hidden>
