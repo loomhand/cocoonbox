@@ -15,7 +15,7 @@ The four components share nothing except published contracts.
 
 Rules:
 - No component imports another component's code, reads its config or state, or shares a database, file or socket with it.
-- The edge never interprets agent payloads: gRPC frames and MCP HTTP exchanges pass through unchanged; it knows only auth, ownership and where a box lives. One deliberate exception is a trust point that must not rest on what a box reports, since `user` has sudo and could forge it: the share page bridge parses the RFB stream and drops what a viewer may not send or get, so it stays view-only and never gets the box's clipboard (`api/edge/screen.go`).
+- The edge never interprets agent payloads: gRPC frames and MCP HTTP exchanges pass through unchanged; it knows only auth, ownership and where a box lives. One deliberate exception is a trust point that must not rest on what a box reports, since `user` has sudo and could forge it: the share page bridge parses the RFB stream and drops what a viewer may not send or get, so it stays view-only and never gets the box's clipboard (`api/edge/screen.go`, `api/edge/rfb.go`).
 - The agent never knows how its machine is scheduled (Kubernetes, sandboxd, a laptop) or who the user is beyond the principal in the edge credential (the owner, or a share and its guest's user id).
 - The app never knows pod IPs, VNC ports or guest users; it sees box ids, gRPC services and an RFB byte stream.
 - A contract change lands on `main` first (`proto/`, `docs/contracts.md`), then each component adopts it.
@@ -28,12 +28,14 @@ Each component is a stack; a layer calls only the interface of the layer directl
 
 ```
 gRPC services (Boxes) · edge (gRPC + MCP proxy)
-        │ Machines interface: Ensure / Get / List / Hibernate / Watch / Address
+        │ machines.Machines: lifecycle (Ensure / Get / List / Hibernate / Delete / Watch / Changes),
+        │   Address, SetMeta, Deliver, SetCredentials, SetEgress
+        │ machines.Tenants: PutTenant / DeleteTenant
         ▼
-backend: sandboxd (claims on the cbsbx instance)
+backend: sandboxd (claims and tenants on the cbsbx instance, one client)
 ```
 
-The service layer owns users, ownership, operations and their event logs. A backend owns only machine lifecycle and returns an address; it never sees tokens or proto types. The edge depends on an address resolver, never on a backend.
+The service layer owns users, ownership, operations and their event logs, and names every key it installs. A backend owns only machine lifecycle and tenants and returns an address; it gets secrets as named values to install and never sees proto types or which product credential a value is. The edge depends on an address resolver, never on a backend.
 
 **agent**
 

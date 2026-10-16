@@ -916,8 +916,8 @@ func (g *fakeGW) cap(owner string) int64 {
 
 type fakeTenants struct{}
 
-func (fakeTenants) Put(context.Context, string, string, int) error { return nil }
-func (fakeTenants) Delete(context.Context, string) error           { return nil }
+func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
+func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
 
 func masterKeyFile(t *testing.T) string {
 	t.Helper()

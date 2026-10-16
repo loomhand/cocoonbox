@@ -55,14 +55,20 @@ type Options struct {
 	// Flavors lists every flavor Ensure may request; each must be a sandboxd tier.
 	Flavors []machines.Flavor
 	// DiskGiB is the disk the node gives each claim.
-	DiskGiB   uint32
-	AgentPort int
+	DiskGiB           uint32
+	AgentPort         int
+	TenantEgressClass string
 }
 
-var _ machines.Machines = (*Backend)(nil)
+var (
+	_ machines.Machines = (*Backend)(nil)
+	_ machines.Tenants  = (*Backend)(nil)
+)
 
-// Backend implements machines.Machines on one sandboxd instance that holds only cocoonbox claims.
+// Backend implements machines.Machines and machines.Tenants on one sandboxd instance that holds only cocoonbox claims.
 type Backend struct {
+	*Tenants
+
 	opts Options
 	api  *client
 	ctx  context.Context
@@ -85,6 +91,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		}
 	}
 	b := &Backend{
+		Tenants: &Tenants{api: api, egressClass: opts.TenantEgressClass},
 		opts:    opts,
 		api:     api,
 		ctx:     ctx,

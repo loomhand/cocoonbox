@@ -715,8 +715,8 @@ func (*fakeGW) SetDailyCap(context.Context, string, *int64) error   { return nil
 
 type fakeTenants struct{}
 
-func (fakeTenants) Put(context.Context, string, string, int) error { return nil }
-func (fakeTenants) Delete(context.Context, string) error           { return nil }
+func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
+func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
 
 // newFakeAgent answers every MCP request over h2c and echoes the credential and authorization it saw.
 func newFakeAgent(t *testing.T) *httptest.Server {

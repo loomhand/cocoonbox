@@ -23,6 +23,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 const (
@@ -111,18 +112,12 @@ type GWKeys interface {
 	SetDailyCap(ctx context.Context, owner string, micros *int64) error
 }
 
-// Tenants manages each user's sandboxd tenant, named by the user id.
-type Tenants interface {
-	Put(ctx context.Context, name, token string, maxClaims int) error
-	Delete(ctx context.Context, name string) error
-}
-
 // Options names the database, the master key file and the backends that hold each user's keys.
 type Options struct {
 	DSN           string
 	MasterKeyFile string
 	GW            GWKeys
-	Tenants       Tenants
+	Tenants       machines.Tenants
 	// TenantClaims makes Tenant hand out each user's tenant token, so machines claim under it.
 	TenantClaims bool
 	// FirstBoxID names the box Create gives each new user.
@@ -134,7 +129,7 @@ type Service struct {
 	store        *store
 	seal         *sealer
 	gw           GWKeys
-	tenants      Tenants
+	tenants      machines.Tenants
 	tenantClaims bool
 	firstBoxID   func(string) string
 	nextMiss     atomic.Int64
@@ -266,7 +261,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	for _, r := range s.records() {
 		token, err := s.seal.open(r.tenantToken, userData(r.ID, columnTenant))
 		if err == nil {
-			err = s.tenants.Put(ctx, r.ID, token, s.claimCap(r))
+			err = s.tenants.PutTenant(ctx, r.ID, token, s.claimCap(r))
 		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("tenant of %s: %w", r.Name, err))
@@ -384,9 +379,9 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		err = s.gw.SetDailyCap(ctx, id, nu.DailyCapMicros)
 	}
 	if err == nil {
-		if err = s.tenants.Put(ctx, id, tenantToken, s.claimCap(r)); err == nil {
+		if err = s.tenants.PutTenant(ctx, id, tenantToken, s.claimCap(r)); err == nil {
 			if err = s.store.insert(ctx, r, string(hash), first); err != nil {
-				err = errors.Join(err, s.tenants.Delete(context.WithoutCancel(ctx), id))
+				err = errors.Join(err, s.tenants.DeleteTenant(context.WithoutCancel(ctx), id))
 			}
 		}
 	}
@@ -405,7 +400,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if _, err := s.record(id); err != nil {
 		return err
 	}
-	if err := s.tenants.Delete(ctx, id); err != nil {
+	if err := s.tenants.DeleteTenant(ctx, id); err != nil {
 		return fmt.Errorf("delete tenant: %w", err)
 	}
 	if err := s.gw.Revoke(ctx, id); err != nil {
@@ -470,7 +465,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 		return User{}, err
 	}
 	if s.claimCap(r) != s.claimCap(old) {
-		if err := s.tenants.Put(ctx, id, "", s.claimCap(r)); err != nil {
+		if err := s.tenants.PutTenant(ctx, id, "", s.claimCap(r)); err != nil {
 			return User{}, fmt.Errorf("set tenant cap: %w", err)
 		}
 	}

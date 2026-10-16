@@ -548,7 +548,7 @@ type fakeTenants struct {
 	err     error
 }
 
-func (f *fakeTenants) Put(_ context.Context, name, token string, maxClaims int) error {
+func (f *fakeTenants) PutTenant(_ context.Context, name, token string, maxClaims int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -558,7 +558,7 @@ func (f *fakeTenants) Put(_ context.Context, name, token string, maxClaims int) 
 	return nil
 }
 
-func (f *fakeTenants) Delete(_ context.Context, name string) error {
+func (f *fakeTenants) DeleteTenant(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.tenants, name)

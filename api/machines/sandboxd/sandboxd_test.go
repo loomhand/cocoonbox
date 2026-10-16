@@ -110,7 +110,7 @@ func TestATenantClaimBelongsToItsTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTenants: %v", err)
 	}
-	if err := tenants.Put(t.Context(), "u-1", "tenant-token", 1); err != nil {
+	if err := tenants.PutTenant(t.Context(), "u-1", "tenant-token", 1); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	fake.add(&fakeSandbox{row: row{ID: "sb_stamped", Key: poolKey{Template: template, Size: "xlarge"}, Tenant: "u-2", Metadata: map[string]string{"cb_machine": "cb-b", "cb_owner": "u-1"}}})
@@ -138,17 +138,17 @@ func TestTenantsPutKeepsTheTokenAndDeleteIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewTenants: %v", err)
 	}
-	if err := tenants.Put(t.Context(), "u-1", "tenant-token", 1); err != nil {
+	if err := tenants.PutTenant(t.Context(), "u-1", "tenant-token", 1); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if err := tenants.Put(t.Context(), "u-1", "", 2); err != nil {
+	if err := tenants.PutTenant(t.Context(), "u-1", "", 2); err != nil {
 		t.Fatalf("Put cap: %v", err)
 	}
 	if got := fake.tenants["u-1"]; got != (tenantRequest{Token: "tenant-token", MaxClaims: 2, EgressClass: "desk"}) {
 		t.Errorf("tenant = %+v, want the token kept, the cap changed and the class sent", got)
 	}
 	for range 2 {
-		if err := tenants.Delete(t.Context(), "u-1"); err != nil {
+		if err := tenants.DeleteTenant(t.Context(), "u-1"); err != nil {
 			t.Errorf("Delete: %v", err)
 		}
 	}
@@ -160,6 +160,26 @@ func TestTenantsPutKeepsTheTokenAndDeleteIsIdempotent(t *testing.T) {
 	}
 	if _, err := NewTenants("127.0.0.1:17780", rootToken, ""); err == nil {
 		t.Error("NewTenants accepted a URL without a scheme")
+	}
+}
+
+func TestTheBackendManagesTenantsWithItsOwnClientAndClass(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var tenants machines.Tenants = b
+	if err := tenants.PutTenant(t.Context(), "u-1", "tenant-token", 3); err != nil {
+		t.Fatalf("PutTenant: %v", err)
+	}
+	if got := fake.tenants["u-1"]; got != (tenantRequest{Token: "tenant-token", MaxClaims: 3, EgressClass: "desk"}) {
+		t.Errorf("tenant = %+v, want the backend's egress class", got)
+	}
+	if err := tenants.DeleteTenant(t.Context(), "u-1"); err != nil || len(fake.tenants) != 0 {
+		t.Errorf("DeleteTenant = %v, tenants %+v", err, fake.tenants)
 	}
 }
 

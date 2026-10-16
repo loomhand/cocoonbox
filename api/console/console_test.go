@@ -509,14 +509,14 @@ type fakeTenants struct {
 	tenants map[string]tenant
 }
 
-func (f *fakeTenants) Put(_ context.Context, name, token string, maxClaims int) error {
+func (f *fakeTenants) PutTenant(_ context.Context, name, token string, maxClaims int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tenants[name] = tenant{token: cmp.Or(token, f.tenants[name].token), max: maxClaims}
 	return nil
 }
 
-func (f *fakeTenants) Delete(_ context.Context, name string) error {
+func (f *fakeTenants) DeleteTenant(_ context.Context, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.tenants, name)

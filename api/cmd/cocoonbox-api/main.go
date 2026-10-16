@@ -83,7 +83,7 @@ func main() {
 	if err != nil {
 		logger.Fatalf(ctx, err, "start sandboxd backend")
 	}
-	accounts, err := openUsers(ctx, cfg)
+	accounts, err := openUsersWith(ctx, cfg, backend)
 	if err != nil {
 		logger.Fatalf(ctx, err, "open users")
 	}
@@ -395,8 +395,20 @@ func openOAuth(ctx context.Context, cfg *config.Config, accounts *users.Service)
 	return grants, nil
 }
 
-// openUsers opens the users table with gw and sandboxd as the holders of each user's keys.
+// openUsers opens the users table for operator commands, with a sandboxd client of its own for the tenants.
 func openUsers(ctx context.Context, cfg *config.Config) (*users.Service, error) {
+	token, err := cfg.SandboxdToken()
+	if err != nil {
+		return nil, err
+	}
+	tenants, err := sandboxd.NewTenants(cfg.Sandboxd.URL, token, cfg.Sandboxd.TenantEgressClass)
+	if err != nil {
+		return nil, err
+	}
+	return openUsersWith(ctx, cfg, tenants)
+}
+
+func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Tenants) (*users.Service, error) {
 	dsn, err := cfg.DSN()
 	if err != nil {
 		return nil, err
@@ -406,14 +418,6 @@ func openUsers(ctx context.Context, cfg *config.Config) (*users.Service, error) 
 		return nil, err
 	}
 	gw, err := gwkeys.New(cfg.Provision.GWAdmin.URL, gwToken)
-	if err != nil {
-		return nil, err
-	}
-	sandboxdToken, err := cfg.SandboxdToken()
-	if err != nil {
-		return nil, err
-	}
-	tenants, err := sandboxd.NewTenants(cfg.Sandboxd.URL, sandboxdToken, cfg.Sandboxd.TenantEgressClass)
 	if err != nil {
 		return nil, err
 	}
@@ -427,18 +431,19 @@ func openUsers(ctx context.Context, cfg *config.Config) (*users.Service, error) 
 	})
 }
 
-func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor) (machines.Machines, error) {
+func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor) (*sandboxd.Backend, error) {
 	token, err := cfg.SandboxdToken()
 	if err != nil {
 		return nil, err
 	}
 	return sandboxd.New(ctx, sandboxd.Options{
-		URL:       cfg.Sandboxd.URL,
-		Token:     token,
-		Image:     cfg.Image,
-		Flavors:   append(flavors, machineFlavor(cfg.Flavor)),
-		DiskGiB:   cfg.Flavor.DiskGiB,
-		AgentPort: cfg.AgentPort,
+		URL:               cfg.Sandboxd.URL,
+		Token:             token,
+		Image:             cfg.Image,
+		Flavors:           append(flavors, machineFlavor(cfg.Flavor)),
+		DiskGiB:           cfg.Flavor.DiskGiB,
+		AgentPort:         cfg.AgentPort,
+		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
 	})
 }
 

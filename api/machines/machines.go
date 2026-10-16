@@ -153,3 +153,9 @@ type Machines interface {
 	// SetEgress sends the machine's new connections through the proxy at upstream, or direct when upstream is empty.
 	SetEgress(ctx context.Context, id, upstream string) error
 }
+
+// Tenants manages each owner's backend tenant, named by the owner.
+type Tenants interface {
+	PutTenant(ctx context.Context, name, token string, maxClaims int) error
+	DeleteTenant(ctx context.Context, name string) error
+}
