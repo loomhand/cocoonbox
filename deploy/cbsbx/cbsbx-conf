@@ -15,7 +15,6 @@ LISTEN = "127.0.0.1:17780"
 GATEWAY = "10.203.0.1"
 GW_PORT = 18090
 CONNECT_PORT = 18091
-STATE_PORT = 9000
 APT_PORT = 3142
 RESIDENTIAL = "10.203.1.2"
 STORAGE = "40G"
@@ -35,7 +34,7 @@ if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
 gw = {"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"}
 connect = {"host": GATEWAY, "ports": [CONNECT_PORT], "secret": "CB_CONNECT_KEY"}
 inject = {"host": "*", "intercept": "inject"}
-rest = [{"host": GATEWAY, "ports": [STATE_PORT]}, {"host": "*"}]
+rest = [{"host": "*"}]
 egress = {"allow": [gw, *rest]}
 inject_egress = {"allow": [gw, inject, *rest]}
 # the door key rule precedes the inject rule, since a plain request takes the first rule that matches
@@ -64,7 +63,7 @@ conf = {
     "max_claims": 16,
     "refill_concurrency": 1,
     "audit_log": True,
-    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{STATE_PORT},{APT_PORT}"],
+    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{APT_PORT}"],
     "egress_upstream": {"claim_env": "EGRESS_UPSTREAM", "allow": [f"{RESIDENTIAL}/32"]},
     "egress_classes": [{"name": "cbdesk", "egress": egress}],
     "secrets": [{"name": "GW_KEY", "header": "Authorization"}, {"name": "CB_CONNECT_KEY", "header": "Authorization"}],

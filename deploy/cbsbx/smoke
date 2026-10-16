@@ -127,7 +127,6 @@ def main():
         size = guest(sid, "df -BG --output=size / | tail -1 | tr -dc 0-9")
         check("guest root disk from the pool storage", size.isdigit() and int(size) >= 38, f"{size} GiB")
         check("gw via proxy with claim secret", http_code(sid, f"http://{GATEWAY}:18090/v1/models", "Bearer unprovisioned") == "200")
-        check("state store via proxy", http_code(sid, f"http://{GATEWAY}:9000/minio/health/live") == "200")
         check("internet via proxy", http_code(sid, "https://example.com/") == "200")
         for port in (10260, 10250, 6443, 22):
             got = http_code(sid, f"http://{GATEWAY}:{port}/")

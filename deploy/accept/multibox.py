@@ -3,7 +3,7 @@
 
 A scratch user (CB_USER, default mb1) exists with max boxes 2 and exactly one box, main; its console password comes
 from <CB_USER>_PASSWORD. The script issues the user a fresh API token, never prints a secret, and refuses the real
-users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd root token and the MinIO root credentials, which it only reads.
+users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd root token and the state store's credentials, which it only reads.
 """
 
 import hashlib
@@ -20,7 +20,6 @@ USER = os.environ.get("CB_USER", "mb1")
 REAL = set(os.environ.get("CB_REAL_USERS", "test,cmgs,dev").split(","))
 SANDBOXD = "http://127.0.0.1:17780"
 MAX_CLAIMS = int(os.environ.get("CB_MAX_CLAIMS", "6"))
-BUCKET = "cocoonbox-state"
 
 failures = []
 
@@ -102,7 +101,10 @@ def claims():
 
 
 def stored(key):
-    script = ". /etc/cocoonbox/minio.env; MC_HOST_cbroot=http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@10.203.0.1:9000 mcli --config-dir /root/.mcli stat --json cbroot/" + BUCKET + "/" + key
+    script = (". /etc/cocoonbox/store.env; set -- $(python3 -c 'import yaml; s = yaml.safe_load(open(\"/etc/cocoonbox/api.yaml\"))[\"state\"]; "
+              "print(\"https\" if s.get(\"secure\") else \"http\", s[\"endpoint\"], s[\"bucket\"], s.get(\"region\") or \"us-east-1\")'); "
+              "printf 'user = \"%s:%s\"\\n' \"$STORE_ACCESS_KEY\" \"$STORE_SECRET_KEY\" | "
+              "curl -sf -o /dev/null -I -K - --aws-sigv4 \"aws:amz:$4:s3\" \"$1://$2/$3/" + key + "\"")
     return sudo("sh", "-c", script).returncode == 0
 
 
