@@ -9,6 +9,7 @@ for p in $(grep -E '^[a-z0-9][a-z0-9+.-]*(:[a-z0-9]+)?$' "$list"); do
 done
 [ -n "$missing" ] || { echo "packages: none missing"; exit 0; }
 echo "packages: installing$missing"
+printf '%s\n' $missing > /etc/cocoonbox/packages.pending
 export DEBIAN_FRONTEND=noninteractive
 apt_install() {
 	out=$(apt-get -o DPkg::Lock::Timeout=120 install -y -q "$@" 2>&1)
