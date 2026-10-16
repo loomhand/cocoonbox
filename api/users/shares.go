@@ -13,11 +13,8 @@ import (
 )
 
 const (
-	// DefaultShareTTL is a share's lifetime when its owner picks none.
-	DefaultShareTTL = 24 * time.Hour
-	// MaxShareTTL bounds a share's lifetime.
-	MaxShareTTL = 30 * 24 * time.Hour
-
+	defaultShareTTL  = 24 * time.Hour
+	maxShareTTL      = 30 * 24 * time.Hour
 	minShareTTL      = time.Minute
 	shareIDPrefix    = "sh-"
 	shareSecretBytes = 16
@@ -43,7 +40,7 @@ type ShareUser struct {
 	Name string
 }
 
-// NewShare describes a share to create; a zero TTL is DefaultShareTTL, and no user names admit anyone with the link.
+// NewShare describes a share to create; a zero TTL is a day, and no user names admit anyone with the link.
 type NewShare struct {
 	Owner     string
 	Box       string
@@ -54,9 +51,9 @@ type NewShare struct {
 
 // CreateShare shares box ns.Box of ns.Owner and returns the share with its secret, which the api keeps sealed.
 func (s *Service) CreateShare(ctx context.Context, ns NewShare) (Share, error) {
-	ttl := cmp.Or(ns.TTL, DefaultShareTTL)
-	if ttl < minShareTTL || ttl > MaxShareTTL {
-		return Share{}, fmt.Errorf("%w: a share lasts from %s to %s", ErrInvalid, minShareTTL, MaxShareTTL)
+	ttl := cmp.Or(ns.TTL, defaultShareTTL)
+	if ttl < minShareTTL || ttl > maxShareTTL {
+		return Share{}, fmt.Errorf("%w: a share lasts from %s to %s", ErrInvalid, minShareTTL, maxShareTTL)
 	}
 	if _, err := s.record(ns.Owner); err != nil {
 		return Share{}, err

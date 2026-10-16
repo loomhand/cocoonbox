@@ -21,10 +21,8 @@ import (
 )
 
 const (
-	// EnvPrefix starts the claim env name of every key's host-only entry.
-	EnvPrefix = "CBV_"
-	// GuestEnv is the guest entry that lists the keys' names, placeholders, hosts and send-as for the image.
-	GuestEnv = "COCOONBOX_VAULT"
+	envPrefix = "CBV_"
+	guestEnv  = "COCOONBOX_VAULT"
 
 	// ActorApp and ActorConsole name where a change comes from in the audit.
 	ActorApp     = "app"
@@ -76,7 +74,7 @@ var (
 		"IFS", "PS1", "PS2", "PS4", "ENV", "PAGER", "EDITOR", "NO_COLOR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "FTP_PROXY",
 		"REQUESTS_CA_BUNDLE",
 	}
-	reservedPrefixes = []string{"GW_", "COCOONBOX_", "CB_", EnvPrefix, "SSL_", "NODE_", "LC_", "LD_", "XDG_", "DBUS_", "BASH_", "GIT_", "SUDO_"}
+	reservedPrefixes = []string{"GW_", "COCOONBOX_", "CB_", envPrefix, "SSL_", "NODE_", "LC_", "LD_", "XDG_", "DBUS_", "BASH_", "GIT_", "SUDO_"}
 	refusedHeaders   = []string{
 		"Host", "Content-Length", "Cookie", "Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Proxy-Connection",
 		"TE", "Trailer", "Transfer-Encoding", "Upgrade",
@@ -141,7 +139,7 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 	if err != nil {
 		return machines.Credentials{}, "", err
 	}
-	out := machines.Credentials{Secrets: map[string]*machines.Secret{}, Flags: map[string]string{GuestEnv: ""}, Prune: EnvPrefix}
+	out := machines.Credentials{Secrets: map[string]*machines.Secret{}, Flags: map[string]string{guestEnv: ""}, Prune: envPrefix}
 	records, versions := make([]string, 0, len(list)), make([]string, 0, len(list))
 	for _, sec := range list {
 		value, err := s.seal.open(ctx, owner, sec.sealed, valueData(sec.id, owner))
@@ -152,7 +150,7 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 		records = append(records, sec.record())
 		versions = append(versions, fmt.Sprintf("%s:%d", sec.id, sec.version))
 	}
-	out.Flags[GuestEnv] = strings.Join(records, " ")
+	out.Flags[guestEnv] = strings.Join(records, " ")
 	return out, digest(versions), nil
 }
 
@@ -189,7 +187,7 @@ func (sec *secret) entry(value string) *machines.Secret {
 	return &machines.Secret{Value: render(sec.template, value), Hosts: sec.hosts, Header: sec.header, Placeholder: render(sec.template, sec.placeholder)}
 }
 
-// record is sec's word in GuestEnv: NAME=placeholder;host,host;how, with how's spaces, semicolons and percent signs escaped.
+// record is sec's word in guestEnv: NAME=placeholder;host,host;how, with how's spaces, semicolons and percent signs escaped.
 func (sec *secret) record() string {
 	how := "?" + sec.query + "=" + slot
 	if sec.query == "" {
@@ -198,7 +196,7 @@ func (sec *secret) record() string {
 	return sec.name + "=" + sec.placeholder + ";" + strings.Join(sec.hosts, ",") + ";" + howEscaper.Replace(how)
 }
 
-// size is what sec takes of a claim's env: its host-only entry, and its record in GuestEnv.
+// size is what sec takes of a claim's env: its host-only entry, and its record in guestEnv.
 func (sec *secret) size() (int, int) {
 	n := len(envName(sec.id)) + len(sec.header) + len(sec.query)
 	for _, h := range sec.hosts {
@@ -265,7 +263,7 @@ func digest(versions []string) string {
 }
 
 func envName(id string) string {
-	return EnvPrefix + strings.TrimPrefix(id, idPrefix)
+	return envPrefix + strings.TrimPrefix(id, idPrefix)
 }
 
 func randomHex(n int) string {

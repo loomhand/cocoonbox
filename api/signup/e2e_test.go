@@ -23,6 +23,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/console"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
@@ -449,7 +450,7 @@ func TestAnInviteTokenMakesOnlyOneUseInvitesAndListsOnlyItsOwn(t *testing.T) {
 		InviteToken signup.InviteToken `json:"invite_token"`
 	}
 	admin.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "dora"}, &minted)
-	if !strings.HasPrefix(minted.Token, signup.InviteTokenPrefix) || minted.InviteToken.Label != "dora" {
+	if !strings.HasPrefix(minted.Token, auth.InviteTokenPrefix) || minted.InviteToken.Label != "dora" {
 		t.Fatalf("minted = %+v", minted)
 	}
 	mintedSum := sha256.Sum256([]byte(minted.Token))
@@ -594,7 +595,7 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 	if _, ok := e.users.ByTokenSHA256(t.Context(), hex.EncodeToString(tokenSum[:])); ok {
 		t.Error("an invite token passes the user token check")
 	}
-	if status, _ := e.bearer(t, signup.InviteTokenPrefix+strings.Repeat("0", 64), http.MethodPost, "/cb/api/invites", map[string]any{}); status != http.StatusUnauthorized {
+	if status, _ := e.bearer(t, auth.InviteTokenPrefix+strings.Repeat("0", 64), http.MethodPost, "/cb/api/invites", map[string]any{}); status != http.StatusUnauthorized {
 		t.Errorf("an unknown invite token: %d, want 401", status)
 	}
 	other := e.browser(t)

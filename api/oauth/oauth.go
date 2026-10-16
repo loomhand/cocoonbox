@@ -41,12 +41,9 @@ const (
 	// AccessPrefix starts every access token.
 	AccessPrefix = "cba_"
 
-	// DefaultMaxBoxes fills the consent form.
-	DefaultMaxBoxes = 2
-	// DefaultMaxRunning fills the consent form.
-	DefaultMaxRunning = 1
-	// DefaultDays fills the consent form.
-	DefaultDays = 30
+	defaultMaxBoxes   = 2
+	defaultMaxRunning = 1
+	defaultDays       = 30
 
 	resourceMetadataPrefix = "/.well-known/oauth-protected-resource"
 	codeParam              = "code"

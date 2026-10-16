@@ -81,7 +81,7 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 	host, loopback := redirectHost(req.RedirectURI)
 	return Consent{
 		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "",
-		Account: c.firstParty, DeviceName: req.DeviceName, Defaults: Caps{MaxBoxes: DefaultMaxBoxes, MaxRunning: DefaultMaxRunning, Days: DefaultDays},
+		Account: c.firstParty, DeviceName: req.DeviceName, Defaults: Caps{MaxBoxes: defaultMaxBoxes, MaxRunning: defaultMaxRunning, Days: defaultDays},
 	}, nil
 }
 

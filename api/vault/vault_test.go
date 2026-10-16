@@ -65,7 +65,7 @@ func TestKeysLifecycle(t *testing.T) {
 	name := onlyName(t, creds.Secrets)
 	sec := creds.Secrets[name]
 	if sec.Value != "Bearer "+synthetic || sec.Placeholder != "Bearer "+k.GetPlaceholder() || !slices.Equal(sec.Hosts, []string{"api.attio.com"}) ||
-		creds.Prune != EnvPrefix || creds.Flags[GuestEnv] != "ATTIO_API_KEY="+k.GetPlaceholder()+";api.attio.com;Authorization:%20Bearer%20{}" {
+		creds.Prune != envPrefix || creds.Flags[guestEnv] != "ATTIO_API_KEY="+k.GetPlaceholder()+";api.attio.com;Authorization:%20Bearer%20{}" {
 		t.Errorf("Credentials = %+v %+v", sec, creds)
 	}
 	if digests, _ := svc.Digests(t.Context()); digests[alice] != d1 || d1 == "" || digests[bob] != "" {
@@ -88,7 +88,7 @@ func TestKeysLifecycle(t *testing.T) {
 		t.Fatalf("Delete: %v", err)
 	}
 	creds, d3, _ := svc.Credentials(t.Context(), alice)
-	if len(creds.Secrets) != 0 || creds.Flags[GuestEnv] != "" || creds.Prune != EnvPrefix || d3 != "" {
+	if len(creds.Secrets) != 0 || creds.Flags[guestEnv] != "" || creds.Prune != envPrefix || d3 != "" {
 		t.Errorf("after Delete: %+v, digest %q", creds, d3)
 	}
 	if !slices.Equal(changes, []string{alice, alice, alice}) {
@@ -174,8 +174,8 @@ func onlyName(t *testing.T, m map[string]*machines.Secret) string {
 		t.Fatalf("secrets = %v, want one", m)
 	}
 	for name := range m {
-		if !strings.HasPrefix(name, EnvPrefix) {
-			t.Errorf("entry %q lacks %s", name, EnvPrefix)
+		if !strings.HasPrefix(name, envPrefix) {
+			t.Errorf("entry %q lacks %s", name, envPrefix)
 		}
 		return name
 	}

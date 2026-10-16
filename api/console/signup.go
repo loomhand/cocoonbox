@@ -423,7 +423,7 @@ func InviteTokenGate(next http.Handler) http.Handler {
 // inviteBearer returns the invite-scoped token of the request's Authorization header.
 func inviteBearer(r *http.Request) (string, bool) {
 	token, ok := auth.Bearer(r.Header.Get("Authorization"))
-	return token, ok && strings.HasPrefix(token, signup.InviteTokenPrefix)
+	return token, ok && strings.HasPrefix(token, auth.InviteTokenPrefix)
 }
 
 // loginRefused sends the browser to the sign-in page with a reason code, which the page turns into text, so a link cannot put words on it.

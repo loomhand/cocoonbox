@@ -27,7 +27,7 @@ func TestShareLifecycle(t *testing.T) {
 	if !strings.HasPrefix(secret, auth.SecretPrefix) || len(secret) != len(auth.SecretPrefix)+32 || !strings.HasPrefix(sh.ID, shareIDPrefix) {
 		t.Errorf("share %s has secret of %d bytes", sh.ID, len(secret))
 	}
-	if ttl := time.Until(sh.ExpiresAt); ttl < DefaultShareTTL-time.Minute || ttl > DefaultShareTTL {
+	if ttl := time.Until(sh.ExpiresAt); ttl < defaultShareTTL-time.Minute || ttl > defaultShareTTL {
 		t.Errorf("default expiry in %s", ttl)
 	}
 	if len(sh.Users) != 1 || sh.Users[0] != (ShareUser{ID: guest.ID, Name: "qa2"}) || sh.Write {
@@ -54,7 +54,7 @@ func TestShareLifecycle(t *testing.T) {
 	if _, err := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-1"}); !errors.Is(err, ErrExists) {
 		t.Errorf("a second live share of the box: %v, want ErrExists", err)
 	}
-	for _, ns := range []NewShare{{Owner: owner.ID, Box: "cb-2", TTL: MaxShareTTL + time.Hour}, {Owner: owner.ID, Box: "cb-2", UserNames: []string{"nobody"}}} {
+	for _, ns := range []NewShare{{Owner: owner.ID, Box: "cb-2", TTL: maxShareTTL + time.Hour}, {Owner: owner.ID, Box: "cb-2", UserNames: []string{"nobody"}}} {
 		if _, err := svc.CreateShare(t.Context(), ns); !errors.Is(err, ErrInvalid) {
 			t.Errorf("CreateShare(%+v) = %v, want ErrInvalid", ns, err)
 		}
