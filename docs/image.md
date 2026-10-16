@@ -23,7 +23,7 @@ sudo image/cut.sh -f cbcore -a cocoonbox-agent-linux-amd64 [-p] cbcore:v(N-1) vN
 
 `cut.sh` boots the base template, reruns `provision.sh` with `-p`, installs the agent, runs the guest gate, seals, stops, exports a flat rootfs tarball with `export-rootfs.sh` and imports it as `cbcore:vN` with `cocoon image import`. The tarball stays under the instance's `build/` directory.
 
-A runtime is a directory with a `provision.sh`; each `-r <dir>` copies one into the guest and runs its `provision.sh` after the base step, in the order given, and `-f cbcore` without `-r` uses `image/desk`. `-f` takes any family name (`[a-z][a-z0-9]*`): `-f <family> -r image/desk -r <dir>` cuts `<family>:vN` from a template with the desk runtime plus another one, such as a directory outside this repository. The guest gate runs for `cbcore` only.
+A runtime is a directory with a `provision.sh`; each `-r <dir>` copies one into the guest and runs its `provision.sh` after the base step, in the order given, and `-f cbcore` without `-r` uses `image/desk`. `-f` takes any family name (`[a-z][a-z0-9]*`): `-f <family> -r image/desk -r <dir>` cuts `<family>:vN` from a template with the desk runtime plus another one, such as a directory outside this repository. The guest gate runs for `cbcore` only. `-n` prints the steps a cut would run, in order, and changes nothing; `make image` (in the gate workflow) checks that list with `image/test/cut-dry-run.sh`: the `-r` order, the `cbcore` default and the refusals.
 
 ## Versions and pins
 

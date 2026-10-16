@@ -1,18 +1,20 @@
 #!/bin/bash
 # Cuts desktop template <family>:<vN> on the cbsbx cocoon root: boot <base template>, provision, seal, stop, export, import.
-# usage: sudo image/cut.sh [-p] [-a <agent binary>] [-f <family>] [-r <runtime dir>]... <base template> <vN>
-#   -p reruns provision.sh; each -r adds a runtime: the directory goes into the guest and its provision.sh runs, in order;
+# usage: sudo image/cut.sh [-n] [-p] [-a <agent binary>] [-f <family>] [-r <runtime dir>]... <base template> <vN>
+#   -n prints the steps and changes nothing; -p reruns provision.sh; each -r adds a runtime: the directory goes into the guest and its provision.sh runs, in order;
 #   -f cbcore without -r adds image/desk and checks the guest with image/clean-gate.sh after the agent step;
 #   every step goes to ~/ops-audit.md
 set -Eeuo pipefail
 export LC_ALL=C
 
+DRY=0
 PROVISION=0
 AGENT=""
 FAMILY=cbdesk
 RUNTIMES=()
-while getopts pa:f:r: o; do
+while getopts npa:f:r: o; do
 	case $o in
+	n) DRY=1 ;;
 	p) PROVISION=1 ;;
 	a) AGENT=$OPTARG ;;
 	f) FAMILY=$OPTARG ;;
@@ -21,8 +23,8 @@ while getopts pa:f:r: o; do
 	esac
 done
 shift $((OPTIND - 1))
-BASE=${1:?usage: cut.sh [-p] [-a agent] [-f family] [-r runtime]... <base template> <vN>}
-V=${2:?usage: cut.sh [-p] [-a agent] [-f family] [-r runtime]... <base template> <vN>}
+BASE=${1:?usage: cut.sh [-n] [-p] [-a agent] [-f family] [-r runtime]... <base template> <vN>}
+V=${2:?usage: cut.sh [-n] [-p] [-a agent] [-f family] [-r runtime]... <base template> <vN>}
 S=/srv/cb/sbx
 COCOON=$S/bin/cocoon-cbsbx
 PROXY=http://127.0.0.1:3128
@@ -70,6 +72,15 @@ fi
 if [ -e "$TARBALL" ]; then
 	echo "$TARBALL exists" >&2
 	exit 1
+fi
+if [ "$DRY" = 1 ]; then
+	echo "boot $BASE as $VM"
+	[ "$PROVISION" = 0 ] || echo "provision"
+	for R in "${RUNTIMES[@]}"; do echo "runtime $R"; done
+	[ -z "$AGENT" ] || echo "agent $AGENT"
+	[ "$FAMILY" != cbcore ] || echo "clean gate"
+	printf '%s\n' seal stop "export $TARBALL" "import $TEMPLATE"
+	exit 0
 fi
 
 step "boot $BASE as $VM"
