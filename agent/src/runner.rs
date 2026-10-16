@@ -3,7 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use tokio::sync::{OwnedRwLockReadGuard, mpsc, oneshot};
@@ -20,7 +20,7 @@ use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entr
 use crate::route::Router;
 use crate::secrets::SECRETS;
 use crate::store::Store;
-use crate::{computer, flows, new_id, prompts, route, tools};
+use crate::{computer, flows, lock, new_id, prompts, route, tools};
 
 const QUEUE_DEPTH: usize = 32;
 const DOOR_ANSWERS: usize = 64;
@@ -1156,10 +1156,6 @@ impl Preempt {
     pub fn fire(&self) {
         std::mem::take(&mut *lock(&self.0)).cancel();
     }
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[derive(Debug, PartialEq)]

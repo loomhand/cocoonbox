@@ -11,9 +11,9 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use crate::dispatch::Tools;
-use crate::new_id;
 use crate::store::Store;
 use crate::toolhost::flows::{self, digest};
+use crate::{lock, new_id};
 
 const DOOR_PATH: &str = "/flows";
 const PULL_BUDGET: Duration = Duration::from_secs(3);
@@ -288,10 +288,6 @@ pub fn runs_flow(args: &Value) -> bool {
     args["script"]
         .as_str()
         .is_some_and(|s| s.trim_start_matches("/workspace/").starts_with("flows/"))
-}
-
-fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::convert::Infallible;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::Router;
@@ -25,7 +25,7 @@ use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Princi
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, event, transcript_entry::Body as Entry};
 use crate::runner::Runtime;
-use crate::{new_id, prompts, tools};
+use crate::{lock, new_id, prompts, tools};
 
 /// Path of the MCP endpoint on the agent listener.
 pub const PATH: &str = "/mcp";
@@ -984,10 +984,6 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
 fn rpc_failure(status: StatusCode, code: i64, message: &str) -> Response {
     let body = json!({"jsonrpc": "2.0", "id": null, "error": {"code": code, "message": message}});
     json_response(status, &body)
-}
-
-fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 #[cfg(test)]
