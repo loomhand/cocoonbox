@@ -35,6 +35,8 @@ const RESTORE_AHEAD: usize = 2;
 const PLAN_READS: usize = 4;
 const ATTEMPTS: u32 = 3;
 const RETRY_BASE: Duration = Duration::from_millis(500);
+const STORE_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const STORE_READ_TIMEOUT: Duration = Duration::from_secs(180);
 const PREEMPT_WAIT: Duration = Duration::from_secs(5);
 const REUSE_AGE_MS: i64 = 1_000;
 const STAGING_PREFIX: &str = ".cb-restore-";
@@ -115,8 +117,8 @@ impl StateEngine {
         work: PathBuf,
         pause: Pause,
         desktop_unit: Option<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, String> {
+        Ok(Self {
             toolhost,
             store,
             roots,
@@ -124,9 +126,9 @@ impl StateEngine {
             work,
             pause,
             desktop_unit,
-            http: reqwest::Client::new(),
+            http: store_client(STORE_CONNECT_TIMEOUT, STORE_READ_TIMEOUT)?,
             pinned: Mutex::new(None),
-        }
+        })
     }
 
     /// Walks and chunks the state, spools new chunks and pins the snapshot for Upload.
@@ -1466,6 +1468,14 @@ async fn read_cached(cache: &Path, id: &str) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("read cached chunk {id}: {e}"))
 }
 
+fn store_client(connect: Duration, read: Duration) -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .connect_timeout(connect)
+        .read_timeout(read)
+        .build()
+        .map_err(|e| format!("build store client: {e}"))
+}
+
 async fn send_retrying(
     label: &str,
     build: impl Fn() -> reqwest::RequestBuilder,
@@ -1523,7 +1533,8 @@ mod tests {
                 wait: Duration::from_secs(30),
             },
             None,
-        );
+        )
+        .unwrap();
         let gate = Arc::clone(&turns).write_owned().await;
         let started = tokio::time::Instant::now();
         engine.resume(
@@ -1540,6 +1551,29 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(args, json!({"if_was_running": true}));
+    }
+
+    #[tokio::test]
+    async fn a_store_that_never_answers_fails_the_transfer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/chunk", listener.local_addr().unwrap());
+        let (held, mut accepted) = mpsc::channel(ATTEMPTS as usize);
+        tokio::spawn(async move {
+            while let Ok((conn, _)) = listener.accept().await {
+                held.send(conn).await.unwrap();
+            }
+        });
+        let http = store_client(Duration::from_secs(1), Duration::from_millis(200)).unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(10),
+            send_retrying("get", || http.get(&url)),
+        )
+        .await
+        .expect("a silent store stalls the transfer");
+        assert!(result.is_err());
+        for _ in 0..ATTEMPTS {
+            assert!(accepted.recv().await.is_some());
+        }
     }
 
     #[test]

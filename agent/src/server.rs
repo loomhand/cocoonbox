@@ -480,7 +480,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
             wait: rt.cfg.quiesce_wait,
         },
         rt.cfg.desktop_unit.clone(),
-    );
+    )?;
     let state = StateServer::new(StateSvc {
         rt: Arc::clone(&rt),
         engine: Arc::new(engine),
