@@ -16,11 +16,16 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/s3utils"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/loomhand/cocoonbox/api/store"
 )
 
-const defaultPresignTTL = 10 * time.Minute
+const (
+	defaultPresignTTL = 10 * time.Minute
+	deleteConcurrency = 32
+)
 
 // Options configures the bucket and credentials.
 type Options struct {
@@ -145,6 +150,9 @@ func (s *S3) Delete(ctx context.Context, keys []string) error {
 		}
 		objects = append(objects, minio.ObjectInfo{Key: object})
 	}
+	if s3utils.IsGoogleEndpoint(*s.client.EndpointURL()) {
+		return s.deleteEach(ctx, objects)
+	}
 	results, err := s.client.RemoveObjectsWithIter(ctx, s.opts.Bucket, slices.Values(objects), minio.RemoveObjectsOptions{})
 	if err != nil {
 		return fmt.Errorf("delete %d objects: %w", len(keys), err)
@@ -172,6 +180,26 @@ func (s *S3) Copy(ctx context.Context, src, dst string) error {
 		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
 	}
 	return nil
+}
+
+func (s *S3) deleteEach(ctx context.Context, objects []minio.ObjectInfo) error {
+	errs := make([]error, len(objects))
+	var g errgroup.Group
+	g.SetLimit(deleteConcurrency)
+	for i, object := range objects {
+		if ctx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			err := s.client.RemoveObject(ctx, s.opts.Bucket, object.Key, minio.RemoveObjectOptions{})
+			if err != nil && minio.ToErrorResponse(err).Code != minio.NoSuchKey {
+				errs[i] = fmt.Errorf("delete %s: %w", strings.TrimPrefix(object.Key, s.base()), err)
+			}
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return errors.Join(append(errs, ctx.Err())...)
 }
 
 func (s *S3) base() string {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -12,10 +13,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 
 	"github.com/loomhand/cocoonbox/api/store"
 )
@@ -125,6 +129,86 @@ func TestDeleteSendsKeysUnderThePrefixAndReportsFailures(t *testing.T) {
 	}
 }
 
+func TestDeleteOnGCSRunsBoundedParallelDeletes(t *testing.T) {
+	const (
+		n       = 320
+		latency = 20 * time.Millisecond
+	)
+	var (
+		mu       sync.Mutex
+		deleted  = map[string]bool{}
+		inFlight int
+		peak     int
+		requests atomic.Int32
+		cancelAt atomic.Int32
+	)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		if r.Method != http.MethodDelete {
+			t.Errorf("request %s %s, want DELETE", r.Method, r.URL)
+			w.WriteHeader(http.StatusNotImplemented)
+			_, _ = w.Write([]byte(`<Error><Code>NotImplemented</Code><Message>multi-object delete</Message></Error>`))
+			return
+		}
+		if requests.Add(1) == cancelAt.Load() {
+			cancel()
+		}
+		mu.Lock()
+		inFlight++
+		peak = max(peak, inFlight)
+		mu.Unlock()
+		time.Sleep(latency)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		switch r.URL.Path {
+		case "/cocoonbox/state/alice/chunks/missing":
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`<Error><Code>NoSuchKey</Code><Message>missing</Message></Error>`))
+		case "/cocoonbox/state/alice/chunks/denied":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`<Error><Code>AccessDenied</Code><Message>denied</Message></Error>`))
+		default:
+			mu.Lock()
+			deleted[r.URL.Path] = true
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s := newGCSStore(t, srv.Listener.Addr().String())
+	keys := make([]string, n, n+2)
+	for i := range n {
+		keys[i] = fmt.Sprintf("alice/chunks/%04d", i)
+	}
+	start := time.Now()
+	err := s.Delete(t.Context(), append(keys, "alice/chunks/missing", "alice/chunks/denied"))
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "delete alice/chunks/denied") || strings.Contains(err.Error(), "missing") || strings.Count(err.Error(), "delete ") != 1 {
+		t.Errorf("Delete = %v, want only the denied failure", err)
+	}
+	if len(deleted) != n || !deleted["/cocoonbox/state/alice/chunks/0000"] || !deleted[fmt.Sprintf("/cocoonbox/state/alice/chunks/%04d", n-1)] {
+		t.Errorf("deleted %d objects, want %d", len(deleted), n)
+	}
+	if peak > deleteConcurrency || peak < 2 {
+		t.Errorf("peak in-flight deletes = %d, want 2..%d", peak, deleteConcurrency)
+	}
+	if serial := (n + 2) * latency; elapsed > serial/4 {
+		t.Errorf("Delete took %v, serial is %v", elapsed, serial)
+	}
+
+	requests.Store(0)
+	cancelAt.Store(40)
+	if err := s.Delete(ctx, keys); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled Delete = %v, want context.Canceled", err)
+	}
+	if got := requests.Load(); got >= n {
+		t.Errorf("cancelled Delete sent %d requests, want fewer than %d", got, n)
+	}
+}
+
 func TestGetMapsMissingObject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
@@ -189,4 +273,25 @@ func TestListAndDeleteOnMinIO(t *testing.T) {
 	if objects, err = s.List(t.Context(), "bob/"); err != nil || len(objects) != 1 {
 		t.Errorf("bob's objects after alice's delete = %v, %v", objects, err)
 	}
+}
+
+func newGCSStore(t *testing.T, addr string) *S3 {
+	t.Helper()
+	s, err := New(Options{Endpoint: addr, Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	dial := func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, addr)
+	}
+	s.client, err = minio.New("storage.googleapis.com", &minio.Options{
+		Creds:        credentials.NewStaticV4("ak", "sk", ""),
+		Region:       "us-east-1",
+		BucketLookup: minio.BucketLookupPath,
+		Transport:    &http.Transport{DialContext: dial},
+	})
+	if err != nil {
+		t.Fatalf("gcs client: %v", err)
+	}
+	return s
 }
