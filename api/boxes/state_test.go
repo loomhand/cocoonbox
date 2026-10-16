@@ -88,8 +88,11 @@ func TestSaveStateRefusals(t *testing.T) {
 func TestSchedulerSavesStaleRunningBoxes(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1")}
+	gate := make(chan struct{})
+	env.agent.onUpload = func(machines.Endpoint) { <-gate }
 	env.svc.saveStale(env.ctx, time.Hour)
 	op := env.svc.ops.activeFor(aliceBox)
+	close(gate)
 	if op == nil {
 		t.Fatal("scheduler started no save")
 	}
