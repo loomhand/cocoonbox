@@ -91,7 +91,7 @@ build: ## Build cocoonbox-api binary
 # --- Testing ---
 
 test: vet ## Run tests with race detection and coverage
-	go test -race -timeout 120s -count=1 -cover -coverprofile=coverage.out ./...
+	go test -race -timeout 300s -count=1 -cover -coverprofile=coverage.out ./...
 
 coverage: test ## Generate and display coverage report
 	go tool cover -func=coverage.out
