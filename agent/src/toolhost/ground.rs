@@ -1,6 +1,6 @@
 //! `computer_act` on a described target: the plan executor's AT-SPI resolve, pressed by action, then a
-//! unique OCR match of the target's visible text, or of the label its description names; neither finding
-//! it, or either failing, leaves the grounding to the caller.
+//! unique OCR match of the target's visible text, or of the label its description names, outside window
+//! titles; neither finding it, or either failing, leaves the grounding to the caller.
 
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -21,6 +21,7 @@ const TESSERACT: &str = "tesseract";
 const CROP: [f64; 2] = [320.0, 200.0];
 const FIELD_WORDS: [&str; 5] = ["field", "input", "box", "entry", "textbox"];
 const TEXT_ROLES: [&str; 3] = ["text", "label", "static"];
+const TITLE_WORDS: [&str; 4] = ["tab", "title", "panel", "taskbar"];
 const MIN_PREFIX: usize = 3;
 const SAYS: [&str; 6] = [
     "that shows ",
@@ -148,10 +149,20 @@ pub async fn act(
         }
     };
     timing::mark("ocr");
-    let (text, hits) = first_read(&words, &texts).unwrap_or((texts[0].as_str(), Vec::new()));
+    let titles = if names_titles(&a.target.description) {
+        Vec::new()
+    } else {
+        titled(cua, desk, &words, &texts).await
+    };
+    timing::mark("titles");
+    let (text, hits) = first_read(&words, &texts, |r| !titles.contains(r))
+        .unwrap_or((texts[0].as_str(), Vec::new()));
     out["ocr"] = json!({"text": text, "matches": hits.len(), "ms": t0.elapsed().as_millis()});
     if a.target.text.is_none() {
         out["ocr"]["from"] = "description".into();
+    }
+    if !titles.is_empty() {
+        out["ocr"]["titles"] = titles.len().into();
     }
     let [rect] = hits.as_slice() else {
         return not_found(cua, out, a.max_edge, start).await;
@@ -340,12 +351,66 @@ fn texts_from(description: &str) -> Vec<String> {
     out
 }
 
-/// The first of `texts` read on the screen and its matches.
-fn first_read<'a>(words: &[Word], texts: &'a [String]) -> Option<(&'a str, Vec<[f64; 4]>)> {
+/// The first of `texts` read on the screen and its matches that `keep` keeps.
+fn first_read<'a>(
+    words: &[Word],
+    texts: &'a [String],
+    keep: impl Fn(&[f64; 4]) -> bool,
+) -> Option<(&'a str, Vec<[f64; 4]>)> {
     texts
         .iter()
-        .map(|t| (t.as_str(), matches(words, t)))
+        .map(|t| {
+            (
+                t.as_str(),
+                matches(words, t)
+                    .into_iter()
+                    .filter(&keep)
+                    .collect::<Vec<_>>(),
+            )
+        })
         .find(|(_, hits)| !hits.is_empty())
+}
+
+/// The matches of `texts` that show a window title, not content: in a desktop panel, a title bar, or a
+/// tab such as a browser's.
+async fn titled(cua: &Cua, desk: &Desk, words: &[Word], texts: &[String]) -> Vec<[f64; 4]> {
+    let mut out = Vec::new();
+    for rect in texts.iter().flat_map(|t| matches(words, t)) {
+        let (cx, cy) = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
+        if cua.title_at(cx, cy)
+            || desk
+                .at_point(cx.round() as i32, cy.round() as i32)
+                .await
+                .is_ok_and(|at| in_tab(&at))
+        {
+            out.push(rect);
+        }
+    }
+    out
+}
+
+/// Whether the `at` answer is a tab or the label of one, whose name starts the tab's, as Chrome adds the
+/// tab's memory use; not content of the page the tab holds.
+fn in_tab(at: &Value) -> bool {
+    let found = &at["found"];
+    let label = found["name"].as_str().unwrap_or_default();
+    found["role"] == "tab"
+        || at["path"]
+            .as_array()
+            .and_then(|p| p.last())
+            .is_some_and(|p| {
+                p["role"] == "tab"
+                    && !label.is_empty()
+                    && p["name"].as_str().is_some_and(|t| t.starts_with(label))
+            })
+}
+
+/// Whether `description` names a place where window titles show, so a match there can be the target.
+fn names_titles(description: &str) -> bool {
+    description
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| TITLE_WORDS.contains(&w))
 }
 
 /// The boxes of every run of consecutive words on one line that spells `label`; its last word may be cut off.
@@ -584,11 +649,66 @@ mod tests {
             "Slide Show".to_owned(),
             "Format".to_owned(),
         ];
-        let (text, hits) = first_read(&words, &texts).unwrap();
+        let all = |_: &[f64; 4]| true;
+        let (text, hits) = first_read(&words, &texts, all).unwrap();
         assert_eq!((text, hits.len()), ("Slide Show", 1));
-        let (text, hits) = first_read(&words, &texts[2..]).unwrap();
+        let (text, hits) = first_read(&words, &texts[2..], all).unwrap();
         assert_eq!((text, hits.len()), ("Format", 2));
-        assert!(first_read(&words, &texts[..1]).is_none());
+        assert!(first_read(&words, &texts[..1], all).is_none());
+    }
+
+    #[test]
+    fn a_title_copy_does_not_count_so_the_content_copy_is_unique_and_a_title_only_text_reads_on() {
+        let at = |text: &str, line: &str, y: f64| Word {
+            norm: norm(text),
+            line: line.to_owned(),
+            rect: [100.0, y, 40.0, 10.0],
+        };
+        let words = [
+            at("house", "1.1.1.1", 12.0),
+            at("house", "1.1.2.1", 38.0),
+            at("Save", "1.1.3.1", 12.0),
+            at("Save", "1.1.4.1", 300.0),
+        ];
+        let content = |r: &[f64; 4]| r[1] > 51.0;
+        let texts = ["house".to_owned(), "Save".to_owned()];
+        assert_eq!(first_read(&words, &texts, |_| true).unwrap().1.len(), 2);
+        let (text, hits) = first_read(&words, &texts, content).unwrap();
+        assert_eq!(
+            (text, hits.as_slice()),
+            ("Save", &[[100.0, 300.0, 40.0, 10.0]][..])
+        );
+        assert!(first_read(&words, &texts[..1], content).is_none());
+    }
+
+    #[test]
+    fn a_tab_or_its_label_is_a_title_but_the_page_under_a_tab_is_not() {
+        let title = "hit: house @520,300";
+        let chrome = json!({"found": {"role": "text", "name": title}, "path": [
+            {"role": "window", "name": title}, {"role": "tablist", "name": ""},
+            {"role": "tab", "name": format!("{title} - Memory usage - 51.7 MB")}]});
+        let tab = json!({"found": {"role": "tab", "name": "Numbers"}, "path": [{"role": "dialog", "name": "Format Cells"}]});
+        let page = json!({"found": {"role": "spinbutton", "name": "Decimal places:"}, "path": [
+            {"role": "dialog", "name": "Format Cells"}, {"role": "tab", "name": "Numbers"}, {"role": "group", "name": "Options"}]});
+        let label = json!({"found": {"role": "label", "name": "Show hidden files"}, "path": [
+            {"role": "dialog", "name": "Preferences"}, {"role": "tab", "name": "Display"}]});
+        assert!(in_tab(&chrome));
+        assert!(in_tab(&tab));
+        assert!(!in_tab(&page));
+        assert!(!in_tab(&label));
+        assert!(!in_tab(&json!({"found": null, "window": {"title": title}})));
+    }
+
+    #[test]
+    fn a_description_that_names_a_tab_title_or_panel_lets_titles_match() {
+        assert!(names_titles("the Numbers tab"));
+        assert!(names_titles("the Untitled 1 button in the taskbar"));
+        assert!(names_titles("the window title"));
+        assert!(names_titles("the Applications menu in the top panel"));
+        assert!(!names_titles(
+            "the yellow star in the top-right corner of the game"
+        ));
+        assert!(!names_titles("the tabular data view"));
     }
 
     #[test]
