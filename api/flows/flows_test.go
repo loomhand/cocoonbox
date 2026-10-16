@@ -161,6 +161,16 @@ func TestDoorServesTheMachineOwnersLibrary(t *testing.T) {
 	}
 }
 
+func TestDoorAnswersAStoreFailureWithoutItsText(t *testing.T) {
+	lib := NewLibrary(failingStore{&memStore{objects: map[string][]byte{}}}, fixedKeys{})
+	door := httptest.NewServer(NewDoor(lib, doorKeys, func(context.Context, string, string) Origin { return Origin{} }))
+	defer door.Close()
+
+	if code, body := call(t, door.URL, "alice-key", http.MethodGet, "/flows", ""); code != http.StatusInternalServerError || strings.Contains(body, "bucket") {
+		t.Errorf("GET list on a failing store = %d %q", code, body)
+	}
+}
+
 func TestServerExportsAndImportsTheCallersFlowsOnly(t *testing.T) {
 	_, lib := newLibrary()
 	srv := NewServer(lib)
@@ -243,6 +253,12 @@ type fixedKeys struct{}
 
 func (fixedKeys) StateKey(_ context.Context, user string) (keyring.Key, error) {
 	return keyring.Key{ID: user, Secret: bytes.Repeat([]byte(user[:1]), keyring.KeySize)}, nil
+}
+
+type failingStore struct{ *memStore }
+
+func (failingStore) Get(context.Context, string) ([]byte, error) {
+	return nil, errors.New("read bucket cb-state: connection refused")
 }
 
 type memStore struct {

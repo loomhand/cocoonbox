@@ -98,18 +98,17 @@ func callerOf(r *http.Request) doorCaller {
 }
 
 func fail(w http.ResponseWriter, r *http.Request, err error) {
-	code := http.StatusInternalServerError
 	switch {
 	case errors.Is(err, ErrInvalid):
-		code = http.StatusBadRequest
+		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, ErrNotFound):
-		code = http.StatusNotFound
+		http.Error(w, err.Error(), http.StatusNotFound)
 	case errors.Is(err, ErrFull):
-		code = http.StatusRequestEntityTooLarge
+		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 	default:
 		log.WithFunc("flows.Door").Error(r.Context(), err, "serve a box's flow request")
+		http.Error(w, "the flow request failed", http.StatusInternalServerError)
 	}
-	http.Error(w, err.Error(), code)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
