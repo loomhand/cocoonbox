@@ -41,6 +41,14 @@ function button(label, onClick, danger) {
   return b;
 }
 
+let providers = null;
+const params = new URLSearchParams(location.search);
+const invite = params.get("invite") || "";
+
+function when(iso) {
+  return iso ? new Date(iso).toLocaleString() : "never";
+}
+
 function show(view) {
   for (const id of ["login", "me", "admin"]) $(id).hidden = !view.includes(id);
 }
@@ -53,6 +61,10 @@ async function load() {
     if (e.status !== 401) notice(e.message, true);
     $("whoami").textContent = "";
     $("logout").hidden = true;
+    $("github-login").hidden = !(providers && providers.github);
+    $("signup-note").textContent = providers && providers.signup
+      ? (invite ? "Your invite is kept: sign in with GitHub to use it." : providers.invite_only ? "New here? Signup is by invite." : "New here? Sign in with GitHub to sign up.")
+      : "";
     show(["login"]);
     return;
   }
@@ -96,6 +108,8 @@ async function load() {
 
   await loadShares(me.boxes);
   await loadDevices();
+  await loadIdentities(u);
+  $("delete-me-section").hidden = u.admin;
 
   const usage = $("usage");
   usage.replaceChildren();
@@ -115,6 +129,88 @@ async function load() {
   show(u.admin ? ["me", "admin"] : ["me"]);
   await loadAgents();
   if (u.admin) await loadUsers(u);
+  if (u.admin) await loadSignup();
+}
+
+async function loadIdentities(u) {
+  $("identities-section").hidden = !(providers && providers.github);
+  if (!providers || !providers.github) return;
+  const ids = await api("GET", "me/identities");
+  const body = $("identities");
+  body.replaceChildren();
+  for (const id of ids) {
+    const row = body.insertRow();
+    cell(row, id.idp);
+    cell(row, id.email);
+    cell(row, when(id.created_at));
+    const actions = cell(row, "");
+    if (id.idp === u.idp) continue;
+    actions.appendChild(button("Disconnect", async () => {
+      await api("DELETE", "me/identities/" + encodeURIComponent(id.idp));
+      notice("Disconnected " + id.idp + ".");
+      await load();
+    }, true));
+  }
+  if (!ids.length) cell(body.insertRow(), "None: you sign in with your password.");
+  $("link-github").hidden = ids.some((id) => id.idp === "github");
+}
+
+async function loadSignup() {
+  $("signup-admin").hidden = !providers;
+  if (!providers) return;
+  const { settings, seats, configured } = await api("GET", "signup");
+  $("signup-seats").textContent = "Seats in use: " + seats.used + " of " + seats.cap + "; waiting: " + seats.waiting + "." +
+    (configured ? "" : " No GitHub login client is configured, so nobody can sign in with GitHub yet.");
+  const f = $("signup-form");
+  f.enabled.checked = settings.enabled;
+  f.invite_only.checked = settings.invite_only;
+  f.seats.value = settings.seats;
+  f.allow_domains.value = (settings.allow_domains || []).join(", ");
+  f.allow_emails.value = (settings.allow_emails || []).join(", ");
+  f.daily_cap.value = String(settings.daily_cap_micros / 1e6);
+  f.max_agent_boxes.value = settings.max_agent_boxes;
+  f.hourly_accounts.value = settings.hourly_accounts;
+  const queue = await api("GET", "queue");
+  const qbody = $("queue");
+  qbody.replaceChildren();
+  for (const e of queue) {
+    const row = qbody.insertRow();
+    cell(row, e.position || "");
+    cell(row, e.email);
+    cell(row, e.name_hint);
+    cell(row, e.status + (e.invited ? " (invited)" : ""));
+    cell(row, when(e.created_at));
+    const actions = cell(row, "");
+    actions.className = "actions";
+    if (e.status !== "waiting") continue;
+    for (const [label, action, danger] of [["Admit now", "admit"], ["Move to front", "front"], ["Reject", "reject", true]]) {
+      actions.appendChild(button(label, async () => {
+        await api("POST", "queue/" + encodeURIComponent(e.id) + "/" + action);
+        notice(label + ": " + e.email + ".");
+        await load();
+      }, danger));
+    }
+  }
+  if (!queue.length) cell(qbody.insertRow(), "Nobody is waiting.");
+  const invites = await api("GET", "invites");
+  const ibody = $("invites");
+  ibody.replaceChildren();
+  for (const inv of invites) {
+    const row = ibody.insertRow();
+    cell(row, inv.id);
+    cell(row, inv.uses_left);
+    cell(row, when(inv.expires_at));
+    cell(row, inv.created_by);
+    cell(row, "").appendChild(button("Revoke", async () => {
+      await api("DELETE", "invites/" + encodeURIComponent(inv.id));
+      notice("Revoked " + inv.id + ".");
+      await load();
+    }, true));
+  }
+}
+
+function list(text) {
+  return text.split(/[\s,]+/).filter(Boolean);
 }
 
 async function loadDevices() {
@@ -154,6 +250,7 @@ async function loadUsers(self) {
     const row = body.insertRow();
     cell(row, u.name + (u.admin ? " (admin)" : ""));
     cell(row, u.id);
+    cell(row, u.idp);
     cell(row, u.has_token ? "set" : "none");
     const res = document.createElement("input");
     res.type = "checkbox";
@@ -168,6 +265,10 @@ async function loadUsers(self) {
     running.placeholder = "default";
     running.title = "How many of the user's boxes run at once; empty for the default";
     cell(row, "").appendChild(running);
+    const agents = number(u.max_agent_boxes || "", (v) => update(u.id, { max_agent_boxes: v || 0 }));
+    agents.placeholder = "no cap";
+    agents.title = "How many boxes all of the user's agents may hold together; empty for no cap";
+    cell(row, "").appendChild(agents);
     const daily = document.createElement("input");
     daily.size = 9;
     daily.placeholder = "default";
@@ -367,6 +468,57 @@ $("regenerate").addEventListener("click", async () => {
   }
 });
 
+$("github-button").addEventListener("click", async () => {
+  try {
+    const { url } = await api("POST", "auth/github/begin", { invite });
+    location.assign(url);
+  } catch (e) {
+    notice(e.message, true);
+  }
+});
+
+$("link-github").addEventListener("click", async () => {
+  try {
+    const { url } = await api("POST", "me/identities/github");
+    location.assign(url);
+  } catch (e) {
+    notice(e.message, true);
+  }
+});
+
+$("delete-me").addEventListener("click", async () => {
+  const name = prompt("This deletes your account, its boxes and their saved state for good. Type your user name to confirm.");
+  if (!name) return;
+  try {
+    await api("POST", "me/delete", { name });
+    notice("Your account is deleted.");
+  } catch (e) {
+    notice(e.message, true);
+  }
+  await load();
+});
+
+submit("signup-form", async (f) => {
+  const cap = Number(f.daily_cap.value);
+  if (!Number.isFinite(cap) || cap < 0) throw new Error("the daily cap is a dollar amount");
+  await api("PUT", "signup", {
+    enabled: f.enabled.checked, invite_only: f.invite_only.checked, seats: Number(f.seats.value),
+    allow_domains: list(f.allow_domains.value), allow_emails: list(f.allow_emails.value), daily_cap_micros: Math.round(cap * 1e6),
+    max_agent_boxes: Number(f.max_agent_boxes.value), hourly_accounts: Number(f.hourly_accounts.value),
+  });
+  notice("Signup saved.");
+  await load();
+});
+
+submit("invite-form", async (f) => {
+  const { invite: inv, code } = await api("POST", "invites", { uses: Number(f.uses.value), days: Number(f.days.value) });
+  const link = $("invite-link");
+  link.textContent = location.origin + "/cb/?invite=" + encodeURIComponent(code);
+  link.hidden = false;
+  notice("Invite " + inv.id + " made. Copy its link now; it is not shown again.");
+  await load();
+});
+
 $("logout").addEventListener("click", async () => {
   await api("POST", "logout").catch(() => {});
   $("share-link").hidden = true;
@@ -377,4 +529,22 @@ $("logout").addEventListener("click", async () => {
   await load();
 });
 
-load();
+const loginErrors = {
+  signup_closed: "Signup is closed. Sign in with your password and connect GitHub on your page, or ask an admin for an account.",
+  email_unverified: "Your GitHub account has no verified primary email.",
+  email_not_allowed: "Signup is not open to your email address.",
+  invite_required: "Signup is by invite only; this sign-in carried no invite, or its invite is used up or expired.",
+  declined: "Your signup request was declined.",
+  disabled: "This cocoonbox account is disabled.",
+  github_taken: "This GitHub account already signs in to another cocoonbox account.",
+  github_linked: "Your account already has a GitHub sign-in; disconnect it first.",
+  browser: "This sign-in did not start in this browser. Start it again.",
+  too_many: "Too many sign-ins from this address; try again later.",
+  github_denied: "GitHub did not allow the sign-in.",
+};
+if (params.get("login_error")) notice(loginErrors[params.get("login_error")] || "Signing in with GitHub failed; try again.", true);
+else if (params.get("linked")) notice("Connected " + params.get("linked") + ": you can sign in with it now.");
+api("GET", "auth/providers").catch(() => null).then((p) => {
+  providers = p;
+  return load();
+});

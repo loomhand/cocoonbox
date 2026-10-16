@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cocoonbox · Waiting for a seat</title>
+<link rel="stylesheet" href="/cb/style.css">
+<script src="/cb/queue.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>cocoonbox · Waiting for a seat</h1>
+</header>
+<main>
+  <p id="notice" hidden></p>
+  <section id="waiting" hidden>
+    <h2 id="position"></h2>
+    <p id="details"></p>
+    <p>Every seat is taken. You get your account as soon as one opens, in the order people signed up. Nothing else to do: come back and sign in with GitHub, and if your seat came, you are in. There is no email.</p>
+    <button id="leave" class="danger">Leave the queue</button>
+  </section>
+  <section id="admitted" hidden>
+    <h2>Your account is ready</h2>
+    <p><a href="/cb/">Sign in with GitHub</a> to use it.</p>
+  </section>
+  <section id="gone" hidden>
+    <h2>You are not in the queue</h2>
+    <p><a href="/cb/">Back to sign-in</a>.</p>
+  </section>
+</main>
+</body>
+</html>

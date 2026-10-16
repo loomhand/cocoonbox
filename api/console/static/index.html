@@ -26,6 +26,10 @@
       <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
       <button>Sign in</button>
     </form>
+    <p id="github-login" hidden>
+      <button type="button" id="github-button">Sign in with GitHub</button>
+      <span id="signup-note" class="muted"></span>
+    </p>
   </section>
 
   <section id="me" hidden>
@@ -74,18 +78,31 @@
     <p id="budget"></p>
     <table><thead><tr><th>Model</th><th>Requests</th><th>Tokens</th><th>Cost (USD)</th></tr></thead><tbody id="usage"></tbody></table>
 
+    <div id="identities-section" hidden>
+      <h2>Sign-in methods</h2>
+      <p>Connect GitHub to sign in with it instead of your password. Only a GitHub account you connect here signs in to this account; an email address never links one.</p>
+      <table><thead><tr><th>Provider</th><th>Email</th><th>Connected</th><th></th></tr></thead><tbody id="identities"></tbody></table>
+      <button id="link-github">Connect GitHub</button>
+    </div>
+
     <h2>Password</h2>
     <form id="password-form">
       <label>Current <input name="current" type="password" autocomplete="current-password" required></label>
       <label>New <input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
       <button>Change password</button>
     </form>
+
+    <div id="delete-me-section" hidden>
+      <h2>Delete my account</h2>
+      <p>Deleting your account releases your boxes, deletes their saved state, your keys and your connections, and signs out every device. It cannot be undone.</p>
+      <button id="delete-me" class="danger">Delete my account</button>
+    </div>
   </section>
 
   <section id="admin" hidden>
     <h2>Users</h2>
     <table>
-      <thead><tr><th>User</th><th>Id</th><th>Token</th><th>Residential</th><th>Max boxes</th><th>Cap</th><th>Running at once</th><th>Daily model cap (USD)</th><th>Status</th><th></th></tr></thead>
+      <thead><tr><th>User</th><th>Id</th><th>Made by</th><th>Token</th><th>Residential</th><th>Max boxes</th><th>Cap</th><th>Running at once</th><th>Agent boxes</th><th>Daily model cap (USD)</th><th>Status</th><th></th></tr></thead>
       <tbody id="users"></tbody>
     </table>
     <h3>Create a user</h3>
@@ -94,6 +111,32 @@
       <label>Initial password <input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
       <button>Create</button>
     </form>
+
+    <div id="signup-admin" hidden>
+      <h2>Signup</h2>
+      <p id="signup-seats"></p>
+      <form id="signup-form">
+        <label><input type="checkbox" name="enabled"> Signup on</label>
+        <label><input type="checkbox" name="invite_only"> Invite only</label>
+        <label>Seats <input type="number" name="seats" min="0"></label>
+        <label>Allowed domains <input name="allow_domains" placeholder="everyone"></label>
+        <label>Allowed emails <input name="allow_emails" placeholder="everyone"></label>
+        <label>Daily model cap (USD) <input name="daily_cap" size="6"></label>
+        <label>Agent boxes <input type="number" name="max_agent_boxes" min="1" max="16"></label>
+        <label>Accounts per hour <input type="number" name="hourly_accounts" min="1"></label>
+        <button>Save</button>
+      </form>
+      <h3>Queue</h3>
+      <table><thead><tr><th>#</th><th>Email</th><th>GitHub login</th><th>Status</th><th>Since</th><th></th></tr></thead><tbody id="queue"></tbody></table>
+      <h3>Invites</h3>
+      <table><thead><tr><th>Invite</th><th>Uses left</th><th>Expires</th><th>Made by</th><th></th></tr></thead><tbody id="invites"></tbody></table>
+      <form id="invite-form">
+        <label>Uses <input type="number" name="uses" min="1" max="1000" value="1"></label>
+        <label>Days <input type="number" name="days" min="1" max="90" value="7"></label>
+        <button>Create an invite</button>
+      </form>
+      <pre id="invite-link" hidden></pre>
+    </div>
   </section>
 </main>
 </body>

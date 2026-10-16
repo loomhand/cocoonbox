@@ -35,6 +35,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines/sandboxd"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/shares"
+	"github.com/loomhand/cocoonbox/api/signup"
 	"github.com/loomhand/cocoonbox/api/store/s3"
 	"github.com/loomhand/cocoonbox/api/users"
 	"github.com/loomhand/cocoonbox/api/vault"
@@ -193,6 +194,14 @@ func main() {
 		httpMux.HandleFunc("POST "+oauth.TokenPath, grants.ServeToken)
 		httpMux.HandleFunc("POST "+oauth.RegisterPath, grants.ServeRegister)
 		httpMux.HandleFunc("POST "+oauth.RevokePath, grants.ServeRevoke)
+		var sig *signup.Service
+		if sig, err = openSignup(ctx, cfg, accounts); err != nil {
+			logger.Fatalf(ctx, err, "open signup")
+		}
+		defer sig.Close()
+		web.EnableSignup(sig)
+		httpMux.HandleFunc("GET "+signup.CallbackPath, web.LoginCallback)
+		go sig.Run(ctx)
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -353,6 +362,23 @@ func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Servic
 	}
 	log.WithFunc("main.openConnect").Infof(ctx, "connect on %s", cfg.Connect.PublicURL)
 	return broker, nil
+}
+
+// openSignup opens sign-in with GitHub and signup on the users database, with the login client from LOGIN_GITHUB_CLIENT_ID and _SECRET.
+func openSignup(ctx context.Context, cfg *config.Config, accounts *users.Service) (*signup.Service, error) {
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return nil, err
+	}
+	sig, err := signup.Open(ctx, signup.Options{
+		DSN: dsn, PublicURL: cfg.OAuth.PublicURL, Accounts: accounts,
+		GitHub: signup.GitHubClient{ClientID: os.Getenv("LOGIN_GITHUB_CLIENT_ID"), ClientSecret: os.Getenv("LOGIN_GITHUB_CLIENT_SECRET")},
+	})
+	if err != nil {
+		return nil, err
+	}
+	log.WithFunc("main.openSignup").Infof(ctx, "sign-in with GitHub configured: %t, callback %s%s", sig.Configured(), cfg.OAuth.PublicURL, signup.CallbackPath)
+	return sig, nil
 }
 
 // openOAuth opens the authorization server of the control MCP on the users database.

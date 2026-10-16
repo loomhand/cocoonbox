@@ -26,6 +26,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/connect"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
+	"github.com/loomhand/cocoonbox/api/signup"
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
@@ -98,6 +99,7 @@ type Server struct {
 	connect *connect.Service
 	keys    controlv1.KeysServer
 	agents  Agents
+	signup  *signup.Service
 
 	defaultDailyCap   int64
 	defaultMaxRunning int
@@ -176,15 +178,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	secret, err := s.users.NewSession(r.Context(), u.ID)
-	if err != nil {
+	if err := s.startSession(w, r, u.ID); err != nil {
 		s.fail(w, r, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name: cookieName, Value: secret, Path: Prefix, MaxAge: int(cookieAge.Seconds()),
-		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
-	})
 	writeJSON(w, u)
 }
 
@@ -410,6 +407,9 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if u.Disabled {
+		s.admit(r.Context())
+	}
 	writeJSON(w, u)
 }
 
@@ -449,31 +449,32 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "you cannot delete yourself")
 		return
 	}
-	disabled := true
-	if _, err := s.users.Update(r.Context(), id, users.Settings{Disabled: &disabled}); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	if err := s.boxes.Release(r.Context(), id); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	if err := s.boxes.DeleteState(r.Context(), id); err != nil {
-		s.fail(w, r, err)
-		return
-	}
-	if s.connect != nil {
-		if err := s.connect.RevokeAll(r.Context(), id); err != nil {
-			s.fail(w, r, err)
-			return
-		}
-	}
-	if err := s.users.Delete(r.Context(), id); err != nil {
+	if err := s.removeUser(r.Context(), id); err != nil {
 		s.fail(w, r, err)
 		return
 	}
 	log.WithFunc("console.Server.deleteUser").Infof(r.Context(), "admin %s deleted user %s", caller(r).Name, id)
+	s.admit(r.Context())
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// removeUser disables user id at once, then releases its boxes, deletes its saved state, revokes its connections and deletes it.
+func (s *Server) removeUser(ctx context.Context, id string) error {
+	if _, err := s.users.Update(ctx, id, users.Settings{Disabled: new(true)}); err != nil {
+		return err
+	}
+	if err := s.boxes.Release(ctx, id); err != nil {
+		return err
+	}
+	if err := s.boxes.DeleteState(ctx, id); err != nil {
+		return err
+	}
+	if s.connect != nil {
+		if err := s.connect.RevokeAll(ctx, id); err != nil {
+			return err
+		}
+	}
+	return s.users.Delete(ctx, id)
 }
 
 func (s *Server) listShares(w http.ResponseWriter, r *http.Request) {
@@ -573,6 +574,18 @@ func (s *Server) viewShare(ws *websocket.Conn) {
 		grant.Box, grant.Principal(), clientAddr(r), status.Code(err), time.Since(start).Round(time.Millisecond))
 }
 
+func (s *Server) startSession(w http.ResponseWriter, r *http.Request, user string) error {
+	secret, err := s.users.NewSession(r.Context(), user)
+	if err != nil {
+		return err
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name: cookieName, Value: secret, Path: Prefix, MaxAge: int(cookieAge.Seconds()),
+		HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode,
+	})
+	return nil
+}
+
 func (s *Server) ownerCtx(r *http.Request) context.Context {
 	return auth.WithUser(r.Context(), caller(r).ID)
 }
@@ -635,6 +648,10 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, users.ErrBadPassword):
 		writeError(w, http.StatusUnauthorized, err.Error())
+	case errors.Is(err, signup.ErrInvalid):
+		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, signup.ErrNotFound), errors.Is(err, signup.ErrOff):
+		writeError(w, http.StatusNotFound, err.Error())
 	case status.Code(err) == codes.InvalidArgument:
 		writeError(w, http.StatusBadRequest, status.Convert(err).Message())
 	case status.Code(err) == codes.AlreadyExists:

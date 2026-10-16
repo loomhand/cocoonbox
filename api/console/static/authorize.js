@@ -48,6 +48,10 @@ async function load() {
   } catch (e) {
     if (e.status === 401) {
       show("login");
+      fetch("/cb/api/auth/providers", { credentials: "same-origin" })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((p) => { $("github-login").hidden = !(p && p.github); })
+        .catch(() => {});
       return;
     }
     refused(e);
@@ -76,6 +80,12 @@ async function load() {
   f.days.value = String(c.defaults.days);
   show("consent");
 }
+
+$("github-button").addEventListener("click", () => {
+  api("POST", "auth/github/begin", { return_to: location.pathname + location.search })
+    .then(({ url }) => location.assign(url))
+    .catch((e) => notice(e.message, true));
+});
 
 $("login-form").addEventListener("submit", (ev) => {
   ev.preventDefault();

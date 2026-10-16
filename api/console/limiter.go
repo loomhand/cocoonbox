@@ -47,6 +47,23 @@ func (l *limiter) take(name, addr string) bool {
 	return true
 }
 
+// allow counts one request of key, refused once key has made limit in the window.
+func (l *limiter) allow(key string, limit int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := l.now()
+	f := l.failures[key]
+	if f == nil || now.Sub(f.since) >= l.window {
+		f = &failures{since: now}
+		l.failures[key] = f
+	}
+	if f.count >= limit {
+		return false
+	}
+	f.count++
+	return true
+}
+
 // settle clears name's attempts and returns the address's reserved one after a correct password.
 func (l *limiter) settle(name, addr string) {
 	l.mu.Lock()
