@@ -36,6 +36,19 @@ AGENT_LISTEN=127.0.0.1:7443
 CONNECT_URL=http://10.203.0.1:18091/mcp   <the Connect box door, through the sandboxd egress proxy; absent: no connector tools and, on cbcore, no flow sync (the flow library is the same door's /flows)>
 ```
 
+## Toolhost wire (agent ↔ toolhost, desk API ↔ desk host)
+
+The agent's toolhost (`/run/cocoonbox/toolhost.sock`), the desk API (`/opt/desk/lib/desk.mts`, `desk`) and the desk host of macOS and Windows (`deskhost/`: `~/Library/Caches/cocoonbox/desk.sock`, 0600, or the named pipe `\\.\pipe\cocoonbox-desk`; `TOOLHOST_SOCKET` overrides the endpoint for the desk API and the desk host) speak one wire, implemented once in `desk-core/` (`desk_core::wire`), which both hosts also take the desk call arguments and the window and name matching from:
+
+- **One call per connection.** The client writes one frame and reads one frame; closing the connection cancels the call.
+- **Frame:** a big-endian u32 length, then that many bytes of JSON. A frame over 64 MiB is refused.
+- **Request:** `{"agent_id": string, "tool": string, "args": object}`; `agent_id` defaults to `""` and `args` to `null`. Desk calls name `desk_<verb>` tools with the verbs and JSON of the `desk` tool (below).
+- **Response:** `{"text": string, "is_error": bool, "image_b64"?: string, "secrets"?: [[field, value], …]}`: `image_b64` is a screenshot or crop when the tool took one; `secrets` (toolhost only) lists the card fields a call typed from a file, so the agent scrubs them from transcripts. A tool failure is `is_error: true` with the reason in `text`, never a closed connection.
+- **Streamed tools (toolhost only):**
+  - `state_read`: after the request, a JSON stamp frame `{size, mtime_ms, backup, error?}`, then raw data frames (a big-endian u32 length and the bytes), an empty data frame at the end, then a second stamp taken after the read.
+  - `state_write`: after the request the client sends raw data frames and an empty one, and reads one response frame once the file has its mode and mtime.
+  - `exec`: one response frame (an error ends the call), then tagged frames both ways: one tag byte, a big-endian u32 length, the bytes. From the toolhost: 1 stdout, 2 stderr, 3 exit code (a big-endian i32, the last frame). To the toolhost: 4 stdin, 5 end of stdin, 6 signal (a big-endian i32), 7 terminal size (big-endian u16 rows and cols).
+
 ## Edge (api) ↔ agent
 
 - The edge forwards every `cocoonbox.agent.v1.*` call unchanged to the box's port 7443 through the sandboxd port relay, adding `x-cocoonbox-credential`; it sends no `x-cocoonbox-edge-token`, and `agent.env` carries no `EDGE_TOKEN`. It drops the client's `authorization` and any client-sent `x-cocoonbox-credential` or `x-cocoonbox-edge-token`.

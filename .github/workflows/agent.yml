@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "agent/**"
+      - "desk-core/**"
       - "proto/**"
       - "image/desk/**"
       - "docs/fixtures/**"
@@ -30,3 +31,6 @@ jobs:
         env:
           CB_NO_BROWSER: "1"
         run: make agent
+
+      - name: desk-core fmt + clippy + test
+        run: make desk-core

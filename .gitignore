@@ -1,4 +1,6 @@
 /agent/target/
+/desk-core/target/
+/deskhost/target/
 /api/bin/
 /macos/.build/
 /macos/dist/
