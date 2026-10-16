@@ -1,16 +1,14 @@
 #!/bin/bash
 # Builds a cua-driver tarball from loomhand/cua the way upstream's cd-rust-cua-driver.yml builds its linux-x86_64 release:
 # debian:11 with the same apt snapshot, rust 1.97.1, the same cargo command and GitHub container paths, here in a chroot.
-# usage: sudo [COMMIT=<sha> VERSION=<name>] image/cua-driver.sh <out dir>; the defaults build the pin of cbcore, COMMIT=275de4cecfce355aafdbc3de8223930a04c1270c
-# VERSION=0.34.0-cmgs.5 cbdesk's, and COMMIT=<sha of tag cua-driver-rs-v0.34.0> rebuilds the upstream binary byte for byte.
+# The tarball holds the files of the fork's dev release, all from COMMIT; the same COMMIT gives the same sha256.
+# usage: sudo [COMMIT=<sha> VERSION=<name>] image/cua-driver.sh <out dir>; the defaults build the pin of cbcore, a commit of dev.
 set -euo pipefail
 export LC_ALL=C
 
 REPO=https://github.com/loomhand/cua.git
-COMMIT=${COMMIT:-46d15d3a59198d0a7210aab287b0b8ee38a31da2}
-VERSION=${VERSION:-0.34.0-cmgs.6}
-UPSTREAM_SHA256=8851c028e5d88a3b779ad2a8d49ed6f4b92aa94de2edf5c2851cee63bcc274c5
-UPSTREAM_URL=https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.34.0/cua-driver-rs-0.34.0-linux-x86_64.tar.gz
+COMMIT=${COMMIT:-4924a74c34ab99e2d05b54cbfc67eacb890f2525}
+VERSION=${VERSION:-0.35.4-loomhand.1}
 DEBIAN=sha256:c0a2ad73611131275b0e9a2e7544cfe3725f4268d4085d8c6f61fdd55aef7917
 SNAPSHOT=20260901T000000Z
 RUST=1.97.1
@@ -58,14 +56,14 @@ mkdir -p "$R$W"
 git -C "$TMP/src" archive FETCH_HEAD "${PATHS[@]}" | tar -x -C "$R$W"
 in_root "cd $W/libs/cua-driver/rust && cargo build -q --locked -p cua-driver -p cursor-theme-cli -p cua-driver-sdk --release --features cua-driver/portal-input --target x86_64-unknown-linux-gnu"
 
-curl -fsSL -o "$TMP/upstream.tgz" "$UPSTREAM_URL"
-echo "$UPSTREAM_SHA256  $TMP/upstream.tgz" | sha256sum -c --quiet -
-tar -xzf "$TMP/upstream.tgz" -C "$TMP"
 stage=$TMP/cua-driver-rs-$VERSION-linux-x86_64
-mv "$TMP/cua-driver-rs-0.34.0-linux-x86_64" "$stage"
+mkdir -p "$stage"
 for f in cua-driver cua-cursor-theme libcua_driver_sdk.so; do
 	install -m 0755 "$R$W/libs/cua-driver/rust/target/x86_64-unknown-linux-gnu/release/$f" "$stage/$f"
 done
+install -m 0644 "$R$W/libs/cua-driver/rust/include/cua_driver_abi.h" "$R$W/libs/cua-driver/rust/THIRD_PARTY_NOTICES.md" "$stage/"
+install -m 0644 "$R$W/LICENSE.md" "$stage/LICENSE"
+cp -R "$R$W/libs/cua-driver/wayland-helper" "$stage/wayland-helper"
 mkdir -p "$OUT"
 tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -C "$TMP" -cf - "$(basename "$stage")" | gzip -n -9 > "$OUT/$(basename "$stage").tar.gz"
 sha256sum "$stage/cua-driver" "$OUT/$(basename "$stage").tar.gz"
