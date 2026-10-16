@@ -92,7 +92,7 @@ impl Host {
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
             plans: cfg.automation.plans(),
-            hidden: cfg.automation.plans().then(|| cfg.workspace.join("flows")),
+            hidden: cfg.automation.plans().then(|| flows::dir(&cfg.workspace)),
             flow_writes: watch::channel(0).0,
         }
     }

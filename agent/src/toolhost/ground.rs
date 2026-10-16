@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::process::Command;
 
-use super::cua::{Cua, libreoffice};
+use super::cua::{self, Cua, libreoffice};
 use super::desk::Desk;
 use super::rpc::Output;
 use super::script::Scripts;
@@ -247,8 +247,8 @@ async fn not_found(
 async fn ocr(cua: &Cua) -> Result<Vec<Word>, String> {
     let (w, h, rgb) = cua.screen_rgb().ok_or("no screen capture over MIT-SHM")?;
     let (sw, sh, big) = upscale(w as usize, h as usize, &rgb, OCR_SCALE);
-    let path = std::env::temp_dir().join(format!("cb-ocr-{}.png", uuid::Uuid::new_v4().simple()));
-    let png = png_of(sw, sh, &big)?;
+    let path = std::env::temp_dir().join(format!("{}.png", crate::new_id("cb-ocr")));
+    let png = cua::png_rgb(sw, sh, &big)?;
     tokio::fs::write(&path, png)
         .await
         .map_err(|e| format!("write {}: {e}", path.display()))?;
@@ -516,17 +516,6 @@ fn upscale(w: usize, h: usize, rgb: &[u8], f: usize) -> (u32, u32, Vec<u8>) {
         }
     }
     (bw as u32, bh as u32, out)
-}
-
-fn png_of(w: u32, h: u32, rgb: &[u8]) -> Result<Vec<u8>, String> {
-    let mut out = Vec::new();
-    let mut enc = png::Encoder::new(&mut out, w, h);
-    enc.set_color(png::ColorType::Rgb);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.write_header()
-        .and_then(|mut wr| wr.write_image_data(rgb))
-        .map_err(|e| format!("encode PNG: {e}"))?;
-    Ok(out)
 }
 
 #[cfg(test)]

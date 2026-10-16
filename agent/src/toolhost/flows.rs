@@ -52,9 +52,17 @@ pub fn digest(data: &[u8]) -> String {
     hex::encode(Sha256::digest(data))
 }
 
+pub fn dir(workspace: &Path) -> PathBuf {
+    workspace.join(DIR)
+}
+
+pub fn index(workspace: &Path) -> PathBuf {
+    dir(workspace).join(INDEX)
+}
+
 /// `flows_scan`: JSON `{name: sha256}` of the regular flow files of at most [`MAX_BYTES`] that are UTF-8 text.
 pub async fn scan(workspace: &Path) -> Result<String, String> {
-    let dir = workspace.join(DIR);
+    let dir = dir(workspace);
     let mut out = serde_json::Map::new();
     let mut entries = match tokio::fs::read_dir(&dir).await {
         Ok(entries) => entries,
@@ -120,7 +128,7 @@ pub async fn remove(workspace: &Path, args: Value) -> Result<String, String> {
 /// `flows_mark {id}`: the folder's id, first written as `id` into a folder that has none; empty without a folder.
 pub async fn mark(workspace: &Path, args: Value) -> Result<String, String> {
     let MarkArgs { id } = parse(args)?;
-    let path = workspace.join(DIR).join(MARK);
+    let path = dir(workspace).join(MARK);
     match tokio::fs::read_to_string(&path).await {
         Ok(id) => return Ok(id),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -159,7 +167,7 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
         .map_err(|e| format!("inotify: {e}"))?;
     let root = crate::sys::inotify_watch(fd.get_ref(), &workspace, root_events)
         .map_err(|e| format!("watch {}: {e}", workspace.display()))?;
-    let dir = workspace.join(DIR);
+    let dir = dir(&workspace);
     let mut flows = crate::sys::inotify_watch(fd.get_ref(), &dir, flow_events).ok();
     let mut buf = vec![0u8; EVENT_BUF];
     loop {
@@ -261,7 +269,7 @@ fn path_of(workspace: &Path, name: &str) -> Result<PathBuf, String> {
     if !valid(name) {
         return Err(format!("{name:?} is no flow name"));
     }
-    Ok(workspace.join(DIR).join(name))
+    Ok(dir(workspace).join(name))
 }
 
 fn parse<T: serde::de::DeserializeOwned>(args: Value) -> Result<T, String> {

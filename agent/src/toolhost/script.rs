@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
@@ -31,7 +31,6 @@ const MAX_RESULT_BYTES: u64 = 256 << 10;
 const KEPT_SHOTS: usize = 20;
 const ERROR_LINES: usize = 12;
 const DESK_PLAN: &str = "/opt/desk/lib/gui_plan.mts";
-const FLOW_INDEX: &str = "flows/INDEX";
 const GAMES_PATH: &str = ":/usr/local/games:/usr/games";
 const ENTRY: &str = r#"import { writeFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
@@ -193,7 +192,7 @@ impl Scripts {
 
     /// The saved flows' catalog, one `name(params)` line each, newest first; empty before the first save.
     pub async fn flows(workspace: &Path) -> String {
-        tokio::fs::read_to_string(workspace.join(FLOW_INDEX))
+        tokio::fs::read_to_string(super::flows::index(workspace))
             .await
             .unwrap_or_default()
     }
@@ -358,9 +357,7 @@ impl Scripts {
             .map_err(|e| format!("decode screenshot: {e}"))?;
         let ext = image_mime(&data).trim_start_matches("image/");
         let shots = self.dir.join("shots");
-        let ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis());
+        let ms = crate::now_ms();
         let path = shots.join(format!("{ms:013}-{id}.{ext}"));
         files::write_bytes(&path, &data).await?;
         prune(&shots).await;

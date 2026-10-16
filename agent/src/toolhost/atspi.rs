@@ -828,20 +828,14 @@ impl Atspi {
             Ok(Ok(reply)) => Ok(reply),
             Ok(Err(e)) => Err(format!("{iface}.{method} on {}: {e}", obj.id())),
             Err(_) => {
-                self.hung
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .insert(obj.bus.clone(), Instant::now());
+                crate::lock(&self.hung).insert(obj.bus.clone(), Instant::now());
                 Err(not_responding(&obj.bus))
             }
         }
     }
 
     fn is_hung(&self, bus: &str) -> bool {
-        let mut hung = self
-            .hung
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut hung = crate::lock(&self.hung);
         hung.retain(|_, at| at.elapsed() < HUNG_FOR);
         hung.contains_key(bus)
     }

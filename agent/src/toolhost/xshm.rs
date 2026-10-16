@@ -336,10 +336,7 @@ impl Grabber {
                 });
             }
         }
-        self.shell
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .retain(|w, _| tree.children.contains(w));
+        crate::lock(&self.shell).retain(|w, _| tree.children.contains(w));
         Ok(mapped)
     }
 
@@ -349,13 +346,7 @@ impl Grabber {
         if !own.is_empty() {
             return own;
         }
-        let children = self
-            .conn
-            .query_tree(w)
-            .ok()
-            .and_then(|c| c.reply().ok())
-            .map(|t| t.children)
-            .unwrap_or_default();
+        let children = self.kids(w);
         children
             .iter()
             .map(|&c| self.name(c))
@@ -398,10 +389,7 @@ impl Grabber {
     }
 
     fn is_shell(&self, w: Window) -> bool {
-        let mut known = self
-            .shell
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut known = crate::lock(&self.shell);
         *known.entry(w).or_insert_with(|| {
             let class = self.class(w);
             SHELL_APPS.contains(&class.as_str())
@@ -420,13 +408,7 @@ impl Grabber {
             atom(b"_NET_WM_WINDOW_TYPE"),
             atom(b"_NET_WM_WINDOW_TYPE_DIALOG"),
         );
-        let children = self
-            .conn
-            .query_tree(w)
-            .ok()
-            .and_then(|c| c.reply().ok())
-            .map(|t| t.children)
-            .unwrap_or_default();
+        let children = self.kids(w);
         std::iter::once(w).chain(children).any(|c| {
             let get = |property: u32, kind: u32| {
                 self.conn
@@ -547,13 +529,7 @@ impl Grabber {
 
     /// The WM_CLASS class of `w`, such as `Google-chrome`, or of the client inside it when `w` is a window manager frame.
     pub fn class(&self, w: Window) -> String {
-        let children = self
-            .conn
-            .query_tree(w)
-            .ok()
-            .and_then(|c| c.reply().ok())
-            .map(|t| t.children)
-            .unwrap_or_default();
+        let children = self.kids(w);
         std::iter::once(w)
             .chain(children)
             .find_map(|c| {
@@ -679,13 +655,7 @@ impl Grabber {
     /// How far below the top of frame `w` its client starts, the height of its title bar; 0 for a window
     /// that is its own client.
     fn client_offset(&self, w: Window) -> i16 {
-        let children = self
-            .conn
-            .query_tree(w)
-            .ok()
-            .and_then(|c| c.reply().ok())
-            .map(|t| t.children)
-            .unwrap_or_default();
+        let children = self.kids(w);
         children
             .into_iter()
             .find(|&c| {
@@ -742,6 +712,15 @@ impl Grabber {
             .map_err(|e| format!("query tree: {e}"))?
             .reply();
         Ok(alive(tree, "query tree")?.map_or(x11rb::NONE, |t| t.parent))
+    }
+
+    fn kids(&self, w: Window) -> Vec<Window> {
+        self.conn
+            .query_tree(w)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|t| t.children)
+            .unwrap_or_default()
     }
 
     fn name(&self, w: Window) -> String {

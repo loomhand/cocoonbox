@@ -192,18 +192,7 @@ pub async fn read<W: AsyncWrite + Unpin>(args: Value, w: &mut W) -> Result<(), S
         }
     };
     rpc::write_frame(w, &stamp_of(&a.path)).await?;
-    let mut buf = vec![0u8; READ_BLOCK];
-    loop {
-        let n = file
-            .read(&mut buf)
-            .await
-            .map_err(|e| format!("read {}: {e}", a.path.display()))?;
-        if n == 0 {
-            break;
-        }
-        rpc::write_data(w, &buf[..n]).await?;
-    }
-    rpc::write_data(w, &[]).await?;
+    send_blocks(&mut file, &a.path, w).await?;
     rpc::write_frame(w, &stamp_of(&a.path)).await?;
     w.flush().await.map_err(|e| format!("flush: {e}"))
 }
@@ -215,20 +204,28 @@ async fn stream_backup<W: AsyncWrite + Unpin>(copy: &Path, w: &mut W) -> Result<
     let mut file = tokio::fs::File::open(copy)
         .await
         .map_err(|e| format!("open {}: {e}", copy.display()))?;
+    send_blocks(&mut file, copy, w).await?;
+    rpc::write_frame(w, &stamp).await?;
+    w.flush().await.map_err(|e| format!("flush: {e}"))
+}
+
+async fn send_blocks<W: AsyncWrite + Unpin>(
+    file: &mut tokio::fs::File,
+    path: &Path,
+    w: &mut W,
+) -> Result<(), String> {
     let mut buf = vec![0u8; READ_BLOCK];
     loop {
         let n = file
             .read(&mut buf)
             .await
-            .map_err(|e| format!("read {}: {e}", copy.display()))?;
+            .map_err(|e| format!("read {}: {e}", path.display()))?;
         if n == 0 {
             break;
         }
         rpc::write_data(w, &buf[..n]).await?;
     }
-    rpc::write_data(w, &[]).await?;
-    rpc::write_frame(w, &stamp).await?;
-    w.flush().await.map_err(|e| format!("flush: {e}"))
+    rpc::write_data(w, &[]).await
 }
 
 /// Copies an SQLite database through the online backup API; `None` when `path` is not
@@ -241,7 +238,7 @@ async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
         return None;
     }
     let src = path.to_path_buf();
-    let dst = std::env::temp_dir().join(format!("cb-sqlite-{}", uuid::Uuid::new_v4().simple()));
+    let dst = std::env::temp_dir().join(crate::new_id("cb-sqlite"));
     let copy = dst.clone();
     let done = tokio::task::spawn_blocking(move || {
         let flags =
