@@ -50,15 +50,6 @@ public enum Keychain {
     }
 
     public static func token(for endpoint: Endpoint, service: String = service) -> String? {
-        if let token = read(endpoint, service) { return token }
-        guard let legacy = Legacy.service(for: service), let token = read(endpoint, legacy) else { return nil }
-        if (try? setToken(token, for: endpoint, service: service)) != nil {
-            deleteToken(for: endpoint, service: legacy)
-        }
-        return token
-    }
-
-    private static func read(_ endpoint: Endpoint, _ service: String) -> String? {
         var query = match(endpoint, service)
         query[kSecReturnData] = true
         query[kSecMatchLimit] = kSecMatchLimitOne
