@@ -21,7 +21,7 @@ const (
 
 	uniqueViolation = "23505"
 
-	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, coalesce(max_running, 0), created_at,
+	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, coalesce(max_running, 0), max_agent_boxes, created_at,
 		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed`
 )
 
@@ -75,7 +75,7 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
 		var r record
-		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.CreatedAt,
+		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.MaxAgentBoxes, &r.CreatedAt,
 			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey)
 		r.HasToken = r.tokenSHA256 != ""
 		return r, err
@@ -84,9 +84,9 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 
 func (s *store) insert(ctx context.Context, r record, passwordHash string, first Box) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO users (id, name, admin, max_boxes, max_boxes_cap, password_hash, gw_ak_id, gw_key_sealed, tenant_token_sealed,
-			state_key_id, state_key_sealed) VALUES ($1, $2, $3, $4, $5, nullif($6, ''), $7, $8, $9, $10, $11)`,
-			r.ID, r.Name, r.Admin, r.MaxBoxes, r.MaxBoxesCap, passwordHash, r.gwAKID, r.gwKey, r.tenantToken, r.stateKeyID, r.stateKey); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO users (id, name, idp, admin, max_boxes, max_boxes_cap, max_agent_boxes, password_hash, gw_ak_id, gw_key_sealed,
+			tenant_token_sealed, state_key_id, state_key_sealed) VALUES ($1, $2, $3, $4, $5, $6, $7, nullif($8, ''), $9, $10, $11, $12, $13)`,
+			r.ID, r.Name, r.IDP, r.Admin, r.MaxBoxes, r.MaxBoxesCap, r.MaxAgentBoxes, passwordHash, r.gwAKID, r.gwKey, r.tenantToken, r.stateKeyID, r.stateKey); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, created_at) VALUES ($1, $2, $3, $4)", first.ID, first.Owner, first.Name, first.CreatedAt)
@@ -113,22 +113,28 @@ func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
 	})
 }
 
-// insertBox adds b, a box of the owner's own only while the owner has fewer of them than max_boxes; the owner's row lock orders concurrent adds.
+// insertBox adds b while the owner has fewer boxes of b's kind than max_boxes (its own) or max_agent_boxes (its agents'); the owner's
+// row lock orders concurrent adds.
 func (s *store) insertBox(ctx context.Context, b Box) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var maxBoxes, boxes int
-		if err := tx.QueryRow(ctx, "SELECT max_boxes FROM users WHERE id = $1 FOR UPDATE", b.Owner).Scan(&maxBoxes); errors.Is(err, pgx.ErrNoRows) {
+		var maxAgentBoxes *int
+		err := tx.QueryRow(ctx, "SELECT max_boxes, max_agent_boxes FROM users WHERE id = $1 FOR UPDATE", b.Owner).Scan(&maxBoxes, &maxAgentBoxes)
+		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		} else if err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, "SELECT count(*) FROM boxes WHERE owner = $1 AND NOT agent", b.Owner).Scan(&boxes); err != nil {
+		if err = tx.QueryRow(ctx, "SELECT count(*) FROM boxes WHERE owner = $1 AND agent = $2", b.Owner, b.Agent).Scan(&boxes); err != nil {
 			return err
 		}
-		if !b.Agent && boxes >= maxBoxes {
+		switch {
+		case !b.Agent && boxes >= maxBoxes:
 			return fmt.Errorf("%w: %d boxes is the most this user may have", ErrQuota, maxBoxes)
+		case b.Agent && maxAgentBoxes != nil && boxes >= *maxAgentBoxes:
+			return fmt.Errorf("%w: %d agent boxes is the most this user's agents may hold together", ErrQuota, *maxAgentBoxes)
 		}
-		_, err := tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, agent, created_at) VALUES ($1, $2, $3, $4, $5)", b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt)
+		_, err = tx.Exec(ctx, "INSERT INTO boxes (id, owner, name, agent, created_at) VALUES ($1, $2, $3, $4, $5)", b.ID, b.Owner, b.Name, b.Agent, b.CreatedAt)
 		return err
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {

@@ -61,34 +61,42 @@ var (
 
 // User is a cocoonbox user as the console shows it; it never carries a credential. MaxRunning 0 is the api's default.
 type User struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	IDP         string    `json:"idp"`
-	Admin       bool      `json:"admin"`
-	Disabled    bool      `json:"disabled"`
-	Residential bool      `json:"residential"`
-	MaxBoxes    int       `json:"max_boxes"`
-	MaxBoxesCap int       `json:"max_boxes_cap"`
-	MaxRunning  int       `json:"max_running"`
-	HasToken    bool      `json:"has_token"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	IDP         string `json:"idp"`
+	Admin       bool   `json:"admin"`
+	Disabled    bool   `json:"disabled"`
+	Residential bool   `json:"residential"`
+	MaxBoxes    int    `json:"max_boxes"`
+	MaxBoxesCap int    `json:"max_boxes_cap"`
+	MaxRunning  int    `json:"max_running"`
+	// MaxAgentBoxes bounds the boxes all of the user's agent grants hold together; nil leaves only each grant's caps.
+	MaxAgentBoxes *int      `json:"max_agent_boxes"`
+	HasToken      bool      `json:"has_token"`
+	CreatedAt     time.Time `json:"created_at"`
 }
 
-// NewUser describes a user to create; an empty ID draws a fresh one and an empty Password leaves sign-in off.
+// NewUser describes a user to create; an empty ID draws a fresh one, an empty Password leaves password sign-in off, an empty IDP
+// records password, and a nil DailyCapMicros keeps the gw tenant default.
 type NewUser struct {
-	ID       string
-	Name     string
-	Password string
-	Admin    bool
+	ID             string
+	Name           string
+	Password       string
+	Admin          bool
+	IDP            string
+	MaxAgentBoxes  *int
+	DailyCapMicros *int64
 }
 
-// Settings changes a user's settings; a nil field keeps its value, and MaxRunning 0 returns the user to the api's default.
+// Settings changes a user's settings; a nil field keeps its value, MaxRunning 0 returns the user to the api's default and
+// MaxAgentBoxes 0 drops the user's agent box cap.
 type Settings struct {
-	Disabled    *bool `json:"disabled,omitempty"`
-	Residential *bool `json:"residential,omitempty"`
-	MaxBoxes    *int  `json:"max_boxes,omitempty"`
-	MaxBoxesCap *int  `json:"max_boxes_cap,omitempty"`
-	MaxRunning  *int  `json:"max_running,omitempty"`
+	Disabled      *bool `json:"disabled,omitempty"`
+	Residential   *bool `json:"residential,omitempty"`
+	MaxBoxes      *int  `json:"max_boxes,omitempty"`
+	MaxBoxesCap   *int  `json:"max_boxes_cap,omitempty"`
+	MaxRunning    *int  `json:"max_running,omitempty"`
+	MaxAgentBoxes *int  `json:"max_agent_boxes,omitempty"`
 }
 
 // GWKeys issues, revokes and meters each user's gw key and keeps the user's own daily cap, found by owner = user id.
@@ -316,6 +324,8 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		return User{}, fmt.Errorf("%w: a username is 2 to 32 lowercase letters, digits, - or _, starting with a letter", ErrInvalid)
 	case !idPattern.MatchString(id):
 		return User{}, fmt.Errorf("%w: id %q is not a sandboxd tenant name", ErrInvalid, id)
+	case nu.MaxAgentBoxes != nil && (*nu.MaxAgentBoxes < 1 || *nu.MaxAgentBoxes > maxBoxesCap):
+		return User{}, fmt.Errorf("%w: max agent boxes must be in 1..%d", ErrInvalid, maxBoxesCap)
 	}
 	var hash []byte
 	if nu.Password != "" {
@@ -337,22 +347,26 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 		return User{}, fmt.Errorf("issue gw key: %w", err)
 	}
 	r := record{
-		ID:          id,
-		Name:        nu.Name,
-		IDP:         "password",
-		Admin:       nu.Admin,
-		MaxBoxes:    defaultBoxes,
-		MaxBoxesCap: defaultBoxes,
-		CreatedAt:   time.Now(),
-		gwAKID:      akID,
-		gwKey:       s.seal.seal(key, userData(id, columnGWKey)),
-		tenantToken: s.seal.seal(tenantToken, userData(id, columnTenant)),
-		stateKeyID:  stateKey.ID,
-		stateKey:    s.seal.seal(string(stateKey.Secret), userData(id, columnStateKey)),
+		ID:            id,
+		Name:          nu.Name,
+		IDP:           cmp.Or(nu.IDP, "password"),
+		Admin:         nu.Admin,
+		MaxBoxes:      defaultBoxes,
+		MaxBoxesCap:   defaultBoxes,
+		MaxAgentBoxes: nu.MaxAgentBoxes,
+		CreatedAt:     time.Now(),
+		gwAKID:        akID,
+		gwKey:         s.seal.seal(key, userData(id, columnGWKey)),
+		tenantToken:   s.seal.seal(tenantToken, userData(id, columnTenant)),
+		stateKeyID:    stateKey.ID,
+		stateKey:      s.seal.seal(string(stateKey.Secret), userData(id, columnStateKey)),
 	}
 	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond)}
-	if nu.Admin {
+	switch {
+	case nu.Admin:
 		err = s.gw.SetDailyCap(ctx, id, new(int64(gwkeys.Unlimited)))
+	case nu.DailyCapMicros != nil:
+		err = s.gw.SetDailyCap(ctx, id, nu.DailyCapMicros)
 	}
 	if err == nil {
 		if err = s.tenants.Put(ctx, id, tenantToken, s.claimCap(r)); err == nil {
@@ -415,6 +429,12 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 		r.MaxBoxes = *set.MaxBoxes
 	}
 	r.MaxRunning = deref(set.MaxRunning, r.MaxRunning)
+	if set.MaxAgentBoxes != nil {
+		r.MaxAgentBoxes = nil
+		if *set.MaxAgentBoxes != 0 {
+			r.MaxAgentBoxes = new(*set.MaxAgentBoxes)
+		}
+	}
 	r.Disabled = deref(set.Disabled, r.Disabled)
 	r.Residential = deref(set.Residential, r.Residential)
 	switch {
@@ -426,14 +446,16 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, len(s.Boxes(id))-s.agentBoxes(id))
 	case r.MaxRunning < 0 || r.MaxRunning > r.MaxBoxes:
 		return User{}, fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, r.MaxBoxes)
+	case r.MaxAgentBoxes != nil && (*r.MaxAgentBoxes < 1 || *r.MaxAgentBoxes > maxBoxesCap):
+		return User{}, fmt.Errorf("%w: max agent boxes must be in 1..%d, or 0 for no cap", ErrInvalid, maxBoxesCap)
 	}
-	if r.MaxBoxes != old.MaxBoxes {
+	if s.claimCap(r) != s.claimCap(old) {
 		if err := s.tenants.Put(ctx, id, "", s.claimCap(r)); err != nil {
 			return User{}, fmt.Errorf("set tenant cap: %w", err)
 		}
 	}
-	if err := s.store.exec(ctx, "UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0) WHERE id = $1",
-		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning); err != nil {
+	if err := s.store.exec(ctx, `UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0),
+		max_agent_boxes = $7 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes); err != nil {
 		return User{}, err
 	}
 	if r.Disabled && !old.Disabled {

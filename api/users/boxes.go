@@ -135,9 +135,14 @@ func (s *Service) putClaimCap(ctx context.Context, owner string) error {
 	return s.tenants.Put(ctx, owner, "", s.claimCap(r))
 }
 
-// claimCap is the tenant's max_claims: the owner's box quota, its agents' boxes, and the old machine a Rebase keeps until the new one serves.
+// claimCap is the tenant's max_claims: the owner's box quota, its agents' boxes up to max_agent_boxes, and the old machine a Rebase keeps
+// until the new one serves.
 func (s *Service) claimCap(r record) int {
-	return r.MaxBoxes + s.agentBoxes(r.ID) + 1
+	agent := s.agentBoxes(r.ID)
+	if r.MaxAgentBoxes != nil {
+		agent = min(agent, *r.MaxAgentBoxes)
+	}
+	return r.MaxBoxes + agent + 1
 }
 
 func (s *Service) agentBoxes(owner string) int {

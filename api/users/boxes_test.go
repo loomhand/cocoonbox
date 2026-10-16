@@ -198,6 +198,41 @@ func TestTheRunningLimitIsTheUsersOwnOrTheDefault(t *testing.T) {
 	}
 }
 
+func TestTheUsersAgentBoxCapBoundsEveryGrantAndTheTenantCap(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", IDP: "github", MaxAgentBoxes: new(1), DailyCapMicros: new(int64(1_000_000))})
+	if err != nil || u.IDP != "github" || u.MaxAgentBoxes == nil || *u.MaxAgentBoxes != 1 || gw.caps[u.ID] != 1_000_000 {
+		t.Fatalf("Create = %+v, %v; gw caps %v", u, err, gw.caps)
+	}
+	if got := tenants.tenants[u.ID].max; got != 2 {
+		t.Errorf("tenant cap of a new user = %d, want max boxes 1 + 0 agent boxes + 1", got)
+	}
+	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-a1", Owner: u.ID, Name: "a1", Agent: true}); err != nil {
+		t.Fatalf("the first agent box: %v", err)
+	}
+	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-a2", Owner: u.ID, Name: "a2", Agent: true}); !errors.Is(err, ErrQuota) {
+		t.Errorf("a second agent box, from any grant, past max agent boxes 1 = %v, want ErrQuota", err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxAgentBoxes: new(0)}); err != nil {
+		t.Fatalf("drop the cap: %v", err)
+	}
+	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-a2", Owner: u.ID, Name: "a2", Agent: true}); err != nil {
+		t.Fatalf("an agent box with no cap: %v", err)
+	}
+	if got := tenants.tenants[u.ID].max; got != 4 {
+		t.Errorf("tenant cap with two agent boxes and no cap = %d, want 4", got)
+	}
+	if got, err := svc.Update(t.Context(), u.ID, Settings{MaxAgentBoxes: new(1)}); err != nil || tenants.tenants[u.ID].max != 3 || *got.MaxAgentBoxes != 1 {
+		t.Errorf("cap 1 over two agent boxes = %+v, %v; tenant cap %d, want min(2, 1) counted, 3", got, err, tenants.tenants[u.ID].max)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxAgentBoxes: new(17)}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a cap over the limit = %v, want ErrInvalid", err)
+	}
+	if again, err := openTestService(t, dsn, gw, tenants).Get(u.ID); err != nil || again.MaxAgentBoxes == nil || *again.MaxAgentBoxes != 1 || again.IDP != "github" {
+		t.Errorf("after reopen = %+v, %v", again, err)
+	}
+}
+
 func firstBoxID(user string) string {
 	s := sha256.Sum256([]byte(user))
 	return "cb-" + hex.EncodeToString(s[:])[:12]
