@@ -34,12 +34,8 @@ type store struct {
 }
 
 func openStore(ctx context.Context, dsn string) (*store, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	pool, err := migrate.Open(ctx, dsn, migrations, "schema_migrations", migrationLock)
 	if err != nil {
-		return nil, fmt.Errorf("open database: %w", err)
-	}
-	if err := migrate.Apply(ctx, pool, migrations, "schema_migrations", migrationLock); err != nil {
-		pool.Close()
 		return nil, err
 	}
 	return &store{pool: pool}, nil

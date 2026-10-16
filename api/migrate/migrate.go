@@ -13,8 +13,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Apply runs fsys's migrations/<n>_<name>.sql not yet in table, in number order, under the advisory lock.
-func Apply(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string, lock int64) error {
+// Open connects to dsn and runs fsys's migrations/<n>_<name>.sql not yet in table, in number order, under the advisory lock.
+func Open(ctx context.Context, dsn string, fsys fs.FS, table string, lock int64) (*pgxpool.Pool, error) {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	if err := apply(ctx, pool, fsys, table, lock); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
+func apply(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string, lock int64) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
