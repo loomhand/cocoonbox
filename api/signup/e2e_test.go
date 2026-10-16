@@ -276,6 +276,68 @@ func TestOneFreedSeatAdmitsOnePersonWhileTwoApisAdmitAtOnce(t *testing.T) {
 	}
 }
 
+func TestInviteCodeOnlySignupMakesAnAccountOnlyWithAValidInviteAndWritesNothingWithout(t *testing.T) {
+	e := newEnv(t)
+	admin := e.browser(t)
+	admin.password(t, "admin", adminPassword)
+	admin.setSignup(t, signup.Settings{Enabled: true, InviteOnly: true, Seats: 100, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
+	written := func() (int, int) {
+		t.Helper()
+		var queued, accounts int
+		if err := query(t, e.dsn, "SELECT (SELECT count(*) FROM signup_queue), (SELECT count(*) FROM users WHERE idp = 'github')").Scan(&queued, &accounts); err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		return queued, accounts
+	}
+	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", nil); loc != "/cb/?login_error=invite_required" {
+		t.Fatalf("no invite ends at %q, want the invite_required code", loc)
+	}
+	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", map[string]string{"invite": "cbi_" + strings.Repeat("0", 64)}); loc != "/cb/?login_error=invite_required" {
+		t.Fatalf("an unknown invite ends at %q", loc)
+	}
+	if queued, accounts := written(); queued != 0 || accounts != 0 {
+		t.Fatalf("after refusals: %d queue entries, %d accounts, want none", queued, accounts)
+	}
+	var one struct {
+		Code   string        `json:"code"`
+		Invite signup.Invite `json:"invite"`
+	}
+	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 1, "days": 1}, &one)
+	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", map[string]string{"invite": one.Code}); loc != "/cb/" {
+		t.Fatalf("a valid invite ends at %q, want signed in", loc)
+	}
+	if loc := e.browser(t).githubAs(t, "carol", "/cb/api/auth/github/begin", map[string]string{"invite": one.Code}); loc != "/cb/?login_error=invite_required" {
+		t.Errorf("a used-up invite ends at %q", loc)
+	}
+	var expired struct {
+		Code   string        `json:"code"`
+		Invite signup.Invite `json:"invite"`
+	}
+	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 5, "days": 1}, &expired)
+	if err := exec(t, e.dsn, "UPDATE signup_invites SET expires_at = now() - interval '1 second' WHERE id = $1", expired.Invite.ID); err != nil {
+		t.Fatalf("expire: %v", err)
+	}
+	if loc := e.browser(t).githubAs(t, "dave", "/cb/api/auth/github/begin", map[string]string{"invite": expired.Code}); loc != "/cb/?login_error=invite_required" {
+		t.Errorf("an expired invite ends at %q", loc)
+	}
+	var usesLeft int
+	if err := query(t, e.dsn, "SELECT uses_left FROM signup_invites WHERE id = $1", expired.Invite.ID).Scan(&usesLeft); err != nil || usesLeft != 5 {
+		t.Errorf("the expired invite's uses = %d, %v, want 5 untouched", usesLeft, err)
+	}
+	if queued, accounts := written(); queued != 1 || accounts != 1 {
+		t.Errorf("after one valid and two spent invites: %d queue entries, %d accounts, want only bob's", queued, accounts)
+	}
+	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", nil); loc != "/cb/" {
+		t.Errorf("the invited account's next sign-in without an invite ends at %q", loc)
+	}
+	alice := e.browser(t)
+	alice.password(t, "alice", alicePassword)
+	alice.githubAs(t, "alice", "/cb/api/me/identities/github", nil)
+	if loc := e.browser(t).githubAs(t, "alice", "/cb/api/auth/github/begin", nil); loc != "/cb/" {
+		t.Errorf("an existing account with GitHub linked ends at %q, want signed in", loc)
+	}
+}
+
 type person struct {
 	id       int64
 	login    string
