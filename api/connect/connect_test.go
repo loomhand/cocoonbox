@@ -295,10 +295,20 @@ func TestBoxDoorAsksAndAnApprovalCoversOneCallWithTheSameArguments(t *testing.T)
 	if err != nil || len(activity.GetEntries()) != 8 {
 		t.Fatalf("Activity = %d entries, %v", len(activity.GetEntries()), err)
 	}
+	upstream := 0
 	for _, e := range activity.GetEntries() {
 		if len(e.GetArgsHash()) != 64 || strings.Contains(e.String(), "Fix it") {
 			t.Errorf("audit entry = %v", e)
 		}
+		if e.GetUpstreamStatus() == http.StatusOK {
+			upstream++
+			if e.GetRequestBytes() == 0 || e.GetResponseBytes() == 0 {
+				t.Errorf("upstream entry lacks byte counts: %v", e)
+			}
+		}
+	}
+	if upstream == 0 {
+		t.Errorf("no audit entry reached the vendor: %v", activity.GetEntries())
 	}
 }
 

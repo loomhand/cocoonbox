@@ -153,8 +153,9 @@ func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) 
 	for _, r := range records {
 		out.Entries = append(out.Entries, &controlv1.ActivityEntry{
 			AtMs: r.at.UnixMilli(), ConnectorId: r.connector, Tool: r.tool, Door: r.door, Caller: r.caller, Decision: r.decision,
-			UpstreamStatus: int32(r.status), //nolint:gosec // an HTTP status LatencyMs: r.latency.Milliseconds(), RequestBytes: r.reqBytes, ResponseBytes: r.respBytes,
-			ArgsHash:       r.argsSHA256, Outcome: r.outcome,
+			UpstreamStatus: int32(r.status), //nolint:gosec // an HTTP status
+			LatencyMs:      r.latency.Milliseconds(), RequestBytes: r.reqBytes, ResponseBytes: r.respBytes,
+			ArgsHash: r.argsSHA256, Outcome: r.outcome,
 		})
 	}
 	return out, nil
