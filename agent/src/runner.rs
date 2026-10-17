@@ -1149,7 +1149,7 @@ enum Ending {
     Empty,
 }
 
-/// Sorts a reply without a tool call: a final answer, a bare announcement of more work, or empty (blank, tool markup, a lone closing tag, "no response").
+/// Sorts a reply without a tool call: a final answer, a bare announcement of more work, or empty (blank, tool markup, a lone closing tag, "no response"); a done word counts only in the last sentence.
 fn ending(text: &str) -> Ending {
     let text = text.trim();
     let last = text.lines().last().unwrap_or_default().trim();
@@ -1174,10 +1174,16 @@ fn ending(text: &str) -> Ending {
         .map(str::trim_start)
         .any(|s| NEXT_LEADS.iter().any(|l| s.starts_with(l)) && !s.starts_with("let me know"));
     let lead_in = LEAD_IN_ENDS.iter().any(|e| text.ends_with(e));
-    let done = lower
+    let body = lower.trim_end_matches(['.', '!', '。', '！', ' ']);
+    let last = [". ", "! ", "。", "！"]
+        .iter()
+        .filter_map(|e| body.rfind(e).map(|i| i + e.len()))
+        .max()
+        .map_or(body, |i| &body[i..]);
+    let done = last
         .split(|c: char| !c.is_alphanumeric())
         .any(|w| DONE_WORDS.contains(&w))
-        || DONE_MARKS.iter().any(|m| text.contains(m));
+        || DONE_MARKS.iter().any(|m| last.contains(m));
     if (announces || (!text.contains('\n') && (lead_in || next)))
         && !text.ends_with(['?', '？'])
         && !done
@@ -1311,6 +1317,9 @@ mod tests {
             "The dialog is open. Now I'll set the font",
             "标签页打开了。接下来设置字体。",
             "I'll do this GUI-only, step by step. Starting with Thunar creating the folder structure.",
+            "Step 80 done. Continuing.",
+            "I saved the file. Let me check the column widths",
+            "已保存文件。接下来检查列宽。",
         ] {
             assert_eq!(ending(reply), Ending::Announcement, "{reply}");
         }
@@ -1334,8 +1343,9 @@ mod tests {
             "Tell me to continue and I'll resume at step 41.",
             "```html\n<p>hi</p>\n</div>\n```",
             "Continued and finished all 6 steps.",
-            "Step 80 done. Continuing.",
             "Continue: the file is saved as notes.txt.",
+            "Let me check the result. All done.",
+            "I checked notes.txt. Saved.",
             "继续执行后已全部完成。",
             "我将继续下一步",
             "是否继续？",

@@ -1737,6 +1737,42 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
 }
 
 #[tokio::test]
+async fn a_reply_that_saved_and_then_announces_a_check_gets_the_continuation() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("c1", "list_dir", &json!({})),
+            ),
+            (
+                "chat/completions",
+                chat_text("I saved the file. Let me check the column widths"),
+            ),
+            (
+                "chat/completions",
+                chat_text("The widths are right. All done."),
+            ),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent = create_agent(&mut agents).await;
+    send(&mut agents, &agent, "save it, then check the widths", "").await;
+    let entries = wait_turn_end(&mut agents, &agent).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    assert_eq!(chats.len(), 3);
+    let last = chats[2]["messages"].as_array().unwrap();
+    assert_eq!(
+        last[last.len() - 1]["content"][0]["text"],
+        "Continue: call the next tool, or give your final answer."
+    );
+}
+
+#[tokio::test]
 async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     let h = Harness::start(
         vec![
