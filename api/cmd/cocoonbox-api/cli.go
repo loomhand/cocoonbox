@@ -77,9 +77,6 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	}
 	defer accounts.Close()
 	written := func(format string, args ...any) error {
-		if notifyErr := accounts.Notify(ctx); notifyErr != nil {
-			return notifyErr
-		}
 		_, printErr := fmt.Fprintf(stdout, format, args...)
 		return printErr
 	}
@@ -186,7 +183,7 @@ func migrateState(ctx context.Context, cfg *config.Config, args []string, stdout
 			return err
 		}
 	}
-	return accounts.Notify(ctx)
+	return nil
 }
 
 // expandState rewrites every delta record and manifest delta as full objects, for a rollback to an api without delta records; stop the api first.

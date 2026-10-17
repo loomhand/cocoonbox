@@ -53,7 +53,7 @@ func (s *Service) publish(ctx context.Context, sig signal) {
 	sig.Origin = s.origin
 	raw, err := json.Marshal(sig)
 	if err == nil {
-		_, err = s.store.pool.Exec(ctx, "SELECT pg_notify($1, $2)", signalChannel, string(raw))
+		_, err = s.store.pool.Exec(context.WithoutCancel(ctx), "SELECT pg_notify($1, $2)", signalChannel, string(raw))
 	}
 	if err != nil {
 		log.WithFunc("connect.Service.publish").Warnf(ctx, "the watchers of %s in other apis miss a change: %v", sig.User, err)
@@ -70,6 +70,7 @@ func (s *Service) listenSignals(ctx context.Context) error {
 	if _, err := conn.Exec(ctx, "LISTEN "+signalChannel); err != nil {
 		return err
 	}
+	s.watchers.notifyAll()
 	for {
 		n, err := conn.WaitForNotification(ctx)
 		if err != nil {

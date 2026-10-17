@@ -1096,6 +1096,12 @@ func TestAWatcherChangeReachesTheWatchersOfAnotherApi(t *testing.T) {
 			t.Fatal("the other api's watcher missed the change")
 		}
 	}
+	a.changedFor(t.Context(), "u-1")
+	select {
+	case <-watch.changed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the other api's watcher missed a change signaled while it listened")
+	}
 	a.answerFor(t.Context(), "u-1", []byte(`{"answer":1}`))
 	select {
 	case msg := <-watch.answered:
@@ -1104,6 +1110,25 @@ func TestAWatcherChangeReachesTheWatchersOfAnotherApi(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("the other api's watcher missed the approval answer")
+	}
+}
+
+func TestAnApiTakesItsOwnSignalOnce(t *testing.T) {
+	e := newEnv(t)
+	watch, stop := e.svc.watchers.add("u-1", true)
+	defer stop()
+	go e.svc.RunSignals(t.Context())
+	select {
+	case <-watch.changed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the listener did not wake the watchers once it listened")
+	}
+	e.svc.answerFor(t.Context(), "u-1", []byte(`{"answer":1}`))
+	<-watch.answered
+	select {
+	case msg := <-watch.answered:
+		t.Errorf("the watcher took its own api's answer twice: %s", msg)
+	case <-time.After(500 * time.Millisecond):
 	}
 }
 

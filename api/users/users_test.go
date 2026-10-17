@@ -273,11 +273,8 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(old)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
-	if err := cli.Notify(t.Context()); err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
 	if took, ok := within(time.Second, func() bool { _, err := svc.Get(u.ID); return err == nil }); !ok {
-		t.Fatalf("the user another process added is unknown %s after Notify", took)
+		t.Fatalf("the user another process added is unknown %s after the write", took)
 	}
 	if id, ok := svc.ByTokenSHA256(t.Context(), sum(old)); !ok || id != u.ID {
 		t.Fatalf("old token resolves to %q, %t", id, ok)
@@ -287,14 +284,11 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(replaced)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
-	if err := cli.Notify(t.Context()); err != nil {
-		t.Fatalf("Notify: %v", err)
-	}
 	took, ok := within(time.Second, func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok })
 	if !ok {
-		t.Fatalf("the replaced token still works %s after Notify", took)
+		t.Fatalf("the replaced token still works %s after the write", took)
 	}
-	t.Logf("the replaced token stopped working %s after Notify", took)
+	t.Logf("the replaced token stopped working %s after the write", took)
 
 	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
 		t.Fatalf("end the listening connection: %v", err)
@@ -302,9 +296,6 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	missed := TokenPrefix + randomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(missed)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
-	}
-	if err := cli.Notify(t.Context()); err != nil {
-		t.Fatalf("Notify: %v", err)
 	}
 	if took, ok := within(listenRetry+time.Second, func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(replaced)); return !ok }); !ok {
 		t.Errorf("a token replaced while the listener was down still works %s later", took)

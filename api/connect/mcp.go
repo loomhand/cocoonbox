@@ -305,6 +305,20 @@ func (w *watchers) notify(user string) {
 	}
 }
 
+// notifyAll wakes every watcher, for the changes another api signaled while none listened.
+func (w *watchers) notifyAll() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, byWatch := range w.byUser {
+		for watch := range byWatch {
+			select {
+			case watch.changed <- struct{}{}:
+			default:
+			}
+		}
+	}
+}
+
 func (w *watchers) answer(user string, msg []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
