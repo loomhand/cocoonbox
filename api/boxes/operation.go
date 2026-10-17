@@ -77,7 +77,6 @@ func (o *operation) record(obs observation) {
 	}
 }
 
-// note appends a progress event unless it repeats the previous one.
 func (o *operation) note(phase controlv1.Phase, state controlv1.BoxState, detail string) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
