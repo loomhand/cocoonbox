@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/config"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/store"
@@ -222,11 +223,6 @@ func expandState(ctx context.Context, cfg *config.Config, args []string, stdout 
 }
 
 func checkConfig(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
-	ledger, err := openLedger(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	ledger.Close()
 	opts, err := backendOptions(cfg, configFlavors(cfg), nil)
 	if err == nil {
 		err = opts.Check()
@@ -234,7 +230,25 @@ func checkConfig(ctx context.Context, cfg *config.Config, stdout io.Writer) erro
 	if err != nil {
 		return err
 	}
+	if cfg.Cluster.Ledger {
+		if err = reportMigrations(ctx, cfg, stdout); err != nil {
+			return err
+		}
+	}
 	_, err = fmt.Fprintln(stdout, "config ok")
+	return err
+}
+
+func reportMigrations(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return err
+	}
+	pending, err := cluster.PendingMigrations(ctx, dsn)
+	if err != nil || len(pending) == 0 {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "cluster migrations the next start applies: %s\n", strings.Join(pending, ", "))
 	return err
 }
 

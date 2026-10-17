@@ -20,6 +20,7 @@ const (
 	ChannelHeads      = "cocoonbox_heads"
 	ChannelOperations = "cocoonbox_operations"
 
+	schemaTable   = "cluster_schema_migrations"
 	migrationLock = 0x6362636c // "cbcl"
 	listenRetry   = 5 * time.Second
 )
@@ -44,7 +45,7 @@ type Store struct {
 
 // Open connects to dsn and applies the cluster migrations.
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	pool, err := migrate.Open(ctx, dsn, migrations, "cluster_schema_migrations", migrationLock)
+	pool, err := migrate.Open(ctx, dsn, migrations, schemaTable, migrationLock)
 	if err != nil {
 		return nil, err
 	}
@@ -92,6 +93,11 @@ func (s *Store) listen(ctx context.Context, channel string, reset func(), fn Not
 		}
 		fn(n.Payload)
 	}
+}
+
+// PendingMigrations connects to dsn and returns the cluster migrations it lacks, applying none.
+func PendingMigrations(ctx context.Context, dsn string) ([]string, error) {
+	return migrate.Pending(ctx, dsn, migrations, schemaTable)
 }
 
 func notify(ctx context.Context, tx pgx.Tx, channel, payload string) error {

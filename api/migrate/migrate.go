@@ -26,6 +26,48 @@ func Open(ctx context.Context, dsn string, fsys fs.FS, table string, lock int64)
 	return pool, nil
 }
 
+// Pending connects to dsn and returns fsys's migrations not yet in table, writing nothing.
+func Pending(ctx context.Context, dsn string, fsys fs.FS, table string) ([]string, error) {
+	conn, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	var exists bool
+	if err = conn.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", table).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("read %s: %w", table, err)
+	}
+	applied := map[int]bool{}
+	if exists {
+		var rows pgx.Rows
+		if rows, err = conn.Query(ctx, "SELECT version FROM "+table); err != nil {
+			return nil, fmt.Errorf("read %s: %w", table, err)
+		}
+		var versions []int
+		if versions, err = pgx.CollectRows(rows, pgx.RowTo[int]); err != nil {
+			return nil, fmt.Errorf("read %s: %w", table, err)
+		}
+		for _, v := range versions {
+			applied[v] = true
+		}
+	}
+	names, err := migrations(fsys)
+	if err != nil {
+		return nil, err
+	}
+	var pending []string
+	for _, name := range names {
+		version, err := versionOf(name)
+		if err != nil {
+			return nil, err
+		}
+		if !applied[version] {
+			pending = append(pending, name)
+		}
+	}
+	return pending, nil
+}
+
 func apply(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string, lock int64) error {
 	conn, err := pool.Acquire(ctx)
 	if err != nil {
@@ -39,15 +81,14 @@ func apply(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string, lo
 	if _, err = conn.Exec(ctx, "CREATE TABLE IF NOT EXISTS "+table+" (version integer PRIMARY KEY)"); err != nil {
 		return fmt.Errorf("create %s: %w", table, err)
 	}
-	names, err := fs.Glob(fsys, "migrations/*.sql")
+	names, err := migrations(fsys)
 	if err != nil {
 		return err
 	}
-	slices.Sort(names)
 	for _, name := range names {
-		version, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(name, "migrations/"), "_", 2)[0])
+		version, err := versionOf(name)
 		if err != nil {
-			return fmt.Errorf("migration %s: name must start with its number", name)
+			return err
 		}
 		var applied bool
 		if err = conn.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM "+table+" WHERE version = $1)", version).Scan(&applied); err != nil {
@@ -71,4 +112,18 @@ func apply(ctx context.Context, pool *pgxpool.Pool, fsys fs.FS, table string, lo
 		}
 	}
 	return nil
+}
+
+func migrations(fsys fs.FS) ([]string, error) {
+	names, err := fs.Glob(fsys, "migrations/*.sql")
+	slices.Sort(names)
+	return names, err
+}
+
+func versionOf(name string) (int, error) {
+	version, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(name, "migrations/"), "_", 2)[0])
+	if err != nil {
+		return 0, fmt.Errorf("migration %s: name must start with its number", name)
+	}
+	return version, nil
 }

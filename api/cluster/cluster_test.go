@@ -8,9 +8,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 )
+
+func TestPendingMigrationsListsWhatOpenAppliesAndWritesNothing(t *testing.T) {
+	dsn := clustertest.EmptyDSN(t)
+	pending, err := cluster.PendingMigrations(t.Context(), dsn)
+	if err != nil || len(pending) == 0 {
+		t.Fatalf("PendingMigrations on an empty database = %v, %v", pending, err)
+	}
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.WithoutCancel(t.Context())) }()
+	var tables int
+	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'").Scan(&tables); err != nil || tables != 0 {
+		t.Fatalf("tables after PendingMigrations = %d, %v; want none", tables, err)
+	}
+	st, err := cluster.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	st.Close()
+	if pending, err := cluster.PendingMigrations(t.Context(), dsn); err != nil || len(pending) != 0 {
+		t.Errorf("PendingMigrations after Open = %v, %v; want none", pending, err)
+	}
+}
 
 func TestPutMachineRoundTripsEveryField(t *testing.T) {
 	st := clustertest.Open(t)

@@ -16,6 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/config"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
@@ -58,13 +60,25 @@ func TestCheckRefusesWhatStartupRefuses(t *testing.T) {
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || out.String() != "config ok\n" {
 		t.Fatalf("check of a valid config = %q, %v", out.String(), err)
 	}
+	cfg.Flavor.MemoryMiB = 1000
+	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "not a sandboxd tier") {
+		t.Errorf("check of a flavor that is no tier = %v, want the startup refusal", err)
+	}
+	cfg.Flavor.MemoryMiB = 512
 	cfg.Cluster.Ledger, cfg.Accounts.DSNFile = true, filepath.Join(t.TempDir(), "missing.dsn")
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "database dsn") {
 		t.Errorf("check with the ledger on and no dsn file = %v, want the startup refusal", err)
 	}
-	cfg.Cluster.Ledger, cfg.Flavor.MemoryMiB = false, 1000
-	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "not a sandboxd tier") {
-		t.Errorf("check of a flavor that is no tier = %v, want the startup refusal", err)
+	dsn := clustertest.EmptyDSN(t)
+	if err := os.WriteFile(cfg.Accounts.DSNFile, []byte(dsn), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	out.Reset()
+	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || !strings.Contains(out.String(), "migrations the next start applies") {
+		t.Fatalf("check with migrations pending = %q, %v; want them listed", out.String(), err)
+	}
+	if pending, err := cluster.PendingMigrations(t.Context(), dsn); err != nil || len(pending) == 0 {
+		t.Errorf("pending migrations after check = %v, %v; want check to apply none", pending, err)
 	}
 }
 
