@@ -168,9 +168,16 @@ func TestLoadsTheExampleConfig(t *testing.T) {
 	}
 }
 
-func TestLoadRefusesClusterSharedForNow(t *testing.T) {
-	if _, err := Load(writeConfig(t, required+"cluster:\n  ledger: true\n  shared: true\n")); err == nil || !strings.Contains(err.Error(), "cluster.shared stays off") {
-		t.Errorf("Load with cluster.shared = %v, want the refusal", err)
+func TestLoadTakesClusterSharedOnlyWithTheLedgerAndConditionalWrites(t *testing.T) {
+	shared := "cluster:\n  ledger: true\n  shared: true\n"
+	if cfg, err := Load(writeConfig(t, required+shared+"state:\n  conditional_writes: true\n")); err != nil || !cfg.Cluster.Shared {
+		t.Errorf("Load with cluster.shared, the ledger and conditional writes = %+v, %v", cfg.Cluster, err)
+	}
+	if _, err := Load(writeConfig(t, required+shared)); err == nil || !strings.Contains(err.Error(), "cluster.shared needs state.conditional_writes") {
+		t.Errorf("Load with cluster.shared without conditional writes = %v, want the refusal", err)
+	}
+	if _, err := Load(writeConfig(t, required+"cluster:\n  shared: true\n")); err == nil || !strings.Contains(err.Error(), "cluster.shared needs cluster.ledger") {
+		t.Errorf("Load with cluster.shared without the ledger = %v, want the refusal", err)
 	}
 }
 
