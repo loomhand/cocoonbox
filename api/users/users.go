@@ -505,7 +505,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			return User{}, fmt.Errorf("set gw key: %w", err)
 		}
 	}
-	if err := s.store.update(ctx, r); err != nil {
+	if err := s.store.update(ctx, r, set); err != nil {
 		return User{}, err
 	}
 	if r.Disabled && !old.Disabled {
