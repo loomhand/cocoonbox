@@ -132,16 +132,18 @@ func (s *Service) keepAwake(ctx context.Context, m machines.Machine) string {
 
 func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
 	logger := log.WithFunc("boxes.Service.runIdleSleep").WithField("box", op.boxID)
+	detail := "saved the idle box; hibernating it"
 	if s.state != nil {
 		if _, err := s.save(op, op.user, m, agentv1.Consistency_CONSISTENCY_LIVE); err != nil {
 			logger.Error(op.ctx, err, "save the idle box; its hibernation keeps the state")
+			detail = "save failed; hibernating it"
 		}
 	}
 	if !s.idle.idleAt(op.boxID, s.idle.now(), s.idle.user) {
 		op.succeed("a client came back while saving; the box stays up")
 		return
 	}
-	op.succeed("saved the idle box; hibernating it")
+	op.succeed(detail)
 	ctx := context.WithoutCancel(op.ctx)
 	if _, err := s.Hibernate(auth.WithUser(ctx, op.user), &controlv1.BoxRef{BoxId: op.boxID}); err != nil {
 		logger.Warnf(ctx, "hibernate the idle box: %v", err)

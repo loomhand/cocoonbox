@@ -91,6 +91,24 @@ func TestAClientComingBackDuringTheSaveKeepsTheBoxUp(t *testing.T) {
 	}
 }
 
+func TestAnIdleBoxWhoseSaveFailedStillHibernates(t *testing.T) {
+	env, clock := newUserIdleEnv(t)
+	env.svc.state.retryDelay = time.Millisecond
+	env.store.failNext(statePath{user: alice, box: aliceBox}.head(), 10)
+	env.svc.hibernateIdle(t.Context())
+	*clock = clock.Add(userIdleAfter)
+	env.svc.hibernateIdle(t.Context())
+	op := env.svc.ops.activeFor(aliceBox)
+	if op == nil {
+		t.Fatal("no save started for the idle box")
+	}
+	events := watch(t, env.svc, env.ctx, op.id, "")
+	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE || last.GetDetail() != "save failed; hibernating it" {
+		t.Errorf("the operation ended with %v", last)
+	}
+	waitState(t, env.fake, aliceBox, machines.StateHibernating)
+}
+
 func TestAnIdleHibernatedUserBoxWakesOnEnsure(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	env.svc.hibernateIdle(t.Context())
