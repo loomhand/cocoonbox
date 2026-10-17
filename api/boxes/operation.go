@@ -7,7 +7,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strconv"
 	"sync"
@@ -24,11 +23,16 @@ const (
 	stateTimeout       = time.Hour
 	operationRetention = time.Hour
 	sharedTimeout      = 5 * time.Second
-	remotePoll         = 5 * time.Second
 	// opLease bounds how long a shared operation outlives its process, which renews it every opRenew while it runs.
 	opLease = time.Minute
 	opRenew = 20 * time.Second
 )
+
+var ended = func() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	return ctx
+}()
 
 // SharedOperations is the operation table api processes share.
 type SharedOperations interface {
@@ -198,9 +202,22 @@ func (o *operation) recordLocked() cluster.Operation {
 	}
 }
 
-// adoptLocked ends o with the events of rec, which another process finished.
+// gone reports whether o is another process's operation whose lease ran out more than after ago.
+func (o *operation) gone(after time.Duration) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.remote && time.Since(o.lease) >= after
+}
+
+func (o *operation) leaseEnd() time.Time {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.lease
+}
+
+// adoptLocked takes the events of rec, which another process wrote: the progress of a remote operation or the end of this one.
 func (o *operation) adoptLocked(rec cluster.Operation) {
-	o.events, o.finishedAt = fromEventRecords(rec.ID, rec.Events), rec.FinishedAt
+	o.events, o.finishedAt, o.lease = fromEventRecords(rec.ID, rec.Events), rec.FinishedAt, rec.ExpiresAt
 	if n := len(o.events); n > 0 {
 		o.last = observation{state: o.events[n-1].GetBoxState(), detail: o.events[n-1].GetDetail()}
 	}
@@ -220,23 +237,15 @@ type operations struct {
 	watchers *watchers
 	mirror   operationMirror
 	shared   SharedOperations
-	// done is the canceled context of every remote operation.
-	done context.Context
 
-	mu     sync.Mutex
-	byID   map[string]*operation
+	mu   sync.Mutex
+	byID map[string]*operation
+	// active maps a box to its newest operation, this process's or a read-only copy of another's.
 	active map[string]*operation
-	// remote maps a box to the unfinished operation another api process runs on it, as its last notify read.
-	remote map[string]cluster.Operation
-	// waits maps an operation id to a channel closed on its next notify.
-	waits map[string]chan struct{}
 }
 
 func newOperations() *operations {
-	return &operations{
-		watchers: &watchers{next: map[string]chan struct{}{}}, byID: map[string]*operation{}, active: map[string]*operation{},
-		remote: map[string]cluster.Operation{}, waits: map[string]chan struct{}{},
-	}
+	return &operations{watchers: &watchers{next: map[string]chan struct{}{}}, byID: map[string]*operation{}, active: map[string]*operation{}}
 }
 
 // start returns the running operation of the same phase on boxID, or supersedes whatever runs there with a new one of user whose context derives from base.
@@ -248,16 +257,10 @@ func (r *operations) start(base context.Context, user, boxID string, phase contr
 func (r *operations) begin(base context.Context, op *operation, timeout time.Duration) (*operation, bool) {
 	r.mu.Lock()
 	r.sweepLocked()
-	if cur := r.active[op.boxID]; cur != nil {
-		if _, done := cur.finished(); !done && cur.phase == op.phase && cur.park == op.park {
-			r.mu.Unlock()
-			return cur, false
-		}
-	}
-	remote, elsewhere := r.remoteLocked(op.boxID)
-	if elsewhere && remote.phase == op.phase && remote.park == op.park {
+	cur := r.activeLocked(op.boxID)
+	if cur != nil && cur.phase == op.phase && cur.park == op.park {
 		r.mu.Unlock()
-		return remote, false
+		return cur, false
 	}
 	op.id, op.changed, op.watchers, op.mirror, op.created = rand.Text(), make(chan struct{}), r.watchers, r.mirror, time.Now()
 	op.expires = op.created.Add(timeout)
@@ -265,11 +268,8 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 		op.lease = op.created.Add(opLease)
 	}
 	op.ctx, op.stop = context.WithDeadline(base, op.expires)
-	if cur := r.active[op.boxID]; cur != nil {
+	if cur != nil && !cur.remote {
 		cur.fail("superseded by operation " + op.id)
-	}
-	if elsewhere {
-		delete(r.remote, op.boxID)
 	}
 	r.byID[op.id] = op
 	r.active[op.boxID] = op
@@ -278,13 +278,13 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 	op.mirrorLocked()
 	op.mu.Unlock()
 	r.mu.Unlock()
-	if elsewhere {
-		r.end(base, remote.id, "superseded by operation "+op.id)
+	if cur != nil && cur.remote {
+		r.end(base, cur.id, "superseded by operation "+op.id)
 	}
 	return op, true
 }
 
-// get returns operation id, from the shared table when this process does not run it; nil when there is none.
+// get returns operation id, from the shared table when this process does not know it; nil when there is none.
 func (r *operations) get(ctx context.Context, id string) (*operation, error) {
 	if op := r.local(id); op != nil || r.shared == nil {
 		return op, nil
@@ -296,7 +296,12 @@ func (r *operations) get(ctx context.Context, id string) (*operation, error) {
 	case err != nil:
 		return nil, err
 	}
-	return r.remoteOperation(rec, true), nil
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if op := r.takeLocked(rec); op != nil {
+		return op, nil
+	}
+	return r.remoteOperation(rec), nil
 }
 
 func (r *operations) local(id string) *operation {
@@ -305,61 +310,55 @@ func (r *operations) local(id string) *operation {
 	return r.byID[id]
 }
 
+// all returns the operations this process runs or ran.
 func (r *operations) all() []*operation {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return slices.Collect(maps.Values(r.byID))
+	var out []*operation
+	for _, op := range r.byID {
+		if !op.remote {
+			out = append(out, op)
+		}
+	}
+	return out
 }
 
 // activeFor returns the unfinished operation on boxID, this process's or another's, nil when none runs.
 func (r *operations) activeFor(boxID string) *operation {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if op := r.active[boxID]; op != nil {
-		if _, done := op.finished(); !done {
-			return op
-		}
-	}
-	if op, ok := r.remoteLocked(boxID); ok {
-		return op
-	}
-	return nil
+	return r.activeLocked(boxID)
 }
 
-// changed returns a channel closed on the next notify of operation id.
-func (r *operations) changed(id string) <-chan struct{} {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	ch := r.waits[id]
-	if ch == nil {
-		ch = make(chan struct{})
-		r.waits[id] = ch
+func (r *operations) activeLocked(boxID string) *operation {
+	op := r.active[boxID]
+	if op == nil {
+		return nil
 	}
-	return ch
+	if _, done := op.finished(); done || op.gone(0) {
+		return nil
+	}
+	return op
 }
 
-// notified takes in the change of operation id: a remote one starts or ends, or a local one another process ended.
+// notified takes in the change of operation id: a remote one starts, progresses or ends, or a local one another process ended.
 func (r *operations) notified(ctx context.Context, id string) {
 	rec, err := r.shared.Operation(ctx, id)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if ch := r.waits[id]; ch != nil {
-		close(ch)
-		delete(r.waits, id)
-	}
 	switch {
 	case errors.Is(err, cluster.ErrNotFound):
-		maps.DeleteFunc(r.remote, func(_ string, op cluster.Operation) bool { return op.ID == id })
-		return
+		if op := r.byID[id]; op != nil && op.remote {
+			r.forgetLocked(op)
+		}
 	case err != nil:
 		log.WithFunc("boxes.operations.notified").Warnf(ctx, "read operation %s: %v", id, err)
-		return
+	default:
+		r.takeLocked(rec)
 	}
-	r.takeLocked(rec)
-	r.watchers.wake(rec.User)
 }
 
-// reload replaces what the notifies told with the shared table, since notifies sent while none listened are lost.
+// reload takes the shared table in again, since notifies sent while none listened are lost.
 func (r *operations) reload(ctx context.Context) error {
 	recs, err := r.shared.Operations(ctx, time.Now().Add(-operationRetention))
 	if err != nil {
@@ -367,43 +366,47 @@ func (r *operations) reload(ctx context.Context) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	clear(r.remote)
-	for id, ch := range r.waits {
-		close(ch)
-		delete(r.waits, id)
-	}
+	listed := map[string]bool{}
 	for _, rec := range recs {
+		listed[rec.ID] = true
 		r.takeLocked(rec)
-		r.watchers.wake(rec.User)
+	}
+	for id, op := range r.byID {
+		if op.remote && !listed[id] {
+			r.forgetLocked(op)
+		}
 	}
 	return nil
 }
 
-// takeLocked tracks rec as the remote operation of its box, or ends the local one it names that another process finished.
-func (r *operations) takeLocked(rec cluster.Operation) {
-	if op := r.byID[rec.ID]; op != nil {
+// takeLocked takes rec into the copy of another process's operation, or into this process's operation another one ended, and returns the operation; nil for an ended one this process never followed.
+func (r *operations) takeLocked(rec cluster.Operation) *operation {
+	op := r.byID[rec.ID]
+	switch {
+	case op == nil && (!rec.FinishedAt.IsZero() || !time.Now().Before(rec.ExpiresAt)):
+		return nil
+	case op == nil:
+		op = r.remoteOperation(rec)
+		r.byID[op.id] = op
+	default:
 		op.mu.Lock()
-		if op.finishedAt.IsZero() && !rec.FinishedAt.IsZero() {
+		if op.remote || op.finishedAt.IsZero() && !rec.FinishedAt.IsZero() {
 			op.adoptLocked(rec)
 		}
 		op.mu.Unlock()
-		return
 	}
-	switch cur, ok := r.remote[rec.Box]; {
-	case rec.FinishedAt.IsZero() && time.Now().Before(rec.ExpiresAt) && (!ok || !cur.CreatedAt.After(rec.CreatedAt)):
-		r.remote[rec.Box] = rec
-	case ok && cur.ID == rec.ID:
-		delete(r.remote, rec.Box)
+	if cur := r.active[op.boxID]; cur == nil || !cur.created.After(op.created) {
+		r.active[op.boxID] = op
 	}
+	r.watchers.wake(op.user)
+	return op
 }
 
-// remoteLocked returns the operation another process runs on box while its lease holds, without its events.
-func (r *operations) remoteLocked(box string) (*operation, bool) {
-	rec, ok := r.remote[box]
-	if !ok || !time.Now().Before(rec.ExpiresAt) {
-		return nil, false
+func (r *operations) forgetLocked(op *operation) {
+	delete(r.byID, op.id)
+	if r.active[op.boxID] == op {
+		delete(r.active, op.boxID)
 	}
-	return r.remoteOperation(rec, false), true
 }
 
 // end finishes operation id in the shared table with a failure that says detail, so its process stops it.
@@ -458,36 +461,27 @@ func (r *operations) running() []*operation {
 	defer r.mu.Unlock()
 	var out []*operation
 	for _, op := range r.byID {
-		if _, done := op.finished(); !done {
+		if _, done := op.finished(); !done && !op.remote {
 			out = append(out, op)
 		}
 	}
 	return out
 }
 
-// remoteOperation is a read-only copy of rec, with its events when events is set; nothing it records leaves this process.
-func (r *operations) remoteOperation(rec cluster.Operation, events bool) *operation {
+// remoteOperation is a read-only copy of rec; nothing it records leaves this process.
+func (r *operations) remoteOperation(rec cluster.Operation) *operation {
 	op := &operation{
-		id: rec.ID, user: rec.User, boxID: rec.Box, phase: controlv1.Phase(rec.Phase), park: rec.Park, gen: rec.Gen, ctx: r.done, stop: func() {},
-		watchers: &watchers{next: map[string]chan struct{}{}}, created: rec.CreatedAt, expires: rec.ExpiresAt, remote: true,
-		finishedAt: rec.FinishedAt, changed: make(chan struct{}),
+		id: rec.ID, user: rec.User, boxID: rec.Box, phase: controlv1.Phase(rec.Phase), park: rec.Park, gen: rec.Gen, ctx: ended, stop: func() {},
+		watchers: r.watchers, created: rec.CreatedAt, remote: true, changed: make(chan struct{}),
 	}
-	if events {
-		op.events = fromEventRecords(rec.ID, rec.Events)
-	}
-	if n := len(op.events); n > 0 {
-		op.last = observation{state: op.events[n-1].GetBoxState(), detail: op.events[n-1].GetDetail()}
-	}
+	op.adoptLocked(rec)
 	return op
 }
 
 func (r *operations) sweepLocked() {
-	for id, op := range r.byID {
-		if at, done := op.finished(); done && time.Since(at) > operationRetention {
-			delete(r.byID, id)
-			if r.active[op.boxID] == op {
-				delete(r.active, op.boxID)
-			}
+	for _, op := range r.byID {
+		if at, done := op.finished(); done && time.Since(at) > operationRetention || op.gone(operationRetention) {
+			r.forgetLocked(op)
 		}
 	}
 }
