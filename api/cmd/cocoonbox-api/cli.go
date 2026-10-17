@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/config"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/store"
@@ -29,6 +30,7 @@ const (
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
   cocoonbox-api [-config FILE] state migrate [-keyring DIR]
   cocoonbox-api [-config FILE] state expand [-user ID]
+  cocoonbox-api [-config FILE] state heads
   cocoonbox-api [-config FILE] box rebase USER BOX IMAGE`
 
 	defaultKeyringDir = "/var/lib/cocoonbox-api/keys"
@@ -52,11 +54,8 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	if len(args) == 1 && args[0] == "check" {
 		return checkConfig(cfg, stdout)
 	}
-	if len(args) >= 2 && args[0] == "state" && args[1] == "migrate" {
-		return migrateState(ctx, cfg, args[2:], stdout)
-	}
-	if len(args) >= 2 && args[0] == "state" && args[1] == "expand" {
-		return expandState(ctx, cfg, args[2:], stdout)
+	if len(args) >= 2 && args[0] == "state" {
+		return runStateCLI(ctx, cfg, args[1], args[2:], stdout)
 	}
 	if len(args) >= 2 && args[0] == "box" && args[1] == "rebase" {
 		return rebaseBox(ctx, cfg, args[2:], stdout)
@@ -231,6 +230,50 @@ func checkConfig(cfg *config.Config, stdout io.Writer) error {
 	}
 	_, err = fmt.Fprintln(stdout, "config ok")
 	return err
+}
+
+func runStateCLI(ctx context.Context, cfg *config.Config, verb string, args []string, stdout io.Writer) error {
+	switch verb {
+	case "migrate":
+		return migrateState(ctx, cfg, args, stdout)
+	case "expand":
+		return expandState(ctx, cfg, args, stdout)
+	case "heads":
+		return backfillHeads(ctx, cfg, stdout)
+	}
+	return errors.New(cliUsage)
+}
+
+// backfillHeads copies every box's head.json into the cluster ledger once, before cluster.shared makes the ledger the heads' truth.
+func backfillHeads(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
+	st, err := newStore(cfg)
+	if err != nil {
+		return err
+	}
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return err
+	}
+	ledger, err := cluster.Open(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer ledger.Close()
+	accounts, err := openUsers(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer accounts.Close()
+	for _, u := range accounts.List() {
+		written, removed, err := boxes.BackfillHeads(ctx, st, ledger, u.ID)
+		if err != nil {
+			return fmt.Errorf("backfill the heads of %s: %w", u.Name, err)
+		}
+		if _, err := fmt.Fprintf(stdout, "user %s (%s): %d heads written, %d removed\n", u.Name, u.ID, written, removed); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // importStateKey gives user the key in the box key file at path, or a new key when there is no file and the user has none.
