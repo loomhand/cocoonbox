@@ -129,10 +129,15 @@ func (s *Service) Reached(box string) func() {
 	if s.wake != nil {
 		s.wake.reach(box)
 	}
+	var ended func(string, time.Time)
+	if s.reaches != nil {
+		s.reaches.reach(box, s.reaches.now())
+		ended = s.reaches.reach
+	}
 	if s.idle == nil {
 		return func() {}
 	}
-	return s.idle.enter(box)
+	return s.idle.enter(box, ended)
 }
 
 // RunAlarms acts on the wake schedules every interval until ctx ends.
@@ -151,6 +156,7 @@ func (s *Service) RunAlarms(ctx context.Context, interval time.Duration) {
 
 func (s *Service) alarm(ctx context.Context, now time.Time) {
 	logger := log.WithFunc("boxes.Service.alarm")
+	s.readReaches(ctx)
 	list, err := s.wake.store.WakeSchedules(ctx, "")
 	if err != nil {
 		logger.Error(ctx, err, "list wake schedules")
@@ -234,7 +240,7 @@ func (s *Service) sleepAfter(ctx context.Context, w users.WakeSchedule, now time
 	case err != nil:
 		logger.Error(ctx, err, "get box")
 		return w
-	case s.wake.reachedSince(w.Box, w.LastWakeAt):
+	case s.reachedSince(w.Box, w.LastWakeAt):
 		logger.Info(ctx, "a client reached the box since its scheduled wake; leaving it up")
 	case now.Before(w.SleepAt) || cur.State == machines.StateStarting || (cur.State == machines.StateRunning && s.ops.activeFor(w.Box) != nil):
 		return w

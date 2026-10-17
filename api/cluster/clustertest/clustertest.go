@@ -18,12 +18,20 @@ import (
 // Open returns a store on a fresh database dropped when t ends, and skips t without COCOONBOX_TEST_DSN.
 func Open(t testing.TB) *cluster.Store {
 	t.Helper()
-	st, err := cluster.Open(t.Context(), EmptyDSN(t))
+	st, _ := OpenDSN(t)
+	return st
+}
+
+// OpenDSN is Open that also returns the database's connection string.
+func OpenDSN(t testing.TB) (*cluster.Store, string) {
+	t.Helper()
+	dsn := EmptyDSN(t)
+	st, err := cluster.Open(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("open cluster store: %v", err)
 	}
 	t.Cleanup(st.Close)
-	return st
+	return st, dsn
 }
 
 // EmptyDSN returns the dsn of a fresh database without tables, dropped when t ends, and skips t without COCOONBOX_TEST_DSN.

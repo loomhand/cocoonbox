@@ -30,7 +30,10 @@ func (s *Service) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (
 	if !ok {
 		return nil, status.Errorf(codes.InvalidArgument, "image %q is not offered", req.GetImage())
 	}
-	unlock := s.lockStarts(user)
+	unlock, err := s.lockStarts(ctx, user)
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	logger := log.WithFunc("boxes.Service.Create").WithField("user", user)
 	current, err := s.currentMachines(ctx, user)
@@ -92,7 +95,10 @@ func (s *Service) Delete(ctx context.Context, ref *controlv1.BoxRef) (*controlv1
 	if err != nil {
 		return nil, err
 	}
-	unlock := s.lockStarts(user)
+	unlock, err := s.lockStarts(ctx, user)
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	if active := s.ops.activeFor(box); active != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "operation %s is still running", active.id)
