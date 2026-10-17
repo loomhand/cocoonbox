@@ -39,6 +39,16 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.State.ParkAfter != 0 || cfg.State.ParkOwners != nil {
 		t.Errorf("park after = %s for %q, want parking off", time.Duration(cfg.State.ParkAfter), cfg.State.ParkOwners)
 	}
+	if cfg.UserIdleHibernate != 0 {
+		t.Errorf("user idle hibernate = %s, want off", time.Duration(cfg.UserIdleHibernate))
+	}
+}
+
+func TestLoadUserIdleHibernate(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"user_idle_hibernate: 2h\n"))
+	if err != nil || cfg.UserIdleHibernate != Duration(2*time.Hour) {
+		t.Errorf("Load = %s, %v, want user boxes hibernating after 2h idle", time.Duration(cfg.UserIdleHibernate), err)
+	}
 }
 
 func TestLoadParkingForSomeOwners(t *testing.T) {
@@ -96,6 +106,7 @@ func TestLoadRejects(t *testing.T) {
 		{name: "oauth over http", body: required + "oauth:\n  public_url: http://cb.example\n", want: "oauth.public_url must be an https origin"},
 		{name: "negative idle hibernate", body: required + "oauth:\n  idle_hibernate: -1m\n", want: "oauth.idle_hibernate must not be negative"},
 		{name: "negative park after", body: required + "state:\n  park_after: -1h\n", want: "state.park_after must not be negative"},
+		{name: "negative user idle hibernate", body: required + "user_idle_hibernate: -1h\n", want: "user_idle_hibernate must not be negative"},
 		{name: "image owners of an image not offered", body: required + "rebase_images: [cbdesk:v34]\nimage_owners: {\"cbcore:v1\": [u-a]}\n", want: `image_owners image "cbcore:v1" must be in rebase_images`},
 		{name: "image owner under two images", body: required + "rebase_images: [cbdesk:v34, cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a], \"cbdesk:v34\": [u-a]}\n", want: `image_owners lists user "u-a" under`},
 		{name: "relative operator socket", body: required + "operator_socket: operator.sock\n", want: "operator_socket must be an absolute path"},

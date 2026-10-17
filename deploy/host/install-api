@@ -78,6 +78,7 @@ EOF
 		[ ! -e "$E/connect.env" ] || printf 'connect:\n  public_url: %s\n  box_listen: 10.203.0.1:18091\n' "$CB_PUBLIC_URL"
 		cat <<EOF
 operator_socket: /var/lib/cocoonbox-api/operator.sock
+user_idle_hibernate: 2h
 oauth:
   public_url: $CB_PUBLIC_URL
   idle_hibernate: 30m

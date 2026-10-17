@@ -39,6 +39,7 @@ accounts:                      # users, console sessions and each user's sealed 
   master_key_file: master.key  # 32 random bytes: head -c 32 /dev/urandom
   default_daily_cap_micros: 5000000  # gw tenant's user_daily_cost_quota_micros, shown on the user page
 operator_socket: /var/lib/cocoonbox-api/operator.sock    # the root CLI's box commands; the 0700 state directory keeps others out; empty turns them off
+user_idle_hibernate: 2h        # save and hibernate a user's box no client reached for this long, unless an agent turn or offloaded session works in it; 0s keeps it up
 wake:                          # scheduled box wakes (design §15.13)
   max_schedules: 3             # wake schedules per user
   floor: 1h                    # least time between two wakes of one box from hibernation

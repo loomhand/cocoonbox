@@ -201,9 +201,11 @@ type Config struct {
 	Flavor    Flavor    `json:"flavor"`
 	Flavors   []Flavor  `json:"flavors"`
 	// MaxRunningBoxes bounds how many boxes of one user run at once; Ensure and Create past it fail and name the running box.
-	MaxRunningBoxes int     `json:"max_running_boxes"`
-	State           State   `json:"state"`
-	Connect         Connect `json:"connect"`
+	MaxRunningBoxes int `json:"max_running_boxes"`
+	// UserIdleHibernate saves and hibernates a user's running box no client reached for this long; 0s (the default) leaves it up.
+	UserIdleHibernate Duration `json:"user_idle_hibernate"`
+	State             State    `json:"state"`
+	Connect           Connect  `json:"connect"`
 	// OperatorSocket serves the root CLI's box commands on this unix socket; empty turns them off.
 	OperatorSocket string `json:"operator_socket"`
 	Wake           Wake   `json:"wake"`
@@ -307,6 +309,9 @@ func (c *Config) validate() error {
 	}
 	if c.State.Bucket != "" && (c.State.Endpoint == "" || c.State.CredentialsFile == "") {
 		errs = append(errs, errors.New("state.endpoint and state.credentials_file are required with state.bucket"))
+	}
+	if c.UserIdleHibernate < 0 {
+		errs = append(errs, fmt.Errorf("user_idle_hibernate must not be negative, got %s", time.Duration(c.UserIdleHibernate)))
 	}
 	if c.State.ParkAfter < 0 {
 		errs = append(errs, fmt.Errorf("state.park_after must not be negative, got %s", time.Duration(c.State.ParkAfter)))

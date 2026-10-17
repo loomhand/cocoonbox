@@ -124,11 +124,8 @@ func main() {
 			logger.Fatalf(ctx, err, "open oauth")
 		}
 		defer grants.Close()
-		if idle := time.Duration(*cfg.OAuth.IdleHibernate); idle > 0 {
-			svc.EnableIdle(idle)
-			go svc.RunIdle(ctx, idleInterval)
-		}
 	}
+	enableIdle(ctx, cfg, svc, grants != nil, pool)
 	var library *flows.Library
 	if cfg.State.Bucket != "" {
 		var st *s3.S3
@@ -246,6 +243,21 @@ func main() {
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
 	}
+}
+
+// enableIdle hibernates idle boxes: an agent's after oauth.idle_hibernate while OAuth is on, a user's after user_idle_hibernate.
+func enableIdle(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents bool, pool *dialer.Pool) {
+	agentIdle, userIdle := time.Duration(0), time.Duration(cfg.UserIdleHibernate)
+	if agents {
+		agentIdle = time.Duration(*cfg.OAuth.IdleHibernate)
+	}
+	if agentIdle == 0 && userIdle == 0 {
+		return
+	}
+	svc.EnableIdle(agentIdle, userIdle)
+	svc.EnableActivity(dialer.New(pool))
+	go svc.RunIdle(ctx, idleInterval)
+	log.WithFunc("main.enableIdle").Infof(ctx, "idle boxes hibernate: an agent's after %s, a user's after %s (0s: never)", agentIdle, userIdle)
 }
 
 func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Service, accounts *users.Service) (*credential.Signer, error) {

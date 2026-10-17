@@ -111,6 +111,7 @@ type Service struct {
 	park      *parking
 	usage     *usageMeter
 	idle      *idling
+	activity  Activity
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex
