@@ -755,6 +755,32 @@ func TestTwoBackendsOnASharedTableClaimOnceAndSeeEachOthersChanges(t *testing.T)
 	}
 }
 
+func TestVerifyOnASharedTableReloadsTheCacheAndNeverWritesTheTable(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	a, b := newSharedBackend(t, fake, db), newSharedBackend(t, fake, db)
+	m := claimRunning(t, a)
+	waitState(t, b, boxID, m.Revision, machines.StateRunning)
+	before, err := db.Machine(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Machine: %v", err)
+	}
+	b.mu.Lock()
+	b.entries[boxID].meta = map[string]string{"slept": "9"}
+	b.entries["cb-ghost"] = &entry{id: "cb-ghost", owner: owner}
+	b.mu.Unlock()
+	if differ, err := b.Verify(t.Context()); err != nil || !slices.Equal(differ, []string{boxID, "cb-ghost"}) {
+		t.Fatalf("Verify over a stale cache = %v, %v, want the box and the ghost", differ, err)
+	}
+	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
+		t.Errorf("Verify after the reload = %v, %v, want no difference", differ, err)
+	}
+	rows, err := db.Machines(t.Context())
+	if err != nil || len(rows) != 1 || rows[0].Version != before.Version || rows[0].Meta["slept"] != before.Meta["slept"] {
+		t.Errorf("table after Verify = %+v, %v, want the row at version %d untouched", rows, err, before.Version)
+	}
+}
+
 func TestAKeyOneBackendWroteIsPrunedByTheOther(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)
