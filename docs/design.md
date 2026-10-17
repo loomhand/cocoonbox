@@ -573,7 +573,7 @@ The service layer computes each incarnation's identity and hands it to the backe
 - Consequences of the none lane:
   - No UDP. Chrome falls back from QUIC to TCP, and WebRTC media is degraded.
   - Raw TCP (git over ssh) needs the pool policy's `socks5: true` door.
-  - Policy: the gw rule, then `*`. The SSRF guard keeps other cb VMs and host ports unreachable, which M4.5 measured as 502.
+  - Policy: the gw, Connect and apt cache rules, then `*` on ports 22, 80 and 443 only, so mail ports and every other port are closed. The SSRF guard keeps other cb VMs and host ports unreachable, which M4.5 measured as 502.
 - **VMM crash (#269).**
   - The claim is cold-booted from its own disk within the 10 s liveness pass plus the boot, under the same id and token.
   - Lost: memory, the running turn, Chrome's open tabs and the tmpfs files, although env and identity are re-delivered. Kept: synced files, `/workspace` and `agent.db`.
