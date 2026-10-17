@@ -15,5 +15,6 @@ if [ ! -f "$IMG" ]; then
 	mkfs.btrfs -q "$IMG"
 fi
 mountpoint -q "$TOP" || mount -o loop,noatime "$IMG" "$TOP"
+[ -d "$TOP/data" ] || [ ! -d "$TOP/old" ] || mv "$TOP/old" "$TOP/data"
 [ -d "$TOP/data" ] || btrfs -q subvolume create "$TOP/data"
 mount --bind "$TOP/data" "$DATA"

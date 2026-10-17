@@ -33,15 +33,22 @@ if systemctl -q is-active docker.service; then
 	stop_android
 fi
 btrfs -q subvolume delete "$TOP/new" >/dev/null 2>&1 || true
+btrfs -q subvolume delete "$TOP/old" >/dev/null 2>&1 || true
 if btrfs -q subvolume create "$TOP/new" &&
 	tar -C "$TOP/new" --numeric-owner --xattrs --xattrs-include='*' -xpf "$DIR/data.tar"; then
-	umount "$DATA" &&
-		btrfs -q subvolume delete "$TOP/data" &&
-		mv "$TOP/new" "$TOP/data" &&
-		mount --bind "$TOP/data" "$DATA" &&
-		echo "$sum" > "$STAMP" &&
-		log "applied data.tar $sum" ||
-		log "swap to data.tar $sum failed"
+	if umount "$DATA" && mv "$TOP/data" "$TOP/old" && mv "$TOP/new" "$TOP/data" && mount --bind "$TOP/data" "$DATA"; then
+		echo "$sum" > "$STAMP"
+		btrfs -q subvolume delete "$TOP/old" >/dev/null 2>&1 || true
+		log "applied data.tar $sum"
+	else
+		log "swap to data.tar $sum failed; /data stays"
+		if [ -d "$TOP/old" ]; then
+			! mountpoint -q "$DATA" || umount "$DATA"
+			[ ! -d "$TOP/data" ] || mv "$TOP/data" "$TOP/new"
+			mv "$TOP/old" "$TOP/data"
+		fi
+		btrfs -q subvolume delete "$TOP/new" >/dev/null 2>&1 || true
+	fi
 else
 	log "extract of data.tar $sum failed; /data stays"
 	btrfs -q subvolume delete "$TOP/new" >/dev/null 2>&1 || true
