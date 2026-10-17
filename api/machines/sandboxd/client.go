@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -22,7 +23,18 @@ const (
 	requestTimeout = 30 * time.Second
 	dialTimeout    = 5 * time.Second
 	maxErrorBody   = 4 << 10
+	idleConns      = 64
+	idleTimeout    = 90 * time.Second
 )
+
+// transport keeps enough idle connections per node for the api's concurrent calls to each.
+var transport = &http.Transport{
+	Proxy:               http.ProxyFromEnvironment,
+	DialContext:         (&net.Dialer{Timeout: dialTimeout}).DialContext,
+	MaxIdleConns:        4 * idleConns,
+	MaxIdleConnsPerHost: idleConns,
+	IdleConnTimeout:     idleTimeout,
+}
 
 // apiError is a sandboxd error answer; 400 is machines.ErrRefused, 404 machines.ErrNotFound, 409 machines.ErrConflict and 429 machines.ErrCapacity.
 type apiError struct {
@@ -65,6 +77,8 @@ type row struct {
 	Restarts   int               `json:"restarts,omitzero"`
 	Failed     string            `json:"failed,omitempty"`
 	ClaimedAt  time.Time         `json:"claimed_at,omitzero"`
+	// node names the node that listed the row; the claim does not carry it.
+	node string
 }
 
 type envVar struct {
@@ -85,6 +99,17 @@ type claimRequest struct {
 	TTLSeconds int               `json:"ttl_seconds"`
 	OnExpire   string            `json:"on_expire"`
 	Metadata   map[string]string `json:"metadata"`
+	// NoRedirect asks a node to claim itself instead of naming warmer peers.
+	NoRedirect      bool `json:"no_redirect,omitzero"`
+	RequirePromoted bool `json:"require_promoted,omitzero"`
+}
+
+// claimResponse is the claim a node made, or the peers to claim on instead.
+type claimResponse struct {
+	ID              string   `json:"id"`
+	OwnerAddr       string   `json:"owner_addr"`
+	Redirect        []string `json:"redirect"`
+	RequirePromoted bool     `json:"require_promoted"`
 }
 
 type renewRequest struct {
@@ -122,16 +147,36 @@ func newClient(rawURL, token string) (*client, error) {
 	if err != nil || base.Host == "" {
 		return nil, fmt.Errorf("sandboxd url %q must be an absolute URL", rawURL)
 	}
-	return &client{base: base, token: token, http: &http.Client{}}, nil
+	base.Path = strings.TrimSuffix(base.Path, "/")
+	return &client{base: base, token: token, http: &http.Client{Transport: transport}}, nil
 }
 
+// addr names the node as its peers do, its base URL.
+func (c *client) addr() string { return c.base.String() }
+
 // claim claims with token, a tenant's or the root one.
-func (c *client) claim(ctx context.Context, token string, req claimRequest) (string, error) {
-	var resp struct {
-		ID string `json:"id"`
-	}
+func (c *client) claim(ctx context.Context, token string, req claimRequest) (claimResponse, error) {
+	var resp claimResponse
 	err := c.request(ctx, cmp.Or(token, c.token), http.MethodPost, "/v1/claim", nil, req, &resp)
-	return resp.ID, err
+	return resp, err
+}
+
+// peers returns the other nodes of the node's mesh, none for a node without one.
+func (c *client) peers(ctx context.Context) ([]string, error) {
+	var resp struct {
+		Peers []string `json:"peers"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/peers", nil, nil, &resp)
+	return resp.Peers, err
+}
+
+// advertise returns the address the node's peers know it by.
+func (c *client) advertise(ctx context.Context) (string, error) {
+	var resp struct {
+		AdvertiseAddr string `json:"advertise_addr"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/info", nil, nil, &resp)
+	return resp.AdvertiseAddr, err
 }
 
 func (c *client) list(ctx context.Context) ([]row, error) {
@@ -260,6 +305,14 @@ type bufferedConn struct {
 }
 
 func (c *bufferedConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+// nodeURL gives a node address without a scheme, as a mesh names its nodes, the http one.
+func nodeURL(addr string) string {
+	if strings.Contains(addr, "://") {
+		return strings.TrimSuffix(addr, "/")
+	}
+	return "http://" + addr
+}
 
 func responseError(resp *http.Response) error {
 	var body struct {

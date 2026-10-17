@@ -551,7 +551,7 @@ func TestDeleteReleasesTheClaim(t *testing.T) {
 
 func TestAClaimRefusedForCapacityFailsAndDeleteForgetsIt(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	fake.refusals = 1
+	fake.refusals = capacityAttempts
 	b := newTestBackend(t, fake)
 	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID + "-r1", Owner: owner, Flavor: xlarge})
 	if err != nil {
@@ -819,6 +819,70 @@ func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	waitState(t, a, boxID, 3, machines.StateHibernated)
 }
 
+func TestAClaimTheEntryRedirectsRunsOnThePeerAndStaysAfterARestart(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.name, peer.name = "a", "b"
+	entry.peers, peer.peers = []*fakeSandboxd{peer}, []*fakeSandboxd{entry}
+	entry.redirect = []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	m := claimRunning(t, b)
+	if entry.count("claim") != 0 || peer.count("claim") != 1 || !peer.lastClaim().NoRedirect {
+		t.Fatalf("claims on the entry %d, on the peer %d (no_redirect %t), want the peer's only", entry.count("claim"), peer.count("claim"), peer.lastClaim().NoRedirect)
+	}
+	if _, err := b.Hibernate(t.Context(), boxID); err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, b, boxID, m.Revision+1, machines.StateHibernated)
+	if peer.count("hibernate") != 1 || entry.count("hibernate") != 0 {
+		t.Errorf("hibernates on the peer %d, the entry %d, want the peer's", peer.count("hibernate"), entry.count("hibernate"))
+	}
+	restarted := newTestBackend(t, entry)
+	if got, err := restarted.Get(t.Context(), boxID); err != nil || got.State != machines.StateHibernated {
+		t.Fatalf("a restarted backend reads %+v, %v, want the hibernated machine on the peer", got, err)
+	}
+	if _, action, err := restarted.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge}); err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure on the restarted backend = %v, %v", action, err)
+	}
+	waitState(t, restarted, boxID, 0, machines.StateRunning)
+	if peer.count("wake") != 1 {
+		t.Errorf("wakes on the peer = %d, want 1", peer.count("wake"))
+	}
+}
+
+func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.name, peer.name = "a", "b"
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	b.lostAfter = 300 * time.Millisecond
+	claimRunning(t, b)
+	peer.mu.Lock()
+	peer.down = true
+	peer.mu.Unlock()
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh with the peer down: %v", err)
+	}
+	if _, err := b.cached(boxID); err != nil {
+		t.Fatalf("the machine of a peer that does not answer went at once: %v", err)
+	}
+	entry.mu.Lock()
+	entry.peers = nil
+	entry.mu.Unlock()
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the peer left: %v", err)
+	}
+	if _, err := b.cached(boxID); err != nil {
+		t.Fatalf("the machine went before its node stayed away: %v", err)
+	}
+	time.Sleep(b.lostAfter)
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the peer stayed away: %v", err)
+	}
+	if _, err := b.cached(boxID); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("the machine of a node away for good = %v, want it gone", err)
+	}
+}
+
 type fakeSandbox struct {
 	row   row
 	token string
@@ -827,6 +891,8 @@ type fakeSandbox struct {
 
 type fakeSandboxd struct {
 	srv *httptest.Server
+	// name prefixes the sandbox ids, so the nodes of one mesh never share one.
+	name string
 
 	mu          sync.Mutex
 	sandboxes   map[string]*fakeSandbox
@@ -842,14 +908,38 @@ type fakeSandboxd struct {
 	refusals    int
 	agent       string
 	tenants     map[string]tenantRequest
+	peers       []*fakeSandboxd
+	redirect    []*fakeSandboxd
+	down        bool
 }
 
 func (f *fakeSandboxd) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/peers", f.root(func(w http.ResponseWriter, _ *http.Request) {
+		peers := []string{}
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		for _, p := range f.peers {
+			peers = append(peers, strings.TrimPrefix(p.srv.URL, "http://"))
+		}
+		writeJSON(w, map[string]any{"peers": peers})
+	}))
+	mux.HandleFunc("GET /v1/info", f.root(func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, map[string]any{"advertise_addr": strings.TrimPrefix(f.srv.URL, "http://")})
+	}))
 	mux.HandleFunc("POST /v1/claim", func(w http.ResponseWriter, r *http.Request) {
 		var req claimRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		f.mu.Lock()
+		if len(f.redirect) > 0 && !req.NoRedirect {
+			var to []string
+			for _, p := range f.redirect {
+				to = append(to, strings.TrimPrefix(p.srv.URL, "http://"))
+			}
+			f.mu.Unlock()
+			writeJSON(w, map[string]any{"redirect": to})
+			return
+		}
 		tenant, ok := f.tokenOwner(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 		if !ok {
 			f.mu.Unlock()
@@ -863,12 +953,12 @@ func (f *fakeSandboxd) handler() http.Handler {
 			return
 		}
 		f.next++
-		sb := &fakeSandbox{row: row{ID: "sb_" + strconv.Itoa(f.next), Key: req.poolKey, Tenant: tenant, Metadata: req.Metadata, ClaimedAt: time.Now().UTC()}, token: "tok", env: map[string]envVar{}}
+		sb := &fakeSandbox{row: row{ID: "sb_" + f.name + strconv.Itoa(f.next), Key: req.poolKey, Tenant: tenant, Metadata: req.Metadata, ClaimedAt: time.Now().UTC()}, token: "tok", env: map[string]envVar{}}
 		f.sandboxes[sb.row.ID] = sb
 		f.claims = append(f.claims, req)
 		f.calls["claim"]++
 		f.mu.Unlock()
-		writeJSON(w, map[string]string{"id": sb.row.ID, "token": sb.token})
+		writeJSON(w, map[string]string{"id": sb.row.ID, "token": sb.token, "owner_addr": strings.TrimPrefix(f.srv.URL, "http://")})
 	})
 	mux.HandleFunc("PUT /v1/tenants/{name}", f.root(func(w http.ResponseWriter, r *http.Request) {
 		var req tenantRequest
@@ -1139,7 +1229,17 @@ func (f *fakeSandboxd) renewed() []string {
 func newFakeSandboxd(t *testing.T) *fakeSandboxd {
 	t.Helper()
 	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}}
-	f.srv = httptest.NewServer(f.handler())
+	mux := f.handler()
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		down := f.down
+		f.mu.Unlock()
+		if down {
+			writeError(w, http.StatusServiceUnavailable, "node down")
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(f.srv.Close)
 	return f
 }
@@ -1155,6 +1255,7 @@ func newTestBackend(t *testing.T, fake *fakeSandboxd) *Backend {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	b.capacityPause = time.Millisecond
 	return b
 }
 
@@ -1166,6 +1267,7 @@ func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Back
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	b.capacityPause = time.Millisecond
 	go b.Run(ctx)
 	return b
 }

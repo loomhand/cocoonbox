@@ -43,6 +43,13 @@ const (
 	// opLease bounds how long a shared op outlives its process, which renews it every opRenew while it runs.
 	opLease = time.Minute
 	opRenew = 20 * time.Second
+
+	renewTimeout     = 4 * time.Minute
+	renewCallTimeout = 10 * time.Second
+	renewFanout      = 8
+	capacityAttempts = 3
+	capacityBackoff  = 5 * time.Second
+	nodeLostAfter    = 5 * time.Minute
 )
 
 var (
@@ -69,6 +76,8 @@ type Options struct {
 	Ledger Ledger
 	// Shared, when set, holds the machine records: every change lands on a row's version and the backend caches the table.
 	Shared Shared
+	// CapacityAttempts bounds the claims of one machine while the mesh answers at capacity; 0 is capacityAttempts.
+	CapacityAttempts int
 }
 
 // Ledger keeps the machine records api processes share.
@@ -100,6 +109,17 @@ type Backend struct {
 	api    *client
 	ctx    context.Context
 	mirror *cluster.Mirror
+	// self is the entry node's address as its peers name it.
+	self string
+	// capacityPause is the first pause before a claim at capacity is retried.
+	capacityPause time.Duration
+	// lostAfter is how long a node that left the mesh and answers no list may stay away before its machines count as gone.
+	lostAfter time.Duration
+
+	nodeMu sync.Mutex
+	nodes  map[string]*client
+	// away maps a node that left the mesh to when it was first missed.
+	away map[string]time.Time
 
 	mu      sync.Mutex
 	entries map[string]*entry
@@ -119,13 +139,21 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		}
 	}
 	b := &Backend{
-		Tenants: &Tenants{api: api, egressClass: opts.TenantEgressClass},
-		opts:    opts,
-		api:     api,
-		ctx:     ctx,
-		entries: map[string]*entry{},
-		owners:  map[string]chan struct{}{},
-		views:   map[string]view{},
+		Tenants:       &Tenants{api: api, egressClass: opts.TenantEgressClass},
+		opts:          opts,
+		api:           api,
+		ctx:           ctx,
+		self:          api.addr(),
+		capacityPause: capacityBackoff,
+		lostAfter:     nodeLostAfter,
+		nodes:         map[string]*client{},
+		away:          map[string]time.Time{},
+		entries:       map[string]*entry{},
+		owners:        map[string]chan struct{}{},
+		views:         map[string]view{},
+	}
+	if advertised, err := api.advertise(ctx); err == nil && advertised != "" {
+		b.self = nodeURL(advertised)
 	}
 	switch {
 	case opts.Shared != nil:
@@ -150,8 +178,8 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 // itself unless a shared table lets one api do it for all.
 func (b *Backend) Run(ctx context.Context) {
 	var wg sync.WaitGroup
-	wg.Go(func() { b.loop(ctx, refreshInterval, b.refresh) })
-	wg.Go(func() { b.loop(ctx, renewInterval, b.renew) })
+	wg.Go(func() { b.loop(ctx, refreshInterval, requestTimeout, b.refresh) })
+	wg.Go(func() { b.loop(ctx, renewInterval, renewTimeout, b.renew) })
 	wg.Wait()
 }
 
@@ -240,7 +268,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 	}
 	if started {
 		b.run(id, opHibernate, m.Revision, func(ctx context.Context) error {
-			if err := b.api.verb(ctx, sandbox, "hibernate", nil); err != nil {
+			if err := b.nodeOf(id).verb(ctx, sandbox, "hibernate", nil); err != nil {
 				return err
 			}
 			return b.reread(ctx, id, sandbox)
@@ -307,10 +335,10 @@ func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, erro
 	if state, _ := e.state(); state != machines.StateRunning {
 		return machines.Endpoint{}, &machines.NotRunningError{State: state}
 	}
-	sandbox := e.row.ID
+	sandbox, node := e.row.ID, b.node(e.ownerAddr)
 	key := net.JoinHostPort(sandbox+".sandboxd", strconv.Itoa(b.opts.AgentPort))
 	return machines.Endpoint{Key: key, Dial: func(ctx context.Context) (net.Conn, error) {
-		return b.api.dialPort(ctx, sandbox, b.opts.AgentPort)
+		return node.dialPort(ctx, sandbox, b.opts.AgentPort)
 	}}, nil
 }
 
@@ -327,7 +355,7 @@ func (b *Backend) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err = b.api.verb(ctx, sandbox, "release", nil); err != nil {
+	if err = b.nodeOf(id).verb(ctx, sandbox, "release", nil); err != nil {
 		return err
 	}
 	_, err = b.drop(ctx, id, func(*entry) bool { return true })
@@ -342,7 +370,7 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	if err != nil {
 		return err
 	}
-	if err = b.api.patchEnv(ctx, sandbox, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
+	if err = b.nodeOf(id).patchEnv(ctx, sandbox, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
 		return fmt.Errorf("set meta %s: %w", key, err)
 	}
 	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
@@ -375,7 +403,7 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 		for name, sec := range keys {
 			vars[name] = secretVar(sec)
 		}
-		if err = b.api.patchEnv(ctx, sandbox, vars); err != nil {
+		if err = b.nodeOf(id).patchEnv(ctx, sandbox, vars); err != nil {
 			return fmt.Errorf("install host keys: %w", err)
 		}
 	}
@@ -383,11 +411,12 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 	if err != nil {
 		return fmt.Errorf("encode identity: %w", err)
 	}
-	r, err := b.api.get(ctx, sandbox)
+	node := b.nodeOf(id)
+	r, err := node.get(ctx, sandbox)
 	if err != nil {
 		return fmt.Errorf("read sandbox token: %w", err)
 	}
-	resp, err := b.api.exec(ctx, sandbox, r.Token, execRequest{Argv: writeIdentity, Env: map[string]string{"CB_STDIN": string(file)}, TimeoutSeconds: identityTimeoutSeconds})
+	resp, err := node.exec(ctx, sandbox, r.Token, execRequest{Argv: writeIdentity, Env: map[string]string{"CB_STDIN": string(file)}, TimeoutSeconds: identityTimeoutSeconds})
 	switch {
 	case err != nil:
 		return fmt.Errorf("write identity: %w", err)
@@ -406,7 +435,7 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 	if upstream != "" {
 		v = &envVar{Value: upstream, Guest: new(false)}
 	}
-	if err = b.api.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
+	if err = b.nodeOf(id).patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
 		return fmt.Errorf("set egress upstream: %w", err)
 	}
 	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
@@ -462,7 +491,7 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	if len(changes) == 0 {
 		return nil
 	}
-	err = b.api.patchEnv(ctx, sandbox, changes)
+	err = b.nodeOf(id).patchEnv(ctx, sandbox, changes)
 	if err != nil && !errors.Is(err, machines.ErrRefused) {
 		return fmt.Errorf("set credentials: %w", err)
 	}
@@ -678,7 +707,7 @@ func (b *Backend) lease() time.Duration {
 }
 
 func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size string) error {
-	sandbox, err := b.api.claim(ctx, tenant, claimRequest{
+	sandbox, node, err := b.claimRetried(ctx, tenant, claimRequest{
 		Template:   template,
 		Net:        netNone,
 		Size:       size,
@@ -689,11 +718,60 @@ func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size s
 	if err != nil {
 		return err
 	}
+	if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil {
+			return e, false
+		}
+		e.ownerAddr = node
+		return e, true
+	}); err != nil {
+		return err
+	}
 	return b.reread(ctx, id, sandbox)
 }
 
+// claimRetried claims with claimOnce and retries a mesh at capacity with a growing pause.
+func (b *Backend) claimRetried(ctx context.Context, tenant string, req claimRequest) (string, string, error) {
+	for attempt := 1; ; attempt++ {
+		sandbox, node, err := b.claimOnce(ctx, tenant, req)
+		if !errors.Is(err, machines.ErrCapacity) || attempt >= cmp.Or(b.opts.CapacityAttempts, capacityAttempts) {
+			return sandbox, node, err
+		}
+		select {
+		case <-ctx.Done():
+			return "", "", err
+		case <-time.After(b.capacityPause * time.Duration(attempt)):
+		}
+	}
+}
+
+// claimOnce claims on the entry node or on the peers it redirects to, and returns the claim and the node that holds it;
+// when every peer fails, the entry node claims itself.
+func (b *Backend) claimOnce(ctx context.Context, tenant string, req claimRequest) (string, string, error) {
+	resp, err := b.api.claim(ctx, tenant, req)
+	if err != nil {
+		return "", "", err
+	}
+	if len(resp.Redirect) == 0 {
+		return resp.ID, b.nodeAddr(cmp.Or(resp.OwnerAddr, b.self)), nil
+	}
+	req.NoRedirect, req.RequirePromoted = true, resp.RequirePromoted
+	var errs []error
+	for _, peer := range resp.Redirect {
+		r, peerErr := b.node(peer).claim(ctx, tenant, req)
+		if peerErr == nil && len(r.Redirect) == 0 {
+			return r.ID, b.nodeAddr(cmp.Or(r.OwnerAddr, peer)), nil
+		}
+		errs = append(errs, cmp.Or(peerErr, fmt.Errorf("%s redirected again", peer)))
+	}
+	if resp, err = b.api.claim(ctx, tenant, req); err != nil {
+		return "", "", errors.Join(append(errs, err)...)
+	}
+	return resp.ID, b.nodeAddr(cmp.Or(resp.OwnerAddr, b.self)), nil
+}
+
 func (b *Backend) wake(ctx context.Context, id, sandbox string) error {
-	if err := b.api.verb(ctx, sandbox, "wake", nil); err != nil {
+	if err := b.nodeOf(id).verb(ctx, sandbox, "wake", nil); err != nil {
 		return err
 	}
 	b.mu.Lock()
@@ -702,7 +780,7 @@ func (b *Backend) wake(ctx context.Context, id, sandbox string) error {
 		wakes = e.wakes + 1
 	}
 	b.mu.Unlock()
-	if err := b.api.patchEnv(ctx, sandbox, map[string]*envVar{envWakes: {Value: strconv.Itoa(wakes)}}); err != nil {
+	if err := b.nodeOf(id).patchEnv(ctx, sandbox, map[string]*envVar{envWakes: {Value: strconv.Itoa(wakes)}}); err != nil {
 		return fmt.Errorf("record wake: %w", err)
 	}
 	if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
@@ -719,7 +797,7 @@ func (b *Backend) wake(ctx context.Context, id, sandbox string) error {
 
 // reread replaces machine id's row with sandbox's current one.
 func (b *Backend) reread(ctx context.Context, id, sandbox string) error {
-	r, err := b.api.get(ctx, sandbox)
+	r, err := b.nodeOf(id).get(ctx, sandbox)
 	if err != nil {
 		return err
 	}
@@ -749,14 +827,11 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 	var r row
 	var err error
 	if sandbox != "" {
-		r, err = b.api.get(ctx, sandbox)
+		node := b.nodeOf(id)
+		r, err = node.get(ctx, sandbox)
+		r.node = b.nodeAddr(node.addr())
 	} else {
-		var rows []row
-		if rows, err = b.api.find(ctx, metaMachine, id); err == nil && len(rows) == 0 {
-			err = machines.ErrNotFound
-		} else if err == nil {
-			r = rows[0]
-		}
+		r, err = b.find(ctx, id)
 	}
 	if errors.Is(err, machines.ErrNotFound) {
 		if err = b.forget(ctx, id, sandbox); err != nil {
@@ -768,7 +843,7 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 		return machines.Machine{}, err
 	}
 	r.Token = ""
-	if err := b.index(ctx, []row{r}, time.Time{}); err != nil {
+	if err := b.index(ctx, []row{r}); err != nil {
 		return machines.Machine{}, err
 	}
 	return b.cached(id)
@@ -827,11 +902,14 @@ func (b *Backend) forget(ctx context.Context, id, sandbox string) error {
 // refresh re-reads every claim, drops machines whose claim is gone and probes agents not yet seen.
 func (b *Backend) refresh(ctx context.Context) error {
 	listed := time.Now()
-	rows, err := b.api.list(ctx)
+	rows, answered, err := b.listMesh(ctx)
 	if err != nil {
 		return err
 	}
-	if err := b.index(ctx, rows, listed); err != nil {
+	if err := b.index(ctx, rows); err != nil {
+		return err
+	}
+	if err := b.dropUnlisted(ctx, rows, listed, answered); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -858,19 +936,18 @@ func (b *Backend) refresh(ctx context.Context) error {
 	return nil
 }
 
-// index merges rows, reading the env of unseen claims; a full list taken at listed, not zero, also drops what it lacks.
-func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error {
-	present := map[string]bool{}
+// index merges rows into the entries, reading the env of claims it has not seen.
+func (b *Backend) index(ctx context.Context, rows []row) error {
 	for _, r := range rows {
 		id := r.Metadata[metaMachine]
 		if id == "" {
 			continue
 		}
-		present[id] = true
 		b.mu.Lock()
 		e := b.entries[id]
 		known := e != nil && e.row != nil && e.row.ID == r.ID
-		unchanged := known && sameRow(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template
+		unchanged := known && sameRow(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template &&
+			(r.node == "" || e.ownerAddr == r.node)
 		b.mu.Unlock()
 		if unchanged {
 			continue
@@ -878,7 +955,7 @@ func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error
 		var env map[string]envVar
 		if !known {
 			var err error
-			if env, err = b.api.env(ctx, r.ID); err != nil {
+			if env, err = b.node(r.node).env(ctx, r.ID); err != nil {
 				return fmt.Errorf("read env of %s: %w", r.ID, err)
 			}
 		}
@@ -891,19 +968,32 @@ func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error
 			}
 			cur := r
 			e.row, e.image = &cur, r.Key.Template
+			if r.node != "" {
+				e.ownerAddr = r.node
+			}
 			return e, true
 		}); err != nil {
 			return err
 		}
 	}
-	if listed.IsZero() {
-		return nil
+	return nil
+}
+
+// dropUnlisted drops the machines whose node answered the list taken at listed without them, and those of a node that
+// left the mesh and answered no list for b.lostAfter; a machine whose row this process saw after the list stays.
+func (b *Backend) dropUnlisted(ctx context.Context, rows []row, listed time.Time, answered map[string]bool) error {
+	present := map[string]bool{}
+	for _, r := range rows {
+		present[r.Metadata[metaMachine]] = true
 	}
 	now := time.Now()
 	b.mu.Lock()
 	gone := map[string]string{}
 	for id, e := range b.entries {
-		if !present[id] && !e.busy(now) && e.row != nil && e.rowAt.Before(listed) {
+		if present[id] || e.busy(now) || e.row == nil || !e.rowAt.Before(listed) {
+			continue
+		}
+		if node := b.nodeAddr(e.ownerAddr); answered[node] || b.lostLocked(node, now) {
 			gone[id] = e.row.ID
 		}
 	}
@@ -914,6 +1004,136 @@ func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error
 		}
 	}
 	return nil
+}
+
+// listMesh lists the claims of the entry node and of every peer, each row naming its node, and returns the nodes that
+// answered; a failed entry node fails the list, a failed peer only leaves its rows out.
+func (b *Backend) listMesh(ctx context.Context) ([]row, map[string]bool, error) {
+	peers, err := b.api.peers(ctx)
+	if err != nil {
+		log.WithFunc("sandboxd.Backend.listMesh").Warnf(ctx, "list the peers of %s: %v", b.self, err)
+	}
+	nodes := []*client{b.api}
+	for _, peer := range peers {
+		if node := b.node(peer); node != b.api {
+			nodes = append(nodes, node)
+		}
+	}
+	lists := make([][]row, len(nodes))
+	errs := make([]error, len(nodes))
+	var g errgroup.Group
+	for i, node := range nodes {
+		g.Go(func() error {
+			lists[i], errs[i] = node.list(ctx)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	if errs[0] != nil {
+		return nil, nil, errs[0]
+	}
+	answered := map[string]bool{}
+	var rows []row
+	for i, node := range nodes {
+		addr := b.nodeAddr(node.addr())
+		if errs[i] != nil {
+			log.WithFunc("sandboxd.Backend.listMesh").Warnf(ctx, "list the claims of %s: %v", addr, errs[i])
+			continue
+		}
+		answered[addr] = true
+		for _, r := range lists[i] {
+			r.node = addr
+			rows = append(rows, r)
+		}
+	}
+	b.trackAway(peers, answered)
+	return rows, answered, nil
+}
+
+// find looks machine id up on the entry node, then on every peer.
+func (b *Backend) find(ctx context.Context, id string) (row, error) {
+	rows, err := b.api.find(ctx, metaMachine, id)
+	if err != nil {
+		return row{}, err
+	}
+	if len(rows) > 0 {
+		rows[0].node = b.self
+		return rows[0], nil
+	}
+	peers, err := b.api.peers(ctx)
+	if err != nil {
+		return row{}, err
+	}
+	for _, peer := range peers {
+		node := b.node(peer)
+		if rows, err = node.find(ctx, metaMachine, id); err == nil && len(rows) > 0 {
+			rows[0].node = b.nodeAddr(node.addr())
+			return rows[0], nil
+		}
+	}
+	return row{}, machines.ErrNotFound
+}
+
+// node returns the client of the node at addr, the entry node's for "" or its own address.
+func (b *Backend) node(addr string) *client {
+	addr = b.nodeAddr(addr)
+	if addr == b.self {
+		return b.api
+	}
+	b.nodeMu.Lock()
+	defer b.nodeMu.Unlock()
+	if c := b.nodes[addr]; c != nil {
+		return c
+	}
+	c, err := newClient(addr, b.opts.Token)
+	if err != nil {
+		return b.api
+	}
+	b.nodes[addr] = c
+	return c
+}
+
+// nodeOf returns the client of the node that holds machine id.
+func (b *Backend) nodeOf(id string) *client {
+	b.mu.Lock()
+	var addr string
+	if e := b.entries[id]; e != nil {
+		addr = e.ownerAddr
+	}
+	b.mu.Unlock()
+	return b.node(addr)
+}
+
+// nodeAddr names the node at addr as the backend keeps it, the entry node for "".
+func (b *Backend) nodeAddr(addr string) string {
+	if addr == "" || nodeURL(addr) == b.api.addr() {
+		return b.self
+	}
+	return nodeURL(addr)
+}
+
+// trackAway notes when a node that machines name stopped being a peer and answering the list.
+func (b *Backend) trackAway(peers []string, answered map[string]bool) {
+	member := map[string]bool{b.self: true}
+	for _, peer := range peers {
+		member[b.nodeAddr(peer)] = true
+	}
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, e := range b.entries {
+		node := b.nodeAddr(e.ownerAddr)
+		if _, ok := b.away[node]; !ok && !member[node] && !answered[node] {
+			b.away[node] = now
+		}
+	}
+	maps.DeleteFunc(b.away, func(node string, _ time.Time) bool { return member[node] || answered[node] })
+}
+
+// lostLocked reports whether node has been away from the mesh for lostAfter.
+func (b *Backend) lostLocked(node string, now time.Time) bool {
+	since, ok := b.away[node]
+	return ok && now.Sub(since) >= b.lostAfter
 }
 
 // publishLocked wakes the owners of the machines whose state, image, flavor, incarnation or meta changed since the last call, or that went away.
@@ -954,7 +1174,7 @@ func (b *Backend) probe(ctx context.Context, id string) {
 	b.mu.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	conn, err := b.api.dialPort(ctx, sandbox, b.opts.AgentPort)
+	conn, err := b.nodeOf(id).dialPort(ctx, sandbox, b.opts.AgentPort)
 	if err != nil {
 		return
 	}
@@ -970,22 +1190,33 @@ func (b *Backend) probe(ctx context.Context, id string) {
 	}
 }
 
-// renew extends the lease of every claim that is not archived.
+// renew extends the lease of every claim that is not archived, on its node, a few at a time and each with its own deadline.
 func (b *Backend) renew(ctx context.Context) error {
 	b.mu.Lock()
-	var sandboxes []string
+	leases := map[string]string{}
 	for _, e := range b.entries {
 		if e.row != nil && !e.row.Archived {
-			sandboxes = append(sandboxes, e.row.ID)
+			leases[e.row.ID] = e.ownerAddr
 		}
 	}
 	b.mu.Unlock()
+	var mu sync.Mutex
 	var errs []error
-	for _, sandbox := range sandboxes {
-		if err := b.api.verb(ctx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire}); err != nil && !isStatus(err, http.StatusConflict) {
-			errs = append(errs, err)
-		}
+	var g errgroup.Group
+	g.SetLimit(renewFanout)
+	for sandbox, node := range leases {
+		g.Go(func() error {
+			callCtx, cancel := context.WithTimeout(ctx, renewCallTimeout)
+			defer cancel()
+			if err := b.node(node).verb(callCtx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire}); err != nil && !isStatus(err, http.StatusConflict) {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+			return nil
+		})
 	}
+	_ = g.Wait()
 	return errors.Join(errs...)
 }
 
@@ -1117,7 +1348,7 @@ func (b *Backend) differences(ctx context.Context, only []string) ([]string, err
 	return differ, nil
 }
 
-func (b *Backend) loop(ctx context.Context, interval time.Duration, fn func(context.Context) error) {
+func (b *Backend) loop(ctx context.Context, interval, timeout time.Duration, fn func(context.Context) error) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -1126,7 +1357,7 @@ func (b *Backend) loop(ctx context.Context, interval time.Duration, fn func(cont
 			return
 		case <-ticker.C:
 		}
-		callCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		callCtx, cancel := context.WithTimeout(ctx, timeout)
 		if err := fn(callCtx); err != nil {
 			log.WithFunc("sandboxd.Backend.loop").Warnf(callCtx, "every %s: %v", interval, err)
 		}
