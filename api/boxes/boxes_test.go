@@ -439,6 +439,7 @@ type fakeMachines struct {
 	lists     int
 	revision  int64
 	ensureErr error
+	deleteErr error
 	addr      string
 	addrErr   error
 	execErr   error
@@ -624,6 +625,9 @@ func (f *fakeMachines) SetEgress(_ context.Context, id, upstream string) error {
 func (f *fakeMachines) Delete(_ context.Context, id string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	delete(f.machines, id)
 	f.deleted = append(f.deleted, id)
 	return nil

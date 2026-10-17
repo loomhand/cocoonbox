@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const operationColumns = "id, user_id, box, phase, park, gen, events, finished_at, expires_at, created_at"
+const operationColumns = "id, user_id, box, phase, park, gen, events, finished_at, expires_at, created_at, releasing"
 
 // Operation is one box operation and the events it logged, encoded by the service.
 type Operation struct {
@@ -24,6 +24,7 @@ type Operation struct {
 	// ExpiresAt ends the lease its process renews while it runs, so an unfinished one past it ran in a process that is gone.
 	ExpiresAt time.Time
 	CreatedAt time.Time
+	Releasing bool
 }
 
 // Operations returns the operations unfinished or finished after since.
@@ -58,11 +59,11 @@ func (s *Store) PutRunningOperation(ctx context.Context, op Operation) error {
 	return s.putOperation(ctx, op, "WHERE operations.finished_at IS NULL")
 }
 
-// FinishOperation ends unfinished operation id with edit's change of its events, rerunning edit after a concurrent write.
+// FinishOperation ends unfinished, unclaimed operation id with edit's change of its events, rerunning edit after a concurrent write.
 func (s *Store) FinishOperation(ctx context.Context, id string, edit func(events []byte) ([]byte, error)) (bool, error) {
 	for {
 		op, err := s.Operation(ctx, id)
-		if err != nil || !op.FinishedAt.IsZero() {
+		if err != nil || !op.FinishedAt.IsZero() || op.Releasing {
 			return false, err
 		}
 		events, err := edit(op.Events)
@@ -74,6 +75,15 @@ func (s *Store) FinishOperation(ctx context.Context, id string, edit func(events
 			return ended, err
 		}
 	}
+}
+
+// ClaimOperation marks unfinished operation id releasing, so FinishOperation no longer ends it, and reports whether it did.
+func (s *Store) ClaimOperation(ctx context.Context, id string) (bool, error) {
+	cmd, err := s.pool.Exec(ctx, "UPDATE operations SET releasing = true WHERE id = $1 AND finished_at IS NULL AND NOT releasing", id)
+	if err != nil {
+		return false, fmt.Errorf("claim operation %s: %w", id, err)
+	}
+	return cmd.RowsAffected() == 1, nil
 }
 
 // PurgeOperations removes the operations finished, or expired unfinished, before before.
@@ -88,7 +98,7 @@ func (s *Store) PurgeOperations(ctx context.Context, before time.Time) error {
 func (s *Store) finishOn(ctx context.Context, id string, old, events []byte) (bool, error) {
 	var ended bool
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		cmd, err := tx.Exec(ctx, "UPDATE operations SET events = $3, finished_at = now() WHERE id = $1 AND finished_at IS NULL AND events::text = $2",
+		cmd, err := tx.Exec(ctx, "UPDATE operations SET events = $3, finished_at = now() WHERE id = $1 AND finished_at IS NULL AND NOT releasing AND events::text = $2",
 			id, string(old), string(events))
 		if err != nil {
 			return fmt.Errorf("finish operation %s: %w", id, err)
@@ -120,7 +130,7 @@ func scanOperation(row pgx.CollectableRow) (Operation, error) {
 	var op Operation
 	var events string
 	var finished *time.Time
-	err := row.Scan(&op.ID, &op.User, &op.Box, &op.Phase, &op.Park, &op.Gen, &events, &finished, &op.ExpiresAt, &op.CreatedAt)
+	err := row.Scan(&op.ID, &op.User, &op.Box, &op.Phase, &op.Park, &op.Gen, &events, &finished, &op.ExpiresAt, &op.CreatedAt, &op.Releasing)
 	op.Events = []byte(events)
 	if finished != nil {
 		op.FinishedAt = *finished

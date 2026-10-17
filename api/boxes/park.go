@@ -147,12 +147,7 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 	}
 	unlock := s.lockStarts(op.user)
 	defer unlock()
-	var detail string
-	if err == nil {
-		detail = fmt.Sprintf("parked: snapshot %s, %.1f MiB logical, %.1f MiB uploaded in %s; machine %s removed; the next Ensure restores it",
-			rec.ID, float64(rec.LogicalBytes)/mib, float64(rec.UploadedBytes)/mib, time.Since(start).Round(time.Second), m.ID)
-	}
-	if s.ops.activeFor(op.boxID) != op || err == nil && !s.ops.release(op.ctx, op, detail) {
+	if s.ops.activeFor(op.boxID) != op || err == nil && !s.ops.claim(op.ctx, op) {
 		logger.Infof(op.ctx, "a client took %s over; it stays", m.ID)
 		return
 	}
@@ -168,7 +163,8 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 		return
 	}
 	logger.Infof(op.ctx, "parked: removed %s after snapshot %s", m.ID, rec.ID)
-	op.succeed(detail)
+	op.succeed(fmt.Sprintf("parked: snapshot %s, %.1f MiB logical, %.1f MiB uploaded; machine %s removed in %s; the next Ensure restores it",
+		rec.ID, float64(rec.LogicalBytes)/mib, float64(rec.UploadedBytes)/mib, m.ID, time.Since(start).Round(time.Second)))
 }
 
 func (s *Service) parking(box string) bool {
