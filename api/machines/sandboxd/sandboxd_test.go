@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -28,7 +29,23 @@ const (
 	template  = "cbdesk:v8"
 )
 
-var xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
+var (
+	xlarge = machines.Flavor{VCPUs: 4, MemoryMiB: 8192, DiskGiB: 40}
+
+	onSharedTable bool
+)
+
+// TestMain runs every test on a backend in memory, then on a shared table when COCOONBOX_TEST_DSN names a server.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if os.Getenv("COCOONBOX_TEST_DSN") != "" {
+		onSharedTable = true
+		if shared := m.Run(); shared != 0 {
+			code = shared
+		}
+	}
+	os.Exit(code)
+}
 
 func TestNewRefusesAFlavorThatIsNoTier(t *testing.T) {
 	fake := newFakeSandboxd(t)
@@ -697,6 +714,111 @@ func TestTheLedgerMirrorsEveryMachineAndVerifyRepairsIt(t *testing.T) {
 	}
 }
 
+func TestTwoBackendsOnASharedTableClaimOnceAndSeeEachOthersChanges(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	a, b := newSharedBackend(t, fake, db), newSharedBackend(t, fake, db)
+	var wg sync.WaitGroup
+	for _, be := range []*Backend{a, b} {
+		wg.Go(func() {
+			if _, _, err := be.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge}); err != nil {
+				t.Errorf("Ensure: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	waitState(t, a, boxID, 1, machines.StateRunning)
+	waitState(t, b, boxID, 1, machines.StateRunning)
+	if n := fake.count("claim"); n != 1 {
+		t.Fatalf("claims = %d, want one for two concurrent Ensures", n)
+	}
+	if err := b.SetMeta(t.Context(), boxID, "slept", "7"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	waitFor(t, "a sees b's meta", func() bool {
+		m, err := a.cached(boxID)
+		return err == nil && m.Meta["slept"] == "7"
+	})
+	m, err := a.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, b, boxID, m.Revision, machines.StateHibernated)
+	if _, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge}); err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure of the hibernated machine on b = %v, %v", action, err)
+	}
+	running := waitState(t, a, boxID, m.Revision+1, machines.StateRunning)
+	c := newSharedBackend(t, fake, db)
+	got, err := c.cached(boxID)
+	if err != nil || got.Incarnation != running.Incarnation || got.Meta["slept"] != "7" || got.Revision != running.Revision {
+		t.Errorf("a third backend reads %+v, %v, want %+v", got, err, running)
+	}
+}
+
+func TestAKeyOneBackendWroteIsPrunedByTheOther(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	a, b := newSharedBackend(t, fake, db), newSharedBackend(t, fake, db)
+	claimRunning(t, a)
+	key := &machines.Secret{Value: "k1", Hosts: []string{"api.example.com"}, Header: "Authorization"}
+	if err := a.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"CBV_k": key}, Prune: "CBV_"}); err != nil {
+		t.Fatalf("SetCredentials on a: %v", err)
+	}
+	waitFor(t, "b knows the key name", func() bool {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if e := b.entries[boxID]; e != nil {
+			_, ok := e.env["CBV_k"]
+			return ok
+		}
+		return false
+	})
+	if err := b.SetCredentials(t.Context(), boxID, machines.Credentials{Prune: "CBV_"}); err != nil {
+		t.Fatalf("SetCredentials on b: %v", err)
+	}
+	if _, ok := fake.env()["CBV_k"]; ok {
+		t.Error("the key a wrote stayed after b pruned the vault names")
+	}
+}
+
+func TestARecreatedMachineReachesABackendThatCachedTheOldOne(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	a, b := newSharedBackend(t, fake, db), newSharedBackend(t, fake, db)
+	for range 3 {
+		m := claimRunning(t, a)
+		waitState(t, b, boxID, m.Revision, machines.StateRunning)
+		if err := a.Delete(t.Context(), boxID); err != nil {
+			t.Fatalf("Delete: %v", err)
+		}
+	}
+	m := claimRunning(t, b)
+	if got := waitState(t, a, boxID, m.Revision, machines.StateRunning); got.Revision != 1 {
+		t.Errorf("a sees revision %d of the recreated machine, want 1", got.Revision)
+	}
+}
+
+func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	a := newSharedBackend(t, fake, db)
+	claimRunning(t, a)
+	if _, err := db.UpdateMachine(t.Context(), boxID, func(m *cluster.Machine, _ bool) (bool, error) {
+		m.Op, m.OpUntil, m.Revision = opHibernate, time.Now().Add(-time.Second), m.Revision+1
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine: %v", err)
+	}
+	waitFor(t, "a takes the dead op as ended", func() bool {
+		m, err := a.cached(boxID)
+		return err == nil && m.State == machines.StateRunning && m.Revision == 2
+	})
+	if _, err := a.Hibernate(t.Context(), boxID); err != nil {
+		t.Fatalf("Hibernate over a dead op: %v", err)
+	}
+	waitState(t, a, boxID, 3, machines.StateHibernated)
+}
+
 type fakeSandbox struct {
 	row   row
 	token string
@@ -1024,6 +1146,9 @@ func newFakeSandboxd(t *testing.T) *fakeSandboxd {
 
 func newTestBackend(t *testing.T, fake *fakeSandboxd) *Backend {
 	t.Helper()
+	if onSharedTable {
+		return newSharedBackend(t, fake, clustertest.Open(t))
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443})
@@ -1031,6 +1156,28 @@ func newTestBackend(t *testing.T, fake *fakeSandboxd) *Backend {
 		t.Fatalf("New: %v", err)
 	}
 	return b
+}
+
+func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Backend {
+	t.Helper()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Shared: db})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return b
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: not within 5 s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func claimRunning(t *testing.T, b *Backend) machines.Machine {
