@@ -110,6 +110,11 @@ func (s *Service) RestorePaths(ctx context.Context, req *controlv1.RestorePathsR
 	if len(req.GetPaths()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "no path to restore")
 	}
+	unlock, err := s.lockShared(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	paths := make([]boxPath, 0, len(req.GetPaths()))
 	for _, raw := range req.GetPaths() {
 		bp, perr := parseBoxPath(raw)

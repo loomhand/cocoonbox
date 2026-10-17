@@ -472,7 +472,7 @@ func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 		return l.Unlock, nil
 	}
 	logger := log.WithFunc("boxes.Service.lockStarts").WithField("user", user)
-	unlock, err := s.userLocks.LockUser(ctx, user)
+	unlock, err := s.userLocks.Lock(ctx, "starts:"+user)
 	what := "lock the starts"
 	if err == nil {
 		if err = s.syncUser(ctx, user); err != nil {
@@ -488,16 +488,26 @@ func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 		logger.Error(ctx, err, what)
 		return nil, status.Errorf(codes.Unavailable, "%s failed", what)
 	}
+	held := time.Now()
 	return func() {
-		// The next start in another process reads the operations from the table, so they reach it before the lock does.
-		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
-		if err := s.mirror.Flush(flushCtx); err != nil {
-			logger.Warnf(ctx, "the next start elsewhere may miss this one's operations: %v", err)
+		// The next holder in another process reads the operations from the table, so the ones written under the lock reach it first.
+		if keys := s.ops.heldSince(user, held); len(keys) > 0 {
+			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
+			if err := s.mirror.FlushKeys(flushCtx, keys); err != nil {
+				logger.Error(ctx, err, "write the operations of the starts before the lock goes")
+			}
+			cancel()
 		}
-		cancel()
 		unlock()
 		l.Unlock()
 	}, nil
+}
+
+func (s *Service) lockShared(ctx context.Context, user string) (func(), error) {
+	if s.userLocks == nil {
+		return func() {}, nil
+	}
+	return s.lockStarts(ctx, user)
 }
 
 // syncUser reads user's machines, operations and heads from the shared table, so a start under the user's lock never acts on what this process's cache has yet to learn.

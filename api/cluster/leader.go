@@ -43,13 +43,13 @@ func (s *Store) Lead(ctx context.Context, lead Work) {
 	}
 }
 
-// LockUser holds the advisory lock of user's starts until the returned func runs, on a connection of the lock pool.
-func (s *Store) LockUser(ctx context.Context, user string) (func(), error) {
+// Lock holds the advisory lock of name in every process until the returned func runs, on a connection of the lock pool.
+func (s *Store) Lock(ctx context.Context, name string) (func(), error) {
 	conn, err := s.locks.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	key := userLock(user)
+	key := lockKey(name)
 	drop := func() {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
 		defer cancel()
@@ -58,7 +58,7 @@ func (s *Store) LockUser(ctx context.Context, user string) (func(), error) {
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
 		// A canceled wait may still have taken the lock, which only closing the session drops.
 		drop()
-		return nil, fmt.Errorf("lock the starts of %s: %w", user, err)
+		return nil, fmt.Errorf("lock %s: %w", name, err)
 	}
 	return func() {
 		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
@@ -120,8 +120,8 @@ func (s *Store) leadOnce(ctx context.Context, lead Work) (bool, error) {
 	return true, err
 }
 
-func userLock(user string) int64 {
+func lockKey(name string) int64 {
 	h := fnv.New64a()
-	_, _ = h.Write([]byte("cocoonbox-starts:" + user))
+	_, _ = h.Write([]byte("cocoonbox-lock:" + name))
 	return int64(h.Sum64()) //nolint:gosec // a lock key, its sign does not matter
 }

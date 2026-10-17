@@ -22,6 +22,11 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	if err != nil {
 		return nil, err
 	}
+	unlock, err := s.lockShared(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	m, err := s.runningMachine(ctx, box, user)
 	if err != nil {
 		return nil, err
@@ -99,6 +104,20 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 	}
 	restored := time.Since(start)
 
+	unlock, err := s.lockShared(op.ctx, user)
+	if err != nil {
+		logger.Error(op.ctx, err, "lock the starts before removing the old machine")
+		s.discard(op, created.ID)
+		op.fail("rebase failed; the old machine stays")
+		return
+	}
+	defer unlock()
+	if s.ops.activeFor(op.boxID) != op || !s.ops.claim(op.ctx, op) {
+		logger.Infof(op.ctx, "another operation took %s over; the old machine stays", op.boxID)
+		s.discard(op, created.ID)
+		op.fail("superseded; the old machine stays")
+		return
+	}
 	if err := s.deleteMachine(op.ctx, old.ID); err != nil {
 		logger.Error(op.ctx, err, "delete old machine")
 		op.fail("state restored into the new machine, but removing the old machine failed")
