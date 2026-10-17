@@ -790,6 +790,72 @@ func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) 
 	}
 }
 
+func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, collector := st.layer(agent), st.layer(agent)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	noProgress := func(*agentv1.TransferProgress) {}
+	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
+		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
+		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+			t.Fatalf("save %v: %v", chunks, err)
+		}
+	}
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c3")}
+	var collected error
+	agent.onUpload = func(machines.Endpoint) {
+		agent.onUpload = nil
+		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), func(string) bool { return true })
+	}
+	_, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	if collected != nil {
+		t.Fatalf("collect during the save: %v", collected)
+	}
+	var idx chunkIndex
+	if gerr := getJSON(t.Context(), st, p.index(), &idx); gerr != nil || idx.Generation != 1 {
+		t.Fatalf("index after the gc pass = %+v, %v, want generation 1", idx, gerr)
+	}
+	if !errors.Is(err, errIndexCollected) {
+		t.Errorf("save planned before the gc pass = %v, want errIndexCollected", err)
+	}
+}
+
+func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, collector := st.layer(agent), st.layer(agent)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	noProgress := func(*agentv1.TransferProgress) {}
+	live := func(string) bool { return true }
+	save := func(chunks ...string) {
+		t.Helper()
+		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
+		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+			t.Fatalf("save %v: %v", chunks, err)
+		}
+	}
+	save("c1")
+	if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+		t.Fatalf("collect that writes the timeline: %v", err)
+	}
+	save("c2")
+	saved := false
+	st.before = func(op, key string) {
+		if op != "putif" || key != p.timeline() || saved {
+			return
+		}
+		saved = true
+		save("c3")
+	}
+	if _, err := st.layer(agent).collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), live); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("collect across a timeline append = %v, want ErrStale", err)
+	}
+	if !st.has(p.record(snapshotID(1))) {
+		t.Error("the gc deleted a record after its timeline write lost")
+	}
+}
+
 type stateEnv struct {
 	ctx   context.Context
 	svc   *Service
