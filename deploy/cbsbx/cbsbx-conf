@@ -19,6 +19,8 @@ CONNECT_PORT = 18091
 APT_PORT = 3142
 RESIDENTIAL = "10.203.1.2"
 STORAGE = "40G"
+SSH_PORT = 22
+WEB_PORTS = [80, 443]
 WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
           "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
           "sleep 0.2; done; exit 1")
@@ -38,12 +40,15 @@ if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
     sys.exit(__doc__)
 gw = {"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"}
 connect = {"host": GATEWAY, "ports": [CONNECT_PORT], "secret": "CB_CONNECT_KEY"}
-inject = {"host": "*", "intercept": "inject"}
-rest = [{"host": "*"}]
-egress = {"allow": [gw, *rest]}
-inject_egress = {"allow": [gw, inject, *rest]}
+apt = {"host": GATEWAY, "ports": [APT_PORT]}
+inject = {"host": "*", "intercept": "inject", "ports": WEB_PORTS}
+public = {"host": "*", "ports": [SSH_PORT, *WEB_PORTS]}
+egress = {"allow": [gw, apt, public]}
+inject_egress = {"allow": [gw, apt, inject, public]}
 # the door key rule precedes the inject rule, since a plain request takes the first rule that matches
-connect_egress = {"allow": [gw, connect, inject, *rest]}
+connect_egress = {"allow": [gw, connect, apt, inject, public]}
+# the tenant class narrows nothing; the pool rules hold the ports
+tenant_egress = {"allow": [gw, {"host": "*"}]}
 pools = []
 for arg in sys.argv[1:]:
     template, warm = arg.rsplit("=", 1)
@@ -73,7 +78,7 @@ conf = {
     "audit_log": True,
     "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{APT_PORT}"],
     "egress_upstream": {"claim_env": "EGRESS_UPSTREAM", "allow": [f"{RESIDENTIAL}/32"]},
-    "egress_classes": [{"name": "cbdesk", "egress": egress}],
+    "egress_classes": [{"name": "cbdesk", "egress": tenant_egress}],
     "secrets": [{"name": "GW_KEY", "header": "Authorization"}, {"name": "CB_CONNECT_KEY", "header": "Authorization"}],
     "pools": pools,
 }
