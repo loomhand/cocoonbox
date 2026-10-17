@@ -12,3 +12,5 @@
 /dist-extra/
 /.build/
 /Package.resolved
+/image/android/base/docker-data-*.tar
+/image/android/base/redroid-image.tar
