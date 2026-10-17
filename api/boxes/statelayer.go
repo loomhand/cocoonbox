@@ -143,7 +143,7 @@ type stateLayer struct {
 	// mirror, when set, gets every committed head and, as nil, every forgotten one.
 	mirror func(p statePath, h *head)
 	// shared, when set, holds the heads: a commit swaps the head on the version its save read.
-	shared SharedHeads
+	shared *cluster.Store
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
