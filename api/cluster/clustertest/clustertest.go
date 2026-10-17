@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -39,6 +40,18 @@ func Open(t testing.TB) *cluster.Store {
 		_ = exec(base, "DROP DATABASE "+name+" WITH (FORCE)")
 	})
 	return st
+}
+
+// WaitFor fails t unless cond holds within 5 s, as a notify takes effect.
+func WaitFor(t testing.TB, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: not within 5 s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 func exec(dsn, sql string) error {

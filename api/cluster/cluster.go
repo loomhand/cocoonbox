@@ -21,6 +21,10 @@ const (
 	ChannelHeads      = "cocoonbox_heads"
 	ChannelOperations = "cocoonbox_operations"
 
+	// Lease bounds how long a machine op or an operation outlives its process, which renews it every LeaseRenew while it runs.
+	Lease      = time.Minute
+	LeaseRenew = 20 * time.Second
+
 	migrationLock = 0x6362636c // "cbcl"
 	listenRetry   = 5 * time.Second
 )

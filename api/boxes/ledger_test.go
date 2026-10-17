@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"bytes"
 	"encoding/json/v2"
 	"slices"
 	"testing"
@@ -86,7 +87,7 @@ func TestBackfillHeadsMakesTheLedgerMatchTheStore(t *testing.T) {
 		t.Fatalf("ledger heads after the backfill = %+v, %v", rows, err)
 	}
 	for _, r := range rows {
-		if string(r.Head) != string(headBytes(head{Latest: snapshotID(2), SavedAtMs: 200})) {
+		if !bytes.Equal(r.Head, headBytes(head{Latest: snapshotID(2), SavedAtMs: 200})) {
 			t.Errorf("ledger head of %s = %s, want the store's", r.Box, r.Head)
 		}
 	}

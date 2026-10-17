@@ -23,9 +23,6 @@ const (
 	stateTimeout       = time.Hour
 	operationRetention = time.Hour
 	sharedTimeout      = 5 * time.Second
-	// opLease bounds how long a shared operation outlives its process, which renews it every opRenew while it runs.
-	opLease = time.Minute
-	opRenew = 20 * time.Second
 )
 
 var ended = func() context.Context {
@@ -39,7 +36,7 @@ type SharedOperations interface {
 	Operation(ctx context.Context, id string) (cluster.Operation, error)
 	Operations(ctx context.Context, since time.Time) ([]cluster.Operation, error)
 	PutRunningOperation(ctx context.Context, op cluster.Operation) error
-	FinishOperation(ctx context.Context, id string, edit func(events []byte) ([]byte, error)) (bool, error)
+	FinishOperation(ctx context.Context, id string, edit cluster.EventsEdit) (bool, error)
 }
 
 type eventRecord struct {
@@ -265,7 +262,7 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 	op.id, op.changed, op.watchers, op.mirror, op.created = rand.Text(), make(chan struct{}), r.watchers, r.mirror, time.Now()
 	op.expires = op.created.Add(timeout)
 	if r.shared != nil {
-		op.lease = op.created.Add(opLease)
+		op.lease = op.created.Add(cluster.Lease)
 	}
 	op.ctx, op.stop = context.WithDeadline(base, op.expires)
 	if cur != nil && !cur.remote {
@@ -441,7 +438,7 @@ func (r *operations) end(ctx context.Context, id, detail string) {
 
 // renew extends the leases of this process's operations until ctx ends, then ends them in the shared table.
 func (r *operations) renew(ctx context.Context) {
-	ticker := time.NewTicker(opRenew)
+	ticker := time.NewTicker(cluster.LeaseRenew)
 	defer ticker.Stop()
 	for {
 		select {
@@ -455,7 +452,7 @@ func (r *operations) renew(ctx context.Context) {
 		for _, op := range r.running() {
 			op.mu.Lock()
 			if op.finishedAt.IsZero() {
-				op.lease = time.Now().Add(opLease)
+				op.lease = time.Now().Add(cluster.Lease)
 				op.mirrorLocked()
 			}
 			op.mu.Unlock()
