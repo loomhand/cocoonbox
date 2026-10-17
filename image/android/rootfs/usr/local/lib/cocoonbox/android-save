@@ -1,0 +1,23 @@
+#!/bin/bash
+# Writes Android's /data to ~user/.android/data.tar from a read-only snapshot while Android runs; the tar and its sha256 replace the old pair by rename.
+set -euo pipefail
+TOP=/var/lib/cocoonbox-android/fs
+SNAP=$TOP/save
+DIR=/home/user/.android
+OUT=$DIR/data.tar
+TMP=$DIR/.cb-restore-android-data.tar
+
+mountpoint -q "$TOP" || exit 0
+exec 9>/run/cocoonbox-android.lock
+flock 9
+install -d -o user -g user -m 0700 "$DIR"
+btrfs -q subvolume delete "$SNAP" >/dev/null 2>&1 || true
+btrfs -q subvolume snapshot -r "$TOP/data" "$SNAP"
+trap 'btrfs -q subvolume delete "$SNAP" >/dev/null 2>&1 || true; rm -f "$TMP" "$TMP.sha256"' EXIT
+sum=$(tar -C "$SNAP" --sort=name --numeric-owner --xattrs --xattrs-include='*' --warning=no-file-ignored \
+	--exclude=./dalvik-cache --exclude=./cache -cf - . | tee "$TMP" | sha256sum | cut -d' ' -f1)
+echo "$sum  data.tar" > "$TMP.sha256"
+chown user:user "$TMP" "$TMP.sha256"
+chmod 0600 "$TMP" "$TMP.sha256"
+mv -f "$TMP" "$OUT"
+mv -f "$TMP.sha256" "$OUT.sha256"

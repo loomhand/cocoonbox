@@ -1,0 +1,53 @@
+#!/bin/bash
+# Applies ~user/.android/data.tar to Android's /data once per tar: a tar its sha256 does not match is refused, and the
+# old /data stays unless the whole tar extracts; every failure is logged and leaves Android on its old /data.
+set -uo pipefail
+TOP=/var/lib/cocoonbox-android/fs
+DIR=/home/user/.android
+STAMP=/var/lib/cocoonbox-android/applied.sha256
+DATA=/var/lib/redroid-data
+
+log() { echo "android-apply: $*" >&2; }
+
+# Android's own shutdown ends the container cleanly, where docker stop's SIGTERM reaches only the container's shell;
+# the docker stop after it keeps the restart policy from starting Android on the old /data
+stop_android() {
+	timeout 10 docker exec redroid /system/bin/setprop sys.powerctl shutdown >/dev/null 2>&1 || true
+	timeout 30 docker wait redroid >/dev/null 2>&1 || true
+	docker stop -t 1 redroid >/dev/null || log "docker stop redroid failed"
+}
+
+[ -f "$DIR/data.tar" ] || exit 0
+exec 9>/run/cocoonbox-android.lock
+flock 9
+sum=$(cut -d' ' -f1 "$DIR/data.tar.sha256" 2>/dev/null) || sum=none
+[ "$sum" != "$(cat "$STAMP" 2>/dev/null)" ] || exit 0
+if ! (cd "$DIR" && sha256sum --quiet -c data.tar.sha256 >/dev/null 2>&1); then
+	log "refused data.tar $sum: it does not match data.tar.sha256; /data stays"
+	exit 0
+fi
+/usr/local/lib/cocoonbox/android-mount || { log "mount /data failed"; exit 0; }
+running=false
+if systemctl -q is-active docker.service; then
+	running=true
+	stop_android
+fi
+btrfs -q subvolume delete "$TOP/new" >/dev/null 2>&1 || true
+if btrfs -q subvolume create "$TOP/new" &&
+	tar -C "$TOP/new" --numeric-owner --xattrs --xattrs-include='*' -xpf "$DIR/data.tar"; then
+	umount "$DATA" &&
+		btrfs -q subvolume delete "$TOP/data" &&
+		mv "$TOP/new" "$TOP/data" &&
+		mount --bind "$TOP/data" "$DATA" &&
+		echo "$sum" > "$STAMP" &&
+		log "applied data.tar $sum" ||
+		log "swap to data.tar $sum failed"
+else
+	log "extract of data.tar $sum failed; /data stays"
+	btrfs -q subvolume delete "$TOP/new" >/dev/null 2>&1 || true
+fi
+mountpoint -q "$DATA" || mount --bind "$TOP/data" "$DATA"
+if [ "$running" = true ]; then
+	docker start redroid >/dev/null || log "docker start redroid failed"
+fi
+exit 0

@@ -1,0 +1,10 @@
+// cbagent may start, stop and restart the desktop session unit only (State.Restore swaps /home/user around it)
+polkit.addRule(function(action, subject) {
+	if (action.id == "org.freedesktop.systemd1.manage-units" &&
+	    subject.user == "cbagent" &&
+	    action.lookup("unit") == "cocoonbox-session.service") {
+		var verb = action.lookup("verb");
+		if (verb == "start" || verb == "stop" || verb == "restart")
+			return polkit.Result.YES;
+	}
+});

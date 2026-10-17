@@ -1,11 +1,16 @@
 #!/bin/bash
-# Starts docker, whose baked redroid container cold-boots Android, gives Android DNS and the egress proxy, then starts the screen.
+# Cold-boots Android in the baked redroid container, gives it DNS and the egress proxy, then starts the screen.
 set -euo pipefail
 S=127.0.0.1:5555
 BRIDGE=172.18.0.1
 PROXY=$BRIDGE:3128
 
+exec 9>/run/cocoonbox-android.lock
+flock 9
+/usr/local/lib/cocoonbox/android-mount
 systemctl start docker.service
+docker start redroid >/dev/null
+flock -u 9
 for p in udp tcp; do
 	iptables -t nat -C PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53" 2>/dev/null ||
 		iptables -t nat -I PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53"

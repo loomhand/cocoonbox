@@ -39,6 +39,12 @@ The box has no NIC. Android on the docker bridge reaches silkd's proxy through `
 
 On the desk wire a window is an app's activity or dialog titled `<title> - <package>`, and an element id is `package:path:role:name`, since a list reuses its rows as it scrolls and an app recreates its window on a theme change. A press scrolls an off-screen row into view. Only one accessibility client runs at a time, so `uiautomator dump` fails while the UI server runs.
 
+## State
+
+Android's `/data` is a btrfs subvolume in a sparse loop image (`android-mount`). A quiesced save (Rebase, Delete, SaveState, park) runs `session-save`, which takes a read-only snapshot while Android runs and writes it as a plain tar, sorted by name with numeric owners and without `dalvik-cache` and `cache`, to `/home/user/.android/data.tar` with its sha256, both by rename; the `home` root then carries it. Live saves every 15 minutes and idle hibernation do not refresh it, so after a restore `/data` is as of the last quiesced save.
+
+Restore stops and starts `cocoonbox-session.service`, which runs `android-apply`: a tar whose sha256 does not match, or that was applied before, is left alone; otherwise Android shuts down, the tar extracts into a new subvolume, and only a whole extract replaces `/data`. On any failure Android boots on its old `/data` and the journal says why. A Rebase from an Android image without this unit fails at the restore and the api keeps the box on its old image.
+
 ## Pool
 
 `cbsbx-conf` gives a `cbdroid` pool a warmup that waits for the agent only (`ANDROID_FAMILIES`).
