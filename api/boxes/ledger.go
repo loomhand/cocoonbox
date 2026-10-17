@@ -154,7 +154,8 @@ func (s *Service) headDifferences(ctx context.Context) ([]statePath, []statePath
 
 // operationDifferences returns the ids of the operations whose ledger row is missing or differs.
 func (s *Service) operationDifferences(ctx context.Context) ([]string, error) {
-	rows, err := s.ledger.Operations(ctx, time.Now().Add(-operationRetention))
+	since := time.Now().Add(-operationRetention)
+	rows, err := s.ledger.Operations(ctx, since)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +168,9 @@ func (s *Service) operationDifferences(ctx context.Context) ([]string, error) {
 		op.mu.Lock()
 		want := op.recordLocked()
 		op.mu.Unlock()
+		if !want.FinishedAt.IsZero() && !want.FinishedAt.After(since) {
+			continue
+		}
 		got, ok := have[want.ID]
 		if !ok || !sameOperation(want, got) {
 			differ = append(differ, want.ID)
