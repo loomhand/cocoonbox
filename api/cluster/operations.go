@@ -64,9 +64,9 @@ func (s *Store) PutOperation(ctx context.Context, op Operation) error {
 	})
 }
 
-// PurgeOperations removes the operations finished before before.
+// PurgeOperations removes the operations finished, or expired unfinished, before before.
 func (s *Store) PurgeOperations(ctx context.Context, before time.Time) error {
-	if _, err := s.pool.Exec(ctx, "DELETE FROM operations WHERE finished_at < $1", before); err != nil {
+	if _, err := s.pool.Exec(ctx, "DELETE FROM operations WHERE finished_at < $1 OR finished_at IS NULL AND expires_at < $1", before); err != nil {
 		return fmt.Errorf("purge operations: %w", err)
 	}
 	return nil
