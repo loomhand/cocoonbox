@@ -146,7 +146,7 @@ func TestGCKeepsPinnedSnapshots(t *testing.T) {
 		env.agent.chunks = hexIDs(chunks...)
 		env.save(t)
 	}
-	unpin := env.svc.state.pin(p, snapshotID(1))
+	unpin, _ := env.svc.state.pin(t.Context(), p, snapshotID(1))
 	env.collect(t, GCOptions{DeleteBatch: 1000}, 40*24*time.Hour)
 	if !env.store.has(p.record(snapshotID(1))) || !env.store.has(p.chunk(hexID("c1"))) {
 		t.Error("the GC removed a pinned snapshot")

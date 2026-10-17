@@ -377,6 +377,25 @@ func TestTheLeaderLeadsWhileStartLocksHoldEveryLockConnection(t *testing.T) {
 	}
 }
 
+func TestAPinHoldsItsSnapshotUntilDeletedOrExpired(t *testing.T) {
+	st := clustertest.Open(t)
+	if err := st.PutPin(t.Context(), "p-1", "u-1", "cb-1", "s-1", time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("PutPin: %v", err)
+	}
+	if err := st.PutPin(t.Context(), "p-2", "u-1", "cb-1", "s-2", time.Now().Add(-time.Second)); err != nil {
+		t.Fatalf("PutPin expired: %v", err)
+	}
+	if pins, err := st.Pins(t.Context(), "u-1", "cb-1"); err != nil || !slices.Equal(pins, []string{"s-1"}) {
+		t.Fatalf("Pins = %v, %v; want the live pin only", pins, err)
+	}
+	if err := st.DeletePin(t.Context(), "p-1"); err != nil {
+		t.Fatalf("DeletePin: %v", err)
+	}
+	if pins, err := st.Pins(t.Context(), "u-1", "cb-1"); err != nil || len(pins) != 0 {
+		t.Errorf("Pins after the delete = %v, %v", pins, err)
+	}
+}
+
 func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 	a, dsn := clustertest.OpenDSN(t)
 	b, err := cluster.Open(t.Context(), dsn)

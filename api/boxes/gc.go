@@ -154,7 +154,10 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	if err != nil {
 		return nil, nil, err
 	}
-	keep := l.pinned(p)
+	keep, err := l.pinned(ctx, p)
+	if err != nil {
+		return nil, nil, err
+	}
 	if h.Latest != "" {
 		keep[h.Latest] = true
 	}

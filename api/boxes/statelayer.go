@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,6 +33,8 @@ const (
 	commitAttempts   = 3
 	commitRetryDelay = time.Second
 	staleAttempts    = 8
+	// pinTTL outlasts the longest operation that holds a pin, should its process die before it unpins.
+	pinTTL = stateTimeout + 10*time.Minute
 )
 
 var (
@@ -437,30 +440,57 @@ func (l *stateLayer) addToTimeline(ctx context.Context, p statePath, e timelineE
 }
 
 // pin keeps snapshot id of p's box from pruning until the returned func runs.
-func (l *stateLayer) pin(p statePath, id string) func() {
+func (l *stateLayer) pin(ctx context.Context, p statePath, id string) (func(), error) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	if l.pins[p] == nil {
 		l.pins[p] = map[string]int{}
 	}
 	l.pins[p][id]++
-	return func() {
+	l.mu.Unlock()
+	release := func() {
 		l.mu.Lock()
 		defer l.mu.Unlock()
 		if l.pins[p][id]--; l.pins[p][id] == 0 {
 			delete(l.pins[p], id)
 		}
 	}
+	if l.shared == nil {
+		return release, nil
+	}
+	pinID := rand.Text()
+	if err := l.shared.PutPin(ctx, pinID, p.user, p.box, id, time.Now().Add(pinTTL)); err != nil {
+		release()
+		return func() {}, err
+	}
+	return func() {
+		release()
+		unpinCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
+		defer cancel()
+		if err := l.shared.DeletePin(unpinCtx, pinID); err != nil {
+			log.WithFunc("boxes.stateLayer.pin").Warnf(ctx, "the pin of snapshot %s holds until it expires: %v", id, err)
+		}
+	}, nil
 }
 
-func (l *stateLayer) pinned(p statePath) map[string]bool {
+// pinned returns the snapshots of p's box that this process's pins and, with a shared table, every process's keep.
+func (l *stateLayer) pinned(ctx context.Context, p statePath) (map[string]bool, error) {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	out := map[string]bool{}
 	for id := range l.pins[p] {
 		out[id] = true
 	}
-	return out
+	l.mu.Unlock()
+	if l.shared == nil {
+		return out, nil
+	}
+	ids, err := l.shared.Pins(ctx, p.user, p.box)
+	if err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		out[id] = true
+	}
+	return out, nil
 }
 
 func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
