@@ -33,7 +33,6 @@ final class ScreenController {
     @ObservationIgnored private var screen: LiveScreen?
     @ObservationIgnored private var connection: BoxConnection?
     @ObservationIgnored private var copiedAt: Date?
-    @ObservationIgnored private var pause = ScreenPause()
     // CB_PASTEBOARD names a private pasteboard, so test runs leave the user's clipboard alone.
     @ObservationIgnored let pasteboard = ProcessInfo.processInfo.environment["CB_PASTEBOARD"].map { NSPasteboard(name: .init($0)) } ?? .general
 
@@ -64,23 +63,8 @@ final class ScreenController {
 
     func stop() {
         connection = nil
-        pause = ScreenPause()
         screen?.stop()
         takeOver = false
-    }
-
-    // windowVisible stops the screen while its window is not visible and starts it again when it is.
-    func windowVisible(_ visible: Bool) {
-        switch pause.window(visible: visible, started: connection != nil) {
-        case .pause:
-            Perf.mark("screen_pause", "window hidden")
-            screen?.stop()
-        case .resume:
-            Perf.mark("screen_pause", "window shown")
-            if let connection { screen?.start(connection) }
-        case .none:
-            break
-        }
     }
 
     func reopen() {
@@ -197,6 +181,7 @@ final class LiveScreenContainer: NSView, NSMenuItemValidation {
         self.screen = screen
         addSubview(screen.view, positioned: .below, relativeTo: overlay)
         needsLayout = true
+        reportVisibility()
     }
 
     override func layout() {
@@ -218,7 +203,7 @@ final class LiveScreenContainer: NSView, NSMenuItemValidation {
 
     private func reportVisibility() {
         guard let window else { return }
-        controller?.windowVisible(window.occlusionState.contains(.visible))
+        screen?.windowVisible(window.occlusionState.contains(.visible))
     }
 
     var framebufferRectInWindow: CGRect? {

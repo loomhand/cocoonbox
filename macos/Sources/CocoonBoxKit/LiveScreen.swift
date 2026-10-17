@@ -50,6 +50,7 @@ public final class LiveScreen {
     private var connection: BoxConnection?
     private var attempt = 0
     private var deleted: (since: ContinuousClock.Instant, reported: Bool)?
+    private var visibility = ScreenPause()
 
     public init?(options: Options) {
         guard let view = RFBView() else { return nil }
@@ -94,19 +95,28 @@ public final class LiveScreen {
         self.connection = connection
         deleted = nil
         reconnectTask?.cancel()
+        guard !visibility.paused else { return }
         reconnectTask = Task { self.open() }
     }
 
     public func stop() {
         connection = nil
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        sessionTask?.cancel()
-        sessionTask = nil
-        session = nil
-        rfbView.client = nil
+        close()
         rfbView.isInputEnabled = false
-        onStatus?(.idle)
+    }
+
+    // windowVisible closes the stream while the window is not visible and opens it again, with input as it was, when it is.
+    public func windowVisible(_ visible: Bool) {
+        switch visibility.window(visible: visible, started: connection != nil) {
+        case .pause:
+            Perf.mark("screen_pause", "window hidden")
+            close()
+        case .resume:
+            Perf.mark("screen_pause", "window shown")
+            if let connection { start(connection) }
+        case .none:
+            break
+        }
     }
 
     public func typeText(_ text: String) {
@@ -187,6 +197,16 @@ public final class LiveScreen {
         configuration.eagerHandshake = options.eagerHandshake
         configuration.collectsStatistics = options.collectsStatistics
         return configuration
+    }
+
+    private func close() {
+        reconnectTask?.cancel()
+        reconnectTask = nil
+        sessionTask?.cancel()
+        sessionTask = nil
+        session = nil
+        rfbView.client = nil
+        onStatus?(.idle)
     }
 
     private func open() {
