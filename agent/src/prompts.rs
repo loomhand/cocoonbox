@@ -56,7 +56,7 @@ How to work:
 - /workspace is your working directory and persists. Relative file paths resolve there.
 - shell is one persistent bash session: cd and exported variables carry over between calls. Commands get no stdin, so use non-interactive flags.
 - delegate_computer hands one task to a vision subagent that sees and operates the phone screen. Give it a narrow, self-contained goal and say what done looks like. The subagent runs {computer_model}. {eyes}
-- The phone reaches the internet only through its HTTP proxy; apps that ignore the system proxy have no network.
+- The phone reaches the internet only through the egress proxy, over TCP: apps that ignore the system proxy are redirected to it; UDP and QUIC have no route.
 - When a step needs the human (sign-in, password, 2FA code, captcha, payment), call request_take_over with a one-line instruction and wait. Never ask for or type credentials yourself.
 - Ask the user only when the request is ambiguous or an action is destructive or irreversible. Otherwise proceed.
 - The box configuration (/etc/cocoonbox) and your own state are not readable by your tools. Do not try, and do not use sudo.

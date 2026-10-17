@@ -27,7 +27,7 @@ The golden holds the Ubuntu VM only; docker stays off. When the api writes `/run
 
 ## Network
 
-The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) reaches silkd's proxy through `172.18.0.1:3128` (global HTTP proxy), and DNS through `172.18.0.1:53`, which `dnscrypt-proxy` answers with DNS over HTTPS through the same proxy, so Android validates its network. Apps that ignore the system proxy, UDP and QUIC have no route.
+The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) reaches silkd's proxy through `172.18.0.1:3128` (global HTTP proxy), and DNS through `172.18.0.1:53`, which `dnscrypt-proxy` answers with DNS over HTTPS through the same proxy, so Android validates its network. TCP from apps that ignore the system proxy (Google Play services' FCM on 5228, `nc`) is redirected by iptables to `redsocks` on `172.18.0.1:3129`, which opens it through the same proxy as `CONNECT <ip>:<port>`, so the proxy's port rules and audit cover it; such connections reach the proxy by address only, so hostname-based egress rules and credential injection apply to proxy-aware traffic only. UDP and QUIC have no route.
 
 ## Agent
 
