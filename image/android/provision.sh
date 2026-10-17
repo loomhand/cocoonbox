@@ -4,7 +4,7 @@
 set -euo pipefail
 
 DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
-PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy git xz-utils)
+PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy git xz-utils btrfs-progs polkitd)
 BUILD_PACKAGES=(gcc-13 make libc6-dev)
 UI_BUILD_PACKAGES=(openjdk-21-jdk-headless)
 NODE_VERSION=24.21.0
@@ -160,6 +160,7 @@ setup_redroid() {
 
 setup_cocoonbox_dirs() {
 	log "cocoonbox dirs"
+	grep -q ' localhost.localdomain' /etc/hosts || printf '127.0.0.1 localhost.localdomain\n' >> /etc/hosts
 	install -d -m 0755 -o user -g user /workspace
 	install -d -m 0755 -o root -g root /etc/cocoonbox
 	systemd-tmpfiles --create /etc/tmpfiles.d/cocoonbox.conf
@@ -172,7 +173,7 @@ enable_units() {
 	systemctl disable docker.service docker.socket containerd.service >/dev/null 2>&1
 	systemctl is-active -q docker.service && { echo "docker is running in the template" >&2; exit 1; }
 	systemctl mask dnscrypt-proxy.socket dnscrypt-proxy.service dnscrypt-proxy-resolvconf.service >/dev/null 2>&1
-	systemctl enable cocoonbox-android.path cocoonbox-android-proxy.socket >/dev/null
+	systemctl enable cocoonbox-android.path cocoonbox-android-proxy.socket cocoonbox-session.service >/dev/null
 }
 
 setup_packages

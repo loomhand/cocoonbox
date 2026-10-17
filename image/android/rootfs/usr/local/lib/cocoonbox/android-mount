@@ -1,0 +1,19 @@
+#!/bin/bash
+# Mounts Android's /data from a btrfs subvolume in a sparse loop image, so a save can snapshot it while Android runs; idempotent, as root.
+set -euo pipefail
+BASE=/var/lib/cocoonbox-android
+IMG=$BASE/data.img
+TOP=$BASE/fs
+DATA=/var/lib/redroid-data
+SIZE=32G
+
+mountpoint -q "$DATA" && exit 0
+install -d -m 0700 "$BASE" "$TOP"
+modprobe btrfs
+if [ ! -f "$IMG" ]; then
+	truncate -s "$SIZE" "$IMG"
+	mkfs.btrfs -q "$IMG"
+fi
+mountpoint -q "$TOP" || mount -o loop,noatime "$IMG" "$TOP"
+[ -d "$TOP/data" ] || btrfs -q subvolume create "$TOP/data"
+mount --bind "$TOP/data" "$DATA"

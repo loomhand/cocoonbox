@@ -1,0 +1,3 @@
+#!/bin/sh
+# saves Android's /data for a quiesced box save; runs as user
+exec sudo -n /usr/local/lib/cocoonbox/android-save
