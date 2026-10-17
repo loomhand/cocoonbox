@@ -91,6 +91,36 @@ func TestAWatchResumedInAnotherProcessGetsTheEventsAfterItsOffset(t *testing.T) 
 	}
 }
 
+func TestAParkReleaseLosesToASupersedeAnotherProcessWroteFirst(t *testing.T) {
+	a, b, db := newSharedPair(t, t.Context())
+	park := func() *operation {
+		op, _ := a.svc.ops.begin(a.ctx, &operation{user: alice, boxID: aliceBox, phase: controlv1.Phase_PHASE_SAVING, park: true, gen: 1}, time.Minute)
+		clustertest.WaitFor(t, "a's park reaches the table", func() bool {
+			_, err := db.Operation(t.Context(), op.id)
+			return err == nil
+		})
+		return op
+	}
+	superseded := park()
+	b.svc.ops.end(t.Context(), superseded.id, "superseded by operation of b")
+	if a.svc.ops.release(t.Context(), superseded, "parked") {
+		t.Error("a released a park b had superseded in the table")
+	}
+	clustertest.WaitFor(t, "a takes b's end of its park", func() bool {
+		_, done := superseded.finished()
+		return done
+	})
+	kept := park()
+	if !a.svc.ops.release(t.Context(), kept, "parked") {
+		t.Fatal("a could not release a park nobody superseded")
+	}
+	b.svc.ops.end(t.Context(), kept.id, "superseded too late")
+	rec, err := db.Operation(t.Context(), kept.id)
+	if events := fromEventRecords(rec.ID, rec.Events); err != nil || events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Errorf("a released park ends with %v, %v; want its success to stand", events, err)
+	}
+}
+
 func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	gate := make(chan struct{})
