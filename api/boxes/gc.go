@@ -20,6 +20,8 @@ import (
 const (
 	retainAll   = 24 * time.Hour
 	retainDaily = 30 * 24 * time.Hour
+	// gcGrace outlasts any save, so the gc deletes no chunk, record or manifest a save still in flight wrote.
+	gcGrace = 24 * time.Hour
 )
 
 // GCOptions configures the retention and chunk collection passes.
@@ -114,7 +116,7 @@ func (l *stateLayer) collect(ctx context.Context, user string, opts GCOptions, n
 		}
 	}
 	r.boxes = len(kept)
-	return r, l.sweep(ctx, user, opts, kept, dropped, purged, &r)
+	return r, l.sweep(ctx, user, opts, now, kept, dropped, purged, &r)
 }
 
 // prune applies the retention rule to p's timeline under the box lock, makes the only dependent of a dropped base full, removes the dropped snapshots and every record or manifest the timeline does not name or need, and compacts the kept manifests.
@@ -176,7 +178,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	if err != nil {
 		return nil, nil, err
 	}
-	records, manifests, full := obsolete(p, listing, func(id string) bool { return retained[id] || needed[id] }, dropped, r)
+	records, manifests, full := obsolete(p, listing, now, func(id string) bool { return retained[id] || needed[id] }, dropped, r)
 	r.kept += len(next.Snapshots)
 	r.pruned += len(dropped)
 	ids := make([]string, 0, len(next.Snapshots))
@@ -253,7 +255,7 @@ func (l *stateLayer) compact(ctx context.Context, p statePath, next timeline, ke
 }
 
 // sweep marks the chunks of kept without a lock, then under the user lock marks the snapshots committed since outside purged boxes, writes the index without the garbage and deletes it.
-func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kept map[string][]string, dropped map[string]map[string]bool, purged map[string]bool, r *gcReport) error {
+func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now time.Time, kept map[string][]string, dropped map[string]map[string]bool, purged map[string]bool, r *gcReport) error {
 	p := statePath{user: user}
 	marked, seen := map[string]bool{}, map[string]map[string]bool{}
 	for box, ids := range kept {
@@ -293,9 +295,15 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kep
 			return err
 		}
 	}
+	young := map[string]bool{}
+	for _, obj := range listing {
+		if !settled(obj, now) {
+			young[obj.Key] = true
+		}
+	}
 	garbage := map[string]bool{}
 	indexed := slices.DeleteFunc(slices.Clone(idx.Chunks), func(id string) bool {
-		if marked[id] {
+		if marked[id] || young[p.chunk(id)] {
 			return false
 		}
 		garbage[p.chunk(id)] = true
@@ -304,7 +312,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kep
 	r.indexEntries = len(idx.Chunks) - len(indexed)
 	r.stored = len(listing)
 	for _, obj := range listing {
-		if id := strings.TrimPrefix(obj.Key, p.chunks()); objectID.MatchString(id) && !marked[id] {
+		if id := strings.TrimPrefix(obj.Key, p.chunks()); objectID.MatchString(id) && !marked[id] && settled(obj, now) {
 			garbage[obj.Key] = true
 			r.chunks++
 			r.chunkBytes += obj.Size
@@ -429,7 +437,7 @@ func (l *stateLayer) deleteKeys(ctx context.Context, keys []string, batch int) e
 }
 
 // obsolete sorts the records and manifests in listing that keep does not name into dropped and r, and returns them with the snapshots that have a full manifest.
-func obsolete(p statePath, listing []store.Object, keep func(string) bool, dropped map[string]bool, r *gcReport) ([]string, []string, map[string]bool) {
+func obsolete(p statePath, listing []store.Object, now time.Time, keep func(string) bool, dropped map[string]bool, r *gcReport) ([]string, []string, map[string]bool) {
 	var records, manifests []string
 	full := map[string]bool{}
 	for _, obj := range listing {
@@ -439,7 +447,7 @@ func obsolete(p statePath, listing []store.Object, keep func(string) bool, dropp
 		if manifest && name == id {
 			full[id] = true
 		}
-		if !objectID.MatchString(id) || keep(id) {
+		if !objectID.MatchString(id) || keep(id) || !settled(obj, now) {
 			continue
 		}
 		switch {
@@ -455,6 +463,11 @@ func obsolete(p statePath, listing []store.Object, keep func(string) bool, dropp
 		dropped[id] = true
 	}
 	return records, manifests, full
+}
+
+// settled reports whether obj was written gcGrace before now, so no save that has not committed yet can still need it.
+func settled(obj store.Object, now time.Time) bool {
+	return obj.Modified.Before(now.Add(-gcGrace))
 }
 
 // retain returns the ids the rule keeps: all of the last day, the newest of each UTC day for 30 days, the newest of each UTC week, and keep.
