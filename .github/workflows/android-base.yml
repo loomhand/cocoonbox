@@ -16,14 +16,16 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-24.04
-    steps:
+    steps: &steps
       - name: Checkout
         uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Free disk space
         uses: jlumbroso/free-disk-space@v2.0.0
@@ -75,3 +77,11 @@ jobs:
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
+
+  publish:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps: *steps
