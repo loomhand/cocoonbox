@@ -11,9 +11,11 @@ function notice(text) {
 }
 
 const secret = location.hash.slice(1);
-if (!secret) {
-  notice("This page needs the whole share link, including the part after #.");
-} else {
+let rfb = null;
+let paused = false;
+
+// connect opens the view; a hidden tab closes it, so a share left in the background keeps the box up for nobody.
+function connect() {
   const url = new URL("ws", location.href);
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(url);
@@ -30,12 +32,31 @@ if (!secret) {
       return;
     }
     $("state").textContent = "View only";
-    const rfb = new RFB($("screen"), ws, { shared: true });
+    rfb = new RFB($("screen"), ws, { shared: true });
     rfb.viewOnly = true;
     rfb.scaleViewport = true;
-    rfb.addEventListener("disconnect", () => notice("The share ended or the box stopped. Reload to try again."));
+    rfb.addEventListener("disconnect", () => {
+      rfb = null;
+      if (!paused) notice("The share ended or the box stopped. Reload to try again.");
+    });
   };
   ws.onclose = () => {
-    if (!answered) notice("Could not reach the shared box. Reload to try again.");
+    if (!answered && !paused) notice("Could not reach the shared box. Reload to try again.");
   };
+}
+
+if (!secret) {
+  notice("This page needs the whole share link, including the part after #.");
+} else {
+  connect();
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && rfb) {
+      paused = true;
+      $("state").textContent = "Paused while this tab is hidden";
+      rfb.disconnect();
+    } else if (!document.hidden && paused) {
+      paused = false;
+      connect();
+    }
+  });
 }

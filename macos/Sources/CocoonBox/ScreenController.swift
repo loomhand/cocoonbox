@@ -33,6 +33,7 @@ final class ScreenController {
     @ObservationIgnored private var screen: LiveScreen?
     @ObservationIgnored private var connection: BoxConnection?
     @ObservationIgnored private var copiedAt: Date?
+    @ObservationIgnored private var pause = ScreenPause()
     // CB_PASTEBOARD names a private pasteboard, so test runs leave the user's clipboard alone.
     @ObservationIgnored let pasteboard = ProcessInfo.processInfo.environment["CB_PASTEBOARD"].map { NSPasteboard(name: .init($0)) } ?? .general
 
@@ -63,8 +64,23 @@ final class ScreenController {
 
     func stop() {
         connection = nil
+        pause = ScreenPause()
         screen?.stop()
         takeOver = false
+    }
+
+    // windowVisible stops the screen while its window is not visible and starts it again when it is.
+    func windowVisible(_ visible: Bool) {
+        switch pause.window(visible: visible, started: connection != nil) {
+        case .pause:
+            Perf.mark("screen_pause", "window hidden")
+            screen?.stop()
+        case .resume:
+            Perf.mark("screen_pause", "window shown")
+            if let connection { screen?.start(connection) }
+        case .none:
+            break
+        }
     }
 
     func reopen() {
@@ -163,6 +179,7 @@ final class LiveScreenContainer: NSView, NSMenuItemValidation {
     weak var controller: ScreenController?
     private var screen: LiveScreen?
     private let overlay = MarkerOverlay()
+    private var occlusion: NSObjectProtocol?
 
     init() {
         super.init(frame: .zero)
@@ -186,6 +203,22 @@ final class LiveScreenContainer: NSView, NSMenuItemValidation {
         super.layout()
         overlay.frame = bounds
         screen?.view.frame = bounds
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let occlusion { NotificationCenter.default.removeObserver(occlusion) }
+        occlusion = nil
+        guard let window else { return }
+        occlusion = NotificationCenter.default.addObserver(forName: NSWindow.didChangeOcclusionStateNotification, object: window, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reportVisibility() }
+        }
+        reportVisibility()
+    }
+
+    private func reportVisibility() {
+        guard let window else { return }
+        controller?.windowVisible(window.occlusionState.contains(.visible))
     }
 
     var framebufferRectInWindow: CGRect? {
