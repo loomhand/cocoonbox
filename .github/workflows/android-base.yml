@@ -1,14 +1,17 @@
-# Builds the Android box base (AOSP redroid only) and publishes it as ghcr.io/<repo>/android-base: a <sha> tag always,
-# latest from main. Booting it needs binder and ashmem, so its acceptance runs on a host after a cut, as for base:vN.
+# Builds the Android box base (AOSP redroid only) for amd64 and arm64 and publishes it as ghcr.io/<repo>/android-base:
+# a <sha> tag, and latest from main; a pull request only builds it. Booting it needs binder and ashmem, so its acceptance
+# runs on a host after a cut, as for base:vN.
 name: android-base
 
 on:
   push:
-    branches: [main, exp/android-poc]
-    paths:
+    branches: [main]
+    paths: &paths
       - "image/android/**"
       - "image/desk/rootfs/opt/desk/lib/**"
       - ".github/workflows/android-base.yml"
+  pull_request:
+    paths: *paths
   workflow_dispatch:
 
 permissions:
@@ -31,10 +34,14 @@ jobs:
           large-packages: true
           swap-storage: false
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4.4.0
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4.4.1
 
       - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4.6.0
         with:
           registry: ghcr.io
@@ -42,7 +49,12 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Bake redroid
-        run: bash image/android/base/bake.sh
+        run: |
+          for arch in amd64 arm64; do
+            start=$(date +%s)
+            ARCH=$arch bash image/android/base/bake.sh
+            echo "bake $arch: $(( $(date +%s) - start )) s"
+          done
 
       - name: Tags
         id: tags
@@ -57,8 +69,8 @@ jobs:
         with:
           context: image
           file: image/android/base/Dockerfile
-          platforms: linux/amd64
-          push: true
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

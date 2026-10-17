@@ -7,27 +7,27 @@ An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs A
 | Piece | Where |
 |---|---|
 | guest provisioning (docker, adb, scrcpy-rfb, users, units) | `image/android/provision.sh`, `image/android/rootfs/` |
-| ashmem for the 24.04 kernel, which Android's gralloc needs | `image/android/ashmem/` (GPL-2.0, built at cut time) |
-| the UI server: the accessibility tree from a resident `app_process`, built at cut time | `image/android/ui/` |
+| ashmem for the 24.04 kernel, which Android's gralloc needs | `image/android/ashmem/` (GPL-2.0, built in the base) |
+| the UI server: the accessibility tree from a resident `app_process`, built in the base | `image/android/ui/` |
 | Node and the desk runtime of cbcore, for GUI plans and scripts | `image/android/provision.sh` (`setup_desk`) |
-| cut, from an Ubuntu 24.04 cocoon image and a docker data dir with one baked redroid container | `image/android/cut.sh` |
+| cut, from the base and a release's agent | `image/android/cut.sh` |
 
-The base is `ghcr.io/loomhand/cocoonbox/android-base`, built by `.github/workflows/android-base.yml` from `image/android/base/`: `bake.sh` bakes AOSP redroid 16 (`redroid.Dockerfile`, no Google apps) into docker data, and `Dockerfile` provisions cocoon's Ubuntu 24.04 image with it. A template is the base plus a release's agent:
+The base is `ghcr.io/loomhand/cocoonbox/android-base`, built by `.github/workflows/android-base.yml` from `image/android/base/`: `bake.sh` bakes a created container of AOSP redroid 16 (`redroid.Dockerfile`, no Google apps) into docker data, and `Dockerfile` provisions cocoon's Ubuntu 24.04 image with it. A template is the base plus a release's agent:
 
 ```bash
 cocoon image pull ghcr.io/loomhand/cocoonbox/android-base:<sha>
 sudo image/android/cut.sh -a cocoonbox-agent-linux-amd64 ghcr.io/loomhand/cocoonbox/android-base:<sha> vN
 ```
 
-With `-d <docker data dir>`, the cut provisions a plain Ubuntu 24.04 cocoon image itself. The redroid image in the docker data decides what the box ships; a public image carries AOSP only.
+The redroid image in the docker data decides what the box ships; a public base carries AOSP only. A pull request that touches `image/android/` builds the base without publishing it.
 
 ## Boot
 
-The golden holds the Ubuntu VM only; docker stays off. When the api writes `/run/cocoonbox-identity/identity`, `cocoonbox-android.path` starts `android-up`: docker replays the container and Android cold-boots with a fresh `/data`, so no two boxes share an Android identity. `android-up` then sets Android's global proxy and starts the screen: scrcpy-rfb on 127.0.0.1:5900, 720x1280, no password, which the agent's Screen relay serves as is. adb listens on 127.0.0.1:5555.
+The golden holds the Ubuntu VM only; docker stays off. When the api writes `/run/cocoonbox-identity/identity`, `cocoonbox-android.path` starts `android-up`: it starts docker and the container, and Android cold-boots with a fresh `/data`, so no two boxes share an Android identity. `android-up` then sets Android's global proxy and starts the screen: scrcpy-rfb on 127.0.0.1:5900, 720x1280, no password, which the agent's Screen relay serves as is. adb listens on 127.0.0.1:5555.
 
 ## Network
 
-The box has no NIC. Android on the docker bridge reaches silkd's proxy through `172.18.0.1:3128` (global HTTP proxy), and DNS through `172.18.0.1:53`, which `dnscrypt-proxy` answers with DNS over HTTPS through the same proxy, so Android validates its network. Apps that ignore the system proxy, UDP and QUIC have no route.
+The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) reaches silkd's proxy through `172.18.0.1:3128` (global HTTP proxy), and DNS through `172.18.0.1:53`, which `dnscrypt-proxy` answers with DNS over HTTPS through the same proxy, so Android validates its network. Apps that ignore the system proxy, UDP and QUIC have no route.
 
 ## Agent
 
@@ -36,7 +36,7 @@ The box has no NIC. Android on the docker bridge reaches silkd's proxy through `
 | Tool | On Android |
 |---|---|
 | `screenshot` | `adb exec-out screencap -p`, 720x1280 PNG |
-| `computer_state` | the UI server's tree as elements `[index]`; `uiautomator dump` when the server fails |
+| `computer_state` | the UI server's tree as the desk's elements `[index]`: role, name, centre, states |
 | `computer_act` | `adb shell input` taps, swipes and keys; `type` pastes through a control-only scrcpy session as uid 1000, since key injection drops text outside Latin-1; `launch_app` by package |
 | `gui_plan`, `script_run` | `desk.mts` and `gui_plan.mts` unchanged; the toolhost serves `desk_<op>` from Android (`agent/src/toolhost/android_desk.rs`) |
 

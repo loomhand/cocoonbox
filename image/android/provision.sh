@@ -1,27 +1,37 @@
 #!/bin/bash
-# Provisions the Android box guest (Ubuntu 24.04 outer VM, docker, the baked redroid container) in place; idempotent.
-# Runs as root inside the guest from an unpacked copy of this directory, after /var/lib/docker holds the baked redroid container.
+# Provisions the Android box base (Ubuntu 24.04, docker, scrcpy-rfb, ashmem, the UI server, the desk runtime) as root.
+# Runs from a copy of image/android in the base build (base/Dockerfile), after /var/lib/docker holds the baked container.
 set -euo pipefail
 
 DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
 PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy git xz-utils btrfs-progs polkitd)
 BUILD_PACKAGES=(gcc-13 make libc6-dev)
-UI_BUILD_PACKAGES=(openjdk-21-jdk-headless)
 NODE_VERSION=24.21.0
-NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
-NODE_TARBALL="node-v${NODE_VERSION}-linux-x64.tar.xz"
+ARCH=$(dpkg --print-architecture)
+case $ARCH in
+amd64)
+	NODE_ARCH=x64 NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+	SCRCPY_RFB="scrcpy-rfb-linux-amd64 30e287c466a19a1092b085d14af15cd9d73aae01ca75c436d491f5254547a641"
+	SU1000="su1000-linux-amd64 cac34bdbdb04c300c9ebd098dbb6c3e72abf18ee21427e578ba9f6f373d98643"
+	;;
+arm64)
+	NODE_ARCH=arm64 NODE_SHA256=6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2
+	SCRCPY_RFB="scrcpy-rfb-linux-arm64 86d9a9dd055a607aee797a933803213f8c7426f9e1115db5cee3c85a9a2af2f7"
+	SU1000="su1000-linux-arm64 8a6446a2bb9f506d8d6099ca8515bdd009f00827c8d71ba57d2717f166d30b32"
+	;;
+*) echo "unsupported architecture $ARCH" >&2; exit 1 ;;
+esac
+NODE_TARBALL="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
 NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 DESK=$(cd "$(dirname "$0")/../desk/rootfs" && pwd)
 # the gw endpoint of the agent's contract (export-rootfs.sh), for the plan executor and scripts
 GW_BASE_URL=http://10.203.0.1:18090/v1
-R8_URL=https://dl.google.com/android/maven2/com/android/tools/r8/9.5.26/r8-9.5.26.jar
-R8_SHA256=3502f087388ce95bbf5254555927f09385dc2636873964d0bd53f3eaf4fb49ad
 # cocoonstack/scrcpy-rfb master release at 9bdf6ed2b50953589ef153c18f087bcaafc429d9
 SCRCPY_URL=https://github.com/cocoonstack/scrcpy-rfb/releases/download/master
 SCRCPY_FILES=(
-	"scrcpy-rfb-linux-amd64 30e287c466a19a1092b085d14af15cd9d73aae01ca75c436d491f5254547a641 /usr/local/bin/scrcpy-rfb 0755"
+	"$SCRCPY_RFB /usr/local/bin/scrcpy-rfb 0755"
+	"$SU1000 /usr/local/share/scrcpy/su1000 0755"
 	"scrcpy-server-secure.jar 90fe59bd9cfa24b1f6a1dcbe844b1ee306b0c5f33f6f306a0d3676847aa32608 /usr/local/share/scrcpy/scrcpy-server.jar 0644"
-	"su1000-linux-amd64 cac34bdbdb04c300c9ebd098dbb6c3e72abf18ee21427e578ba9f6f373d98643 /usr/local/share/scrcpy/su1000 0755"
 )
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
@@ -35,7 +45,7 @@ setup_packages() {
 	chmod 0755 /usr/sbin/policy-rc.d
 	install -m 0755 -d /etc/apt/keyrings
 	[ -f /etc/apt/keyrings/docker.asc ] || curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-	echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
+	echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
 	apt-get update -qq
 	apt-get install -y -qq --no-install-recommends "linux-modules-extra-$(ls /lib/modules | sort -V | tail -1)" \
 		"docker-ce=$DOCKER_VERSION" "docker-ce-cli=$DOCKER_VERSION" containerd.io "${PACKAGES[@]}" >/dev/null
@@ -107,19 +117,7 @@ setup_scrcpy() {
 # the UI server dumps the accessibility tree from a resident app_process, without uiautomator's start and idle wait
 setup_ui() {
 	log "UI server"
-	local tmp
-	apt-get install -y -qq --no-install-recommends "${UI_BUILD_PACKAGES[@]}" >/dev/null
-	tmp=$(mktemp -d)
-	curl -fsSL "$R8_URL" -o "$tmp/r8.jar"
-	echo "$R8_SHA256  $tmp/r8.jar" | sha256sum -c --quiet -
-	mapfile -t stubs < <(find "$SRC/ui/stubs" -name '*.java')
-	javac -nowarn --release 11 -d "$tmp/stubs" "${stubs[@]}"
-	javac -nowarn --release 11 -cp "$tmp/stubs" -d "$tmp/classes" "$SRC/ui/src/cb/Ui.java"
-	java -cp "$tmp/r8.jar" com.android.tools.r8.D8 --min-api 30 --output "$tmp/cb-ui.jar" "$tmp/classes/cb/Ui.class"
-	install -D -m 0644 "$tmp/cb-ui.jar" /usr/local/share/cocoonbox/cb-ui.jar
-	rm -rf "$tmp"
-	apt-get purge -y -qq --auto-remove "${UI_BUILD_PACKAGES[@]}" >/dev/null
-	apt-get clean
+	install -D -m 0644 "$SRC/ui/cb-ui.jar" /usr/local/share/cocoonbox/cb-ui.jar
 }
 
 # GUI plans and scripts run the desk runtime of cbcore on Node; the toolhost serves its calls from Android
@@ -143,30 +141,17 @@ setup_desk() {
 	chmod 0644 /etc/cocoonbox/desk.env
 }
 
-# adb stays on loopback; the box has no NIC, but nothing outside the VM needs it
-setup_redroid() {
-	log "redroid"
-	local cfgs=(/var/lib/docker/containers/*/config.v2.json)
-	[ "${#cfgs[@]}" = 1 ] && [ -f "${cfgs[0]}" ] || { echo "want one baked container, have ${#cfgs[@]}" >&2; exit 1; }
-	local dir
-	dir=$(dirname "${cfgs[0]}")
-	sed -i 's/"androidboot.use_memfd=1"/"androidboot.use_memfd=0"/' "${cfgs[0]}"
-	grep -q '"androidboot.use_memfd=0"' "${cfgs[0]}"
-	sed -i 's/"HostIp":""/"HostIp":"127.0.0.1"/g' "$dir/hostconfig.json"
-	grep -q '"5555/tcp":\[{"HostIp":"127.0.0.1"' "$dir/hostconfig.json"
-	install -d /var/lib/redroid-data
-	find /var/lib/redroid-data -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-}
-
 setup_cocoonbox_dirs() {
 	log "cocoonbox dirs"
-	grep -q ' localhost.localdomain' /etc/hosts || printf '127.0.0.1 localhost.localdomain\n' >> /etc/hosts
+	# a container build mounts /etc/hosts read-only; the cut adds the line then
+	grep -q ' localhost.localdomain' /etc/hosts || printf '127.0.0.1 localhost.localdomain\n' >> /etc/hosts 2>/dev/null || true
 	install -d -m 0755 -o user -g user /workspace
 	install -d -m 0755 -o root -g root /etc/cocoonbox
+	install -d /var/lib/redroid-data
 	systemd-tmpfiles --create /etc/tmpfiles.d/cocoonbox.conf
 }
 
-# docker stays off until the box has its identity: a docker start replays the container, and a stopped one would not replay
+# docker stays off until the box has its identity, so each box cold-boots its own Android
 enable_units() {
 	log "units"
 	[ ! -d /run/systemd/system ] || systemctl daemon-reload
@@ -183,7 +168,6 @@ install_rootfs
 setup_scrcpy
 setup_ui
 setup_desk
-setup_redroid
 setup_cocoonbox_dirs
 enable_units
 log "done"
