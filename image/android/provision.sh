@@ -4,7 +4,7 @@
 set -euo pipefail
 
 DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
-PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy git xz-utils btrfs-progs polkitd)
+PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy redsocks git xz-utils btrfs-progs polkitd)
 BUILD_PACKAGES=(gcc-13 make libc6-dev)
 NODE_VERSION=24.21.0
 ARCH=$(dpkg --print-architecture)
@@ -157,7 +157,7 @@ enable_units() {
 	[ ! -d /run/systemd/system ] || systemctl daemon-reload
 	systemctl disable docker.service docker.socket containerd.service >/dev/null 2>&1
 	systemctl is-active -q docker.service && { echo "docker is running in the template" >&2; exit 1; }
-	systemctl mask dnscrypt-proxy.socket dnscrypt-proxy.service dnscrypt-proxy-resolvconf.service >/dev/null 2>&1
+	systemctl mask dnscrypt-proxy.socket dnscrypt-proxy.service dnscrypt-proxy-resolvconf.service redsocks.service >/dev/null 2>&1
 	systemctl enable cocoonbox-android.path cocoonbox-android-proxy.socket cocoonbox-session.service >/dev/null
 }
 
