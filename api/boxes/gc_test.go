@@ -316,7 +316,7 @@ func TestASaveAfterPruningPlansOnTheHead(t *testing.T) {
 	if events := watch(t, env.svc, env.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_FAILED {
 		t.Fatalf("save with a failing commit ended with %v", events[len(events)-1])
 	}
-	if r := env.collect(t, GCOptions{DeleteBatch: 1000}, 0); r.chunks != 1 || env.store.has(p.chunk(hexID("c3"))) {
+	if r := env.collect(t, GCOptions{DeleteBatch: 1000}, 2*gcGrace); r.chunks != 1 || env.store.has(p.chunk(hexID("c3"))) {
 		t.Fatalf("report = %+v, want the uncommitted c3 deleted", r)
 	}
 	env.save(t)
@@ -449,7 +449,7 @@ func TestGCKeepsABoxWhoseDeleteIsStillSaving(t *testing.T) {
 	if !env.store.has(p.record(snapshotID(2))) {
 		t.Fatal("the delete's save did not commit")
 	}
-	if r := env.collect(t, opts, 0); r.purged != 1 || r.chunks != 2 {
+	if r := env.collect(t, opts, 2*gcGrace); r.purged != 1 || r.chunks != 2 {
 		t.Errorf("pass after the delete = %+v, want the box and both chunks purged", r)
 	}
 	if left, _ := env.store.List(env.ctx, alice+"/"); len(left) != 1 || left[0].Key != p.index() {

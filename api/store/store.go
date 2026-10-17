@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 var (
@@ -21,8 +22,9 @@ type Presigned struct {
 
 // Object is one stored object as a listing returns it.
 type Object struct {
-	Key  string
-	Size int64
+	Key      string
+	Size     int64
+	Modified time.Time
 }
 
 // Store is implemented by every object store backend; keys are relative to the backend's prefix.

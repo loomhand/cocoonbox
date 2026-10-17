@@ -833,7 +833,7 @@ func TestAGCPassThatDeletesAnUnindexedUploadFailsTheSaveThatUploadedIt(t *testin
 			return
 		}
 		ran = true
-		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
+		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(2*gcGrace), everyBoxLive)
 	}
 	_, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 	if !ran || collected != nil || st.has(p.chunk(hexID("c2"))) {
@@ -871,6 +871,38 @@ func TestAHeadReadBeforeASaveNeverReplacesTheHeadTheSaveCached(t *testing.T) {
 	}
 	if h, _ := l.head(t.Context(), p); h.Latest != snapshotID(2) || mirrored[len(mirrored)-1] != snapshotID(2) {
 		t.Errorf("cached head %q, mirrored %v; want the save's head kept over the older read", h.Latest, mirrored)
+	}
+}
+
+func TestTheGCKeepsTheChunksAndRecordsASaveWroteWithinItsGrace(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, collector := st.layer(agent), st.layer(agent)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	st.mu.Lock()
+	for key := range st.modified {
+		st.modified[key] = time.Now().Add(-40 * 24 * time.Hour)
+	}
+	st.mu.Unlock()
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
+	var r gcReport
+	var collected error
+	st.before = func(op, key string) {
+		if op != "put" || key != p.record(snapshotID(2)) {
+			return
+		}
+		st.before = nil
+		r, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
+	}
+	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("save during the gc pass: %v", err)
+	}
+	if collected != nil || r.chunks != 0 || !st.has(p.chunk(hexID("c2"))) || !st.has(p.manifest(snapshotID(2))) {
+		t.Errorf("the gc pass during a save = %+v, %v; want the save's fresh chunk and manifest kept", r, collected)
 	}
 }
 
@@ -1009,13 +1041,14 @@ type fakeStore struct {
 
 	mu       sync.Mutex
 	objects  map[string][]byte
+	modified map[string]time.Time
 	failures map[string]int
 	puts     map[string]int
 	deleted  []string
 }
 
 func newFakeStore() *fakeStore {
-	return &fakeStore{objects: map[string][]byte{}, failures: map[string]int{}, puts: map[string]int{}}
+	return &fakeStore{objects: map[string][]byte{}, modified: map[string]time.Time{}, failures: map[string]int{}, puts: map[string]int{}}
 }
 
 func (s *fakeStore) PresignPut(_ context.Context, key string) (store.Presigned, error) {
@@ -1046,7 +1079,7 @@ func (s *fakeStore) Put(_ context.Context, key string, data []byte) error {
 		s.failures[key]--
 		return fmt.Errorf("put %s: store unavailable", key)
 	}
-	s.objects[key] = data
+	s.objects[key], s.modified[key] = data, time.Now()
 	return nil
 }
 
@@ -1057,7 +1090,7 @@ func (s *fakeStore) List(_ context.Context, prefix string) ([]store.Object, erro
 	var objects []store.Object
 	for key, data := range s.objects {
 		if strings.HasPrefix(key, prefix) {
-			objects = append(objects, store.Object{Key: key, Size: int64(len(data))})
+			objects = append(objects, store.Object{Key: key, Size: int64(len(data)), Modified: s.modified[key]})
 		}
 	}
 	return objects, nil
@@ -1083,7 +1116,7 @@ func (s *fakeStore) Copy(_ context.Context, src, dst string) error {
 	if !ok {
 		return store.ErrNotFound
 	}
-	s.objects[dst] = data
+	s.objects[dst], s.modified[dst] = data, time.Now()
 	return nil
 }
 
@@ -1138,7 +1171,7 @@ func (s *versionedStore) PutIf(_ context.Context, key string, data []byte, versi
 		return store.ErrStale
 	}
 	s.puts[key]++
-	s.objects[key] = data
+	s.objects[key], s.modified[key] = data, time.Now()
 	return nil
 }
 
