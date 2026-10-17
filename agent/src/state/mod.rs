@@ -81,6 +81,7 @@ pub struct StateEngine {
     work: PathBuf,
     pause: Pause,
     desktop_unit: Option<String>,
+    save_required: bool,
     http: reqwest::Client,
     pinned: Mutex<Option<Pinned>>,
 }
@@ -117,6 +118,7 @@ impl StateEngine {
         work: PathBuf,
         pause: Pause,
         desktop_unit: Option<String>,
+        save_required: bool,
     ) -> Result<Self, String> {
         Ok(Self {
             toolhost,
@@ -126,6 +128,7 @@ impl StateEngine {
             work,
             pause,
             desktop_unit,
+            save_required,
             http: store_client(STORE_CONNECT_TIMEOUT, STORE_READ_TIMEOUT)?,
             pinned: Mutex::new(None),
         })
@@ -930,6 +933,9 @@ impl StateEngine {
             }
         };
         if let Err(e) = self.tool("desktop_save", json!({})).await {
+            if self.save_required {
+                return Err(StateError::Failed(format!("save the session: {e}")));
+            }
             eprintln!("state: save the desktop session: {e}");
         }
         let closed = self.tool("browser_close", json!({})).await?;
@@ -1533,6 +1539,7 @@ mod tests {
                 wait: Duration::from_secs(30),
             },
             None,
+            false,
         )
         .unwrap();
         let gate = Arc::clone(&turns).write_owned().await;
