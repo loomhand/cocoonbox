@@ -39,6 +39,7 @@ type operation struct {
 	watchers *watchers
 	mirror   func(cluster.Operation)
 	created  time.Time
+	expires  time.Time
 
 	mu         sync.Mutex
 	events     []*controlv1.OperationEvent
@@ -154,7 +155,7 @@ func (o *operation) recordLocked() cluster.Operation {
 	events, _ := toEventRecords(o.events)
 	return cluster.Operation{
 		ID: o.id, User: o.user, Box: o.boxID, Phase: int32(o.phase), Park: o.park, Gen: o.gen, Events: events,
-		FinishedAt: o.finishedAt, CreatedAt: o.created,
+		FinishedAt: o.finishedAt, ExpiresAt: o.expires, CreatedAt: o.created,
 	}
 }
 
@@ -193,7 +194,8 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 		}
 	}
 	op.id, op.changed, op.watchers, op.mirror, op.created = rand.Text(), make(chan struct{}), r.watchers, r.mirror, time.Now()
-	op.ctx, op.stop = context.WithTimeout(base, timeout)
+	op.expires = op.created.Add(timeout)
+	op.ctx, op.stop = context.WithDeadline(base, op.expires)
 	if cur := r.active[op.boxID]; cur != nil {
 		cur.fail("superseded by operation " + op.id)
 	}
