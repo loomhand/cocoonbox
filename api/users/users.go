@@ -154,6 +154,7 @@ type Service struct {
 	lives  map[string]life
 	creds  map[string]*credLife
 	tombs  map[string]time.Time
+	grantsLive func(ctx context.Context, ids []string) (map[string]bool, error)
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -799,9 +800,16 @@ func (s *Service) EndCredential(ctx context.Context, credential string) {
 	if credential == "" || hexSHA256.MatchString(credential) {
 		return
 	}
-	if err := s.store.notifyEnded(context.WithoutCancel(ctx), credential); err != nil {
+	if err := s.store.notifyEnded(ctx, credential); err != nil {
 		log.WithFunc("users.Service.EndCredential").Warnf(ctx, "other apis keep the open calls of ended credential %s: %v", credential, err)
 	}
+}
+
+// KeepGrants registers live, which reports which grant ids still exist, so a listener that reconnects ends the calls of the rest.
+func (s *Service) KeepGrants(live func(ctx context.Context, ids []string) (map[string]bool, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.grantsLive = live
 }
 
 // OnResidential registers fn to run after a user's residential setting changes.
@@ -830,6 +838,9 @@ func (s *Service) listen(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	if err := s.endGoneGrants(ctx); err != nil {
+		return err
+	}
 	reload := true
 	for {
 		if reload {
@@ -851,9 +862,34 @@ func (s *Service) listen(ctx context.Context) error {
 	}
 }
 
+func (s *Service) endGoneGrants(ctx context.Context) error {
+	s.mu.RLock()
+	live := s.grantsLive
+	var ids []string
+	for credential := range s.creds {
+		if credential != "" && !hexSHA256.MatchString(credential) {
+			ids = append(ids, credential)
+		}
+	}
+	s.mu.RUnlock()
+	if live == nil || len(ids) == 0 {
+		return nil
+	}
+	alive, err := live(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if !alive[id] {
+			s.endLocally(id)
+		}
+	}
+	return nil
+}
+
 // published tells every api to reload after a write; a failed notify reaches them with the next one.
 func (s *Service) published(ctx context.Context, what string) {
-	if err := s.store.notify(context.WithoutCancel(ctx)); err != nil {
+	if err := s.store.notify(ctx); err != nil {
 		log.WithFunc("users.Service.published").Warnf(ctx, "%s; other apis reload on their next notify: %v", what, err)
 	}
 }

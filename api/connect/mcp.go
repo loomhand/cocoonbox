@@ -319,6 +319,21 @@ func (w *watchers) notifyAll() {
 	}
 }
 
+func (w *watchers) boxUsers() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var users []string
+	for user, byWatch := range w.byUser {
+		for watch := range byWatch {
+			if watch.answered != nil {
+				users = append(users, user)
+				break
+			}
+		}
+	}
+	return users
+}
+
 func (w *watchers) answer(user string, msg []byte) {
 	w.mu.Lock()
 	defer w.mu.Unlock()

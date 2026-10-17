@@ -1,8 +1,10 @@
 package users
 
 import (
+	"context"
 	"errors"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -224,6 +226,38 @@ func TestADeviceRecordsItsUseOncePerMinute(t *testing.T) {
 	second, err := svc.Devices(t.Context(), u.ID)
 	if err != nil || len(second) != 1 || second[0].UsedAt == nil || !second[0].UsedAt.Equal(*first[0].UsedAt) {
 		t.Errorf("Devices after a second use within a minute = %+v, %v, want used_at %v", second, err, first[0].UsedAt)
+	}
+}
+
+func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect(t *testing.T) {
+	a, gw, tenants, dsn := newTestService(t)
+	b := openTestService(t, dsn, gw, tenants)
+	var gone atomic.Bool
+	b.KeepGrants(func(_ context.Context, ids []string) (map[string]bool, error) {
+		live := map[string]bool{}
+		for _, id := range ids {
+			live[id] = !gone.Load()
+		}
+		return live, nil
+	})
+	go b.Listen(t.Context())
+	u, err := a.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, ok := within(2*time.Second, func() bool { _, err := b.Get(u.ID); return err == nil }); !ok {
+		t.Fatal("the other api does not know the user")
+	}
+	call := lifetime(b, u.ID, "oag_missed")
+	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
+		t.Fatalf("end the listening connection: %v", err)
+	}
+	gone.Store(true)
+	a.EndCredential(t.Context(), "oag_missed")
+	select {
+	case <-call.Done():
+	case <-time.After(listenRetry + 3*time.Second):
+		t.Fatal("a grant ended while the other api's listener was down kept its open call after the reconnect")
 	}
 }
 

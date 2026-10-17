@@ -12,6 +12,7 @@ import (
 const (
 	signalChannel = "cocoonbox_connect"
 	signalRetry   = 5 * time.Second
+	signalTimeout = 5 * time.Second
 )
 
 // signal is a change of a user's watchers one api tells the others; Answer, when set, is an approval answer to push.
@@ -53,7 +54,9 @@ func (s *Service) publish(ctx context.Context, sig signal) {
 	sig.Origin = s.origin
 	raw, err := json.Marshal(sig)
 	if err == nil {
-		_, err = s.store.pool.Exec(context.WithoutCancel(ctx), "SELECT pg_notify($1, $2)", signalChannel, string(raw))
+		notifyCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signalTimeout)
+		_, err = s.store.pool.Exec(notifyCtx, "SELECT pg_notify($1, $2)", signalChannel, string(raw))
+		cancel()
 	}
 	if err != nil {
 		log.WithFunc("connect.Service.publish").Warnf(ctx, "the watchers of %s in other apis miss a change: %v", sig.User, err)
@@ -71,6 +74,7 @@ func (s *Service) listenSignals(ctx context.Context) error {
 		return err
 	}
 	s.watchers.notifyAll()
+	s.replayAnswers(ctx)
 	for {
 		n, err := conn.WaitForNotification(ctx)
 		if err != nil {
@@ -85,5 +89,18 @@ func (s *Service) listenSignals(ctx context.Context) error {
 			continue
 		}
 		s.watchers.notify(sig.User)
+	}
+}
+
+func (s *Service) replayAnswers(ctx context.Context) {
+	for _, user := range s.watchers.boxUsers() {
+		answered, err := s.store.answered(ctx, user)
+		if err != nil {
+			log.WithFunc("connect.Service.replayAnswers").Warnf(ctx, "the box watchers of %s miss the answers signaled while none listened: %v", user, err)
+			continue
+		}
+		for _, a := range answered {
+			s.watchers.answer(user, approvalAnswered(a.id, a.decision))
+		}
 	}
 }
