@@ -1,0 +1,13 @@
+[Unit]
+Description=cocoonbox Android (the redroid container, after its DNS and TCP redirect; restarted when it fails)
+Requires=docker.service cocoonbox-android-dns.service cocoonbox-android-redirect.service
+After=docker.service cocoonbox-android-dns.service cocoonbox-android-redirect.service
+
+[Service]
+ExecStart=/usr/bin/docker start -a redroid
+# Android's own shutdown ends the container cleanly, where docker stop's SIGTERM reaches only the container's shell
+ExecStop=-/usr/bin/timeout 10 /usr/bin/docker exec redroid /system/bin/setprop sys.powerctl shutdown
+ExecStop=-/usr/bin/timeout 30 /usr/bin/docker wait redroid
+ExecStop=/usr/bin/docker stop -t 1 redroid
+Restart=on-failure
+RestartSec=1
