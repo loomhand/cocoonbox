@@ -5,6 +5,8 @@ listen:
 
 storage:
   postgres_url: postgres:///gw?host=/var/run/postgresql&user=gw
+  redis_url: redis+unix:///run/redis/redis-server.sock
+  ledger_spool_path: /var/lib/gw/ledger-spool.jsonl
 
 providers:
   - {name: openrouter, kind: openrouter, api_key_env: OPENROUTER_API_KEY_1, timeout_seconds: 300}
