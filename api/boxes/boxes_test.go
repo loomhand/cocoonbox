@@ -71,6 +71,7 @@ func TestTheImageOfAUsersPolicyStartsAndUpgradesItsBoxes(t *testing.T) {
 	registry := newFakeRegistry()
 	registry.setPolicy(alice, users.Policy{Image: "cbcore:v1"})
 	registry.setPolicy("carol", users.Policy{Image: "cbcore:v0"})
+	registry.setPolicy("dave", users.Policy{Image: "gone:v1"})
 	svc := New(fake, defaults, registry)
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	for _, tt := range []struct {
@@ -78,7 +79,8 @@ func TestTheImageOfAUsersPolicyStartsAndUpgradesItsBoxes(t *testing.T) {
 	}{
 		{alice, "cbcore:v1"},
 		{"bob", ""},
-		{"carol", ""},
+		{"carol", "cbcore:v2"},
+		{"dave", ""},
 	} {
 		ctx := auth.WithUser(t.Context(), tt.user)
 		if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{}); err != nil || fake.lastSpec().Image != tt.want {
