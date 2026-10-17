@@ -706,6 +706,90 @@ func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
 	}
 }
 
+func TestTwoLayersOnAVersionedStoreMergeTheirIndexWrites(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2"), "b": hexIDs("c2", "c3")}
+	la, lb := st.layer(agent), st.layer(agent)
+	boxA, boxB := statePath{user: alice, box: "cb-00000000000a"}, statePath{user: alice, box: "cb-00000000000b"}
+	noProgress := func(*agentv1.TransferProgress) {}
+	var inner error
+	agent.onUpload = func(ep machines.Endpoint) {
+		if ep.Key == "a" {
+			agent.onUpload = nil
+			_, inner = lb.save(t.Context(), boxB, machines.Endpoint{Key: "b"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+		}
+	}
+	if _, err := la.save(t.Context(), boxA, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
+		t.Fatalf("save a: %v; save b on another layer during a's upload: %v", err, inner)
+	}
+	var idx chunkIndex
+	if err := getJSON(t.Context(), st, alice+"/index.json", &idx); err != nil || len(idx.Chunks) != 3 {
+		t.Errorf("index after saves on two layers = %v, %v, want c1, c2 and c3", idx.Chunks, err)
+	}
+}
+
+func TestASaveFailsWhenAnotherLayersGCRewroteTheIndexAfterItsPlan(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	saver, collector := st.layer(agent), st.layer(agent)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	noProgress := func(*agentv1.TransferProgress) {}
+	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	agent.byBox["a"] = hexIDs("c1", "c2")
+	agent.onUpload = func(machines.Endpoint) {
+		var idx chunkIndex
+		version, _, err := collector.readVersion(t.Context(), p.index(), &idx)
+		if err == nil {
+			err = collector.writeVersion(t.Context(), p.index(), chunkIndex{KeyID: idx.KeyID, Generation: idx.Generation + 1}, version)
+		}
+		if err != nil {
+			t.Errorf("rewrite the index as a gc would: %v", err)
+		}
+	}
+	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); !errors.Is(err, errIndexCollected) {
+		t.Fatalf("save across a gc rewrite = %v, want errIndexCollected", err)
+	}
+	if h, err := collector.head(t.Context(), p); err != nil || h.Latest != snapshotID(1) {
+		t.Errorf("head after the failed save = %+v, %v, want the first snapshot", h, err)
+	}
+}
+
+func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, collector := st.layer(agent), st.layer(agent)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	noProgress := func(*agentv1.TransferProgress) {}
+	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
+		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
+		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+			t.Fatalf("save %v: %v", chunks, err)
+		}
+	}
+	saved := false
+	st.before = func(op, key string) {
+		if op != "putif" || key != p.index() || saved {
+			return
+		}
+		saved = true
+		agent.byBox = map[string][]string{"a": hexIDs("c1", "c3")}
+		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+			t.Errorf("save during the gc sweep: %v", err)
+		}
+	}
+	_, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), func(string) bool { return true })
+	if !errors.Is(err, store.ErrStale) {
+		t.Fatalf("collect across a save = %v, want ErrStale", err)
+	}
+	if !st.has(p.chunk(hexID("c1"))) {
+		t.Error("the gc deleted c1, which a save on another layer committed during its sweep")
+	}
+}
+
 type stateEnv struct {
 	ctx   context.Context
 	svc   *Service
@@ -780,6 +864,11 @@ func chunkIDs(n int) []string {
 		ids[i] = hexID(fmt.Sprintf("c%d", i))
 	}
 	return ids
+}
+
+func versionOf(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func snapshotID(n int) string {
@@ -902,6 +991,42 @@ func (s *fakeStore) has(key string) bool {
 	defer s.mu.Unlock()
 	_, ok := s.objects[key]
 	return ok
+}
+
+// versionedStore versions each object by the hash of its bytes.
+type versionedStore struct {
+	*fakeStore
+}
+
+func newVersionedStore() *versionedStore {
+	return &versionedStore{fakeStore: newFakeStore()}
+}
+
+func (s *versionedStore) GetVersion(ctx context.Context, key string) ([]byte, string, error) {
+	data, err := s.Get(ctx, key)
+	if err != nil {
+		return nil, "", err
+	}
+	return data, versionOf(data), nil
+}
+
+func (s *versionedStore) PutIf(_ context.Context, key string, data []byte, version string) error {
+	s.hook("putif", key)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur, ok := s.objects[key]
+	if (version == "" && ok) || (version != "" && (!ok || versionOf(cur) != version)) {
+		return store.ErrStale
+	}
+	s.puts[key]++
+	s.objects[key] = data
+	return nil
+}
+
+func (s *versionedStore) layer(agent *fakeAgent) *stateLayer {
+	l := newStateLayer(agent, s, &fakeKeys{})
+	l.versioned = s
+	return l
 }
 
 type fakeKeys struct {

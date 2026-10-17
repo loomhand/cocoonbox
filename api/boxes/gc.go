@@ -132,8 +132,10 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 	}
 	unlock := l.lock(p.box)
 	defer unlock()
+	var version string
 	if found {
-		if tl, _, err = l.readTimeline(ctx, p); err != nil {
+		tl = timeline{}
+		if version, _, err = l.readVersion(ctx, p.timeline(), &tl); err != nil {
 			return nil, nil, err
 		}
 	} else {
@@ -185,7 +187,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 		return ids, dropped, nil
 	}
 	if !found || rebased || len(next.Snapshots) != len(tl.Snapshots) {
-		if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.timeline(), next) }); err != nil {
+		if err := l.retry(ctx, func() error { return l.writeVersion(ctx, p.timeline(), next, version) }); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -268,6 +270,11 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kep
 	defer exclusive.Unlock()
 	unlock := l.lock(p.index())
 	defer unlock()
+	var idx chunkIndex
+	version, _, err := l.readVersion(ctx, p.index(), &idx)
+	if err != nil {
+		return err
+	}
 	boxes, err := l.boxesOf(ctx, user)
 	if err != nil {
 		return err
@@ -285,10 +292,6 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kep
 		if err := l.mark(ctx, bp, fresh, marked, seen); err != nil {
 			return err
 		}
-	}
-	var idx chunkIndex
-	if err := getJSON(ctx, l.store, p.index(), &idx); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
 	}
 	garbage := map[string]bool{}
 	indexed := slices.DeleteFunc(slices.Clone(idx.Chunks), func(id string) bool {
@@ -312,7 +315,8 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kep
 	}
 	// The index goes first: a save must never skip uploading a chunk that the deletes remove.
 	if r.indexEntries > 0 {
-		if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.index(), chunkIndex{KeyID: idx.KeyID, Chunks: indexed}) }); err != nil {
+		next := chunkIndex{KeyID: idx.KeyID, Chunks: indexed, Generation: idx.Generation + 1, Commits: idx.Commits}
+		if err := l.retry(ctx, func() error { return l.writeVersion(ctx, p.index(), next, version) }); err != nil {
 			return err
 		}
 	}

@@ -82,6 +82,8 @@ type State struct {
 	ParkOwners []string `json:"park_owners"`
 	// DeltaUsers are the user ids whose saves write delta records (design §25.8); empty writes only full ones.
 	DeltaUsers []string `json:"delta_users"`
+	// ConditionalWrites makes each index and timeline rewrite land only on the version it read; the store must honor If-Match.
+	ConditionalWrites bool `json:"conditional_writes"`
 }
 
 // GC configures snapshot retention and chunk garbage collection; a zero Interval turns it off.

@@ -470,9 +470,12 @@ func machineFlavor(f config.Flavor) machines.Flavor {
 func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer, st *s3.S3, accounts *users.Service) {
 	svc.EnableState(agents, st, accounts)
 	svc.EnableDeltas(cfg.State.DeltaUsers)
+	if cfg.State.ConditionalWrites {
+		svc.EnableConditionalWrites(st)
+	}
 	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
 	logger := log.WithFunc("main.enableState")
-	logger.Infof(ctx, "state layer on %s/%s, saves every %s, delta records for %q", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval), cfg.State.DeltaUsers)
+	logger.Infof(ctx, "state layer on %s/%s, saves every %s, delta records for %q, conditional writes %t", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval), cfg.State.DeltaUsers, cfg.State.ConditionalWrites)
 	if after := time.Duration(cfg.State.ParkAfter); after > 0 {
 		svc.EnableParking(after, cfg.State.ParkOwners)
 		go svc.RunParking(ctx, parkInterval)

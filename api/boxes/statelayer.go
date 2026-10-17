@@ -30,9 +30,14 @@ const (
 
 	commitAttempts   = 3
 	commitRetryDelay = time.Second
+	staleAttempts    = 8
 )
 
-var objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var (
+	objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+	errIndexCollected = errors.New("the gc rewrote the chunk index after the save read it; save again")
+)
 
 // StateAgents is the agents' State service as the control plane calls it.
 type StateAgents interface {
@@ -68,6 +73,8 @@ type snapshotRecord struct {
 	// Parent is the head the save planned on; pruning may remove it, and nothing follows it.
 	Parent string  `json:"parent,omitempty"`
 	Chunks []chunk `json:"chunks"`
+
+	indexGeneration int64
 }
 
 // timeline lists a box's kept snapshots; the GC prunes it and every reader takes the kept set from it.
@@ -79,6 +86,10 @@ type timeline struct {
 type chunkIndex struct {
 	KeyID  string   `json:"key_id"`
 	Chunks []string `json:"chunks"`
+	// Generation counts the gc rewrites that removed chunks.
+	Generation int64 `json:"generation,omitzero"`
+	// Commits counts the saves that committed, so each commit changes the bytes and so the version a gc read.
+	Commits int64 `json:"commits,omitzero"`
 }
 
 type head struct {
@@ -113,6 +124,8 @@ type stateLayer struct {
 	store      store.Store
 	keys       keyring.Keyring
 	retryDelay time.Duration
+	// versioned, when set, makes every index and timeline rewrite conditional on the version it read.
+	versioned store.Versioned
 
 	mu      sync.Mutex
 	locks   map[string]*sync.Mutex
@@ -179,13 +192,14 @@ func (l *stateLayer) snapshot(ctx context.Context, p statePath, ep machines.Endp
 	if err = checkPlan(plan); err != nil {
 		return nil, err
 	}
-	stored, err := l.index(ctx, p, key.GetKeyId())
+	stored, generation, err := l.index(ctx, p, key.GetKeyId())
 	if err != nil {
 		return nil, err
 	}
 	rec := &snapshotRecord{
 		ID: plan.GetSnapshotId(), Consistency: consistency.String(), TakenAtMs: plan.GetTakenAtMs(),
 		Files: plan.GetFiles(), LogicalBytes: plan.GetLogicalBytes(), ChangedFiles: plan.ChangedFiles,
+		indexGeneration: generation,
 	}
 	var missing []chunk
 	seen := map[string]bool{}
@@ -337,7 +351,7 @@ func (l *stateLayer) lastSaved(ctx context.Context, p statePath) int64 {
 
 // commit adds the uploaded chunks to the index, then writes the snapshot record (a delta against base when set), the timeline and the head, so a crash leaves the previous head valid.
 func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, base *snapshotRecord, h head) error {
-	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks) }); err != nil {
+	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks, rec.indexGeneration) }); err != nil {
 		return err
 	}
 	if err := l.retry(ctx, func() error { return l.putRecord(ctx, p, rec, base) }); err != nil {
@@ -356,32 +370,38 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 	return nil
 }
 
-// addToIndex merges chunks into the user's index under a per-user lock, since every box of the user writes it.
-func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, chunks []chunk) error {
+// addToIndex merges chunks into the user's index, failing the save when a gc rewrote the index after its read at generation.
+func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, chunks []chunk, generation int64) error {
 	unlock := l.lock(p.index())
 	defer unlock()
-	stored, err := l.index(ctx, p, keyID)
-	if err != nil {
-		return err
-	}
-	for _, c := range chunks {
-		stored[c.ID] = true
-	}
-	return putJSON(ctx, l.store, p.index(), chunkIndex{KeyID: keyID, Chunks: slices.Sorted(maps.Keys(stored))})
+	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, _ bool) (bool, error) {
+		if idx.Generation != generation {
+			return false, errIndexCollected
+		}
+		stored := map[string]bool{}
+		if idx.KeyID == keyID {
+			for _, id := range idx.Chunks {
+				stored[id] = true
+			}
+		}
+		for _, c := range chunks {
+			stored[c.ID] = true
+		}
+		idx.KeyID, idx.Chunks = keyID, slices.Sorted(maps.Keys(stored))
+		idx.Commits++
+		return true, nil
+	})
 }
 
 // addToTimeline appends e to p's timeline; a box without one gets it from the GC, which builds it from the records.
 func (l *stateLayer) addToTimeline(ctx context.Context, p statePath, e timelineEntry) error {
-	var tl timeline
-	err := getJSON(ctx, l.store, p.timeline(), &tl)
-	if errors.Is(err, store.ErrNotFound) {
-		return nil
-	}
-	if err != nil || slices.ContainsFunc(tl.Snapshots, func(x timelineEntry) bool { return x.ID == e.ID }) {
-		return err
-	}
-	tl.Snapshots = append(tl.Snapshots, e)
-	return putJSON(ctx, l.store, p.timeline(), tl)
+	return l.updateJSON(ctx, p.timeline(), func(tl *timeline, found bool) (bool, error) {
+		if !found || slices.ContainsFunc(tl.Snapshots, func(x timelineEntry) bool { return x.ID == e.ID }) {
+			return false, nil
+		}
+		tl.Snapshots = append(tl.Snapshots, e)
+		return true, nil
+	})
 }
 
 // pin keeps snapshot id of p's box from pruning until the returned func runs.
@@ -413,7 +433,7 @@ func (l *stateLayer) pinned(p statePath) map[string]bool {
 
 func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
 	err := fn()
-	for attempt := 1; err != nil && attempt < commitAttempts; attempt++ {
+	for attempt := 1; err != nil && !errors.Is(err, store.ErrStale) && !errors.Is(err, errIndexCollected) && attempt < commitAttempts; attempt++ {
 		select {
 		case <-ctx.Done():
 			return err
@@ -422,6 +442,60 @@ func (l *stateLayer) retry(ctx context.Context, fn func() error) error {
 		err = fn()
 	}
 	return err
+}
+
+// updateJSON rewrites key with edit's change; on a versioned store a write after the read reruns edit on the newer value.
+func (l *stateLayer) updateJSON[T any](ctx context.Context, key string, edit func(v *T, found bool) (bool, error)) error {
+	for attempt := 1; ; attempt++ {
+		var v T
+		version, found, err := l.readVersion(ctx, key, &v)
+		if err != nil {
+			return err
+		}
+		write, err := edit(&v, found)
+		if err != nil || !write {
+			return err
+		}
+		if err = l.writeVersion(ctx, key, v, version); !errors.Is(err, store.ErrStale) || attempt == staleAttempts {
+			return err
+		}
+	}
+}
+
+// readVersion decodes key into v and returns its version: "" for a missing object, or for every object when the store does not version.
+func (l *stateLayer) readVersion(ctx context.Context, key string, v any) (string, bool, error) {
+	var (
+		raw     []byte
+		version string
+		err     error
+	)
+	if l.versioned != nil {
+		raw, version, err = l.versioned.GetVersion(ctx, key)
+	} else {
+		raw, err = l.store.Get(ctx, key)
+	}
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return "", false, nil
+	case err != nil:
+		return "", false, err
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return "", false, fmt.Errorf("decode %s: %w", key, err)
+	}
+	return version, true, nil
+}
+
+// writeVersion encodes v into key; with a versioned store it lands only on version, ErrStale otherwise.
+func (l *stateLayer) writeVersion(ctx context.Context, key string, v any, version string) error {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", key, err)
+	}
+	if l.versioned == nil {
+		return l.store.Put(ctx, key, raw)
+	}
+	return l.versioned.PutIf(ctx, key, raw, version)
 }
 
 func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
@@ -440,19 +514,19 @@ func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 	return h, nil
 }
 
-func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, error) {
+func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, int64, error) {
 	var idx chunkIndex
 	if err := getJSON(ctx, l.store, p.index(), &idx); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return nil, err
+		return nil, 0, err
 	}
 	stored := map[string]bool{}
 	if idx.KeyID != keyID {
-		return stored, nil
+		return stored, idx.Generation, nil
 	}
 	for _, id := range idx.Chunks {
 		stored[id] = true
 	}
-	return stored, nil
+	return stored, idx.Generation, nil
 }
 
 func (l *stateLayer) record(ctx context.Context, p statePath, id string) (*snapshotRecord, error) {
