@@ -3,8 +3,11 @@ package cluster_test
 import (
 	"context"
 	"errors"
+	"net"
+	"net/url"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -309,6 +312,50 @@ func TestOneProcessLeadsAndAnotherTakesOverWhenItsConnectionDies(t *testing.T) {
 	}
 }
 
+func TestALeaderWhoseLinkGoesSilentStopsAndAnotherTakesOver(t *testing.T) {
+	st, dsn := clustertest.OpenDSN(t)
+	link := newFreezer(t, dsn)
+	silent, err := cluster.Open(t.Context(), link.dsn)
+	if err != nil {
+		t.Fatalf("Open through the link: %v", err)
+	}
+	t.Cleanup(silent.Close)
+	var mu sync.Mutex
+	leading := map[string]bool{}
+	stopped := make(chan time.Time, 1)
+	lead := func(name string) cluster.Work {
+		return func(ctx context.Context) {
+			mu.Lock()
+			if len(leading) > 0 {
+				t.Errorf("%s leads while %v does", name, leading)
+			}
+			leading[name] = true
+			mu.Unlock()
+			<-ctx.Done()
+			mu.Lock()
+			delete(leading, name)
+			mu.Unlock()
+			if name == "silent" {
+				stopped <- time.Now()
+			}
+		}
+	}
+	go silent.Lead(t.Context(), lead("silent"))
+	if first := waitLeader(t, &mu, leading, ""); first != "silent" {
+		t.Fatalf("leader = %s, want the one behind the link", first)
+	}
+	go st.Lead(t.Context(), lead("direct"))
+	link.freeze()
+	select {
+	case <-stopped:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the leader behind a silent link kept leading")
+	}
+	if next := waitLeader(t, &mu, leading, "silent"); next != "direct" {
+		t.Errorf("leader after the silent link = %s, want direct", next)
+	}
+}
+
 func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 	a, dsn := clustertest.OpenDSN(t)
 	b, err := cluster.Open(t.Context(), dsn)
@@ -393,4 +440,64 @@ func waitLeader(t *testing.T, mu *sync.Mutex, leading map[string]bool, not strin
 	}
 	t.Fatalf("no leader other than %q within 20 s", not)
 	return ""
+}
+
+
+// freezer forwards connections to the database of a dsn until freeze, after which it keeps them open and passes nothing.
+type freezer struct {
+	dsn    string
+	frozen atomic.Bool
+}
+
+func newFreezer(t *testing.T, dsn string) *freezer {
+	t.Helper()
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	target := u.Host
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = lis.Close() })
+	u.Host = lis.Addr().String()
+	f := &freezer{dsn: u.String()}
+	go func() {
+		for {
+			client, err := lis.Accept()
+			if err != nil {
+				return
+			}
+			server, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = client.Close()
+				continue
+			}
+			t.Cleanup(func() { _ = client.Close(); _ = server.Close() })
+			go f.pipe(client, server)
+			go f.pipe(server, client)
+		}
+	}()
+	return f
+}
+
+func (f *freezer) freeze() {
+	f.frozen.Store(true)
+}
+
+func (f *freezer) pipe(dst, src net.Conn) {
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := src.Read(buf)
+		if err != nil {
+			return
+		}
+		if f.frozen.Load() {
+			continue
+		}
+		if _, err := dst.Write(buf[:n]); err != nil {
+			return
+		}
+	}
 }

@@ -350,7 +350,7 @@ func (c *Config) validate() error {
 		errs = append(errs, errors.New("cluster.shared needs cluster.ledger"))
 	}
 	if c.Cluster.Shared {
-		errs = append(errs, errors.New("cluster.shared stays off until leader-only provisioning and gc, cross-process restore pins and a per-user start lock land"))
+		errs = append(errs, errors.New("cluster.shared stays off until cross-process restore pins and an Ensure that reads the shared state under the start lock land"))
 	}
 	return errors.Join(errs...)
 }

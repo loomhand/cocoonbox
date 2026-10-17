@@ -1,4 +1,4 @@
-// Package cluster keeps the state api processes share in PostgreSQL: machines, box heads and operations.
+// Package cluster keeps the state api processes share in PostgreSQL: machines, box heads, operations and client reaches, with the leader and user locks.
 package cluster
 
 import (
@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -54,7 +55,7 @@ type Change struct {
 // Store is the shared state in one PostgreSQL database.
 type Store struct {
 	pool *pgxpool.Pool
-	// locks holds the connections of the user locks.
+	// locks holds the connections of the leader and user locks apart, with keepalives so the server frees the locks of a host that died.
 	locks *pgxpool.Pool
 }
 
@@ -70,6 +71,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("parse the database dsn: %w", err)
 	}
 	cfg.MaxConns = lockConns
+	maps.Copy(cfg.ConnConfig.RuntimeParams, map[string]string{"tcp_keepalives_idle": "5", "tcp_keepalives_interval": "2", "tcp_keepalives_count": "3"})
 	locks, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		pool.Close()

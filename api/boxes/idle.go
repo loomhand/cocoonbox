@@ -174,7 +174,7 @@ func (i *idling) threshold(agent bool) time.Duration {
 }
 
 // enter records a call to box that runs until the returned func; ended, when set, learns when it ended.
-func (i *idling) enter(box string, ended func(box string, at time.Time)) func() {
+func (i *idling) enter(box string, ended reachFunc) func() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.last[box] = i.now()
@@ -193,8 +193,7 @@ func (i *idling) enter(box string, ended func(box string, at time.Time)) func() 
 	}
 }
 
-// idleAt reports whether box had no open call for after, with elsewhere the last reach another process saw; a box seen
-// for the first time starts its idle time now.
+// idleAt reports whether box had no open call here for after nor a reach elsewhere since; a box seen for the first time starts its idle time now.
 func (i *idling) idleAt(box string, now time.Time, after time.Duration, elsewhere time.Time) bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()

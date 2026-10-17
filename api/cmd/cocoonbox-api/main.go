@@ -250,7 +250,11 @@ func main() {
 	if cfg.Cluster.Shared {
 		loops.add(backend.Run)
 	}
-	loops.run(ctx, ledger)
+	var shared *cluster.Store
+	if cfg.Cluster.Shared {
+		shared = ledger
+	}
+	loops.run(ctx, shared)
 	logger.Infof(ctx, "serving gRPC on %s and MCP and the console on %s for %d users", cfg.Listen, cfg.MCPListen, len(accounts.List()))
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")

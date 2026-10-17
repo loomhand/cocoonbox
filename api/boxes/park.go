@@ -150,10 +150,7 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 	}
 	unlock, lockErr := s.lockStarts(op.ctx, op.user)
 	if lockErr != nil {
-		if _, herr := s.sleep(context.WithoutCancel(op.ctx), m.ID); herr != nil {
-			logger.Error(op.ctx, herr, "hibernate "+m.ID+" again")
-		}
-		op.fail("park failed; the box is hibernated again")
+		s.unpark(op, m.ID, lockErr)
 		return
 	}
 	defer unlock()
@@ -165,16 +162,22 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 		err = s.deleteMachine(context.WithoutCancel(op.ctx), m.ID)
 	}
 	if err != nil {
-		logger.Error(op.ctx, err, "park "+m.ID)
-		if _, herr := s.sleep(context.WithoutCancel(op.ctx), m.ID); herr != nil {
-			logger.Error(op.ctx, herr, "hibernate "+m.ID+" again")
-		}
-		op.fail("park failed; the box is hibernated again")
+		s.unpark(op, m.ID, err)
 		return
 	}
 	logger.Infof(op.ctx, "parked: removed %s after snapshot %s", m.ID, rec.ID)
 	op.succeed(fmt.Sprintf("parked: snapshot %s, %.1f MiB logical, %.1f MiB uploaded; machine %s removed in %s; the next Ensure restores it",
 		rec.ID, float64(rec.LogicalBytes)/mib, float64(rec.UploadedBytes)/mib, m.ID, time.Since(start).Round(time.Second)))
+}
+
+// unpark ends op, which err stopped, with machine id hibernated again.
+func (s *Service) unpark(op *operation, id string, err error) {
+	logger := log.WithFunc("boxes.Service.unpark").WithField("box", op.boxID)
+	logger.Error(op.ctx, err, "park "+id)
+	if _, herr := s.sleep(context.WithoutCancel(op.ctx), id); herr != nil {
+		logger.Error(op.ctx, herr, "hibernate "+id+" again")
+	}
+	op.fail("park failed; the box is hibernated again")
 }
 
 func (s *Service) parking(box string) bool {
