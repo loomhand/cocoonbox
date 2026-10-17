@@ -25,10 +25,8 @@ type Shared interface {
 // it planned on, and the operations of other processes count as running here until ctx ends.
 func (s *Service) EnableShared(ctx context.Context, shared Shared) {
 	logger := log.WithFunc("boxes.Service.EnableShared")
-	done, cancel := context.WithCancel(ctx)
-	cancel()
 	s.ops.mu.Lock()
-	s.ops.shared, s.ops.done = shared, done
+	s.ops.shared = shared
 	if s.mirror != nil {
 		s.ops.mirror = func(rec cluster.Operation) {
 			s.mirror.Put("op:"+rec.ID, func(ctx context.Context) error { return shared.PutRunningOperation(ctx, rec) })
