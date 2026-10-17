@@ -166,7 +166,7 @@ func (o *operation) appendBytesLocked(phase controlv1.Phase, detail string, stat
 }
 
 func (o *operation) recordLocked() cluster.Operation {
-	events, _ := toEventRecords(collapseTransfers(o.events))
+	events := eventRecords(collapseTransfers(o.events))
 	return cluster.Operation{
 		ID: o.id, User: o.user, Box: o.boxID, Phase: int32(o.phase), Park: o.park, Gen: o.gen, Events: events,
 		FinishedAt: o.finishedAt, ExpiresAt: o.expires, CreatedAt: o.created,

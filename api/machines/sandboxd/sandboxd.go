@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -645,7 +646,7 @@ func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
 		b.mu.Lock()
 		e := b.entries[id]
 		known := e != nil && e.row != nil && e.row.ID == r.ID
-		unchanged := known && sameRow(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template
+		unchanged := known && reflect.DeepEqual(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template
 		b.mu.Unlock()
 		if unchanged {
 			continue
@@ -776,14 +777,20 @@ func (b *Backend) dropLocked(id string) {
 	}
 }
 
-// differences returns the ids, of only or of all when only is nil, whose ledger row differs from the entry.
-func (b *Backend) differences(ctx context.Context, only []string) ([]string, error) {
+// differences returns the ids whose ledger row differs from the entry.
+func (b *Backend) differences(ctx context.Context) ([]string, error) {
 	b.mu.Lock()
-	want := make(map[string]cluster.Machine, len(b.entries))
-	for id, e := range b.entries {
-		want[id] = e.record()
+	entries := make([]entry, 0, len(b.entries))
+	for _, e := range b.entries {
+		copied := *e
+		copied.meta = maps.Clone(e.meta)
+		entries = append(entries, copied)
 	}
 	b.mu.Unlock()
+	want := make(map[string]cluster.Machine, len(entries))
+	for _, e := range entries {
+		want[e.id] = e.record()
+	}
 	rows, err := b.opts.Ledger.Machines(ctx)
 	if err != nil {
 		return nil, err
@@ -792,16 +799,13 @@ func (b *Backend) differences(ctx context.Context, only []string) ([]string, err
 	for _, r := range rows {
 		have[r.ID] = r
 	}
-	ids := only
-	if ids == nil {
-		ids = slices.Collect(maps.Keys(want))
-		for id := range have {
-			if _, ok := want[id]; !ok {
-				ids = append(ids, id)
-			}
+	ids := slices.Collect(maps.Keys(want))
+	for id := range have {
+		if _, ok := want[id]; !ok {
+			ids = append(ids, id)
 		}
-		slices.Sort(ids)
 	}
+	slices.Sort(ids)
 	var differ []string
 	for _, id := range ids {
 		w, inMemory := want[id]
@@ -858,9 +862,4 @@ func fingerprint(v *envVar) string {
 	raw, _ := json.Marshal(v)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
-}
-
-func sameRow(a, b row) bool {
-	return a.ID == b.ID && a.Key == b.Key && a.Tenant == b.Tenant && maps.Equal(a.Metadata, b.Metadata) && a.Hibernated == b.Hibernated &&
-		a.Archived == b.Archived && a.Restarts == b.Restarts && a.Failed == b.Failed && a.ClaimedAt.Equal(b.ClaimedAt)
 }

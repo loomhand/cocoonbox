@@ -38,18 +38,20 @@ func (s *Store) Head(ctx context.Context, user, box string) (Head, error) {
 	return h, err
 }
 
-// PutHead writes the head of user's box whatever the stored version and returns the new version.
-func (s *Store) PutHead(ctx context.Context, user, box string, head []byte) (int64, error) {
-	var version int64
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `INSERT INTO box_heads (user_id, box, head) VALUES ($1, $2, $3)
+// PutHead writes the head of user's box whatever the stored version, unless the row already holds it.
+func (s *Store) PutHead(ctx context.Context, user, box string, head []byte) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		cmd, err := tx.Exec(ctx, `INSERT INTO box_heads (user_id, box, head) VALUES ($1, $2, $3)
 			ON CONFLICT (user_id, box) DO UPDATE SET head = $3, version = box_heads.version + 1, updated_at = now()
-			RETURNING version`, user, box, string(head)).Scan(&version); err != nil {
+			WHERE box_heads.head::text IS DISTINCT FROM EXCLUDED.head::text`, user, box, string(head))
+		switch {
+		case err != nil:
 			return fmt.Errorf("put head of %s: %w", box, err)
+		case cmd.RowsAffected() == 0:
+			return nil
 		}
 		return notify(ctx, tx, ChannelHeads, user+"/"+box)
 	})
-	return version, err
 }
 
 // SwapHead writes the head of user's box while it keeps version, 0 for none stored; ErrStale when another write came first.

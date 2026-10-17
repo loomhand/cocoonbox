@@ -1,10 +1,10 @@
 package boxes
 
 import (
+	"bytes"
 	"cmp"
 	"context"
 	"encoding/json/v2"
-	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -22,7 +22,7 @@ const (
 // Ledger keeps the box heads and operations api processes share.
 type Ledger interface {
 	Heads(ctx context.Context) ([]cluster.Head, error)
-	PutHead(ctx context.Context, user, box string, head []byte) (int64, error)
+	PutHead(ctx context.Context, user, box string, head []byte) error
 	DeleteHeads(ctx context.Context, user, box string) error
 	Operations(ctx context.Context, since time.Time) ([]cluster.Operation, error)
 	PutOperation(ctx context.Context, op cluster.Operation) error
@@ -44,19 +44,13 @@ func (s *Service) EnableLedger(ctx context.Context, l Ledger) {
 	}
 	if s.state != nil {
 		s.state.mirror = func(p statePath, h *head) {
-			key := headKey + p.user + "/" + p.box
+			key := p.ledgerKey()
 			if h == nil {
 				s.mirror.Put(key, func(ctx context.Context) error { return l.DeleteHeads(ctx, p.user, p.box) })
 				return
 			}
-			raw, err := json.Marshal(h)
-			if err != nil {
-				return
-			}
-			s.mirror.Put(key, func(ctx context.Context) error {
-				_, err := l.PutHead(ctx, p.user, p.box, raw)
-				return err
-			})
+			raw := headBytes(*h)
+			s.mirror.Put(key, func(ctx context.Context) error { return l.PutHead(ctx, p.user, p.box, raw) })
 		}
 	}
 }
@@ -97,21 +91,14 @@ func (s *Service) Verify(ctx context.Context) (Drift, error) {
 	return d, s.ledger.PurgeOperations(ctx, time.Now().Add(-operationRetention))
 }
 
-// differences returns the keys, of only or of all when only is nil, of the cached heads and the operations whose ledger row differs or is missing.
-func (s *Service) differences(ctx context.Context, only []string) ([]string, error) {
+// differences returns the keys of the cached heads and the operations whose ledger row differs or is missing.
+func (s *Service) differences(ctx context.Context) ([]string, error) {
 	heads, err := s.headDifferences(ctx)
 	if err != nil {
 		return nil, err
 	}
 	ops, err := s.operationDifferences(ctx)
-	if err != nil {
-		return nil, err
-	}
-	differ := slices.Concat(heads, ops)
-	if only != nil {
-		differ = slices.DeleteFunc(differ, func(key string) bool { return !slices.Contains(only, key) })
-	}
-	return differ, nil
+	return slices.Concat(heads, ops), err
 }
 
 func (s *Service) headDifferences(ctx context.Context) ([]string, error) {
@@ -122,21 +109,18 @@ func (s *Service) headDifferences(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	have := make(map[statePath]head, len(rows))
+	have := make(map[statePath][]byte, len(rows))
 	for _, r := range rows {
-		var h head
-		if err := json.Unmarshal(r.Head, &h); err != nil {
-			return nil, fmt.Errorf("decode the ledger head of %s: %w", r.Box, err)
-		}
-		have[statePath{user: r.User, box: r.Box}] = h
+		have[statePath{user: r.User, box: r.Box}] = r.Head
 	}
 	s.state.mu.Lock()
 	cached := maps.Clone(s.state.heads)
 	s.state.mu.Unlock()
 	var differ []string
 	for _, p := range slices.SortedFunc(maps.Keys(cached), comparePaths) {
-		if h, ok := have[p]; ok != (cached[p] != head{}) || ok && h != cached[p] {
-			differ = append(differ, headKey+p.user+"/"+p.box)
+		stored, ok := have[p]
+		if h := cached[p]; ok != (h != head{}) || ok && !bytes.Equal(stored, headBytes(h)) {
+			differ = append(differ, p.ledgerKey())
 		}
 	}
 	return differ, nil
@@ -169,19 +153,20 @@ func (s *Service) operationDifferences(ctx context.Context) ([]string, error) {
 }
 
 func sameOperation(a, b cluster.Operation) bool {
-	var ea, eb []eventRecord
-	if json.Unmarshal(a.Events, &ea) != nil || json.Unmarshal(b.Events, &eb) != nil {
-		return false
-	}
 	return a.User == b.User && a.Box == b.Box && a.Phase == b.Phase && a.Park == b.Park && a.Gen == b.Gen &&
-		a.FinishedAt.IsZero() == b.FinishedAt.IsZero() && slices.Equal(ea, eb)
+		a.FinishedAt.IsZero() == b.FinishedAt.IsZero() && bytes.Equal(a.Events, b.Events)
+}
+
+func headBytes(h head) []byte {
+	raw, _ := json.Marshal(h)
+	return raw
 }
 
 func comparePaths(a, b statePath) int {
 	return cmp.Or(cmp.Compare(a.user, b.user), cmp.Compare(a.box, b.box))
 }
 
-func toEventRecords(events []*controlv1.OperationEvent) ([]byte, error) {
+func eventRecords(events []*controlv1.OperationEvent) []byte {
 	recs := make([]eventRecord, len(events))
 	for i, ev := range events {
 		recs[i] = eventRecord{
@@ -189,9 +174,6 @@ func toEventRecords(events []*controlv1.OperationEvent) ([]byte, error) {
 			BoxState: int32(ev.GetBoxState()), DoneBytes: ev.GetDoneBytes(), TotalBytes: ev.GetTotalBytes(),
 		}
 	}
-	raw, err := json.Marshal(recs)
-	if err != nil {
-		return nil, fmt.Errorf("encode events: %w", err)
-	}
-	return raw, nil
+	raw, _ := json.Marshal(recs)
+	return raw
 }
