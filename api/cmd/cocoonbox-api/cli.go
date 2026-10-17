@@ -22,6 +22,7 @@ import (
 
 const (
 	cliUsage = `usage:
+  cocoonbox-api [-config FILE] check
   cocoonbox-api [-config FILE] user add NAME [-id ID] [-admin]
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
@@ -48,6 +49,10 @@ type accountDeleter interface {
 
 // runCLI serves the operator commands; secrets arrive on stdin and never on the command line.
 func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Reader, stdout io.Writer) error {
+	if len(args) == 1 && args[0] == "check" {
+		_, err := fmt.Fprintln(stdout, "config ok")
+		return err
+	}
 	if len(args) >= 2 && args[0] == "state" && args[1] == "migrate" {
 		return migrateState(ctx, cfg, args[2:], stdout)
 	}
