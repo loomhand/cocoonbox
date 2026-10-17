@@ -70,6 +70,23 @@ func TestAClientCallReachesTheBoxAndEndShareDoesNot(t *testing.T) {
 	}
 }
 
+func TestSessionEventsDoNotKeepTheBoxUp(t *testing.T) {
+	env := newProxyEnv(t)
+	stream, err := env.client.Events(env.aliceCtx(t), &agentv1.EventsRequest{})
+	if err == nil {
+		_, _ = stream.Recv()
+	}
+	if got := env.resolver.reaches(); len(got) != 0 {
+		t.Errorf("Session.Events reached %v; it only watches the box", got)
+	}
+	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); err != nil {
+		t.Fatalf("Hello: %v", err)
+	}
+	if got := env.resolver.reaches(); !slices.Equal(got, []string{boxes.BoxID("alice")}) {
+		t.Errorf("reached %v after a Hello, want alice's box", got)
+	}
+}
+
 func TestDialsTheEndpointNotItsKey(t *testing.T) {
 	env := newProxyEnv(t)
 	env.resolver.opaque = true

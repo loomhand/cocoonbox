@@ -150,9 +150,17 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
 	if rt.ep, rt.wake, err = m.resolver.Resolve(rt.ctx, owner, boxID); err == nil {
-		rt.left = m.resolver.Reached(boxID)
+		rt.left = m.reached(r, boxID)
 	}
 	return rt, err
+}
+
+// reached records an exchange that keeps box up: every one but a GET, whose event stream only watches the box.
+func (m *MCP) reached(r *http.Request, box string) func() {
+	if r.Method == http.MethodGet {
+		return func() {}
+	}
+	return m.resolver.Reached(box)
 }
 
 // grantRoute authorizes one exchange for an access token on a box its grant created, as the box owner.
@@ -179,7 +187,7 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 		return rt, errNoBox
 	}
 	if rt.ep, rt.wake, err = m.resolver.Resolve(rt.ctx, g.User, boxID); err == nil {
-		rt.left = m.resolver.Reached(boxID)
+		rt.left = m.reached(r, boxID)
 	}
 	return rt, err
 }

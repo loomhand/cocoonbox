@@ -101,6 +101,9 @@ func TestMCPStreamsEvents(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("edge handler did not return after the client cancelled")
 	}
+	if reached := env.resolver.reaches(); len(reached) != 0 {
+		t.Errorf("a GET event stream reached %v; it only watches the box", reached)
+	}
 }
 
 func TestMCPStreamEndsWhenItsUserIsDisabled(t *testing.T) {

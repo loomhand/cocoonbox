@@ -30,6 +30,8 @@ const (
 
 	agentServicePrefix = "/cocoonbox.agent.v1."
 	stateServicePrefix = "/cocoonbox.agent.v1.State/"
+	// sessionEvents only watches the box, so it keeps no box up.
+	sessionEvents = "/cocoonbox.agent.v1.Session/Events"
 )
 
 var droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, credential.Header, "content-type", "user-agent", "te"}
@@ -83,7 +85,9 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	if err != nil {
 		return err
 	}
-	defer p.resolver.Reached(boxes[0])()
+	if method != sessionEvents {
+		defer p.resolver.Reached(boxes[0])()
+	}
 	conn, err := p.conn(ctx, boxes[0], ep)
 	if err != nil {
 		return err
