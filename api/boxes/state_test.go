@@ -844,6 +844,36 @@ func TestAGCPassThatDeletesAnUnindexedUploadFailsTheSaveThatUploadedIt(t *testin
 	}
 }
 
+func TestAHeadReadBeforeASaveNeverReplacesTheHeadTheSaveCached(t *testing.T) {
+	st := newFakeStore()
+	agent := newFakeAgent(st)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	if _, err := newStateLayer(agent, st, &fakeKeys{}).save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	slow := &afterGetStore{fakeStore: st}
+	l := newStateLayer(agent, slow, &fakeKeys{})
+	var mirrored []string
+	l.mirror = func(_ statePath, h *head) { mirrored = append(mirrored, h.Latest) }
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
+	slow.after = func(key string) {
+		if key != p.head() {
+			return
+		}
+		slow.after = nil
+		if _, err := l.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+			t.Errorf("save during the head read: %v", err)
+		}
+	}
+	if h, err := l.head(t.Context(), p); err != nil || h.Latest != snapshotID(1) {
+		t.Fatalf("head read before the save = %+v, %v", h, err)
+	}
+	if h, _ := l.head(t.Context(), p); h.Latest != snapshotID(2) || mirrored[len(mirrored)-1] != snapshotID(2) {
+		t.Errorf("cached head %q, mirrored %v; want the save's head kept over the older read", h.Latest, mirrored)
+	}
+}
+
 func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)
@@ -1364,4 +1394,17 @@ func (a *fakeAgent) lastRestore() restoreCall {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.restores[len(a.restores)-1]
+}
+
+type afterGetStore struct {
+	*fakeStore
+	after func(key string)
+}
+
+func (s *afterGetStore) Get(ctx context.Context, key string) ([]byte, error) {
+	data, err := s.fakeStore.Get(ctx, key)
+	if s.after != nil {
+		s.after(key)
+	}
+	return data, err
 }

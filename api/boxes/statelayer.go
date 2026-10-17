@@ -377,7 +377,7 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.head(), h) }); err != nil {
 		return err
 	}
-	l.keepHead(p, h)
+	l.keepHead(p, h, false)
 	return nil
 }
 
@@ -512,15 +512,19 @@ func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 	if err := getJSON(ctx, l.store, p.head(), &h); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return head{}, err
 	}
-	l.keepHead(p, h)
+	l.keepHead(p, h, true)
 	return h, nil
 }
 
-func (l *stateLayer) keepHead(p statePath, h head) {
+func (l *stateLayer) keepHead(p statePath, h head, read bool) {
 	l.mu.Lock()
-	l.heads[p] = h
+	_, cached := l.heads[p]
+	kept := !read || !cached
+	if kept {
+		l.heads[p] = h
+	}
 	l.mu.Unlock()
-	if l.mirror != nil && h != (head{}) {
+	if kept && l.mirror != nil && h != (head{}) {
 		l.mirror(p, &h)
 	}
 }
