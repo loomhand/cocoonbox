@@ -290,6 +290,11 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 		if err != nil {
 			return err
 		}
+		young, err := l.youngRecords(ctx, bp, now)
+		if err != nil {
+			return err
+		}
+		ids = slices.Compact(slices.Sorted(slices.Values(append(ids, young...))))
 		fresh := slices.DeleteFunc(ids, func(id string) bool { return seen[box][id] || dropped[box][id] })
 		if err := l.mark(ctx, bp, fresh, marked, seen); err != nil {
 			return err
@@ -348,6 +353,20 @@ func (l *stateLayer) mark(ctx context.Context, p statePath, ids []string, marked
 		seen[p.box][id] = true
 	}
 	return nil
+}
+
+func (l *stateLayer) youngRecords(ctx context.Context, p statePath, now time.Time) ([]string, error) {
+	listing, err := l.store.List(ctx, p.records())
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, obj := range listing {
+		if id, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, p.records()), ".json"); ok && objectID.MatchString(id) && !settled(obj, now) {
+			ids = append(ids, id)
+		}
+	}
+	return ids, nil
 }
 
 // boxesOf returns the boxes that hold snapshots of user.
