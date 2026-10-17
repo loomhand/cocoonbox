@@ -34,9 +34,9 @@ const (
 )
 
 var (
-	objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
-
 	errIndexCollected = errors.New("the gc rewrote the chunk index after the save read it; save again")
+
+	objectID = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
 // StateAgents is the agents' State service as the control plane calls it.
@@ -124,8 +124,7 @@ type stateLayer struct {
 	store      store.Store
 	keys       keyring.Keyring
 	retryDelay time.Duration
-	// versioned, when set, makes every index and timeline rewrite conditional on the version it read.
-	versioned store.Versioned
+	versioned  store.Versioned
 	// mirror, when set, gets every committed head and, as nil, every forgotten one.
 	mirror func(p statePath, h *head)
 

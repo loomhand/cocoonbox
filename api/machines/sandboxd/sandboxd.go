@@ -60,8 +60,7 @@ type Options struct {
 	DiskGiB           uint32
 	AgentPort         int
 	TenantEgressClass string
-	// Ledger, when set, receives a copy of every machine record for other api processes.
-	Ledger Ledger
+	Ledger            Ledger
 }
 
 // Ledger keeps the machine records api processes share.

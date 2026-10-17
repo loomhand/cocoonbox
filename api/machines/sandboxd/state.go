@@ -64,8 +64,7 @@ type entry struct {
 	// ready means the agent answered on its port since the claim, a wake or the last restart.
 	ready         bool
 	readyRestarts int
-	// mirrored is the record last queued for the ledger.
-	mirrored *cluster.Machine
+	mirrored      *cluster.Machine
 }
 
 func (e *entry) state() (machines.State, string) {
@@ -127,7 +126,6 @@ func (e *entry) machine(disk uint32) machines.Machine {
 	return m
 }
 
-// record is e as the ledger keeps it.
 func (e *entry) record() cluster.Machine {
 	m := cluster.Machine{
 		ID: e.id, Owner: e.owner, Image: e.image, CreatedAt: e.created, Op: e.op, OpErr: e.opErr, Revision: e.revision,

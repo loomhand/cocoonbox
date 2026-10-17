@@ -16,13 +16,12 @@ import (
 )
 
 const (
-	migrationLock = 0x6362636c // "cbcl"
-
 	ChannelMachines   = "cocoonbox_machines"
 	ChannelHeads      = "cocoonbox_heads"
 	ChannelOperations = "cocoonbox_operations"
 
-	listenRetry = 5 * time.Second
+	migrationLock = 0x6362636c // "cbcl"
+	listenRetry   = 5 * time.Second
 )
 
 var (
