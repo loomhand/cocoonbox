@@ -1,0 +1,48 @@
+syntax = "proto3";
+
+package cocoonbox.control.v1;
+
+option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1";
+
+// Account is served by cocoonbox-api for the caller's own sign-ins, with
+// `authorization: Bearer <user token>`: the personal token or a device token.
+// A revoke ends every call still open on the token at once.
+service Account {
+  // ListDevices returns the caller's device tokens, newest first.
+  rpc ListDevices(ListDevicesRequest) returns (ListDevicesResponse);
+  // RevokeDevice signs one device out; NOT_FOUND for another user's device or
+  // one already gone.
+  rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
+  // RevokeToken drops the personal token; device tokens stay.
+  rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+}
+
+message Device {
+  // `dev_` and 16 hex digits.
+  string id = 1;
+  // The first-party client that signed in: `cocoonbox-cli` or `cocoonbox-app`.
+  string client = 2;
+  // The device name the sign-in gave, such as the computer's name.
+  string label = 3;
+  int64 created_at_ms = 4;
+  // 0 when never used; written at most once a minute.
+  int64 used_at_ms = 5;
+  // The device whose token made this call.
+  bool current = 6;
+}
+
+message ListDevicesRequest {}
+
+message ListDevicesResponse {
+  repeated Device devices = 1;
+}
+
+message RevokeDeviceRequest {
+  string device_id = 1;
+}
+
+message RevokeDeviceResponse {}
+
+message RevokeTokenRequest {}
+
+message RevokeTokenResponse {}

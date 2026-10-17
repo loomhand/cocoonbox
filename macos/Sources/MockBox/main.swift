@@ -3,7 +3,7 @@ import Foundation
 import GRPCCore
 import GRPCNIOTransportHTTP2TransportServices
 
-// MockBox serves Boxes, Shares, Flows, Connectors, Agents and Session over plaintext HTTP/2, and MCP at
+// MockBox serves Boxes, Shares, Flows, Keys, Account, Connectors, Agents and Session over plaintext HTTP/2, and MCP at
 // /cocoonbox.mcp/<box id>, /control and /connect and the first-party clients' browser sign-in on the same port, with canned agent turns and a
 // synthetic RFB desktop, for running the app without a box. It starts with
 // one box, main; Boxes.Create adds more, which show the same desktop.
@@ -35,7 +35,7 @@ let transport = HTTP2ServerTransport.TransportServices(
 )
 let server = GRPCServer(
     transport: transport,
-    services: [BoxesService(world: world), SharesService(world: world), FlowsService(flows: MockFlows()), KeysService(keys: MockKeys()), ConnectorsService(connect: world.connect), AgentsService(world: world), SessionService(world: world, credentials: options["--credentials"] != "0", workspace: options["--workspace"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory)],
+    services: [BoxesService(world: world), SharesService(world: world), FlowsService(flows: MockFlows()), KeysService(keys: MockKeys()), AccountService(account: MockAccount()), ConnectorsService(connect: world.connect), AgentsService(world: world), SessionService(world: world, credentials: options["--credentials"] != "0", workspace: options["--workspace"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.temporaryDirectory)],
     interceptors: [AuthCheck(token: token, world: world)]
 )
 try await withThrowingTaskGroup(of: Void.self) { group in

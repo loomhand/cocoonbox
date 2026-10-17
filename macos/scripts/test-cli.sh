@@ -6,7 +6,7 @@
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
 # and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, a release-built
+# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, devices and devices revoke, a release-built
 # bridge naming the keys at initialize, and login through the browser and logout. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
@@ -324,6 +324,18 @@ check("keys rm", r.returncode == 0 and "revoke it at the vendor too" in r.stdout
 r = keys("rm", "ATTIO_API_KEY")
 check("keys rm of a missing key fails", r.returncode == 1 and "NotFound" in r.stderr.replace("notFound", "NotFound"), r.stderr)
 check("keys rm SERP", keys("rm", "SERP").returncode == 0)
+
+r = run("devices", "--json")
+devices = json.loads(r.stdout or "{}").get("devices", [])
+check("devices --json lists the devices and marks this one", r.returncode == 0 and [d["client"] for d in devices] == ["cocoonbox-app", "cocoonbox-cli"] and [d["current"] for d in devices] == [False, True], r.stdout + r.stderr)
+r = run("devices")
+check("devices marks this one with *", r.returncode == 0 and "* dev_cli0000000000000  cocoonbox-cli  laptop" in r.stdout and "never used" in r.stdout, r.stdout + r.stderr)
+r = run("devices", "revoke", "dev_app0000000000000")
+check("devices revoke", r.returncode == 0 and "revoked dev_app0000000000000" in r.stdout and "dev_app" not in run("devices").stdout, r.stdout + r.stderr)
+r = run("devices", "revoke", "dev_gone")
+check("devices revoke of an unknown device fails", r.returncode == 1 and "device not found" in r.stderr, r.stderr)
+r = run("devices", "revoke")
+check("devices revoke without an id prints the usage", r.returncode == 1 and "usage: cocoonbox devices" in r.stderr, r.stderr)
 
 headers = run("mcp-headers")
 check("mcp-headers prints the Authorization header", json.loads(headers.stdout) == {"Authorization": "Bearer mock-token"}, headers.stdout)

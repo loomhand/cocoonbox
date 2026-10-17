@@ -58,6 +58,12 @@ func (s *Service) Devices(ctx context.Context, id string) ([]Device, error) {
 	return s.store.devices(ctx, id)
 }
 
+// TokenDevice returns the id of the device whose token hashes to sum, empty for the personal token or an unknown one.
+func (s *Service) TokenDevice(sum string) string {
+	owner, _ := s.indexedToken(sum)
+	return owner.device
+}
+
 // RevokeDevice ends user id's device token device at once.
 func (s *Service) RevokeDevice(ctx context.Context, id, device string) error {
 	sum, err := s.store.removeDevice(ctx, id, device)

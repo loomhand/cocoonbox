@@ -83,6 +83,8 @@ The CLI and the app sign in through the same authorization server, as first-part
 
 **The user.** The console's Devices section lists them (`GET /cb/api/devices`: `id`, `client`, `label`, `created_at`, `used_at`) and `DELETE /cb/api/devices/{id}` revokes one at once (404 for a device of another user or one already gone). `DELETE /cb/api/me/token` revokes the personal token at once, 204 also when there is none; device tokens stay.
 
+**`cocoonbox.control.v1.Account`** (`proto/cocoonbox/control/v1/account.proto`, the personal token or a device token): `ListDevices` answers the console's list plus `current`, true for the device whose token made the call; `RevokeDevice{device_id}` revokes one (`NOT_FOUND` for another user's device or one already gone); `RevokeToken` revokes the personal token. `cocoonbox devices [--json]` lists them, `*` marking the CLI's own, and `cocoonbox devices revoke ID` revokes one.
+
 ### Sign-in with GitHub and signup
 
 GitHub is the one identity provider. A dedicated GitHub OAuth App, apart from Connect's GitHub App, signs people in: its id and secret come from `LOGIN_GITHUB_CLIENT_ID` and `LOGIN_GITHUB_CLIENT_SECRET` (`/etc/cocoonbox/login.env`), and its callback is `<oauth.public_url>/cocoonbox.auth/callback`, which Caddy routes to `127.0.0.1:18201`. The package is `api/signup`, its tables in the users database under `signup_schema_migrations`.

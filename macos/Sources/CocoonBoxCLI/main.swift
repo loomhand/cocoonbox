@@ -22,6 +22,8 @@ usage: cocoonbox <command> [options]
                                         or COCOONBOX_INVITE_TOKEN_FILE, never from the command line
   logout                                delete the stored token, and revoke it when the CLI got it through the
                                         browser (a token copied from the app stays the app's)
+  devices [--json]                      list the devices signed in through the browser; * marks this one
+  devices revoke ID                     sign a device out at once, with every call it holds open
   status [--json]                       show the box
   ensure | save                         wake or save the box, with progress
   hibernate [--yes]                     hibernate the box, with progress
@@ -633,6 +635,45 @@ func keysCommand() async {
             print("deleted \(name) from every box; revoke it at the vendor too")
         default:
             fail(keysUsage)
+        }
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+// MARK: devices
+
+let devicesUsage = "usage: cocoonbox devices [list] [--json] | devices revoke ID"
+
+func deviceObject(_ device: Cocoonbox_Control_V1_Device) -> [String: Any] {
+    [
+        "id": device.id, "client": device.client, "label": device.label, "created_at_ms": device.createdAtMs,
+        "used_at_ms": device.usedAtMs, "current": device.current,
+    ]
+}
+
+func deviceLine(_ device: Cocoonbox_Control_V1_Device) -> String {
+    func at(_ ms: Int64) -> String { Date(timeIntervalSince1970: Double(ms) / 1000).formatted(.iso8601) }
+    let used = device.usedAtMs > 0 ? "used \(at(device.usedAtMs))" : "never used"
+    return "\(device.current ? "*" : " ") \(device.id)  \(device.client)  \(device.label.isEmpty ? "-" : device.label)  signed in \(at(device.createdAtMs))  \(used)"
+}
+
+func devicesCommand() async {
+    let connection = connection()
+    defer { connection.close() }
+    do {
+        switch words.first ?? "list" {
+        case "list", "ls":
+            let devices = try await connection.listDevices()
+            if flags.contains("--json") { return printJSON(["devices": devices.map(deviceObject)]) }
+            if devices.isEmpty { return print("no device signed in through the browser") }
+            devices.forEach { print(deviceLine($0)) }
+        case "revoke":
+            guard words.count == 2 else { fail(devicesUsage) }
+            try await connection.revokeDevice(id: words[1])
+            print("revoked \(words[1])")
+        default:
+            fail(devicesUsage)
         }
     } catch {
         fail(BoxConnection.describe(error))
@@ -1338,6 +1379,8 @@ case "flows":
     await flowsCommand()
 case "keys":
     await keysCommand()
+case "devices":
+    await devicesCommand()
 case "invite":
     await inviteCommand()
 case "mcp":

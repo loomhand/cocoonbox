@@ -19,6 +19,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/account"
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/config"
@@ -161,6 +162,7 @@ func main() {
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 	controlv1.RegisterSharesServer(server, shareSvc)
+	controlv1.RegisterAccountServer(server, account.New(accounts))
 	controlv1.RegisterKeysServer(server, keys)
 	if library != nil {
 		controlv1.RegisterFlowsServer(server, flows.NewServer(library))

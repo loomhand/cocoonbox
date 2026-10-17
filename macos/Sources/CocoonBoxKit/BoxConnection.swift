@@ -9,6 +9,7 @@ typealias SharesClient = Cocoonbox_Control_V1_Shares.Client<BoxTransport>
 typealias FlowsClient = Cocoonbox_Control_V1_Flows.Client<BoxTransport>
 typealias ConnectorsClient = Cocoonbox_Control_V1_Connectors.Client<BoxTransport>
 typealias KeysClient = Cocoonbox_Control_V1_Keys.Client<BoxTransport>
+typealias AccountClient = Cocoonbox_Control_V1_Account.Client<BoxTransport>
 typealias AgentsClient = Cocoonbox_Agent_V1_Agents.Client<BoxTransport>
 typealias SessionClient = Cocoonbox_Agent_V1_Session.Client<BoxTransport>
 
@@ -22,6 +23,7 @@ public final class BoxConnection: Sendable {
     let flows: FlowsClient
     let connectors: ConnectorsClient
     let keys: KeysClient
+    let account: AccountClient
     let agents: AgentsClient
     let session: SessionClient
 
@@ -54,6 +56,7 @@ public final class BoxConnection: Sendable {
         self.flows = FlowsClient(wrapping: client)
         self.connectors = ConnectorsClient(wrapping: client)
         self.keys = KeysClient(wrapping: client)
+        self.account = AccountClient(wrapping: client)
         self.agents = AgentsClient(wrapping: client)
         self.session = SessionClient(wrapping: client)
         self.runner = Task { try? await client.runConnections() }
@@ -314,6 +317,17 @@ public final class BoxConnection: Sendable {
 
     public func deleteKey(name: String) async throws {
         _ = try await keys.delete(.with { $0.name = name })
+    }
+
+    // MARK: Account
+
+    // listDevices returns the user's device tokens, newest first; current marks the one this connection signs in with.
+    public func listDevices() async throws -> [Cocoonbox_Control_V1_Device] {
+        try await account.listDevices(Cocoonbox_Control_V1_ListDevicesRequest()).devices
+    }
+
+    public func revokeDevice(id: String) async throws {
+        _ = try await account.revokeDevice(.with { $0.deviceID = id })
     }
 
     // MARK: Connectors
