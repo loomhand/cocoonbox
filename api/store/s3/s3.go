@@ -42,7 +42,10 @@ type Options struct {
 	PresignTTL     time.Duration
 }
 
-var _ store.Store = (*S3)(nil)
+var (
+	_ store.Store     = (*S3)(nil)
+	_ store.Versioned = (*S3)(nil)
+)
 
 // S3 is a store.Store on one bucket and prefix.
 type S3 struct {
@@ -119,6 +122,52 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 	}
 	_, err = s.client.PutObject(ctx, s.opts.Bucket, object, bytes.NewReader(data), int64(len(data)),
 		minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		return fmt.Errorf("put %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *S3) GetVersion(ctx context.Context, key string) ([]byte, string, error) {
+	object, err := s.object(key)
+	if err != nil {
+		return nil, "", err
+	}
+	obj, err := s.client.GetObject(ctx, s.opts.Bucket, object, minio.GetObjectOptions{})
+	if err != nil {
+		return nil, "", fmt.Errorf("get %s: %w", key, err)
+	}
+	defer func() { _ = obj.Close() }()
+	data, err := io.ReadAll(obj)
+	if minio.ToErrorResponse(err).StatusCode == http.StatusNotFound {
+		return nil, "", store.ErrNotFound
+	}
+	if err != nil {
+		return nil, "", fmt.Errorf("read %s: %w", key, err)
+	}
+	// After a read, Stat answers from the same GET response, so the version matches data.
+	info, err := obj.Stat()
+	if err != nil {
+		return nil, "", fmt.Errorf("stat %s: %w", key, err)
+	}
+	return data, info.ETag, nil
+}
+
+func (s *S3) PutIf(ctx context.Context, key string, data []byte, version string) error {
+	object, err := s.object(key)
+	if err != nil {
+		return err
+	}
+	opts := minio.PutObjectOptions{ContentType: "application/octet-stream"}
+	if version == "" {
+		opts.SetMatchETagExcept("*")
+	} else {
+		opts.SetMatchETag(version)
+	}
+	_, err = s.client.PutObject(ctx, s.opts.Bucket, object, bytes.NewReader(data), int64(len(data)), opts)
+	if minio.ToErrorResponse(err).StatusCode == http.StatusPreconditionFailed {
+		return fmt.Errorf("put %s: %w", key, store.ErrStale)
+	}
 	if err != nil {
 		return fmt.Errorf("put %s: %w", key, err)
 	}

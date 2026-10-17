@@ -27,6 +27,11 @@ func (s *Service) EnableState(agents StateAgents, st store.Store, keys keyring.K
 	s.state = newStateLayer(agents, st, keys)
 }
 
+// EnableConditionalWrites makes each index and timeline rewrite land only on the version it read, so api processes on one store keep each other's writes.
+func (s *Service) EnableConditionalWrites(v store.Versioned) {
+	s.state.versioned = v
+}
+
 // EnableDeltas makes the saves of users write delta records against the day's first full snapshot, and lets the GC compact their manifests.
 func (s *Service) EnableDeltas(users []string) {
 	for _, u := range users {

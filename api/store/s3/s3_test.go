@@ -225,6 +225,66 @@ func TestGetMapsMissingObject(t *testing.T) {
 	}
 }
 
+func TestPutIfSendsTheVersionAndMapsAPreconditionFailure(t *testing.T) {
+	var mu sync.Mutex
+	etag, body := "", []byte(nil)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			if etag == "" {
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>missing</Message></Error>`))
+				return
+			}
+			w.Header().Set("ETag", `"`+etag+`"`)
+			w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+			w.Header().Set("Last-Modified", time.Now().UTC().Format(http.TimeFormat))
+			_, _ = w.Write(body)
+		case http.MethodPut:
+			match, none := strings.Trim(r.Header.Get("If-Match"), `"`), r.Header.Get("If-None-Match")
+			if (none == "*" && etag != "") || (match != "" && match != etag) {
+				w.Header().Set("Content-Type", "application/xml")
+				w.WriteHeader(http.StatusPreconditionFailed)
+				_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>PreconditionFailed</Code><Message>stale</Message></Error>`))
+				return
+			}
+			raw, _ := io.ReadAll(r.Body)
+			size, _ := strconv.Atoi(r.Header.Get("X-Amz-Decoded-Content-Length"))
+			_, chunk, _ := strings.Cut(string(raw), "\r\n")
+			body = []byte(chunk[:size])
+			etag = "v" + strconv.Itoa(len(body))
+			w.Header().Set("ETag", `"`+etag+`"`)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	s, err := New(Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox", AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if _, v, err := s.GetVersion(t.Context(), "u/index.json"); !errors.Is(err, store.ErrNotFound) || v != "" {
+		t.Fatalf("GetVersion of a missing object = %q, %v", v, err)
+	}
+	if err := s.PutIf(t.Context(), "u/index.json", []byte("a"), ""); err != nil {
+		t.Fatalf("PutIf absent: %v", err)
+	}
+	if err := s.PutIf(t.Context(), "u/index.json", []byte("bb"), ""); !errors.Is(err, store.ErrStale) {
+		t.Fatalf("PutIf absent over an object = %v, want ErrStale", err)
+	}
+	data, v, err := s.GetVersion(t.Context(), "u/index.json")
+	if err != nil || string(data) != "a" || v != "v1" {
+		t.Fatalf("GetVersion = %q %q %v", data, v, err)
+	}
+	if err := s.PutIf(t.Context(), "u/index.json", []byte("cc"), v); err != nil {
+		t.Fatalf("PutIf current: %v", err)
+	}
+	if err := s.PutIf(t.Context(), "u/index.json", []byte("ddd"), v); !errors.Is(err, store.ErrStale) {
+		t.Errorf("PutIf stale = %v, want ErrStale", err)
+	}
+}
+
 func TestListAndDeleteOnMinIO(t *testing.T) {
 	raw := os.Getenv("COCOONBOX_TEST_S3")
 	if raw == "" {
