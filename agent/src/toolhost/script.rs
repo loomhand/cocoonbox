@@ -13,6 +13,7 @@ use serde_json::{Map, Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
+use super::android::Android;
 use super::cua::Cua;
 use super::files;
 use super::rpc::{self, Output};
@@ -57,15 +58,20 @@ impl Scripts {
     }
 
     /// Runs one script and reports it as JSON text, with a screenshot taken after the run unless turned off.
-    pub async fn run(&self, cua: &Cua, workspace: &Path, args: Value) -> Result<Output, String> {
-        self.run_with(&self.bin, cua, workspace, args).await
+    pub async fn run(
+        &self,
+        screen: &impl Screen,
+        workspace: &Path,
+        args: Value,
+    ) -> Result<Output, String> {
+        self.run_with(&self.bin, screen, workspace, args).await
     }
 
     /// Runs one script as [`Scripts::run`] does, with the program at `bin` in place of Node.
     pub async fn run_with(
         &self,
         bin: &Path,
-        cua: &Cua,
+        screen: &impl Screen,
         workspace: &Path,
         args: Value,
     ) -> Result<Output, String> {
@@ -89,7 +95,7 @@ impl Scripts {
             .await?;
         let mut out = Output::default();
         if screenshot {
-            match self.screenshot(cua, max_edge, &id).await {
+            match self.screenshot(screen, max_edge, &id).await {
                 Ok(Some((path, image_b64))) => {
                     report["screenshot_path"] = path.display().to_string().into();
                     out.image_b64 = Some(image_b64);
@@ -105,7 +111,12 @@ impl Scripts {
     }
 
     /// Runs the plan executor and reports its result as compact JSON, with a screenshot only after an escalation or on request.
-    pub async fn plan(&self, cua: &Cua, workspace: &Path, args: Value) -> Result<Output, String> {
+    pub async fn plan(
+        &self,
+        screen: &impl Screen,
+        workspace: &Path,
+        args: Value,
+    ) -> Result<Output, String> {
         let PlanArgs {
             params,
             timeout_s,
@@ -140,7 +151,7 @@ impl Scripts {
             None => report["result"].take(),
         };
         if screenshot.unwrap_or(body["ok"] != true) {
-            out.image_b64 = cua.screenshot_once(max_edge).await?;
+            out.image_b64 = screen.screenshot_once(max_edge).await?;
         }
         out.text = body.to_string();
         Ok(out)
@@ -345,11 +356,11 @@ impl Scripts {
 
     async fn screenshot(
         &self,
-        cua: &Cua,
+        screen: &impl Screen,
         max_edge: Option<u32>,
         id: &str,
     ) -> Result<Option<(PathBuf, String)>, String> {
-        let Some(image_b64) = cua.screenshot_once(max_edge).await? else {
+        let Some(image_b64) = screen.screenshot_once(max_edge).await? else {
             return Ok(None);
         };
         let data = B64
@@ -362,6 +373,27 @@ impl Scripts {
         files::write_bytes(&path, &data).await?;
         prune(&shots).await;
         Ok(Some((path, image_b64)))
+    }
+}
+
+/// The screen a script's or plan's screenshot comes from.
+pub trait Screen {
+    /// One screenshot as base64, its long edge at most `max_edge` where the screen can scale it.
+    fn screenshot_once(
+        &self,
+        max_edge: Option<u32>,
+    ) -> impl Future<Output = Result<Option<String>, String>> + Send;
+}
+
+impl Screen for Cua {
+    async fn screenshot_once(&self, max_edge: Option<u32>) -> Result<Option<String>, String> {
+        Cua::screenshot_once(self, max_edge).await
+    }
+}
+
+impl Screen for Android {
+    async fn screenshot_once(&self, _max_edge: Option<u32>) -> Result<Option<String>, String> {
+        Ok(self.look().await?.image_b64)
     }
 }
 

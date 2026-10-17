@@ -56,6 +56,11 @@ impl Automation {
     pub fn plans(self) -> bool {
         self == Self::Desk
     }
+
+    /// Whether the box runs GUI plans and scripts on the desk API: a desk box, and an Android box through adb.
+    pub fn scripts(self) -> bool {
+        self != Self::Plain
+    }
 }
 
 /// Settings of `serve`, read from `/etc/cocoonbox/agent.env` via systemd.

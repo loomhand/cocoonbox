@@ -3687,9 +3687,11 @@ async fn mcp_on_an_android_box_drives_the_phone_through_adb() {
             "computer_act",
             "computer_state",
             "edit_file",
+            "gui_plan",
             "list_dir",
             "read_file",
             "screenshot",
+            "script_run",
             "shell",
             "write_file"
         ]

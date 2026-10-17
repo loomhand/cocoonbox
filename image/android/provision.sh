@@ -4,9 +4,16 @@
 set -euo pipefail
 
 DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
-PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy)
+PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy git xz-utils)
 BUILD_PACKAGES=(gcc-13 make libc6-dev)
 UI_BUILD_PACKAGES=(openjdk-21-jdk-headless)
+NODE_VERSION=24.21.0
+NODE_SHA256=fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6
+NODE_TARBALL="node-v${NODE_VERSION}-linux-x64.tar.xz"
+NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
+DESK=$(cd "$(dirname "$0")/../desk/rootfs" && pwd)
+# the gw endpoint of the agent's contract (export-rootfs.sh), for the plan executor and scripts
+GW_BASE_URL=http://10.203.0.1:18090/v1
 R8_URL=https://dl.google.com/android/maven2/com/android/tools/r8/9.5.26/r8-9.5.26.jar
 R8_SHA256=3502f087388ce95bbf5254555927f09385dc2636873964d0bd53f3eaf4fb49ad
 # cocoonstack/scrcpy-rfb master release at 9bdf6ed2b50953589ef153c18f087bcaafc429d9
@@ -115,6 +122,27 @@ setup_ui() {
 	apt-get clean
 }
 
+# GUI plans and scripts run the desk runtime of cbcore on Node; the toolhost serves its calls from Android
+setup_desk() {
+	log "node $NODE_VERSION and the desk runtime"
+	local dir=/opt/node/$NODE_VERSION tmp
+	if [ ! -x "$dir/bin/node" ]; then
+		tmp=$(mktemp -d)
+		curl -fsSL "$NODE_URL" -o "$tmp/$NODE_TARBALL"
+		echo "$NODE_SHA256  $tmp/$NODE_TARBALL" | sha256sum -c --quiet -
+		install -d "$dir"
+		tar -xJf "$tmp/$NODE_TARBALL" -C "$dir" --strip-components=1 --no-same-owner
+		rm -rf "$tmp"
+	fi
+	for b in node npm npx; do ln -sfn "$dir/bin/$b" "/usr/local/bin/$b"; done
+	install -D -m 0644 "$DESK/opt/desk/lib/desk.mts" /opt/desk/lib/desk.mts
+	install -D -m 0644 "$DESK/opt/desk/lib/gui_plan.mts" /opt/desk/lib/gui_plan.mts
+	install -D -m 0755 "$DESK/usr/local/bin/desk" /usr/local/bin/desk
+	install -d /etc/cocoonbox
+	printf 'GW_BASE_URL=%s\n' "$GW_BASE_URL" > /etc/cocoonbox/desk.env
+	chmod 0644 /etc/cocoonbox/desk.env
+}
+
 # adb stays on loopback; the box has no NIC, but nothing outside the VM needs it
 setup_redroid() {
 	log "redroid"
@@ -153,6 +181,7 @@ setup_users
 install_rootfs
 setup_scrcpy
 setup_ui
+setup_desk
 setup_redroid
 setup_cocoonbox_dirs
 enable_units

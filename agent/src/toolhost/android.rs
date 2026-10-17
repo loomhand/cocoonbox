@@ -86,7 +86,7 @@ impl Android {
     /// The UI elements of the screen, [index] for computer_act, and a screenshot.
     pub async fn state(&self, args: Value) -> Result<Output, String> {
         let args: StateArgs = rpc::parse(args)?;
-        let xml = self.dump().await?;
+        let xml = self.tree(None).await?;
         let mut elements = elements(&xml);
         if let Some(q) = args.query.as_deref().map(str::to_lowercase) {
             elements.retain(|e| e.label().to_lowercase().contains(&q));
@@ -172,23 +172,7 @@ impl Android {
             }
             "launch_app" => {
                 let app = args.app.as_deref().ok_or("launch_app needs app")?;
-                let out = self
-                    .adb(&[
-                        "shell",
-                        "cmd",
-                        "package",
-                        "resolve-activity",
-                        "--brief",
-                        "-c",
-                        "android.intent.category.LAUNCHER",
-                        app,
-                    ])
-                    .await?;
-                let component = launcher(&String::from_utf8_lossy(&out), app)
-                    .ok_or_else(|| format!("launch {app}: no launcher activity"))?;
-                self.adb(&["shell", "am", "start", "-W", "-n", &component])
-                    .await?;
-                format!("launched {component}")
+                format!("launched {}", self.launch(app).await?)
             }
             "wait" => {
                 let s = args.seconds.unwrap_or(1.0).clamp(0.0, MAX_WAIT);
@@ -201,6 +185,27 @@ impl Android {
         let mut out = self.look().await?;
         out.text = report;
         Ok(out)
+    }
+
+    /// Starts the launcher activity of package `app`; its component.
+    pub(super) async fn launch(&self, app: &str) -> Result<String, String> {
+        let out = self
+            .adb(&[
+                "shell",
+                "cmd",
+                "package",
+                "resolve-activity",
+                "--brief",
+                "-c",
+                "android.intent.category.LAUNCHER",
+                app,
+            ])
+            .await?;
+        let component = launcher(&String::from_utf8_lossy(&out), app)
+            .ok_or_else(|| format!("launch {app}: no launcher activity"))?;
+        self.adb(&["shell", "am", "start", "-W", "-n", &component])
+            .await?;
+        Ok(component)
     }
 
     /// Forgets the element rects of a session.
@@ -233,41 +238,54 @@ impl Android {
             .await
     }
 
-    async fn input(&self, args: &[&str]) -> Result<(), String> {
+    pub(super) async fn input(&self, args: &[&str]) -> Result<(), String> {
         let mut argv = vec!["shell", "input"];
         argv.extend_from_slice(args);
         self.adb(&argv).await.map(drop)
     }
 
-    /// The active window's UI tree from the image's UI server, else from `uiautomator dump`.
-    async fn dump(&self) -> Result<String, String> {
-        match self.served().await {
-            Ok(tree) => Ok(tree),
-            Err(e) => {
+    /// The UI tree of window `window`, else of the active one, from the image's UI server; the active one falls
+    /// back to `uiautomator dump`.
+    pub(super) async fn tree(&self, window: Option<&str>) -> Result<String, String> {
+        let cmd = window.map_or_else(|| "dump".to_owned(), |w| format!("dump {w}"));
+        match (self.served(&cmd).await, window) {
+            (Ok(tree), _) => Ok(tree),
+            (Err(e), Some(_)) => Err(e),
+            (Err(e), None) => {
                 eprintln!("android: UI server: {e}; falling back to uiautomator dump");
                 self.uiautomator().await
             }
         }
     }
 
-    /// One dump of the persistent UI server, started on first use; a failed server is dropped.
-    async fn served(&self) -> Result<String, String> {
+    /// The interactive windows as the UI server lists them, as JSON.
+    pub(super) async fn windows(&self) -> Result<String, String> {
+        self.served("windows").await
+    }
+
+    /// One answer of the persistent UI server, started on first use; a failed server is dropped.
+    async fn served(&self, cmd: &str) -> Result<String, String> {
         let mut slot = self.ui.lock().await;
         if slot.is_none() {
             *slot = Some(self.start_ui().await?);
         }
         let server = slot.as_mut().ok_or("UI server missing")?;
-        let tree = tokio::time::timeout(UI_TIMEOUT, server.dump())
+        let answer = tokio::time::timeout(UI_TIMEOUT, server.ask(cmd))
             .await
             .unwrap_or_else(|_| Err("timed out".to_owned()));
-        if tree.is_err() {
+        if answer.is_err() {
             *slot = None;
         }
-        tree
+        let answer = answer?;
+        match answer.trim().strip_prefix("<error>") {
+            Some(e) => Err(format!("UI server: {}", e.trim_end_matches("</error>"))),
+            None => Ok(answer),
+        }
     }
 
     async fn start_ui(&self) -> Result<UiServer, String> {
         self.adb(&["push", UI_JAR, DEVICE_UI_JAR]).await?;
+        let _ = self.adb(&["shell", "pkill", "-f", "cb.Ui"]).await;
         let mut cmd = Command::new(&self.adb);
         cmd.args(["shell", UI_CLASSPATH, "app_process", "/", "cb.Ui"])
             .stdin(Stdio::piped())
@@ -311,7 +329,7 @@ impl Android {
     }
 
     /// Pastes `text` into the focused field through the clipboard, which takes any Unicode, unlike key injection.
-    async fn paste(&self, text: &str) -> Result<(), String> {
+    pub(super) async fn paste(&self, text: &str) -> Result<(), String> {
         self.adb(&["push", SCRCPY_JAR, DEVICE_JAR]).await?;
         self.adb(&["push", SCRCPY_SU, DEVICE_SU]).await?;
         let socket = format!("localabstract:scrcpy_{SCRCPY_SCID}");
@@ -367,7 +385,7 @@ impl Android {
         cmd.spawn().map_err(|e| format!("run scrcpy control: {e}"))
     }
 
-    async fn adb(&self, args: &[&str]) -> Result<Vec<u8>, String> {
+    pub(super) async fn adb(&self, args: &[&str]) -> Result<Vec<u8>, String> {
         let mut cmd = Command::new(&self.adb);
         cmd.args(args).stdin(Stdio::null()).kill_on_drop(true);
         crate::sys::unprotect(&mut cmd);
@@ -396,9 +414,9 @@ struct UiServer {
 }
 
 impl UiServer {
-    async fn dump(&mut self) -> Result<String, String> {
+    async fn ask(&mut self, cmd: &str) -> Result<String, String> {
         self.stdin
-            .write_all(b"dump\n")
+            .write_all(format!("{cmd}\n").as_bytes())
             .await
             .map_err(|e| format!("ask UI server: {e}"))?;
         let mut tree = String::new();
@@ -458,15 +476,15 @@ struct ActArgs {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Rect {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
+pub(super) struct Rect {
+    pub(super) left: i32,
+    pub(super) top: i32,
+    pub(super) right: i32,
+    pub(super) bottom: i32,
 }
 
 impl Rect {
-    fn center(self) -> (i32, i32) {
+    pub(super) fn center(self) -> (i32, i32) {
         ((self.left + self.right) / 2, (self.top + self.bottom) / 2)
     }
 }
@@ -522,6 +540,9 @@ fn elements(xml: &str) -> Vec<Element> {
         .skip(1)
         .filter_map(|node| {
             let attr = |key: &str| attribute(node, key).unwrap_or_default();
+            if attr("visible") == "false" {
+                return None;
+            }
             let text = attr("text");
             let desc = attr("content-desc");
             let clickable = attr("clickable") == "true" || attr("long-clickable") == "true";
@@ -546,7 +567,7 @@ fn elements(xml: &str) -> Vec<Element> {
 }
 
 /// The unescaped value of `key="..."` in the attributes of one node.
-fn attribute(node: &str, key: &str) -> Option<String> {
+pub(super) fn attribute(node: &str, key: &str) -> Option<String> {
     let head = node.split('>').next()?;
     let start = head
         .find(&format!(" {key}=\""))
@@ -595,7 +616,7 @@ fn unescape(value: &str) -> String {
 }
 
 /// `[l,t][r,b]` of a uiautomator node.
-fn bounds(value: &str) -> Option<Rect> {
+pub(super) fn bounds(value: &str) -> Option<Rect> {
     let nums: Vec<i32> = value
         .split(|c: char| !c.is_ascii_digit() && c != '-')
         .filter(|s| !s.is_empty())

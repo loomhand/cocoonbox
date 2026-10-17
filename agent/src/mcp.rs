@@ -51,7 +51,7 @@ const ANDROID_INSTRUCTIONS: &str = "These tools act on an Android 16 phone (720x
 shell is one persistent bash session on that Ubuntu, with adb on PATH already connected to the phone (adb shell, adb install, adb push/pull); \
 relative file paths resolve under /workspace. \
 Prefer adb commands (am start, pm, settings, content) for anything a command can do, and use computer_state / computer_act for app UI. \
-computer_state lists the screen's UI elements by [index]; computer_act taps, swipes, types any Unicode text into the focused field, presses keys (back, home) or launches an app by package, then returns a fresh screenshot; trust the screenshot, not the action's report. \
+gui_plan runs several app UI steps in one call (open an app by package, tap by label, set a switch or field, verify); computer_state lists the screen's UI elements by [index]; computer_act taps, swipes, types any Unicode text into the focused field, presses keys (back, home) or launches an app by package, then returns a fresh screenshot; trust the screenshot, not the action's report. \
 The phone reaches the internet only through its HTTP proxy. \
 The user watches the screen live and sees every call.";
 const PLAN_HEAD: &str =
@@ -106,7 +106,7 @@ impl Mcp {
                 tool["inputSchema"] = t.parameters;
                 let always = ALWAYS_LOAD.contains(&t.name.as_ref())
                     || plugins.iter().any(|p| p.name == t.name);
-                if automation.plans() && always {
+                if automation.scripts() && always {
                     tool["_meta"] = json!({"anthropic/alwaysLoad": true});
                 }
                 (t.name, tool)

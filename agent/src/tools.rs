@@ -190,6 +190,7 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     ];
     if automation == Automation::Android {
         tools.retain(|t| !t.name.starts_with("browser_"));
+        tools.extend([android_plan_tool(), android_script_tool()]);
     }
     if vision {
         tools.push(if automation == Automation::Android {
@@ -544,6 +545,29 @@ A passing plan that starts with an app step is saved as a flow: name it with sav
                 "timeout_s": {"type": "integer", "description": "Default 90, max 110"}
             }
         }),
+    }
+}
+
+fn android_plan_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("gui_plan"),
+        description: Cow::Borrowed(
+            "Run an Android GUI plan in ONE call: the box runs each step on the accessibility tree, checks it, and stops at the first surprise. Use it for app UI work (settings, toggles, forms, several taps in a row). Write the whole plan at once, without looking first.\n\
+One op per step; optional window: title text of the window the step acts in (waited for). Windows are titled \"<title> - <package>\":\n\
+{app: \"com.android.settings\"} open or bring up an app by package; {click: \"Display\"} tap an element by its label; {check: \"Dark theme\", on: true} a switch or check box; {set: \"Name\", value: \"x\"} a text field; {type: \"text\"} into the focused field; {key: \"back\"} (back, home_screen, recents, return, tab, ctrl+a); {wait: \"Display\"} a window title; {verify: \"Dark theme\", on: true} (or value); {close: true} back out of the focused dialog.\n\
+Returns {ok: true, trace} or {ok: false, escalate: {step, reason, window, outline}}. Trust ok: true: each step was verified. On escalate, handle the reason, then call again with only the remaining steps. An element must be on the screen: scroll with computer_act first. A passing plan that starts with an app step can be saved with save: \"app-action\" and replayed with {flow: \"name\", params: {...}}; {flows: true} lists them. screenshot: true adds a screenshot (default: only on escalate).",
+        ),
+        parameters: gui_plan_tool().parameters,
+    }
+}
+
+fn android_script_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("script_run"),
+        description: Cow::Borrowed(
+            "Run one script for Android work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 on the box's Ubuntu that drives the phone through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, taps, screen crops) and adb from child_process. Read /opt/android/AGENTS.md first. Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Returns JSON {result, logs, error?, duration_ms, exit_code, stderr, screenshot_path} and a screenshot taken after the run.",
+        ),
+        parameters: desk_script_tool().parameters,
     }
 }
 

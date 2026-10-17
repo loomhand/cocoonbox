@@ -1,6 +1,7 @@
 //! The tool host: runs every tool as the desktop user behind a unix socket.
 
 mod android;
+mod android_desk;
 mod atspi;
 mod browser;
 mod cua;
@@ -106,7 +107,7 @@ impl Host {
     /// Executes one call; failures become error outputs for the model.
     async fn dispatch(&self, call: Call) -> Output {
         if let Some(android) = &self.android
-            && let Some(result) = android_call(android, &call).await
+            && let Some(result) = self.android_call(android, &call).await
         {
             let out = result.unwrap_or_else(Output::error);
             timing::note("error", out.is_error);
@@ -223,6 +224,25 @@ impl Host {
         out
     }
 
+    /// Runs the screen, desk and script tools of an Android box; None for every other tool.
+    async fn android_call(&self, android: &Android, call: &Call) -> Option<Result<Output, String>> {
+        let args = call.args.clone();
+        Some(match call.tool.as_str() {
+            "screenshot" => android.look().await,
+            "computer_state" => android.state(args).await,
+            "computer_act" => android.act(args).await,
+            "computer_end" => android.end(&call.args).await.map(Output::text),
+            t if t.starts_with("desk_") => android_desk::run(android, t, args).await,
+            "desk" => {
+                let op = call.args["op"].as_str().unwrap_or_default();
+                android_desk::run(android, &format!("desk_{op}"), args).await
+            }
+            "script_run" => self.scripts.run(android, &self.workspace, args).await,
+            "gui_plan" => self.scripts.plan(android, &self.workspace, args).await,
+            _ => return None,
+        })
+    }
+
     async fn shell(&self, agent_id: &str, args: Value) -> Result<String, String> {
         let command = args["command"]
             .as_str()
@@ -300,17 +320,6 @@ impl Host {
         files::write_bytes(&path, &data).await?;
         Ok(path.display().to_string())
     }
-}
-
-/// Runs the screen tools of an Android box; None for every other tool.
-async fn android_call(android: &Android, call: &Call) -> Option<Result<Output, String>> {
-    Some(match call.tool.as_str() {
-        "screenshot" => android.look().await,
-        "computer_state" => android.state(call.args.clone()).await,
-        "computer_act" => android.act(call.args.clone()).await,
-        "computer_end" => android.end(&call.args).await.map(Output::text),
-        _ => return None,
-    })
 }
 
 /// Runs the toolhost until SIGTERM or SIGINT, which closes Chrome with its agent windows first.
