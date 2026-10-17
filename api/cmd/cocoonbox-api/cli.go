@@ -50,8 +50,7 @@ type accountDeleter interface {
 // runCLI serves the operator commands; secrets arrive on stdin and never on the command line.
 func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 1 && args[0] == "check" {
-		_, err := fmt.Fprintln(stdout, "config ok")
-		return err
+		return checkConfig(cfg, stdout)
 	}
 	if len(args) >= 2 && args[0] == "state" && args[1] == "migrate" {
 		return migrateState(ctx, cfg, args[2:], stdout)
@@ -220,6 +219,18 @@ func expandState(ctx context.Context, cfg *config.Config, args []string, stdout 
 		}
 	}
 	return nil
+}
+
+func checkConfig(cfg *config.Config, stdout io.Writer) error {
+	opts, err := backendOptions(cfg, configFlavors(cfg), nil)
+	if err == nil {
+		err = opts.Check()
+	}
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(stdout, "config ok")
+	return err
 }
 
 // importStateKey gives user the key in the box key file at path, or a new key when there is no file and the user has none.

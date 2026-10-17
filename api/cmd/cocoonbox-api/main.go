@@ -79,10 +79,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	flavors := make([]machines.Flavor, 0, len(cfg.Flavors))
-	for _, f := range cfg.Flavors {
-		flavors = append(flavors, machineFlavor(f))
-	}
+	flavors := configFlavors(cfg)
 	pool := dialer.NewPool()
 	defer pool.Close()
 	ledger, err := openLedger(ctx, cfg)
@@ -457,9 +454,17 @@ func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Ten
 }
 
 func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor, ledger *cluster.Store) (*sandboxd.Backend, error) {
-	token, err := cfg.SandboxdToken()
+	opts, err := backendOptions(cfg, flavors, ledger)
 	if err != nil {
 		return nil, err
+	}
+	return sandboxd.New(ctx, opts)
+}
+
+func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *cluster.Store) (sandboxd.Options, error) {
+	token, err := cfg.SandboxdToken()
+	if err != nil {
+		return sandboxd.Options{}, err
 	}
 	opts := sandboxd.Options{
 		URL:               cfg.Sandboxd.URL,
@@ -473,7 +478,7 @@ func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flav
 	if ledger != nil {
 		opts.Ledger = ledger
 	}
-	return sandboxd.New(ctx, opts)
+	return opts, nil
 }
 
 func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error) {
@@ -518,6 +523,14 @@ func verifyLedger(ctx context.Context, backend *sandboxd.Backend, svc *boxes.Ser
 		}
 		logger.Debug(ctx, "ledger verified: no drift")
 	}
+}
+
+func configFlavors(cfg *config.Config) []machines.Flavor {
+	flavors := make([]machines.Flavor, 0, len(cfg.Flavors))
+	for _, f := range cfg.Flavors {
+		flavors = append(flavors, machineFlavor(f))
+	}
+	return flavors
 }
 
 func machineFlavor(f config.Flavor) machines.Flavor {
