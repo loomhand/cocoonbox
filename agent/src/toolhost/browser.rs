@@ -80,12 +80,12 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
     return s.length > n ? s.slice(0, n - 1) + '…' : s;
   };
   const shown = (el) => {
-    if (el.getAttribute('aria-hidden') === 'true') return false;
+    if (el.getAttribute('aria-hidden') === 'true') return null;
     const st = getComputedStyle(el);
-    if (st.display === 'none' || st.visibility === 'hidden') return false;
-    if (st.display === 'contents') return true;
+    if (st.display === 'none' || st.visibility === 'hidden') return null;
+    if (st.display === 'contents') return st;
     const r = el.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
+    return r.width > 0 && r.height > 0 ? st : null;
   };
   const active = (el) =>
     (ACTIVE_TAGS.has(el.tagName) && !(el.tagName === 'A' && !el.hasAttribute('href'))
@@ -107,19 +107,38 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
     }
     return el.isContentEditable ? 'textbox' : el.tagName.toLowerCase();
   };
+  const ICON = /(?:^|\s)(?:fa|bi|mdi|ti|icon)-(?!solid|regular|light|brands|lg|sm|xs|fw|2x|3x)([a-z][a-z0-9-]*)/;
+  const iconName = (el) => {
+    const tip = el.getAttribute('data-tip') || el.getAttribute('data-tooltip') || el.getAttribute('data-title');
+    if (tip) return tip;
+    const inner = el.querySelector('[title],[aria-label]');
+    if (inner) return inner.getAttribute('aria-label') || inner.getAttribute('title');
+    for (const c of [el, ...el.querySelectorAll('[class]')]) {
+      const m = ICON.exec(typeof c.className === 'string' ? c.className : c.getAttribute('class') || '');
+      if (m) return m[1].replace(/-/g, ' ');
+    }
+    return '';
+  };
   const nameOf = (el) => clip(el.getAttribute('aria-label')
     || (el.labels && el.labels[0] && el.labels[0].innerText)
     || el.getAttribute('placeholder') || el.getAttribute('alt') || el.getAttribute('title')
-    || (el.tagName === 'INPUT' ? '' : el.innerText) || '', 80);
+    || (el.tagName === 'INPUT' ? '' : el.innerText) || (plans ? iconName(el) : '') || '', 80);
+  const named = [];
   const pad = (d) => '  '.repeat(Math.min(d, 8));
-  const walk = (root, depth) => {
+  const walk = (root, depth, inside = false, pointer = false) => {
     for (const el of root.children) {
       if (out.length > MAX) { truncated = true; return; }
-      if (SKIP.has(el.tagName) || !shown(el)) continue;
-      if (active(el)) {
+      const st = SKIP.has(el.tagName) ? null : shown(el);
+      if (!st) continue;
+      const act = active(el);
+      const clickable = plans && !act && !inside && !pointer && st.cursor === 'pointer';
+      if (act || clickable) {
         const ref = 'e' + (refs.size + 1);
         refs.set(ref, el);
-        let line = `${pad(depth)}- ${roleOf(el)} "${nameOf(el)}" [ref=${ref}]`;
+        const role = clickable ? 'clickable' : roleOf(el);
+        const name = nameOf(el);
+        if (plans) named.push({ i: out.length, el, key: `${role}\u0000${name}`, name });
+        let line = `${pad(depth)}- ${role} "${name}" [ref=${ref}]`;
         if (el.disabled) line += ' disabled';
         if (el.checked) line += ' checked';
         if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT') {
@@ -131,6 +150,11 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
         const href = el.tagName === 'A' ? el.getAttribute('href') : null;
         if (href && !href.startsWith('javascript:')) line += ` href="${clip(href, 100)}"`;
         out.push(line);
+        if (clickable) walk(el, depth + 1, true, true);
+        continue;
+      }
+      if (inside) {
+        walk(el, depth + 1, true, true);
         continue;
       }
       const tag = /^H([1-6])$/.exec(el.tagName);
@@ -139,7 +163,7 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
       if (level) {
         headings++;
         out.push(`${pad(depth)}- heading "${clip(el.innerText, 150)}" [level=${level}]`);
-        if (nested) walk(el, depth + 1);
+        if (nested) walk(el, depth + 1, false, st.cursor === 'pointer');
         continue;
       }
       if (!nested && (TEXT_TAGS.has(el.tagName) || el.children.length === 0)) {
@@ -147,11 +171,24 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
         if (t) out.push(`${pad(depth)}- text "${t}"`);
         continue;
       }
-      walk(el, depth + 1);
-      if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
+      walk(el, depth + 1, false, st.cursor === 'pointer');
+      if (el.shadowRoot) walk(el.shadowRoot, depth + 1, false, st.cursor === 'pointer');
     }
   };
   if (document.body) walk(document.body, 0);
+  const refd = new Set(refs.values());
+  const groups = new Map();
+  for (const n of named) groups.set(n.key, [...(groups.get(n.key) || []), n]);
+  for (const same of groups.values()) {
+    if (same.length < 2) continue;
+    for (const n of same) {
+      for (let a = n.el.parentElement; a && a !== document.body; a = a.parentElement) {
+        if (same.some((m) => m !== n && a.contains(m.el)) || refd.has(a)) break;
+        const t = (a.innerText || '').split('\n').map((x) => x.trim()).find((x) => x && x !== n.name);
+        if (t) { out[n.i] += ` in "${clip(t, 60)}"`; break; }
+      }
+    }
+  }
   if (!headings && !truncated) out.splice(1, 0, '(this page has no headings)');
   if (truncated) out.push(`[snapshot truncated at ${MAX} lines; use browser_read for page text]`);
   return out.join('\n');
@@ -1709,6 +1746,14 @@ pub(super) mod tests {
 
     use super::*;
 
+    const MAILBOX: &str = "<!doctype html><title>Mail</title><style>.row{cursor:pointer}</style><ul id=inbox></ul><div id=cards></div>\
+        <form><label>To <input name=to></label><label>Body <textarea name=body></textarea></label></form><script>\
+        for (let n = 1; n <= 45; n++) { const li = document.createElement('li'); li.className = 'row';\
+        li.innerHTML = '<b>Sender ' + n + '</b> <span>subject ' + n + '</span> <span>a preview of message ' + n + '</span> <time>Oct ' + n + '</time> <button data-tip=Star><i class=\"fa-solid fa-star\"></i></button>';\
+        li.addEventListener('click', (e) => { if (e.target.tagName !== 'BUTTON') document.title = 'opened ' + n; }); inbox.append(li); }\
+        for (let n = 1; n <= 8; n++) { const d = document.createElement('div'); d.innerHTML = '<p>Card ' + n + '</p><button>Resolve</button>'; cards.append(d); }\
+        </script>";
+
     /// Serves Chrome's CDP endpoints on the returned port until a `Browser.close` arrives.
     async fn fake_chrome() -> u16 {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2836,6 +2881,67 @@ pub(super) mod tests {
             }
         });
         port
+    }
+
+    #[tokio::test]
+    async fn on_a_box_with_plans_listener_rows_icon_buttons_and_repeated_names_get_refs() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(bin) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let url = format!("http://127.0.0.1:{}/", page_server(MAILBOX).await);
+        let mut sizes = Vec::new();
+        for plans in [true, false] {
+            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            let b = Browser::new(
+                bin.clone(),
+                dir.path().join(format!("m{plans}")),
+                cdp,
+                plans,
+            );
+            let snap = b
+                .run("a", "browser_navigate", json!({"url": url}))
+                .await
+                .unwrap();
+            sizes.push(snap.len());
+            let rows = snap.matches("clickable \"Sender ").count();
+            if !plans {
+                assert_eq!(rows, 0, "{snap}");
+                assert!(snap.contains("button \"\" [ref="), "{snap}");
+                continue;
+            }
+            assert_eq!(rows, 45, "{snap}");
+            assert!(!snap.contains("snapshot truncated"), "{snap}");
+            assert!(snap.contains("textbox \"To\""), "{snap}");
+            assert_eq!(snap.matches("button \"Star\"").count(), 45, "{snap}");
+            let resolves: Vec<&str> = snap
+                .lines()
+                .filter(|l| l.contains("button \"Resolve\""))
+                .collect();
+            assert_eq!(resolves.len(), 8, "{snap}");
+            assert!(
+                resolves.iter().any(|l| l.ends_with(r#" in "Card 3""#)),
+                "{snap}"
+            );
+            let row = snap
+                .lines()
+                .find(|l| l.contains("clickable \"Sender 31 "))
+                .and_then(|l| l.split("[ref=").nth(1))
+                .and_then(|r| r.split(']').next())
+                .unwrap()
+                .to_owned();
+            let out = b
+                .run("a", "browser_click", json!({"ref": row}))
+                .await
+                .unwrap();
+            assert!(out.contains("opened 31"), "{out}");
+            b.run("a", "browser_close", json!({})).await.unwrap();
+        }
+        assert!(sizes[0] <= sizes[1], "{sizes:?}");
     }
 
     #[tokio::test]
