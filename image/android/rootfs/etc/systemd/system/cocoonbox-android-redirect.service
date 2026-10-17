@@ -1,0 +1,9 @@
+[Unit]
+Description=cocoonbox TCP redirect for Android (connections that ignore the proxy go through it as CONNECT) on the docker bridge
+After=docker.service
+
+[Service]
+User=redsocks
+ExecStart=/usr/sbin/redsocks -c /etc/cocoonbox/android-redsocks.conf
+Restart=always
+RestartSec=1
