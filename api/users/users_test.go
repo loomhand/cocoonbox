@@ -27,6 +27,23 @@ import (
 
 const password = "correct horse battery"
 
+func TestAnUpdateFromAStaleCacheKeepsTheColumnsItDoesNotSet(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := exec(t, dsn, "UPDATE users SET no_gc = true, image = 'cbcore:v1' WHERE id = '"+u.ID+"'"); err != nil {
+		t.Fatalf("set the policy behind the cache: %v", err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(1)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if p := openTestService(t, dsn, gw, tenants).Policy(u.ID); p != (Policy{Image: "cbcore:v1", NoGC: true}) {
+		t.Errorf("policy after an update from a stale cache = %+v, want the one the table held", p)
+	}
+}
+
 func TestAUsersPolicyIsKeptAndReloaded(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
