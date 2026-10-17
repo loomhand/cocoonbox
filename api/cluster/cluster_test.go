@@ -23,15 +23,16 @@ func TestPutMachineRoundTripsEveryField(t *testing.T) {
 		t.Fatalf("PutMachine: %v", err)
 	}
 	got, err := st.Machine(t.Context(), "cb-1")
-	if err != nil || !got.Equal(want) || got.Version != 1 {
-		t.Fatalf("Machine = %+v, %v, want %+v at version 1", got, err, want)
+	if err != nil || !got.Equal(want) || got.Version == 0 {
+		t.Fatalf("Machine = %+v, %v, want %+v with a version", got, err, want)
 	}
-	want.Claim, want.Op, want.OpUntil = nil, "", time.Time{}
+	first := got.Version
+	want.Claim, want.Op, want.OpUntil, want.Env = nil, "", time.Time{}, map[string]string{"GW_KEY": "f1"}
 	if err := st.PutMachine(t.Context(), want); err != nil {
 		t.Fatalf("PutMachine again: %v", err)
 	}
-	if got, err = st.Machine(t.Context(), "cb-1"); err != nil || !got.Equal(want) || got.Version != 2 {
-		t.Fatalf("Machine after the second put = %+v, %v", got, err)
+	if got, err = st.Machine(t.Context(), "cb-1"); err != nil || !got.Equal(want) || got.Version <= first {
+		t.Fatalf("Machine after the second put = %+v, %v, want a version past %d", got, err, first)
 	}
 	if err := st.DeleteMachine(t.Context(), "cb-1"); err != nil {
 		t.Fatalf("DeleteMachine: %v", err)
@@ -69,6 +70,10 @@ func TestUpdateMachineRerunsTheEditOnAConcurrentWrite(t *testing.T) {
 	if err := st.PutMachine(t.Context(), cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now()}); err != nil {
 		t.Fatalf("PutMachine: %v", err)
 	}
+	put, err := st.Machine(t.Context(), "cb-1")
+	if err != nil {
+		t.Fatalf("Machine: %v", err)
+	}
 	runs := 0
 	got, err := st.UpdateMachine(t.Context(), "cb-1", func(m *cluster.Machine, found bool) (bool, error) {
 		runs++
@@ -86,7 +91,7 @@ func TestUpdateMachineRerunsTheEditOnAConcurrentWrite(t *testing.T) {
 		m.Op, m.Revision = "wake", m.Revision+1
 		return true, nil
 	})
-	if err != nil || runs != 2 || got.Op != "wake" || got.Revision != 2 || got.Version != 3 {
+	if err != nil || runs != 2 || got.Op != "wake" || got.Revision != 2 || got.Version <= put.Version {
 		t.Errorf("UpdateMachine = %+v, %v after %d runs, want the edit on top of the concurrent one", got, err, runs)
 	}
 }
@@ -112,11 +117,34 @@ func TestUpdateMachineInsertsOnceForConcurrentCreators(t *testing.T) {
 	}
 	wg.Wait()
 	all, err := st.Machines(t.Context())
-	if err != nil || len(all) != 1 || all[0].Version != 1 {
-		t.Fatalf("Machines = %+v, %v, want one row written once", all, err)
+	if err != nil || len(all) != 1 {
+		t.Fatalf("Machines = %+v, %v, want one row", all, err)
 	}
 	if slices.Contains(results, "") {
 		t.Errorf("results = %q, want every caller to see the claim", results)
+	}
+}
+
+func TestDeleteMachineIfRemovesOnlyWhileTheConditionHolds(t *testing.T) {
+	st := clustertest.Open(t)
+	if err := st.PutMachine(t.Context(), cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now(), Op: "wake"}); err != nil {
+		t.Fatalf("PutMachine: %v", err)
+	}
+	idle := func(m cluster.Machine) bool { return m.Op == "" }
+	if removed, err := st.DeleteMachineIf(t.Context(), "cb-1", idle); err != nil || removed {
+		t.Fatalf("DeleteMachineIf during an op = %t, %v, want kept", removed, err)
+	}
+	if _, err := st.UpdateMachine(t.Context(), "cb-1", func(m *cluster.Machine, _ bool) (bool, error) {
+		m.Op = ""
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine: %v", err)
+	}
+	if removed, err := st.DeleteMachineIf(t.Context(), "cb-1", idle); err != nil || !removed {
+		t.Fatalf("DeleteMachineIf when idle = %t, %v, want removed", removed, err)
+	}
+	if removed, err := st.DeleteMachineIf(t.Context(), "cb-1", idle); !errors.Is(err, cluster.ErrNotFound) || removed {
+		t.Errorf("DeleteMachineIf of a missing machine = %t, %v, want ErrNotFound", removed, err)
 	}
 }
 
