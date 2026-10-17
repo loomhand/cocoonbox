@@ -449,11 +449,15 @@ func (s *Service) boxName(user, box string) string {
 	return ""
 }
 
-// ownImage is the image the user's policy names while Rebase offers it, else empty.
+// ownImage is the image the user's policy names while Rebase offers it, else the newest offered of its family, else empty.
 func (s *Service) ownImage(user string) string {
 	image := s.registry.Policy(user).Image
-	if image == s.defaults.Image || slices.Contains(s.defaults.RebaseImages, image) {
+	if image == "" || image == s.defaults.Image || slices.Contains(s.defaults.RebaseImages, image) {
 		return image
+	}
+	family, _, _ := strings.Cut(image, ":")
+	if newest := s.defaults.latest(image); strings.HasPrefix(newest, family+":") {
+		return newest
 	}
 	return ""
 }
