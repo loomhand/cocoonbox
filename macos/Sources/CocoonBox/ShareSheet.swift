@@ -1,7 +1,7 @@
 import CocoonBoxKit
 import SwiftUI
 
-private let writeWarning = "Write hands guests every login in the box: browser sessions and agent CLI logins (Claude Code, Codex, Cursor)."
+private let writeWarning = "Write hands guests every login in the box: browser sessions and agent CLI logins (Claude Code, Codex, Cursor). A guest with write runs as root in the box, so programs they start can keep running after you revoke the share, read passwords you fill in later, and use your keys and Connect connections."
 
 // ShareSheet creates and manages the box's share link; the api returns the link to the owner only.
 struct ShareSheet: View {

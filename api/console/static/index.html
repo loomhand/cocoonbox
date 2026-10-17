@@ -68,7 +68,7 @@
       <label>Expires in <select name="ttl"><option value="86400">24 hours</option><option value="604800">7 days</option><option value="2592000">30 days</option></select></label>
       <label>Only for users <input name="users" placeholder="anyone with the link"></label>
       <label><input type="checkbox" name="write"> Allow write</label>
-      <span id="write-warning" class="warn">Write hands guests every login in the box: browser sessions, agent CLI logins (Claude Code, Codex, Cursor) and the use of your keys.</span>
+      <span id="write-warning" class="warn">Write hands guests every login in the box: browser sessions, agent CLI logins (Claude Code, Codex, Cursor) and the use of your keys. A guest with write runs as root in the box, so programs they start can keep running after you revoke the share, read passwords you fill in later, and use your keys and Connect connections.</span>
       <button>Share</button>
     </form>
     <div id="share-link" hidden>
