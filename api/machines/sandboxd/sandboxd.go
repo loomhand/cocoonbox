@@ -39,6 +39,11 @@ const (
 	opTimeout       = 10 * time.Minute
 	probeTimeout    = 2 * time.Second
 	probeFanout     = 8
+	finishTimeout   = 10 * time.Second
+	sharedTimeout   = 10 * time.Second
+	// opLease bounds how long a shared op outlives its process, which renews it every opRenew while it runs.
+	opLease = time.Minute
+	opRenew = 20 * time.Second
 )
 
 var (
@@ -62,6 +67,8 @@ type Options struct {
 	AgentPort         int
 	TenantEgressClass string
 	Ledger            *cluster.Store
+	// Shared, when set, holds the machine records: every change lands on a row's version and the backend caches the table.
+	Shared Shared
 }
 
 // Check reports whether New refuses opts before it reads the instance.
@@ -77,6 +84,15 @@ func (o Options) client() (*client, error) {
 		}
 	}
 	return newClient(o.URL, o.Token)
+}
+
+// Shared is the machine table api processes share, with the notifies of its changes.
+type Shared interface {
+	Machines(ctx context.Context) ([]cluster.Machine, error)
+	Machine(ctx context.Context, id string) (cluster.Machine, error)
+	UpdateMachine(ctx context.Context, id string, edit func(m *cluster.Machine, found bool) (bool, error)) (cluster.Machine, error)
+	DeleteMachineIf(ctx context.Context, id string, cond func(m cluster.Machine) bool) (bool, error)
+	Listen(ctx context.Context, channel string, reset func(), fn cluster.Notified)
 }
 
 var (
@@ -114,7 +130,13 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		owners:  map[string]chan struct{}{},
 		views:   map[string]view{},
 	}
-	if opts.Ledger != nil {
+	switch {
+	case opts.Shared != nil:
+		if err := b.reload(ctx); err != nil {
+			return nil, fmt.Errorf("read the shared machines: %w", err)
+		}
+		go opts.Shared.Listen(ctx, cluster.ChannelMachines, func() { b.reloadLogged(ctx) }, func(id string) { b.notified(ctx, id) })
+	case opts.Ledger != nil:
 		b.mirror = cluster.NewMirror()
 		go b.mirror.Run(ctx)
 	}
@@ -134,25 +156,38 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 	if _, err := b.lookup(ctx, spec.ID); err != nil && !errors.Is(err, machines.ErrNotFound) {
 		return machines.Machine{}, machines.ActionNone, err
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	e := b.entries[spec.ID]
-	switch {
-	case e == nil || (e.row == nil && e.op == ""):
-		template := cmp.Or(spec.Image, b.opts.Image)
-		e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: time.Now(), meta: map[string]string{}}
-		b.entries[spec.ID] = e
-		b.startLocked(e, opClaim, func(ctx context.Context) error { return b.claim(ctx, e, spec.Tenant, template, size) })
-		return e.machine(b.opts.DiskGiB), machines.ActionCreated, nil
-	case e.op != "":
-		return e.machine(b.opts.DiskGiB), machines.ActionNone, nil
+	template := cmp.Or(spec.Image, b.opts.Image)
+	action, sandbox := machines.ActionNone, ""
+	m, err := b.mutate(ctx, spec.ID, func(e *entry) (*entry, bool) {
+		now := time.Now()
+		action = machines.ActionNone
+		switch {
+		case e == nil || (e.row == nil && !e.busy(now)):
+			e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: now, meta: map[string]string{}}
+			e.begin(opClaim, now, b.lease())
+			action = machines.ActionCreated
+			return e, true
+		case e.busy(now):
+			return e, false
+		}
+		if state, _ := e.state(); state == machines.StateHibernated || state == machines.StateFailed {
+			sandbox = e.row.ID
+			e.begin(opWake, now, b.lease())
+			action = machines.ActionWoken
+			return e, true
+		}
+		return e, false
+	})
+	if err != nil {
+		return machines.Machine{}, machines.ActionNone, err
 	}
-	if state, _ := e.state(); state == machines.StateHibernated || state == machines.StateFailed {
-		sandbox := e.row.ID
-		b.startLocked(e, opWake, func(ctx context.Context) error { return b.wake(ctx, e, sandbox) })
-		return e.machine(b.opts.DiskGiB), machines.ActionWoken, nil
+	switch action {
+	case machines.ActionCreated:
+		b.run(spec.ID, opClaim, m.Revision, func(ctx context.Context) error { return b.claim(ctx, spec.ID, spec.Owner, spec.Tenant, template, size) })
+	case machines.ActionWoken:
+		b.run(spec.ID, opWake, m.Revision, func(ctx context.Context) error { return b.wake(ctx, spec.ID, sandbox) })
 	}
-	return e.machine(b.opts.DiskGiB), machines.ActionNone, nil
+	return m, action, nil
 }
 
 func (b *Backend) Get(ctx context.Context, id string) (machines.Machine, error) {
@@ -176,22 +211,35 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 	if _, err := b.lookup(ctx, id); err != nil {
 		return machines.Machine{}, err
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	e := b.entries[id]
-	if e == nil || e.row == nil {
+	started, missing, sandbox := false, false, ""
+	m, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		started, missing = false, e == nil || e.row == nil
+		if missing {
+			return e, false
+		}
+		now := time.Now()
+		if state, _ := e.state(); state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) {
+			sandbox, started = e.row.ID, true
+			e.begin(opHibernate, now, b.lease())
+			return e, true
+		}
+		return e, false
+	})
+	switch {
+	case err != nil:
+		return machines.Machine{}, err
+	case missing:
 		return machines.Machine{}, machines.ErrNotFound
 	}
-	if state, _ := e.state(); state == machines.StateRunning || state == machines.StateStarting && e.op == "" {
-		sandbox := e.row.ID
-		b.startLocked(e, opHibernate, func(ctx context.Context) error {
+	if started {
+		b.run(id, opHibernate, m.Revision, func(ctx context.Context) error {
 			if err := b.api.verb(ctx, sandbox, "hibernate", nil); err != nil {
 				return err
 			}
-			return b.reread(ctx, e, sandbox)
+			return b.reread(ctx, id, sandbox)
 		})
 	}
-	return e.machine(b.opts.DiskGiB), nil
+	return m, nil
 }
 
 func (b *Backend) Watch(ctx context.Context, id string, revision int64) <-chan machines.Machine {
@@ -260,13 +308,11 @@ func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, erro
 }
 
 func (b *Backend) Delete(ctx context.Context, id string) error {
-	b.mu.Lock()
-	e := b.entries[id]
-	unclaimed := e != nil && e.row == nil && e.op == ""
-	if unclaimed {
-		b.dropLocked(id)
+	now := time.Now()
+	unclaimed, err := b.drop(ctx, id, func(e *entry) bool { return e.row == nil && !e.busy(now) })
+	if err != nil {
+		return err
 	}
-	b.mu.Unlock()
 	sandbox, err := b.sandboxOf(ctx, id)
 	if unclaimed && errors.Is(err, machines.ErrNotFound) {
 		return nil
@@ -274,13 +320,11 @@ func (b *Backend) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if err := b.api.verb(ctx, sandbox, "release", nil); err != nil {
+	if err = b.api.verb(ctx, sandbox, "release", nil); err != nil {
 		return err
 	}
-	b.mu.Lock()
-	b.dropLocked(id)
-	b.mu.Unlock()
-	return nil
+	_, err = b.drop(ctx, id, func(*entry) bool { return true })
+	return err
 }
 
 func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
@@ -291,16 +335,19 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	if err != nil {
 		return err
 	}
-	if err := b.api.patchEnv(ctx, sandbox, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
+	if err = b.api.patchEnv(ctx, sandbox, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
 		return fmt.Errorf("set meta %s: %w", key, err)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if e := b.entries[id]; e != nil {
+	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil || e.meta[key] == value {
+			return e, false
+		}
 		e.meta[key] = value
-		e.notifyLocked()
-		b.touchLocked(e)
+		return e, true
+	}); err != nil {
+		return err
 	}
+	b.notify(id)
 	return nil
 }
 
@@ -352,16 +399,17 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 	if upstream != "" {
 		v = &envVar{Value: upstream, Guest: new(false)}
 	}
-	if err := b.api.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
+	if err = b.api.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
 		return fmt.Errorf("set egress upstream: %w", err)
 	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if e := b.entries[id]; e != nil {
+	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil || e.routed == (upstream != "") {
+			return e, false
+		}
 		e.routed = upstream != ""
-		b.touchLocked(e)
-	}
-	return nil
+		return e, true
+	})
+	return err
 }
 
 func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Credentials) error {
@@ -375,13 +423,14 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 		b.mu.Unlock()
 		return machines.ErrNotFound
 	}
-	changes, sums := map[string]*envVar{}, map[string]string{}
+	changes, sums, had := map[string]*envVar{}, map[string]string{}, map[string]string{}
 	add := func(name string, v *envVar) {
 		sum := fingerprint(v)
-		if have, ok := e.env[name]; (v == nil && !ok) || (v != nil && ok && have == sum) {
+		have, ok := e.env[name]
+		if (v == nil && !ok) || (v != nil && ok && have == sum) {
 			return
 		}
-		changes[name], sums[name] = v, sum
+		changes[name], sums[name], had[name] = v, sum, have
 	}
 	for name, sec := range c.Secrets {
 		add(name, secretVar(sec))
@@ -411,26 +460,43 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 		return fmt.Errorf("set credentials: %w", err)
 	}
 	// A refused write counts as written, so a pool that cannot inject is retried only when the values change.
-	b.mu.Lock()
-	if e.env == nil {
-		e.env = map[string]string{}
-	}
-	for name, sum := range sums {
-		if changes[name] == nil {
-			delete(e.env, name)
-		} else {
-			e.env[name] = sum
+	if _, merr := b.mutate(ctx, id, func(cur *entry) (*entry, bool) {
+		if cur == nil {
+			return cur, false
 		}
+		if cur.env == nil {
+			cur.env = map[string]string{}
+		}
+		for name, sum := range sums {
+			switch {
+			case cur.env[name] != had[name]:
+				// Another process wrote the name since this one read it, so the value there is unknown.
+				cur.env[name] = ""
+			case changes[name] == nil:
+				delete(cur.env, name)
+			default:
+				cur.env[name] = sum
+			}
+		}
+		return cur, true
+	}); merr != nil {
+		return fmt.Errorf("record credentials: %w", merr)
 	}
-	b.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("set credentials: %w", err)
 	}
 	return nil
 }
 
-// Verify rewrites the ledger rows that still differ from the machines once the queued writes landed, and returns their ids.
+// Verify returns the machines whose record differs from the table once queued writes landed, repairing the row or, shared, the cache.
 func (b *Backend) Verify(ctx context.Context) ([]string, error) {
+	if b.opts.Shared != nil {
+		differ, err := b.differences(ctx)
+		for _, id := range differ {
+			b.notified(ctx, id)
+		}
+		return differ, err
+	}
 	differ, err := b.mirror.Verify(ctx, b.differences)
 	if err != nil {
 		return nil, err
@@ -448,76 +514,212 @@ func (b *Backend) Verify(ctx context.Context) ([]string, error) {
 	return differ, nil
 }
 
-// startLocked marks e as running op and runs fn off the caller's request.
-func (b *Backend) startLocked(e *entry, op string, fn func(context.Context) error) {
-	e.op, e.opErr = op, ""
-	e.revision++
-	b.touchLocked(e)
+// mutate applies fn to machine id's entry, nil for none, under the lock in memory or on the shared row's version, rerun on a conflict.
+func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*entry, bool)) (machines.Machine, error) {
+	if b.opts.Shared == nil {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		sandbox := b.entries[id].sandbox()
+		next, changed := fn(b.entries[id])
+		if next == nil {
+			return machines.Machine{}, nil
+		}
+		if changed {
+			if next.sandbox() != sandbox {
+				next.rowAt = time.Now()
+			}
+			b.entries[id] = next
+			b.touchLocked(next)
+		}
+		return next.machine(b.opts.DiskGiB), nil
+	}
+	// A write that committed must reach the cache even when the caller left.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
+	defer cancel()
+	var kept *entry
+	rec, err := b.opts.Shared.UpdateMachine(ctx, id, func(m *cluster.Machine, found bool) (bool, error) {
+		var cur *entry
+		if found {
+			cur = &entry{id: id}
+			cur.load(*m)
+		}
+		next, changed := fn(cur)
+		kept = next
+		if next == nil || !changed {
+			return false, nil
+		}
+		version := m.Version
+		*m = next.record()
+		m.Version = version
+		return true, nil
+	})
+	if err != nil {
+		return machines.Machine{}, err
+	}
+	if kept == nil {
+		return machines.Machine{}, nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e := b.loadLocked(rec)
+	b.publishLocked()
+	return e.machine(b.opts.DiskGiB), nil
+}
+
+// drop removes machine id while cond holds for its entry and reports whether it did.
+func (b *Backend) drop(ctx context.Context, id string, cond func(e *entry) bool) (bool, error) {
+	if b.opts.Shared == nil {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if e := b.entries[id]; e != nil && cond(e) {
+			b.dropLocked(id)
+			return true, nil
+		}
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
+	defer cancel()
+	removed, err := b.opts.Shared.DeleteMachineIf(ctx, id, func(m cluster.Machine) bool {
+		e := &entry{id: id}
+		e.load(m)
+		return cond(e)
+	})
+	if err != nil && !errors.Is(err, cluster.ErrNotFound) || err == nil && !removed {
+		return false, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	_, cached := b.entries[id]
+	delete(b.entries, id)
+	b.publishLocked()
+	return removed || cached, nil
+}
+
+// run runs fn as op of machine id, begun at revision, off the caller's request, and ends the op when fn returns.
+func (b *Backend) run(id, op string, revision int64, fn func(context.Context) error) {
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
 		defer cancel()
+		logger := log.WithFunc("sandboxd.Backend.run").WithField("machine", id)
+		if b.opts.Shared != nil {
+			go b.renewOp(ctx, id, op, revision)
+		}
 		err := fn(ctx)
 		if err != nil {
-			log.WithFunc("sandboxd.Backend.startLocked").WithField("machine", e.id).Errorf(ctx, err, "%s", op)
+			logger.Errorf(ctx, err, "%s", op)
 		}
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		e.op = ""
-		e.notifyLocked()
+		opErr := ""
 		switch {
+		case b.ctx.Err() != nil:
+			// The process stops; the claim row tells the next reader how far the op came.
 		case errors.Is(err, machines.ErrCapacity):
-			e.opErr = machines.ErrCapacity.Error()
+			opErr = machines.ErrCapacity.Error()
 		case err != nil:
-			e.opErr = op + " failed"
+			opErr = op + " failed"
 		}
-		b.touchLocked(e)
+		finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+		defer cancelFinish()
+		if _, err := b.mutate(finishCtx, id, func(e *entry) (*entry, bool) {
+			if e == nil || e.op != op || e.revision != revision {
+				return e, false
+			}
+			e.op, e.opErr, e.opUntil = "", opErr, time.Time{}
+			return e, true
+		}); err != nil {
+			logger.Errorf(finishCtx, err, "end %s", op)
+		}
+		b.notify(id)
 	}()
 }
 
-func (b *Backend) claim(ctx context.Context, e *entry, tenant, template, size string) error {
+// renewOp extends the lease of op on machine id every opRenew until ctx ends or the op does.
+func (b *Backend) renewOp(ctx context.Context, id, op string, revision int64) {
+	ticker := time.NewTicker(opRenew)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		running := false
+		if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+			if running = e != nil && e.op == op && e.revision == revision; !running {
+				return e, false
+			}
+			e.opUntil = time.Now().Add(opLease)
+			return e, true
+		}); err != nil {
+			log.WithFunc("sandboxd.Backend.renewOp").WithField("machine", id).Warnf(ctx, "renew the lease of %s: %v", op, err)
+		} else if !running {
+			return
+		}
+	}
+}
+
+// lease is how long a new op holds its machine before its process must renew it; zero, for ever, in memory.
+func (b *Backend) lease() time.Duration {
+	if b.opts.Shared == nil {
+		return 0
+	}
+	return opLease
+}
+
+func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size string) error {
 	sandbox, err := b.api.claim(ctx, tenant, claimRequest{
 		Template:   template,
 		Net:        netNone,
 		Size:       size,
 		TTLSeconds: leaseSeconds,
 		OnExpire:   onExpire,
-		Metadata:   map[string]string{metaMachine: e.id, metaOwner: e.owner},
+		Metadata:   map[string]string{metaMachine: id, metaOwner: owner},
 	})
 	if err != nil {
 		return err
 	}
-	return b.reread(ctx, e, sandbox)
+	return b.reread(ctx, id, sandbox)
 }
 
-func (b *Backend) wake(ctx context.Context, e *entry, sandbox string) error {
+func (b *Backend) wake(ctx context.Context, id, sandbox string) error {
 	if err := b.api.verb(ctx, sandbox, "wake", nil); err != nil {
 		return err
 	}
 	b.mu.Lock()
-	wakes := e.wakes + 1
+	wakes := 1
+	if e := b.entries[id]; e != nil {
+		wakes = e.wakes + 1
+	}
 	b.mu.Unlock()
 	if err := b.api.patchEnv(ctx, sandbox, map[string]*envVar{envWakes: {Value: strconv.Itoa(wakes)}}); err != nil {
 		return fmt.Errorf("record wake: %w", err)
 	}
-	b.mu.Lock()
-	e.wakes, e.ready = wakes, false
-	b.touchLocked(e)
-	b.mu.Unlock()
-	return b.reread(ctx, e, sandbox)
+	if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil {
+			return e, false
+		}
+		e.wakes, e.ready = wakes, false
+		return e, true
+	}); err != nil {
+		return err
+	}
+	return b.reread(ctx, id, sandbox)
 }
 
-// reread replaces e's row with sandbox's current one.
-func (b *Backend) reread(ctx context.Context, e *entry, sandbox string) error {
+// reread replaces machine id's row with sandbox's current one.
+func (b *Backend) reread(ctx context.Context, id, sandbox string) error {
 	r, err := b.api.get(ctx, sandbox)
 	if err != nil {
 		return err
 	}
 	r.Token = ""
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	e.row = &r
-	b.touchLocked(e)
-	return nil
+	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil {
+			return e, false
+		}
+		e.row = &r
+		return e, true
+	})
+	return err
 }
 
 // lookup refreshes id's row from sandboxd, finding it by metadata when the index lacks it.
@@ -545,14 +747,16 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 		}
 	}
 	if errors.Is(err, machines.ErrNotFound) {
-		b.forget(id, sandbox)
+		if err = b.forget(ctx, id, sandbox); err != nil {
+			return machines.Machine{}, err
+		}
 		return machines.Machine{}, machines.ErrNotFound
 	}
 	if err != nil {
 		return machines.Machine{}, err
 	}
 	r.Token = ""
-	if err := b.index(ctx, []row{r}, false); err != nil {
+	if err := b.index(ctx, []row{r}, time.Time{}); err != nil {
 		return machines.Machine{}, err
 	}
 	return b.cached(id)
@@ -566,6 +770,14 @@ func (b *Backend) cached(id string) (machines.Machine, error) {
 		return machines.Machine{}, machines.ErrNotFound
 	}
 	return e.machine(b.opts.DiskGiB), nil
+}
+
+func (b *Backend) notify(id string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if e := b.entries[id]; e != nil {
+		e.notifyLocked()
+	}
 }
 
 func (b *Backend) changes(id string) <-chan struct{} {
@@ -594,27 +806,27 @@ func (b *Backend) sandboxOf(ctx context.Context, id string) (string, error) {
 }
 
 // forget drops id unless an operation still owns it.
-func (b *Backend) forget(id, sandbox string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if e := b.entries[id]; e != nil && e.op == "" && (e.row == nil || e.row.ID == sandbox) {
-		b.dropLocked(id)
-	}
+func (b *Backend) forget(ctx context.Context, id, sandbox string) error {
+	now := time.Now()
+	_, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && (e.row == nil || e.row.ID == sandbox) })
+	return err
 }
 
 // refresh re-reads every claim, drops machines whose claim is gone and probes agents not yet seen.
 func (b *Backend) refresh(ctx context.Context) error {
+	listed := time.Now()
 	rows, err := b.api.list(ctx)
 	if err != nil {
 		return err
 	}
-	if err := b.index(ctx, rows, true); err != nil {
+	if err := b.index(ctx, rows, listed); err != nil {
 		return err
 	}
+	now := time.Now()
 	b.mu.Lock()
 	var unready []string
 	for id, e := range b.entries {
-		if state, _ := e.state(); state == machines.StateStarting && e.op == "" && e.row != nil {
+		if state, _ := e.state(); state == machines.StateStarting && !e.busy(now) && e.row != nil {
 			unready = append(unready, id)
 		}
 	}
@@ -634,8 +846,8 @@ func (b *Backend) refresh(ctx context.Context) error {
 	return nil
 }
 
-// index merges rows into the entries, reading the env of claims it has not seen; complete drops the entries rows lack.
-func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
+// index merges rows, reading the env of unseen claims; a full list taken at listed, not zero, also drops what it lacks.
+func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error {
 	present := map[string]bool{}
 	for _, r := range rows {
 		id := r.Metadata[metaMachine]
@@ -658,29 +870,35 @@ func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
 				return fmt.Errorf("read env of %s: %w", r.ID, err)
 			}
 		}
-		b.mu.Lock()
-		if e = b.entries[id]; e == nil {
-			e = &entry{id: id, owner: r.Metadata[metaOwner]}
-			b.entries[id] = e
+		if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+			e = cmp.Or(e, &entry{id: id, owner: r.Metadata[metaOwner]})
+			// The tenant stamp is sandboxd's own, so it outranks the owner metadata the api wrote.
+			e.owner = cmp.Or(r.Tenant, e.owner)
+			if env != nil && (e.row == nil || e.row.ID != r.ID) {
+				e.loadEnv(env)
+			}
+			cur := r
+			e.row, e.image = &cur, r.Key.Template
+			return e, true
+		}); err != nil {
+			return err
 		}
-		// The tenant stamp is sandboxd's own, so it outranks the owner metadata the api wrote.
-		e.owner = cmp.Or(r.Tenant, e.owner)
-		if !known {
-			e.loadEnv(env)
-		}
-		cur := r
-		e.row, e.image = &cur, r.Key.Template
-		b.touchLocked(e)
-		b.mu.Unlock()
 	}
-	if !complete {
+	if listed.IsZero() {
 		return nil
 	}
+	now := time.Now()
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	gone := map[string]string{}
 	for id, e := range b.entries {
-		if !present[id] && e.op == "" && e.row != nil {
-			b.dropLocked(id)
+		if !present[id] && !e.busy(now) && e.row != nil && e.rowAt.Before(listed) {
+			gone[id] = e.row.ID
+		}
+	}
+	b.mu.Unlock()
+	for id, sandbox := range gone {
+		if _, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox }); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -715,7 +933,7 @@ func (b *Backend) wakeLocked(owner string) {
 func (b *Backend) probe(ctx context.Context, id string) {
 	b.mu.Lock()
 	e := b.entries[id]
-	if e == nil || e.row == nil || e.op != "" || e.row.Hibernated || e.row.Archived || e.row.Failed != "" ||
+	if e == nil || e.row == nil || e.busy(time.Now()) || e.row.Hibernated || e.row.Archived || e.row.Failed != "" ||
 		(e.ready && e.readyRestarts == e.row.Restarts) {
 		b.mu.Unlock()
 		return
@@ -729,11 +947,14 @@ func (b *Backend) probe(ctx context.Context, id string) {
 		return
 	}
 	_ = conn.Close()
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if e.row != nil && e.row.ID == sandbox && e.row.Restarts == restarts {
+	if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		if e == nil || e.row == nil || e.row.ID != sandbox || e.row.Restarts != restarts {
+			return e, false
+		}
 		e.ready, e.readyRestarts = true, restarts
-		b.touchLocked(e)
+		return e, true
+	}); err != nil {
+		log.WithFunc("sandboxd.Backend.probe").WithField("machine", id).Warnf(ctx, "record the agent ready: %v", err)
 	}
 }
 
@@ -754,6 +975,67 @@ func (b *Backend) renew(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func (b *Backend) reload(ctx context.Context) error {
+	recs, err := b.opts.Shared.Machines(ctx)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	present := make(map[string]bool, len(recs))
+	for _, rec := range recs {
+		present[rec.ID] = true
+		b.loadLocked(rec)
+	}
+	maps.DeleteFunc(b.entries, func(id string, _ *entry) bool { return !present[id] })
+	b.publishLocked()
+	return nil
+}
+
+func (b *Backend) reloadLogged(ctx context.Context) {
+	if err := b.reload(ctx); err != nil {
+		log.WithFunc("sandboxd.Backend.reloadLogged").Warnf(ctx, "reload the shared machines: %v", err)
+	}
+}
+
+// notified takes the shared row of machine id into the cache after a notify.
+func (b *Backend) notified(ctx context.Context, id string) {
+	rec, err := b.opts.Shared.Machine(ctx, id)
+	if err != nil && !errors.Is(err, cluster.ErrNotFound) {
+		log.WithFunc("sandboxd.Backend.notified").WithField("machine", id).Warnf(ctx, "read the shared machine: %v", err)
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err != nil {
+		delete(b.entries, id)
+	} else {
+		b.loadLocked(rec)
+	}
+	b.publishLocked()
+}
+
+// loadLocked takes rec into the cache unless the cache holds a newer version, and returns the cached entry.
+func (b *Backend) loadLocked(rec cluster.Machine) *entry {
+	e := b.entries[rec.ID]
+	if e == nil {
+		e = &entry{id: rec.ID}
+		b.entries[rec.ID] = e
+	}
+	if rec.Version >= e.version {
+		busy, opErr, meta, sandbox := e.op != "", e.opErr, e.meta, e.sandbox()
+		e.load(rec)
+		if e.sandbox() != sandbox {
+			e.rowAt = time.Now()
+		}
+		// Like a change in memory, only an op end, a failure or a meta change wakes the watchers before their next poll.
+		if (busy && e.op == "") || opErr != e.opErr || !maps.Equal(meta, e.meta) {
+			e.notifyLocked()
+		}
+	}
+	return e
 }
 
 // touchLocked queues e's record for the ledger when it changed since the last one queued.
@@ -777,13 +1059,19 @@ func (b *Backend) dropLocked(id string) {
 	}
 }
 
-// differences returns the ids whose ledger row differs from the entry.
+// differences returns the ids whose table row differs from the entry.
 func (b *Backend) differences(ctx context.Context) ([]string, error) {
+	var table func(context.Context) ([]cluster.Machine, error)
+	if b.mirror != nil {
+		table = b.opts.Ledger.Machines
+	} else {
+		table = b.opts.Shared.Machines
+	}
 	b.mu.Lock()
 	entries := make([]entry, 0, len(b.entries))
 	for _, e := range b.entries {
 		copied := *e
-		copied.meta = maps.Clone(e.meta)
+		copied.meta, copied.env = maps.Clone(e.meta), maps.Clone(e.env)
 		entries = append(entries, copied)
 	}
 	b.mu.Unlock()
@@ -791,7 +1079,7 @@ func (b *Backend) differences(ctx context.Context) ([]string, error) {
 	for _, e := range entries {
 		want[e.id] = e.record()
 	}
-	rows, err := b.opts.Ledger.Machines(ctx)
+	rows, err := table(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -809,8 +1097,8 @@ func (b *Backend) differences(ctx context.Context) ([]string, error) {
 	var differ []string
 	for _, id := range ids {
 		w, inMemory := want[id]
-		h, inLedger := have[id]
-		if inMemory != inLedger || (inMemory && !w.Equal(h)) {
+		h, inTable := have[id]
+		if inMemory != inTable || (inMemory && !w.Equal(h)) {
 			differ = append(differ, id)
 		}
 	}
@@ -862,4 +1150,12 @@ func fingerprint(v *envVar) string {
 	raw, _ := json.Marshal(v)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+func envNames(env map[string]envVar) map[string]string {
+	names := make(map[string]string, len(env))
+	for name := range env {
+		names[name] = ""
+	}
+	return names
 }
