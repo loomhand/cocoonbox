@@ -9,8 +9,7 @@ DATA=/var/lib/redroid-data
 
 log() { echo "android-apply: $*" >&2; }
 
-# Android's own shutdown ends the container cleanly, where docker stop's SIGTERM reaches only the container's shell;
-# the docker stop after it keeps the restart policy from starting Android on the old /data
+# Android's own shutdown ends the container cleanly, where docker stop's SIGTERM reaches only the container's shell
 stop_android() {
 	timeout 10 docker exec redroid /system/bin/setprop sys.powerctl shutdown >/dev/null 2>&1 || true
 	timeout 30 docker wait redroid >/dev/null 2>&1 || true
