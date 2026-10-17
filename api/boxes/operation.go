@@ -138,13 +138,13 @@ func (o *operation) fail(detail string) {
 	}
 }
 
-// since returns the events after offset, whether the log is complete, and a channel closed on the next append.
+// since returns the events whose offset key is past offset, whether the log is complete, and a channel closed on the next append.
 func (o *operation) since(offset int) ([]*controlv1.OperationEvent, bool, <-chan struct{}) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	var events []*controlv1.OperationEvent
-	if offset < len(o.events) {
-		events = o.events[offset:]
+	if i := slices.IndexFunc(o.events, func(ev *controlv1.OperationEvent) bool { return offsetOf(ev.GetOffsetKey()) > offset }); i >= 0 {
+		events = o.events[i:]
 	}
 	return events, !o.finishedAt.IsZero(), o.changed
 }
@@ -167,11 +167,15 @@ func (o *operation) appendLocked(phase controlv1.Phase, detail string, state con
 }
 
 func (o *operation) appendBytesLocked(phase controlv1.Phase, detail string, state controlv1.BoxState, done, total uint64) {
+	next := 1
+	if n := len(o.events); n > 0 {
+		next = offsetOf(o.events[n-1].GetOffsetKey()) + 1
+	}
 	o.events = append(o.events, &controlv1.OperationEvent{
 		OperationId: o.id,
 		Phase:       phase,
 		Detail:      detail,
-		OffsetKey:   strconv.Itoa(len(o.events) + 1),
+		OffsetKey:   strconv.Itoa(next),
 		AtMs:        time.Now().UnixMilli(),
 		BoxState:    state,
 		DoneBytes:   done,
@@ -413,11 +417,12 @@ func (r *operations) end(ctx context.Context, id, detail string) {
 			return nil, fmt.Errorf("decode the events of %s: %w", id, err)
 		}
 		var state int32
+		next := 1
 		if n := len(events); n > 0 {
-			state = events[n-1].BoxState
+			state, next = events[n-1].BoxState, offsetOf(events[n-1].OffsetKey)+1
 		}
 		events = append(events, eventRecord{
-			Phase: int32(controlv1.Phase_PHASE_FAILED), Detail: detail, OffsetKey: strconv.Itoa(len(events) + 1), AtMs: time.Now().UnixMilli(), BoxState: state,
+			Phase: int32(controlv1.Phase_PHASE_FAILED), Detail: detail, OffsetKey: strconv.Itoa(next), AtMs: time.Now().UnixMilli(), BoxState: state,
 		})
 		return json.Marshal(events)
 	}); err != nil {
@@ -503,4 +508,9 @@ func collapseTransfers(events []*controlv1.OperationEvent) []*controlv1.Operatio
 
 func transfer(ev *controlv1.OperationEvent) bool {
 	return ev.GetTotalBytes() > 0
+}
+
+func offsetOf(key string) int {
+	n, _ := strconv.Atoi(key)
+	return n
 }

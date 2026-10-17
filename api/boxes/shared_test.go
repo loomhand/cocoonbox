@@ -68,6 +68,29 @@ func TestAHeadsNotifyFillsTheCacheWithoutDroppingANewerHead(t *testing.T) {
 	}
 }
 
+func TestAWatchResumedInAnotherProcessGetsTheEventsAfterItsOffset(t *testing.T) {
+	a, b, _ := newSharedPair(t, t.Context())
+	op, _ := a.svc.ops.start(a.ctx, alice, aliceBox, controlv1.Phase_PHASE_SAVING, 1, time.Minute)
+	for i := range 10 {
+		op.progress(controlv1.Phase_PHASE_SAVING, "upload", uint64(i+1), 10)
+	}
+	events, _, _ := op.since(0)
+	from := events[len(events)-1].GetOffsetKey()
+	op.succeed("saved")
+	waitFor(t, "b reads a's finished operation", func() bool {
+		remote, err := b.svc.ops.get(t.Context(), op.id)
+		if err != nil || remote == nil {
+			return false
+		}
+		_, done := remote.finished()
+		return done
+	})
+	events = watch(t, b.svc, b.ctx, op.id, from)
+	if len(events) != 1 || events[0].GetPhase() != controlv1.Phase_PHASE_DONE || events[0].GetOffsetKey() <= from {
+		t.Errorf("a watch on b resumed after %s got %v, want the one event after it", from, events)
+	}
+}
+
 func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	gate := make(chan struct{})
