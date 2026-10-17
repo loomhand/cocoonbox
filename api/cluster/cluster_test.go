@@ -168,8 +168,15 @@ func TestOperationsKeepTheirEventsUntilPurged(t *testing.T) {
 	if recent, err := st.Operations(t.Context(), time.Now().Add(-time.Hour)); err != nil || len(recent) != 0 {
 		t.Errorf("Operations since an hour ago = %v, %v, want none", recent, err)
 	}
+	abandoned := cluster.Operation{ID: "op-2", User: "u-1", Box: "cb-1", Events: []byte(`[]`), ExpiresAt: time.Now().Add(-2 * time.Hour), CreatedAt: time.Now().Add(-3 * time.Hour)}
+	if err := st.PutOperation(t.Context(), abandoned); err != nil {
+		t.Fatalf("PutOperation abandoned: %v", err)
+	}
 	if err := st.PurgeOperations(t.Context(), time.Now().Add(-time.Hour)); err != nil {
 		t.Fatalf("PurgeOperations: %v", err)
+	}
+	if _, err := st.Operation(t.Context(), "op-2"); !errors.Is(err, cluster.ErrNotFound) {
+		t.Errorf("an unfinished operation past its expiry after the purge = %v, want ErrNotFound", err)
 	}
 	if _, err := st.Operation(t.Context(), "op-1"); !errors.Is(err, cluster.ErrNotFound) {
 		t.Errorf("Operation after the purge = %v, want ErrNotFound", err)
