@@ -906,6 +906,54 @@ func TestTheGCKeepsTheChunksAndRecordsASaveWroteWithinItsGrace(t *testing.T) {
 	}
 }
 
+func TestTheGCKeepsAnOldChunkASaveReusesBeforeItsTimelineNamesIt(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, collector := st.layer(agent), st.layer(agent)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
+		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
+		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+			t.Fatalf("save %v: %v", chunks, err)
+		}
+	}
+	if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive); err != nil {
+		t.Fatalf("collect that writes the timeline: %v", err)
+	}
+	tl, _, err := saver.readTimeline(t.Context(), p)
+	if err != nil || len(tl.Snapshots) != 2 {
+		t.Fatalf("readTimeline = %+v, %v", tl, err)
+	}
+	if err := putJSON(t.Context(), st, p.timeline(), timeline{Snapshots: tl.Snapshots[1:]}); err != nil {
+		t.Fatalf("drop the first snapshot from the timeline: %v", err)
+	}
+	if err := st.Delete(t.Context(), []string{p.record(snapshotID(1)), p.manifest(snapshotID(1))}); err != nil {
+		t.Fatalf("delete the first snapshot: %v", err)
+	}
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	st.mu.Lock()
+	for key := range st.modified {
+		st.modified[key] = time.Now().Add(-40 * 24 * time.Hour)
+	}
+	st.mu.Unlock()
+	var collected error
+	ran := false
+	st.before = func(op, key string) {
+		if op != "putif" || key != p.timeline() || ran {
+			return
+		}
+		ran = true
+		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
+	}
+	_, err = saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	if !ran || collected != nil {
+		t.Fatalf("collect before the timeline write ran %t, %v", ran, collected)
+	}
+	if err != nil || !st.has(p.chunk(hexID("c1"))) {
+		t.Errorf("save over a gc pass = %v, c1 kept %t; want the save committed and the chunk it reused kept", err, st.has(p.chunk(hexID("c1"))))
+	}
+}
+
 func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)
