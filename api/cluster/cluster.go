@@ -28,6 +28,7 @@ const (
 	schemaTable   = "cluster_schema_migrations"
 	migrationLock = 0x6362636c // "cbcl"
 	listenRetry   = 5 * time.Second
+	lockConns     = 4
 )
 
 var (
@@ -53,6 +54,8 @@ type Change struct {
 // Store is the shared state in one PostgreSQL database.
 type Store struct {
 	pool *pgxpool.Pool
+	// locks holds the connections of the user locks.
+	locks *pgxpool.Pool
 }
 
 // Open connects to dsn and applies the cluster migrations.
@@ -61,12 +64,24 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{pool: pool}, nil
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("parse the database dsn: %w", err)
+	}
+	cfg.MaxConns = lockConns
+	locks, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("open the lock pool: %w", err)
+	}
+	return &Store{pool: pool, locks: locks}, nil
 }
 
 // Close closes the store; closing a nil store does nothing.
 func (s *Store) Close() {
 	if s != nil {
+		s.locks.Close()
 		s.pool.Close()
 	}
 }

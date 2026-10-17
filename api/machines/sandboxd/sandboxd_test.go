@@ -1227,6 +1227,7 @@ func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Back
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	go b.Run(ctx)
 	return b
 }
 

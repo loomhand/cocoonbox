@@ -269,6 +269,86 @@ func TestListenDeliversTheChangeOfEveryWrite(t *testing.T) {
 	}
 }
 
+func TestOneProcessLeadsAndAnotherTakesOverWhenItsConnectionDies(t *testing.T) {
+	st, dsn := clustertest.OpenDSN(t)
+	other, err := cluster.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(other.Close)
+	var mu sync.Mutex
+	leading := map[string]bool{}
+	run := func(name string, s *cluster.Store) {
+		s.Lead(t.Context(), func(ctx context.Context) {
+			mu.Lock()
+			if len(leading) > 0 {
+				t.Errorf("%s leads while %v does", name, leading)
+			}
+			leading[name] = true
+			mu.Unlock()
+			<-ctx.Done()
+			mu.Lock()
+			delete(leading, name)
+			mu.Unlock()
+		})
+	}
+	go run("a", st)
+	go run("b", other)
+	first := waitLeader(t, &mu, leading, "")
+	conn, err := pgx.Connect(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(t.Context(), `SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND granted
+		AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND classid = $1 AND objid = $2`, 0x6362, 0x6c656164); err != nil {
+		t.Fatalf("end the leader's connection: %v", err)
+	}
+	if next := waitLeader(t, &mu, leading, first); next == first {
+		t.Errorf("leader stayed %s after its connection died", first)
+	}
+}
+
+func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
+	a, dsn := clustertest.OpenDSN(t)
+	b, err := cluster.Open(t.Context(), dsn)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(b.Close)
+	unlock, err := a.LockUser(t.Context(), "u-1")
+	if err != nil {
+		t.Fatalf("LockUser: %v", err)
+	}
+	other, err := b.LockUser(t.Context(), "u-2")
+	if err != nil {
+		t.Fatalf("LockUser of another user: %v", err)
+	}
+	other()
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	if _, err := b.LockUser(ctx, "u-1"); err == nil {
+		t.Fatal("b took the lock a holds")
+	}
+	got := make(chan error, 1)
+	go func() {
+		release, err := b.LockUser(t.Context(), "u-1")
+		if err == nil {
+			release()
+		}
+		got <- err
+	}()
+	unlock()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Errorf("LockUser after the release: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("b did not take the lock a released")
+	}
+}
+
 func TestMirrorAppliesTheNewestWritePerKeyInOrder(t *testing.T) {
 	m := cluster.NewMirror()
 	var mu sync.Mutex
@@ -295,4 +375,22 @@ func TestMirrorAppliesTheNewestWritePerKeyInOrder(t *testing.T) {
 	if !slices.Equal(applied, []string{"a2", "b1"}) {
 		t.Errorf("applied %q, want a2 then b1", applied)
 	}
+}
+
+func waitLeader(t *testing.T, mu *sync.Mutex, leading map[string]bool, not string) string {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		for name := range leading {
+			if name != not {
+				mu.Unlock()
+				return name
+			}
+		}
+		mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("no leader other than %q within 20 s", not)
+	return ""
 }

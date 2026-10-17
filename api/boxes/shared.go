@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"time"
 
 	"github.com/projecteru2/core/log"
 
@@ -20,6 +21,12 @@ func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 	}
 	s.ops.mu.Unlock()
 	go s.ops.renew(ctx)
+	now := time.Now
+	if s.idle != nil {
+		now = func() time.Time { return s.idle.now() }
+	}
+	s.reaches, s.userLocks = newReaches(ctx, shared, now), shared
+	go s.reaches.run(ctx, s.openBoxes)
 	go shared.Listen(ctx, cluster.ChannelOperations, func() {
 		if err := s.ops.reload(ctx); err != nil {
 			logger.Warnf(ctx, "reload the shared operations: %v", err)
@@ -50,4 +57,12 @@ func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 			}
 		}
 	})
+}
+
+// openBoxes returns the boxes open client calls hold in this process.
+func (s *Service) openBoxes() []string {
+	if s.idle == nil {
+		return nil
+	}
+	return s.idle.opened()
 }
