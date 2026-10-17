@@ -3,7 +3,6 @@ mcp_listen: 127.0.0.1:18201
 # relative paths resolve next to this file (the systemd credentials directory)
 image: cbdesk:v11            # the default sandboxd template
 rebase_images: []            # older templates Rebase may also target; anything else is refused
-image_owners: {}             # a rebase image -> user ids whose new boxes start from it and whose boxes upgrade to it
 agent_port: 7443
 sandboxd:
   url: http://127.0.0.1:17780
@@ -22,13 +21,10 @@ state:
   interval: 15m
   presign_ttl: 10m
   park_after: 0s               # a box hibernated this long loses its machine and memory image; the next Ensure restores its saved state; 0s turns it off
-  park_owners: []
   gc:                          # snapshot retention and chunk GC (design §25.3); no interval turns it off
     interval: 24h              # one pass at start, then every interval
     dry_run: false             # log what a pass would remove, remove nothing
-    users: []                  # user ids to collect; empty means every user
     delete_batch: 1000         # keys per DeleteObjects request, at most 1000
-  delta_users: []              # user ids whose saves write delta records (design §25.8); empty writes full ones
   conditional_writes: false    # index and timeline rewrites land only on the version read; the store must honor If-Match on PUT (R2 does)
 provision:                     # every box's identity file (design §12) and its user's gw key
   signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519

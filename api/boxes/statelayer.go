@@ -147,6 +147,8 @@ type stateLayer struct {
 	mirror func(p statePath, h *head)
 	// shared, when set, holds the heads: a commit swaps the head on the version its save read.
 	shared *cluster.Store
+	// deltaFor reports whether a user's saves write delta records against the day's newest full snapshot.
+	deltaFor func(user string) bool
 
 	mu    sync.Mutex
 	locks map[string]*sync.Mutex
@@ -156,16 +158,14 @@ type stateLayer struct {
 	dropped uint64
 	pins    map[statePath]map[string]int
 	browsed map[statePath]browsed
-	// deltaUsers are the users whose saves write delta records.
-	deltaUsers map[string]bool
-	bases      map[statePath]*snapshotRecord
+	bases   map[statePath]*snapshotRecord
 }
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay,
 		locks: map[string]*sync.Mutex{}, users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
-		browsed: map[statePath]browsed{}, deltaUsers: map[string]bool{}, bases: map[statePath]*snapshotRecord{},
+		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{},
 	}
 }
 
