@@ -58,7 +58,11 @@ func TestCheckRefusesWhatStartupRefuses(t *testing.T) {
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || out.String() != "config ok\n" {
 		t.Fatalf("check of a valid config = %q, %v", out.String(), err)
 	}
-	cfg.Flavor.MemoryMiB = 1000
+	cfg.Cluster.Ledger, cfg.Accounts.DSNFile = true, filepath.Join(t.TempDir(), "missing.dsn")
+	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "database dsn") {
+		t.Errorf("check with the ledger on and no dsn file = %v, want the startup refusal", err)
+	}
+	cfg.Cluster.Ledger, cfg.Flavor.MemoryMiB = false, 1000
 	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "not a sandboxd tier") {
 		t.Errorf("check of a flavor that is no tier = %v, want the startup refusal", err)
 	}
