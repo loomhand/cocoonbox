@@ -1,4 +1,4 @@
-# A v* tag runs GoReleaser: cocoonbox-api (linux amd64, arm64) and the changelog, with cocoonbox-agent (linux x86_64),
+# A v* tag runs GoReleaser: cocoonbox-api (linux amd64, arm64) and the changelog, with cocoonbox-agent (linux amd64, arm64),
 # the image recipe with its pins and, when the repository variable CB_ENDPOINT names an api origin, CocoonBox.app (ad hoc signed).
 name: release
 
@@ -11,7 +11,14 @@ permissions:
 
 jobs:
   agent:
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -19,16 +26,22 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
 
+      # the arm64 runner image has no rustup; rust-toolchain.toml then picks the pinned toolchain
+      - name: Install rustup
+        if: matrix.arch == 'arm64'
+        run: |
+          command -v rustup || { curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none; echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"; }
+
       - name: Build
         run: |
           agent/build-release.sh
-          cp agent/target/release/cocoonbox-agent cocoonbox-agent-linux-amd64
+          cp agent/target/release/cocoonbox-agent cocoonbox-agent-linux-${{ matrix.arch }}
 
       - name: Upload
         uses: actions/upload-artifact@v7.0.2
         with:
-          name: agent
-          path: cocoonbox-agent-linux-amd64
+          name: agent-${{ matrix.arch }}
+          path: cocoonbox-agent-linux-${{ matrix.arch }}
 
   app:
     if: vars.CB_ENDPOINT != ''
@@ -85,6 +98,7 @@ jobs:
             echo "release $GITHUB_REF_NAME"
             echo "commit $GITHUB_SHA"
             echo "agent-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-amd64 | cut -d' ' -f1)"
+            echo "agent-arm64-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-arm64 | cut -d' ' -f1)"
             sed -n -e 's/^COMMIT=${COMMIT:-\(.*\)}$/cua-driver-commit \1/p' -e 's/^VERSION=${VERSION:-\(.*\)}$/cua-driver-version \1/p' image/cua-driver.sh
           } > "$RUNNER_TEMP/$recipe/PINS"
           cat "$RUNNER_TEMP/$recipe/PINS"
