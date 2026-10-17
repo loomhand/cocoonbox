@@ -107,7 +107,7 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	}
 	var grants []oauth.Grant
 	e.console(t, http.MethodGet, "agents", nil, &grants)
-	life := e.users.Lifetime(e.alice, grants[0].ID)
+	life := lifetime(e.users, e.alice, grants[0].ID)
 	if code, body := e.tokenError(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); code != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") || life.Err() == nil {
 		t.Fatalf("replayed refresh token: %d %s; the grant's calls' lifetime %v", code, body, life.Err())
 	}
@@ -138,7 +138,7 @@ func TestConsoleListsAcknowledgesAndRevokesGrants(t *testing.T) {
 	if !grants[0].Seen {
 		t.Error("seen did not stick")
 	}
-	life := e.users.Lifetime(e.alice, grants[0].ID)
+	life := lifetime(e.users, e.alice, grants[0].ID)
 	e.console(t, http.MethodDelete, "agents/"+grants[0].ID, map[string]any{}, nil)
 	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || life.Err() == nil {
 		t.Errorf("a revoked grant answers %d, want 401; its calls' lifetime %v", resp.StatusCode, life.Err())
@@ -235,7 +235,7 @@ func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 	access, refresh := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
 	var grants []oauth.Grant
 	e.console(t, http.MethodGet, "agents", nil, &grants)
-	life := e.users.Lifetime(e.alice, grants[0].ID)
+	life := lifetime(e.users, e.alice, grants[0].ID)
 	if resp := e.post(t, oauth.RevokePath, "application/x-www-form-urlencoded", url.Values{"token": {refresh}, "client_id": {clientID}}.Encode()); resp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke: %d", resp.StatusCode)
 	}
@@ -253,7 +253,7 @@ func TestSigningOutEverywhereEndsEverySignInAndKeepsTheBoxes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueDevice: %v", err)
 	}
-	life := e.users.Lifetime(e.alice, "")
+	life := lifetime(e.users, e.alice, "")
 	if code, body := e.consoleStatus(t, http.MethodPost, "me/sign-out-everywhere", map[string]any{}); code != http.StatusNoContent {
 		t.Fatalf("sign out everywhere = %d %s", code, body)
 	}
@@ -801,6 +801,11 @@ func masterKeyFile(t *testing.T) string {
 		t.Fatalf("setup: %v", err)
 	}
 	return path
+}
+
+func lifetime(us *users.Service, id, credential string) context.Context {
+	ctx, _ := us.Lifetime(id, credential)
+	return ctx
 }
 
 func freshDatabase(t *testing.T) string {

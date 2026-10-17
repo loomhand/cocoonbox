@@ -38,7 +38,7 @@ type (
 // Users resolves the sha256 of an API token, in lowercase hex, to an enabled user id, and gives the context that ends when the user is disabled or deleted or the credential ends.
 type Users interface {
 	ByTokenSHA256(ctx context.Context, sum string) (string, bool)
-	Lifetime(user, credential string) context.Context
+	Lifetime(user, credential string) (context.Context, func())
 }
 
 // Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.
@@ -148,11 +148,13 @@ func (a *Authenticator) Authenticate(ctx context.Context, header string) (string
 }
 
 func (a *Authenticator) Bind(ctx context.Context, user, credential string) (context.Context, context.CancelFunc) {
+	life, release := a.users.Lifetime(user, credential)
 	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(a.users.Lifetime(user, credential), cancel)
+	stop := context.AfterFunc(life, cancel)
 	return ctx, func() {
 		stop()
 		cancel()
+		release()
 	}
 }
 

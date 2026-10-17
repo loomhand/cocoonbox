@@ -118,7 +118,9 @@ func (f *fakeUsers) ByTokenSHA256(_ context.Context, sum string) (string, bool) 
 	return "", false
 }
 
-func (f *fakeUsers) Lifetime(string, string) context.Context { return context.Background() }
+func (f *fakeUsers) Lifetime(string, string) (context.Context, func()) {
+	return context.Background(), func() {}
+}
 
 func (f *fakeUsers) Devices(_ context.Context, id string) ([]users.Device, error) {
 	if f.err != nil {

@@ -42,7 +42,9 @@ type anyToken struct{}
 
 func (anyToken) ByTokenSHA256(context.Context, string) (string, bool) { return "u-any", true }
 
-func (anyToken) Lifetime(string, string) context.Context { return context.Background() }
+func (anyToken) Lifetime(string, string) (context.Context, func()) {
+	return context.Background(), func() {}
+}
 
 type noShares struct{}
 

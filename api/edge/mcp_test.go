@@ -282,11 +282,11 @@ type livingUsers struct {
 	credentials map[string]context.Context
 }
 
-func (u livingUsers) Lifetime(_, credential string) context.Context {
+func (u livingUsers) Lifetime(_, credential string) (context.Context, func()) {
 	if life, ok := u.credentials[credential]; ok {
-		return life
+		return life, func() {}
 	}
-	return u.life
+	return u.life, func() {}
 }
 
 type fakeMCP struct {

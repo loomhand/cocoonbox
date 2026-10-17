@@ -175,7 +175,7 @@ func TestRevokeTokenDropsTheTokenEverywhereAndEndsItsCalls(t *testing.T) {
 	token, _ := svc.RegenerateToken(t.Context(), u.ID)
 	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	elsewhere := openTestService(t, dsn, gw, tenants)
-	life, deviceLife := svc.Lifetime(u.ID, sum(token)), svc.Lifetime(u.ID, sum(device))
+	life, deviceLife := lifetime(svc, u.ID, sum(token)), lifetime(svc, u.ID, sum(device))
 	if err := svc.RevokeToken(t.Context(), u.ID); err != nil {
 		t.Fatalf("RevokeToken: %v", err)
 	}
@@ -209,7 +209,7 @@ func TestSignOutEndsEverySignInOfTheUserOnly(t *testing.T) {
 	otherToken, _ := svc.RegenerateToken(t.Context(), other.ID)
 	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	elsewhere := openTestService(t, dsn, gw, tenants)
-	life, deviceLife, otherLife := svc.Lifetime(u.ID, ""), svc.Lifetime(u.ID, sum(device)), svc.Lifetime(other.ID, sum(otherToken))
+	life, deviceLife, otherLife := lifetime(svc, u.ID, ""), lifetime(svc, u.ID, sum(device)), lifetime(svc, other.ID, sum(otherToken))
 	if err := svc.SignOut(t.Context(), u.ID); err != nil {
 		t.Fatalf("SignOut: %v", err)
 	}
@@ -239,8 +239,8 @@ func TestSignOutEndsEverySignInOfTheUserOnly(t *testing.T) {
 	if id, ok := svc.ByTokenSHA256(t.Context(), sum(otherToken)); !ok || id != other.ID || otherLife.Err() != nil {
 		t.Errorf("another user's token resolves to %q, %t, its lifetime %v", id, ok, otherLife.Err())
 	}
-	if _, err := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop"); err != nil || svc.Lifetime(u.ID, "").Err() != nil {
-		t.Errorf("signing in again = %v, lifetime %v", err, svc.Lifetime(u.ID, "").Err())
+	if _, err := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop"); err != nil || lifetime(svc, u.ID, "").Err() != nil {
+		t.Errorf("signing in again = %v, lifetime %v", err, lifetime(svc, u.ID, "").Err())
 	}
 }
 
@@ -471,15 +471,15 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
 	other := openTestService(t, dsn, gw, tenants)
-	life, elsewhere := svc.Lifetime(u.ID, ""), other.Lifetime(u.ID, "")
+	life, elsewhere := lifetime(svc, u.ID, ""), lifetime(other, u.ID, "")
 	if life.Err() != nil || elsewhere.Err() != nil {
 		t.Fatalf("an enabled user's lifetime ended: %v, %v", life.Err(), elsewhere.Err())
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if !gw.disabled[u.ID] || life.Err() == nil || svc.Lifetime(u.ID, "").Err() == nil {
-		t.Errorf("after disable: gw key off %t, lifetime %v, a new lifetime %v", gw.disabled[u.ID], life.Err(), svc.Lifetime(u.ID, "").Err())
+	if !gw.disabled[u.ID] || life.Err() == nil || lifetime(svc, u.ID, "").Err() == nil {
+		t.Errorf("after disable: gw key off %t, lifetime %v, a new lifetime %v", gw.disabled[u.ID], life.Err(), lifetime(svc, u.ID, "").Err())
 	}
 	if err := other.Load(t.Context()); err != nil || elsewhere.Err() == nil {
 		t.Errorf("another api reloading the disable = %v, its lifetime %v", err, elsewhere.Err())
@@ -491,7 +491,7 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(false)}); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	life = svc.Lifetime(u.ID, "")
+	life = lifetime(svc, u.ID, "")
 	if gw.disabled[u.ID] || life.Err() != nil {
 		t.Errorf("after enable: gw key off %t, lifetime %v", gw.disabled[u.ID], life.Err())
 	}
@@ -734,6 +734,11 @@ func within(limit time.Duration, cond func() bool) (time.Duration, bool) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return time.Since(start), true
+}
+
+func lifetime(svc *Service, id, credential string) context.Context {
+	ctx, _ := svc.Lifetime(id, credential)
+	return ctx
 }
 
 func sum(token string) string {

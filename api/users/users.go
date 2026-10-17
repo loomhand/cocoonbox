@@ -149,7 +149,7 @@ type Service struct {
 
 	lifeMu sync.Mutex
 	lives  map[string]life
-	creds  map[string]life
+	creds  map[string]*credLife
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -170,7 +170,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
-		creds: map[string]life{},
+		creds: map[string]*credLife{},
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
@@ -764,21 +764,28 @@ func (s *Service) Residential(id string) bool {
 	return err == nil && r.Residential
 }
 
-func (s *Service) Lifetime(id, credential string) context.Context {
+func (s *Service) Lifetime(id, credential string) (context.Context, func()) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	if r, ok := s.byID[id]; !ok || r.Disabled || hexSHA256.MatchString(credential) && s.byToken[credential].user != id {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		return ctx
+		return ctx, func() {}
 	}
 	s.lifeMu.Lock()
 	defer s.lifeMu.Unlock()
 	user := liveIn(context.Background(), s.lives, id)
 	if credential == "" {
-		return user
+		return user, func() {}
 	}
-	return liveIn(user, s.creds, credential)
+	c := s.creds[credential]
+	if c == nil || c.ctx.Err() != nil {
+		c = &credLife{}
+		c.ctx, c.cancel = context.WithCancel(user)
+		s.creds[credential] = c
+	}
+	c.refs++
+	return c.ctx, func() { s.release(credential, c) }
 }
 
 // EndCredential ends the calls bound to credential, a token's sha256 or a grant id.
@@ -858,8 +865,19 @@ func (s *Service) end(id string) {
 }
 
 func (s *Service) endCredential(credential string) {
-	if l, ok := s.creds[credential]; ok {
-		l.cancel()
+	if c, ok := s.creds[credential]; ok {
+		c.cancel()
+		delete(s.creds, credential)
+	}
+}
+
+func (s *Service) release(credential string, c *credLife) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.lifeMu.Lock()
+	defer s.lifeMu.Unlock()
+	if c.refs--; c.refs == 0 && s.creds[credential] == c {
+		c.cancel()
 		delete(s.creds, credential)
 	}
 }
@@ -897,6 +915,11 @@ type record struct {
 type life struct {
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type credLife struct {
+	life
+	refs int
 }
 
 // tokenOwner is the user a token serves and, for a device token, its device id.
