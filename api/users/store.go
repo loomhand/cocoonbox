@@ -192,10 +192,50 @@ func (s *store) remove(ctx context.Context, id string) error {
 	return s.exec(ctx, "DELETE FROM users WHERE id = $1", id)
 }
 
-func (s *store) update(ctx context.Context, r record) error {
-	return s.exec(ctx, `UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0),
-		max_agent_boxes = $7, admin = $8, image = $9, delta = $10, no_park = $11, no_gc = $12 WHERE id = $1`,
-		r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes, r.Admin, r.Policy.Image, r.Policy.Delta, r.Policy.NoPark, r.Policy.NoGC)
+func (s *store) update(ctx context.Context, r record, set Settings) error {
+	args := []any{r.ID}
+	var cols []string
+	add := func(col string, v any) {
+		args = append(args, v)
+		cols = append(cols, fmt.Sprintf(col, len(args)))
+	}
+	if set.Disabled != nil {
+		add("disabled = $%d", r.Disabled)
+	}
+	if set.Residential != nil {
+		add("residential = $%d", r.Residential)
+	}
+	if set.MaxBoxes != nil || set.MaxBoxesCap != nil {
+		add("max_boxes = $%d", r.MaxBoxes)
+	}
+	if set.MaxBoxesCap != nil {
+		add("max_boxes_cap = $%d", r.MaxBoxesCap)
+	}
+	if set.MaxRunning != nil {
+		add("max_running = nullif($%d, 0)", r.MaxRunning)
+	}
+	if set.MaxAgentBoxes != nil {
+		add("max_agent_boxes = $%d", r.MaxAgentBoxes)
+	}
+	if set.Admin != nil {
+		add("admin = $%d", r.Admin)
+	}
+	if set.Image != nil {
+		add("image = $%d", r.Policy.Image)
+	}
+	if set.Delta != nil {
+		add("delta = $%d", r.Policy.Delta)
+	}
+	if set.NoPark != nil {
+		add("no_park = $%d", r.Policy.NoPark)
+	}
+	if set.NoGC != nil {
+		add("no_gc = $%d", r.Policy.NoGC)
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	return s.exec(ctx, "UPDATE users SET "+strings.Join(cols, ", ")+" WHERE id = $1", args...)
 }
 
 func (s *store) setPassword(ctx context.Context, id, hash string) error {
