@@ -678,7 +678,6 @@ func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
 	}
 	l := newStateLayer(agent, st, &fakeKeys{})
 	boxA, boxB := statePath{user: alice, box: "cb-00000000000a"}, statePath{user: alice, box: "cb-00000000000b"}
-	noProgress := func(*agentv1.TransferProgress) {}
 	var inner error
 	agent.onUpload = func(ep machines.Endpoint) {
 		if ep.Key == "a" {
@@ -712,7 +711,6 @@ func TestTwoLayersOnAVersionedStoreMergeTheirIndexWrites(t *testing.T) {
 	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2"), "b": hexIDs("c2", "c3")}
 	la, lb := st.layer(agent), st.layer(agent)
 	boxA, boxB := statePath{user: alice, box: "cb-00000000000a"}, statePath{user: alice, box: "cb-00000000000b"}
-	noProgress := func(*agentv1.TransferProgress) {}
 	var inner error
 	agent.onUpload = func(ep machines.Endpoint) {
 		if ep.Key == "a" {
@@ -735,7 +733,6 @@ func TestASaveFailsWhenAnotherLayersGCRewroteTheIndexAfterItsPlan(t *testing.T) 
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
-	noProgress := func(*agentv1.TransferProgress) {}
 	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
@@ -763,7 +760,6 @@ func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) 
 	agent := newFakeAgent(st.fakeStore)
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
-	noProgress := func(*agentv1.TransferProgress) {}
 	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
 		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
@@ -781,7 +777,7 @@ func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) 
 			t.Errorf("save during the gc sweep: %v", err)
 		}
 	}
-	_, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), func(string) bool { return true })
+	_, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), everyBoxLive)
 	if !errors.Is(err, store.ErrStale) {
 		t.Fatalf("collect across a save = %v, want ErrStale", err)
 	}
@@ -795,7 +791,6 @@ func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T
 	agent := newFakeAgent(st.fakeStore)
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
-	noProgress := func(*agentv1.TransferProgress) {}
 	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
 		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
@@ -806,7 +801,7 @@ func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T
 	var collected error
 	agent.onUpload = func(machines.Endpoint) {
 		agent.onUpload = nil
-		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), func(string) bool { return true })
+		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), everyBoxLive)
 	}
 	_, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 	if collected != nil {
@@ -826,8 +821,6 @@ func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 	agent := newFakeAgent(st.fakeStore)
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
-	noProgress := func(*agentv1.TransferProgress) {}
-	live := func(string) bool { return true }
 	save := func(chunks ...string) {
 		t.Helper()
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
@@ -836,7 +829,7 @@ func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 		}
 	}
 	save("c1")
-	if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), live); err != nil {
+	if _, err := collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive); err != nil {
 		t.Fatalf("collect that writes the timeline: %v", err)
 	}
 	save("c2")
@@ -848,7 +841,7 @@ func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 		saved = true
 		save("c3")
 	}
-	if _, err := st.layer(agent).collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), live); !errors.Is(err, store.ErrStale) {
+	if _, err := st.layer(agent).collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), everyBoxLive); !errors.Is(err, store.ErrStale) {
 		t.Fatalf("collect across a timeline append = %v, want ErrStale", err)
 	}
 	if !st.has(p.record(snapshotID(1))) {
@@ -931,6 +924,8 @@ func chunkIDs(n int) []string {
 	}
 	return ids
 }
+
+func everyBoxLive(string) bool { return true }
 
 func versionOf(data []byte) string {
 	sum := sha256.Sum256(data)

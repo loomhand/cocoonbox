@@ -34,6 +34,9 @@ var (
 	migrations embed.FS
 )
 
+// Notified takes the payload of one notify.
+type Notified func(payload string)
+
 // Store is the shared state in one PostgreSQL database.
 type Store struct {
 	pool *pgxpool.Pool
@@ -56,7 +59,7 @@ func (s *Store) Close() {
 }
 
 // Listen calls fn with each notify payload on channel until ctx ends, and reset after each (re)connect since a missed notify is lost.
-func (s *Store) Listen(ctx context.Context, channel string, reset func(), fn func(payload string)) {
+func (s *Store) Listen(ctx context.Context, channel string, reset func(), fn Notified) {
 	for {
 		err := s.listen(ctx, channel, reset, fn)
 		if ctx.Err() != nil {
@@ -71,7 +74,7 @@ func (s *Store) Listen(ctx context.Context, channel string, reset func(), fn fun
 	}
 }
 
-func (s *Store) listen(ctx context.Context, channel string, reset func(), fn func(payload string)) error {
+func (s *Store) listen(ctx context.Context, channel string, reset func(), fn Notified) error {
 	pooled, err := s.pool.Acquire(ctx)
 	if err != nil {
 		return fmt.Errorf("acquire a connection: %w", err)
