@@ -78,6 +78,7 @@ func (s *Service) CreateShare(ctx context.Context, ns NewShare) (Share, error) {
 	if err := s.store.insertShare(ctx, rec, s.seal.seal(secret, shareData(id, ns.Box))); err != nil {
 		return Share{}, err
 	}
+	s.published(ctx, "created share "+id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.putShare(rec)
@@ -106,6 +107,7 @@ func (s *Service) SetShareWrite(ctx context.Context, owner, id string, write boo
 	if err := s.store.setShareWrite(ctx, id, write); err != nil {
 		return Share{}, err
 	}
+	s.published(ctx, "set the mode of share "+id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.shares[id]
@@ -116,6 +118,7 @@ func (s *Service) SetShareWrite(ctx context.Context, owner, id string, write boo
 		rec.write = write
 		close(rec.moded)
 		rec.moded = make(chan struct{})
+		s.shareGen++
 	}
 	return s.view(rec), nil
 }
@@ -130,6 +133,7 @@ func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share,
 	if err := s.store.setShareSecret(ctx, id, hashHex(secret), s.seal.seal(secret, shareData(id, box))); err != nil {
 		return Share{}, err
 	}
+	s.published(ctx, "regenerated share "+id)
 	s.mu.Lock()
 	rec, ok := s.shares[id]
 	if !ok {
@@ -139,6 +143,7 @@ func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share,
 	delete(s.shareSecrets, rec.secretSHA256)
 	rec.secret, rec.secretSHA256 = secret, hashHex(secret)
 	s.shareSecrets[rec.secretSHA256] = id
+	s.shareGen++
 	rec.cutStreams()
 	view := s.view(rec)
 	s.mu.Unlock()
@@ -154,6 +159,7 @@ func (s *Service) RevokeShare(ctx context.Context, owner, id string) error {
 	if err := s.store.revokeShare(ctx, id); err != nil {
 		return err
 	}
+	s.published(ctx, "revoked share "+id)
 	s.endShare(ctx, id)
 	return nil
 }
@@ -183,18 +189,9 @@ func (s *Service) OnShareEnd(fn func(ctx context.Context, sh Share)) {
 }
 
 func (s *Service) loadShares(ctx context.Context) error {
-	recs, err := s.store.liveShares(ctx)
+	recs, err := s.liveShares(ctx)
 	if err != nil {
 		return err
-	}
-	for _, rec := range recs {
-		if rec.secretSealed == nil {
-			continue
-		}
-		if rec.secret, err = s.seal.open(rec.secretSealed, shareData(rec.id, rec.box)); err != nil {
-			log.WithFunc("users.Service.loadShares").Warnf(ctx, "share %s keeps no link: %v", rec.id, err)
-		}
-		rec.secretSealed = nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -202,6 +199,75 @@ func (s *Service) loadShares(ctx context.Context) error {
 		s.putShare(rec)
 	}
 	return nil
+}
+
+// syncShares takes in the shares another api wrote: a new one, a revoked or expired one, a new secret or mode.
+func (s *Service) syncShares(ctx context.Context) error {
+	s.mu.RLock()
+	gen := s.shareGen
+	s.mu.RUnlock()
+	recs, err := s.liveShares(ctx)
+	if err != nil {
+		return err
+	}
+	live := make(map[string]*shareRecord, len(recs))
+	for _, rec := range recs {
+		live[rec.id] = rec
+	}
+	var gone []string
+	s.mu.Lock()
+	if s.shareGen != gen {
+		// The notify of that change follows and syncs again.
+		s.mu.Unlock()
+		return nil
+	}
+	for id := range s.shares {
+		if live[id] == nil {
+			gone = append(gone, id)
+		}
+	}
+	for id, next := range live {
+		cur, ok := s.shares[id]
+		if !ok {
+			s.putShare(next)
+			continue
+		}
+		if cur.secretSHA256 != next.secretSHA256 {
+			delete(s.shareSecrets, cur.secretSHA256)
+			cur.secret, cur.secretSHA256 = next.secret, next.secretSHA256
+			s.shareSecrets[cur.secretSHA256] = id
+			cur.cutStreams()
+		}
+		if cur.write != next.write {
+			cur.write = next.write
+			close(cur.moded)
+			cur.moded = make(chan struct{})
+		}
+		cur.userIDs = next.userIDs
+	}
+	s.mu.Unlock()
+	for _, id := range gone {
+		s.endShare(ctx, id)
+	}
+	return nil
+}
+
+// liveShares reads the live shares with their secrets opened.
+func (s *Service) liveShares(ctx context.Context) ([]*shareRecord, error) {
+	recs, err := s.store.liveShares(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, rec := range recs {
+		if rec.secretSealed == nil {
+			continue
+		}
+		if rec.secret, err = s.seal.open(rec.secretSealed, shareData(rec.id, rec.box)); err != nil {
+			log.WithFunc("users.Service.liveShares").Warnf(ctx, "share %s keeps no link: %v", rec.id, err)
+		}
+		rec.secretSealed = nil
+	}
+	return recs, nil
 }
 
 // shareBox returns the box of owner's live share id.
@@ -217,6 +283,7 @@ func (s *Service) shareBox(owner, id string) (string, error) {
 
 // putShare indexes rec and arms its expiry; the caller holds s.mu.
 func (s *Service) putShare(rec *shareRecord) {
+	s.shareGen++
 	rec.cut, rec.moded = make(chan struct{}), make(chan struct{})
 	s.shares[rec.id] = rec
 	s.shareSecrets[rec.secretSHA256] = rec.id
@@ -247,6 +314,7 @@ func (s *Service) endShare(ctx context.Context, id string) {
 
 // dropShare removes rec from the index and cuts its streams; the caller holds s.mu.
 func (s *Service) dropShare(rec *shareRecord) {
+	s.shareGen++
 	rec.timer.Stop()
 	delete(s.shares, rec.id)
 	delete(s.shareSecrets, rec.secretSHA256)

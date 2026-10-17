@@ -43,6 +43,7 @@ func (s *Service) IssueDevice(ctx context.Context, id, client, label string) (st
 	if err := s.store.insertDevice(ctx, id, d, client, label); err != nil {
 		return "", err
 	}
+	s.published(ctx, "issued device "+d.id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if cur, ok := s.byID[id]; ok {
@@ -95,9 +96,7 @@ func (s *Service) dropDevice(ctx context.Context, id, device, sum string) {
 	s.endCredential(sum)
 	s.mu.Unlock()
 	s.deviceUse.Delete(device)
-	if err := s.store.notify(ctx); err != nil {
-		log.WithFunc("users.Service.dropDevice").Warnf(ctx, "revoked device %s; other apis reload on their next notify: %v", device, err)
-	}
+	s.published(ctx, "revoked device "+device)
 }
 
 func (s *Service) touchDevice(ctx context.Context, device string) {
