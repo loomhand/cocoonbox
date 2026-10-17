@@ -19,6 +19,7 @@ const (
 	migrationLock = 0x63627573 // "cbus"
 	notifyChannel = "cocoonbox_users"
 	endedChannel  = "cocoonbox_ended"
+	notifyTimeout = 5 * time.Second
 
 	uniqueViolation = "23505"
 
@@ -45,6 +46,8 @@ func openStore(ctx context.Context, dsn string) (*store, error) {
 func (s *store) close() { s.pool.Close() }
 
 func (s *store) notify(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
+	defer cancel()
 	if _, err := s.pool.Exec(ctx, "SELECT pg_notify($1, '')", notifyChannel); err != nil {
 		return fmt.Errorf("notify %s: %w", notifyChannel, err)
 	}
@@ -68,6 +71,8 @@ func (s *store) listen(ctx context.Context) (*pgx.Conn, error) {
 }
 
 func (s *store) notifyEnded(ctx context.Context, credential string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), notifyTimeout)
+	defer cancel()
 	if _, err := s.pool.Exec(ctx, "SELECT pg_notify($1, $2)", endedChannel, credential); err != nil {
 		return fmt.Errorf("notify %s: %w", endedChannel, err)
 	}

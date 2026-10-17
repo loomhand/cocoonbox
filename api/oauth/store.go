@@ -196,6 +196,22 @@ func (s *store) byAccess(ctx context.Context, sum string) (Grant, error) {
 	return g, err
 }
 
+func (s *store) liveGrants(ctx context.Context, ids []string) (map[string]bool, error) {
+	rows, err := s.pool.Query(ctx, "SELECT id FROM oauth_grants WHERE id = ANY($1)", ids)
+	if err != nil {
+		return nil, fmt.Errorf("read live grants: %w", err)
+	}
+	found, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, fmt.Errorf("read live grants: %w", err)
+	}
+	live := make(map[string]bool, len(found))
+	for _, id := range found {
+		live[id] = true
+	}
+	return live, nil
+}
+
 func (s *store) touch(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, "UPDATE oauth_grants SET used_at = now() WHERE id = $1", id)
 	return err

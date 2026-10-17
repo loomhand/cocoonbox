@@ -1113,6 +1113,28 @@ func TestAWatcherChangeReachesTheWatchersOfAnotherApi(t *testing.T) {
 	}
 }
 
+func TestAListenerReplaysTheAnsweredApprovalsWhenItListens(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	out, _ := call(t.Context(), env.svc, modeA, createItem, nil, "")
+	id := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	if _, err := env.svc.Approve(auth.WithUser(t.Context(), alice), &controlv1.ApproveRequest{ApprovalId: id, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE}); err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	b := newService(t, env.dsn, env.sessions)
+	watch, stop := b.watchers.add(alice, true)
+	defer stop()
+	go b.RunSignals(t.Context())
+	select {
+	case msg := <-watch.answered:
+		if !strings.Contains(string(msg), id) {
+			t.Errorf("replayed answer %s, want approval %s", msg, id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the listener did not replay an answer given while it was not listening")
+	}
+}
+
 func TestAnApiTakesItsOwnSignalOnce(t *testing.T) {
 	e := newEnv(t)
 	watch, stop := e.svc.watchers.add("u-1", true)

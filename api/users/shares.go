@@ -281,6 +281,10 @@ func (s *Service) shareBox(owner, id string) (string, error) {
 
 // putShare indexes rec and arms its expiry; the caller holds s.mu.
 func (s *Service) putShare(rec *shareRecord) {
+	if old := s.shares[rec.id]; old != nil {
+		old.timer.Stop()
+		delete(s.shareSecrets, old.secretSHA256)
+	}
 	s.shareGen++
 	rec.cut, rec.moded = make(chan struct{}), make(chan struct{})
 	s.shares[rec.id] = rec
