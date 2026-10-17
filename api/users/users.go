@@ -552,6 +552,25 @@ func (s *Service) RegenerateToken(ctx context.Context, id string) (string, error
 	return token, nil
 }
 
+// RevokeToken drops user id's API token at once, with the calls it holds open; a user without one is no error.
+func (s *Service) RevokeToken(ctx context.Context, id string) error {
+	r, err := s.record(id)
+	if err != nil {
+		return err
+	}
+	if err := s.store.clearToken(ctx, id); err != nil {
+		return err
+	}
+	old := r.tokenSHA256
+	r.tokenSHA256, r.HasToken = "", false
+	s.put(r)
+	s.EndCredential(old)
+	if err := s.store.notify(ctx); err != nil {
+		log.WithFunc("users.Service.RevokeToken").Warnf(ctx, "revoked the token of %s; other apis reload on their next notify: %v", id, err)
+	}
+	return nil
+}
+
 // Login checks name's password and returns the user.
 func (s *Service) Login(ctx context.Context, name, password string) (User, error) {
 	id, hash, err := s.store.password(ctx, name)

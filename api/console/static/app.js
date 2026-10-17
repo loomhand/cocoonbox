@@ -73,6 +73,7 @@ async function load() {
   $("logout").hidden = false;
   $("connect-link").hidden = !me.connect;
   $("token-state").textContent = u.has_token ? "A token is set." : "No token yet: generate one for the app.";
+  $("revoke-token").hidden = !u.has_token;
   const form = $("settings-form");
   form.max_boxes.value = u.max_boxes;
   form.max_boxes.max = u.max_boxes_cap;
@@ -480,6 +481,19 @@ $("regenerate").addEventListener("click", async () => {
     pre.textContent = token;
     pre.hidden = false;
     notice("Copy the token now; it is not shown again.");
+    await load();
+  } catch (e) {
+    notice(e.message, true);
+  }
+});
+
+$("revoke-token").addEventListener("click", async () => {
+  if (!confirm("Revoke the personal token? Whatever holds it is signed out at once; devices signed in through the browser stay signed in.")) return;
+  try {
+    await api("DELETE", "me/token");
+    $("token").hidden = true;
+    $("token").textContent = "";
+    notice("The personal token is revoked.");
     await load();
   } catch (e) {
     notice(e.message, true);

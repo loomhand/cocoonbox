@@ -194,6 +194,10 @@ func (s *store) setToken(ctx context.Context, id, sha string) error {
 	return err
 }
 
+func (s *store) clearToken(ctx context.Context, id string) error {
+	return s.exec(ctx, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
+}
+
 func (s *store) tokenServes(ctx context.Context, sha string) (bool, error) {
 	var serves bool
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE token_sha256 = $1 AND NOT disabled)

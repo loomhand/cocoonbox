@@ -169,6 +169,36 @@ func TestATokenAnotherProcessSetWorksAtOnce(t *testing.T) {
 	}
 }
 
+func TestRevokeTokenDropsTheTokenEverywhereAndEndsItsCalls(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	token, _ := svc.RegenerateToken(t.Context(), u.ID)
+	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
+	elsewhere := openTestService(t, dsn, gw, tenants)
+	life, deviceLife := svc.Lifetime(u.ID, sum(token)), svc.Lifetime(u.ID, sum(device))
+	if err := svc.RevokeToken(t.Context(), u.ID); err != nil {
+		t.Fatalf("RevokeToken: %v", err)
+	}
+	if got, _ := svc.Get(u.ID); got.HasToken || life.Err() == nil || deviceLife.Err() != nil {
+		t.Errorf("after RevokeToken: has token %t, its lifetime %v, the device's %v", got.HasToken, life.Err(), deviceLife.Err())
+	}
+	if _, ok := svc.ByTokenSHA256(t.Context(), sum(token)); ok {
+		t.Error("a revoked token still resolves")
+	}
+	if err := elsewhere.Load(t.Context()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := elsewhere.ByTokenSHA256(t.Context(), sum(token)); ok {
+		t.Error("a revoked token resolves on another api after its reload")
+	}
+	if id, ok := svc.ByTokenSHA256(t.Context(), sum(device)); !ok || id != u.ID {
+		t.Errorf("the device token resolves to %q, %t after the API token's revoke", id, ok)
+	}
+	if err := svc.RevokeToken(t.Context(), u.ID); err != nil {
+		t.Errorf("RevokeToken without a token = %v, want nil", err)
+	}
+}
+
 func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())

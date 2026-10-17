@@ -117,6 +117,15 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	if id, ok := env.users.ByTokenSHA256(t.Context(), hex.EncodeToString(sum[:])); !ok || id != created.ID {
 		t.Errorf("the generated token resolves to %q, %t", id, ok)
 	}
+	if code := env.do(t, http.MethodDelete, "api/me/token", qa1, "{}").Code; code != http.StatusNoContent {
+		t.Errorf("revoke token = %d, want 204", code)
+	}
+	if _, ok := env.users.ByTokenSHA256(t.Context(), hex.EncodeToString(sum[:])); ok {
+		t.Error("the revoked token still resolves")
+	}
+	if u, _ := env.users.Get(created.ID); u.HasToken {
+		t.Error("the user still has a token after the revoke")
+	}
 
 	env.boxes.list = []*controlv1.Box{{Id: "cb-1", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "cbdesk:v13"}}
 	resp = env.do(t, http.MethodGet, "api/me", qa1, "")
