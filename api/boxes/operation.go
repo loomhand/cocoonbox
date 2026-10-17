@@ -304,6 +304,21 @@ func (r *operations) local(id string) *operation {
 	return r.byID[id]
 }
 
+func (r *operations) heldSince(user string, since time.Time) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var keys []string
+	for id, op := range r.byID {
+		if op.remote || op.user != user {
+			continue
+		}
+		if at, done := op.finished(); !op.created.Before(since) || done && !at.Before(since) {
+			keys = append(keys, opKey+id)
+		}
+	}
+	return keys
+}
+
 func (r *operations) runsHere(id string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()

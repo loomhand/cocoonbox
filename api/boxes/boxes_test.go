@@ -440,6 +440,7 @@ type fakeMachines struct {
 	revision  int64
 	ensureErr error
 	deleteErr error
+	onDeliver func()
 	addr      string
 	addrErr   error
 	execErr   error
@@ -573,6 +574,9 @@ func (f *fakeMachines) SetMeta(_ context.Context, id, key, value string) error {
 }
 
 func (f *fakeMachines) Deliver(_ context.Context, id string, identity machines.Identity, keys map[string]*machines.Secret) error {
+	if f.onDeliver != nil {
+		f.onDeliver()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.execErr != nil {

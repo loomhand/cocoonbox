@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/cluster"
@@ -222,6 +226,68 @@ func TestASnapshotOneProcessPinsIsKeptByTheGCOfAnother(t *testing.T) {
 	}
 	if a.store.has(p.record(snapshotID(1))) {
 		t.Error("the other process's gc kept a snapshot no pin holds")
+	}
+}
+
+func TestTwoProcessesProvisioningOneMachineProvisionItOnce(t *testing.T) {
+	a, b, _ := newSharedPair(t, t.Context())
+	a.svc.EnableProvisioning(fakeSigner{})
+	b.svc.EnableProvisioning(fakeSigner{})
+	a.fake.onDeliver = func() { time.Sleep(100 * time.Millisecond) }
+	a.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Incarnation: "vm1", Revision: 2})
+	m, err := a.fake.Get(t.Context(), aliceBox)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	before := len(a.fake.execCalls())
+	var wg sync.WaitGroup
+	for _, env := range []*stateEnv{a, b} {
+		wg.Go(func() {
+			if err := env.svc.provisionMachine(t.Context(), m); err != nil {
+				t.Errorf("provisionMachine: %v", err)
+			}
+		})
+	}
+	wg.Wait()
+	if n := len(a.fake.execCalls()) - before; n != 1 {
+		t.Errorf("deliveries = %d, want one for two processes provisioning one machine", n)
+	}
+}
+
+func TestAFileRestoreInOneProcessWaitsOutARebaseElsewhere(t *testing.T) {
+	db := clustertest.Open(t)
+	bCtx, deaf := context.WithCancel(t.Context())
+	a := newStateEnv(t)
+	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
+	b.svc = New(a.fake, testDefaults, a.svc.registry)
+	b.svc.EnableState(a.agent, a.store, a.keys)
+	a.svc.EnableLedger(t.Context(), db)
+	a.svc.EnableShared(t.Context(), db)
+	b.svc.EnableLedger(t.Context(), db)
+	b.svc.EnableShared(bCtx, db)
+	a.agent.files = sampleFiles()
+	a.save(t)
+	first := a.headID(t)
+	deaf()
+	gate, saving := make(chan struct{}), make(chan struct{})
+	a.agent.onUpload = func(machines.Endpoint) {
+		a.agent.onUpload = nil
+		close(saving)
+		<-gate
+	}
+	if _, err := a.svc.Rebase(a.ctx, &controlv1.RebaseRequest{BoxId: aliceBox, Image: "desktop-v3"}); err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+	<-saving
+	b.svc.ops.mu.Lock()
+	if op := b.svc.ops.active[aliceBox]; op != nil && op.remote {
+		b.svc.ops.forgetLocked(op)
+	}
+	b.svc.ops.mu.Unlock()
+	_, err := b.svc.RestorePaths(b.ctx, &controlv1.RestorePathsRequest{BoxId: aliceBox, SnapshotId: first, Paths: []string{"/workspace/app/main.go"}})
+	close(gate)
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("RestorePaths on b during a's rebase = %v, want FailedPrecondition, since the rebase removes the machine it would write into", err)
 	}
 }
 

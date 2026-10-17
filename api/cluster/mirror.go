@@ -2,6 +2,8 @@ package cluster
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"time"
@@ -16,16 +18,17 @@ type Write func(ctx context.Context) error
 
 // Mirror applies writes on one goroutine in the order their keys were first queued, keeping only the newest write per key.
 type Mirror struct {
-	mu       sync.Mutex
-	pending  map[string]Write
-	order    []string
-	inflight bool
-	changed  chan struct{}
+	mu      sync.Mutex
+	pending map[string]Write
+	order   []string
+	running string
+	failed  map[string]error
+	changed chan struct{}
 }
 
 // NewMirror returns a mirror that applies nothing until Run.
 func NewMirror() *Mirror {
-	return &Mirror{pending: map[string]Write{}, changed: make(chan struct{})}
+	return &Mirror{pending: map[string]Write{}, failed: map[string]error{}, changed: make(chan struct{})}
 }
 
 // Put queues w for key, replacing a write for key not yet applied.
@@ -39,7 +42,7 @@ func (m *Mirror) Put(key string, w Write) {
 	m.wakeLocked()
 }
 
-// Run applies the queued writes until ctx ends; a failed write is logged and dropped.
+// Run applies the queued writes until ctx ends; a failed write is logged, dropped and reported by FlushKeys.
 func (m *Mirror) Run(ctx context.Context) {
 	logger := log.WithFunc("cluster.Mirror.Run")
 	for {
@@ -58,17 +61,23 @@ func (m *Mirror) Run(ctx context.Context) {
 		m.order = m.order[1:]
 		w := m.pending[key]
 		delete(m.pending, key)
-		m.inflight = true
+		m.running = key
 		m.mu.Unlock()
 
 		writeCtx, cancel := context.WithTimeout(ctx, mirrorWriteTimeout)
-		if err := w(writeCtx); err != nil {
+		err := w(writeCtx)
+		if err != nil {
 			logger.Warnf(ctx, "mirror %s: %v", key, err)
 		}
 		cancel()
 
 		m.mu.Lock()
-		m.inflight = false
+		m.running = ""
+		if err != nil {
+			m.failed[key] = err
+		} else {
+			delete(m.failed, key)
+		}
 		m.wakeLocked()
 		m.mu.Unlock()
 	}
@@ -97,9 +106,37 @@ func (m *Mirror) Verify(ctx context.Context, diff func(ctx context.Context) ([]s
 func (m *Mirror) Flush(ctx context.Context) error {
 	for {
 		m.mu.Lock()
-		if len(m.order) == 0 && !m.inflight {
+		if len(m.order) == 0 && m.running == "" {
 			m.mu.Unlock()
 			return nil
+		}
+		changed := m.changed
+		m.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
+// FlushKeys waits until no write of keys is queued or running and reports the keys whose last write failed.
+func (m *Mirror) FlushKeys(ctx context.Context, keys []string) error {
+	for {
+		m.mu.Lock()
+		busy := slices.ContainsFunc(keys, func(key string) bool {
+			_, queued := m.pending[key]
+			return queued || m.running == key
+		})
+		if !busy {
+			var errs []error
+			for _, key := range keys {
+				if err := m.failed[key]; err != nil {
+					errs = append(errs, fmt.Errorf("%s: %w", key, err))
+				}
+			}
+			m.mu.Unlock()
+			return errors.Join(errs...)
 		}
 		changed := m.changed
 		m.mu.Unlock()
