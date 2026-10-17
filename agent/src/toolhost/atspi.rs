@@ -30,6 +30,8 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(3);
 const HUNG_FOR: Duration = Duration::from_secs(10);
 const MAX_NODES: usize = 2500;
 const MAX_DEPTH: usize = 64;
+const MANAGED_KIDS: i32 = 200;
+const LIST_ROLES: [u32; 4] = [31, 55, 65, 66];
 const VALUE_CHARS: i32 = 200;
 const SCREEN: u32 = 0;
 const IF_ACTION: u8 = 1;
@@ -465,12 +467,49 @@ impl Atspi {
         let mut frontier = vec![frame.obj.clone()];
         let mut seen: HashSet<Obj> = HashSet::from([frame.obj.clone()]);
         let mut truncated = false;
+        let mut by_index: HashSet<Obj> = HashSet::new();
         while !frontier.is_empty() {
+            let uncounted: Vec<&Obj> = frontier
+                .iter()
+                .filter(|o| {
+                    let r = &raw[*o];
+                    LIST_ROLES.contains(&r.role)
+                        && r.count <= 0
+                        && cached.get(*o).is_none_or(Vec::is_empty)
+                })
+                .collect();
+            let counts = join_all(
+                uncounted
+                    .iter()
+                    .map(|o| self.prop::<i32>(o, ACCESSIBLE, "ChildCount")),
+            )
+            .await;
+            for (o, count) in uncounted.into_iter().zip(counts) {
+                if let Some(count) = count.ok().filter(|c| (1..=MANAGED_KIDS).contains(c)) {
+                    if let Some(r) = raw.get_mut(o) {
+                        r.count = count;
+                    }
+                    by_index.insert(o.clone());
+                }
+            }
             let live: Vec<&Obj> = frontier
                 .iter()
                 .filter(|o| needs_live(&raw[*o], cached.get(*o)))
                 .collect();
-            let lists = join_all(live.iter().map(|o| self.children(o))).await;
+            let indexed = &by_index;
+            let lists = join_all(live.iter().map(|o| {
+                let r = &raw[*o];
+                async move {
+                    if r.states & (1 << MANAGES_DESCENDANTS) == 0 && !indexed.contains(*o) {
+                        return self.children(o).await;
+                    }
+                    join_all((0..r.count).map(|i| self.child_at(o, i)))
+                        .await
+                        .into_iter()
+                        .collect()
+                }
+            }))
+            .await;
             let mut listed: HashMap<Obj, Vec<Obj>> = HashMap::new();
             for (o, list) in live.iter().zip(lists) {
                 if let Ok(list) = list {
@@ -756,6 +795,13 @@ impl Atspi {
         let kids: Vec<(String, OwnedObjectPath)> =
             self.call(obj, ACCESSIBLE, "GetChildren", &()).await?;
         Ok(kids.into_iter().map(Obj::of).collect())
+    }
+
+    async fn child_at(&self, obj: &Obj, index: i32) -> Result<Obj, String> {
+        let kid: (String, OwnedObjectPath) = self
+            .call(obj, ACCESSIBLE, "GetChildAtIndex", &(index,))
+            .await?;
+        Ok(Obj::of(kid))
     }
 
     async fn role(&self, obj: &Obj) -> Result<u32, String> {
@@ -1054,7 +1100,7 @@ fn indexed(old: Vec<OldItem>) -> Vec<Item> {
 }
 
 fn needs_live(r: &Raw, cached: Option<&Vec<(i32, Obj)>>) -> bool {
-    if r.states & (1 << MANAGES_DESCENDANTS) != 0 {
+    if r.states & (1 << MANAGES_DESCENDANTS) != 0 && !(1..=MANAGED_KIDS).contains(&r.count) {
         return false;
     }
     if r.role == ROLE_DOCUMENT_WEB {
@@ -1287,7 +1333,8 @@ mod tests {
     }
 
     #[test]
-    fn the_cache_is_trusted_unless_children_are_missing_or_unordered() {
+    fn the_cache_is_trusted_unless_children_are_missing_or_unordered_and_small_managed_lists_are_walked()
+     {
         let o = |p: &str| Obj {
             bus: ":1.1".into(),
             path: p.into(),
@@ -1305,7 +1352,14 @@ mod tests {
             &r(2, 0),
             Some(&vec![(-1, o("a")), (-1, o("b"))])
         ));
-        assert!(!needs_live(&r(5, 1 << MANAGES_DESCENDANTS), None));
+        assert!(needs_live(&r(5, 1 << MANAGES_DESCENDANTS), None));
+        assert!(needs_live(&r(5, 1 << MANAGES_DESCENDANTS), Some(&two)));
+        assert!(!needs_live(&r(2, 1 << MANAGES_DESCENDANTS), Some(&two)));
+        assert!(!needs_live(
+            &r(MANAGED_KIDS + 1, 1 << MANAGES_DESCENDANTS),
+            None
+        ));
+        assert!(!needs_live(&r(i32::MAX, 1 << MANAGES_DESCENDANTS), None));
         assert!(!needs_live(&r(0, 0), None));
     }
 
