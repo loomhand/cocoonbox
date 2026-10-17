@@ -114,12 +114,7 @@ func (s *Service) SetShareWrite(ctx context.Context, owner, id string, write boo
 	if !ok {
 		return Share{}, ErrNotFound
 	}
-	if rec.write != write {
-		rec.write = write
-		close(rec.moded)
-		rec.moded = make(chan struct{})
-		s.shareGen++
-	}
+	s.setWrite(rec, write)
 	return s.view(rec), nil
 }
 
@@ -140,11 +135,7 @@ func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share,
 		s.mu.Unlock()
 		return Share{}, ErrNotFound
 	}
-	delete(s.shareSecrets, rec.secretSHA256)
-	rec.secret, rec.secretSHA256 = secret, hashHex(secret)
-	s.shareSecrets[rec.secretSHA256] = id
-	s.shareGen++
-	rec.cutStreams()
+	s.swapSecret(rec, secret, hashHex(secret))
 	view := s.view(rec)
 	s.mu.Unlock()
 	s.ended(ctx, view)
@@ -189,6 +180,9 @@ func (s *Service) OnShareEnd(fn func(ctx context.Context, sh Share)) {
 }
 
 func (s *Service) loadShares(ctx context.Context) error {
+	if err := s.store.forgetEndedSecrets(ctx); err != nil {
+		return err
+	}
 	recs, err := s.liveShares(ctx)
 	if err != nil {
 		return err
@@ -203,29 +197,44 @@ func (s *Service) loadShares(ctx context.Context) error {
 
 // syncShares takes in the shares another api wrote: a new one, a revoked or expired one, a new secret or mode.
 func (s *Service) syncShares(ctx context.Context) error {
-	s.mu.RLock()
-	gen := s.shareGen
-	s.mu.RUnlock()
-	recs, err := s.liveShares(ctx)
-	if err != nil {
-		return err
+	for {
+		s.mu.RLock()
+		gen := s.shareGen
+		s.mu.RUnlock()
+		recs, err := s.liveShares(ctx)
+		if err != nil {
+			return err
+		}
+		s.mu.Lock()
+		if s.shareGen != gen {
+			s.mu.Unlock()
+			continue
+		}
+		gone, renewed := s.applyShares(recs)
+		s.mu.Unlock()
+		for _, id := range gone {
+			s.endShare(ctx, id)
+		}
+		for _, view := range renewed {
+			s.ended(ctx, view)
+		}
+		return nil
 	}
+}
+
+// applyShares makes the index match recs and returns the shares gone and the views of those with a new secret; the caller holds s.mu.
+func (s *Service) applyShares(recs []*shareRecord) ([]string, []Share) {
 	live := make(map[string]*shareRecord, len(recs))
 	for _, rec := range recs {
 		live[rec.id] = rec
 	}
 	var gone []string
-	s.mu.Lock()
-	if s.shareGen != gen {
-		// The notify of that change follows and syncs again.
-		s.mu.Unlock()
-		return nil
-	}
 	for id := range s.shares {
 		if live[id] == nil {
 			gone = append(gone, id)
 		}
 	}
+	var renewed []Share
 	for id, next := range live {
 		cur, ok := s.shares[id]
 		if !ok {
@@ -233,23 +242,12 @@ func (s *Service) syncShares(ctx context.Context) error {
 			continue
 		}
 		if cur.secretSHA256 != next.secretSHA256 {
-			delete(s.shareSecrets, cur.secretSHA256)
-			cur.secret, cur.secretSHA256 = next.secret, next.secretSHA256
-			s.shareSecrets[cur.secretSHA256] = id
-			cur.cutStreams()
+			s.swapSecret(cur, next.secret, next.secretSHA256)
+			renewed = append(renewed, s.view(cur))
 		}
-		if cur.write != next.write {
-			cur.write = next.write
-			close(cur.moded)
-			cur.moded = make(chan struct{})
-		}
-		cur.userIDs = next.userIDs
+		s.setWrite(cur, next.write)
 	}
-	s.mu.Unlock()
-	for _, id := range gone {
-		s.endShare(ctx, id)
-	}
-	return nil
+	return gone, renewed
 }
 
 // liveShares reads the live shares with their secrets opened.
@@ -352,6 +350,26 @@ func (s *Service) view(rec *shareRecord) Share {
 	return sh
 }
 
+// swapSecret gives rec secret, whose sha256 is sum, and cuts the streams of the old one; the caller holds s.mu.
+func (s *Service) swapSecret(rec *shareRecord, secret, sum string) {
+	delete(s.shareSecrets, rec.secretSHA256)
+	rec.secret, rec.secretSHA256 = secret, sum
+	s.shareSecrets[sum] = rec.id
+	s.shareGen++
+	rec.cutStreams()
+}
+
+// setWrite switches rec's mode and tells its open sessions; the caller holds s.mu.
+func (s *Service) setWrite(rec *shareRecord, write bool) {
+	if rec.write == write {
+		return
+	}
+	rec.write = write
+	close(rec.moded)
+	rec.moded = make(chan struct{})
+	s.shareGen++
+}
+
 // shareRecord is a live share in the index with the channels its streams watch.
 type shareRecord struct {
 	id           string
@@ -363,7 +381,7 @@ type shareRecord struct {
 	createdAt    time.Time
 	secret       string
 	secretSHA256 string
-	secretSealed []byte // the row's, until loadShares opens it
+	secretSealed []byte // the row's, until liveShares opens it
 	cut          chan struct{}
 	moded        chan struct{}
 	timer        *time.Timer

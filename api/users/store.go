@@ -18,8 +18,7 @@ import (
 const (
 	migrationLock = 0x63627573 // "cbus"
 	notifyChannel = "cocoonbox_users"
-	// endedChannel carries each ended credential, whose calls every api ends.
-	endedChannel = "cocoonbox_ended"
+	endedChannel  = "cocoonbox_ended"
 
 	uniqueViolation = "23505"
 
@@ -359,11 +358,15 @@ func (s *store) insertShare(ctx context.Context, rec *shareRecord, sealed []byte
 	return nil
 }
 
-// liveShares returns the live shares, after it forgets the secrets of the shares that ended while no api ran.
-func (s *store) liveShares(ctx context.Context) ([]*shareRecord, error) {
+// forgetEndedSecrets drops the secrets of the shares that ended while no api ran.
+func (s *store) forgetEndedSecrets(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, "UPDATE shares SET secret_sealed = NULL WHERE secret_sealed IS NOT NULL AND (revoked_at IS NOT NULL OR expires_at <= now())"); err != nil {
-		return nil, fmt.Errorf("clear ended share secrets: %w", err)
+		return fmt.Errorf("clear ended share secrets: %w", err)
 	}
+	return nil
+}
+
+func (s *store) liveShares(ctx context.Context) ([]*shareRecord, error) {
 	rows, err := s.pool.Query(ctx, `SELECT id, box, owner, secret_sha256, secret_sealed, user_ids, write, expires_at, created_at
 		FROM shares WHERE revoked_at IS NULL AND expires_at > now()`)
 	if err != nil {

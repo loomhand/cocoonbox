@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestEveryUserStartsWithOneBox(t *testing.T) {
@@ -230,6 +231,39 @@ func TestTheUsersAgentBoxCapBoundsEveryGrantAndTheTenantCap(t *testing.T) {
 	}
 	if again, err := openTestService(t, dsn, gw, tenants).Get(u.ID); err != nil || again.MaxAgentBoxes == nil || *again.MaxAgentBoxes != 1 || again.IDP != "github" {
 		t.Errorf("after reopen = %+v, %v", again, err)
+	}
+}
+
+func TestABoxChangeOfOneApiReachesAnother(t *testing.T) {
+	a, gw, tenants, dsn := newTestService(t)
+	b := openTestService(t, dsn, gw, tenants)
+	go b.Listen(t.Context())
+	u, err := a.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := a.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(2), MaxBoxes: new(2)}); err != nil {
+		t.Fatalf("raise max boxes: %v", err)
+	}
+	if _, err := a.AddBox(t.Context(), Box{ID: "cb-x", Owner: u.ID, Name: "extra"}); err != nil {
+		t.Fatalf("AddBox: %v", err)
+	}
+	if took, ok := within(2*time.Second, func() bool { return b.HasBox(u.ID, "cb-x") }); !ok {
+		t.Fatalf("the other api does not know the added box %s later", took)
+	}
+	if _, err := a.RenameBox(t.Context(), u.ID, "cb-x", "renamed"); err != nil {
+		t.Fatalf("RenameBox: %v", err)
+	}
+	if took, ok := within(2*time.Second, func() bool {
+		return slices.ContainsFunc(b.Boxes(u.ID), func(x Box) bool { return x.ID == "cb-x" && x.Name == "renamed" })
+	}); !ok {
+		t.Fatalf("the other api does not know the new name %s later", took)
+	}
+	if err := a.RemoveBox(t.Context(), u.ID, "cb-x"); err != nil {
+		t.Fatalf("RemoveBox: %v", err)
+	}
+	if took, ok := within(2*time.Second, func() bool { return !b.HasBox(u.ID, "cb-x") }); !ok {
+		t.Errorf("the other api still has the removed box %s later", took)
 	}
 }
 

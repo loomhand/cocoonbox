@@ -227,6 +227,11 @@ func (s *Service) Load(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for id, r := range byID {
+		if r.Disabled && !s.byID[id].Disabled {
+			s.cutOwner(id, false)
+		}
+	}
 	s.byID, s.byToken = byID, byToken
 	if s.boxGen == gen {
 		s.boxes = byOwner
@@ -244,8 +249,7 @@ func (s *Service) Load(ctx context.Context) error {
 	return nil
 }
 
-// Listen reloads the index on every Notify until ctx ends. It reloads after each LISTEN as well, since a notification
-// sent while no connection listens is lost; a failed reload or connection listens again after listenRetry.
+// Listen reloads the index and the shares on every users notify, and ends each credential another api ended, until ctx ends; it reloads after each LISTEN too, since a notify sent while none listens is lost.
 func (s *Service) Listen(ctx context.Context) {
 	for {
 		err := s.listen(ctx)
@@ -259,11 +263,6 @@ func (s *Service) Listen(ctx context.Context) {
 		case <-time.After(listenRetry):
 		}
 	}
-}
-
-// Notify tells every api that listens to reload its index; the CLI calls it after it writes users or tokens.
-func (s *Service) Notify(ctx context.Context) error {
-	return s.store.notify(ctx)
 }
 
 // Reconcile writes every user's tenant with its token and cap, so sandboxd matches the table, turns off disabled users' gw keys and lifts the gw cap of admins on the default.
@@ -797,11 +796,11 @@ func (s *Service) Lifetime(id, credential string) (context.Context, func()) {
 // EndCredential ends the calls bound to credential, a token's sha256 or a grant id, in every api; an ended grant id stays ended.
 func (s *Service) EndCredential(ctx context.Context, credential string) {
 	s.endLocally(credential)
-	if credential == "" {
+	if credential == "" || hexSHA256.MatchString(credential) {
 		return
 	}
-	if err := s.store.notifyEnded(ctx, credential); err != nil {
-		log.WithFunc("users.Service.EndCredential").Warnf(ctx, "other apis end the calls of an ended credential at their next reload only: %v", err)
+	if err := s.store.notifyEnded(context.WithoutCancel(ctx), credential); err != nil {
+		log.WithFunc("users.Service.EndCredential").Warnf(ctx, "other apis keep the open calls of ended credential %s: %v", credential, err)
 	}
 }
 
@@ -854,7 +853,7 @@ func (s *Service) listen(ctx context.Context) error {
 
 // published tells every api to reload after a write; a failed notify reaches them with the next one.
 func (s *Service) published(ctx context.Context, what string) {
-	if err := s.store.notify(ctx); err != nil {
+	if err := s.store.notify(context.WithoutCancel(ctx)); err != nil {
 		log.WithFunc("users.Service.published").Warnf(ctx, "%s; other apis reload on their next notify: %v", what, err)
 	}
 }

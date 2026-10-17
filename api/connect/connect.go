@@ -126,10 +126,9 @@ type Service struct {
 	allowPrivate bool
 	refreshes    singleflight.Group
 	watchers     *watchers
-	// origin names this api in the signals it sends the others.
-	origin      string
-	onInjection InjectionFunc
-	linkAPI     string
+	origin       string
+	onInjection  InjectionFunc
+	linkAPI      string
 
 	mu    sync.Mutex
 	conns map[string]*conn

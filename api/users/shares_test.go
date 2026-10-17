@@ -249,7 +249,7 @@ func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
 	var seen auth.Share
 	if took, ok := within(2*time.Second, func() bool {
 		var found bool
-		seen, found = b.ShareBySecretSHA256(hashHex(sh.Secret))
+		seen, found = b.ShareBySecretSHA256(sum(sh.Secret))
 		return found
 	}); !ok {
 		t.Fatalf("the other api does not know the new share %s later", took)
@@ -267,11 +267,16 @@ func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
 		t.Fatalf("RegenerateShare: %v", err)
 	}
 	if took, ok := within(2*time.Second, func() bool {
-		_, oldWorks := b.ShareBySecretSHA256(hashHex(sh.Secret))
-		_, newWorks := b.ShareBySecretSHA256(hashHex(renewed.Secret))
+		_, oldWorks := b.ShareBySecretSHA256(sum(sh.Secret))
+		_, newWorks := b.ShareBySecretSHA256(sum(renewed.Secret))
 		return !oldWorks && newWorks
 	}); !ok {
 		t.Fatalf("the other api still takes the old secret %s after a regenerate", took)
+	}
+	select {
+	case <-ended:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the other api did not end the sessions of the old secret")
 	}
 	if err := a.RevokeShare(t.Context(), owner.ID, sh.ID); err != nil {
 		t.Fatalf("RevokeShare: %v", err)
@@ -284,8 +289,38 @@ func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the other api did not end the revoked share")
 	}
-	if _, ok := b.ShareBySecretSHA256(hashHex(renewed.Secret)); ok {
+	if _, ok := b.ShareBySecretSHA256(sum(renewed.Secret)); ok {
 		t.Error("the other api still takes the revoked share")
+	}
+}
+
+func TestDisablingAnOwnerCutsItsSharesInEveryApi(t *testing.T) {
+	a, gw, tenants, dsn := newTestService(t)
+	b := openTestService(t, dsn, gw, tenants)
+	go b.Listen(t.Context())
+	owner, err := a.Create(t.Context(), NewUser{Name: "owner1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	sh, err := a.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: a.Boxes(owner.ID)[0].ID})
+	if err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	var seen auth.Share
+	if took, ok := within(2*time.Second, func() bool {
+		var found bool
+		seen, found = b.ShareBySecretSHA256(sum(sh.Secret))
+		return found
+	}); !ok {
+		t.Fatalf("the other api does not know the share %s later", took)
+	}
+	if _, err := a.Update(t.Context(), owner.ID, Settings{Disabled: new(true)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	select {
+	case <-seen.Cut:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the other api kept the open share streams of an owner disabled elsewhere")
 	}
 }
 
