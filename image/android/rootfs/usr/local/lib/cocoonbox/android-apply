@@ -9,10 +9,6 @@ DATA=/var/lib/redroid-data
 
 log() { echo "android-apply: $*" >&2; }
 
-stop_android() {
-	systemctl stop cocoonbox-redroid.service || log "stop cocoonbox-redroid failed"
-}
-
 rollback() {
 	if [ -d "$TOP/old" ]; then
 		! mountpoint -q "$DATA" || umount "$DATA" || return 1
@@ -35,7 +31,7 @@ fi
 running=false
 if systemctl -q is-active docker.service; then
 	running=true
-	stop_android
+	systemctl stop cocoonbox-redroid.service || { log "stop cocoonbox-redroid failed; /data stays"; exit 1; }
 fi
 btrfs -q subvolume delete "$TOP/new" >/dev/null 2>&1 || true
 ! mountpoint -q "$DATA" || btrfs -q subvolume delete "$TOP/old" >/dev/null 2>&1 || true
