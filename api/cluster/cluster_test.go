@@ -238,12 +238,18 @@ func TestOperationsKeepTheirEventsUntilPurged(t *testing.T) {
 	}
 }
 
-func TestListenDeliversTheIDOfEveryWrite(t *testing.T) {
+func TestListenDeliversTheChangeOfEveryWrite(t *testing.T) {
 	st := clustertest.Open(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	ready, got := make(chan struct{}), make(chan string, 4)
-	go st.Listen(ctx, cluster.ChannelMachines, func() { close(ready) }, func(id string) { got <- id })
+	ready, got := make(chan struct{}), make(chan cluster.Change, 4)
+	go st.Listen(ctx, cluster.ChannelMachines, func() { close(ready) }, func(payload string) {
+		c, err := cluster.ParseChange(payload)
+		if err != nil {
+			t.Errorf("ParseChange(%q): %v", payload, err)
+		}
+		got <- c
+	})
 	<-ready
 	if err := st.PutMachine(t.Context(), cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now()}); err != nil {
 		t.Fatalf("PutMachine: %v", err)
@@ -251,11 +257,11 @@ func TestListenDeliversTheIDOfEveryWrite(t *testing.T) {
 	if err := st.DeleteMachine(t.Context(), "cb-1"); err != nil {
 		t.Fatalf("DeleteMachine: %v", err)
 	}
-	for _, want := range []string{"cb-1", "cb-1"} {
+	for _, removed := range []bool{false, true} {
 		select {
-		case id := <-got:
-			if id != want {
-				t.Errorf("notified %q, want %q", id, want)
+		case c := <-got:
+			if c.ID != "cb-1" || (c.Version == 0) != removed {
+				t.Errorf("notified %+v, want cb-1 removed %t", c, removed)
 			}
 		case <-time.After(5 * time.Second):
 			t.Fatal("no notify within 5 s")

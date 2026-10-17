@@ -38,7 +38,15 @@ func (s *Service) EnableShared(ctx context.Context, shared Shared) {
 		if err := s.ops.reload(ctx); err != nil {
 			logger.Warnf(ctx, "reload the shared operations: %v", err)
 		}
-	}, func(id string) { s.ops.notified(ctx, id) })
+	}, func(payload string) {
+		c, err := cluster.ParseChange(payload)
+		switch {
+		case err != nil:
+			logger.Warnf(ctx, "take an operations notify: %v", err)
+		case c.Finished || !s.ops.runsHere(c.ID):
+			s.ops.notified(ctx, c.ID)
+		}
+	})
 	if s.state == nil {
 		return
 	}

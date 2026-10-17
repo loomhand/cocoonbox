@@ -96,7 +96,7 @@ func (s *Store) finishOn(ctx context.Context, id string, old, events []byte) (bo
 		if ended = cmd.RowsAffected() == 1; !ended {
 			return nil
 		}
-		return notify(ctx, tx, ChannelOperations, id)
+		return notifyChange(ctx, tx, ChannelOperations, Change{ID: id, Finished: true})
 	})
 	return ended, err
 }
@@ -112,7 +112,7 @@ func (s *Store) putOperation(ctx context.Context, op Operation, cond string) err
 			op.ID, op.User, op.Box, op.Phase, op.Park, op.Gen, string(op.Events), finished, op.ExpiresAt, op.CreatedAt); err != nil {
 			return fmt.Errorf("put operation %s: %w", op.ID, err)
 		}
-		return notify(ctx, tx, ChannelOperations, op.ID)
+		return notifyChange(ctx, tx, ChannelOperations, Change{ID: op.ID, Finished: !op.FinishedAt.IsZero()})
 	})
 }
 
