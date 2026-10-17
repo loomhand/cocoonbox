@@ -215,6 +215,30 @@ func TestTheOperationsOfAStoppedProcessEndAndFreeTheBox(t *testing.T) {
 	}
 }
 
+func TestAClaimedParkOfAGoneProcessFreesTheBoxAtItsLease(t *testing.T) {
+	_, b, db := newSharedPair(t, t.Context())
+	if err := db.PutOperation(t.Context(), cluster.Operation{
+		ID: "op-claimed", User: alice, Box: aliceBox, Phase: int32(controlv1.Phase_PHASE_SAVING), Park: true, Events: []byte(`[]`),
+		ExpiresAt: time.Now().Add(200 * time.Millisecond), CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatalf("PutOperation: %v", err)
+	}
+	if claimed, err := db.ClaimOperation(t.Context(), "op-claimed"); err != nil || !claimed {
+		t.Fatalf("ClaimOperation = %t, %v", claimed, err)
+	}
+	clustertest.WaitFor(t, "b sees the claimed park", func() bool { return b.svc.ops.activeFor(aliceBox) != nil })
+	clustertest.WaitFor(t, "b takes the claimed park as gone past its lease", func() bool { return b.svc.ops.activeFor(aliceBox) == nil })
+	if op, started := b.svc.ops.start(b.ctx, alice, aliceBox, controlv1.Phase_PHASE_SAVING, 1, time.Minute); !started || op.id == "op-claimed" {
+		t.Errorf("b's operation after the lease = %s started %t; want a new one", op.id, started)
+	}
+	if err := db.PurgeOperations(t.Context(), time.Now().Add(time.Second)); err != nil {
+		t.Fatalf("PurgeOperations: %v", err)
+	}
+	if _, err := db.Operation(t.Context(), "op-claimed"); !errors.Is(err, cluster.ErrNotFound) {
+		t.Errorf("the claimed row after the purge = %v, want it gone", err)
+	}
+}
+
 func TestAnOperationPastItsLeaseCountsAsGone(t *testing.T) {
 	_, b, db := newSharedPair(t, t.Context())
 	if err := db.PutOperation(t.Context(), cluster.Operation{
