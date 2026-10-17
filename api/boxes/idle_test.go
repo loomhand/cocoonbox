@@ -81,7 +81,7 @@ func TestAClientComingBackDuringTheSaveKeepsTheBoxUp(t *testing.T) {
 	*clock = clock.Add(userIdleAfter)
 	env.agent.onUpload = func(machines.Endpoint) { env.svc.Reached(aliceBox)() }
 	env.svc.hibernateIdle(t.Context())
-	op := env.svc.ops.activeFor(aliceBox)
+	op := newestOperation(env.svc, aliceBox)
 	if op == nil {
 		t.Fatal("no save started for the idle box")
 	}
@@ -98,7 +98,7 @@ func TestAnIdleBoxWhoseSaveFailedStillHibernates(t *testing.T) {
 	env.svc.hibernateIdle(t.Context())
 	*clock = clock.Add(userIdleAfter)
 	env.svc.hibernateIdle(t.Context())
-	op := env.svc.ops.activeFor(aliceBox)
+	op := newestOperation(env.svc, aliceBox)
 	if op == nil {
 		t.Fatal("no save started for the idle box")
 	}
@@ -133,6 +133,13 @@ func newUserIdleEnv(t *testing.T) (*stateEnv, *time.Time) {
 	env.svc.idle.now = func() time.Time { return clock }
 	env.ctx = auth.WithUser(t.Context(), alice)
 	return env, &clock
+}
+
+// newestOperation returns the last operation begun on box, finished or not, since a fast one ends before a test looks.
+func newestOperation(svc *Service, box string) *operation {
+	svc.ops.mu.Lock()
+	defer svc.ops.mu.Unlock()
+	return svc.ops.active[box]
 }
 
 func waitState(t *testing.T, fake *fakeMachines, id string, want machines.State) {
