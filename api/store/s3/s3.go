@@ -150,7 +150,7 @@ func (s *S3) List(ctx context.Context, prefix string) ([]store.Object, error) {
 		if info.Err != nil {
 			return nil, fmt.Errorf("list %s: %w", prefix, info.Err)
 		}
-		objects = append(objects, store.Object{Key: strings.TrimPrefix(info.Key, base), Size: info.Size})
+		objects = append(objects, store.Object{Key: strings.TrimPrefix(info.Key, base), Size: info.Size, Modified: info.LastModified})
 	}
 	return objects, nil
 }
