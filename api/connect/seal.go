@@ -17,9 +17,11 @@ type secrets struct {
 }
 
 type flowSecrets struct {
-	Verifier string   `json:"verifier"`
-	Client   client   `json:"client,omitzero"`
-	Scopes   []string `json:"scopes,omitzero"`
+	Verifier    string   `json:"verifier"`
+	Client      client   `json:"client,omitzero"`
+	Scopes      []string `json:"scopes,omitzero"`
+	Issuer      string   `json:"issuer,omitzero"`
+	IssRequired bool     `json:"iss_required,omitzero"`
 }
 
 // sealer seals grant and flow secrets as JSON with keyring.Sealer.

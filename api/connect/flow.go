@@ -81,7 +81,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 		if err != nil {
 			return nil, status.Errorf(codes.FailedPrecondition, "sign-in to %s: %v", mcpURL, err)
 		}
-		authorizeURL, fs.Client = auth.authorizeURL, auth.client
+		authorizeURL, fs.Client, fs.Issuer, fs.IssRequired = auth.authorizeURL, auth.client, auth.issuer, auth.issRequired
 		if len(fs.Scopes) == 0 {
 			fs.Scopes = auth.scopes
 		}
@@ -113,8 +113,8 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 }
 
 // Complete exchanges code for the flow of state whose browser holds nonce, while the console session that began it
-// is live, and returns the connector id.
-func (s *Service) Complete(ctx context.Context, nonce, state, code string) (string, error) {
+// is live and iss, the answer's RFC 9207 issuer, names the flow's authorization server, and returns the connector id.
+func (s *Service) Complete(ctx context.Context, nonce, state, code, iss string) (string, error) {
 	f, err := s.store.takeFlow(ctx, hashHex(state), hashHex(nonce))
 	if errors.Is(err, errNoFlow) {
 		return "", status.Error(codes.PermissionDenied, err.Error())
@@ -129,6 +129,10 @@ func (s *Service) Complete(ctx context.Context, nonce, state, code string) (stri
 	var fs flowSecrets
 	if err = s.seal.open(ctx, user, f.sealed, flowData(f.id, f.user, f.connector), &fs); err != nil {
 		return "", err
+	}
+	if !answeredBy(fs, iss) {
+		log.WithFunc("connect.Service.Complete").Warnf(ctx, "refused the sign-in answer of flow %s: iss %q, the flow's issuer %q", f.id, iss, fs.Issuer)
+		return "", status.Error(codes.PermissionDenied, "the sign-in answer came from another server than the one it began at; start again")
 	}
 	e := s.entry(f.kind)
 	if e == nil {
@@ -217,4 +221,11 @@ func (s *Service) connectDirect(ctx context.Context, user, connector, kind, mcpU
 	s.changed(ctx, g)
 	log.WithFunc("connect.Service.connectDirect").Infof(ctx, "user %s connected %s without a sign-in, with a key: %t (grant %s)", user, connector, cred.value != "", g.id)
 	return nil
+}
+
+func answeredBy(fs flowSecrets, iss string) bool {
+	if fs.Issuer == "" || iss == "" {
+		return fs.Issuer == "" || !fs.IssRequired
+	}
+	return strings.TrimSuffix(iss, "/") == strings.TrimSuffix(fs.Issuer, "/")
 }

@@ -49,6 +49,7 @@ type Vendor struct {
 	Refusal string
 	// NoResourceMetadata serves no protected resource metadata, as a server of MCP authorization 2025-03-26.
 	NoResourceMetadata bool
+	Iss                bool
 	// ClientID and ClientSecret are a client registered by hand: no registration, and the token endpoint requires the secret.
 	ClientID     string
 	ClientSecret string
@@ -93,17 +94,22 @@ func (v *Vendor) OpenURL() string { return v.URL + "/open" }
 
 // Consent answers an authorization URL the way a user's consent does, and returns the code and state it redirects with.
 func (v *Vendor) Consent(authorizeURL string) (string, string, error) {
+	answer, err := v.Answer(authorizeURL)
+	return answer.Get("code"), answer.Get("state"), err
+}
+
+func (v *Vendor) Answer(authorizeURL string) (url.Values, error) {
 	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := c.Get(authorizeURL)
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
 	_ = resp.Body.Close()
 	loc, err := url.Parse(resp.Header.Get("Location"))
 	if err != nil {
-		return "", "", err
+		return nil, err
 	}
-	return loc.Query().Get("code"), loc.Query().Get("state"), nil
+	return loc.Query(), nil
 }
 
 // ExpireAccess makes every access token invalid, as an expiry at the vendor does.
@@ -145,6 +151,9 @@ func (v *Vendor) serverMetadata(w http.ResponseWriter, _ *http.Request) {
 		"code_challenge_methods_supported":      []string{"S256"},
 		"client_id_metadata_document_supported": v.CIMD,
 	}
+	if v.Iss {
+		md["authorization_response_iss_parameter_supported"] = true
+	}
 	if v.ClientID != "" {
 		delete(md, "registration_endpoint")
 	}
@@ -180,7 +189,11 @@ func (v *Vendor) authorize(w http.ResponseWriter, r *http.Request) {
 	v.mu.Lock()
 	v.codes[code] = codeGrant{challenge: q.Get("code_challenge"), redirectURI: q.Get("redirect_uri"), clientID: q.Get("client_id")}
 	v.mu.Unlock()
-	http.Redirect(w, r, q.Get("redirect_uri")+"?"+url.Values{"code": {code}, "state": {q.Get("state")}}.Encode(), http.StatusFound)
+	answer := url.Values{"code": {code}, "state": {q.Get("state")}}
+	if v.Iss {
+		answer.Set("iss", v.URL)
+	}
+	http.Redirect(w, r, q.Get("redirect_uri")+"?"+answer.Encode(), http.StatusFound)
 }
 
 func (v *Vendor) token(w http.ResponseWriter, r *http.Request) {

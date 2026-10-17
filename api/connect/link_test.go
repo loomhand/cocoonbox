@@ -37,7 +37,7 @@ func TestLinkGrantInjectsRefreshesPollsAndDisconnects(t *testing.T) {
 	if err != nil || code == "" {
 		t.Fatalf("consent: %q %v", code, err)
 	}
-	if got, err := env.svc.Complete(t.Context(), started.Nonce, state, code); err != nil || got != linkID {
+	if got, err := env.svc.Complete(t.Context(), started.Nonce, state, code, ""); err != nil || got != linkID {
 		t.Fatalf("Complete = %q, %v", got, err)
 	}
 	g, err := env.svc.store.grant(t.Context(), alice, linkID)

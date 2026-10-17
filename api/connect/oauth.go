@@ -65,6 +65,8 @@ type authorization struct {
 	authorizeURL string
 	client       client
 	scopes       []string
+	issuer       string
+	issRequired  bool
 }
 
 type resourceMetadata struct {
@@ -74,6 +76,8 @@ type resourceMetadata struct {
 }
 
 type serverMetadata struct {
+	Issuer                   string   `json:"issuer"`
+	IssParameterSupported    bool     `json:"authorization_response_iss_parameter_supported"`
 	AuthorizationEndpoint    string   `json:"authorization_endpoint"`
 	TokenEndpoint            string   `json:"token_endpoint"`
 	RegistrationEndpoint     string   `json:"registration_endpoint"`
@@ -129,7 +133,10 @@ func (s *Service) discover(ctx context.Context, mcpURL string, preset client) (*
 	case !slices.Contains(as.CodeChallengeMethods, "S256"):
 		return nil, fmt.Errorf("authorization server %s does not offer PKCE S256", issuer)
 	}
-	auth := &authorization{authorizeURL: as.AuthorizationEndpoint, scopes: prm.ScopesSupported}
+	auth := &authorization{authorizeURL: as.AuthorizationEndpoint, scopes: prm.ScopesSupported, issuer: issuer.String(), issRequired: as.IssParameterSupported}
+	if claimed, parseErr := url.Parse(as.Issuer); parseErr == nil && claimed.Scheme == issuer.Scheme && claimed.Host == issuer.Host {
+		auth.issuer = as.Issuer
+	}
 	if scope != "" {
 		auth.scopes = strings.Fields(scope)
 	}

@@ -57,8 +57,16 @@ func TestTheCallbackCompletesOnlyWithTheFlowsNonce(t *testing.T) {
 	if loc := env.callback(t, cookie.Value, state, code); !strings.Contains(loc, "error=") {
 		t.Errorf("expired state -> %s", loc)
 	}
-	req := httptest.NewRequest(http.MethodGet, connect.CallbackPath+"?installation_id=1&setup_action=install&code=x", nil)
+	cookie, code, state = env.begin(t, root, "mock", vendor)
+	req := httptest.NewRequest(http.MethodGet, connect.CallbackPath+"?"+url.Values{"state": {state}, "code": {code}, "iss": {"https://other.example"}}.Encode(), nil)
+	req.AddCookie(&http.Cookie{Name: connectCookie, Value: cookie.Value})
 	rec := httptest.NewRecorder()
+	env.srv.ConnectCallback(rec, req)
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "error=") {
+		t.Errorf("callback naming another server -> %s", loc)
+	}
+	req = httptest.NewRequest(http.MethodGet, connect.CallbackPath+"?installation_id=1&setup_action=install&code=x", nil)
+	rec = httptest.NewRecorder()
 	env.srv.ConnectCallback(rec, req)
 	if loc := rec.Header().Get("Location"); loc != connect.ConsolePath+"?installed=github" {
 		t.Errorf("GitHub install -> %s", loc)

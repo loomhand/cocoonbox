@@ -91,7 +91,7 @@ func (s *Server) ConnectCallback(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, "error", strings.TrimSuffix("The vendor answered "+vendorErr+": "+q.Get("error_description"), ": "))
 		return
 	}
-	id, err := s.connect.Complete(r.Context(), c.Value, q.Get("state"), q.Get("code"))
+	id, err := s.connect.Complete(r.Context(), c.Value, q.Get("state"), q.Get("code"), q.Get("iss"))
 	if err != nil {
 		logger.Warnf(r.Context(), "complete a sign-in from %s: %v", clientAddr(r), err)
 		message := "Connecting failed; try again."
