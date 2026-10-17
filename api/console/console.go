@@ -616,8 +616,14 @@ func (s *Server) viewShare(ws *websocket.Conn) {
 		return
 	}
 	ws.PayloadType = websocket.BinaryFrame
+	ctx := r.Context()
+	if guest != "" {
+		var stop context.CancelFunc
+		ctx, stop = s.authn.Bind(ctx, guest, "")
+		defer stop()
+	}
 	start := time.Now()
-	err = s.screens.Screen(r.Context(), grant, ws)
+	err = s.screens.Screen(ctx, grant, ws)
 	logger.Infof(r.Context(), "share page of box %s as %s from %s: code=%s in %s",
 		grant.Box, grant.Principal(), clientAddr(r), status.Code(err), time.Since(start).Round(time.Millisecond))
 }

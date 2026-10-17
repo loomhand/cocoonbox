@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/net/websocket"
 	"google.golang.org/grpc/codes"
@@ -136,6 +137,31 @@ func TestSharePageAdmitsTheSecretAndNamedViewers(t *testing.T) {
 	}
 }
 
+func TestANamedViewersScreenEndsWhenTheViewerSignsOutEverywhere(t *testing.T) {
+	env := newShareEnv(t)
+	env.screens.hold = true
+	qa1, qa2 := env.login(t, "qa1"), env.login(t, "qa2")
+	named := env.createShare(t, qa1, `{"box_id":"`+boxes.BoxID(env.owner.ID)+`","user_names":["qa2"]}`)
+	srv := httptest.NewServer(env.srv)
+	t.Cleanup(srv.Close)
+	ws := dialShare(t, srv.URL, srv.URL, qa2)
+	if err := websocket.Message.Send(ws, named.Secret); err != nil {
+		t.Fatalf("send secret: %v", err)
+	}
+	var banner []byte
+	if err := websocket.Message.Receive(ws, &banner); err != nil {
+		t.Fatalf("screen: %v", err)
+	}
+	if err := env.users.SignOut(t.Context(), env.qa2.ID); err != nil {
+		t.Fatalf("SignOut: %v", err)
+	}
+	select {
+	case <-env.screens.ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the named viewer's screen outlived the viewer's sign-out")
+	}
+}
+
 type shareEnv struct {
 	*env
 	owner   users.User
@@ -145,7 +171,7 @@ type shareEnv struct {
 
 func newShareEnv(t *testing.T) *shareEnv {
 	t.Helper()
-	e := &shareEnv{env: newEnv(t), screens: &fakeScreens{got: make(chan bridged, 4)}}
+	e := &shareEnv{env: newEnv(t), screens: &fakeScreens{got: make(chan bridged, 4), ended: make(chan struct{}, 1)}}
 	for _, name := range []string{"qa1", "qa2", "qa3"} {
 		u, err := e.users.Create(t.Context(), users.NewUser{Name: name, Password: password})
 		if err != nil {
@@ -210,14 +236,21 @@ type bridged struct {
 	data      string
 }
 
-// fakeScreens sends an RFB banner and reports the principal and the first bytes the viewer sends.
+// fakeScreens sends an RFB banner and reports the principal and the first bytes the viewer sends; hold keeps the screen until its context ends.
 type fakeScreens struct {
-	got chan bridged
+	got   chan bridged
+	hold  bool
+	ended chan struct{}
 }
 
-func (f *fakeScreens) Screen(_ context.Context, g auth.Grant, viewer io.ReadWriter) error {
+func (f *fakeScreens) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) error {
 	if _, err := viewer.Write([]byte("RFB 003.008\n")); err != nil {
 		return err
+	}
+	if f.hold {
+		<-ctx.Done()
+		f.ended <- struct{}{}
+		return ctx.Err()
 	}
 	buf := make([]byte, 64)
 	n, err := viewer.Read(buf)
