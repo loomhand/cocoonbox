@@ -476,7 +476,6 @@ func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flav
 	return sandboxd.New(ctx, opts)
 }
 
-// openLedger opens the cluster tables in the users database when cluster.ledger is on, nil otherwise.
 func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error) {
 	if !cfg.Cluster.Ledger {
 		return nil, nil
@@ -488,7 +487,6 @@ func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error)
 	return cluster.Open(ctx, dsn)
 }
 
-// enableLedger copies machines, heads and operations into ledger and verifies the copy, when there is a ledger.
 func enableLedger(ctx context.Context, ledger *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
 	if ledger == nil {
 		return
@@ -497,7 +495,6 @@ func enableLedger(ctx context.Context, ledger *cluster.Store, backend *sandboxd.
 	go verifyLedger(ctx, backend, svc)
 }
 
-// verifyLedger compares the ledger with this process's machines, heads and operations every minute and repairs it.
 func verifyLedger(ctx context.Context, backend *sandboxd.Backend, svc *boxes.Service) {
 	logger := log.WithFunc("main.verifyLedger")
 	tick := time.Tick(verifyInterval)

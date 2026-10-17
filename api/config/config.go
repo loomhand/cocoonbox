@@ -215,11 +215,10 @@ type Config struct {
 	State             State    `json:"state"`
 	Connect           Connect  `json:"connect"`
 	// OperatorSocket serves the root CLI's box commands on this unix socket; empty turns them off.
-	OperatorSocket string `json:"operator_socket"`
-	Wake           Wake   `json:"wake"`
-	OAuth          OAuth  `json:"oauth"`
-	// Cluster configures the state api processes share in the users database.
-	Cluster Cluster `json:"cluster"`
+	OperatorSocket string  `json:"operator_socket"`
+	Wake           Wake    `json:"wake"`
+	OAuth          OAuth   `json:"oauth"`
+	Cluster        Cluster `json:"cluster"`
 }
 
 // Load reads, defaults and validates the file at path.

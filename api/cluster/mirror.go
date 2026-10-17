@@ -73,8 +73,7 @@ func (m *Mirror) Run(ctx context.Context) {
 	}
 }
 
-// Verify returns the keys diff finds different once the queued writes landed, asking diff again for only those after a
-// second flush, so a write queued during the first diff does not count.
+// Verify returns the keys diff still finds different after a second flush, so a write queued during the first diff does not count.
 func (m *Mirror) Verify(ctx context.Context, diff func(ctx context.Context, only []string) ([]string, error)) ([]string, error) {
 	if err := m.Flush(ctx); err != nil {
 		return nil, err
