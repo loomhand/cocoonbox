@@ -349,8 +349,8 @@ func (c *Config) validate() error {
 	if c.Cluster.Shared && !c.Cluster.Ledger {
 		errs = append(errs, errors.New("cluster.shared needs cluster.ledger"))
 	}
-	if c.Cluster.Shared {
-		errs = append(errs, errors.New("cluster.shared stays off until cross-process provisioning, rebase and file-restore locks land"))
+	if c.Cluster.Shared && !c.State.ConditionalWrites {
+		errs = append(errs, errors.New("cluster.shared needs state.conditional_writes"))
 	}
 	return errors.Join(errs...)
 }
