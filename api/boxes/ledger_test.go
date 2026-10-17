@@ -62,3 +62,35 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 		t.Errorf("Verify with an operation past its retention = %+v, %v, want it skipped", d, err)
 	}
 }
+
+func TestBackfillHeadsMakesTheLedgerMatchTheStore(t *testing.T) {
+	ledger := clustertest.Open(t)
+	st := newFakeStore()
+	a, b := statePath{user: alice, box: "cb-00000000000a"}, statePath{user: alice, box: "cb-00000000000b"}
+	for _, p := range []statePath{a, b} {
+		if err := putJSON(t.Context(), st, p.head(), head{Latest: snapshotID(2), SavedAtMs: 200}); err != nil {
+			t.Fatalf("put head: %v", err)
+		}
+	}
+	if err := ledger.PutHead(t.Context(), alice, a.box, headBytes(head{Latest: snapshotID(1), SavedAtMs: 100})); err != nil {
+		t.Fatalf("PutHead stale: %v", err)
+	}
+	if err := ledger.PutHead(t.Context(), alice, "cb-00000000000z", headBytes(head{Latest: snapshotID(1)})); err != nil {
+		t.Fatalf("PutHead ghost: %v", err)
+	}
+	if written, removed, err := BackfillHeads(t.Context(), st, ledger, alice); err != nil || written != 2 || removed != 1 {
+		t.Fatalf("BackfillHeads = %d written, %d removed, %v; want 2 and 1", written, removed, err)
+	}
+	rows, err := ledger.Heads(t.Context())
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("ledger heads after the backfill = %+v, %v", rows, err)
+	}
+	for _, r := range rows {
+		if string(r.Head) != string(headBytes(head{Latest: snapshotID(2), SavedAtMs: 200})) {
+			t.Errorf("ledger head of %s = %s, want the store's", r.Box, r.Head)
+		}
+	}
+	if written, removed, err := BackfillHeads(t.Context(), st, ledger, alice); err != nil || written+removed != 0 {
+		t.Errorf("second BackfillHeads = %d written, %d removed, %v; want nothing to do", written, removed, err)
+	}
+}
