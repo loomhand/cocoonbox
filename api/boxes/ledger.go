@@ -19,16 +19,6 @@ const (
 	opKey   = "op:"
 )
 
-// Ledger keeps the box heads and operations api processes share.
-type Ledger interface {
-	Heads(ctx context.Context) ([]cluster.Head, error)
-	PutHead(ctx context.Context, user, box string, head []byte) error
-	DeleteHeads(ctx context.Context, user, box string) error
-	Operations(ctx context.Context, since time.Time) ([]cluster.Operation, error)
-	PutOperation(ctx context.Context, op cluster.Operation) error
-	PurgeOperations(ctx context.Context, before time.Time) error
-}
-
 // Drift is what a Verify pass found the ledger holding wrong or missing.
 type Drift struct {
 	Heads      []string
@@ -36,7 +26,7 @@ type Drift struct {
 }
 
 // EnableLedger copies every box head the state layer commits and every operation event into l until ctx ends.
-func (s *Service) EnableLedger(ctx context.Context, l Ledger) {
+func (s *Service) EnableLedger(ctx context.Context, l *cluster.Store) {
 	s.ledger, s.mirror = l, cluster.NewMirror()
 	go s.mirror.Run(ctx)
 	s.ops.mirror = func(rec cluster.Operation) {
@@ -58,9 +48,6 @@ func (s *Service) EnableLedger(ctx context.Context, l Ledger) {
 // Verify rewrites the ledger heads and operations that differ from this process's, and purges operations past their retention.
 func (s *Service) Verify(ctx context.Context) (Drift, error) {
 	var d Drift
-	if s.ledger == nil {
-		return d, nil
-	}
 	differ, err := s.mirror.Verify(ctx, s.differences)
 	if err != nil {
 		return d, err
@@ -91,7 +78,6 @@ func (s *Service) Verify(ctx context.Context) (Drift, error) {
 	return d, s.ledger.PurgeOperations(ctx, time.Now().Add(-operationRetention))
 }
 
-// differences returns the keys of the cached heads and the operations whose ledger row differs or is missing.
 func (s *Service) differences(ctx context.Context) ([]string, error) {
 	heads, err := s.headDifferences(ctx)
 	if err != nil {

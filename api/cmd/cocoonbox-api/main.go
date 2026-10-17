@@ -466,7 +466,7 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *clust
 	if err != nil {
 		return sandboxd.Options{}, err
 	}
-	opts := sandboxd.Options{
+	return sandboxd.Options{
 		URL:               cfg.Sandboxd.URL,
 		Token:             token,
 		Image:             cfg.Image,
@@ -474,11 +474,8 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *clust
 		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
-	}
-	if ledger != nil {
-		opts.Ledger = ledger
-	}
-	return opts, nil
+		Ledger:            ledger,
+	}, nil
 }
 
 func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error) {

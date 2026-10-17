@@ -113,7 +113,7 @@ type Service struct {
 	usage     *usageMeter
 	idle      *idling
 	activity  Activity
-	ledger    Ledger
+	ledger    *cluster.Store
 	mirror    *cluster.Mirror
 
 	mu     sync.Mutex

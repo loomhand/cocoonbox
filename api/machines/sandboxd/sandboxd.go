@@ -61,7 +61,7 @@ type Options struct {
 	DiskGiB           uint32
 	AgentPort         int
 	TenantEgressClass string
-	Ledger            Ledger
+	Ledger            *cluster.Store
 }
 
 // Check reports whether New refuses opts before it reads the instance.
@@ -77,13 +77,6 @@ func (o Options) client() (*client, error) {
 		}
 	}
 	return newClient(o.URL, o.Token)
-}
-
-// Ledger keeps the machine records api processes share.
-type Ledger interface {
-	Machines(ctx context.Context) ([]cluster.Machine, error)
-	PutMachine(ctx context.Context, m cluster.Machine) error
-	DeleteMachine(ctx context.Context, id string) error
 }
 
 var (
@@ -438,9 +431,6 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 
 // Verify rewrites the ledger rows that still differ from the machines once the queued writes landed, and returns their ids.
 func (b *Backend) Verify(ctx context.Context) ([]string, error) {
-	if b.mirror == nil {
-		return nil, nil
-	}
 	differ, err := b.mirror.Verify(ctx, b.differences)
 	if err != nil {
 		return nil, err
