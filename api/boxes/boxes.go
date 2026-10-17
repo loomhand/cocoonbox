@@ -94,29 +94,33 @@ type Registry interface {
 	MaxRunning(owner string) int
 }
 
+// MachineSync reads an owner's machines from the shared table into a backend's cache.
+type MachineSync func(ctx context.Context, owner string) error
+
 // Service implements controlv1.BoxesServer and resolves boxes for the edge.
 type Service struct {
 	controlv1.UnimplementedBoxesServer
 
-	machines  machines.Machines
-	defaults  Defaults
-	registry  Registry
-	ops       *operations
-	state     *stateLayer
-	provision *provisioner
-	exit      *exitPolicy
-	accounts  Accounts
-	connect   Connect
-	vault     Vault
-	wake      *wakeAlarms
-	park      *parking
-	usage     *usageMeter
-	idle      *idling
-	activity  Activity
-	ledger    *cluster.Store
-	mirror    *cluster.Mirror
-	reaches   *reaches
-	userLocks *cluster.Store
+	machines     machines.Machines
+	defaults     Defaults
+	registry     Registry
+	ops          *operations
+	state        *stateLayer
+	provision    *provisioner
+	exit         *exitPolicy
+	accounts     Accounts
+	connect      Connect
+	vault        Vault
+	wake         *wakeAlarms
+	park         *parking
+	usage        *usageMeter
+	idle         *idling
+	activity     Activity
+	ledger       *cluster.Store
+	mirror       *cluster.Mirror
+	reaches      *reaches
+	userLocks    *cluster.Store
+	syncMachines MachineSync
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex
@@ -354,6 +358,11 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 	}
 }
 
+// SyncMachines registers fn, which a start under the user's lock runs before it reads machines.
+func (s *Service) SyncMachines(fn MachineSync) {
+	s.syncMachines = fn
+}
+
 // current returns the serving machine of user's box: the oldest, which a rebase replaces only when it deletes it.
 func (s *Service) current(ctx context.Context, user, box string) (machines.Machine, error) {
 	ms, err := s.machines.List(ctx, user)
@@ -462,19 +471,49 @@ func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 	if s.userLocks == nil {
 		return l.Unlock, nil
 	}
+	logger := log.WithFunc("boxes.Service.lockStarts").WithField("user", user)
 	unlock, err := s.userLocks.LockUser(ctx, user)
+	what := "lock the starts"
+	if err == nil {
+		if err = s.syncUser(ctx, user); err != nil {
+			unlock()
+			what = "read the user's shared state"
+		}
+	}
 	if err != nil {
 		l.Unlock()
 		if ctx.Err() != nil {
 			return nil, status.FromContextError(ctx.Err()).Err()
 		}
-		log.WithFunc("boxes.Service.lockStarts").WithField("user", user).Error(ctx, err, "lock the starts")
-		return nil, status.Error(codes.Unavailable, "lock the starts of the user failed")
+		logger.Error(ctx, err, what)
+		return nil, status.Errorf(codes.Unavailable, "%s failed", what)
 	}
 	return func() {
+		// The next start in another process reads the operations from the table, so they reach it before the lock does.
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
+		if err := s.mirror.Flush(flushCtx); err != nil {
+			logger.Warnf(ctx, "the next start elsewhere may miss this one's operations: %v", err)
+		}
+		cancel()
 		unlock()
 		l.Unlock()
 	}, nil
+}
+
+// syncUser reads user's machines, operations and heads from the shared table, so a start under the user's lock never acts on what this process's cache has yet to learn.
+func (s *Service) syncUser(ctx context.Context, user string) error {
+	if s.syncMachines != nil {
+		if err := s.syncMachines(ctx, user); err != nil {
+			return err
+		}
+	}
+	if err := s.ops.reload(ctx, user); err != nil {
+		return err
+	}
+	if s.state != nil {
+		s.state.forgetHeads(user)
+	}
+	return nil
 }
 
 func (s *Service) withOperation(ctx context.Context, user, box string, m machines.Machine, phase controlv1.Phase) *controlv1.EnsureResponse {

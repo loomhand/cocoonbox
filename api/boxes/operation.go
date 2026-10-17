@@ -360,8 +360,8 @@ func (r *operations) notified(ctx context.Context, id string) {
 }
 
 // reload takes the shared table in again, since notifies sent while none listened are lost.
-func (r *operations) reload(ctx context.Context) error {
-	recs, err := r.shared.Operations(ctx, time.Now().Add(-operationRetention))
+func (r *operations) reload(ctx context.Context, user string) error {
+	recs, err := r.shared.Operations(ctx, user, time.Now().Add(-operationRetention))
 	if err != nil {
 		return err
 	}
@@ -373,7 +373,7 @@ func (r *operations) reload(ctx context.Context) error {
 		r.takeLocked(rec)
 	}
 	for id, op := range r.byID {
-		if op.remote && !listed[id] {
+		if op.remote && (user == "" || op.user == user) && !listed[id] {
 			r.forgetLocked(op)
 		}
 	}

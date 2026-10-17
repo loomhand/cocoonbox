@@ -591,6 +591,13 @@ func (l *stateLayer) invalidate(p statePath) {
 	l.dropped++
 }
 
+func (l *stateLayer) forgetHeads(user string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	maps.DeleteFunc(l.heads, func(p statePath, _ head) bool { return p.user == user })
+	l.dropped++
+}
+
 func (l *stateLayer) invalidateAll() {
 	l.mu.Lock()
 	defer l.mu.Unlock()

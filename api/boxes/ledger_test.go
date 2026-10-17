@@ -28,7 +28,7 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 	if err != nil || h.Latest != snapshotID(1) || h.SavedAtMs == 0 {
 		t.Fatalf("ledger head = %+v, %v", h, err)
 	}
-	ops, err := ledger.Operations(t.Context(), env.svc.ops.all()[0].created.Add(-1))
+	ops, err := ledger.Operations(t.Context(), "", env.svc.ops.all()[0].created.Add(-1))
 	if err != nil || len(ops) != 1 || ops[0].FinishedAt.IsZero() || ops[0].Phase != int32(controlv1.Phase_PHASE_SAVING) {
 		t.Fatalf("ledger operations = %+v, %v", ops, err)
 	}

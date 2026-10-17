@@ -859,6 +859,30 @@ func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
 	}
 }
 
+func TestSyncOwnerReadsTheOwnersRowsIntoTheCache(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	b := newSharedBackend(t, fake, db)
+	if err := db.PutMachine(t.Context(), cluster.Machine{ID: "cb-other", Owner: owner, CreatedAt: time.Now()}); err != nil {
+		t.Fatalf("PutMachine: %v", err)
+	}
+	if err := b.SyncOwner(t.Context(), owner); err != nil {
+		t.Fatalf("SyncOwner: %v", err)
+	}
+	if _, err := b.cached("cb-other"); err != nil {
+		t.Fatalf("a row of the owner is not cached after SyncOwner: %v", err)
+	}
+	if err := db.DeleteMachine(t.Context(), "cb-other"); err != nil {
+		t.Fatalf("DeleteMachine: %v", err)
+	}
+	if err := b.SyncOwner(t.Context(), owner); err != nil {
+		t.Fatalf("SyncOwner: %v", err)
+	}
+	if _, err := b.cached("cb-other"); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("a removed row of the owner is still cached after SyncOwner: %v", err)
+	}
+}
+
 func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)
