@@ -23,7 +23,7 @@ app: ## macOS app bundle dist/CocoonBox.app for CB_ENDPOINT, ad hoc signed
 	cd macos && scripts/bundle.sh
 
 image: ## Syntax-check the image scripts, test cut.sh's dry run (Linux bash) and the package replay (docker)
-	for f in image/*.sh image/desk/*.sh image/test/*.sh; do bash -n "$$f" || exit 1; done
+	for f in image/*.sh image/android/*.sh image/android/rootfs/usr/local/lib/cocoonbox/* image/desk/*.sh image/test/*.sh; do bash -n "$$f" || exit 1; done
 	python3 -c "import ast, sys; ast.parse(open(sys.argv[1]).read())" image/cut-proxy.py
 	bash image/test/cut-dry-run.sh
 	bash image/test/packages.sh

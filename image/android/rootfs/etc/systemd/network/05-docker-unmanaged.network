@@ -1,0 +1,5 @@
+[Match]
+Name=veth* docker0 br-*
+
+[Link]
+Unmanaged=yes

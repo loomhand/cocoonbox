@@ -1,0 +1,10 @@
+[Unit]
+Description=cocoonbox Android (redroid container, egress proxy, remote view)
+After=cocoonbox-android-proxy.socket
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=HOME=/root
+ExecStart=/usr/local/lib/cocoonbox/android-up
+TimeoutStartSec=300

@@ -1,0 +1,8 @@
+[Unit]
+Description=cocoonbox Android start once the box has its identity
+
+[Path]
+PathExists=/run/cocoonbox-identity/identity
+
+[Install]
+WantedBy=multi-user.target

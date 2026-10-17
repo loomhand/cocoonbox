@@ -1,0 +1,9 @@
+listen_addresses = ['172.18.0.1:53']
+server_names = ['cloudflare-doh']
+http_proxy = 'http://127.0.0.1:3128'
+ignore_system_dns = true
+netprobe_timeout = 0
+cache = true
+[static]
+  [static.'cloudflare-doh']
+  stamp = 'sdns://AgcAAAAAAAAABzEuMC4wLjEAEmRucy5jbG91ZGZsYXJlLmNvbQovZG5zLXF1ZXJ5'
