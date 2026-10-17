@@ -1,0 +1,5 @@
+[Unit]
+Description=cocoonbox egress proxy for Android on the docker bridge
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd 127.0.0.1:3128

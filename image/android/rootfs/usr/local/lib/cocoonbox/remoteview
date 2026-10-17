@@ -1,0 +1,44 @@
+#!/bin/bash
+# Serves Android's screen on 127.0.0.1:5900: scrcpy streams H.264, which scrcpy-rfb passes to capable clients and re-encodes for others.
+set -euo pipefail
+S=127.0.0.1:5555
+PORT=27183
+SCID=4a264fb0
+JAR=/data/local/tmp/scrcpy-server.jar
+SU=/data/local/tmp/su1000
+server_pid=""
+rfb_pid=""
+
+cleanup() {
+	[ -z "$rfb_pid" ] || kill "$rfb_pid" 2>/dev/null || true
+	adb -s "$S" forward --remove "tcp:$PORT" >/dev/null 2>&1 || true
+	adb -s "$S" shell pkill -f "com.genymobile.scrcpy.Server 4.1 scid=$SCID" >/dev/null 2>&1 || true
+	[ -z "$server_pid" ] || kill "$server_pid" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+until [ "$(adb -s "$S" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
+	adb connect "$S" >/dev/null 2>&1 || true
+	sleep 1
+done
+# su1000 runs scrcpy as the system uid, whose mirror also shows FLAG_SECURE windows; su1000 needs adbd as root
+adb -s "$S" root >/dev/null 2>&1 || true
+until [ "$(adb -s "$S" shell id -u 2>/dev/null | tr -d '\r')" = 0 ]; do
+	adb connect "$S" >/dev/null 2>&1 || true
+	sleep 1
+done
+cleanup
+adb -s "$S" push /usr/local/share/scrcpy/scrcpy-server.jar "$JAR" >/dev/null
+adb -s "$S" push /usr/local/share/scrcpy/su1000 "$SU" >/dev/null
+adb -s "$S" forward "tcp:$PORT" "localabstract:scrcpy_$SCID"
+adb -s "$S" shell CLASSPATH="$JAR" "$SU" app_process / com.genymobile.scrcpy.Server 4.1 \
+	"scid=$SCID" log_level=info tunnel_forward=true audio=false send_device_meta=false send_dummy_byte=false \
+	video_codec=h264 video_bit_rate=8000000 max_fps=60 'video_codec_options=profile=1,i-frame-interval=1' cleanup=false &
+server_pid=$!
+until adb -s "$S" shell cat /proc/net/unix 2>/dev/null | grep -q "@scrcpy_$SCID"; do
+	kill -0 "$server_pid"
+	sleep 0.1
+done
+/usr/local/bin/scrcpy-rfb -rfbport 5900 -listen 127.0.0.1 -desktop Android &
+rfb_pid=$!
+wait -n "$server_pid" "$rfb_pid"

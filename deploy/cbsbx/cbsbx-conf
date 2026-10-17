@@ -26,6 +26,10 @@ WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoo
 CHROME_WARMUP = ("(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user timeout 30 google-chrome --headless=new "
                  "--no-first-run --user-data-dir=/tmp/cb-warmup-chrome --dump-dom about:blank > /dev/null 2>&1; "
                  "rm -rf /tmp/cb-warmup-chrome; true; }")
+# an Android golden holds the outer VM only: Android boots per box once the api writes the box identity
+ANDROID_WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-toolhost cocoonbox-agent "
+                  "&& (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; sleep 0.2; done; exit 1")
+ANDROID_FAMILIES = ("cbdroid",)
 CHROME_WARMUP_FROM = 15
 INJECT_FROM = 23
 CONNECT_FROM = 24
@@ -46,7 +50,10 @@ for arg in sys.argv[1:]:
     version = re.fullmatch(r"([a-z0-9]+):v(\d+)(-\w+)?", template)
     # every family but cbdesk is cut from a template with the newest rules
     n = 0 if not version else int(version[2]) if version[1] == "cbdesk" else CONNECT_FROM
-    warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
+    if version and version[1] in ANDROID_FAMILIES:
+        warmup = ANDROID_WARMUP
+    else:
+        warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
     pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
                   "warmup": ["bash", "-c", warmup],
                   "egress": connect_egress if n >= CONNECT_FROM else inject_egress if n >= INJECT_FROM else egress})

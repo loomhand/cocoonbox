@@ -1,0 +1,8 @@
+[Unit]
+Description=cocoonbox DNS for Android (DNS over HTTPS through the egress proxy) on the docker bridge
+After=docker.service
+
+[Service]
+ExecStart=/usr/sbin/dnscrypt-proxy -config /etc/cocoonbox/android-dns.toml
+Restart=always
+RestartSec=1

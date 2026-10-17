@@ -1,0 +1,20 @@
+#!/bin/bash
+# Starts docker, whose baked redroid container cold-boots Android, gives Android DNS and the egress proxy, then starts the screen.
+set -euo pipefail
+S=127.0.0.1:5555
+BRIDGE=172.18.0.1
+PROXY=$BRIDGE:3128
+
+systemctl start docker.service
+for p in udp tcp; do
+	iptables -t nat -C PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53" 2>/dev/null ||
+		iptables -t nat -I PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53"
+done
+systemctl start cocoonbox-android-dns.service
+for _ in $(seq 600); do
+	adb connect "$S" >/dev/null 2>&1 || true
+	[ "$(adb -s "$S" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break
+	sleep 0.5
+done
+adb -s "$S" shell settings put global http_proxy "$PROXY"
+systemctl start cocoonbox-remoteview.service

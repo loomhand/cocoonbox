@@ -1,0 +1,11 @@
+[Unit]
+Description=cocoonbox Android screen (scrcpy H.264 to RFB on 127.0.0.1:5900)
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=simple
+Environment=HOME=/root
+ExecStart=/usr/local/lib/cocoonbox/remoteview
+Restart=always
+RestartSec=2
