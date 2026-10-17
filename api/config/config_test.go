@@ -168,6 +168,12 @@ func TestLoadsTheExampleConfig(t *testing.T) {
 	}
 }
 
+func TestLoadRefusesClusterSharedForNow(t *testing.T) {
+	if _, err := Load(writeConfig(t, required+"cluster:\n  ledger: true\n  shared: true\n")); err == nil || !strings.Contains(err.Error(), "cluster.shared stays off") {
+		t.Errorf("Load with cluster.shared = %v, want the refusal", err)
+	}
+}
+
 func writeConfig(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "api.yaml")
