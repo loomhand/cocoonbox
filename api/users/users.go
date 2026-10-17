@@ -542,6 +542,9 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 	if old != sum {
 		s.EndCredential(old)
 	}
+	if err := s.store.notify(ctx); err != nil {
+		log.WithFunc("users.Service.SetTokenSHA256").Warnf(ctx, "set the token of %s; other apis reload on their next notify: %v", id, err)
+	}
 	return nil
 }
 

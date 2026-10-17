@@ -244,6 +244,23 @@ func TestSignOutEndsEverySignInOfTheUserOnly(t *testing.T) {
 	}
 }
 
+func TestRegeneratingTheTokenDropsTheOldOneFromAListeningService(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	go svc.Listen(t.Context())
+	console := openTestService(t, dsn, gw, tenants)
+	u, _ := console.Create(t.Context(), NewUser{Name: "qa1"})
+	old, _ := console.RegenerateToken(t.Context(), u.ID)
+	if took, ok := within(time.Second, func() bool { id, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return ok && id == u.ID }); !ok {
+		t.Fatalf("the listening api does not know the first token %s after it was set", took)
+	}
+	if _, err := console.RegenerateToken(t.Context(), u.ID); err != nil {
+		t.Fatalf("RegenerateToken: %v", err)
+	}
+	if took, ok := within(time.Second, func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok }); !ok {
+		t.Errorf("the listening api still takes the replaced token %s after the regenerate", took)
+	}
+}
+
 func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())
