@@ -89,6 +89,22 @@ func (s *Store) DeleteHeads(ctx context.Context, user, box string) error {
 	})
 }
 
+// DeleteHeadAt removes the head of user's box while it keeps version and reports whether it did.
+func (s *Store) DeleteHeadAt(ctx context.Context, user, box string, version int64) (bool, error) {
+	var removed bool
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		cmd, err := tx.Exec(ctx, "DELETE FROM box_heads WHERE user_id = $1 AND box = $2 AND version = $3", user, box, version)
+		if err != nil {
+			return fmt.Errorf("delete head of %s: %w", box, err)
+		}
+		if removed = cmd.RowsAffected() == 1; !removed {
+			return nil
+		}
+		return notifyHead(ctx, tx, Head{User: user, Box: box})
+	})
+	return removed, err
+}
+
 // ParseHeadNotify returns the head a notify on ChannelHeads carries; Version 0 reports a removal, of every box of User when Box is empty.
 func ParseHeadNotify(payload string) (Head, error) {
 	var h Head

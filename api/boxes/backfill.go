@@ -3,13 +3,14 @@ package boxes
 import (
 	"bytes"
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/store"
 )
 
-// BackfillHeads makes user's ledger heads match the store's head.json files and returns how many rows it wrote and removed.
+// BackfillHeads makes user's ledger heads match the store's head.json files, never over a newer or concurrently written row, and returns how many rows it wrote and removed.
 func BackfillHeads(ctx context.Context, st store.Store, l *cluster.Store, user string) (int, int, error) {
 	p := statePath{user: user}
 	listing, err := st.List(ctx, p.boxes())
@@ -20,10 +21,10 @@ func BackfillHeads(ctx context.Context, st store.Store, l *cluster.Store, user s
 	if err != nil {
 		return 0, 0, err
 	}
-	stored := map[string][]byte{}
+	stored := map[string]cluster.Head{}
 	for _, r := range rows {
 		if r.User == user {
-			stored[r.Box] = r.Head
+			stored[r.Box] = r
 		}
 	}
 	written := 0
@@ -37,18 +38,34 @@ func BackfillHeads(ctx context.Context, st store.Store, l *cluster.Store, user s
 			return written, 0, err
 		}
 		raw := headBytes(h)
-		if row, ok := stored[box]; !ok || !bytes.Equal(row, raw) {
-			if err := l.PutHead(ctx, user, box, raw); err != nil {
+		row, ok := stored[box]
+		delete(stored, box)
+		if ok {
+			cur, err := decodeHead(row)
+			if err != nil {
 				return written, 0, err
 			}
+			if bytes.Equal(row.Head, raw) || cur.SavedAtMs > h.SavedAtMs {
+				continue
+			}
+		}
+		switch _, err := l.SwapHead(ctx, user, box, raw, row.Version); {
+		case errors.Is(err, cluster.ErrStale):
+		case err != nil:
+			return written, 0, err
+		default:
 			written++
 		}
-		delete(stored, box)
 	}
-	for box := range stored {
-		if err := l.DeleteHeads(ctx, user, box); err != nil {
-			return written, 0, err
+	removed := 0
+	for box, row := range stored {
+		gone, err := l.DeleteHeadAt(ctx, user, box, row.Version)
+		if err != nil {
+			return written, removed, err
+		}
+		if gone {
+			removed++
 		}
 	}
-	return written, len(stored), nil
+	return written, removed, nil
 }
