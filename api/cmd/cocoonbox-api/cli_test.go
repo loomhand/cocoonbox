@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/config"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/store"
@@ -44,6 +45,22 @@ func TestImportStateKeyTakesTheBoxKeyOrDrawsOne(t *testing.T) {
 	}
 	if keys.sets != 2 || len(keys.held["dev"].Secret) != keyring.KeySize {
 		t.Errorf("%d keys set, dev holds %d bytes; want one new key for dev", keys.sets, len(keys.held["dev"].Secret))
+	}
+}
+
+func TestCheckRefusesWhatStartupRefuses(t *testing.T) {
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("root"), 0o600); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	cfg := &config.Config{Sandboxd: config.Sandboxd{URL: "http://127.0.0.1:1", TokenFile: token}, Flavor: config.Flavor{VCPUs: 1, MemoryMiB: 512}}
+	var out bytes.Buffer
+	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err != nil || out.String() != "config ok\n" {
+		t.Fatalf("check of a valid config = %q, %v", out.String(), err)
+	}
+	cfg.Flavor.MemoryMiB = 1000
+	if err := runCLI(t.Context(), cfg, []string{"check"}, nil, &out); err == nil || !strings.Contains(err.Error(), "not a sandboxd tier") {
+		t.Errorf("check of a flavor that is no tier = %v, want the startup refusal", err)
 	}
 }
 

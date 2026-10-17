@@ -64,6 +64,21 @@ type Options struct {
 	Ledger            Ledger
 }
 
+// Check reports whether New refuses opts before it reads the instance.
+func (o Options) Check() error {
+	_, err := o.client()
+	return err
+}
+
+func (o Options) client() (*client, error) {
+	for _, f := range o.Flavors {
+		if _, ok := sizeOf(f); !ok {
+			return nil, fmt.Errorf("flavor vcpus:%d memory_mib:%d is not a sandboxd tier", f.VCPUs, f.MemoryMiB)
+		}
+	}
+	return newClient(o.URL, o.Token)
+}
+
 // Ledger keeps the machine records api processes share.
 type Ledger interface {
 	Machines(ctx context.Context) ([]cluster.Machine, error)
@@ -93,14 +108,9 @@ type Backend struct {
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
 func New(ctx context.Context, opts Options) (*Backend, error) {
-	api, err := newClient(opts.URL, opts.Token)
+	api, err := opts.client()
 	if err != nil {
 		return nil, err
-	}
-	for _, f := range opts.Flavors {
-		if _, ok := sizeOf(f); !ok {
-			return nil, fmt.Errorf("flavor vcpus:%d memory_mib:%d is not a sandboxd tier", f.VCPUs, f.MemoryMiB)
-		}
 	}
 	b := &Backend{
 		Tenants: &Tenants{api: api, egressClass: opts.TenantEgressClass},
