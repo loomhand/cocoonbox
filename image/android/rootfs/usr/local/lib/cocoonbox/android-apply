@@ -9,11 +9,8 @@ DATA=/var/lib/redroid-data
 
 log() { echo "android-apply: $*" >&2; }
 
-# Android's own shutdown ends the container cleanly, where docker stop's SIGTERM reaches only the container's shell
 stop_android() {
-	timeout 10 docker exec redroid /system/bin/setprop sys.powerctl shutdown >/dev/null 2>&1 || true
-	timeout 30 docker wait redroid >/dev/null 2>&1 || true
-	docker stop -t 1 redroid >/dev/null || log "docker stop redroid failed"
+	systemctl stop cocoonbox-redroid.service || log "stop cocoonbox-redroid failed"
 }
 
 [ -f "$DIR/data.tar" ] || exit 0
@@ -47,6 +44,6 @@ else
 fi
 mountpoint -q "$DATA" || mount --bind "$TOP/data" "$DATA"
 if [ "$running" = true ]; then
-	docker start redroid >/dev/null || log "docker start redroid failed"
+	systemctl start cocoonbox-redroid.service || log "start cocoonbox-redroid failed"
 fi
 exit 0
