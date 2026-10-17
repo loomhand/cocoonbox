@@ -838,9 +838,6 @@ func (s *Service) listen(ctx context.Context) error {
 		return err
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	if err := s.endGoneGrants(ctx); err != nil {
-		return err
-	}
 	reload := true
 	for {
 		if reload {
@@ -848,6 +845,9 @@ func (s *Service) listen(ctx context.Context) error {
 				return err
 			}
 			if err := s.syncShares(ctx); err != nil {
+				return err
+			}
+			if err := s.endGoneGrants(ctx); err != nil {
 				return err
 			}
 		}
@@ -864,6 +864,7 @@ func (s *Service) listen(ctx context.Context) error {
 
 func (s *Service) endGoneGrants(ctx context.Context) error {
 	s.mu.RLock()
+	s.lifeMu.Lock()
 	live := s.grantsLive
 	var ids []string
 	for credential := range s.creds {
@@ -871,6 +872,7 @@ func (s *Service) endGoneGrants(ctx context.Context) error {
 			ids = append(ids, credential)
 		}
 	}
+	s.lifeMu.Unlock()
 	s.mu.RUnlock()
 	if live == nil || len(ids) == 0 {
 		return nil
