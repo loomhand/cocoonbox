@@ -8,24 +8,24 @@ import (
 )
 
 // leaderLoops are the background loops that one api of a cluster runs at a time.
-type leaderLoops []func(ctx context.Context)
+type leaderLoops []cluster.Work
 
-func (l *leaderLoops) add(fn func(ctx context.Context)) {
+func (l *leaderLoops) add(fn cluster.Work) {
 	*l = append(*l, fn)
 }
 
-// run starts the loops in this api alone without a ledger, else whenever it holds the cluster's leader lock.
-func (l leaderLoops) run(ctx context.Context, ledger *cluster.Store) {
+// run starts the loops in this api without a shared table, else whenever it holds the cluster's leader lock.
+func (l *leaderLoops) run(ctx context.Context, shared *cluster.Store) {
 	start := func(ctx context.Context) {
 		var wg sync.WaitGroup
-		for _, fn := range l {
+		for _, fn := range *l {
 			wg.Go(func() { fn(ctx) })
 		}
 		wg.Wait()
 	}
-	if ledger == nil {
+	if shared == nil {
 		go start(ctx)
 		return
 	}
-	go ledger.Lead(ctx, start)
+	go shared.Lead(ctx, start)
 }

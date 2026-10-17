@@ -129,7 +129,7 @@ func (s *Service) Reached(box string) func() {
 	if s.wake != nil {
 		s.wake.reach(box)
 	}
-	var ended func(string, time.Time)
+	var ended reachFunc
 	if s.reaches != nil {
 		s.reaches.reach(box, s.reaches.now())
 		ended = s.reaches.reach
