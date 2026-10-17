@@ -475,10 +475,9 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *clust
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
 	}
-	switch {
-	case ledger != nil && cfg.Cluster.Shared:
+	if cfg.Cluster.Shared {
 		opts.Shared = ledger
-	case ledger != nil:
+	} else {
 		opts.Ledger = ledger
 	}
 	return opts, nil

@@ -8,21 +8,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/cluster"
 )
 
-// SharedHeads is the box head table api processes share.
-type SharedHeads interface {
-	Head(ctx context.Context, user, box string) (cluster.Head, error)
-	SwapHead(ctx context.Context, user, box string, head []byte, version int64) (int64, error)
-}
-
-// Shared is the state api processes share, with the notifies of its changes.
-type Shared interface {
-	SharedHeads
-	SharedOperations
-	Listen(ctx context.Context, channel string, reset func(), fn cluster.Notified)
-}
-
 // EnableShared makes the shared tables the truth for box heads and operations until ctx ends.
-func (s *Service) EnableShared(ctx context.Context, shared Shared) {
+func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 	logger := log.WithFunc("boxes.Service.EnableShared")
 	s.ops.mu.Lock()
 	s.ops.shared = shared

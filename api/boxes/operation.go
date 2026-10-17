@@ -31,14 +31,6 @@ var ended = func() context.Context {
 	return ctx
 }()
 
-// SharedOperations is the operation table api processes share.
-type SharedOperations interface {
-	Operation(ctx context.Context, id string) (cluster.Operation, error)
-	Operations(ctx context.Context, since time.Time) ([]cluster.Operation, error)
-	PutRunningOperation(ctx context.Context, op cluster.Operation) error
-	FinishOperation(ctx context.Context, id string, edit cluster.EventsEdit) (bool, error)
-}
-
 type eventRecord struct {
 	Phase      int32  `json:"phase"`
 	Detail     string `json:"detail,omitempty"`
@@ -233,7 +225,7 @@ func (o *operation) mirrorLocked() {
 type operations struct {
 	watchers *watchers
 	mirror   operationMirror
-	shared   SharedOperations
+	shared   *cluster.Store
 
 	mu   sync.Mutex
 	byID map[string]*operation

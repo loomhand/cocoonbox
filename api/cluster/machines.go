@@ -13,12 +13,6 @@ import (
 const machineColumns = `id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes, routed,
 	ready, ready_restarts, env, version`
 
-// MachineEdit changes machine m, found false for none, and returns false to write nothing.
-type MachineEdit func(m *Machine, found bool) (bool, error)
-
-// MachineCond decides whether machine m may go.
-type MachineCond func(m Machine) bool
-
 // Machine is a machine backend's record of one machine; Claim is the backend's own claim row, nil until it exists.
 type Machine struct {
 	ID        string
@@ -103,7 +97,7 @@ func (s *Store) PutMachine(ctx context.Context, m Machine) error {
 }
 
 // UpdateMachine writes edit's change of machine id on the version read, rerunning edit after a concurrent write; edit returns false to write nothing.
-func (s *Store) UpdateMachine(ctx context.Context, id string, edit MachineEdit) (Machine, error) {
+func (s *Store) UpdateMachine(ctx context.Context, id string, edit func(m *Machine, found bool) (bool, error)) (Machine, error) {
 	for {
 		m, err := s.Machine(ctx, id)
 		found := err == nil
@@ -136,7 +130,7 @@ func (s *Store) DeleteMachine(ctx context.Context, id string) error {
 }
 
 // DeleteMachineIf removes machine id while cond holds, rerunning cond after a concurrent write; ErrNotFound when there is none.
-func (s *Store) DeleteMachineIf(ctx context.Context, id string, cond MachineCond) (bool, error) {
+func (s *Store) DeleteMachineIf(ctx context.Context, id string, cond func(m Machine) bool) (bool, error) {
 	for {
 		m, err := s.Machine(ctx, id)
 		if err != nil || !cond(m) {
