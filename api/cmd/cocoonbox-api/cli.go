@@ -50,7 +50,7 @@ type accountDeleter interface {
 // runCLI serves the operator commands; secrets arrive on stdin and never on the command line.
 func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Reader, stdout io.Writer) error {
 	if len(args) == 1 && args[0] == "check" {
-		return checkConfig(cfg, stdout)
+		return checkConfig(ctx, cfg, stdout)
 	}
 	if len(args) >= 2 && args[0] == "state" && args[1] == "migrate" {
 		return migrateState(ctx, cfg, args[2:], stdout)
@@ -221,7 +221,12 @@ func expandState(ctx context.Context, cfg *config.Config, args []string, stdout 
 	return nil
 }
 
-func checkConfig(cfg *config.Config, stdout io.Writer) error {
+func checkConfig(ctx context.Context, cfg *config.Config, stdout io.Writer) error {
+	ledger, err := openLedger(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	ledger.Close()
 	opts, err := backendOptions(cfg, configFlavors(cfg), nil)
 	if err == nil {
 		err = opts.Check()
