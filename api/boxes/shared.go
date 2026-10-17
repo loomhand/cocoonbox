@@ -3,6 +3,7 @@ package boxes
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/projecteru2/core/log"
 
@@ -15,10 +16,17 @@ type SharedHeads interface {
 	SwapHead(ctx context.Context, user, box string, head []byte, version int64) (int64, error)
 }
 
+// UserLocks holds a user's lock across api processes.
+type UserLocks interface {
+	LockUser(ctx context.Context, user string) (func(), error)
+}
+
 // Shared is the state api processes share, with the notifies of its changes.
 type Shared interface {
 	SharedHeads
 	SharedOperations
+	SharedReaches
+	UserLocks
 	Listen(ctx context.Context, channel string, reset func(), fn func(payload string))
 }
 
@@ -37,6 +45,12 @@ func (s *Service) EnableShared(ctx context.Context, shared Shared) {
 	}
 	s.ops.mu.Unlock()
 	go s.ops.renew(ctx)
+	now := time.Now
+	if s.idle != nil {
+		now = func() time.Time { return s.idle.now() }
+	}
+	s.reaches, s.userLocks = newReaches(shared, now), shared
+	go s.reaches.run(ctx, s.openBoxes)
 	go shared.Listen(ctx, cluster.ChannelOperations, func() {
 		if err := s.ops.reload(ctx); err != nil {
 			logger.Warnf(ctx, "reload the shared operations: %v", err)
@@ -54,4 +68,12 @@ func (s *Service) EnableShared(ctx context.Context, shared Shared) {
 		}
 		s.state.invalidate(statePath{user: user, box: box})
 	})
+}
+
+// openBoxes returns the boxes open client calls hold in this process.
+func (s *Service) openBoxes() []string {
+	if s.idle == nil {
+		return nil
+	}
+	return s.idle.opened()
 }

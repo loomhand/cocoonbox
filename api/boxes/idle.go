@@ -63,12 +63,13 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 	}
 	now := s.idle.now()
 	s.idle.keep(running)
+	s.readReaches(ctx)
 	for _, box := range slices.Sorted(maps.Keys(byBox)) {
 		m := byBox[box][0]
 		agent := s.agentBox(m.Owner, box)
 		after := s.idle.threshold(agent)
 		if after == 0 || len(byBox[box]) > 1 || m.State != machines.StateRunning || !s.ready(m) || s.ops.activeFor(box) != nil ||
-			!s.registry.HasBox(m.Owner, box) || !s.idle.idleAt(box, now, after) {
+			!s.registry.HasBox(m.Owner, box) || !s.idle.idleAt(box, now, after, s.reachedElsewhere(box)) {
 			continue
 		}
 		if !agent {
@@ -139,7 +140,8 @@ func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
 			detail = "save failed; hibernating it"
 		}
 	}
-	if !s.idle.idleAt(op.boxID, s.idle.now(), s.idle.user) {
+	s.readReaches(op.ctx)
+	if !s.idle.idleAt(op.boxID, s.idle.now(), s.idle.user, s.reachedElsewhere(op.boxID)) {
 		op.succeed("a client came back while saving; the box stays up")
 		return
 	}
@@ -171,23 +173,29 @@ func (i *idling) threshold(agent bool) time.Duration {
 	return i.user
 }
 
-func (i *idling) enter(box string) func() {
+// enter records a call to box that runs until the returned func; ended, when set, learns when it ended.
+func (i *idling) enter(box string, ended func(box string, at time.Time)) func() {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	i.last[box] = i.now()
 	i.open[box]++
 	return func() {
 		i.mu.Lock()
-		defer i.mu.Unlock()
-		i.last[box] = i.now()
+		at := i.now()
+		i.last[box] = at
 		if i.open[box]--; i.open[box] <= 0 {
 			delete(i.open, box)
+		}
+		i.mu.Unlock()
+		if ended != nil {
+			ended(box, at)
 		}
 	}
 }
 
-// idleAt reports whether box had no open call for after; a box seen for the first time starts its idle time now.
-func (i *idling) idleAt(box string, now time.Time, after time.Duration) bool {
+// idleAt reports whether box had no open call for after, with elsewhere the last reach another process saw; a box seen
+// for the first time starts its idle time now.
+func (i *idling) idleAt(box string, now time.Time, after time.Duration, elsewhere time.Time) bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if i.open[box] > 0 {
@@ -198,7 +206,17 @@ func (i *idling) idleAt(box string, now time.Time, after time.Duration) bool {
 		i.last[box] = now
 		return false
 	}
+	if elsewhere.After(at) {
+		at = elsewhere
+	}
 	return now.Sub(at) >= after
+}
+
+// opened returns the boxes that open calls hold.
+func (i *idling) opened() []string {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return slices.Collect(maps.Keys(i.open))
 }
 
 // keep forgets the last call of every box that is not running, so a box's idle time starts again at its next wake.

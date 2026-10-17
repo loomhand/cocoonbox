@@ -131,6 +131,29 @@ func TestAnOperationPastItsLeaseCountsAsGone(t *testing.T) {
 	}
 }
 
+func TestAClientOfOneProcessKeepsTheBoxUpForTheOthersIdleSweep(t *testing.T) {
+	db := clustertest.Open(t)
+	a, clock := newUserIdleEnv(t)
+	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
+	b.svc = New(a.fake, testDefaults, a.svc.registry)
+	b.svc.EnableState(a.agent, a.store, a.keys)
+	b.svc.EnableIdle(0, userIdleAfter)
+	b.svc.idle.now = a.svc.idle.now
+	for _, env := range []*stateEnv{a, b} {
+		env.svc.EnableLedger(t.Context(), db)
+		env.svc.EnableShared(t.Context(), db)
+	}
+	a.svc.hibernateIdle(t.Context())
+	done := b.svc.Reached(aliceBox)
+	defer done()
+	*clock = clock.Add(userIdleAfter)
+	b.svc.reaches.flush(t.Context(), b.svc.openBoxes())
+	a.svc.hibernateIdle(t.Context())
+	if op := newestOperation(a.svc, aliceBox); op != nil || a.fake.state(aliceBox) != machines.StateRunning {
+		t.Errorf("a's sweep started %v on a box a client of b holds, state %v", op, a.fake.state(aliceBox))
+	}
+}
+
 // newSharedPair returns two services on one machine backend, store and shared database, as two api processes see them.
 func newSharedPair(t *testing.T) (*stateEnv, *stateEnv, *cluster.Store) {
 	t.Helper()

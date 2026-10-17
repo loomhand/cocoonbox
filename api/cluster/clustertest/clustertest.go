@@ -17,6 +17,13 @@ import (
 // Open returns a store on a fresh database dropped when t ends, and skips t without COCOONBOX_TEST_DSN.
 func Open(t testing.TB) *cluster.Store {
 	t.Helper()
+	st, _ := OpenDSN(t)
+	return st
+}
+
+// OpenDSN is Open that also returns the database's connection string.
+func OpenDSN(t testing.TB) (*cluster.Store, string) {
+	t.Helper()
 	base := os.Getenv("COCOONBOX_TEST_DSN")
 	if base == "" {
 		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
@@ -38,7 +45,7 @@ func Open(t testing.TB) *cluster.Store {
 		st.Close()
 		_ = exec(base, "DROP DATABASE "+name+" WITH (FORCE)")
 	})
-	return st
+	return st, u.String()
 }
 
 func exec(dsn, sql string) error {
