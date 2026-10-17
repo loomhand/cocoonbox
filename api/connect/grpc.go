@@ -97,7 +97,7 @@ func (s *Service) SetPolicy(ctx context.Context, req *controlv1.SetPolicyRequest
 	if err = s.store.setPolicy(ctx, user, req.GetConnectorId(), req.GetTool(), policy); err != nil {
 		return nil, grantStatus(err)
 	}
-	s.watchers.notify(user)
+	s.changedFor(ctx, user)
 	g, err := s.store.grant(ctx, user, req.GetConnectorId())
 	if err != nil {
 		return nil, grantStatus(err)
@@ -129,9 +129,9 @@ func (s *Service) Approve(ctx context.Context, req *controlv1.ApproveRequest) (*
 		if err := s.store.setPolicy(ctx, user, a.connector, a.tool, policyAllow); err != nil {
 			return nil, grantStatus(err)
 		}
-		s.watchers.notify(user)
+		s.changedFor(ctx, user)
 	}
-	s.watchers.answer(user, approvalAnswered(a.id, decision))
+	s.answerFor(ctx, user, approvalAnswered(a.id, decision))
 	log.WithFunc("connect.Service.Approve").Infof(ctx, "user %s answered approval %s (%s %s): %s", user, a.id, a.connector, a.tool, decision)
 	return &controlv1.ApproveResponse{}, nil
 }

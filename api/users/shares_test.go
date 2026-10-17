@@ -230,6 +230,65 @@ func TestShareSecretOpensOnlyWithItsIDAndBox(t *testing.T) {
 	}
 }
 
+func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
+	a, gw, tenants, dsn := newTestService(t)
+	b := openTestService(t, dsn, gw, tenants)
+	go a.Listen(t.Context())
+	go b.Listen(t.Context())
+	owner, err := a.Create(t.Context(), NewUser{Name: "owner1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	box := a.Boxes(owner.ID)[0].ID
+	ended := make(chan string, 1)
+	b.OnShareEnd(func(_ context.Context, sh Share) { ended <- sh.ID })
+	sh, err := a.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: box})
+	if err != nil {
+		t.Fatalf("CreateShare: %v", err)
+	}
+	var seen auth.Share
+	if took, ok := within(2*time.Second, func() bool {
+		var found bool
+		seen, found = b.ShareBySecretSHA256(hashHex(sh.Secret))
+		return found
+	}); !ok {
+		t.Fatalf("the other api does not know the new share %s later", took)
+	}
+	if _, err := a.SetShareWrite(t.Context(), owner.ID, sh.ID, true); err != nil {
+		t.Fatalf("SetShareWrite: %v", err)
+	}
+	select {
+	case <-seen.Moded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the other api's sessions of the share did not learn the new mode")
+	}
+	renewed, err := a.RegenerateShare(t.Context(), owner.ID, sh.ID)
+	if err != nil {
+		t.Fatalf("RegenerateShare: %v", err)
+	}
+	if took, ok := within(2*time.Second, func() bool {
+		_, oldWorks := b.ShareBySecretSHA256(hashHex(sh.Secret))
+		_, newWorks := b.ShareBySecretSHA256(hashHex(renewed.Secret))
+		return !oldWorks && newWorks
+	}); !ok {
+		t.Fatalf("the other api still takes the old secret %s after a regenerate", took)
+	}
+	if err := a.RevokeShare(t.Context(), owner.ID, sh.ID); err != nil {
+		t.Fatalf("RevokeShare: %v", err)
+	}
+	select {
+	case id := <-ended:
+		if id != sh.ID {
+			t.Errorf("the other api ended share %s, want %s", id, sh.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the other api did not end the revoked share")
+	}
+	if _, ok := b.ShareBySecretSHA256(hashHex(renewed.Secret)); ok {
+		t.Error("the other api still takes the revoked share")
+	}
+}
+
 func closed(ch <-chan struct{}) bool {
 	select {
 	case <-ch:

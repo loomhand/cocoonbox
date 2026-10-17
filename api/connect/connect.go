@@ -3,6 +3,7 @@ package connect
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"net/http"
 	"regexp"
@@ -125,8 +126,10 @@ type Service struct {
 	allowPrivate bool
 	refreshes    singleflight.Group
 	watchers     *watchers
-	onInjection  InjectionFunc
-	linkAPI      string
+	// origin names this api in the signals it sends the others.
+	origin      string
+	onInjection InjectionFunc
+	linkAPI     string
 
 	mu    sync.Mutex
 	conns map[string]*conn
@@ -151,6 +154,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		http:         newHTTPClient(opts.AllowPrivate),
 		allowPrivate: opts.AllowPrivate,
 		watchers:     newWatchers(),
+		origin:       rand.Text(),
 		linkAPI:      linkAPI,
 		conns:        map[string]*conn{},
 		spends:       map[string]*spendPoll{},
@@ -209,7 +213,7 @@ func (s *Service) dropConn(id string) {
 
 // changed tells the user's open MCP streams and, for a grant that injects, the user's boxes that g changed.
 func (s *Service) changed(ctx context.Context, g *grant) {
-	s.watchers.notify(g.user)
+	s.changedFor(ctx, g.user)
 	if e := s.entry(g.kind); e != nil && len(e.inject) > 0 && s.onInjection != nil {
 		s.onInjection(ctx, g.user)
 	}
