@@ -824,6 +824,41 @@ func TestARecreatedMachineReachesABackendThatCachedTheOldOne(t *testing.T) {
 	}
 }
 
+func TestAnOpWhoseLeaseCannotBeRenewedStopsBeforeTheLeaseRunsOut(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db, err := cluster.Open(t.Context(), clustertest.EmptyDSN(t))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(db.Close)
+	b := newSharedBackend(t, fake, db)
+	b.leaseFor, b.renewEvery = 400*time.Millisecond, 20*time.Millisecond
+	m := claimRunning(t, b)
+	if _, err := db.UpdateMachine(t.Context(), boxID, func(r *cluster.Machine, _ bool) (bool, error) {
+		r.Op, r.OpUntil = opHibernate, time.Now().Add(b.leaseFor)
+		return true, nil
+	}); err != nil {
+		t.Fatalf("UpdateMachine: %v", err)
+	}
+	ctx, stop := context.WithCancel(t.Context())
+	defer stop()
+	go b.renewOp(ctx, stop, boxID, opHibernate, m.Revision)
+	time.Sleep(2 * b.leaseFor)
+	if ctx.Err() != nil {
+		t.Fatal("an op whose lease renews was stopped")
+	}
+	db.Close()
+	start := time.Now()
+	select {
+	case <-ctx.Done():
+		if waited := time.Since(start); waited >= b.leaseFor {
+			t.Errorf("the op stopped %v after the last renewal, past its %v lease", waited, b.leaseFor)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("an op whose lease could not be renewed kept running")
+	}
+}
+
 func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	db := clustertest.Open(t)

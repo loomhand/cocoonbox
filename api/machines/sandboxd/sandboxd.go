@@ -91,10 +91,11 @@ var (
 type Backend struct {
 	*Tenants
 
-	opts   Options
-	api    *client
-	ctx    context.Context
-	mirror *cluster.Mirror
+	opts                 Options
+	api                  *client
+	ctx                  context.Context
+	mirror               *cluster.Mirror
+	leaseFor, renewEvery time.Duration
 
 	mu      sync.Mutex
 	entries map[string]*entry
@@ -116,6 +117,8 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		entries: map[string]*entry{},
 		owners:  map[string]chan struct{}{},
 		views:   map[string]view{},
+
+		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
 	switch {
 	case opts.Shared != nil:
@@ -596,7 +599,7 @@ func (b *Backend) run(id, op string, revision int64, fn func(context.Context) er
 		defer cancel()
 		logger := log.WithFunc("sandboxd.Backend.run").WithField("machine", id)
 		if b.opts.Shared != nil {
-			go b.renewOp(ctx, id, op, revision)
+			go b.renewOp(ctx, cancel, id, op, revision)
 		}
 		err := fn(ctx)
 		if err != nil {
@@ -624,9 +627,11 @@ func (b *Backend) run(id, op string, revision int64, fn func(context.Context) er
 	}()
 }
 
-// renewOp extends the lease of op on machine id every cluster.LeaseRenew until ctx ends or the op does.
-func (b *Backend) renewOp(ctx context.Context, id, op string, revision int64) {
-	ticker := time.NewTicker(cluster.LeaseRenew)
+// renewOp extends the lease of op on machine id every renewEvery until ctx ends or the op does, and stops the op through stop before a lease it failed to renew runs out.
+func (b *Backend) renewOp(ctx context.Context, stop context.CancelFunc, id, op string, revision int64) {
+	logger := log.WithFunc("sandboxd.Backend.renewOp").WithField("machine", id)
+	until := time.Now().Add(b.leaseFor)
+	ticker := time.NewTicker(b.renewEvery)
 	defer ticker.Stop()
 	for {
 		select {
@@ -634,17 +639,25 @@ func (b *Backend) renewOp(ctx context.Context, id, op string, revision int64) {
 			return
 		case <-ticker.C:
 		}
-		running := false
-		if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+		running, next := false, time.Now().Add(b.leaseFor)
+		_, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
 			if running = e != nil && e.op == op && e.revision == revision; !running {
 				return e, false
 			}
-			e.opUntil = time.Now().Add(cluster.Lease)
+			e.opUntil = next
 			return e, true
-		}); err != nil {
-			log.WithFunc("sandboxd.Backend.renewOp").WithField("machine", id).Warnf(ctx, "renew the lease of %s: %v", op, err)
-		} else if !running {
+		})
+		switch {
+		case err == nil && !running:
 			return
+		case err == nil:
+			until = next
+		case !time.Now().Add(b.renewEvery).Before(until):
+			logger.Errorf(ctx, err, "stop %s, whose lease runs out unrenewed", op)
+			stop()
+			return
+		default:
+			logger.Warnf(ctx, "renew the lease of %s: %v", op, err)
 		}
 	}
 }
@@ -654,7 +667,7 @@ func (b *Backend) lease() time.Duration {
 	if b.opts.Shared == nil {
 		return 0
 	}
-	return cluster.Lease
+	return b.leaseFor
 }
 
 func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size string) error {
