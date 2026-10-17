@@ -314,7 +314,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, kep
 		return nil
 	}
 	// The index goes first: a save must never skip uploading a chunk that the deletes remove.
-	if r.indexEntries > 0 {
+	if len(garbage) > 0 {
 		next := chunkIndex{KeyID: idx.KeyID, Chunks: indexed, Generation: idx.Generation + 1, Commits: idx.Commits}
 		if err := l.retry(ctx, func() error { return l.writeVersion(ctx, p.index(), next, version) }); err != nil {
 			return err

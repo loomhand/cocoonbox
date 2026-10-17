@@ -816,6 +816,34 @@ func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T
 	}
 }
 
+func TestAGCPassThatDeletesAnUnindexedUploadFailsTheSaveThatUploadedIt(t *testing.T) {
+	st := newVersionedStore()
+	agent := newFakeAgent(st.fakeStore)
+	saver, collector := st.layer(agent), st.layer(agent)
+	p := statePath{user: alice, box: "cb-00000000000a"}
+	agent.byBox = map[string][]string{"a": hexIDs("c1")}
+	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
+	var collected error
+	ran := false
+	st.before = func(op, key string) {
+		if op != "put" || key != p.manifest(snapshotID(2)) || ran {
+			return
+		}
+		ran = true
+		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
+	}
+	_, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	if !ran || collected != nil || st.has(p.chunk(hexID("c2"))) {
+		t.Fatalf("collect after the upload ran %t, %v, c2 left %t; want it to delete the unindexed c2", ran, collected, st.has(p.chunk(hexID("c2"))))
+	}
+	if !errors.Is(err, errIndexCollected) {
+		t.Errorf("save whose upload the gc deleted = %v, want errIndexCollected", err)
+	}
+}
+
 func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 	st := newVersionedStore()
 	agent := newFakeAgent(st.fakeStore)
