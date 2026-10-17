@@ -305,8 +305,8 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 			if err := stream.Send(ev); err != nil {
 				return err
 			}
+			offset = offsetOf(ev.GetOffsetKey())
 		}
-		offset += len(events)
 		if done {
 			return nil
 		}
