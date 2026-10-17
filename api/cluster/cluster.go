@@ -55,8 +55,9 @@ type Change struct {
 // Store is the shared state in one PostgreSQL database.
 type Store struct {
 	pool *pgxpool.Pool
-	// locks holds the connections of the leader and user locks apart, with keepalives so the server frees the locks of a host that died.
-	locks *pgxpool.Pool
+	// locks holds the connections of the user locks apart, with keepalives so the server frees the locks of a host that died.
+	locks  *pgxpool.Pool
+	leader *pgx.ConnConfig
 }
 
 // Open connects to dsn and applies the cluster migrations.
@@ -77,7 +78,7 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("open the lock pool: %w", err)
 	}
-	return &Store{pool: pool, locks: locks}, nil
+	return &Store{pool: pool, locks: locks, leader: cfg.ConnConfig.Copy()}, nil
 }
 
 // Close closes the store; closing a nil store does nothing.

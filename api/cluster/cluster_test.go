@@ -356,6 +356,27 @@ func TestALeaderWhoseLinkGoesSilentStopsAndAnotherTakesOver(t *testing.T) {
 	}
 }
 
+func TestTheLeaderLeadsWhileStartLocksHoldEveryLockConnection(t *testing.T) {
+	st := clustertest.Open(t)
+	for _, user := range []string{"u-1", "u-2", "u-3", "u-4"} {
+		unlock, err := st.LockUser(t.Context(), user)
+		if err != nil {
+			t.Fatalf("LockUser %s: %v", user, err)
+		}
+		defer unlock()
+	}
+	leading := make(chan struct{})
+	go st.Lead(t.Context(), func(ctx context.Context) {
+		close(leading)
+		<-ctx.Done()
+	})
+	select {
+	case <-leading:
+	case <-time.After(15 * time.Second):
+		t.Fatal("the leader waited behind the start locks")
+	}
+}
+
 func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 	a, dsn := clustertest.OpenDSN(t)
 	b, err := cluster.Open(t.Context(), dsn)
@@ -441,7 +462,6 @@ func waitLeader(t *testing.T, mu *sync.Mutex, leading map[string]bool, not strin
 	t.Fatalf("no leader other than %q within 20 s", not)
 	return ""
 }
-
 
 // freezer forwards connections to the database of a dsn until freeze, after which it keeps them open and passes nothing.
 type freezer struct {
