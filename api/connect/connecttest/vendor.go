@@ -49,7 +49,8 @@ type Vendor struct {
 	Refusal string
 	// NoResourceMetadata serves no protected resource metadata, as a server of MCP authorization 2025-03-26.
 	NoResourceMetadata bool
-	Iss                bool
+	// Iss names the authorization server in every authorization response (RFC 9207) and says so in its metadata.
+	Iss bool
 	// ClientID and ClientSecret are a client registered by hand: no registration, and the token endpoint requires the secret.
 	ClientID     string
 	ClientSecret string
@@ -98,6 +99,7 @@ func (v *Vendor) Consent(authorizeURL string) (string, string, error) {
 	return answer.Get("code"), answer.Get("state"), err
 }
 
+// Answer answers an authorization URL the way a user's consent does, and returns every parameter it redirects with.
 func (v *Vendor) Answer(authorizeURL string) (url.Values, error) {
 	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	resp, err := c.Get(authorizeURL)

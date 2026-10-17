@@ -152,6 +152,38 @@ func TestAMixUpThroughACustomConnectorNeverHandsTheCodeToTheAttacker(t *testing.
 	if _, err := env.svc.store.grant(t.Context(), alice, "evil"); !errors.Is(err, errNoGrant) {
 		t.Errorf("grant after the mix-up: %v", err)
 	}
+
+	spoof := newMixUp(t, env.vendor)
+	spoof.claim = env.vendor.URL
+	started, err = env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: kindCustom, Name: "spoof", URL: spoof.URL + "/mcp"})
+	if err != nil {
+		t.Fatalf("Start of the spoofing server: %v", err)
+	}
+	answer = spoof.consent(t, started.URL)
+	if _, err := env.svc.Complete(t.Context(), started.Nonce, answer.Get("state"), answer.Get("code"), answer.Get("iss")); status.Code(err) != codes.PermissionDenied {
+		t.Errorf("Complete of a mix-up whose metadata claims the honest vendor's issuer: %v", err)
+	}
+	if stolen, redeemed := spoof.loot(); stolen != "" || redeemed {
+		t.Errorf("the spoofing server's token endpoint got code %q, redeemed: %t", stolen, redeemed)
+	}
+}
+
+func TestTheExpectedIssuerIsTheMetadataIssuerOnlyOnTheServersOrigin(t *testing.T) {
+	as, _ := url.Parse("https://Auth.Example.com/oauth")
+	tests := []struct {
+		claimed, want string
+	}{
+		{"https://auth.example.com/oauth", "https://auth.example.com/oauth"},
+		{"https://AUTH.EXAMPLE.COM", "https://AUTH.EXAMPLE.COM"},
+		{"https://vendor.example/", "https://Auth.Example.com/oauth"},
+		{"http://auth.example.com/oauth", "https://Auth.Example.com/oauth"},
+		{"", "https://Auth.Example.com/oauth"},
+	}
+	for _, tt := range tests {
+		if got := issuerOf(as, tt.claimed); got != tt.want {
+			t.Errorf("issuerOf(%q) = %q, want %q", tt.claimed, got, tt.want)
+		}
+	}
 }
 
 func TestASessionEndedBeforeTheCallbackRefusesIt(t *testing.T) {
@@ -1242,6 +1274,7 @@ func post(t *testing.T, target, authorization, body string) *http.Response {
 type mixUp struct {
 	*httptest.Server
 	vendor *connecttest.Vendor
+	claim  string
 
 	mu       sync.Mutex
 	client   string
@@ -1263,7 +1296,7 @@ func newMixUp(t *testing.T, vendor *connecttest.Vendor) *mixUp {
 	})
 	mux.HandleFunc("GET /.well-known/oauth-authorization-server", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.MarshalWrite(w, map[string]any{
-			"issuer": m.URL, "authorization_endpoint": m.URL + "/authorize", "token_endpoint": m.URL + "/token",
+			"issuer": cmp.Or(m.claim, m.URL), "authorization_endpoint": m.URL + "/authorize", "token_endpoint": m.URL + "/token",
 			"registration_endpoint": m.URL + "/register", "code_challenge_methods_supported": []string{"S256"},
 		})
 	})

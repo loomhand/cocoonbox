@@ -133,10 +133,7 @@ func (s *Service) discover(ctx context.Context, mcpURL string, preset client) (*
 	case !slices.Contains(as.CodeChallengeMethods, "S256"):
 		return nil, fmt.Errorf("authorization server %s does not offer PKCE S256", issuer)
 	}
-	auth := &authorization{authorizeURL: as.AuthorizationEndpoint, scopes: prm.ScopesSupported, issuer: issuer.String(), issRequired: as.IssParameterSupported}
-	if claimed, parseErr := url.Parse(as.Issuer); parseErr == nil && claimed.Scheme == issuer.Scheme && claimed.Host == issuer.Host {
-		auth.issuer = as.Issuer
-	}
+	auth := &authorization{authorizeURL: as.AuthorizationEndpoint, scopes: prm.ScopesSupported, issuer: issuerOf(issuer, as.Issuer), issRequired: as.IssParameterSupported}
 	if scope != "" {
 		auth.scopes = strings.Fields(scope)
 	}
@@ -347,6 +344,13 @@ func clientForm(form url.Values, c client) {
 			form.Set("client_secret", c.Secret)
 		}
 	}
+}
+
+func issuerOf(as *url.URL, claimed string) string {
+	if c, err := url.Parse(claimed); err == nil && claimed != "" && c.Scheme == as.Scheme && strings.EqualFold(c.Host, as.Host) {
+		return claimed
+	}
+	return as.String()
 }
 
 func pkce() (string, string) {
