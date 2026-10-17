@@ -20,6 +20,7 @@ const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
 const NODE_BIN: &str = "/usr/local/bin/node";
 const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
+const ANDROID_GUIDE: &str = "/opt/android/AGENTS.md";
 const TOOLS_DIR: &str = "/etc/cocoonbox/tools.d";
 const ROUTING_DIR: &str = "/etc/cocoonbox/routing.d";
 const MCP_IDLE: Duration = Duration::from_secs(600);
@@ -34,12 +35,16 @@ pub enum Automation {
     Plain,
     /// GUI plans and scripts on Node with the desk API.
     Desk,
+    /// Android in the box, driven through adb: the cbdroid family.
+    Android,
 }
 
 impl Automation {
     /// The automation whose guide the image holds.
     pub fn detect() -> Self {
-        if Path::new(DESK_GUIDE).exists() {
+        if Path::new(ANDROID_GUIDE).exists() {
+            Self::Android
+        } else if Path::new(DESK_GUIDE).exists() {
             Self::Desk
         } else {
             Self::Plain
@@ -49,7 +54,7 @@ impl Automation {
     /// Whether the box runs GUI plans and scripts, which also settles on a still screen, recompresses
     /// screenshots, runs action lists and offers browser_fetch.
     pub fn plans(self) -> bool {
-        self != Self::Plain
+        self == Self::Desk
     }
 }
 
@@ -166,6 +171,8 @@ pub struct ToolhostConfig {
     pub automation: Automation,
     /// Script tools the image adds, each run by its own program.
     pub plugins: Vec<Plugin>,
+    /// The adb program of an Android box.
+    pub adb_bin: PathBuf,
 }
 
 impl ToolhostConfig {
@@ -193,6 +200,7 @@ impl ToolhostConfig {
             home: home.into(),
             automation: Automation::detect(),
             plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),
+            adb_bin: optional("ADB_BIN", "adb").into(),
         })
     }
 }
