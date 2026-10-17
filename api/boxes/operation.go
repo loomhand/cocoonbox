@@ -85,10 +85,7 @@ func (o *operation) progress(phase controlv1.Phase, detail string, done, total u
 		return
 	}
 	o.last = observation{state: controlv1.BoxState_BOX_STATE_RUNNING, detail: detail}
-	o.appendLocked(phase, detail, o.last.state)
-	ev := o.events[len(o.events)-1]
-	ev.DoneBytes, ev.TotalBytes = done, total
-	o.mirrorLocked()
+	o.appendBytesLocked(phase, detail, o.last.state, done, total)
 }
 
 func (o *operation) succeed(detail string) {
@@ -132,6 +129,10 @@ func (o *operation) target() controlv1.BoxState {
 }
 
 func (o *operation) appendLocked(phase controlv1.Phase, detail string, state controlv1.BoxState) {
+	o.appendBytesLocked(phase, detail, state, 0, 0)
+}
+
+func (o *operation) appendBytesLocked(phase controlv1.Phase, detail string, state controlv1.BoxState, done, total uint64) {
 	o.events = append(o.events, &controlv1.OperationEvent{
 		OperationId: o.id,
 		Phase:       phase,
@@ -139,6 +140,8 @@ func (o *operation) appendLocked(phase controlv1.Phase, detail string, state con
 		OffsetKey:   strconv.Itoa(len(o.events) + 1),
 		AtMs:        time.Now().UnixMilli(),
 		BoxState:    state,
+		DoneBytes:   done,
+		TotalBytes:  total,
 	})
 	if phase == controlv1.Phase_PHASE_DONE || phase == controlv1.Phase_PHASE_FAILED {
 		o.finishedAt = time.Now()
@@ -150,9 +153,8 @@ func (o *operation) appendLocked(phase controlv1.Phase, detail string, state con
 	o.mirrorLocked()
 }
 
-// recordLocked is o as the ledger keeps it.
 func (o *operation) recordLocked() cluster.Operation {
-	events, _ := toEventRecords(o.events)
+	events, _ := toEventRecords(collapseTransfers(o.events))
 	return cluster.Operation{
 		ID: o.id, User: o.user, Box: o.boxID, Phase: int32(o.phase), Park: o.park, Gen: o.gen, Events: events,
 		FinishedAt: o.finishedAt, ExpiresAt: o.expires, CreatedAt: o.created,
@@ -243,4 +245,21 @@ func (r *operations) sweepLocked() {
 			}
 		}
 	}
+}
+
+// collapseTransfers keeps, of each run of transfer events, the last, so a long upload stores a bounded log.
+func collapseTransfers(events []*controlv1.OperationEvent) []*controlv1.OperationEvent {
+	out := make([]*controlv1.OperationEvent, 0, len(events))
+	for _, ev := range events {
+		if n := len(out); n > 0 && transfer(ev) && transfer(out[n-1]) {
+			out[n-1] = ev
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
+}
+
+func transfer(ev *controlv1.OperationEvent) bool {
+	return ev.GetTotalBytes() > 0
 }
