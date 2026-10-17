@@ -12,11 +12,14 @@ An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs A
 | Node and the desk runtime of cbcore, for GUI plans and scripts | `image/android/provision.sh` (`setup_desk`) |
 | cut, from an Ubuntu 24.04 cocoon image and a docker data dir with one baked redroid container | `image/android/cut.sh` |
 
+The base is `ghcr.io/loomhand/cocoonbox/android-base`, built by `.github/workflows/android-base.yml` from `image/android/base/`: `bake.sh` bakes AOSP redroid 16 (`redroid.Dockerfile`, no Google apps) into docker data, and `Dockerfile` provisions cocoon's Ubuntu 24.04 image with it. A template is the base plus a release's agent:
+
 ```bash
-sudo image/android/cut.sh -a cocoonbox-agent-linux-amd64 -d <docker data dir> ghcr.io/cocoonstack/cocoon/ubuntu:24.04 vN
+cocoon image pull ghcr.io/loomhand/cocoonbox/android-base:<sha>
+sudo image/android/cut.sh -a cocoonbox-agent-linux-amd64 ghcr.io/loomhand/cocoonbox/android-base:<sha> vN
 ```
 
-The redroid image in the docker data decides what the box ships; a public image carries AOSP only.
+With `-d <docker data dir>`, the cut provisions a plain Ubuntu 24.04 cocoon image itself. The redroid image in the docker data decides what the box ships; a public image carries AOSP only.
 
 ## Boot
 
