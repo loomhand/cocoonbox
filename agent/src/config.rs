@@ -51,10 +51,14 @@ impl Automation {
         }
     }
 
-    /// Whether the box runs GUI plans and scripts, which also settles on a still screen, recompresses
-    /// screenshots, runs action lists and offers browser_fetch.
+    /// Whether the box runs GUI plans on its desktop, with still-screen settling, scaled screenshots, action lists, browser_fetch.
     pub fn plans(self) -> bool {
         self == Self::Desk
+    }
+
+    /// Whether the box runs GUI plans and scripts on the desk API: a desk box, and an Android box through adb.
+    pub fn scripts(self) -> bool {
+        self != Self::Plain
     }
 }
 

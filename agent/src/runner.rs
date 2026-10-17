@@ -647,7 +647,7 @@ impl Runtime {
             Some(router) => self.front_route(ctx, router, &mut messages, usage).await?,
             None => None,
         };
-        let cap = if self.cfg.automation.plans() {
+        let cap = if self.cfg.automation.scripts() {
             PLAN_MAX_STEPS
         } else {
             MAIN_MAX_STEPS
