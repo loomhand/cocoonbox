@@ -41,6 +41,7 @@ const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
 const FAKE_ADB: &str = r#"echo "$*" >> "$0.log"
 case "$*" in
 "exec-out screencap -p") printf 'phone-png' ;;
+*cb.Ui) echo ready; while read -r _; do echo '<hierarchy><node text="Settings" resource-id="srv:id/served" class="android.widget.TextView" content-desc="" clickable="true" editable="false" bounds="[400,400][600,480]" /></hierarchy>'; echo '<<end>>'; done ;;
 "exec-out uiautomator dump /dev/tty") printf '%s' '<?xml version="1.0"?><hierarchy rotation="0"><node index="0" text="Settings" resource-id="" class="android.widget.TextView" content-desc="" checkable="false" checked="false" clickable="true" long-clickable="false" bounds="[400,400][600,480]" /></hierarchy>UI hierchary dumped to: /dev/tty' ;;
 esac"#;
 const THUMB: &str =
@@ -3737,7 +3738,7 @@ async fn mcp_on_an_android_box_drives_the_phone_through_adb() {
     let state = mcp.call("computer_state", json!({})).await;
     assert_eq!(
         state["content"][0]["text"],
-        "[0] TextView \"Settings\" at 500,440 clickable"
+        "[0] TextView \"Settings\" at 500,440 id=served clickable"
     );
     let tap = mcp
         .call("computer_act", json!({"action": "tap", "element": 0}))
