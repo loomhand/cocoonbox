@@ -239,7 +239,8 @@ func TestOneProcessLeadsAndAnotherTakesOverWhenItsConnectionDies(t *testing.T) {
 		t.Fatalf("connect: %v", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	if _, err := conn.Exec(t.Context(), "SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND granted AND objid <> 0"); err != nil {
+	if _, err := conn.Exec(t.Context(), `SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND granted
+		AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND classid = $1 AND objid = $2`, 0x6362, 0x6c656164); err != nil {
 		t.Fatalf("end the leader's connection: %v", err)
 	}
 	if next := waitLeader(t, &mu, leading, first); next == first {

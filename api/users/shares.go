@@ -118,6 +118,7 @@ func (s *Service) SetShareWrite(ctx context.Context, owner, id string, write boo
 		rec.write = write
 		close(rec.moded)
 		rec.moded = make(chan struct{})
+		s.shareGen++
 	}
 	return s.view(rec), nil
 }
@@ -142,6 +143,7 @@ func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share,
 	delete(s.shareSecrets, rec.secretSHA256)
 	rec.secret, rec.secretSHA256 = secret, hashHex(secret)
 	s.shareSecrets[rec.secretSHA256] = id
+	s.shareGen++
 	rec.cutStreams()
 	view := s.view(rec)
 	s.mu.Unlock()
@@ -201,6 +203,9 @@ func (s *Service) loadShares(ctx context.Context) error {
 
 // syncShares takes in the shares another api wrote: a new one, a revoked or expired one, a new secret or mode.
 func (s *Service) syncShares(ctx context.Context) error {
+	s.mu.RLock()
+	gen := s.shareGen
+	s.mu.RUnlock()
 	recs, err := s.liveShares(ctx)
 	if err != nil {
 		return err
@@ -211,6 +216,11 @@ func (s *Service) syncShares(ctx context.Context) error {
 	}
 	var gone []string
 	s.mu.Lock()
+	if s.shareGen != gen {
+		// The notify of that change follows and syncs again.
+		s.mu.Unlock()
+		return nil
+	}
 	for id := range s.shares {
 		if live[id] == nil {
 			gone = append(gone, id)
@@ -273,6 +283,7 @@ func (s *Service) shareBox(owner, id string) (string, error) {
 
 // putShare indexes rec and arms its expiry; the caller holds s.mu.
 func (s *Service) putShare(rec *shareRecord) {
+	s.shareGen++
 	rec.cut, rec.moded = make(chan struct{}), make(chan struct{})
 	s.shares[rec.id] = rec
 	s.shareSecrets[rec.secretSHA256] = rec.id
@@ -303,6 +314,7 @@ func (s *Service) endShare(ctx context.Context, id string) {
 
 // dropShare removes rec from the index and cuts its streams; the caller holds s.mu.
 func (s *Service) dropShare(rec *shareRecord) {
+	s.shareGen++
 	rec.timer.Stop()
 	delete(s.shares, rec.id)
 	delete(s.shareSecrets, rec.secretSHA256)

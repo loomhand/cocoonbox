@@ -150,8 +150,17 @@ func TestAClientOfOneProcessKeepsTheBoxUpForTheOthersIdleSweep(t *testing.T) {
 	b.svc.reaches.flush(t.Context(), b.svc.openBoxes())
 	a.svc.hibernateIdle(t.Context())
 	if op := newestOperation(a.svc, aliceBox); op != nil || a.fake.state(aliceBox) != machines.StateRunning {
-		t.Errorf("a's sweep started %v on a box a client of b holds, state %v", op, a.fake.state(aliceBox))
+		t.Errorf("a's sweep started an operation (%t) on a box a client of b holds, state %v", op != nil, a.fake.state(aliceBox))
 	}
+}
+
+func TestTheFirstReachAfterAQuietSpellReachesTheTableAtOnce(t *testing.T) {
+	_, b, db := newSharedPair(t)
+	b.svc.Reached(aliceBox)()
+	waitFor(t, "the reach is in the table before the next flush", func() bool {
+		seen, err := db.Activity(t.Context(), time.Now().Add(-time.Minute))
+		return err == nil && !seen[aliceBox].IsZero()
+	})
 }
 
 // newSharedPair returns two services on one machine backend, store and shared database, as two api processes see them.

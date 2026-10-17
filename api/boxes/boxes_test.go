@@ -350,7 +350,7 @@ func TestAUsersPolicyAddsToTheConfigsListsAndPicksItsImage(t *testing.T) {
 	defaults.Image, defaults.RebaseImages = "cbdesk:v25", []string{"cbcore:v2", "cbcore:v1"}
 	svc := New(newFakeMachines(), defaults, newFakeRegistry())
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
-	svc.EnableParking(time.Hour, nil)
+	svc.EnableParking(time.Hour, []string{"carol"})
 	policies := fakePolicies{alice: {Image: "cbcore:v1", Delta: true, Park: true}, "bob": {Image: "gone:v9", GC: true}}
 	svc.EnablePolicies(policies)
 	switch {
@@ -360,8 +360,8 @@ func TestAUsersPolicyAddsToTheConfigsListsAndPicksItsImage(t *testing.T) {
 		t.Errorf("bob's own image = %q, want none for an image no longer offered", svc.defaults.ownImage("bob"))
 	case !svc.state.deltaFor(alice) || svc.state.deltaFor("bob"):
 		t.Error("delta records follow the wrong users")
-	case !svc.park.covers(alice) || svc.park.covers("bob"):
-		t.Error("with one user's policy parking, parking covers the wrong users")
+	case !svc.park.covers(alice) || !svc.park.covers("carol") || svc.park.covers("bob"):
+		t.Error("parking covers the wrong users beside park_owners")
 	case !slices.Equal(svc.GCUsers(), []string{"bob"}):
 		t.Errorf("gc users = %q, want bob", svc.GCUsers())
 	}

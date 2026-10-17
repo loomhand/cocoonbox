@@ -26,7 +26,7 @@ const (
 type GCOptions struct {
 	Interval time.Duration
 	DryRun   bool
-	// Users limits the passes to these user ids and those Flagged returns; both empty means every user.
+	// Users limits the passes to these user ids and those Flagged returns; an empty Users means every user.
 	Users       []string
 	Flagged     func() []string
 	DeleteBatch int
@@ -76,7 +76,7 @@ func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []st
 		verb = "dry run, would remove"
 	}
 	allowed := opts.Users
-	if opts.Flagged != nil {
+	if len(allowed) > 0 && opts.Flagged != nil {
 		allowed = slices.Concat(allowed, opts.Flagged())
 	}
 	for _, user := range users {

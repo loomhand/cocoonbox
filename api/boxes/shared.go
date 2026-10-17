@@ -49,7 +49,7 @@ func (s *Service) EnableShared(ctx context.Context, shared Shared) {
 	if s.idle != nil {
 		now = func() time.Time { return s.idle.now() }
 	}
-	s.reaches, s.userLocks = newReaches(shared, now), shared
+	s.reaches, s.userLocks = newReaches(ctx, shared, now), shared
 	go s.reaches.run(ctx, s.openBoxes)
 	go shared.Listen(ctx, cluster.ChannelOperations, func() {
 		if err := s.ops.reload(ctx); err != nil {

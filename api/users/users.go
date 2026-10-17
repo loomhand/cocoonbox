@@ -151,14 +151,16 @@ type Service struct {
 	// dummyHash keeps a sign-in for an unknown name as slow as one for a known name.
 	dummyHash []byte
 
-	mu            sync.RWMutex
-	byID          map[string]record
-	byToken       map[string]tokenOwner
-	deviceUse     sync.Map
-	boxes         map[string][]Box
-	boxGen        int
-	shares        map[string]*shareRecord
-	shareSecrets  map[string]string
+	mu           sync.RWMutex
+	byID         map[string]record
+	byToken      map[string]tokenOwner
+	deviceUse    sync.Map
+	boxes        map[string][]Box
+	boxGen       int
+	shares       map[string]*shareRecord
+	shareSecrets map[string]string
+	// shareGen counts this api's share changes, so a sync read before one does not undo it.
+	shareGen      int
 	onResidential []func(context.Context, string, bool)
 	onShareEnd    []func(context.Context, Share)
 

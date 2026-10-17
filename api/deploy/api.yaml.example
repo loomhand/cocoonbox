@@ -22,11 +22,11 @@ state:
   interval: 15m
   presign_ttl: 10m
   park_after: 0s               # a box hibernated this long loses its machine and memory image; the next Ensure restores its saved state; 0s turns it off
-  park_owners: []              # with the users of user set -park=true; both empty parks everyone
+  park_owners: []              # empty parks everyone; a list parks its users and those of user set -park=true
   gc:                          # snapshot retention and chunk GC (design §25.3); no interval turns it off
     interval: 24h              # one pass at start, then every interval
     dry_run: false             # log what a pass would remove, remove nothing
-    users: []                  # user ids to collect, with the users of user set -gc=true; both empty means every user
+    users: []                  # empty collects every user; a list collects its users and those of user set -gc=true
     delete_batch: 1000         # keys per DeleteObjects request, at most 1000
   delta_users: []              # user ids whose saves write delta records (design §25.8), with the users of user set -delta=true
   conditional_writes: false    # index and timeline rewrites land only on the version read; the store must honor If-Match on PUT (R2 does)

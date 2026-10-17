@@ -49,19 +49,33 @@ func (s *Service) reachedSince(box string, t time.Time) bool {
 type reaches struct {
 	shared SharedReaches
 	now    func() time.Time
+	ctx    context.Context
 
 	mu      sync.Mutex
 	pending map[string]time.Time
 	remote  map[string]time.Time
+	// written holds the last reach of each box this process wrote.
+	written map[string]time.Time
 }
 
-func newReaches(shared SharedReaches, now func() time.Time) *reaches {
-	return &reaches{shared: shared, now: now, pending: map[string]time.Time{}, remote: map[string]time.Time{}}
+func newReaches(ctx context.Context, shared SharedReaches, now func() time.Time) *reaches {
+	return &reaches{shared: shared, now: now, ctx: ctx, pending: map[string]time.Time{}, remote: map[string]time.Time{}, written: map[string]time.Time{}}
 }
 
+// reach records a reach of box at; the first after a flush period is written at once, since a sweep in another process
+// would take the box as idle until the next flush.
 func (r *reaches) reach(box string, at time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if at.Sub(r.written[box]) >= reachFlush {
+		r.written[box] = at
+		go func() {
+			if err := r.shared.PutActivity(r.ctx, map[string]time.Time{box: at}); err != nil {
+				r.reach(box, at)
+			}
+		}()
+		return
+	}
 	if at.After(r.pending[box]) {
 		r.pending[box] = at
 	}
@@ -104,20 +118,26 @@ func (r *reaches) run(ctx context.Context, open func() []string) {
 func (r *reaches) flush(ctx context.Context, open []string) {
 	logger := log.WithFunc("boxes.reaches.flush")
 	now := r.now()
-	for _, box := range open {
-		r.reach(box, now)
-	}
 	r.mu.Lock()
+	for _, box := range open {
+		r.pending[box] = now
+	}
 	batch := maps.Clone(r.pending)
 	clear(r.pending)
+	maps.Copy(r.written, batch)
+	maps.DeleteFunc(r.written, func(_ string, at time.Time) bool { return now.Sub(at) > reachHorizon })
 	r.mu.Unlock()
 	if err := r.shared.PurgeActivity(ctx, now.Add(-reachHorizon)); err != nil {
 		logger.Warnf(ctx, "purge the old reaches: %v", err)
 	}
 	if err := r.shared.PutActivity(ctx, batch); err != nil {
 		logger.Warnf(ctx, "write the reaches of %d boxes: %v", len(batch), err)
+		r.mu.Lock()
 		for box, at := range batch {
-			r.reach(box, at)
+			if at.After(r.pending[box]) {
+				r.pending[box] = at
+			}
 		}
+		r.mu.Unlock()
 	}
 }

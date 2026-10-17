@@ -150,7 +150,10 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 	}
 	unlock, lockErr := s.lockStarts(op.ctx, op.user)
 	if lockErr != nil {
-		op.fail("park failed; the box stays hibernated")
+		if _, herr := s.sleep(context.WithoutCancel(op.ctx), m.ID); herr != nil {
+			logger.Error(op.ctx, herr, "hibernate "+m.ID+" again")
+		}
+		op.fail("park failed; the box is hibernated again")
 		return
 	}
 	defer unlock()
@@ -197,10 +200,7 @@ type parking struct {
 	flagged func() []string
 }
 
+// covers reports whether owner's boxes park: everyone's without owners, else the owners' and the flagged users'.
 func (p *parking) covers(owner string) bool {
-	owners := p.owners
-	if p.flagged != nil {
-		owners = slices.Concat(owners, p.flagged())
-	}
-	return len(owners) == 0 || slices.Contains(owners, owner)
+	return len(p.owners) == 0 || slices.Contains(p.owners, owner) || p.flagged != nil && slices.Contains(p.flagged(), owner)
 }

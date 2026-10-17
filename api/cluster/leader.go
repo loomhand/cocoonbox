@@ -37,24 +37,29 @@ func (s *Store) Lead(ctx context.Context, lead func(ctx context.Context)) {
 	}
 }
 
-// LockUser holds the advisory lock of user's starts, on a connection of its own, until the returned func runs.
+// LockUser holds the advisory lock of user's starts until the returned func runs, on a connection of the lock pool, so
+// the holders never starve the main pool of the connections their work needs.
 func (s *Store) LockUser(ctx context.Context, user string) (func(), error) {
-	conn, err := s.pool.Acquire(ctx)
+	conn, err := s.locks.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
 	key := userLock(user)
+	drop := func() {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
+		defer cancel()
+		_ = conn.Hijack().Close(closeCtx)
+	}
 	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", key); err != nil {
 		// A canceled wait may still have taken the lock, which only closing the session drops.
-		_ = conn.Hijack().Close(context.WithoutCancel(ctx))
+		drop()
 		return nil, fmt.Errorf("lock the starts of %s: %w", user, err)
 	}
 	return func() {
 		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), unlockTimeout)
 		defer cancel()
 		if _, err := conn.Exec(unlockCtx, "SELECT pg_advisory_unlock($1)", key); err != nil {
-			// A closed session releases its locks; a pooled one would keep them.
-			_ = conn.Hijack().Close(unlockCtx)
+			drop()
 			return
 		}
 		conn.Release()
