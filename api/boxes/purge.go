@@ -96,15 +96,22 @@ func (l *stateLayer) purge(ctx context.Context, p statePath, opts GCOptions, r *
 	return nil
 }
 
-// forget drops the cached state of p's box, or of every box of p's user when p names none.
+// forget drops the cached state of p's box, or of every box of p's user when p names none, and its ledger head.
 func (l *stateLayer) forget(p statePath) {
+	l.forgetCache(p)
+	if l.mirror != nil {
+		l.mirror(p, nil)
+	}
+}
+
+// forgetCache drops the cached state of p's box, or of every box of p's user when p names none.
+func (l *stateLayer) forgetCache(p statePath) {
 	match := func(k statePath) bool { return k.user == p.user && (p.box == "" || k.box == p.box) }
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	maps.DeleteFunc(l.heads, func(k statePath, _ head) bool { return match(k) })
+	maps.DeleteFunc(l.versions, func(k statePath, _ int64) bool { return match(k) })
 	maps.DeleteFunc(l.browsed, func(k statePath, _ browsed) bool { return match(k) })
 	maps.DeleteFunc(l.bases, func(k statePath, _ *snapshotRecord) bool { return match(k) })
-	if l.mirror != nil {
-		l.mirror(p, nil)
-	}
+	l.dropped++
 }

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
@@ -281,7 +282,11 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 	if err != nil {
 		return err
 	}
-	op := s.ops.get(req.GetOperationId())
+	op, err := s.ops.get(ctx, req.GetOperationId())
+	if err != nil {
+		log.WithFunc("boxes.Service.WatchOperation").Error(ctx, err, "read operation "+req.GetOperationId())
+		return status.Error(codes.Unavailable, "read operation failed")
+	}
 	if op == nil || op.user != user {
 		return status.Error(codes.NotFound, "operation not found")
 	}
@@ -292,6 +297,9 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 		}
 	}
 	for {
+		if op.remote && !time.Now().Before(op.expires) {
+			op.fail("the api process that ran the operation is gone")
+		}
 		events, done, changed := op.since(offset)
 		for _, ev := range events {
 			if err := stream.Send(ev); err != nil {
@@ -302,10 +310,23 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 		if done {
 			return nil
 		}
+		var poll <-chan time.Time
+		if op.remote {
+			changed, poll = s.ops.changed(op.id), time.After(remotePoll)
+		}
 		select {
 		case <-changed:
+		case <-poll:
 		case <-ctx.Done():
 			return status.FromContextError(ctx.Err()).Err()
+		}
+		if op.remote {
+			switch next, err := s.ops.get(ctx, op.id); {
+			case next != nil:
+				op = next
+			case err == nil:
+				return status.Error(codes.NotFound, "operation not found")
+			}
 		}
 	}
 }
