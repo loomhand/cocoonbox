@@ -3,7 +3,9 @@ package users
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -259,6 +261,38 @@ func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect
 	case <-time.After(listenRetry + 3*time.Second):
 		t.Fatal("a grant ended while the other api's listener was down kept its open call after the reconnect")
 	}
+}
+
+func TestCheckingGrantsWhileCallsStartAndEndIsSafe(t *testing.T) {
+	svc, _, _, _ := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	svc.KeepGrants(func(_ context.Context, ids []string) (map[string]bool, error) {
+		live := map[string]bool{}
+		for _, id := range ids {
+			live[id] = true
+		}
+		return live, nil
+	})
+	ctx, stop := context.WithCancel(t.Context())
+	var wg sync.WaitGroup
+	for i := range 4 {
+		wg.Go(func() {
+			for ctx.Err() == nil {
+				_, release := svc.Lifetime(u.ID, "oag_"+strconv.Itoa(i))
+				release()
+			}
+		})
+	}
+	for range 200 {
+		if err := svc.endGoneGrants(t.Context()); err != nil {
+			t.Fatalf("endGoneGrants: %v", err)
+		}
+	}
+	stop()
+	wg.Wait()
 }
 
 func TestAnEndedCredentialEndsItsCallsInEveryApi(t *testing.T) {
