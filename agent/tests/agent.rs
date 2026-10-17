@@ -1442,17 +1442,21 @@ async fn run_delegate(messages_wire: bool) {
         assert_eq!(last_user["content"][0]["type"], "tool_result");
         assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
         assert_eq!(chats.len(), 2);
+        assert!(chats.iter().all(|c| c.get("reasoning").is_none()));
         &chats[1]
     } else {
         assert_eq!(chats.len(), 6);
         assert!(gw_bodies(&h.gw_log, "/v1/messages").is_empty());
         let models: Vec<&str> = chats.iter().map(|c| c["model"].as_str().unwrap()).collect();
         assert_eq!(models[1..5], ["anthropic/claude-sonnet-5"; 4]);
+        let efforts: Vec<&Value> = chats.iter().map(|c| &c["reasoning"]).collect();
+        assert_eq!(efforts[1..5], [&json!({"effort": "low"}); 4]);
         let msgs = chats[4]["messages"].as_array().unwrap();
         let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
         assert_eq!(roles.last(), Some(&"user"), "{roles:?}");
         let shot = &msgs.last().unwrap()["content"][1]["image_url"]["url"];
         assert!(shot.as_str().unwrap().starts_with("data:image/png;base64,"));
+        assert!(chats[0].get("reasoning").is_none() && chats[5].get("reasoning").is_none());
         &chats[5]
     };
     let main_tool = main_after["messages"]
