@@ -27,6 +27,51 @@ import (
 
 const password = "correct horse battery"
 
+func TestAnUpdateFromAStaleCacheKeepsTheColumnsItDoesNotSet(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := exec(t, dsn, "UPDATE users SET no_gc = true, image = 'cbcore:v1' WHERE id = '"+u.ID+"'"); err != nil {
+		t.Fatalf("set the policy behind the cache: %v", err)
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(1)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if p := openTestService(t, dsn, gw, tenants).Policy(u.ID); p != (Policy{Image: "cbcore:v1", NoGC: true}) {
+		t.Errorf("policy after an update from a stale cache = %+v, want the one the table held", p)
+	}
+}
+
+func TestAUsersPolicyIsKeptAndReloaded(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if p := svc.Policy(u.ID); p != (Policy{}) {
+		t.Fatalf("a new user's policy = %+v, want the zero one", p)
+	}
+	want := Policy{Image: "cbcore:v1", Delta: true, NoPark: true, NoGC: true}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{Image: &want.Image, Delta: &want.Delta, NoPark: &want.NoPark, NoGC: &want.NoGC}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if p := svc.Policy(u.ID); p != want {
+		t.Errorf("policy after Update = %+v, want %+v", p, want)
+	}
+	if p := openTestService(t, dsn, gw, tenants).Policy(u.ID); p != want {
+		t.Errorf("policy another api loads = %+v, want %+v", p, want)
+	}
+	park := false
+	if _, err := svc.Update(t.Context(), u.ID, Settings{NoPark: &park}); err != nil {
+		t.Fatalf("Update of one field: %v", err)
+	}
+	if want.NoPark = false; svc.Policy(u.ID) != want {
+		t.Errorf("policy after an update of one field = %+v, want %+v", svc.Policy(u.ID), want)
+	}
+}
+
 func TestCreateIssuesBothKeysAndSealsThem(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})

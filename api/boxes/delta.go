@@ -94,7 +94,7 @@ func (m manifestParts) join() []byte {
 
 // deltaBase returns the record new saves of p's box are written against, kept in memory per box: the newest full snapshot saved on day's UTC date, nil when there is none or p's user writes full records.
 func (l *stateLayer) deltaBase(ctx context.Context, p statePath, day time.Time) (*snapshotRecord, error) {
-	if !l.deltaUsers[p.user] {
+	if l.deltaFor == nil || !l.deltaFor(p.user) {
 		return nil, nil
 	}
 	tl, found, err := l.readTimeline(ctx, p)

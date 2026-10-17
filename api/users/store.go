@@ -24,7 +24,7 @@ const (
 	uniqueViolation = "23505"
 
 	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, coalesce(max_running, 0), max_agent_boxes, created_at,
-		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed`
+		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed, image, delta, no_park, no_gc`
 )
 
 //go:embed migrations/*.sql
@@ -87,7 +87,7 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
 		var r record
 		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.MaxAgentBoxes, &r.CreatedAt,
-			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey)
+			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey, &r.Policy.Image, &r.Policy.Delta, &r.Policy.NoPark, &r.Policy.NoGC)
 		r.HasToken = r.tokenSHA256 != ""
 		return r, err
 	})
@@ -192,9 +192,50 @@ func (s *store) remove(ctx context.Context, id string) error {
 	return s.exec(ctx, "DELETE FROM users WHERE id = $1", id)
 }
 
-func (s *store) update(ctx context.Context, r record) error {
-	return s.exec(ctx, `UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0),
-		max_agent_boxes = $7, admin = $8 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes, r.Admin)
+func (s *store) update(ctx context.Context, r record, set Settings) error {
+	args := []any{r.ID}
+	var cols []string
+	add := func(col string, v any) {
+		args = append(args, v)
+		cols = append(cols, fmt.Sprintf(col, len(args)))
+	}
+	if set.Disabled != nil {
+		add("disabled = $%d", r.Disabled)
+	}
+	if set.Residential != nil {
+		add("residential = $%d", r.Residential)
+	}
+	if set.MaxBoxes != nil || set.MaxBoxesCap != nil {
+		add("max_boxes = $%d", r.MaxBoxes)
+	}
+	if set.MaxBoxesCap != nil {
+		add("max_boxes_cap = $%d", r.MaxBoxesCap)
+	}
+	if set.MaxRunning != nil {
+		add("max_running = nullif($%d, 0)", r.MaxRunning)
+	}
+	if set.MaxAgentBoxes != nil {
+		add("max_agent_boxes = $%d", r.MaxAgentBoxes)
+	}
+	if set.Admin != nil {
+		add("admin = $%d", r.Admin)
+	}
+	if set.Image != nil {
+		add("image = $%d", r.Policy.Image)
+	}
+	if set.Delta != nil {
+		add("delta = $%d", r.Policy.Delta)
+	}
+	if set.NoPark != nil {
+		add("no_park = $%d", r.Policy.NoPark)
+	}
+	if set.NoGC != nil {
+		add("no_gc = $%d", r.Policy.NoGC)
+	}
+	if len(cols) == 0 {
+		return nil
+	}
+	return s.exec(ctx, "UPDATE users SET "+strings.Join(cols, ", ")+" WHERE id = $1", args...)
 }
 
 func (s *store) setPassword(ctx context.Context, id, hash string) error {

@@ -29,6 +29,7 @@ cocoonbox-api -config /etc/cocoonbox/api.yaml user add NAME [-id ID] [-admin]
 cocoonbox-api -config /etc/cocoonbox/api.yaml user delete NAME   # only a user who never had an API token; also deletes its state objects
 printf '%s\n' "$PASSWORD" | cocoonbox-api -config /etc/cocoonbox/api.yaml user passwd NAME -stdin
 printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user token-sha256 NAME -stdin
+cocoonbox-api -config /etc/cocoonbox/api.yaml user set NAME|ID [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]   # the user's policy; every api takes it at once; deploy/host/cb-lists-to-users turns an old api.yaml's lists into these
 cocoonbox-api -config /etc/cocoonbox/api.yaml state migrate [-keyring DIR]   # per-box keys and layout to per-user; safe to rerun
 cocoonbox-api -config /etc/cocoonbox/api.yaml state expand [-user ID]       # delta records and manifests to full ones, before a rollback; api stopped
 cocoonbox-api -config /etc/cocoonbox/api.yaml state heads                    # the ledger's box heads to match every head.json, both ways; once, before turning on cluster.shared

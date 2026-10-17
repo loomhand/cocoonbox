@@ -76,6 +76,15 @@ type User struct {
 	MaxAgentBoxes *int      `json:"max_agent_boxes"`
 	HasToken      bool      `json:"has_token"`
 	CreatedAt     time.Time `json:"created_at"`
+	Policy        Policy    `json:"policy"`
+}
+
+// Policy is the image a user's boxes start from and upgrade to, whether its saves write delta records, and whether the parking and the gc skip it.
+type Policy struct {
+	Image  string `json:"image,omitempty"`
+	Delta  bool   `json:"delta,omitzero"`
+	NoPark bool   `json:"no_park,omitzero"`
+	NoGC   bool   `json:"no_gc,omitzero"`
 }
 
 // NewUser describes a user to create; an empty ID draws a fresh one, an empty Password leaves password sign-in off, an empty IDP
@@ -100,6 +109,11 @@ type Settings struct {
 	MaxBoxesCap   *int  `json:"max_boxes_cap,omitempty"`
 	MaxRunning    *int  `json:"max_running,omitempty"`
 	MaxAgentBoxes *int  `json:"max_agent_boxes,omitempty"`
+
+	Image  *string `json:"image,omitempty"`
+	Delta  *bool   `json:"delta,omitempty"`
+	NoPark *bool   `json:"no_park,omitempty"`
+	NoGC   *bool   `json:"no_gc,omitempty"`
 }
 
 // GWKeys issues, revokes and meters each user's gw key and keeps the user's own daily cap, found by owner = user id.
@@ -462,6 +476,10 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	r.Admin = deref(set.Admin, r.Admin)
 	r.Disabled = deref(set.Disabled, r.Disabled)
 	r.Residential = deref(set.Residential, r.Residential)
+	r.Policy.Image = deref(set.Image, r.Policy.Image)
+	r.Policy.Delta = deref(set.Delta, r.Policy.Delta)
+	r.Policy.NoPark = deref(set.NoPark, r.Policy.NoPark)
+	r.Policy.NoGC = deref(set.NoGC, r.Policy.NoGC)
 	switch {
 	case r.MaxBoxesCap < 1 || r.MaxBoxesCap > maxBoxesCap:
 		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d", ErrInvalid, maxBoxesCap)
@@ -487,7 +505,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			return User{}, fmt.Errorf("set gw key: %w", err)
 		}
 	}
-	if err := s.store.update(ctx, r); err != nil {
+	if err := s.store.update(ctx, r, set); err != nil {
 		return User{}, err
 	}
 	if r.Disabled && !old.Disabled {
@@ -752,6 +770,15 @@ func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) err
 	s.published(ctx, "set the state key of "+id)
 	s.put(r)
 	return nil
+}
+
+// Policy returns user id's policy; an unknown user has the zero one.
+func (s *Service) Policy(id string) Policy {
+	r, err := s.record(id)
+	if err != nil {
+		return Policy{}
+	}
+	return r.Policy
 }
 
 // MaxRunning returns how many of user id's boxes may run at once, 0 when the user takes the api's default.
