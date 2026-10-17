@@ -140,7 +140,7 @@ func main() {
 		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts)
 		library = flows.NewLibrary(st, accounts)
 	}
-	enableLedger(ctx, ledger, backend, svc)
+	enableLedger(ctx, cfg, ledger, backend, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
@@ -466,7 +466,7 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *clust
 	if err != nil {
 		return sandboxd.Options{}, err
 	}
-	return sandboxd.Options{
+	opts := sandboxd.Options{
 		URL:               cfg.Sandboxd.URL,
 		Token:             token,
 		Image:             cfg.Image,
@@ -474,8 +474,14 @@ func backendOptions(cfg *config.Config, flavors []machines.Flavor, ledger *clust
 		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
-		Ledger:            ledger,
-	}, nil
+	}
+	switch {
+	case ledger != nil && cfg.Cluster.Shared:
+		opts.Shared = ledger
+	case ledger != nil:
+		opts.Ledger = ledger
+	}
+	return opts, nil
 }
 
 func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error) {
@@ -489,11 +495,14 @@ func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error)
 	return cluster.Open(ctx, dsn)
 }
 
-func enableLedger(ctx context.Context, ledger *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
+func enableLedger(ctx context.Context, cfg *config.Config, ledger *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
 	if ledger == nil {
 		return
 	}
 	svc.EnableLedger(ctx, ledger)
+	if cfg.Cluster.Shared {
+		svc.EnableShared(ctx, ledger)
+	}
 	go verifyLedger(ctx, backend, svc)
 }
 
