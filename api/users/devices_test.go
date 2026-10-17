@@ -133,6 +133,43 @@ func TestADeviceTokenAnotherProcessIssuedWorksAtOnceAndItsRevokeReachesListeners
 	}
 }
 
+func TestACredentialsLifetimeEndsWithItsRevokeAndWithItsUser(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	stranger, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	old, _ := svc.RegenerateToken(t.Context(), u.ID)
+	cli, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
+	app, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-app", "laptop")
+	elsewhere := openTestService(t, dsn, gw, tenants)
+	tokenLife, cliLife, appLife, grantLife := svc.Lifetime(u.ID, sum(old)), svc.Lifetime(u.ID, sum(cli)), svc.Lifetime(u.ID, sum(app)), svc.Lifetime(u.ID, "oag_0123")
+	cliElsewhere := elsewhere.Lifetime(u.ID, sum(cli))
+	for name, life := range map[string]error{"token": tokenLife.Err(), "cli": cliLife.Err(), "app": appLife.Err(), "grant": grantLife.Err(), "cli elsewhere": cliElsewhere.Err()} {
+		if life != nil {
+			t.Fatalf("the %s lifetime ended before any revoke: %v", name, life)
+		}
+	}
+	if svc.Lifetime(stranger.ID, sum(cli)).Err() == nil || svc.Lifetime(u.ID, sum("cb_unknown")).Err() == nil {
+		t.Error("a lifetime for another user's token or an unknown token is live")
+	}
+	if _, err := svc.RegenerateToken(t.Context(), u.ID); err != nil || tokenLife.Err() == nil {
+		t.Errorf("RegenerateToken = %v, the replaced token's lifetime %v", err, tokenLife.Err())
+	}
+	devices, _ := svc.Devices(t.Context(), u.ID)
+	if err := svc.RevokeDevice(t.Context(), u.ID, devices[1].ID); err != nil || cliLife.Err() == nil || appLife.Err() != nil {
+		t.Errorf("RevokeDevice = %v, the revoked device's lifetime %v, the other's %v", err, cliLife.Err(), appLife.Err())
+	}
+	if err := elsewhere.Load(t.Context()); err != nil || cliElsewhere.Err() == nil {
+		t.Errorf("another api reloading the revoke = %v, its lifetime %v", err, cliElsewhere.Err())
+	}
+	svc.EndCredential("oag_0123")
+	if grantLife.Err() == nil || svc.Lifetime(u.ID, "oag_0123").Err() != nil {
+		t.Errorf("after EndCredential the grant's lifetime %v, a new one %v", grantLife.Err(), svc.Lifetime(u.ID, "oag_0123").Err())
+	}
+	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil || appLife.Err() == nil {
+		t.Errorf("disable = %v, a device's lifetime %v", err, appLife.Err())
+	}
+}
+
 func TestADeviceRecordsItsUseOncePerMinute(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})

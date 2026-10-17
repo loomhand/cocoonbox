@@ -149,6 +149,7 @@ type Service struct {
 
 	lifeMu sync.Mutex
 	lives  map[string]life
+	creds  map[string]life
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -169,6 +170,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
+		creds: map[string]life{},
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
@@ -228,6 +230,11 @@ func (s *Service) Load(ctx context.Context) error {
 	for id := range s.lives {
 		if r, ok := byID[id]; !ok || r.Disabled {
 			s.end(id)
+		}
+	}
+	for credential := range s.creds {
+		if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
+			s.endCredential(credential)
 		}
 	}
 	return nil
@@ -527,8 +534,12 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 	if err := s.store.setToken(ctx, id, sum); err != nil {
 		return err
 	}
+	old := r.tokenSHA256
 	r.tokenSHA256, r.HasToken = sum, true
 	s.put(r)
+	if old != sum {
+		s.EndCredential(old)
+	}
 	return nil
 }
 
@@ -707,22 +718,28 @@ func (s *Service) Residential(id string) bool {
 	return err == nil && r.Residential
 }
 
-func (s *Service) Lifetime(id string) context.Context {
+func (s *Service) Lifetime(id, credential string) context.Context {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if r, ok := s.byID[id]; !ok || r.Disabled {
+	if r, ok := s.byID[id]; !ok || r.Disabled || hexSHA256.MatchString(credential) && s.byToken[credential].user != id {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		return ctx
 	}
 	s.lifeMu.Lock()
 	defer s.lifeMu.Unlock()
-	l, ok := s.lives[id]
-	if !ok {
-		l.ctx, l.cancel = context.WithCancel(context.Background())
-		s.lives[id] = l
+	user := liveIn(context.Background(), s.lives, id)
+	if credential == "" {
+		return user
 	}
-	return l.ctx
+	return liveIn(user, s.creds, credential)
+}
+
+// EndCredential ends the calls bound to credential, a token's sha256 or a grant id.
+func (s *Service) EndCredential(credential string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.endCredential(credential)
 }
 
 // OnResidential registers fn to run after a user's residential setting changes.
@@ -794,6 +811,13 @@ func (s *Service) end(id string) {
 	}
 }
 
+func (s *Service) endCredential(credential string) {
+	if l, ok := s.creds[credential]; ok {
+		l.cancel()
+		delete(s.creds, credential)
+	}
+}
+
 func (s *Service) records() []record {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -852,6 +876,16 @@ func dropTokens(byToken map[string]tokenOwner, r record) {
 	for _, d := range r.devices {
 		delete(byToken, d.sha256)
 	}
+}
+
+// liveIn returns key's context in lives, made under parent when it has none or its last one ended with the parent.
+func liveIn(parent context.Context, lives map[string]life, key string) context.Context {
+	l, ok := lives[key]
+	if !ok || l.ctx.Err() != nil {
+		l.ctx, l.cancel = context.WithCancel(parent)
+		lives[key] = l
+	}
+	return l.ctx
 }
 
 func hashPassword(password string) ([]byte, error) {

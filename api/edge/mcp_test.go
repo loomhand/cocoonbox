@@ -120,6 +120,23 @@ func TestMCPStreamEndsWhenItsUserIsDisabled(t *testing.T) {
 	}
 }
 
+func TestMCPStreamEndsWhenItsTokenIsRevoked(t *testing.T) {
+	env := newMCPEnv(t)
+	req := env.request(t, http.MethodGet, boxes.BoxID("alice"), "")
+	req.Header.Set("Accept", "text/event-stream")
+	resp := env.do(t, req)
+	defer resp.Body.Close()
+	if line, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil || line != "data: 0\n" {
+		t.Fatalf("first event = %q, %v", line, err)
+	}
+	env.revoke()
+	select {
+	case <-env.upstream.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream outlived its token")
+	}
+}
+
 func TestMCPRejects(t *testing.T) {
 	env := newMCPEnv(t)
 	tests := []struct {
@@ -197,6 +214,7 @@ type mcpEnv struct {
 	shares   *fakeShares
 	users    staticUsers
 	disable  context.CancelFunc
+	revoke   context.CancelFunc
 	client   *http.Client
 }
 
@@ -211,14 +229,15 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 	shares := &fakeShares{bySum: map[string]auth.Share{}}
 	users := staticUsers{hex.EncodeToString(sum[:]): "alice", hex.EncodeToString(bobSum[:]): "bob", hex.EncodeToString(carolSum[:]): "carol"}
 	life, disable := context.WithCancel(t.Context())
-	authn := auth.New(livingUsers{staticUsers: users, life: life}, shares)
+	aliceLife, revoke := context.WithCancel(life)
+	authn := auth.New(livingUsers{staticUsers: users, life: life, credentials: map[string]context.Context{hex.EncodeToString(sum[:]): aliceLife}}, shares)
 	served := make(chan string, 16)
 	mcp := NewMCP(resolver, authn, fakeCreds{})
 	addr := serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() { served <- r.Method }()
 		mcp.ServeHTTP(w, r)
 	}))
-	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, shares: shares, users: users, disable: disable, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
+	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, shares: shares, users: users, disable: disable, revoke: revoke, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
 }
 
 func (e *mcpEnv) request(t *testing.T, method, path, body string) *http.Request {
@@ -259,10 +278,16 @@ func serveHTTP(t *testing.T, handler http.Handler) string {
 // fakeMCP answers POST with what it received and GET with one SSE event per signal on next.
 type livingUsers struct {
 	staticUsers
-	life context.Context
+	life        context.Context
+	credentials map[string]context.Context
 }
 
-func (u livingUsers) Lifetime(string) context.Context { return u.life }
+func (u livingUsers) Lifetime(_, credential string) context.Context {
+	if life, ok := u.credentials[credential]; ok {
+		return life
+	}
+	return u.life
+}
 
 type fakeMCP struct {
 	calls  atomic.Int64

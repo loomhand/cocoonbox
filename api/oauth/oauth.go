@@ -78,11 +78,13 @@ var (
 	grantTypes = []string{authorizationCode, refreshToken}
 )
 
-// Accounts returns a user, so a disabled or deleted user's tokens stop working, and issues and revokes the device tokens of first-party clients.
+// Accounts returns a user, so a disabled or deleted user's tokens stop working, issues and revokes the device tokens of first-party
+// clients, and ends the calls bound to a revoked grant, whose id is its credential.
 type Accounts interface {
 	Get(id string) (users.User, error)
 	IssueDevice(ctx context.Context, user, client, label string) (string, error)
 	RevokeDeviceSHA256(ctx context.Context, sum string) error
+	EndCredential(credential string)
 }
 
 // Options names the database, the public origin, the protected resource and the users.
@@ -251,7 +253,11 @@ func (s *Service) Grants(ctx context.Context, user string) ([]Grant, error) {
 
 // Revoke ends user's grant id and its tokens; its boxes stay the user's.
 func (s *Service) Revoke(ctx context.Context, user, id string) error {
-	return s.store.revoke(ctx, user, id)
+	if err := s.store.revoke(ctx, user, id); err != nil {
+		return err
+	}
+	s.accounts.EndCredential(id)
+	return nil
 }
 
 // MarkSeen records that user saw every grant the console lists.

@@ -137,9 +137,9 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 	return stored, cmp.Or(err, refused)
 }
 
-// refresh spends the refresh token and issues tokens in its place; a spent one revokes its grant, as a replay shows a leak.
-func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tokens issued) error {
-	var replay bool
+// refresh spends the refresh token and issues tokens in its place; a spent one revokes its grant, as a replay shows a leak, and returns its id.
+func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tokens issued) (string, error) {
+	var replayed string
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var (
 			grantID, owner string
@@ -156,7 +156,7 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 		case owner != clientID:
 			return errInvalidGrant
 		case spent:
-			replay = true
+			replayed = grantID
 			_, err = tx.Exec(ctx, "DELETE FROM oauth_grants WHERE id = $1", grantID)
 			return err
 		case !time.Now().Before(expiresAt):
@@ -170,10 +170,13 @@ func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tok
 		}
 		return insertTokens(ctx, tx, grantID, tokens, expiresAt)
 	})
-	if err == nil && replay {
-		return errInvalidGrant
+	switch {
+	case err != nil:
+		return "", err
+	case replayed != "":
+		return replayed, errInvalidGrant
 	}
-	return err
+	return "", nil
 }
 
 func (s *store) liveGrant(ctx context.Context, user, client string) (string, error) {
@@ -217,9 +220,14 @@ func (s *store) revoke(ctx context.Context, user, id string) error {
 	return nil
 }
 
-func (s *store) revokeByToken(ctx context.Context, sum, clientID string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM oauth_grants g USING oauth_tokens t WHERE t.grant_id = g.id AND t.sha256 = $1 AND g.client_id = $2`, sum, clientID)
-	return err
+func (s *store) revokeByToken(ctx context.Context, sum, clientID string) (string, error) {
+	var id string
+	err := s.pool.QueryRow(ctx, `DELETE FROM oauth_grants g USING oauth_tokens t WHERE t.grant_id = g.id AND t.sha256 = $1 AND g.client_id = $2
+		RETURNING g.id`, sum, clientID).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return id, err
 }
 
 func (s *store) markSeen(ctx context.Context, user string) error {

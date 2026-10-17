@@ -104,8 +104,11 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	if list := e.boxNames(t, newAccess); !slices.Equal(list, []string{"agent-one"}) {
 		t.Errorf("after refresh the grant sees %v", list)
 	}
-	if code, body := e.tokenError(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); code != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
-		t.Fatalf("replayed refresh token: %d %s", code, body)
+	var grants []oauth.Grant
+	e.console(t, http.MethodGet, "agents", nil, &grants)
+	life := e.users.Lifetime(e.alice, grants[0].ID)
+	if code, body := e.tokenError(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); code != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") || life.Err() == nil {
+		t.Fatalf("replayed refresh token: %d %s; the grant's calls' lifetime %v", code, body, life.Err())
 	}
 	if resp := e.mcp(t, newAccess, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || !strings.Contains(resp.Header.Get("WWW-Authenticate"), "invalid_token") {
 		t.Errorf("after a replay the grant still works: %d", resp.StatusCode)
@@ -134,9 +137,10 @@ func TestConsoleListsAcknowledgesAndRevokesGrants(t *testing.T) {
 	if !grants[0].Seen {
 		t.Error("seen did not stick")
 	}
+	life := e.users.Lifetime(e.alice, grants[0].ID)
 	e.console(t, http.MethodDelete, "agents/"+grants[0].ID, map[string]any{}, nil)
-	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("a revoked grant answers %d, want 401", resp.StatusCode)
+	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || life.Err() == nil {
+		t.Errorf("a revoked grant answers %d, want 401; its calls' lifetime %v", resp.StatusCode, life.Err())
 	}
 }
 
@@ -228,11 +232,14 @@ func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 		t.Errorf("deny redirect = %q", denied.Redirect)
 	}
 	access, refresh := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
+	var grants []oauth.Grant
+	e.console(t, http.MethodGet, "agents", nil, &grants)
+	life := e.users.Lifetime(e.alice, grants[0].ID)
 	if resp := e.post(t, oauth.RevokePath, "application/x-www-form-urlencoded", url.Values{"token": {refresh}, "client_id": {clientID}}.Encode()); resp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke: %d", resp.StatusCode)
 	}
-	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("after revocation the access token answers %d", resp.StatusCode)
+	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized || life.Err() == nil {
+		t.Errorf("after revocation the access token answers %d; its calls' lifetime %v", resp.StatusCode, life.Err())
 	}
 }
 

@@ -30,12 +30,15 @@ const (
 	bearerPrefix = "bearer "
 )
 
-type userKey struct{}
+type (
+	userKey       struct{}
+	credentialKey struct{}
+)
 
-// Users resolves the sha256 of an API token, in lowercase hex, to an enabled user id, and gives the context that ends when the user is disabled or deleted.
+// Users resolves the sha256 of an API token, in lowercase hex, to an enabled user id, and gives the context that ends when the user is disabled or deleted or the credential ends.
 type Users interface {
 	ByTokenSHA256(ctx context.Context, sum string) (string, bool)
-	Lifetime(user string) context.Context
+	Lifetime(user, credential string) context.Context
 }
 
 // Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.
@@ -112,7 +115,7 @@ func (a *Authenticator) Guest(ctx context.Context, token string) (string, error)
 	if token == "" {
 		return "", nil
 	}
-	user, ok := a.byToken(ctx, token)
+	user, _, ok := a.byToken(ctx, token)
 	if !ok {
 		return "", status.Error(codes.Unauthenticated, "invalid guest token")
 	}
@@ -127,33 +130,26 @@ func (a *Authenticator) Unary(ctx context.Context, req any, _ *grpc.UnaryServerI
 	return handler(ctx, req)
 }
 
-// Stream authenticates streaming calls, including those served by the unknown-service handler, and ends each when its user is disabled or deleted.
+// Stream authenticates streaming calls, including those served by the unknown-service handler, and ends each when its user is disabled or deleted or its token revoked.
 func (a *Authenticator) Stream(srv any, ss grpc.ServerStream, _ *grpc.StreamServerInfo, handler grpc.StreamHandler) error {
 	ctx, err := a.authenticate(ss.Context())
 	if err != nil {
 		return err
 	}
-	ctx, stop := a.Bind(ctx, User(ctx))
+	ctx, stop := a.Bind(ctx, User(ctx), Credential(ctx))
 	defer stop()
 	return handler(srv, &authedStream{ServerStream: ss, ctx: ctx})
 }
 
 // Authenticate maps an Authorization header value to its user; the error is a gRPC status.
 func (a *Authenticator) Authenticate(ctx context.Context, header string) (string, error) {
-	token, ok := Bearer(header)
-	if !ok {
-		return "", status.Error(codes.Unauthenticated, "missing bearer token")
-	}
-	user, ok := a.byToken(ctx, token)
-	if !ok {
-		return "", status.Error(codes.Unauthenticated, "invalid bearer token")
-	}
-	return user, nil
+	user, _, err := a.admit(ctx, header)
+	return user, err
 }
 
-func (a *Authenticator) Bind(ctx context.Context, user string) (context.Context, context.CancelFunc) {
+func (a *Authenticator) Bind(ctx context.Context, user, credential string) (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(ctx)
-	stop := context.AfterFunc(a.users.Lifetime(user), cancel)
+	stop := context.AfterFunc(a.users.Lifetime(user, credential), cancel)
 	return ctx, func() {
 		stop()
 		cancel()
@@ -170,12 +166,25 @@ func (a *Authenticator) Identify(ctx context.Context) string {
 	return user
 }
 
-func (a *Authenticator) byToken(ctx context.Context, token string) (string, bool) {
-	if strings.HasPrefix(token, InviteTokenPrefix) {
-		return "", false
+func (a *Authenticator) admit(ctx context.Context, header string) (string, string, error) {
+	token, ok := Bearer(header)
+	if !ok {
+		return "", "", status.Error(codes.Unauthenticated, "missing bearer token")
 	}
-	sum := sha256.Sum256([]byte(token))
-	return a.users.ByTokenSHA256(ctx, hex.EncodeToString(sum[:]))
+	user, credential, ok := a.byToken(ctx, token)
+	if !ok {
+		return "", "", status.Error(codes.Unauthenticated, "invalid bearer token")
+	}
+	return user, credential, nil
+}
+
+func (a *Authenticator) byToken(ctx context.Context, token string) (string, string, bool) {
+	if strings.HasPrefix(token, InviteTokenPrefix) {
+		return "", "", false
+	}
+	credential := TokenCredential(token)
+	user, ok := a.users.ByTokenSHA256(ctx, credential)
+	return user, credential, ok
 }
 
 func (a *Authenticator) authenticate(ctx context.Context) (context.Context, error) {
@@ -184,11 +193,11 @@ func (a *Authenticator) authenticate(ctx context.Context) (context.Context, erro
 	if len(values) != 1 {
 		return nil, status.Error(codes.Unauthenticated, "missing bearer token")
 	}
-	user, err := a.Authenticate(ctx, values[0])
+	user, credential, err := a.admit(ctx, values[0])
 	if err != nil {
 		return nil, err
 	}
-	return WithUser(ctx, user), nil
+	return context.WithValue(WithUser(ctx, user), credentialKey{}, credential), nil
 }
 
 type authedStream struct {
@@ -209,6 +218,18 @@ func Bearer(header string) (string, bool) {
 		return "", false
 	}
 	return header[len(bearerPrefix):], true
+}
+
+// TokenCredential names a user or device token's credential for Bind: its sha256 in lowercase hex.
+func TokenCredential(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
+// Credential returns the credential the interceptors admitted, "" when ctx did not pass them.
+func Credential(ctx context.Context) string {
+	credential, _ := ctx.Value(credentialKey{}).(string)
+	return credential
 }
 
 // User returns the authenticated user id, "" when ctx did not pass the interceptors.

@@ -86,6 +86,7 @@ func (s *Service) dropDevice(ctx context.Context, id, device, sum string) {
 		r.devices = slices.DeleteFunc(slices.Clone(r.devices), func(d deviceToken) bool { return d.id == device })
 		s.byID[id] = r
 	}
+	s.endCredential(sum)
 	s.mu.Unlock()
 	s.deviceUse.Delete(device)
 	if err := s.store.notify(ctx); err != nil {

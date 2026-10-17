@@ -1104,7 +1104,7 @@ func (f *fakeSessions) end(sum string) {
 
 type fakeAuthn struct{}
 
-func (fakeAuthn) Bind(ctx context.Context, _ string) (context.Context, context.CancelFunc) {
+func (fakeAuthn) Bind(ctx context.Context, _, _ string) (context.Context, context.CancelFunc) {
 	return context.WithCancel(ctx)
 }
 

@@ -396,15 +396,15 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
 	other := openTestService(t, dsn, gw, tenants)
-	life, elsewhere := svc.Lifetime(u.ID), other.Lifetime(u.ID)
+	life, elsewhere := svc.Lifetime(u.ID, ""), other.Lifetime(u.ID, "")
 	if life.Err() != nil || elsewhere.Err() != nil {
 		t.Fatalf("an enabled user's lifetime ended: %v, %v", life.Err(), elsewhere.Err())
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
-	if !gw.disabled[u.ID] || life.Err() == nil || svc.Lifetime(u.ID).Err() == nil {
-		t.Errorf("after disable: gw key off %t, lifetime %v, a new lifetime %v", gw.disabled[u.ID], life.Err(), svc.Lifetime(u.ID).Err())
+	if !gw.disabled[u.ID] || life.Err() == nil || svc.Lifetime(u.ID, "").Err() == nil {
+		t.Errorf("after disable: gw key off %t, lifetime %v, a new lifetime %v", gw.disabled[u.ID], life.Err(), svc.Lifetime(u.ID, "").Err())
 	}
 	if err := other.Load(t.Context()); err != nil || elsewhere.Err() == nil {
 		t.Errorf("another api reloading the disable = %v, its lifetime %v", err, elsewhere.Err())
@@ -416,7 +416,7 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(false)}); err != nil {
 		t.Fatalf("enable: %v", err)
 	}
-	life = svc.Lifetime(u.ID)
+	life = svc.Lifetime(u.ID, "")
 	if gw.disabled[u.ID] || life.Err() != nil {
 		t.Errorf("after enable: gw key off %t, lifetime %v", gw.disabled[u.ID], life.Err())
 	}

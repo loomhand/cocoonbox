@@ -59,7 +59,7 @@ func (s *Server) EnableGrants(grants Grants) {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	user, grant, err := s.authenticate(r)
+	user, credential, grant, err := s.authenticate(r)
 	if err != nil {
 		s.refuse(w, r, err)
 		return
@@ -87,7 +87,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	ctx, stop := s.authn.Bind(auth.WithUser(r.Context(), user), user)
+	ctx, stop := s.authn.Bind(auth.WithUser(r.Context(), user), user, credential)
 	defer stop()
 	caller := user
 	if grant != nil {
@@ -123,18 +123,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, newResponse(req.ID, result, rpcErr))
 }
 
-// authenticate maps the bearer to its user, and an access token also to its grant.
-func (s *Server) authenticate(r *http.Request) (string, *oauth.Grant, error) {
+// authenticate maps the bearer to its user and credential, and an access token also to its grant, whose id is its credential.
+func (s *Server) authenticate(r *http.Request) (string, string, *oauth.Grant, error) {
 	header := r.Header.Get("Authorization")
 	if s.grants == nil || !oauth.IsAccessToken(header) {
 		user, err := s.authn.Authenticate(r.Context(), header)
-		return user, nil, err
+		token, _ := auth.Bearer(header)
+		return user, auth.TokenCredential(token), nil, err
 	}
 	g, err := s.grants.Authenticate(r.Context(), header)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
-	return g.User, &g, nil
+	return g.User, g.ID, &g, nil
 }
 
 // refuse answers a failed authentication: 401 with the OAuth challenge, or 503 when the grant store failed.
