@@ -2,13 +2,15 @@
 # Builds the redroid image of redroid.Dockerfile and bakes a restart-primed container of it into docker-data-<arch>.tar:
 # a privileged DinD (vfs) creates and starts the container, whose bake wrapper only sleeps, so docker's restart policy
 # is armed; the VM's dockerd then replays it and the wrapper execs Android's /init.
-# usage: image/android/base/bake.sh [redroid image]   (default: build redroid.Dockerfile)
+# usage: ARCH=amd64|arm64 image/android/base/bake.sh [redroid image]   (default: build redroid.Dockerfile for ARCH)
+#   an arm64 bake on an amd64 host runs the wrapper under QEMU, which the DinD registers itself
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-ARCH=amd64
+ARCH=${ARCH:-amd64}
 SRC=${1:-}
 DIND=docker:29.8.1-dind@sha256:3f3c01aaaebf7cce837356b688b7c059a4749f10bd7660dec7c58fc454a283f0
+BINFMT=tonistiigi/binfmt:qemu-v9.2.2@sha256:1b804311fe87047a4c96d38b4b3ef6f62fca8cd125265917a9e3dc3c996c39e6
 UBUNTU=ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 DNS1=8.8.8.8
 DNS2=1.1.1.1
@@ -21,7 +23,7 @@ cleanup() {
 trap cleanup EXIT
 
 if [ -z "$SRC" ]; then
-	SRC=local/redroid-aosp:16
+	SRC=local/redroid-aosp:16-$ARCH
 	docker buildx build --load --platform "linux/$ARCH" -f "$HERE/redroid.Dockerfile" -t "$SRC" "$HERE"
 fi
 [ "$(docker image inspect --format '{{len .RootFS.Layers}}' "$SRC")" = 1 ] || { echo "$SRC is not one layer" >&2; exit 1; }
@@ -33,10 +35,11 @@ docker run -d --privileged --name cb-bake \
 	-v "$HERE/redroid-image.tar":/redroid.tar:ro \
 	-v cb-bake:/var/lib/docker \
 	"$DIND" >/dev/null
-docker exec -e SRC="$SRC" -e DNS1="$DNS1" -e DNS2="$DNS2" cb-bake sh -c '
+docker exec -e SRC="$SRC" -e DNS1="$DNS1" -e DNS2="$DNS2" -e BINFMT="$BINFMT" cb-bake sh -c '
 	set -e
 	for i in $(seq 60); do docker info >/dev/null 2>&1 && break; sleep 1; done
 	test "$(docker info --format "{{.Driver}}")" = vfs
+	docker run --privileged --rm "$BINFMT" --install arm64 >/dev/null
 	docker load -i /redroid.tar
 	docker tag "$SRC" local/redroid:vm
 	[ "$SRC" = local/redroid:vm ] || docker image rm "$SRC" >/dev/null
