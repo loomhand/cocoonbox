@@ -10,8 +10,6 @@ exec 9>/run/cocoonbox-android.lock
 flock 9
 /usr/local/lib/cocoonbox/android-mount
 systemctl start docker.service
-docker start redroid >/dev/null
-flock -u 9
 for p in udp tcp; do
 	iptables -t nat -C PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53" 2>/dev/null ||
 		iptables -t nat -I PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53"
@@ -19,6 +17,8 @@ done
 iptables -t nat -C PREROUTING -i docker0 -p tcp ! -d "$BRIDGE" -j REDIRECT --to-ports "$REDIRECT" 2>/dev/null ||
 	iptables -t nat -A PREROUTING -i docker0 -p tcp ! -d "$BRIDGE" -j REDIRECT --to-ports "$REDIRECT"
 systemctl start cocoonbox-android-dns.service cocoonbox-android-redirect.service
+docker start redroid >/dev/null
+flock -u 9
 for _ in $(seq 600); do
 	adb connect "$S" >/dev/null 2>&1 || true
 	[ "$(adb -s "$S" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break

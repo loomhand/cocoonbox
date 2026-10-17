@@ -39,7 +39,7 @@ docker exec -e SRC="$SRC" -e DNS1="$DNS1" -e DNS2="$DNS2" -e ARCH="$ARCH" cb-bak
 	docker load -i /redroid.tar
 	docker tag "$SRC" local/redroid:vm
 	[ "$SRC" = local/redroid:vm ] || docker image rm "$SRC" >/dev/null
-	docker create --platform "linux/$ARCH" --privileged --name redroid --restart unless-stopped \
+	docker create --platform "linux/$ARCH" --privileged --name redroid \
 		-p 127.0.0.1:5555:5555 -v /var/lib/redroid-data:/data \
 		local/redroid:vm \
 		androidboot.use_memfd=0 \

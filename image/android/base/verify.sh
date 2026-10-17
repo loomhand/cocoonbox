@@ -15,7 +15,6 @@ cfgs=(/var/lib/docker/containers/*/config.v2.json)
 [ "${#cfgs[@]}" = 1 ]
 grep -Fq '"Name":"/redroid"' "${cfgs[0]}"
 grep -Fq '"androidboot.use_memfd=0"' "${cfgs[0]}"
-grep -Fq '"Name":"unless-stopped"' "$(dirname "${cfgs[0]}")/hostconfig.json"
 grep -Fq '"5555/tcp":[{"HostIp":"127.0.0.1"' "$(dirname "${cfgs[0]}")/hostconfig.json"
 [ -z "$(find /var/lib/docker/vfs/dir -maxdepth 5 -path '*/priv-app/PrebuiltGmsCore' -print -quit)" ]
 for u in cocoonbox-android.path cocoonbox-android-proxy.socket cocoonbox-session.service; do systemctl is-enabled -q "$u"; done
