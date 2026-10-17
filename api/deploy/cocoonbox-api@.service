@@ -1,0 +1,37 @@
+[Unit]
+Description=cocoonbox control plane and agent edge, process %i of a pair
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=cocoonbox-api
+Group=cocoonbox-api
+LoadCredential=api.yaml:/etc/cocoonbox/api-%i.yaml
+LoadCredential=sandboxd-token:/etc/cocoonbox/sandboxd-token
+LoadCredential=store.env:/etc/cocoonbox/store.env
+LoadCredential=edge-signing.key:/etc/cocoonbox/edge-signing.key
+LoadCredential=gw-admin-token:/etc/cocoonbox/gw-admin-token
+LoadCredential=pg.dsn:/etc/cocoonbox/pg.dsn
+LoadCredential=master.key:/etc/cocoonbox/master.key
+StateDirectory=cocoonbox-api-%i
+StateDirectoryMode=0700
+ExecStart=/usr/local/bin/cocoonbox-api -config %d/api.yaml
+Restart=always
+RestartSec=2
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -51,6 +52,8 @@ const (
 	idleInterval        = time.Minute
 	injectionTimeout    = time.Minute
 	shutdownGrace       = 5 * time.Second
+	drainDelay          = 3 * time.Second
+	healthPath          = "/healthz"
 	verifyInterval      = time.Minute
 	verifyTimeout       = 30 * time.Second
 	readHeaderTimeout   = 10 * time.Second
@@ -179,6 +182,14 @@ func main() {
 	}
 
 	httpMux := http.NewServeMux()
+	var draining atomic.Bool
+	httpMux.HandleFunc("GET "+healthPath, func(w http.ResponseWriter, _ *http.Request) {
+		if draining.Load() {
+			http.Error(w, "draining", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = w.Write([]byte("ok\n"))
+	})
 	control := controlmcp.New(svc, authn)
 	httpMux.Handle(controlmcp.Path, control)
 	boxMCP := edge.NewMCP(svc, authn, signer)
@@ -239,17 +250,7 @@ func main() {
 			logger.Fatalf(ctx, err, "serve http on %s", cfg.MCPListen)
 		}
 	}()
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancelShutdown := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
-		defer cancelShutdown()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			_ = httpServer.Close()
-		}
-		timer := time.AfterFunc(shutdownGrace, server.Stop)
-		server.GracefulStop()
-		timer.Stop()
-	}()
+	go shutdown(ctx, cfg, &draining, httpServer, server)
 	loops.add(func(ctx context.Context) { svc.RunAlarms(ctx, alarmInterval) })
 	if cfg.Cluster.Shared {
 		loops.add(backend.Run)
@@ -259,6 +260,24 @@ func main() {
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
 	}
+}
+
+// shutdown stops the servers once ctx ends; with cluster.shared it first fails /healthz for drainDelay, so the
+// balancer sends new calls to the other apis before this one stops taking them.
+func shutdown(ctx context.Context, cfg *config.Config, draining *atomic.Bool, httpServer *http.Server, server *grpc.Server) {
+	<-ctx.Done()
+	draining.Store(true)
+	if cfg.Cluster.Shared {
+		time.Sleep(drainDelay)
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.WithoutCancel(ctx), shutdownGrace)
+	defer cancelShutdown()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		_ = httpServer.Close()
+	}
+	timer := time.AfterFunc(shutdownGrace, server.Stop)
+	server.GracefulStop()
+	timer.Stop()
 }
 
 // enableIdle hibernates idle boxes: an agent's after oauth.idle_hibernate while OAuth is on, a user's after user_idle_hibernate.

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Installs Caddy from its official apt repository and serves the cocoonbox routes (Caddyfile.cocoonbox) on CB_DOMAIN with an
 # automatic certificate, every other path answering 404; idempotent. Without CB_DOMAIN it only validates the site.
-# usage: sudo CB_DOMAIN=<name> deploy/host/install-caddy
+# CB_API_PAIR=1 serves a pair of api processes instead (cocoonbox-api@a and @b, Caddyfile.cocoonbox-pair) and the box door.
+# usage: sudo CB_DOMAIN=<name> [CB_API_PAIR=1] deploy/host/install-caddy
 set -euo pipefail
 export LC_ALL=C DEBIAN_FRONTEND=noninteractive
 
@@ -21,7 +22,14 @@ install -d -m 0755 /etc/systemd/system/caddy.service.d
 printf '[Service]\nRestart=on-failure\nRestartSec=5s\nOOMScoreAdjust=-900\n' > /etc/systemd/system/caddy.service.d/restart.conf
 systemctl daemon-reload
 
-{ echo "${CB_DOMAIN:-example.com} {"; cat "$SRC/Caddyfile.cocoonbox"; printf '\thandle {\n\t\trespond 404\n\t}\n}\n'; } > "$TMP/Caddyfile"
+SITE=Caddyfile.cocoonbox
+[ -z "${CB_API_PAIR:-}" ] || SITE=Caddyfile.cocoonbox-pair
+{
+	[ -z "${CB_API_PAIR:-}" ] || cat "$SRC/Caddyfile.cocoonbox-pair-top"
+	echo "${CB_DOMAIN:-example.com} {"
+	cat "$SRC/$SITE"
+	printf '\thandle {\n\t\trespond 404\n\t}\n}\n'
+} > "$TMP/Caddyfile"
 caddy validate --config "$TMP/Caddyfile" --adapter caddyfile >/dev/null
 if [ -z "${CB_DOMAIN:-}" ]; then
 	echo "caddy: the site validates; set CB_DOMAIN to install it"
