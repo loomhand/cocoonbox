@@ -6,6 +6,9 @@ set -euo pipefail
 DOCKER_VERSION=5:29.8.1-1~ubuntu.24.04~noble
 PACKAGES=(adb libjpeg-turbo8 sudo locales iptables dnscrypt-proxy)
 BUILD_PACKAGES=(gcc-13 make libc6-dev)
+UI_BUILD_PACKAGES=(openjdk-21-jdk-headless)
+R8_URL=https://dl.google.com/android/maven2/com/android/tools/r8/9.5.26/r8-9.5.26.jar
+R8_SHA256=3502f087388ce95bbf5254555927f09385dc2636873964d0bd53f3eaf4fb49ad
 # cocoonstack/scrcpy-rfb master release at 9bdf6ed2b50953589ef153c18f087bcaafc429d9
 SCRCPY_URL=https://github.com/cocoonstack/scrcpy-rfb/releases/download/master
 SCRCPY_FILES=(
@@ -94,6 +97,24 @@ setup_scrcpy() {
 	! ldd /usr/local/bin/scrcpy-rfb | grep 'not found'
 }
 
+# the UI server dumps the accessibility tree from a resident app_process, without uiautomator's start and idle wait
+setup_ui() {
+	log "UI server"
+	local tmp
+	apt-get install -y -qq --no-install-recommends "${UI_BUILD_PACKAGES[@]}" >/dev/null
+	tmp=$(mktemp -d)
+	curl -fsSL "$R8_URL" -o "$tmp/r8.jar"
+	echo "$R8_SHA256  $tmp/r8.jar" | sha256sum -c --quiet -
+	mapfile -t stubs < <(find "$SRC/ui/stubs" -name '*.java')
+	javac -nowarn --release 11 -d "$tmp/stubs" "${stubs[@]}"
+	javac -nowarn --release 11 -cp "$tmp/stubs" -d "$tmp/classes" "$SRC/ui/src/cb/Ui.java"
+	java -cp "$tmp/r8.jar" com.android.tools.r8.D8 --min-api 30 --output "$tmp/cb-ui.jar" "$tmp/classes/cb/Ui.class"
+	install -D -m 0644 "$tmp/cb-ui.jar" /usr/local/share/cocoonbox/cb-ui.jar
+	rm -rf "$tmp"
+	apt-get purge -y -qq --auto-remove "${UI_BUILD_PACKAGES[@]}" >/dev/null
+	apt-get clean
+}
+
 # adb stays on loopback; the box has no NIC, but nothing outside the VM needs it
 setup_redroid() {
 	log "redroid"
@@ -131,6 +152,7 @@ setup_ashmem
 setup_users
 install_rootfs
 setup_scrcpy
+setup_ui
 setup_redroid
 setup_cocoonbox_dirs
 enable_units
