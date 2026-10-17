@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json/v2"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -146,6 +147,15 @@ func sameOperation(a, b cluster.Operation) bool {
 func headBytes(h head) []byte {
 	raw, _ := json.Marshal(h)
 	return raw
+}
+
+func decodeHead(row cluster.Head) (head, error) {
+	var h head
+	if err := json.Unmarshal(row.Head, &h); err != nil {
+		return head{}, fmt.Errorf("decode the shared head of %s: %w", row.Box, err)
+	}
+	h.version = row.Version
+	return h, nil
 }
 
 func comparePaths(a, b statePath) int {

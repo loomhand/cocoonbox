@@ -2,7 +2,6 @@ package boxes
 
 import (
 	"context"
-	"strings"
 
 	"github.com/projecteru2/core/log"
 
@@ -47,11 +46,16 @@ func (s *Service) EnableShared(ctx context.Context, shared Shared) {
 	}
 	s.state.shared = shared
 	go shared.Listen(ctx, cluster.ChannelHeads, s.state.invalidateAll, func(payload string) {
-		user, box, _ := strings.Cut(payload, "/")
-		if box == "" {
-			s.state.forgetCache(statePath{user: user})
-			return
+		row, err := cluster.ParseHeadNotify(payload)
+		switch {
+		case err != nil:
+			logger.Warnf(ctx, "take a heads notify: %v", err)
+		case row.Version == 0:
+			s.state.forgetCache(statePath{user: row.User, box: row.Box})
+		default:
+			if err := s.state.learnHead(row); err != nil {
+				logger.Warnf(ctx, "take a heads notify: %v", err)
+			}
 		}
-		s.state.invalidate(statePath{user: user, box: box})
 	})
 }
