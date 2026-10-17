@@ -115,6 +115,8 @@ type Service struct {
 	activity  Activity
 	ledger    *cluster.Store
 	mirror    *cluster.Mirror
+	reaches   *reaches
+	userLocks *cluster.Store
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex
@@ -134,7 +136,10 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	unlock := s.lockStarts(user)
+	unlock, err := s.lockStarts(ctx, user)
+	if err != nil {
+		return nil, err
+	}
 	defer unlock()
 	box := req.GetBoxId()
 	if box == "" {
@@ -444,8 +449,9 @@ func (s *Service) boxName(user, box string) string {
 	return ""
 }
 
-// lockStarts serializes the requests that may start or delete a machine of user, so two cannot both pass the running limit or race a delete.
-func (s *Service) lockStarts(user string) func() {
+// lockStarts serializes the requests that may start or delete a machine of user, so two cannot both pass the running
+// limit or race a delete; with a shared table it holds the user's lock in every api too.
+func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 	s.mu.Lock()
 	l := s.starts[user]
 	if l == nil {
@@ -454,7 +460,19 @@ func (s *Service) lockStarts(user string) func() {
 	}
 	s.mu.Unlock()
 	l.Lock()
-	return l.Unlock
+	if s.userLocks == nil {
+		return l.Unlock, nil
+	}
+	unlock, err := s.userLocks.LockUser(ctx, user)
+	if err != nil {
+		l.Unlock()
+		log.WithFunc("boxes.Service.lockStarts").WithField("user", user).Error(ctx, err, "lock the starts")
+		return nil, status.Error(codes.Unavailable, "lock the starts of the user failed")
+	}
+	return func() {
+		unlock()
+		l.Unlock()
+	}, nil
 }
 
 func (s *Service) withOperation(ctx context.Context, user, box string, m machines.Machine, phase controlv1.Phase) *controlv1.EnsureResponse {

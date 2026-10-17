@@ -137,9 +137,19 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
 	}
-	go b.loop(refreshInterval, b.refresh)
-	go b.loop(renewInterval, b.renew)
+	if opts.Shared == nil {
+		go b.Run(ctx)
+	}
 	return b, nil
+}
+
+// Run re-reads the claims every refreshInterval and renews their leases every renewInterval until ctx ends; New runs it
+// itself unless a shared table lets one api do it for all.
+func (b *Backend) Run(ctx context.Context) {
+	var wg sync.WaitGroup
+	wg.Go(func() { b.loop(ctx, refreshInterval, b.refresh) })
+	wg.Go(func() { b.loop(ctx, renewInterval, b.renew) })
+	wg.Wait()
 }
 
 func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Machine, machines.Action, error) {
@@ -1119,18 +1129,18 @@ func (b *Backend) differences(ctx context.Context) ([]string, error) {
 	return differ, nil
 }
 
-func (b *Backend) loop(interval time.Duration, fn func(context.Context) error) {
+func (b *Backend) loop(ctx context.Context, interval time.Duration, fn func(context.Context) error) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		select {
-		case <-b.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 		}
-		ctx, cancel := context.WithTimeout(b.ctx, requestTimeout)
-		if err := fn(ctx); err != nil {
-			log.WithFunc("sandboxd.Backend.loop").Warnf(ctx, "every %s: %v", interval, err)
+		callCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		if err := fn(callCtx); err != nil {
+			log.WithFunc("sandboxd.Backend.loop").Warnf(callCtx, "every %s: %v", interval, err)
 		}
 		cancel()
 	}

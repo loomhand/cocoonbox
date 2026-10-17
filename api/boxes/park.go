@@ -105,7 +105,10 @@ func (s *Service) idleSince(ctx context.Context, box string, m machines.Machine)
 // startPark wakes m, the only machine of box, and runs its park as an operation; nil when the box changed since the sweep read it.
 func (s *Service) startPark(ctx context.Context, box string, m machines.Machine) *operation {
 	logger := log.WithFunc("boxes.Service.startPark").WithField("box", box)
-	unlock := s.lockStarts(m.Owner)
+	unlock, err := s.lockStarts(ctx, m.Owner)
+	if err != nil {
+		return nil
+	}
 	defer unlock()
 	cur, err := s.current(ctx, m.Owner, box)
 	if err != nil || cur.ID != m.ID || cur.State != machines.StateHibernated || s.ops.activeFor(box) != nil {
@@ -145,7 +148,14 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 	if err == nil {
 		rec, err = s.save(op, op.user, running, agentv1.Consistency_CONSISTENCY_QUIESCED)
 	}
-	unlock := s.lockStarts(op.user)
+	unlock, lockErr := s.lockStarts(op.ctx, op.user)
+	if lockErr != nil {
+		if _, herr := s.sleep(context.WithoutCancel(op.ctx), m.ID); herr != nil {
+			logger.Error(op.ctx, herr, "hibernate "+m.ID+" again")
+		}
+		op.fail("park failed; the box is hibernated again")
+		return
+	}
 	defer unlock()
 	if s.ops.activeFor(op.boxID) != op || err == nil && !s.ops.claim(op.ctx, op) {
 		logger.Infof(op.ctx, "a client took %s over; it stays", m.ID)

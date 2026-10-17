@@ -82,6 +82,7 @@ func main() {
 	flavors := configFlavors(cfg)
 	pool := dialer.NewPool()
 	defer pool.Close()
+	var loops leaderLoops
 	ledger, err := openLedger(ctx, cfg)
 	if err != nil {
 		logger.Fatalf(ctx, err, "open the cluster ledger")
@@ -106,7 +107,7 @@ func main() {
 			logger.Fatalf(ctx, err, "open connect")
 		}
 		defer broker.Close()
-		go broker.RunPurge(ctx)
+		loops.add(broker.RunPurge)
 		go broker.RunSignals(ctx)
 	}
 	svc := boxes.New(backend, boxes.Defaults{
@@ -131,18 +132,18 @@ func main() {
 		}
 		defer grants.Close()
 	}
-	enableIdle(ctx, cfg, svc, grants != nil, pool)
+	enableIdle(ctx, cfg, svc, grants != nil, pool, &loops)
 	var library *flows.Library
 	if cfg.State.Bucket != "" {
 		var st *s3.S3
 		if st, err = newStore(cfg); err != nil {
 			logger.Fatalf(ctx, err, "open the state store")
 		}
-		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts)
+		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts, &loops)
 		library = flows.NewLibrary(st, accounts)
 	}
 	enableLedger(ctx, cfg, ledger, backend, svc)
-	signer, err := enableProvisioning(ctx, cfg, svc, accounts)
+	signer, err := enableProvisioning(ctx, cfg, svc, accounts, &loops)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
 	}
@@ -189,7 +190,7 @@ func main() {
 		httpMux.Handle(connect.MCPPath, broker.NewDoor(authn, connect.DoorMCP))
 		httpMux.HandleFunc("GET "+connect.CallbackPath, web.ConnectCallback)
 		httpMux.HandleFunc("GET "+connect.ClientMetadataPath, broker.ServeClientMetadata)
-		enableBoxConnect(ctx, cfg, svc, broker, authn, library)
+		enableBoxConnect(ctx, cfg, svc, broker, authn, library, &loops)
 	}
 	if grants != nil {
 		control.EnableGrants(grants)
@@ -209,7 +210,7 @@ func main() {
 		defer sig.Close()
 		web.EnableSignup(sig)
 		httpMux.HandleFunc("GET "+signup.CallbackPath, web.LoginCallback)
-		go sig.Run(ctx)
+		loops.add(sig.Run)
 	}
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
@@ -245,7 +246,11 @@ func main() {
 		server.GracefulStop()
 		timer.Stop()
 	}()
-	go svc.RunAlarms(ctx, alarmInterval)
+	loops.add(func(ctx context.Context) { svc.RunAlarms(ctx, alarmInterval) })
+	if cfg.Cluster.Shared {
+		loops.add(backend.Run)
+	}
+	loops.run(ctx, ledger)
 	logger.Infof(ctx, "serving gRPC on %s and MCP and the console on %s for %d users", cfg.Listen, cfg.MCPListen, len(accounts.List()))
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
@@ -253,7 +258,7 @@ func main() {
 }
 
 // enableIdle hibernates idle boxes: an agent's after oauth.idle_hibernate while OAuth is on, a user's after user_idle_hibernate.
-func enableIdle(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents bool, pool *dialer.Pool) {
+func enableIdle(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents bool, pool *dialer.Pool, loops *leaderLoops) {
 	agentIdle, userIdle := time.Duration(0), time.Duration(cfg.UserIdleHibernate)
 	if agents {
 		agentIdle = time.Duration(*cfg.OAuth.IdleHibernate)
@@ -263,11 +268,11 @@ func enableIdle(ctx context.Context, cfg *config.Config, svc *boxes.Service, age
 	}
 	svc.EnableIdle(agentIdle, userIdle)
 	svc.EnableActivity(dialer.New(pool))
-	go svc.RunIdle(ctx, idleInterval)
+	loops.add(func(ctx context.Context) { svc.RunIdle(ctx, idleInterval) })
 	log.WithFunc("main.enableIdle").Infof(ctx, "idle boxes hibernate: an agent's after %s, a user's after %s (0s: never)", agentIdle, userIdle)
 }
 
-func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Service, accounts *users.Service) (*credential.Signer, error) {
+func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Service, accounts *users.Service, loops *leaderLoops) (*credential.Signer, error) {
 	signer, err := credential.Load(cfg.Provision.SigningKeyFile)
 	if err != nil {
 		return nil, err
@@ -281,14 +286,14 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 			}
 		})
 	}
-	go svc.RunProvisioner(ctx, provisionInterval)
+	loops.add(func(ctx context.Context) { svc.RunProvisioner(ctx, provisionInterval) })
 	log.WithFunc("main.enableProvisioning").Infof(ctx, "provisioning every box with key %s, residential exit %q", signer.KeyID(), cfg.Provision.ResidentialUpstream)
 	return signer, nil
 }
 
 // enableBoxConnect gives every box its door key and its owner's credentials, and serves the box door on connect.box_listen,
 // with the flow library when there is one.
-func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service, authn *auth.Authenticator, library *flows.Library) {
+func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service, authn *auth.Authenticator, library *flows.Library, loops *leaderLoops) {
 	logger := log.WithFunc("main.enableBoxConnect")
 	svc.EnableConnect(broker)
 	if err := svc.PruneDoorKeys(ctx); err != nil {
@@ -303,7 +308,7 @@ func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Servic
 			}
 		}()
 	})
-	go svc.RunCredentials(ctx, credentialsInterval)
+	loops.add(func(ctx context.Context) { svc.RunCredentials(ctx, credentialsInterval) })
 	if cfg.Connect.BoxListen == "" {
 		return
 	}
@@ -543,27 +548,30 @@ func machineFlavor(f config.Flavor) machines.Flavor {
 	return machines.Flavor{VCPUs: f.VCPUs, MemoryMiB: f.MemoryMiB, DiskGiB: f.DiskGiB}
 }
 
-func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer, st *s3.S3, accounts *users.Service) {
+func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer, st *s3.S3, accounts *users.Service, loops *leaderLoops) {
 	svc.EnableState(agents, st, accounts)
 	svc.EnableDeltas(cfg.State.DeltaUsers)
 	if cfg.State.ConditionalWrites {
 		svc.EnableConditionalWrites(st)
 	}
-	go svc.RunScheduler(ctx, time.Duration(cfg.State.Interval))
+	loops.add(func(ctx context.Context) { svc.RunScheduler(ctx, time.Duration(cfg.State.Interval)) })
 	logger := log.WithFunc("main.enableState")
 	logger.Infof(ctx, "state layer on %s/%s, saves every %s, delta records for %q, conditional writes %t", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval), cfg.State.DeltaUsers, cfg.State.ConditionalWrites)
 	if after := time.Duration(cfg.State.ParkAfter); after > 0 {
 		svc.EnableParking(after, cfg.State.ParkOwners)
-		go svc.RunParking(ctx, parkInterval)
+		loops.add(func(ctx context.Context) { svc.RunParking(ctx, parkInterval) })
 		logger.Infof(ctx, "parking boxes hibernated for %s, owners %q (empty: everyone)", after, cfg.State.ParkOwners)
 	}
 	if gc := cfg.State.GC; gc.Interval > 0 {
-		go svc.RunGC(ctx, boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, DeleteBatch: gc.DeleteBatch, DeletedRetention: time.Duration(gc.DeletedRetention)}, func() []string {
-			var ids []string
-			for _, u := range accounts.List() {
-				ids = append(ids, u.ID)
-			}
-			return ids
+		gcOpts := boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, DeleteBatch: gc.DeleteBatch, DeletedRetention: time.Duration(gc.DeletedRetention)}
+		loops.add(func(ctx context.Context) {
+			svc.RunGC(ctx, gcOpts, func() []string {
+				var ids []string
+				for _, u := range accounts.List() {
+					ids = append(ids, u.ID)
+				}
+				return ids
+			})
 		})
 		logger.Infof(ctx, "state gc every %s, dry run %t, users %q, deleted boxes kept %s", time.Duration(gc.Interval), gc.DryRun, gc.Users, time.Duration(gc.DeletedRetention))
 	}
