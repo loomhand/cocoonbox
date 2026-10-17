@@ -14,7 +14,7 @@ import (
 )
 
 func TestTwoProcessesCommitHeadsInTurnAndRefuseAStaleOne(t *testing.T) {
-	a, b, _ := newSharedPair(t)
+	a, b, _ := newSharedPair(t, t.Context())
 	a.agent.chunks = hexIDs("c1")
 	a.save(t)
 	p := statePath{user: alice, box: aliceBox}
@@ -32,13 +32,44 @@ func TestTwoProcessesCommitHeadsInTurnAndRefuseAStaleOne(t *testing.T) {
 	if parent := a.agent.lastPlan().GetParent(); parent != snapshotID(2) {
 		t.Errorf("a planned on %q, want b's snapshot", parent)
 	}
-	if _, err := a.svc.state.swapHead(t.Context(), p, head{Latest: "stale"}, 1); err == nil || !strings.Contains(err.Error(), "another api process") {
+	if _, err := a.svc.state.swapHead(t.Context(), p, head{Latest: "stale", version: 1}); err == nil || !strings.Contains(err.Error(), "another api process") {
 		t.Errorf("swapHead on an old version = %v, want a refusal", err)
 	}
 }
 
+func TestAHeadsNotifyFillsTheCacheWithoutDroppingANewerHead(t *testing.T) {
+	a, b, db := newSharedPair(t, t.Context())
+	p, mark := statePath{user: alice, box: aliceBox}, statePath{user: alice, box: "cb-mark"}
+	settle := func(latest string) {
+		t.Helper()
+		puts := 0
+		waitFor(t, "both take a notify of "+latest, func() bool {
+			if puts%10 == 0 {
+				if err := db.PutHead(t.Context(), alice, mark.box, headBytes(head{Latest: latest, SavedAtMs: int64(puts)})); err != nil {
+					t.Fatalf("PutHead: %v", err)
+				}
+			}
+			puts++
+			return cachedHead(a, mark).Latest == latest && cachedHead(b, mark).Latest == latest
+		})
+	}
+	settle("listening")
+	a.agent.chunks = hexIDs("c1")
+	a.save(t)
+	settle("after")
+	if h := cachedHead(a, p); h.Latest != snapshotID(1) || h.version != cachedHead(b, p).version {
+		t.Fatalf("a caches %+v after its own notify, b %+v; want the same head", h, cachedHead(b, p))
+	}
+	if err := b.svc.state.learnHead(cluster.Head{User: alice, Box: aliceBox, Head: headBytes(head{Latest: "old"}), Version: 0}); err != nil {
+		t.Fatalf("learnHead: %v", err)
+	}
+	if h := cachedHead(b, p); h.Latest != snapshotID(1) {
+		t.Errorf("an older head replaced the cached one: %+v", h)
+	}
+}
+
 func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
-	a, b, _ := newSharedPair(t)
+	a, b, _ := newSharedPair(t, t.Context())
 	gate := make(chan struct{})
 	a.agent.onUpload = func(machines.Endpoint) { <-gate }
 	a.agent.chunks = hexIDs("c1")
@@ -62,7 +93,7 @@ func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 }
 
 func TestAnOperationAnotherProcessSupersedesFailsWhereItRuns(t *testing.T) {
-	a, b, _ := newSharedPair(t)
+	a, b, _ := newSharedPair(t, t.Context())
 	gate := make(chan struct{})
 	defer close(gate)
 	a.agent.onUpload = func(machines.Endpoint) { <-gate }
@@ -88,16 +119,8 @@ func TestAnOperationAnotherProcessSupersedesFailsWhereItRuns(t *testing.T) {
 }
 
 func TestTheOperationsOfAStoppedProcessEndAndFreeTheBox(t *testing.T) {
-	db := clustertest.Open(t)
 	aCtx, stopA := context.WithCancel(t.Context())
-	a, b := newStateEnv(t), (*stateEnv)(nil)
-	b = &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
-	b.svc = New(a.fake, testDefaults, a.svc.registry)
-	b.svc.EnableState(a.agent, a.store, a.keys)
-	a.svc.EnableLedger(aCtx, db)
-	a.svc.EnableShared(aCtx, db)
-	b.svc.EnableLedger(t.Context(), db)
-	b.svc.EnableShared(t.Context(), db)
+	a, b, _ := newSharedPair(t, aCtx)
 	gate := make(chan struct{})
 	defer close(gate)
 	a.agent.onUpload = func(machines.Endpoint) { <-gate }
@@ -116,7 +139,7 @@ func TestTheOperationsOfAStoppedProcessEndAndFreeTheBox(t *testing.T) {
 }
 
 func TestAnOperationPastItsLeaseCountsAsGone(t *testing.T) {
-	_, b, db := newSharedPair(t)
+	_, b, db := newSharedPair(t, t.Context())
 	if err := db.PutOperation(t.Context(), cluster.Operation{
 		ID: "op-dead", User: alice, Box: aliceBox, Phase: int32(controlv1.Phase_PHASE_SAVING), Events: []byte(`[]`),
 		ExpiresAt: time.Now().Add(200 * time.Millisecond), CreatedAt: time.Now(),
@@ -131,18 +154,18 @@ func TestAnOperationPastItsLeaseCountsAsGone(t *testing.T) {
 	}
 }
 
-// newSharedPair returns two services on one machine backend, store and shared database, as two api processes see them.
-func newSharedPair(t *testing.T) (*stateEnv, *stateEnv, *cluster.Store) {
+// newSharedPair returns two services on one machine backend, store and shared database, as two api processes see them; a's process runs until aCtx ends.
+func newSharedPair(t *testing.T, aCtx context.Context) (*stateEnv, *stateEnv, *cluster.Store) {
 	t.Helper()
 	db := clustertest.Open(t)
 	a := newStateEnv(t)
 	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
 	b.svc = New(a.fake, testDefaults, a.svc.registry)
 	b.svc.EnableState(a.agent, a.store, a.keys)
-	for _, env := range []*stateEnv{a, b} {
-		env.svc.EnableLedger(t.Context(), db)
-		env.svc.EnableShared(t.Context(), db)
-	}
+	a.svc.EnableLedger(aCtx, db)
+	a.svc.EnableShared(aCtx, db)
+	b.svc.EnableLedger(t.Context(), db)
+	b.svc.EnableShared(t.Context(), db)
 	return a, b, db
 }
 
@@ -164,4 +187,10 @@ func lastEventDetail(op *operation) string {
 		return ""
 	}
 	return op.events[len(op.events)-1].GetDetail()
+}
+
+func cachedHead(env *stateEnv, p statePath) head {
+	env.svc.state.mu.Lock()
+	defer env.svc.state.mu.Unlock()
+	return env.svc.state.heads[p]
 }
