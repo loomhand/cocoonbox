@@ -168,7 +168,7 @@ func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T
 		t.Fatalf("b's head before the park = %+v, %v", h, err)
 	}
 	e.clock = time.Now()
-	e.svc.EnableParking(parkAfter, nil)
+	e.svc.EnableParking(parkAfter)
 	e.svc.park.now = func() time.Time { return e.clock }
 	if _, err := e.svc.Hibernate(e.ctx, &controlv1.BoxRef{BoxId: aliceBox}); err != nil {
 		t.Fatalf("Hibernate: %v", err)

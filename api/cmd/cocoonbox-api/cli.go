@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
@@ -28,6 +29,7 @@ const (
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
+  cocoonbox-api [-config FILE] user set NAME [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]
   cocoonbox-api [-config FILE] state migrate [-keyring DIR]
   cocoonbox-api [-config FILE] state expand [-user ID]
   cocoonbox-api [-config FILE] state heads
@@ -64,6 +66,9 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return errors.New(cliUsage)
 	}
 	verb, name := args[1], args[2]
+	if verb == "set" {
+		return setPolicy(ctx, cfg, name, args[3:], stdout)
+	}
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	id := fs.String("id", "", "user id; migrated users keep their old name so their box id stays")
 	admin := fs.Bool("admin", false, "make the user an admin")
@@ -122,6 +127,51 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return err
 	}
 	return written("%s of user %s updated\n", verb, u.Name)
+}
+
+// setPolicy sets the policy fields of user name that args name, refusing an image Rebase does not offer.
+func setPolicy(ctx context.Context, cfg *config.Config, name string, args []string, stdout io.Writer) error {
+	flags := flag.NewFlagSet("set", flag.ContinueOnError)
+	image := flags.String("image", "", "the image the user's boxes start from and upgrade to; empty takes the default")
+	delta := flags.Bool("delta", false, "the user's saves write delta records")
+	noPark := flags.Bool("no-park", false, "the parking skips the user's boxes")
+	noGC := flags.Bool("no-gc", false, "the gc skips the user's state")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	var set users.Settings
+	flags.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "image":
+			set.Image = image
+		case "delta":
+			set.Delta = delta
+		case "no-park":
+			set.NoPark = noPark
+		case "no-gc":
+			set.NoGC = noGC
+		}
+	})
+	if set == (users.Settings{}) {
+		return errors.New("user set needs -image, -delta, -no-park or -no-gc")
+	}
+	if *image != "" && *image != cfg.Image && !slices.Contains(cfg.RebaseImages, *image) {
+		return fmt.Errorf("image %q is neither the default image nor in rebase_images", *image)
+	}
+	accounts, err := openUsers(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer accounts.Close()
+	u, err := accounts.ByName(name)
+	if err != nil {
+		return err
+	}
+	if u, err = accounts.Update(ctx, u.ID, set); err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "policy of user %s: image %q, delta %t, no park %t, no gc %t\n", u.Name, u.Policy.Image, u.Policy.Delta, u.Policy.NoPark, u.Policy.NoGC)
+	return err
 }
 
 func removeUser(ctx context.Context, cfg *config.Config, accounts *users.Service, u users.User) (int, error) {

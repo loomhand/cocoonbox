@@ -18,9 +18,9 @@ import (
 // metaSlept records when the api last hibernated a machine, in Unix milliseconds.
 const metaSlept = "slept"
 
-// EnableParking parks every box of owners, or of everyone when owners is empty, hibernated longer than after: RunParking saves it and removes its machine, and the next Ensure restores it.
-func (s *Service) EnableParking(after time.Duration, owners []string) {
-	s.park = &parking{after: after, owners: owners, now: time.Now}
+// EnableParking parks every box hibernated longer than after whose owner's policy does not skip it: RunParking saves it and removes its machine, and the next Ensure restores it.
+func (s *Service) EnableParking(after time.Duration) {
+	s.park = &parking{after: after, now: time.Now}
 }
 
 // RunParking parks the boxes idle past the threshold every interval until ctx ends.
@@ -57,7 +57,7 @@ func (s *Service) parkIdle(ctx context.Context) {
 	}
 	for _, box := range slices.Sorted(maps.Keys(byBox)) {
 		m := byBox[box][0]
-		if len(byBox[box]) > 1 || held[box] || m.State != machines.StateHibernated || !s.park.covers(m.Owner) || !s.registry.HasBox(m.Owner, box) {
+		if len(byBox[box]) > 1 || held[box] || m.State != machines.StateHibernated || s.registry.Policy(m.Owner).NoPark || !s.registry.HasBox(m.Owner, box) {
 			continue
 		}
 		if now.Sub(s.idleSince(ctx, box, m)) < s.park.after {
@@ -196,11 +196,6 @@ func (s *Service) sleep(ctx context.Context, id string) (machines.Machine, error
 }
 
 type parking struct {
-	after  time.Duration
-	owners []string
-	now    func() time.Time
-}
-
-func (p *parking) covers(owner string) bool {
-	return len(p.owners) == 0 || slices.Contains(p.owners, owner)
+	after time.Duration
+	now   func() time.Time
 }

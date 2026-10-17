@@ -86,7 +86,9 @@ func TestParkLeavesABoxAlone(t *testing.T) {
 			e.svc.ops.start(e.ctx, alice, aliceBox, controlv1.Phase_PHASE_DELETING, 1, time.Minute)
 		}},
 		{"box deleted", func(e *parkEnv) { _ = e.svc.registry.RemoveBox(e.ctx, alice, aliceBox) }},
-		{"owner outside park_owners", func(e *parkEnv) { e.svc.park.owners = []string{bob} }},
+		{"owner whose policy skips the parking", func(e *parkEnv) {
+			e.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{NoPark: true})
+		}},
 		{"a second machine", func(e *parkEnv) {
 			e.fake.put(machines.Machine{ID: aliceBox + "-rx", Owner: alice, State: machines.StateStarting})
 		}},
@@ -99,14 +101,6 @@ func TestParkLeavesABoxAlone(t *testing.T) {
 				t.Errorf("parked: %t, %d Ensure calls, deleted %q", op != nil, e.fake.specCount(), e.fake.deletedIDs())
 			}
 		})
-	}
-}
-
-func TestParkOwnersListingTheOwnerParksTheBox(t *testing.T) {
-	e := newParkEnv(t)
-	e.svc.park.owners = []string{bob, alice}
-	if op := e.park(t, e.clock.Add(parkAfter)); op == nil || e.fake.deletedIDs() != aliceBox {
-		t.Errorf("parked: %t, deleted %q, want alice's box parked", op != nil, e.fake.deletedIDs())
 	}
 }
 
@@ -208,7 +202,7 @@ func newParkEnv(t *testing.T) *parkEnv {
 	e.agent.chunks = []string{hexID("c1")}
 	e.save(t)
 	e.clock = time.Now()
-	e.svc.EnableParking(parkAfter, nil)
+	e.svc.EnableParking(parkAfter)
 	e.svc.park.now = func() time.Time { return e.clock }
 	if _, err := e.svc.Hibernate(e.ctx, &controlv1.BoxRef{BoxId: aliceBox}); err != nil {
 		t.Fatalf("Hibernate: %v", err)
