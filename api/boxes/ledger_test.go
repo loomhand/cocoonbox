@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
@@ -48,5 +49,15 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 	}
 	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Heads)+len(d.Operations) != 0 {
 		t.Errorf("Verify after the repair = %+v, %v, want no drift", d, err)
+	}
+	op := env.svc.ops.get(ops[0].ID)
+	op.mu.Lock()
+	op.finishedAt = op.finishedAt.Add(-2 * operationRetention)
+	op.mu.Unlock()
+	if err := ledger.PurgeOperations(t.Context(), time.Now()); err != nil {
+		t.Fatalf("PurgeOperations: %v", err)
+	}
+	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Operations) != 0 {
+		t.Errorf("Verify with an operation past its retention = %+v, %v, want it skipped", d, err)
 	}
 }
