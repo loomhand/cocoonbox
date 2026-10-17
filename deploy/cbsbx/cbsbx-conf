@@ -4,9 +4,11 @@ usage: cbsbx-conf <template>=<warm> [<template>=<warm> ...]   the first is the d
 With an egress CA under /etc/cocoonbox/egress-ca, CB_EGRESS_INTERMEDIATE names its intermediate cert and key.
 CB_MAX_CLAIMS caps the node's live claims, hibernated ones included (default 16)."""
 
+import ipaddress
 import json
 import os
 import re
+import subprocess
 import sys
 
 S = "/srv/cb/sbx"
@@ -19,6 +21,8 @@ CONNECT_PORT = 18091
 APT_PORT = 3142
 RESIDENTIAL = "10.203.1.2"
 STORAGE = "40G"
+DISK_RESERVE = "100G"
+CONN_RATE = {"per_second": 30, "burst": 600}
 SSH_PORT = 22
 WEB_PORTS = [80, 443]
 WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
@@ -35,6 +39,17 @@ ANDROID_FAMILIES = ("cbdroid",)
 CHROME_WARMUP_FROM = 15
 INJECT_FROM = 23
 CONNECT_FROM = 24
+
+
+def ip_json(*args):
+    return json.loads(subprocess.run(["ip", "-j", *args], capture_output=True, check=True, text=True).stdout)
+
+
+def public_addrs():
+    dev = ip_json("route", "show", "default")[0]["dev"]
+    addrs = [ipaddress.ip_address(a["local"]) for a in ip_json("addr", "show", "dev", dev, "scope", "global")[0]["addr_info"] if "local" in a]
+    return [a for a in addrs if a.is_global]
+
 
 if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
     sys.exit(__doc__)
@@ -76,7 +91,11 @@ conf = {
     "max_claims": int(os.environ.get("CB_MAX_CLAIMS", "16")),
     "refill_concurrency": 1,
     "audit_log": True,
-    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{APT_PORT}"],
+    # sandboxd blocks the node's own addresses; a box still reaches the console this host serves
+    "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{APT_PORT}",
+                              *(f"{a}/{a.max_prefixlen}:{','.join(map(str, WEB_PORTS))}" for a in public_addrs())],
+    "egress_conn_rate": CONN_RATE,
+    "disk_reserve": {"free": DISK_RESERVE},
     "egress_upstream": {"claim_env": "EGRESS_UPSTREAM", "allow": [f"{RESIDENTIAL}/32"]},
     "egress_classes": [{"name": "cbdesk", "egress": tenant_egress}],
     "secrets": [{"name": "GW_KEY", "header": "Authorization"}, {"name": "CB_CONNECT_KEY", "header": "Authorization"}],
