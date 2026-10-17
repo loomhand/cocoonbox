@@ -348,7 +348,7 @@ func TestConcurrentCallsShareOneRefreshThatStoresTheRotatedToken(t *testing.T) {
 	var wg sync.WaitGroup
 	for range 2 {
 		wg.Go(func() {
-			if out, err := call(context.Background(), env.svc, modeB, listItems, nil, ""); err != nil || out.IsError {
+			if out, err := call(t.Context(), env.svc, modeB, listItems, nil, ""); err != nil || out.IsError {
 				t.Errorf("Call = %+v, %v", out, err)
 			}
 		})
@@ -361,8 +361,8 @@ func TestConcurrentCallsShareOneRefreshThatStoresTheRotatedToken(t *testing.T) {
 	}
 	other := newService(t, env.dsn, env.sessions)
 	env.exec(t, "UPDATE connect_grants SET token_expires_at = now() - interval '1 minute'")
-	wg.Go(func() { _, _ = call(context.Background(), env.svc, modeB, listItems, nil, "") })
-	wg.Go(func() { _, _ = call(context.Background(), other, modeB, listItems, nil, "") })
+	wg.Go(func() { _, _ = call(t.Context(), env.svc, modeB, listItems, nil, "") })
+	wg.Go(func() { _, _ = call(t.Context(), other, modeB, listItems, nil, "") })
 	wg.Wait()
 	if refreshes, _, _ := env.vendor.Snapshot(); refreshes != 2 {
 		t.Errorf("two replicas made %d refreshes in all, want 2", refreshes)
@@ -1004,7 +1004,7 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	if _, err := conn.Exec(t.Context(), "CREATE TABLE users (id text PRIMARY KEY); INSERT INTO users VALUES ('u-alice'), ('u-bob')"); err != nil {
 		t.Fatalf("users table: %v", err)
 	}
@@ -1125,7 +1125,7 @@ func freshDatabase(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	name := "t_" + randomHex(6)
 	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)

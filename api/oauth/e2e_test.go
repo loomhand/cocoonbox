@@ -274,7 +274,7 @@ func TestSigningOutEverywhereEndsEverySignInAndKeepsTheBoxes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	var sessions, devices, grants int
 	var token *string
 	err = conn.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM sessions WHERE user_id = $1), (SELECT count(*) FROM user_tokens WHERE user_id = $1),
@@ -813,7 +813,7 @@ func freshDatabase(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	name := "t_" + strings.ToLower(rand.Text()[:12])
 	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)
