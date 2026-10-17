@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"bytes"
 	"context"
 	"strings"
 
@@ -35,7 +36,7 @@ func BackfillHeads(ctx context.Context, st store.Store, l Ledger, user string) (
 			return written, 0, err
 		}
 		raw := headBytes(h)
-		if row, ok := stored[box]; !ok || string(row) != string(raw) {
+		if row, ok := stored[box]; !ok || !bytes.Equal(row, raw) {
 			if err := l.PutHead(ctx, user, box, raw); err != nil {
 				return written, 0, err
 			}
