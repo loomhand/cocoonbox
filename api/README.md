@@ -32,6 +32,7 @@ printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user tok
 cocoonbox-api -config /etc/cocoonbox/api.yaml state migrate [-keyring DIR]   # per-box keys and layout to per-user; safe to rerun
 cocoonbox-api -config /etc/cocoonbox/api.yaml state expand [-user ID]       # delta records and manifests to full ones, before a rollback; api stopped
 cocoonbox-api -config /etc/cocoonbox/api.yaml box rebase USER BOX IMAGE      # the user's Rebase through the running api on operator_socket, saved first; follows it to the end
+cocoonbox-api -config /etc/cocoonbox/api.yaml check                          # the checks startup runs before it reaches sandboxd; run before every restart
 ```
 
 ## Build
@@ -49,6 +50,8 @@ install -m 0755 bin/cocoonbox-api-linux-amd64 /usr/local/bin/cocoonbox-api
 install -m 0644 deploy/cocoonbox-api.service /etc/systemd/system/
 systemctl enable --now cocoonbox-api
 ```
+
+Before rolling back to a binary older than the `cluster:` config block, remove that block from `api.yaml`: older binaries refuse unknown keys.
 
 `/etc/cocoonbox/edge-signing.key` (`openssl genpkey -algorithm ed25519`) signs every credential agents admit; the api refuses to start without `provision.signing_key_file`.
 
