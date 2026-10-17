@@ -48,7 +48,13 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 		op.fail("save failed")
 		return
 	}
-	defer s.state.pin(statePath{user: user, box: op.boxID}, rec.ID)()
+	unpin, err := s.state.pin(op.ctx, statePath{user: user, box: op.boxID}, rec.ID)
+	defer unpin()
+	if err != nil {
+		logger.Error(op.ctx, err, "pin the saved snapshot")
+		op.fail("pin the saved snapshot failed")
+		return
+	}
 	saved := time.Since(start)
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING,
 		fmt.Sprintf("saved snapshot %s in %s", rec.ID, saved.Round(time.Second)))
