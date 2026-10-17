@@ -449,8 +449,7 @@ func (s *Service) boxName(user, box string) string {
 	return ""
 }
 
-// lockStarts serializes the requests that may start or delete a machine of user, so two cannot both pass the running
-// limit or race a delete; with a shared table it holds the user's lock in every api too.
+// lockStarts serializes the requests that may start or delete a machine of user, in every api with a shared table.
 func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 	s.mu.Lock()
 	l := s.starts[user]
@@ -466,6 +465,9 @@ func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 	unlock, err := s.userLocks.LockUser(ctx, user)
 	if err != nil {
 		l.Unlock()
+		if ctx.Err() != nil {
+			return nil, status.FromContextError(ctx.Err()).Err()
+		}
 		log.WithFunc("boxes.Service.lockStarts").WithField("user", user).Error(ctx, err, "lock the starts")
 		return nil, status.Error(codes.Unavailable, "lock the starts of the user failed")
 	}

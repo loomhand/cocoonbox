@@ -33,11 +33,13 @@ func (s *Store) Activity(ctx context.Context, since time.Time) (map[string]time.
 	out := map[string]time.Time{}
 	var box string
 	var at time.Time
-	_, err = pgx.ForEachRow(rows, []any{&box, &at}, func() error {
+	if _, err = pgx.ForEachRow(rows, []any{&box, &at}, func() error {
 		out[box] = at
 		return nil
-	})
-	return out, err
+	}); err != nil {
+		return nil, fmt.Errorf("read box activity: %w", err)
+	}
+	return out, nil
 }
 
 // PurgeActivity removes the activity older than before.

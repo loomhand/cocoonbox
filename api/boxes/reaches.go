@@ -22,11 +22,11 @@ func (s *Service) readReaches(ctx context.Context) {
 		return
 	}
 	if err := s.reaches.read(ctx); err != nil {
-		log.WithFunc("boxes.Service.readReaches").Warnf(ctx, "the sweep sees this process's reaches only: %v", err)
+		log.WithFunc("boxes.Service.readReaches").Warnf(ctx, "the sweep sees the reaches of its last read: %v", err)
 	}
 }
 
-// reachedElsewhere is when a client of any process last reached box, zero without a shared table.
+// reachedElsewhere is when a client of any process last reached box, as the last read saw it; zero without a shared table.
 func (s *Service) reachedElsewhere(box string) time.Time {
 	if s.reaches == nil {
 		return time.Time{}
@@ -39,6 +39,8 @@ func (s *Service) reachedSince(box string, t time.Time) bool {
 	at := s.reachedElsewhere(box)
 	return s.wake.reachedSince(box, t) || !at.IsZero() && !at.Before(t)
 }
+
+type reachFunc func(box string, at time.Time)
 
 // reaches carries this process's client reaches to the shared table and the other processes' reaches to the sweeps.
 type reaches struct {
@@ -57,8 +59,7 @@ func newReaches(ctx context.Context, shared *cluster.Store, now func() time.Time
 	return &reaches{shared: shared, now: now, ctx: ctx, pending: map[string]time.Time{}, remote: map[string]time.Time{}, written: map[string]time.Time{}}
 }
 
-// reach records a reach of box at; the first after a flush period is written at once, since a sweep in another process
-// would take the box as idle until the next flush.
+// reach records a reach of box at, writing the first after a flush period at once so a sweep elsewhere sees it.
 func (r *reaches) reach(box string, at time.Time) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -76,16 +77,20 @@ func (r *reaches) reach(box string, at time.Time) {
 	}
 }
 
-// last is when a client of another process last reached box, as the last read saw it.
+// last is when a client of any process last reached box, as the last read saw it.
 func (r *reaches) last(box string) time.Time {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.remote[box]
 }
 
-// read takes in the reaches of every process.
+// read takes in the reaches of every process and drops those past the horizon from the table.
 func (r *reaches) read(ctx context.Context) error {
-	remote, err := r.shared.Activity(ctx, r.now().Add(-reachHorizon))
+	since := r.now().Add(-reachHorizon)
+	if err := r.shared.PurgeActivity(ctx, since); err != nil {
+		return err
+	}
+	remote, err := r.shared.Activity(ctx, since)
 	if err != nil {
 		return err
 	}
@@ -122,9 +127,6 @@ func (r *reaches) flush(ctx context.Context, open []string) {
 	maps.Copy(r.written, batch)
 	maps.DeleteFunc(r.written, func(_ string, at time.Time) bool { return now.Sub(at) > reachHorizon })
 	r.mu.Unlock()
-	if err := r.shared.PurgeActivity(ctx, now.Add(-reachHorizon)); err != nil {
-		logger.Warnf(ctx, "purge the old reaches: %v", err)
-	}
 	if err := r.shared.PutActivity(ctx, batch); err != nil {
 		logger.Warnf(ctx, "write the reaches of %d boxes: %v", len(batch), err)
 		r.mu.Lock()

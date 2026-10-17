@@ -143,8 +143,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	return b, nil
 }
 
-// Run re-reads the claims every refreshInterval and renews their leases every renewInterval until ctx ends; New runs it
-// itself unless a shared table lets one api do it for all.
+// Run re-reads the claims and renews their leases until ctx ends; New runs it unless a shared table lets one api do it for all.
 func (b *Backend) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Go(func() { b.loop(ctx, refreshInterval, b.refresh) })
