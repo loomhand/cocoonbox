@@ -39,7 +39,6 @@ const (
 	opTimeout       = 10 * time.Minute
 	probeTimeout    = 2 * time.Second
 	probeFanout     = 8
-	finishTimeout   = 10 * time.Second
 	sharedTimeout   = 10 * time.Second
 )
 
@@ -612,16 +611,14 @@ func (b *Backend) run(id, op string, revision int64, fn func(context.Context) er
 		case err != nil:
 			opErr = op + " failed"
 		}
-		finishCtx, cancelFinish := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
-		defer cancelFinish()
-		if _, err := b.mutate(finishCtx, id, func(e *entry) (*entry, bool) {
+		if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
 			if e == nil || e.op != op || e.revision != revision {
 				return e, false
 			}
 			e.op, e.opErr, e.opUntil = "", opErr, time.Time{}
 			return e, true
 		}); err != nil {
-			logger.Errorf(finishCtx, err, "end %s", op)
+			logger.Errorf(ctx, err, "end %s", op)
 		}
 		b.notify(id)
 	}()
