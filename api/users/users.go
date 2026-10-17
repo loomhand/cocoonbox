@@ -150,10 +150,10 @@ type Service struct {
 	onResidential []func(context.Context, string, bool)
 	onShareEnd    []func(context.Context, Share)
 
-	lifeMu sync.Mutex
-	lives  map[string]life
-	creds  map[string]*credLife
-	tombs  map[string]time.Time
+	lifeMu     sync.Mutex
+	lives      map[string]life
+	creds      map[string]*credLife
+	tombs      map[string]time.Time
 	grantsLive func(ctx context.Context, ids []string) (map[string]bool, error)
 }
 
