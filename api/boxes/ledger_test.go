@@ -79,16 +79,28 @@ func TestBackfillHeadsMakesTheLedgerMatchTheStore(t *testing.T) {
 	if err := ledger.PutHead(t.Context(), alice, "cb-00000000000z", headBytes(head{Latest: snapshotID(1)})); err != nil {
 		t.Fatalf("PutHead ghost: %v", err)
 	}
+	c := statePath{user: alice, box: "cb-00000000000c"}
+	if err := putJSON(t.Context(), st, c.head(), head{Latest: snapshotID(2), SavedAtMs: 200}); err != nil {
+		t.Fatalf("put head: %v", err)
+	}
+	newer := headBytes(head{Latest: snapshotID(3), SavedAtMs: 300})
+	if err := ledger.PutHead(t.Context(), alice, c.box, newer); err != nil {
+		t.Fatalf("PutHead newer: %v", err)
+	}
 	if written, removed, err := BackfillHeads(t.Context(), st, ledger, alice); err != nil || written != 2 || removed != 1 {
 		t.Fatalf("BackfillHeads = %d written, %d removed, %v; want 2 and 1", written, removed, err)
 	}
 	rows, err := ledger.Heads(t.Context())
-	if err != nil || len(rows) != 2 {
+	if err != nil || len(rows) != 3 {
 		t.Fatalf("ledger heads after the backfill = %+v, %v", rows, err)
 	}
 	for _, r := range rows {
-		if !bytes.Equal(r.Head, headBytes(head{Latest: snapshotID(2), SavedAtMs: 200})) {
-			t.Errorf("ledger head of %s = %s, want the store's", r.Box, r.Head)
+		want := headBytes(head{Latest: snapshotID(2), SavedAtMs: 200})
+		if r.Box == c.box {
+			want = newer
+		}
+		if !bytes.Equal(r.Head, want) {
+			t.Errorf("ledger head of %s = %s, want %s", r.Box, r.Head, want)
 		}
 	}
 	if written, removed, err := BackfillHeads(t.Context(), st, ledger, alice); err != nil || written+removed != 0 {
