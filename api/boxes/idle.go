@@ -16,6 +16,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
+const probeTimeout = 15 * time.Second
+
 // Activity tells whether work runs in a box that no client reaches: an agent turn, or an offloaded CLI session at work.
 type Activity interface {
 	Busy(ctx context.Context, box string, ep machines.Endpoint) (bool, error)
@@ -24,7 +26,7 @@ type Activity interface {
 // EnableIdle hibernates a running box once no client call to it is open and none began or ended for agent, for a box an
 // agent created, or user, for a user's own box; zero leaves that kind of box up.
 func (s *Service) EnableIdle(agent, user time.Duration) {
-	s.idle = &idling{agent: agent, user: user, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
+	s.idle = &idling{agent: agent, user: user, probe: probeTimeout, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
 }
 
 // EnableActivity asks activity before an idle user box hibernates; a box it calls busy, or cannot answer for, stays up.
@@ -112,6 +114,8 @@ func (s *Service) keepAwake(ctx context.Context, m machines.Machine) string {
 	if s.activity == nil {
 		return ""
 	}
+	ctx, cancel := context.WithTimeout(ctx, s.idle.probe)
+	defer cancel()
 	ep, err := s.machines.Address(ctx, m.ID)
 	if err != nil {
 		return "its address failed: " + err.Error()
@@ -150,6 +154,7 @@ func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
 type idling struct {
 	agent time.Duration
 	user  time.Duration
+	probe time.Duration
 	now   func() time.Time
 
 	mu   sync.Mutex

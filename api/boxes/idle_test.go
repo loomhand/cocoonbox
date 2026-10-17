@@ -59,6 +59,22 @@ func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 	}
 }
 
+func TestAWedgedAgentDoesNotStallTheSweepForTheNextBox(t *testing.T) {
+	env, clock := newUserIdleEnv(t)
+	bobBox := BoxID(bob)
+	env.fake.put(machines.Machine{ID: bobBox, Owner: bob, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop-v1", Revision: 1})
+	hung, next := min(aliceBox, bobBox), max(aliceBox, bobBox)
+	env.svc.activity.(*fakeActivity).hang = hung
+	env.svc.idle.probe = 50 * time.Millisecond
+	env.svc.hibernateIdle(t.Context())
+	*clock = clock.Add(userIdleAfter)
+	env.svc.hibernateIdle(t.Context())
+	waitState(t, env.fake, next, machines.StateHibernating)
+	if got := env.fake.state(hung); got != machines.StateRunning || env.svc.ops.activeFor(hung) != nil {
+		t.Errorf("the box whose agent never answered: state %v, operation %v; want it running with none", got, env.svc.ops.activeFor(hung))
+	}
+}
+
 func TestAClientComingBackDuringTheSaveKeepsTheBoxUp(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
 	env.svc.hibernateIdle(t.Context())
@@ -115,8 +131,13 @@ func waitState(t *testing.T, fake *fakeMachines, id string, want machines.State)
 type fakeActivity struct {
 	busy bool
 	err  error
+	hang string
 }
 
-func (a *fakeActivity) Busy(context.Context, string, machines.Endpoint) (bool, error) {
+func (a *fakeActivity) Busy(ctx context.Context, box string, _ machines.Endpoint) (bool, error) {
+	if box == a.hang {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
 	return a.busy, a.err
 }
