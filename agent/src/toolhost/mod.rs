@@ -1,5 +1,6 @@
 //! The tool host: runs every tool as the desktop user behind a unix socket.
 
+mod android;
 mod atspi;
 mod browser;
 mod cua;
@@ -33,7 +34,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
 use x11rb::connection::Connection as _;
 
-use crate::config::ToolhostConfig;
+use crate::config::{Automation, ToolhostConfig};
+use android::Android;
 use browser::Browser;
 use cua::Cua;
 use desk::Desk;
@@ -54,6 +56,8 @@ struct Host {
     shells: Mutex<HashMap<String, Arc<Mutex<Option<Shell>>>>>,
     browser: Browser,
     cua: Cua,
+    /// The screen tools of an Android box, in place of cua-driver.
+    android: Option<Android>,
     desk: Desk,
     scripts: Scripts,
     /// The program of each plugin script tool, on a box that runs GUI plans.
@@ -81,6 +85,8 @@ impl Host {
                 cfg.automation.plans(),
             ),
             cua: Cua::new(cfg.cua_socket.clone(), cfg.automation.plans()),
+            android: (cfg.automation == Automation::Android)
+                .then(|| Android::new(cfg.adb_bin.clone())),
             desk: Desk::default(),
             scripts: Scripts::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
             plugins: cfg
@@ -99,6 +105,13 @@ impl Host {
 
     /// Executes one call; failures become error outputs for the model.
     async fn dispatch(&self, call: Call) -> Output {
+        if let Some(android) = &self.android
+            && let Some(result) = android_call(android, &call).await
+        {
+            let out = result.unwrap_or_else(Output::error);
+            timing::note("error", out.is_error);
+            return out;
+        }
         let result = match call.tool.as_str() {
             "shell" => {
                 let command = call.args["command"].as_str().unwrap_or_default();
@@ -287,6 +300,17 @@ impl Host {
         files::write_bytes(&path, &data).await?;
         Ok(path.display().to_string())
     }
+}
+
+/// Runs the screen tools of an Android box; None for every other tool.
+async fn android_call(android: &Android, call: &Call) -> Option<Result<Output, String>> {
+    Some(match call.tool.as_str() {
+        "screenshot" => android.look().await,
+        "computer_state" => android.state(call.args.clone()).await,
+        "computer_act" => android.act(call.args.clone()).await,
+        "computer_end" => android.end(&call.args).await.map(Output::text),
+        _ => return None,
+    })
 }
 
 /// Runs the toolhost until SIGTERM or SIGINT, which closes Chrome with its agent windows first.

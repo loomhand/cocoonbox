@@ -35,6 +35,7 @@ const SHOT_POINT: &str = "or x,y in the pixels of your latest screenshot.";
 const SCALED_STATE: &str = "Screenshot of the whole screen, scaled to a long edge of 1024 pixels unless max_edge says otherwise, the visible windows (pid, window_id), and the accessibility elements [index] of the frontmost window or of the given pid.";
 const REGION_HINT: &str = "Only this part of the screen, at full resolution: x, y, w, h in the pixels of your last screenshot";
 const SHELL_HINT: &str = " Keep each command's wait well under the time left; save the required output early and improve it after.";
+const ANDROID_SHOT: &str = "Look at the phone: a read-only screenshot of the whole 720x1280 Android screen; x,y of computer_act are its pixels.";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -187,13 +188,24 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
             }),
         },
     ];
+    if automation == Automation::Android {
+        tools.retain(|t| !t.name.starts_with("browser_"));
+    }
     if vision {
-        tools.push(ToolSpec {
-            name: Cow::Borrowed("screenshot"),
-            description: Cow::Borrowed(
-                "Look at the desktop: a read-only screenshot of the whole 1280x800 screen.",
-            ),
-            parameters: json!({"type": "object", "properties": {"max_edge": max_edge()}}),
+        tools.push(if automation == Automation::Android {
+            ToolSpec {
+                name: Cow::Borrowed("screenshot"),
+                description: Cow::Borrowed(ANDROID_SHOT),
+                parameters: json!({"type": "object", "properties": {}}),
+            }
+        } else {
+            ToolSpec {
+                name: Cow::Borrowed("screenshot"),
+                description: Cow::Borrowed(
+                    "Look at the desktop: a read-only screenshot of the whole 1280x800 screen.",
+                ),
+                parameters: json!({"type": "object", "properties": {"max_edge": max_edge()}}),
+            }
         });
     }
     if let Some(script) = script_tool(automation) {
@@ -215,6 +227,14 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
 /// Tools served over MCP to external agents; the names are the contract, and `gui_plan`, the script tool,
 /// `browser_fetch`, `desk` and the `computer_act` hint exist only on a box that runs GUI plans.
 pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
+    if automation == Automation::Android {
+        let mut tools: Vec<ToolSpec> = main_tools(true, automation)
+            .into_iter()
+            .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
+            .collect();
+        tools.extend(computer_tools(automation));
+        return tools;
+    }
     let mut tools: Vec<ToolSpec> = main_tools(true, Automation::Plain)
         .into_iter()
         .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
@@ -331,13 +351,16 @@ fn with_select(tools: &mut [ToolSpec]) {
 /// The automation's script tool; none on a box without one.
 fn script_tool(automation: Automation) -> Option<ToolSpec> {
     match automation {
-        Automation::Plain => None,
+        Automation::Plain | Automation::Android => None,
         Automation::Desk => Some(desk_script_tool()),
     }
 }
 
 /// Tools of the computer subagent; on a box that runs GUI plans their screenshots name the default scale.
 pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
+    if automation == Automation::Android {
+        return android_tools();
+    }
     let mut tools = vec![
         ToolSpec {
             name: Cow::Borrowed("computer_state"),
@@ -392,6 +415,46 @@ pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
         with_scale(&mut tools);
     }
     tools
+}
+
+/// computer_state and computer_act on Android: UI elements from uiautomator, touch and keys through adb.
+fn android_tools() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: Cow::Borrowed("computer_state"),
+            description: Cow::Borrowed(
+                "Screenshot of the whole 720x1280 Android screen and its UI elements [index]: text or description, id, center x,y, and whether it is clickable, editable or checked.",
+            ),
+            parameters: json!({
+                "type": "object",
+                "properties": {"query": {"type": "string", "description": "Only elements whose text contains this"}}
+            }),
+        },
+        ToolSpec {
+            name: Cow::Borrowed("computer_act"),
+            description: Cow::Borrowed(
+                "Perform one touch or key action on Android, then return a fresh screenshot. Target an element by index from the latest computer_state, or x,y in screen pixels.",
+            ),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["tap", "double_tap", "long_press", "swipe", "scroll", "type", "key", "launch_app", "wait"]},
+                    "element": {"type": "integer", "description": "Element index from the latest computer_state"},
+                    "x": {"type": "number"},
+                    "y": {"type": "number"},
+                    "to_x": {"type": "number", "description": "swipe end"},
+                    "to_y": {"type": "number", "description": "swipe end"},
+                    "text": {"type": "string", "description": "type: any Unicode text, pasted into the focused field, or into the field at element or x,y"},
+                    "key": {"type": "string", "description": "key: back, home, enter, tab, delete, escape, recents, menu, up, down, left, right, or an Android keycode"},
+                    "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "description": "scroll: the direction the content moves into view"},
+                    "amount": {"type": "integer"},
+                    "app": {"type": "string", "description": "launch_app: package name, e.g. com.android.settings"},
+                    "seconds": {"type": "number", "description": "wait: up to 10"}
+                },
+                "required": ["action"]
+            }),
+        },
+    ]
 }
 
 /// Gives `computer_act` of a box that runs GUI plans the `locate` action and the described `target`.

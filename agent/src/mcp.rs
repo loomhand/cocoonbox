@@ -47,6 +47,13 @@ Relative file paths resolve under /workspace, and shell is one persistent bash s
 Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
 Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
 The user watches the screen live and sees every call.";
+const ANDROID_INSTRUCTIONS: &str = "These tools act on an Android 16 phone (720x1280) that runs in a cloud computer: Ubuntu 24.04 with no desktop. \
+shell is one persistent bash session on that Ubuntu, with adb on PATH already connected to the phone (adb shell, adb install, adb push/pull); \
+relative file paths resolve under /workspace. \
+Prefer adb commands (am start, pm, settings, content) for anything a command can do, and use computer_state / computer_act for app UI. \
+computer_state lists the screen's UI elements by [index]; computer_act taps, swipes, types any Unicode text into the focused field, presses keys (back, home) or launches an app by package, then returns a fresh screenshot; trust the screenshot, not the action's report. \
+The phone reaches the internet only through its HTTP proxy. \
+The user watches the screen live and sees every call.";
 const PLAN_HEAD: &str =
     "Relative file paths resolve under /workspace, and shell is one persistent bash session.";
 const ALWAYS_LOAD: &[&str] = &[
@@ -109,7 +116,7 @@ impl Mcp {
             })
             .collect();
         let mut resources = match automation {
-            Automation::Plain => Vec::new(),
+            Automation::Plain | Automation::Android => Vec::new(),
             Automation::Desk => DESK_RESOURCES.to_vec(),
         };
         if automation.plans() {
@@ -370,7 +377,7 @@ impl Mcp {
             "protocolVersion": protocol,
             "capabilities": {"tools": {"listChanged": session.guest.is_some()}},
             "serverInfo": {"name": "cocoonbox-agent", "version": env!("CB_AGENT_VERSION")},
-            "instructions": INSTRUCTIONS,
+            "instructions": if self.automation == Automation::Android { ANDROID_INSTRUCTIONS } else { INSTRUCTIONS },
         });
         if self.automation.plans() {
             result["capabilities"]["resources"] = json!({});

@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::engine::general_purpose::{STANDARD as B64, URL_SAFE_NO_PAD};
 use cocoonbox_agent::config::{Automation, ServeConfig, ToolhostConfig};
 use cocoonbox_agent::pb::agents_client::AgentsClient;
 use cocoonbox_agent::pb::session_client::SessionClient;
@@ -38,6 +38,11 @@ case "$src" in
 esac"#;
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+const FAKE_ADB: &str = r#"echo "$*" >> "$0.log"
+case "$*" in
+"exec-out screencap -p") printf 'phone-png' ;;
+"exec-out uiautomator dump /dev/tty") printf '%s' '<?xml version="1.0"?><hierarchy rotation="0"><node index="0" text="Settings" resource-id="" class="android.widget.TextView" content-desc="" checkable="false" checked="false" clickable="true" long-clickable="false" bounds="[400,400][600,480]" /></hierarchy>UI hierchary dumped to: /dev/tty' ;;
+esac"#;
 const THUMB: &str =
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=";
 const TARGET_TOOLS: [&str; 7] = [
@@ -138,6 +143,22 @@ impl Harness {
         .await
     }
 
+    /// A harness of an Android box, whose toolhost drives a fake adb.
+    async fn with_android() -> Self {
+        let day = Duration::from_secs(24 * 3600);
+        Self::boot(
+            Vec::new(),
+            false,
+            Duration::from_secs(600),
+            day,
+            None,
+            None,
+            Automation::Android,
+            false,
+        )
+        .await
+    }
+
     /// A harness of a box with the desk runtime, which runs GUI plans and scripts on Node.
     async fn with_desk(script: Vec<(&'static str, String)>) -> Self {
         let day = Duration::from_secs(24 * 3600);
@@ -180,6 +201,8 @@ impl Harness {
         write_script(&session_save, "echo saved >> \"$0.log\"");
         let script_bin = dir.path().join("script-bin");
         write_script(&script_bin, FAKE_NODE);
+        let adb_bin = dir.path().join("adb");
+        write_script(&adb_bin, FAKE_ADB);
         let tools_dir = dir.path().join("tools.d");
         let routing_dir = dir.path().join("routing.d");
         if plugin {
@@ -226,6 +249,7 @@ impl Harness {
             home: home.clone(),
             automation,
             plugins: plugins.clone(),
+            adb_bin,
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -3670,6 +3694,64 @@ async fn a_plain_box_ignores_its_plugins() {
         .await;
     assert_eq!(out["error"]["message"], "unknown tool: demo_run", "{out}");
     assert!(!h.workspace.join("plugin.log").exists());
+}
+
+#[tokio::test]
+async fn mcp_on_an_android_box_drives_the_phone_through_adb() {
+    let h = Harness::with_android().await;
+    let init: Value = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .header("accept", "application/json, text/event-stream")
+        .header("x-cocoonbox-edge-token", TOKEN)
+        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(instructions.contains("Android 16 phone"), "{instructions}");
+    assert!(!instructions.contains("XFCE"), "{instructions}");
+
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    assert_eq!(
+        McpClient::tool_names(&listed),
+        [
+            "computer_act",
+            "computer_state",
+            "edit_file",
+            "list_dir",
+            "read_file",
+            "screenshot",
+            "shell",
+            "write_file"
+        ]
+    );
+
+    let shot = mcp.call("screenshot", json!({})).await;
+    assert_eq!(shot["isError"], false, "{shot}");
+    assert_eq!(shot["content"][1]["data"], B64.encode("phone-png"));
+
+    let state = mcp.call("computer_state", json!({})).await;
+    assert_eq!(
+        state["content"][0]["text"],
+        "[0] TextView \"Settings\" at 500,440 clickable"
+    );
+    let tap = mcp
+        .call("computer_act", json!({"action": "tap", "element": 0}))
+        .await;
+    assert_eq!(tap["isError"], false, "{tap}");
+    assert_eq!(tap["content"][1]["data"], B64.encode("phone-png"));
+    let back = mcp
+        .call("computer_act", json!({"action": "key", "key": "back"}))
+        .await;
+    assert_eq!(back["content"][0]["text"], "pressed back");
+
+    let log = std::fs::read_to_string(h._dir.path().join("adb.log")).unwrap();
+    assert!(log.contains("shell input tap 500 440\n"), "{log}");
+    assert!(log.contains("shell input keyevent 4\n"), "{log}");
 }
 
 #[tokio::test]
