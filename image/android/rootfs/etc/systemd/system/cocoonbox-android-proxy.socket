@@ -1,0 +1,9 @@
+[Unit]
+Description=cocoonbox egress proxy for Android on the docker bridge
+
+[Socket]
+ListenStream=172.18.0.1:3128
+FreeBind=yes
+
+[Install]
+WantedBy=sockets.target

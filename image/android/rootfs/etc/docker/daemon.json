@@ -1,0 +1,5 @@
+{
+  "storage-driver": "vfs",
+  "features": { "containerd-snapshotter": false },
+  "bip": "172.18.0.1/16"
+}
