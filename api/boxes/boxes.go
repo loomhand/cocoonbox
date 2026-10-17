@@ -297,7 +297,7 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 		}
 	}
 	for {
-		if op.remote && !time.Now().Before(op.expires) {
+		if op.gone(0) {
 			op.fail("the api process that ran the operation is gone")
 		}
 		events, done, changed := op.since(offset)
@@ -310,23 +310,15 @@ func (s *Service) WatchOperation(req *controlv1.WatchOperationRequest, stream gr
 		if done {
 			return nil
 		}
-		var poll <-chan time.Time
+		var lease <-chan time.Time
 		if op.remote {
-			changed, poll = s.ops.changed(op.id), time.After(remotePoll)
+			lease = time.After(time.Until(op.leaseEnd()))
 		}
 		select {
 		case <-changed:
-		case <-poll:
+		case <-lease:
 		case <-ctx.Done():
 			return status.FromContextError(ctx.Err()).Err()
-		}
-		if op.remote {
-			switch next, err := s.ops.get(ctx, op.id); {
-			case next != nil:
-				op = next
-			case err == nil:
-				return status.Error(codes.NotFound, "operation not found")
-			}
 		}
 	}
 }
