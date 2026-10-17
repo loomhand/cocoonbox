@@ -50,9 +50,14 @@ type entry struct {
 	// created stands in for the claim time until the claim row exists.
 	created time.Time
 	row     *row
+	// rowAt is when this process first saw the row's sandbox, so a claim list taken before it cannot drop the machine.
+	rowAt     time.Time
+	ownerAddr string
 
-	op       string
-	opErr    string
+	op    string
+	opErr string
+	// opUntil is when op's process gives up on it, so a later reader takes it as ended.
+	opUntil  time.Time
 	revision int64
 	changed  chan struct{}
 
@@ -66,13 +71,19 @@ type entry struct {
 	readyRestarts int
 	// mirrored is the record last queued for the ledger.
 	mirrored *cluster.Machine
+	// version is the shared row version the entry was loaded from.
+	version int64
 }
 
 func (e *entry) state() (machines.State, string) {
+	op := e.op
+	if !e.busy(time.Now()) {
+		op = ""
+	}
 	switch {
-	case e.op == opClaim, e.op == opWake:
+	case op == opClaim, op == opWake:
 		return machines.StateStarting, ""
-	case e.op == opHibernate:
+	case op == opHibernate:
 		return machines.StateHibernating, ""
 	case e.opErr != "":
 		return machines.StateFailed, e.opErr
@@ -87,6 +98,27 @@ func (e *entry) state() (machines.State, string) {
 	default:
 		return machines.StateRunning, ""
 	}
+}
+
+// sandbox is the id of e's claim, "" for none or a nil e.
+func (e *entry) sandbox() string {
+	if e == nil || e.row == nil {
+		return ""
+	}
+	return e.row.ID
+}
+
+func (e *entry) busy(now time.Time) bool {
+	return e.op != "" && (e.opUntil.IsZero() || now.Before(e.opUntil))
+}
+
+// begin marks e as running op from now on, as a new revision, held for lease; zero holds it until it ends.
+func (e *entry) begin(op string, now time.Time, lease time.Duration) {
+	e.op, e.opErr, e.opUntil = op, "", time.Time{}
+	if lease > 0 {
+		e.opUntil = now.Add(lease)
+	}
+	e.revision++
 }
 
 func (e *entry) notifyLocked() {
@@ -130,8 +162,9 @@ func (e *entry) machine(disk uint32) machines.Machine {
 // record is e as the ledger keeps it.
 func (e *entry) record() cluster.Machine {
 	m := cluster.Machine{
-		ID: e.id, Owner: e.owner, Image: e.image, CreatedAt: e.created, Op: e.op, OpErr: e.opErr, Revision: e.revision,
-		Meta: maps.Clone(e.meta), Wakes: e.wakes, Routed: e.routed, Ready: e.ready, ReadyRestarts: e.readyRestarts,
+		ID: e.id, Owner: e.owner, Image: e.image, CreatedAt: e.created, OwnerAddr: e.ownerAddr, Op: e.op, OpErr: e.opErr, OpUntil: e.opUntil,
+		Revision: e.revision, Meta: maps.Clone(e.meta), Wakes: e.wakes, Routed: e.routed, Ready: e.ready, ReadyRestarts: e.readyRestarts,
+		Env: maps.Clone(e.env),
 	}
 	if e.row != nil {
 		m.Claim, _ = json.Marshal(e.row, json.Deterministic(true))
@@ -139,12 +172,29 @@ func (e *entry) record() cluster.Machine {
 	return m
 }
 
+// load takes rec's fields; the watchers and the ledger copy of e stay.
+func (e *entry) load(rec cluster.Machine) {
+	e.owner, e.image, e.created, e.ownerAddr = rec.Owner, rec.Image, rec.CreatedAt, rec.OwnerAddr
+	e.op, e.opErr, e.opUntil, e.revision = rec.Op, rec.OpErr, rec.OpUntil, rec.Revision
+	e.meta, e.wakes, e.routed, e.ready, e.readyRestarts = maps.Clone(rec.Meta), rec.Wakes, rec.Routed, rec.Ready, rec.ReadyRestarts
+	e.env = maps.Clone(rec.Env)
+	if e.meta == nil {
+		e.meta = map[string]string{}
+	}
+	e.row, e.version = nil, rec.Version
+	if rec.Claim != nil {
+		var r row
+		if json.Unmarshal(rec.Claim, &r) == nil {
+			e.row = &r
+		}
+	}
+}
+
 // loadEnv reads the service meta, the wake count, whether an upstream is set and the names from the claim's env entries.
 func (e *entry) loadEnv(env map[string]envVar) {
 	e.meta = map[string]string{}
-	e.env = map[string]string{}
+	e.env = envNames(env)
 	for name, v := range env {
-		e.env[name] = ""
 		if key, ok := strings.CutPrefix(name, envMetaPrefix); ok {
 			e.meta[key] = v.Value
 		}
