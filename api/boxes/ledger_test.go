@@ -37,7 +37,7 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 		t.Fatalf("ledger events = %+v, %v, want the %d of %d watched events left after collapsing the transfers", recs, err, len(kept), len(events))
 	}
 
-	if _, err := ledger.PutHead(t.Context(), alice, aliceBox, []byte(`{"latest":"stale"}`)); err != nil {
+	if err := ledger.PutHead(t.Context(), alice, aliceBox, []byte(`{"latest":"stale"}`)); err != nil {
 		t.Fatalf("PutHead: %v", err)
 	}
 	ops[0].Events = []byte(`[]`)

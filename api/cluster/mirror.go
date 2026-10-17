@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 
@@ -73,19 +74,23 @@ func (m *Mirror) Run(ctx context.Context) {
 	}
 }
 
-// Verify returns the keys diff still finds different after a second flush, so a write queued during the first diff does not count.
-func (m *Mirror) Verify(ctx context.Context, diff func(ctx context.Context, only []string) ([]string, error)) ([]string, error) {
+// Verify returns the keys diff finds different before and after a second flush, so a write queued meanwhile does not count.
+func (m *Mirror) Verify(ctx context.Context, diff func(ctx context.Context) ([]string, error)) ([]string, error) {
 	if err := m.Flush(ctx); err != nil {
 		return nil, err
 	}
-	differ, err := diff(ctx, nil)
-	if err != nil || len(differ) == 0 {
+	first, err := diff(ctx)
+	if err != nil || len(first) == 0 {
 		return nil, err
 	}
-	if err := m.Flush(ctx); err != nil {
+	if err = m.Flush(ctx); err != nil {
 		return nil, err
 	}
-	return diff(ctx, differ)
+	second, err := diff(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(second, func(key string) bool { return !slices.Contains(first, key) }), nil
 }
 
 // Flush waits until no write is queued or running.

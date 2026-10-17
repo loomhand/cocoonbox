@@ -96,36 +96,12 @@ func (s *S3) PresignGet(ctx context.Context, key string) (store.Presigned, error
 }
 
 func (s *S3) Get(ctx context.Context, key string) ([]byte, error) {
-	object, err := s.object(key)
-	if err != nil {
-		return nil, err
-	}
-	obj, err := s.client.GetObject(ctx, s.opts.Bucket, object, minio.GetObjectOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("get %s: %w", key, err)
-	}
-	defer func() { _ = obj.Close() }()
-	data, err := io.ReadAll(obj)
-	if minio.ToErrorResponse(err).StatusCode == http.StatusNotFound {
-		return nil, store.ErrNotFound
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", key, err)
-	}
-	return data, nil
+	data, _, err := s.GetVersion(ctx, key)
+	return data, err
 }
 
 func (s *S3) Put(ctx context.Context, key string, data []byte) error {
-	object, err := s.object(key)
-	if err != nil {
-		return err
-	}
-	_, err = s.client.PutObject(ctx, s.opts.Bucket, object, bytes.NewReader(data), int64(len(data)),
-		minio.PutObjectOptions{ContentType: "application/octet-stream"})
-	if err != nil {
-		return fmt.Errorf("put %s: %w", key, err)
-	}
-	return nil
+	return s.put(ctx, key, data, minio.PutObjectOptions{})
 }
 
 func (s *S3) GetVersion(ctx context.Context, key string) ([]byte, string, error) {
@@ -154,24 +130,13 @@ func (s *S3) GetVersion(ctx context.Context, key string) ([]byte, string, error)
 }
 
 func (s *S3) PutIf(ctx context.Context, key string, data []byte, version string) error {
-	object, err := s.object(key)
-	if err != nil {
-		return err
-	}
-	opts := minio.PutObjectOptions{ContentType: "application/octet-stream"}
+	var opts minio.PutObjectOptions
 	if version == "" {
 		opts.SetMatchETagExcept("*")
 	} else {
 		opts.SetMatchETag(version)
 	}
-	_, err = s.client.PutObject(ctx, s.opts.Bucket, object, bytes.NewReader(data), int64(len(data)), opts)
-	if minio.ToErrorResponse(err).StatusCode == http.StatusPreconditionFailed {
-		return fmt.Errorf("put %s: %w", key, store.ErrStale)
-	}
-	if err != nil {
-		return fmt.Errorf("put %s: %w", key, err)
-	}
-	return nil
+	return s.put(ctx, key, data, opts)
 }
 
 func (s *S3) List(ctx context.Context, prefix string) ([]store.Object, error) {
@@ -227,6 +192,22 @@ func (s *S3) Copy(ctx context.Context, src, dst string) error {
 	}
 	if _, err := s.client.CopyObject(ctx, minio.CopyDestOptions{Bucket: s.opts.Bucket, Object: to}, minio.CopySrcOptions{Bucket: s.opts.Bucket, Object: from}); err != nil {
 		return fmt.Errorf("copy %s to %s: %w", src, dst, err)
+	}
+	return nil
+}
+
+func (s *S3) put(ctx context.Context, key string, data []byte, opts minio.PutObjectOptions) error {
+	object, err := s.object(key)
+	if err != nil {
+		return err
+	}
+	opts.ContentType = "application/octet-stream"
+	_, err = s.client.PutObject(ctx, s.opts.Bucket, object, bytes.NewReader(data), int64(len(data)), opts)
+	if minio.ToErrorResponse(err).StatusCode == http.StatusPreconditionFailed {
+		err = store.ErrStale
+	}
+	if err != nil {
+		return fmt.Errorf("put %s: %w", key, err)
 	}
 	return nil
 }

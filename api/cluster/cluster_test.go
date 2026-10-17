@@ -136,8 +136,11 @@ func TestSwapHeadWritesOnlyOnTheVersionRead(t *testing.T) {
 	if _, err := st.SwapHead(t.Context(), "u-1", "cb-1", []byte(`{"latest":"c"}`), v1); !errors.Is(err, cluster.ErrStale) {
 		t.Errorf("SwapHead stale = %v, want ErrStale", err)
 	}
-	if v3, err := st.PutHead(t.Context(), "u-1", "cb-1", []byte(`{"latest":"d"}`)); err != nil || v3 != 3 {
-		t.Errorf("PutHead = %d, %v", v3, err)
+	if err := st.PutHead(t.Context(), "u-1", "cb-1", []byte(`{"latest":"d"}`)); err != nil {
+		t.Errorf("PutHead: %v", err)
+	}
+	if err := st.PutHead(t.Context(), "u-1", "cb-1", []byte(`{"latest":"d"}`)); err != nil {
+		t.Errorf("PutHead of the stored head: %v", err)
 	}
 	h, err := st.Head(t.Context(), "u-1", "cb-1")
 	if err != nil || string(h.Head) != `{"latest":"d"}` || h.Version != 3 {

@@ -92,6 +92,17 @@ type chunkIndex struct {
 	Commits int64 `json:"commits,omitzero"`
 }
 
+func (idx chunkIndex) stored(keyID string) map[string]bool {
+	stored := map[string]bool{}
+	if idx.KeyID != keyID {
+		return stored
+	}
+	for _, id := range idx.Chunks {
+		stored[id] = true
+	}
+	return stored
+}
+
 type head struct {
 	Latest    string `json:"latest"`
 	SavedAtMs int64  `json:"saved_at_ms"`
@@ -117,6 +128,7 @@ func (p statePath) head() string              { return p.boxDir() + "head.json" 
 func (p statePath) deleted() string           { return p.boxDir() + "deleted.json" }
 func (p statePath) boxDir() string            { return p.boxes() + p.box + "/" }
 func (p statePath) boxes() string             { return p.user + "/boxes/" }
+func (p statePath) ledgerKey() string         { return headKey + p.user + "/" + p.box }
 
 // stateLayer moves user state between box agents and the store; one transfer per box at a time.
 type stateLayer struct {
@@ -365,12 +377,7 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.head(), h) }); err != nil {
 		return err
 	}
-	l.mu.Lock()
-	l.heads[p] = h
-	l.mu.Unlock()
-	if l.mirror != nil {
-		l.mirror(p, &h)
-	}
+	l.keepHead(p, h)
 	return nil
 }
 
@@ -382,12 +389,7 @@ func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, 
 		if idx.Generation != generation {
 			return false, errIndexCollected
 		}
-		stored := map[string]bool{}
-		if idx.KeyID == keyID {
-			for _, id := range idx.Chunks {
-				stored[id] = true
-			}
-		}
+		stored := idx.stored(keyID)
 		for _, c := range chunks {
 			stored[c.ID] = true
 		}
@@ -468,16 +470,14 @@ func (l *stateLayer) updateJSON[T any](ctx context.Context, key string, edit fun
 
 // readVersion decodes key into v and returns its version: "" for a missing object, or for every object when the store does not version.
 func (l *stateLayer) readVersion(ctx context.Context, key string, v any) (string, bool, error) {
-	var (
-		raw     []byte
-		version string
-		err     error
-	)
-	if l.versioned != nil {
-		raw, version, err = l.versioned.GetVersion(ctx, key)
-	} else {
-		raw, err = l.store.Get(ctx, key)
+	if l.versioned == nil {
+		err := getJSON(ctx, l.store, key, v)
+		if errors.Is(err, store.ErrNotFound) {
+			return "", false, nil
+		}
+		return "", err == nil, err
 	}
+	raw, version, err := l.versioned.GetVersion(ctx, key)
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		return "", false, nil
@@ -492,12 +492,12 @@ func (l *stateLayer) readVersion(ctx context.Context, key string, v any) (string
 
 // writeVersion encodes v into key; with a versioned store it lands only on version, ErrStale otherwise.
 func (l *stateLayer) writeVersion(ctx context.Context, key string, v any, version string) error {
+	if l.versioned == nil {
+		return putJSON(ctx, l.store, key, v)
+	}
 	raw, err := json.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", key, err)
-	}
-	if l.versioned == nil {
-		return l.store.Put(ctx, key, raw)
 	}
 	return l.versioned.PutIf(ctx, key, raw, version)
 }
@@ -512,13 +512,17 @@ func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 	if err := getJSON(ctx, l.store, p.head(), &h); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return head{}, err
 	}
+	l.keepHead(p, h)
+	return h, nil
+}
+
+func (l *stateLayer) keepHead(p statePath, h head) {
 	l.mu.Lock()
 	l.heads[p] = h
 	l.mu.Unlock()
 	if l.mirror != nil && h != (head{}) {
 		l.mirror(p, &h)
 	}
-	return h, nil
 }
 
 func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, int64, error) {
@@ -526,14 +530,7 @@ func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[
 	if err := getJSON(ctx, l.store, p.index(), &idx); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, 0, err
 	}
-	stored := map[string]bool{}
-	if idx.KeyID != keyID {
-		return stored, idx.Generation, nil
-	}
-	for _, id := range idx.Chunks {
-		stored[id] = true
-	}
-	return stored, idx.Generation, nil
+	return idx.stored(keyID), idx.Generation, nil
 }
 
 func (l *stateLayer) record(ctx context.Context, p statePath, id string) (*snapshotRecord, error) {
