@@ -5959,6 +5959,22 @@ async fn quiesced_plan_saves_the_desktop_session_and_survives_a_failed_save() {
 }
 
 #[tokio::test]
+async fn an_android_box_fails_a_quiesced_plan_when_its_session_save_fails() {
+    let h = Harness::with_android().await;
+    write_script(&h.session_save, "echo tar failed >&2; exit 1");
+    let err = state_client(&h)
+        .await
+        .plan(authed(pb::PlanRequest {
+            key: Some(state_key()),
+            consistency: pb::Consistency::Quiesced.into(),
+            parent: String::new(),
+        }))
+        .await
+        .unwrap_err();
+    assert!(err.message().contains("tar failed"), "{err:?}");
+}
+
+#[tokio::test]
 async fn a_restore_tells_the_offload_inbox_to_rescan() {
     let h = Harness::start(Vec::new(), false).await;
     let inbox = UnixListener::bind(h.home.parent().unwrap().join("offload.sock")).unwrap();

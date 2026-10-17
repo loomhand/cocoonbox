@@ -44,7 +44,7 @@ On the desk wire a window is an app's activity or dialog titled `<title> - <pack
 
 ## State
 
-Android's `/data` is a btrfs subvolume in a sparse loop image (`android-mount`). A quiesced save (Rebase, Delete, SaveState, park) runs `session-save`, which takes a read-only snapshot while Android runs and writes it as a plain tar, sorted by name with numeric owners and without `dalvik-cache` and `cache`, to `/home/user/.android/data.tar` with its sha256, both by rename; the `home` root then carries it. Live saves every 15 minutes and idle hibernation do not refresh it, so after a restore `/data` is as of the last quiesced save.
+Android's `/data` is a btrfs subvolume in a sparse loop image (`android-mount`). A quiesced save (Rebase, Delete, SaveState, park) runs `session-save`, which takes a read-only snapshot while Android runs and writes it as a plain tar, sorted by name with numeric owners and without `dalvik-cache` and `cache`, to `/home/user/.android/data.tar` with its sha256, both by rename; the `home` root then carries it. A failed save fails the quiesced save, so a snapshot never carries a stale tar. Live saves every 15 minutes and idle hibernation do not refresh it, so after a restore `/data` is as of the last quiesced save.
 
 Restore stops and starts `cocoonbox-session.service`, which runs `android-apply`: a tar whose sha256 does not match, or that was applied before, is left alone; otherwise Android shuts down, the tar extracts into a new subvolume, and only a whole extract replaces `/data`. On any failure Android boots on its old `/data` and the journal says why. A Rebase from an Android image without this unit fails at the restore and the api keeps the box on its old image.
 

@@ -13,7 +13,7 @@ use tonic::service::{Interceptor, Routes};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 
-use crate::config::ServeConfig;
+use crate::config::{Automation, ServeConfig};
 use crate::exec;
 use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
 use crate::llm;
@@ -480,6 +480,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
             wait: rt.cfg.quiesce_wait,
         },
         rt.cfg.desktop_unit.clone(),
+        rt.cfg.automation == Automation::Android,
     )?;
     let state = StateServer::new(StateSvc {
         rt: Arc::clone(&rt),
