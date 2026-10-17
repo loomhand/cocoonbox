@@ -163,9 +163,6 @@ pub fn body(req: &Request<'_>) -> Value {
             body["tool_choice"] = "none".into();
         }
     }
-    if let Some(effort) = req.effort {
-        body["reasoning"] = json!({"effort": effort});
-    }
     body
 }
 
@@ -310,7 +307,6 @@ mod tests {
             max_tokens: 100,
             vision: false,
             forbid_calls: false,
-            effort: None,
         };
         let text_body = body(&req);
         let msgs = text_body["messages"].as_array().unwrap();
@@ -320,7 +316,6 @@ mod tests {
         assert_eq!(text_body["tools"][0]["function"]["name"], "shell");
         assert!(text_body.get("tool_choice").is_none());
         assert!(!text_body.to_string().contains("cache_control"));
-        assert!(text_body.get("reasoning").is_none());
         req.forbid_calls = true;
         let report_body = body(&req);
         assert_eq!(report_body["tool_choice"], "none");
@@ -328,9 +323,7 @@ mod tests {
         req.forbid_calls = false;
         req.vision = true;
         req.model = "anthropic/claude-sonnet-5";
-        req.effort = Some("low");
         let vision_body = body(&req);
-        assert_eq!(vision_body["reasoning"], json!({"effort": "low"}));
         assert_eq!(
             vision_body["messages"][0]["content"][0]["cache_control"]["type"],
             "ephemeral"

@@ -13,7 +13,6 @@ use crate::runner::{Runtime, TurnCtx};
 const SUBAGENT: &str = "computer";
 const MAX_STEPS: usize = 30;
 const MAX_TOKENS: u32 = 2048;
-const EFFORT: &str = "low";
 const KEEP_IMAGES: usize = 3;
 const PRUNE_AT: usize = 6;
 const IMAGE_DROPPED: &str = "[older screenshot removed]";
@@ -90,7 +89,6 @@ async fn drive(
             max_tokens: MAX_TOKENS,
             vision: true,
             forbid_calls: false,
-            effort: Some(EFFORT),
         };
         if steps == MAX_STEPS {
             break Err(rt.cap_report(ctx, &req, MAX_STEPS, SUBAGENT, usage).await);

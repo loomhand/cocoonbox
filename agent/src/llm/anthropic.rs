@@ -302,7 +302,6 @@ mod tests {
             max_tokens: 50,
             vision: true,
             forbid_calls: false,
-            effort: None,
         };
         let b = body(&req);
         let msgs = b["messages"].as_array().unwrap();
