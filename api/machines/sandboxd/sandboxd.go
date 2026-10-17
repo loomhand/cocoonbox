@@ -649,7 +649,11 @@ func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
 		b.mu.Lock()
 		e := b.entries[id]
 		known := e != nil && e.row != nil && e.row.ID == r.ID
+		unchanged := known && sameRow(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template
 		b.mu.Unlock()
+		if unchanged {
+			continue
+		}
 		var env map[string]envVar
 		if !known {
 			var err error
@@ -861,4 +865,9 @@ func fingerprint(v *envVar) string {
 	raw, _ := json.Marshal(v)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+func sameRow(a, b row) bool {
+	return a.ID == b.ID && a.Key == b.Key && a.Tenant == b.Tenant && maps.Equal(a.Metadata, b.Metadata) && a.Hibernated == b.Hibernated &&
+		a.Archived == b.Archived && a.Restarts == b.Restarts && a.Failed == b.Failed && a.ClaimedAt.Equal(b.ClaimedAt)
 }
