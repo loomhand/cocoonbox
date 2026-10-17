@@ -26,7 +26,7 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
 
-      # the arm64 runner image has no rustup; rust-toolchain.toml then picks the pinned toolchain
+      # rust-toolchain.toml pins the compiler only through rustup, which the partner arm64 image may lack
       - name: Install rustup
         if: matrix.arch == 'arm64'
         run: |
