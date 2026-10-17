@@ -27,6 +27,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/account"
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/console"
@@ -243,6 +244,49 @@ func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 	}
 }
 
+func TestSigningOutEverywhereEndsEverySignInAndKeepsTheBoxes(t *testing.T) {
+	e := newEnv(t)
+	first, _ := e.authorize(t, e.register(t, "First Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 7})
+	second, _ := e.authorize(t, e.register(t, "Second Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 7})
+	e.call(t, first, "box_create", map[string]any{"name": "agent-one"})
+	device, err := e.users.IssueDevice(t.Context(), e.alice, oauth.CLIClient, "laptop")
+	if err != nil {
+		t.Fatalf("IssueDevice: %v", err)
+	}
+	life := e.users.Lifetime(e.alice, "")
+	if code, body := e.consoleStatus(t, http.MethodPost, "me/sign-out-everywhere", map[string]any{}); code != http.StatusNoContent {
+		t.Fatalf("sign out everywhere = %d %s", code, body)
+	}
+	for name, token := range map[string]string{"the first agent": first, "the second agent": second} {
+		if resp := e.mcp(t, token, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("%s answers %d after signing out everywhere, want 401", name, resp.StatusCode)
+		}
+	}
+	for name, token := range map[string]string{"the personal token": e.userToken, "the device token": device} {
+		if _, err := e.authn.Authenticate(t.Context(), "Bearer "+token); err == nil {
+			t.Errorf("%s still authenticates", name)
+		}
+	}
+	if life.Err() == nil {
+		t.Error("the user's open calls outlived signing out everywhere")
+	}
+	conn, err := pgx.Connect(t.Context(), e.dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	var sessions, devices, grants int
+	var token *string
+	err = conn.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM sessions WHERE user_id = $1), (SELECT count(*) FROM user_tokens WHERE user_id = $1),
+		(SELECT count(*) FROM oauth_grants WHERE user_id = $1), (SELECT token_sha256 FROM users WHERE id = $1)`, e.alice).Scan(&sessions, &devices, &grants, &token)
+	if err != nil || sessions+devices+grants != 0 || token != nil {
+		t.Errorf("after signing out everywhere: %d sessions, %d device tokens, %d grants, personal token %v, %v", sessions, devices, grants, token, err)
+	}
+	if !slices.ContainsFunc(e.users.Boxes(e.alice), func(b users.Box) bool { return b.Name == "agent-one" }) {
+		t.Errorf("an agent's box left the user: %+v", e.users.Boxes(e.alice))
+	}
+}
+
 func TestAGrantDrivesOnlyItsOwnBoxesThroughTheBoxMCP(t *testing.T) {
 	e := newEnv(t)
 	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
@@ -330,6 +374,7 @@ func TestDisabledUserLosesItsGrants(t *testing.T) {
 }
 
 type env struct {
+	dsn       string
 	srv       *httptest.Server
 	client    *http.Client
 	users     *users.Service
@@ -373,6 +418,9 @@ func newEnv(t *testing.T) *env {
 	control.EnableGrants(grants)
 	web := console.New(us, store, 0, 2)
 	web.EnableAgents(grants)
+	signIns := account.New(us)
+	signIns.EnableGrants(grants)
+	web.EnableAccount(signIns)
 	agent := newFakeAgent(t)
 	boxMCP := edge.NewMCP(fakeResolver{users: us, addr: agent.Listener.Addr().String()}, authn, fakeCredentials{})
 	boxMCP.EnableGrants(grants)
@@ -389,7 +437,7 @@ func newEnv(t *testing.T) *env {
 	client := srv.Client()
 	client.Jar, _ = cookiejar.New(nil)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	e := &env{srv: srv, client: client, users: us, authn: authn, resource: resource, alice: alice.ID, userToken: userToken}
+	e := &env{dsn: dsn, srv: srv, client: client, users: us, authn: authn, resource: resource, alice: alice.ID, userToken: userToken}
 	e.console(t, http.MethodPost, "login", map[string]any{"name": "alice", "password": alicePassword}, nil)
 	return e
 }

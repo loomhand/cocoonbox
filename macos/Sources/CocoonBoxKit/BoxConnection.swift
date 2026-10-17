@@ -330,6 +330,11 @@ public final class BoxConnection: Sendable {
         _ = try await account.revokeDevice(.with { $0.deviceID = id })
     }
 
+    // signOutEverywhere ends every sign-in of the user, this connection's token too.
+    public func signOutEverywhere() async throws {
+        _ = try await account.signOutEverywhere(Cocoonbox_Control_V1_SignOutEverywhereRequest())
+    }
+
     // MARK: Connectors
 
     // catalog lists the connectors the api offers; `custom` connects any MCP server by URL.

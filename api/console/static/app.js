@@ -500,6 +500,19 @@ $("revoke-token").addEventListener("click", async () => {
   }
 });
 
+$("sign-out-everywhere").addEventListener("click", async () => {
+  if (!confirm("Sign out everywhere? This page, the CLI, the app, scripts with the personal token and every agent must sign in again.")) return;
+  try {
+    await api("POST", "me/sign-out-everywhere");
+    $("token").hidden = true;
+    $("token").textContent = "";
+    await load();
+    notice("Signed out everywhere.");
+  } catch (e) {
+    notice(e.message, true);
+  }
+});
+
 $("github-button").addEventListener("click", async () => {
   try {
     const { url } = await api("POST", "auth/github/begin", { invite });

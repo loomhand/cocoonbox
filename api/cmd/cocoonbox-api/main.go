@@ -162,7 +162,8 @@ func main() {
 	)
 	controlv1.RegisterBoxesServer(server, svc)
 	controlv1.RegisterSharesServer(server, shareSvc)
-	controlv1.RegisterAccountServer(server, account.New(accounts))
+	signIns := account.New(accounts)
+	controlv1.RegisterAccountServer(server, signIns)
 	controlv1.RegisterKeysServer(server, keys)
 	if library != nil {
 		controlv1.RegisterFlowsServer(server, flows.NewServer(library))
@@ -176,6 +177,7 @@ func main() {
 	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros, cfg.MaxRunningBoxes)
 	web.EnableSharing(shareSvc, authn, proxy)
 	web.EnableKeys(keys)
+	web.EnableAccount(signIns)
 	httpMux.Handle(console.Prefix, web)
 	if broker != nil {
 		controlv1.RegisterConnectorsServer(server, broker)
@@ -187,6 +189,7 @@ func main() {
 	}
 	if grants != nil {
 		control.EnableGrants(grants)
+		signIns.EnableGrants(grants)
 		boxMCP.EnableGrants(grants)
 		web.EnableAgents(grants)
 		httpMux.HandleFunc("GET "+grants.ResourceMetadataPath(), grants.ServeResourceMetadata)

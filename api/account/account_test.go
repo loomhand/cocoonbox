@@ -3,6 +3,7 @@ package account
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,25 @@ func TestRevokesActOnTheCallerOnly(t *testing.T) {
 	}
 }
 
+func TestSignOutEverywhereRevokesTheGrantsThenTheSignIns(t *testing.T) {
+	us := newFakeUsers()
+	srv := New(us)
+	alice := as(t, us, appToken)
+	if _, err := srv.SignOutEverywhere(alice, &controlv1.SignOutEverywhereRequest{}); err != nil || us.order != "users:alice" {
+		t.Errorf("SignOutEverywhere without grants = %v, calls %q", err, us.order)
+	}
+	us.order = ""
+	srv.EnableGrants(&fakeGrants{users: us})
+	if _, err := srv.SignOutEverywhere(alice, &controlv1.SignOutEverywhereRequest{}); err != nil || us.order != "grants:alice users:alice" {
+		t.Errorf("SignOutEverywhere = %v, calls %q", err, us.order)
+	}
+	us.order = ""
+	srv.EnableGrants(&fakeGrants{users: us, err: errors.New("delete oauth_grants: connection refused")})
+	if _, err := srv.SignOutEverywhere(alice, &controlv1.SignOutEverywhereRequest{}); status.Code(err) != codes.Internal || us.order != "" {
+		t.Errorf("SignOutEverywhere with a failing grant store = %v, calls %q, want Internal before any sign-out", err, us.order)
+	}
+}
+
 func as(t *testing.T, us *fakeUsers, token string) context.Context {
 	t.Helper()
 	ctx := metadata.NewIncomingContext(t.Context(), metadata.Pairs(auth.HeaderAuthorization, "Bearer "+token))
@@ -83,6 +103,7 @@ type fakeUsers struct {
 	used         time.Time
 	revoked      string
 	tokenRevoked string
+	order        string
 	err          error
 }
 
@@ -124,6 +145,24 @@ func (f *fakeUsers) RevokeToken(_ context.Context, id string) error {
 		return f.err
 	}
 	f.tokenRevoked = id
+	return nil
+}
+
+func (f *fakeUsers) SignOut(_ context.Context, id string) error {
+	f.order = strings.TrimSpace(f.order + " users:" + id)
+	return nil
+}
+
+type fakeGrants struct {
+	users *fakeUsers
+	err   error
+}
+
+func (g *fakeGrants) RevokeAll(_ context.Context, user string) error {
+	if g.err != nil {
+		return g.err
+	}
+	g.users.order = strings.TrimSpace(g.users.order + " grants:" + user)
 	return nil
 }
 

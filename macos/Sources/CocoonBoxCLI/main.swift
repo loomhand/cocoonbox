@@ -22,6 +22,8 @@ usage: cocoonbox <command> [options]
                                         or COCOONBOX_INVITE_TOKEN_FILE, never from the command line
   logout                                delete the stored token, and revoke it when the CLI got it through the
                                         browser (a token copied from the app stays the app's)
+  logout --everywhere                   sign out every console session, the personal token, every device and
+                                        every agent's access at once, this CLI too; boxes stay
   devices [--json]                      list the devices signed in through the browser; * marks this one
   devices revoke ID                     sign a device out at once, with every call it holds open
   status [--json]                       show the box
@@ -767,6 +769,18 @@ func login() async {
 
 func logout() async {
     let endpoint = endpoint()
+    if flags.contains("--everywhere") {
+        let connection = connection(endpoint)
+        defer { connection.close() }
+        do {
+            try await connection.signOutEverywhere()
+        } catch {
+            fail(BoxConnection.describe(error))
+        }
+        Keychain.deleteToken(for: endpoint, service: service)
+        try? saveSettings([sourceKey(endpoint): nil])
+        return print("signed out everywhere")
+    }
     if let token = Keychain.token(for: endpoint, service: service), settings()[sourceKey(endpoint)] == "browser" {
         do {
             try await BrowserLogin.revoke(token: token, endpoint: endpoint, client: BrowserLogin.cliClient)

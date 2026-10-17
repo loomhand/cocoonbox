@@ -220,6 +220,14 @@ func (s *store) revoke(ctx context.Context, user, id string) error {
 	return nil
 }
 
+func (s *store) revokeAll(ctx context.Context, user string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, "DELETE FROM oauth_grants WHERE user_id = $1 RETURNING id", user)
+	if err != nil {
+		return nil, fmt.Errorf("revoke grants: %w", err)
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
 func (s *store) revokeByToken(ctx context.Context, sum, clientID string) (string, error) {
 	var id string
 	err := s.pool.QueryRow(ctx, `DELETE FROM oauth_grants g USING oauth_tokens t WHERE t.grant_id = g.id AND t.sha256 = $1 AND g.client_id = $2

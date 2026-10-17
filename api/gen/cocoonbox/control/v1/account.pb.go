@@ -342,6 +342,78 @@ func (*RevokeTokenResponse) Descriptor() ([]byte, []int) {
 	return file_cocoonbox_control_v1_account_proto_rawDescGZIP(), []int{6}
 }
 
+type SignOutEverywhereRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignOutEverywhereRequest) Reset() {
+	*x = SignOutEverywhereRequest{}
+	mi := &file_cocoonbox_control_v1_account_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignOutEverywhereRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignOutEverywhereRequest) ProtoMessage() {}
+
+func (x *SignOutEverywhereRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_account_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignOutEverywhereRequest.ProtoReflect.Descriptor instead.
+func (*SignOutEverywhereRequest) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_account_proto_rawDescGZIP(), []int{7}
+}
+
+type SignOutEverywhereResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SignOutEverywhereResponse) Reset() {
+	*x = SignOutEverywhereResponse{}
+	mi := &file_cocoonbox_control_v1_account_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SignOutEverywhereResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SignOutEverywhereResponse) ProtoMessage() {}
+
+func (x *SignOutEverywhereResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cocoonbox_control_v1_account_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SignOutEverywhereResponse.ProtoReflect.Descriptor instead.
+func (*SignOutEverywhereResponse) Descriptor() ([]byte, []int) {
+	return file_cocoonbox_control_v1_account_proto_rawDescGZIP(), []int{8}
+}
+
 var File_cocoonbox_control_v1_account_proto protoreflect.FileDescriptor
 
 const file_cocoonbox_control_v1_account_proto_rawDesc = "" +
@@ -362,11 +434,14 @@ const file_cocoonbox_control_v1_account_proto_rawDesc = "" +
 	"\tdevice_id\x18\x01 \x01(\tR\bdeviceId\"\x16\n" +
 	"\x14RevokeDeviceResponse\"\x14\n" +
 	"\x12RevokeTokenRequest\"\x15\n" +
-	"\x13RevokeTokenResponse2\xb8\x02\n" +
+	"\x13RevokeTokenResponse\"\x1a\n" +
+	"\x18SignOutEverywhereRequest\"\x1b\n" +
+	"\x19SignOutEverywhereResponse2\xae\x03\n" +
 	"\aAccount\x12b\n" +
 	"\vListDevices\x12(.cocoonbox.control.v1.ListDevicesRequest\x1a).cocoonbox.control.v1.ListDevicesResponse\x12e\n" +
 	"\fRevokeDevice\x12).cocoonbox.control.v1.RevokeDeviceRequest\x1a*.cocoonbox.control.v1.RevokeDeviceResponse\x12b\n" +
-	"\vRevokeToken\x12(.cocoonbox.control.v1.RevokeTokenRequest\x1a).cocoonbox.control.v1.RevokeTokenResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
+	"\vRevokeToken\x12(.cocoonbox.control.v1.RevokeTokenRequest\x1a).cocoonbox.control.v1.RevokeTokenResponse\x12t\n" +
+	"\x11SignOutEverywhere\x12..cocoonbox.control.v1.SignOutEverywhereRequest\x1a/.cocoonbox.control.v1.SignOutEverywhereResponseBFZDgithub.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1;controlv1b\x06proto3"
 
 var (
 	file_cocoonbox_control_v1_account_proto_rawDescOnce sync.Once
@@ -380,26 +455,30 @@ func file_cocoonbox_control_v1_account_proto_rawDescGZIP() []byte {
 	return file_cocoonbox_control_v1_account_proto_rawDescData
 }
 
-var file_cocoonbox_control_v1_account_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_cocoonbox_control_v1_account_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_cocoonbox_control_v1_account_proto_goTypes = []any{
-	(*Device)(nil),               // 0: cocoonbox.control.v1.Device
-	(*ListDevicesRequest)(nil),   // 1: cocoonbox.control.v1.ListDevicesRequest
-	(*ListDevicesResponse)(nil),  // 2: cocoonbox.control.v1.ListDevicesResponse
-	(*RevokeDeviceRequest)(nil),  // 3: cocoonbox.control.v1.RevokeDeviceRequest
-	(*RevokeDeviceResponse)(nil), // 4: cocoonbox.control.v1.RevokeDeviceResponse
-	(*RevokeTokenRequest)(nil),   // 5: cocoonbox.control.v1.RevokeTokenRequest
-	(*RevokeTokenResponse)(nil),  // 6: cocoonbox.control.v1.RevokeTokenResponse
+	(*Device)(nil),                    // 0: cocoonbox.control.v1.Device
+	(*ListDevicesRequest)(nil),        // 1: cocoonbox.control.v1.ListDevicesRequest
+	(*ListDevicesResponse)(nil),       // 2: cocoonbox.control.v1.ListDevicesResponse
+	(*RevokeDeviceRequest)(nil),       // 3: cocoonbox.control.v1.RevokeDeviceRequest
+	(*RevokeDeviceResponse)(nil),      // 4: cocoonbox.control.v1.RevokeDeviceResponse
+	(*RevokeTokenRequest)(nil),        // 5: cocoonbox.control.v1.RevokeTokenRequest
+	(*RevokeTokenResponse)(nil),       // 6: cocoonbox.control.v1.RevokeTokenResponse
+	(*SignOutEverywhereRequest)(nil),  // 7: cocoonbox.control.v1.SignOutEverywhereRequest
+	(*SignOutEverywhereResponse)(nil), // 8: cocoonbox.control.v1.SignOutEverywhereResponse
 }
 var file_cocoonbox_control_v1_account_proto_depIdxs = []int32{
 	0, // 0: cocoonbox.control.v1.ListDevicesResponse.devices:type_name -> cocoonbox.control.v1.Device
 	1, // 1: cocoonbox.control.v1.Account.ListDevices:input_type -> cocoonbox.control.v1.ListDevicesRequest
 	3, // 2: cocoonbox.control.v1.Account.RevokeDevice:input_type -> cocoonbox.control.v1.RevokeDeviceRequest
 	5, // 3: cocoonbox.control.v1.Account.RevokeToken:input_type -> cocoonbox.control.v1.RevokeTokenRequest
-	2, // 4: cocoonbox.control.v1.Account.ListDevices:output_type -> cocoonbox.control.v1.ListDevicesResponse
-	4, // 5: cocoonbox.control.v1.Account.RevokeDevice:output_type -> cocoonbox.control.v1.RevokeDeviceResponse
-	6, // 6: cocoonbox.control.v1.Account.RevokeToken:output_type -> cocoonbox.control.v1.RevokeTokenResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
+	7, // 4: cocoonbox.control.v1.Account.SignOutEverywhere:input_type -> cocoonbox.control.v1.SignOutEverywhereRequest
+	2, // 5: cocoonbox.control.v1.Account.ListDevices:output_type -> cocoonbox.control.v1.ListDevicesResponse
+	4, // 6: cocoonbox.control.v1.Account.RevokeDevice:output_type -> cocoonbox.control.v1.RevokeDeviceResponse
+	6, // 7: cocoonbox.control.v1.Account.RevokeToken:output_type -> cocoonbox.control.v1.RevokeTokenResponse
+	8, // 8: cocoonbox.control.v1.Account.SignOutEverywhere:output_type -> cocoonbox.control.v1.SignOutEverywhereResponse
+	5, // [5:9] is the sub-list for method output_type
+	1, // [1:5] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
@@ -416,7 +495,7 @@ func file_cocoonbox_control_v1_account_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cocoonbox_control_v1_account_proto_rawDesc), len(file_cocoonbox_control_v1_account_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

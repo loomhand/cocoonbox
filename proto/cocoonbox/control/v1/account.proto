@@ -15,6 +15,10 @@ service Account {
   rpc RevokeDevice(RevokeDeviceRequest) returns (RevokeDeviceResponse);
   // RevokeToken drops the personal token; device tokens stay.
   rpc RevokeToken(RevokeTokenRequest) returns (RevokeTokenResponse);
+  // SignOutEverywhere ends every sign-in of the caller, the calling one too:
+  // console sessions, the personal token, device tokens and agents' OAuth
+  // grants. Boxes, shares and connected accounts stay.
+  rpc SignOutEverywhere(SignOutEverywhereRequest) returns (SignOutEverywhereResponse);
 }
 
 message Device {
@@ -46,3 +50,7 @@ message RevokeDeviceResponse {}
 message RevokeTokenRequest {}
 
 message RevokeTokenResponse {}
+
+message SignOutEverywhereRequest {}
+
+message SignOutEverywhereResponse {}

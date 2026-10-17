@@ -99,6 +99,7 @@ type Server struct {
 	screens Screens
 	connect *connect.Service
 	keys    controlv1.KeysServer
+	account controlv1.AccountServer
 	agents  Agents
 	signup  *signup.Service
 
@@ -134,6 +135,12 @@ func New(us *users.Service, boxes Boxes, defaultDailyCap int64, defaultMaxRunnin
 	s.mux.HandleFunc("PUT "+Prefix+"api/users/{id}/daily-cap", s.admin(s.setDailyCap))
 	s.mux.HandleFunc("DELETE "+Prefix+"api/users/{id}", s.admin(s.deleteUser))
 	return s
+}
+
+// EnableAccount serves signing out everywhere over account.
+func (s *Server) EnableAccount(account controlv1.AccountServer) {
+	s.account = account
+	s.mux.HandleFunc("POST "+Prefix+"api/me/sign-out-everywhere", s.signedIn(s.signOutEverywhere))
 }
 
 // EnableSharing serves the owner's share calls over shares and the share page, which authn admits and screens bridges.
@@ -319,6 +326,15 @@ func (s *Server) revokeToken(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) signOutEverywhere(w http.ResponseWriter, r *http.Request) {
+	if _, err := s.account.SignOutEverywhere(s.ownerCtx(r), &controlv1.SignOutEverywhereRequest{}); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: cookieName, Path: Prefix, MaxAge: -1, HttpOnly: true, Secure: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 

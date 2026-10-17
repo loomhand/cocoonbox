@@ -20,18 +20,30 @@ type Users interface {
 	TokenDevice(sum string) string
 	RevokeDevice(ctx context.Context, id, device string) error
 	RevokeToken(ctx context.Context, id string) error
+	SignOut(ctx context.Context, id string) error
+}
+
+// Grants keeps agents' OAuth grants; oauth.Service is the production one.
+type Grants interface {
+	RevokeAll(ctx context.Context, user string) error
 }
 
 // Server implements controlv1.AccountServer for the authenticated caller.
 type Server struct {
 	controlv1.UnimplementedAccountServer
 
-	users Users
+	users  Users
+	grants Grants
 }
 
 // New serves the sign-ins in us.
 func New(us Users) *Server {
 	return &Server{users: us}
+}
+
+// EnableGrants makes SignOutEverywhere revoke the caller's OAuth grants too.
+func (s *Server) EnableGrants(grants Grants) {
+	s.grants = grants
 }
 
 func (s *Server) ListDevices(ctx context.Context, _ *controlv1.ListDevicesRequest) (*controlv1.ListDevicesResponse, error) {
@@ -80,6 +92,23 @@ func (s *Server) RevokeToken(ctx context.Context, _ *controlv1.RevokeTokenReques
 	}
 	log.WithFunc("account.Server.RevokeToken").Infof(ctx, "user %s revoked the personal token", user)
 	return &controlv1.RevokeTokenResponse{}, nil
+}
+
+func (s *Server) SignOutEverywhere(ctx context.Context, _ *controlv1.SignOutEverywhereRequest) (*controlv1.SignOutEverywhereResponse, error) {
+	user, err := auth.Caller(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if s.grants != nil {
+		if err := s.grants.RevokeAll(ctx, user); err != nil {
+			return nil, usersError(ctx, err, "sign out everywhere")
+		}
+	}
+	if err := s.users.SignOut(ctx, user); err != nil {
+		return nil, usersError(ctx, err, "sign out everywhere")
+	}
+	log.WithFunc("account.Server.SignOutEverywhere").Infof(ctx, "user %s signed out everywhere", user)
+	return &controlv1.SignOutEverywhereResponse{}, nil
 }
 
 func usersError(ctx context.Context, err error, action string) error {

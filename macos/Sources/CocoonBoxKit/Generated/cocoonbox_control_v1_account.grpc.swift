@@ -59,11 +59,25 @@ public enum Cocoonbox_Control_V1_Account: Sendable {
                 type: .unary
             )
         }
+        /// Namespace for "SignOutEverywhere" metadata.
+        public enum SignOutEverywhere: Sendable {
+            /// Request type for "SignOutEverywhere".
+            public typealias Input = Cocoonbox_Control_V1_SignOutEverywhereRequest
+            /// Response type for "SignOutEverywhere".
+            public typealias Output = Cocoonbox_Control_V1_SignOutEverywhereResponse
+            /// Descriptor for "SignOutEverywhere".
+            public static let descriptor = GRPCCore.MethodDescriptor(
+                service: GRPCCore.ServiceDescriptor(fullyQualifiedService: "cocoonbox.control.v1.Account"),
+                method: "SignOutEverywhere",
+                type: .unary
+            )
+        }
         /// Descriptors for all methods in the "cocoonbox.control.v1.Account" service.
         public static let descriptors: [GRPCCore.MethodDescriptor] = [
             ListDevices.descriptor,
             RevokeDevice.descriptor,
-            RevokeToken.descriptor
+            RevokeToken.descriptor,
+            SignOutEverywhere.descriptor
         ]
     }
 }
@@ -150,6 +164,26 @@ extension Cocoonbox_Control_V1_Account {
             request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse>
+
+        /// Handle the "SignOutEverywhere" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SignOutEverywhere ends every sign-in of the caller, the calling one too:
+        /// > console sessions, the personal token, device tokens and agents' OAuth
+        /// > grants. Boxes, shares and connected accounts stay.
+        ///
+        /// - Parameters:
+        ///   - request: A streaming request of `Cocoonbox_Control_V1_SignOutEverywhereRequest` messages.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A streaming response of `Cocoonbox_Control_V1_SignOutEverywhereResponse` messages.
+        func signOutEverywhere(
+            request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse>
     }
 
     /// Service protocol for the "cocoonbox.control.v1.Account" service.
@@ -220,6 +254,26 @@ extension Cocoonbox_Control_V1_Account {
             request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_RevokeTokenRequest>,
             context: GRPCCore.ServerContext
         ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse>
+
+        /// Handle the "SignOutEverywhere" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SignOutEverywhere ends every sign-in of the caller, the calling one too:
+        /// > console sessions, the personal token, device tokens and agents' OAuth
+        /// > grants. Boxes, shares and connected accounts stay.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SignOutEverywhereRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A response containing a single `Cocoonbox_Control_V1_SignOutEverywhereResponse` message.
+        func signOutEverywhere(
+            request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+            context: GRPCCore.ServerContext
+        ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse>
     }
 
     /// Simple service protocol for the "cocoonbox.control.v1.Account" service.
@@ -288,6 +342,26 @@ extension Cocoonbox_Control_V1_Account {
             request: Cocoonbox_Control_V1_RevokeTokenRequest,
             context: GRPCCore.ServerContext
         ) async throws -> Cocoonbox_Control_V1_RevokeTokenResponse
+
+        /// Handle the "SignOutEverywhere" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SignOutEverywhere ends every sign-in of the caller, the calling one too:
+        /// > console sessions, the personal token, device tokens and agents' OAuth
+        /// > grants. Boxes, shares and connected accounts stay.
+        ///
+        /// - Parameters:
+        ///   - request: A `Cocoonbox_Control_V1_SignOutEverywhereRequest` message.
+        ///   - context: Context providing information about the RPC.
+        /// - Throws: Any error which occurred during the processing of the request. Thrown errors
+        ///     of type `RPCError` are mapped to appropriate statuses. All other errors are converted
+        ///     to an internal error.
+        /// - Returns: A `Cocoonbox_Control_V1_SignOutEverywhereResponse` to respond with.
+        func signOutEverywhere(
+            request: Cocoonbox_Control_V1_SignOutEverywhereRequest,
+            context: GRPCCore.ServerContext
+        ) async throws -> Cocoonbox_Control_V1_SignOutEverywhereResponse
     }
 }
 
@@ -323,6 +397,17 @@ extension Cocoonbox_Control_V1_Account.StreamingServiceProtocol {
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RevokeTokenResponse>(),
             handler: { request, context in
                 try await self.revokeToken(
+                    request: request,
+                    context: context
+                )
+            }
+        )
+        router.registerHandler(
+            forMethod: Cocoonbox_Control_V1_Account.Method.SignOutEverywhere.descriptor,
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SignOutEverywhereRequest>(),
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SignOutEverywhereResponse>(),
+            handler: { request, context in
+                try await self.signOutEverywhere(
                     request: request,
                     context: context
                 )
@@ -366,6 +451,17 @@ extension Cocoonbox_Control_V1_Account.ServiceProtocol {
         )
         return GRPCCore.StreamingServerResponse(single: response)
     }
+
+    public func signOutEverywhere(
+        request: GRPCCore.StreamingServerRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.StreamingServerResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse> {
+        let response = try await self.signOutEverywhere(
+            request: GRPCCore.ServerRequest(stream: request),
+            context: context
+        )
+        return GRPCCore.StreamingServerResponse(single: response)
+    }
 }
 
 // Default implementation of methods from 'ServiceProtocol'.
@@ -403,6 +499,19 @@ extension Cocoonbox_Control_V1_Account.SimpleServiceProtocol {
     ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse> {
         return GRPCCore.ServerResponse<Cocoonbox_Control_V1_RevokeTokenResponse>(
             message: try await self.revokeToken(
+                request: request.message,
+                context: context
+            ),
+            metadata: [:]
+        )
+    }
+
+    public func signOutEverywhere(
+        request: GRPCCore.ServerRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+        context: GRPCCore.ServerContext
+    ) async throws -> GRPCCore.ServerResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse> {
+        return GRPCCore.ServerResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse>(
+            message: try await self.signOutEverywhere(
                 request: request.message,
                 context: context
             ),
@@ -494,6 +603,31 @@ extension Cocoonbox_Control_V1_Account {
             deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_RevokeTokenResponse>,
             options: GRPCCore.CallOptions,
             onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_RevokeTokenResponse>) async throws -> Result
+        ) async throws -> Result where Result: Sendable
+
+        /// Call the "SignOutEverywhere" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SignOutEverywhere ends every sign-in of the caller, the calling one too:
+        /// > console sessions, the personal token, device tokens and agents' OAuth
+        /// > grants. Boxes, shares and connected accounts stay.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SignOutEverywhereRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SignOutEverywhereRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_SignOutEverywhereResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        func signOutEverywhere<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_SignOutEverywhereResponse>,
+            options: GRPCCore.CallOptions,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse>) async throws -> Result
         ) async throws -> Result where Result: Sendable
     }
 
@@ -621,6 +755,42 @@ extension Cocoonbox_Control_V1_Account {
                 onResponse: handleResponse
             )
         }
+
+        /// Call the "SignOutEverywhere" method.
+        ///
+        /// > Source IDL Documentation:
+        /// >
+        /// > SignOutEverywhere ends every sign-in of the caller, the calling one too:
+        /// > console sessions, the personal token, device tokens and agents' OAuth
+        /// > grants. Boxes, shares and connected accounts stay.
+        ///
+        /// - Parameters:
+        ///   - request: A request containing a single `Cocoonbox_Control_V1_SignOutEverywhereRequest` message.
+        ///   - serializer: A serializer for `Cocoonbox_Control_V1_SignOutEverywhereRequest` messages.
+        ///   - deserializer: A deserializer for `Cocoonbox_Control_V1_SignOutEverywhereResponse` messages.
+        ///   - options: Options to apply to this RPC.
+        ///   - handleResponse: A closure which handles the response and returns its result to
+        ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+        ///       already finished.
+        /// - Returns: The result of `handleResponse`.
+        public func signOutEverywhere<Result>(
+            request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+            serializer: some GRPCCore.MessageSerializer<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+            deserializer: some GRPCCore.MessageDeserializer<Cocoonbox_Control_V1_SignOutEverywhereResponse>,
+            options: GRPCCore.CallOptions = .defaults,
+            onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse>) async throws -> Result = { response in
+                try response.message
+            }
+        ) async throws -> Result where Result: Sendable {
+            try await self.client.unary(
+                request: request,
+                descriptor: Cocoonbox_Control_V1_Account.Method.SignOutEverywhere.descriptor,
+                serializer: serializer,
+                deserializer: deserializer,
+                options: options,
+                onResponse: handleResponse
+            )
+        }
     }
 }
 
@@ -710,6 +880,37 @@ extension Cocoonbox_Control_V1_Account.ClientProtocol {
             request: request,
             serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_RevokeTokenRequest>(),
             deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_RevokeTokenResponse>(),
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SignOutEverywhere" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SignOutEverywhere ends every sign-in of the caller, the calling one too:
+    /// > console sessions, the personal token, device tokens and agents' OAuth
+    /// > grants. Boxes, shares and connected accounts stay.
+    ///
+    /// - Parameters:
+    ///   - request: A request containing a single `Cocoonbox_Control_V1_SignOutEverywhereRequest` message.
+    ///   - options: Options to apply to this RPC.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func signOutEverywhere<Result>(
+        request: GRPCCore.ClientRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>,
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        try await self.signOutEverywhere(
+            request: request,
+            serializer: GRPCProtobuf.ProtobufSerializer<Cocoonbox_Control_V1_SignOutEverywhereRequest>(),
+            deserializer: GRPCProtobuf.ProtobufDeserializer<Cocoonbox_Control_V1_SignOutEverywhereResponse>(),
             options: options,
             onResponse: handleResponse
         )
@@ -813,6 +1014,41 @@ extension Cocoonbox_Control_V1_Account.ClientProtocol {
             metadata: metadata
         )
         return try await self.revokeToken(
+            request: request,
+            options: options,
+            onResponse: handleResponse
+        )
+    }
+
+    /// Call the "SignOutEverywhere" method.
+    ///
+    /// > Source IDL Documentation:
+    /// >
+    /// > SignOutEverywhere ends every sign-in of the caller, the calling one too:
+    /// > console sessions, the personal token, device tokens and agents' OAuth
+    /// > grants. Boxes, shares and connected accounts stay.
+    ///
+    /// - Parameters:
+    ///   - message: request message to send.
+    ///   - metadata: Additional metadata to send, defaults to empty.
+    ///   - options: Options to apply to this RPC, defaults to `.defaults`.
+    ///   - handleResponse: A closure which handles the response and returns its result to
+    ///       the caller. Returning from the closure will cancel the RPC if it hasn't
+    ///       already finished.
+    /// - Returns: The result of `handleResponse`.
+    public func signOutEverywhere<Result>(
+        _ message: Cocoonbox_Control_V1_SignOutEverywhereRequest,
+        metadata: GRPCCore.Metadata = [:],
+        options: GRPCCore.CallOptions = .defaults,
+        onResponse handleResponse: @Sendable @escaping (GRPCCore.ClientResponse<Cocoonbox_Control_V1_SignOutEverywhereResponse>) async throws -> Result = { response in
+            try response.message
+        }
+    ) async throws -> Result where Result: Sendable {
+        let request = GRPCCore.ClientRequest<Cocoonbox_Control_V1_SignOutEverywhereRequest>(
+            message: message,
+            metadata: metadata
+        )
+        return try await self.signOutEverywhere(
             request: request,
             options: options,
             onResponse: handleResponse

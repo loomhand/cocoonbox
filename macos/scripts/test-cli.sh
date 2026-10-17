@@ -6,7 +6,7 @@
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
 # and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, devices and devices revoke, a release-built
+# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, devices and devices revoke, logout --everywhere, a release-built
 # bridge naming the keys at initialize, and login through the browser and logout. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
@@ -734,6 +734,10 @@ r = run("logout")
 check("logout revokes the token at the server", r.returncode == 0 and "revoked=mock-token" in open(mocklog).read()[seen:], r.stderr)
 r = run("status", "--json")
 check("after logout the CLI is signed out", r.returncode != 0 and "run cocoonbox login" in r.stderr, r.stderr)
+r = subprocess.run([cli, "login", "--token", "-"], input="mock-token\n", capture_output=True, text=True, timeout=30)
+seen = len(open(mocklog).read())
+r = run("logout", "--everywhere")
+check("logout --everywhere signs out everywhere at the server and here", r.returncode == 0 and "signed out everywhere" in r.stdout and "account=signed-out-everywhere" in open(mocklog).read()[seen:] and "run cocoonbox login" in run("status").stderr, r.stdout + r.stderr)
 # A token copied from the app is the app's device: the CLI's logout deletes its own item and revokes nothing.
 for how in ("login --from-app", "an implicit copy"):
     service = app_service("revoke-" + how.split()[-1])

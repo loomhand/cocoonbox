@@ -199,6 +199,51 @@ func TestRevokeTokenDropsTheTokenEverywhereAndEndsItsCalls(t *testing.T) {
 	}
 }
 
+func TestSignOutEndsEverySignInOfTheUserOnly(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	other, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	session, _ := svc.NewSession(t.Context(), u.ID)
+	otherSession, _ := svc.NewSession(t.Context(), other.ID)
+	token, _ := svc.RegenerateToken(t.Context(), u.ID)
+	otherToken, _ := svc.RegenerateToken(t.Context(), other.ID)
+	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
+	elsewhere := openTestService(t, dsn, gw, tenants)
+	life, deviceLife, otherLife := svc.Lifetime(u.ID, ""), svc.Lifetime(u.ID, sum(device)), svc.Lifetime(other.ID, sum(otherToken))
+	if err := svc.SignOut(t.Context(), u.ID); err != nil {
+		t.Fatalf("SignOut: %v", err)
+	}
+	if _, err := svc.Session(t.Context(), session); !errors.Is(err, ErrNotFound) {
+		t.Errorf("the signed-out user's session = %v, want ErrNotFound", err)
+	}
+	for name, held := range map[string]string{"the personal token": token, "the device token": device} {
+		if _, ok := svc.ByTokenSHA256(t.Context(), sum(held)); ok {
+			t.Errorf("%s resolves after SignOut", name)
+		}
+	}
+	if got, _ := svc.Get(u.ID); got.HasToken || got.Disabled || life.Err() == nil || deviceLife.Err() == nil {
+		t.Errorf("after SignOut: has token %t, disabled %t, lifetime %v, device lifetime %v", got.HasToken, got.Disabled, life.Err(), deviceLife.Err())
+	}
+	if devices, err := svc.Devices(t.Context(), u.ID); err != nil || len(devices) != 0 {
+		t.Errorf("Devices after SignOut = %+v, %v", devices, err)
+	}
+	if err := elsewhere.Load(t.Context()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if _, ok := elsewhere.ByTokenSHA256(t.Context(), sum(device)); ok {
+		t.Error("a signed-out device token resolves on another api after its reload")
+	}
+	if _, err := svc.Session(t.Context(), otherSession); err != nil {
+		t.Errorf("another user's session = %v", err)
+	}
+	if id, ok := svc.ByTokenSHA256(t.Context(), sum(otherToken)); !ok || id != other.ID || otherLife.Err() != nil {
+		t.Errorf("another user's token resolves to %q, %t, its lifetime %v", id, ok, otherLife.Err())
+	}
+	if _, err := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop"); err != nil || svc.Lifetime(u.ID, "").Err() != nil {
+		t.Errorf("signing in again = %v, lifetime %v", err, svc.Lifetime(u.ID, "").Err())
+	}
+}
+
 func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())

@@ -83,7 +83,9 @@ The CLI and the app sign in through the same authorization server, as first-part
 
 **The user.** The console's Devices section lists them (`GET /cb/api/devices`: `id`, `client`, `label`, `created_at`, `used_at`) and `DELETE /cb/api/devices/{id}` revokes one at once (404 for a device of another user or one already gone). `DELETE /cb/api/me/token` revokes the personal token at once, 204 also when there is none; device tokens stay.
 
-**`cocoonbox.control.v1.Account`** (`proto/cocoonbox/control/v1/account.proto`, the personal token or a device token): `ListDevices` answers the console's list plus `current`, true for the device whose token made the call; `RevokeDevice{device_id}` revokes one (`NOT_FOUND` for another user's device or one already gone); `RevokeToken` revokes the personal token. `cocoonbox devices [--json]` lists them, `*` marking the CLI's own, and `cocoonbox devices revoke ID` revokes one.
+**`cocoonbox.control.v1.Account`** (`proto/cocoonbox/control/v1/account.proto`, the personal token or a device token): `ListDevices` answers the console's list plus `current`, true for the device whose token made the call; `RevokeDevice{device_id}` revokes one (`NOT_FOUND` for another user's device or one already gone); `RevokeToken` revokes the personal token; `SignOutEverywhere` signs the caller out everywhere (below). `cocoonbox devices [--json]` lists them, `*` marking the CLI's own, and `cocoonbox devices revoke ID` revokes one.
+
+**Sign out everywhere.** `POST /cb/api/me/sign-out-everywhere` (console session, 204, the session cookie cleared), `Account.SignOutEverywhere` and `cocoonbox logout --everywhere` (which then deletes the CLI's stored token) end every sign-in of the user at once, the calling one too: every console session, the personal token, every device token and every agent's OAuth grant with its tokens, and every call open on any of them. Boxes, shares, connected accounts, keys and the boxes' gw and door keys stay. The grants go first, then the sessions and tokens in one transaction; a failure leaves the rest for a retry.
 
 ### Sign-in with GitHub and signup
 

@@ -266,6 +266,18 @@ func (s *store) removeDeviceBySHA256(ctx context.Context, sum string) (string, s
 	return user, id, nil
 }
 
+// signOut deletes user's console sessions, personal token and device tokens in one transaction.
+func (s *store) signOut(ctx context.Context, user string) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		for _, sql := range []string{"DELETE FROM sessions WHERE user_id = $1", "UPDATE users SET token_sha256 = NULL WHERE id = $1", "DELETE FROM user_tokens WHERE user_id = $1"} {
+			if _, err := tx.Exec(ctx, sql, user); err != nil {
+				return fmt.Errorf("sign out: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
 func (s *store) touchDevice(ctx context.Context, id string) error {
 	return s.exec(ctx, "UPDATE user_tokens SET used_at = now() WHERE id = $1", id)
 }

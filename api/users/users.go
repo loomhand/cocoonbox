@@ -571,6 +571,33 @@ func (s *Service) RevokeToken(ctx context.Context, id string) error {
 	return nil
 }
 
+// SignOut ends every sign-in of user id at once: its console sessions, personal token and device tokens, and every call open on them.
+func (s *Service) SignOut(ctx context.Context, id string) error {
+	if _, err := s.record(id); err != nil {
+		return err
+	}
+	if err := s.store.signOut(ctx, id); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if r, ok := s.byID[id]; ok {
+		dropTokens(s.byToken, r)
+		for _, d := range r.devices {
+			s.endCredential(d.sha256)
+			s.deviceUse.Delete(d.id)
+		}
+		s.endCredential(r.tokenSHA256)
+		r.tokenSHA256, r.HasToken, r.devices = "", false, nil
+		s.byID[id] = r
+	}
+	s.end(id)
+	s.mu.Unlock()
+	if err := s.store.notify(ctx); err != nil {
+		log.WithFunc("users.Service.SignOut").Warnf(ctx, "signed %s out everywhere; other apis reload on their next notify: %v", id, err)
+	}
+	return nil
+}
+
 // Login checks name's password and returns the user.
 func (s *Service) Login(ctx context.Context, name, password string) (User, error) {
 	id, hash, err := s.store.password(ctx, name)

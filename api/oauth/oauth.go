@@ -260,6 +260,18 @@ func (s *Service) Revoke(ctx context.Context, user, id string) error {
 	return nil
 }
 
+// RevokeAll ends every grant of user and their tokens; their boxes stay the user's.
+func (s *Service) RevokeAll(ctx context.Context, user string) error {
+	ids, err := s.store.revokeAll(ctx, user)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		s.accounts.EndCredential(id)
+	}
+	return nil
+}
+
 // MarkSeen records that user saw every grant the console lists.
 func (s *Service) MarkSeen(ctx context.Context, user string) error {
 	return s.store.markSeen(ctx, user)
