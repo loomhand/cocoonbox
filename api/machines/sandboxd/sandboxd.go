@@ -65,7 +65,7 @@ type Options struct {
 	TenantEgressClass string
 	Ledger            *cluster.Store
 	// Shared, when set, holds the machine records: every change lands on a row's version and the backend caches the table.
-	Shared Shared
+	Shared *cluster.Store
 }
 
 // Check reports whether New refuses opts before it reads the instance.
@@ -81,15 +81,6 @@ func (o Options) client() (*client, error) {
 		}
 	}
 	return newClient(o.URL, o.Token)
-}
-
-// Shared is the machine table api processes share, with the notifies of its changes.
-type Shared interface {
-	Machines(ctx context.Context) ([]cluster.Machine, error)
-	Machine(ctx context.Context, id string) (cluster.Machine, error)
-	UpdateMachine(ctx context.Context, id string, edit cluster.MachineEdit) (cluster.Machine, error)
-	DeleteMachineIf(ctx context.Context, id string, cond cluster.MachineCond) (bool, error)
-	Listen(ctx context.Context, channel string, reset func(), fn cluster.Notified)
 }
 
 var (
