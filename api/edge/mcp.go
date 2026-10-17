@@ -42,15 +42,15 @@ type Grants interface {
 	Challenge(invalid bool) string
 }
 
-// route is where one MCP exchange goes and as whom: the caller for the log, the user and credential whose end ends it, and the grant of a share call.
+// route is where one MCP exchange goes and as whom: the caller for the log, the context that ends with its user and credential, and the grant of a share call.
 type route struct {
-	caller     string
-	user       string
-	credential string
-	ep         machines.Endpoint
-	wake       string
-	grant      *auth.Grant
-	left       func()
+	caller string
+	ctx    context.Context
+	stop   context.CancelFunc
+	ep     machines.Endpoint
+	wake   string
+	grant  *auth.Grant
+	left   func()
 }
 
 type boxTransport struct {
@@ -87,6 +87,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
 	rt, err := m.route(r, boxID)
+	defer rt.stop()
 	defer func() {
 		log.WithFunc("edge.MCP.ServeHTTP").Infof(r.Context(), "%s %q user=%s box=%q addr=%s code=%s in %s",
 			r.Method, r.URL.Path, rt.caller, boxID, rt.ep.Key, status.Code(err), time.Since(start).Round(time.Millisecond))
@@ -99,11 +100,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rt.left()
-	if rt.user != "" {
-		ctx, stop := m.authn.Bind(r.Context(), rt.user, rt.credential)
-		defer stop()
-		r = r.WithContext(ctx)
-	}
+	r = r.WithContext(rt.ctx)
 	if rt.grant != nil {
 		ctx, cancel := context.WithCancel(r.Context())
 		defer cancel()
@@ -121,11 +118,13 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // route authorizes one exchange for the bearer's user, or, when no user holds it and it is a share secret, for that share.
 func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
+	rt.ctx, rt.stop = r.Context(), func() {}
 	authorization := r.Header.Get("Authorization")
 	if m.grants != nil && oauth.IsAccessToken(authorization) {
 		return m.grantRoute(r, authorization, boxID)
 	}
 	owner, err := m.authn.Authenticate(r.Context(), authorization)
+	var user, credential string
 	if secret, ok := auth.ShareSecret(authorization); err != nil && ok && boxID != "" {
 		var guest string
 		if guest, err = m.authn.Guest(r.Context(), r.Header.Get(auth.HeaderGuestToken)); err != nil {
@@ -135,19 +134,22 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 		if grant, err = m.authn.Admit(secret, boxID, guest); err != nil {
 			return rt, err
 		}
-		rt.grant, owner = &grant, grant.Owner
-		rt.caller, rt.user, rt.credential = grant.Principal(), guest, auth.TokenCredential(r.Header.Get(auth.HeaderGuestToken))
+		rt.grant, owner, rt.caller = &grant, grant.Owner, grant.Principal()
+		user, credential = guest, auth.TokenCredential(r.Header.Get(auth.HeaderGuestToken))
 	} else {
 		if err != nil {
 			return rt, err
 		}
 		token, _ := auth.Bearer(authorization)
-		rt.caller, rt.user, rt.credential = owner, owner, auth.TokenCredential(token)
+		rt.caller, user, credential = owner, owner, auth.TokenCredential(token)
+	}
+	if user != "" {
+		rt.ctx, rt.stop = m.authn.Bind(r.Context(), user, credential)
 	}
 	if boxID == "" {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
 	}
-	if rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), owner, boxID); err == nil {
+	if rt.ep, rt.wake, err = m.resolver.Resolve(rt.ctx, owner, boxID); err == nil {
 		rt.left = m.resolver.Reached(boxID)
 	}
 	return rt, err
@@ -155,6 +157,7 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 
 // grantRoute authorizes one exchange for an access token on a box its grant created, as the box owner.
 func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route, err error) {
+	rt.ctx, rt.stop = r.Context(), func() {}
 	g, err := m.grants.Authenticate(r.Context(), authorization)
 	switch {
 	case errors.Is(err, oauth.ErrInvalidToken):
@@ -163,8 +166,9 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 		log.WithFunc("edge.MCP.grantRoute").Error(r.Context(), err, "check access token")
 		return rt, status.Error(codes.Unavailable, "checking the access token failed")
 	}
-	rt.caller, rt.user, rt.credential = g.User+" grant="+g.ID, g.User, g.ID
-	ids, err := m.grants.Boxes(r.Context(), g.ID)
+	rt.caller = g.User + " grant=" + g.ID
+	rt.ctx, rt.stop = m.authn.Bind(r.Context(), g.User, g.ID)
+	ids, err := m.grants.Boxes(rt.ctx, g.ID)
 	switch {
 	case err != nil:
 		log.WithFunc("edge.MCP.grantRoute").Errorf(r.Context(), err, "list the boxes of grant %s", g.ID)
@@ -174,7 +178,7 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 	case !slices.Contains(ids, boxID):
 		return rt, errNoBox
 	}
-	if rt.ep, rt.wake, err = m.resolver.Resolve(r.Context(), g.User, boxID); err == nil {
+	if rt.ep, rt.wake, err = m.resolver.Resolve(rt.ctx, g.User, boxID); err == nil {
 		rt.left = m.resolver.Reached(boxID)
 	}
 	return rt, err

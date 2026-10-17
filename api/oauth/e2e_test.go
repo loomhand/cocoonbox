@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -287,6 +288,43 @@ func TestSigningOutEverywhereEndsEverySignInAndKeepsTheBoxes(t *testing.T) {
 	}
 }
 
+func TestAGrantRevokedWhileItsBoxWakesEndsTheExchange(t *testing.T) {
+	e := newEnv(t)
+	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
+	var made struct {
+		BoxID string `json:"box_id"`
+	}
+	if err := json.Unmarshal(e.call(t, access, "box_create", map[string]any{"name": "agent-one"}), &made); err != nil {
+		t.Fatalf("box_create: %v", err)
+	}
+	var grants []oauth.Grant
+	e.console(t, http.MethodGet, "agents", nil, &grants)
+	e.waking.slow.Store(true)
+	answered := make(chan int, 1)
+	go func() {
+		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, e.srv.URL+edge.MCPPrefix+made.BoxID, nil)
+		req.Header.Set("Accept", "text/event-stream")
+		req.Header.Set("Authorization", "Bearer "+access)
+		resp, err := e.client.Do(req)
+		if err != nil {
+			answered <- 0
+			return
+		}
+		_ = resp.Body.Close()
+		answered <- resp.StatusCode
+	}()
+	<-e.waking.entered
+	e.console(t, http.MethodDelete, "agents/"+grants[0].ID, map[string]any{}, nil)
+	select {
+	case code := <-answered:
+		if code == http.StatusOK {
+			t.Errorf("a grant revoked while its box woke got its stream: %d", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the exchange of a revoked grant waited out its box's wake")
+	}
+}
+
 func TestAGrantDrivesOnlyItsOwnBoxesThroughTheBoxMCP(t *testing.T) {
 	e := newEnv(t)
 	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
@@ -375,6 +413,7 @@ func TestDisabledUserLosesItsGrants(t *testing.T) {
 
 type env struct {
 	dsn       string
+	waking    *wakeGate
 	srv       *httptest.Server
 	client    *http.Client
 	users     *users.Service
@@ -422,7 +461,8 @@ func newEnv(t *testing.T) *env {
 	signIns.EnableGrants(grants)
 	web.EnableAccount(signIns)
 	agent := newFakeAgent(t)
-	boxMCP := edge.NewMCP(fakeResolver{users: us, addr: agent.Listener.Addr().String()}, authn, fakeCredentials{})
+	waking := &wakeGate{entered: make(chan struct{}, 1)}
+	boxMCP := edge.NewMCP(fakeResolver{users: us, addr: agent.Listener.Addr().String(), waking: waking}, authn, fakeCredentials{})
 	boxMCP.EnableGrants(grants)
 	mux.Handle(edge.MCPPrefix, boxMCP)
 	mux.Handle(controlmcp.Path, control)
@@ -437,7 +477,7 @@ func newEnv(t *testing.T) *env {
 	client := srv.Client()
 	client.Jar, _ = cookiejar.New(nil)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	e := &env{dsn: dsn, srv: srv, client: client, users: us, authn: authn, resource: resource, alice: alice.ID, userToken: userToken}
+	e := &env{dsn: dsn, waking: waking, srv: srv, client: client, users: us, authn: authn, resource: resource, alice: alice.ID, userToken: userToken}
 	e.console(t, http.MethodPost, "login", map[string]any{"name": "alice", "password": alicePassword}, nil)
 	return e
 }
@@ -735,18 +775,32 @@ func (f *fakeBoxes) start(id, name string) *controlv1.EnsureResponse {
 
 // fakeResolver routes every box of its owner to the fake agent.
 type fakeResolver struct {
-	users *users.Service
-	addr  string
+	users  *users.Service
+	addr   string
+	waking *wakeGate
 }
 
-func (r fakeResolver) Resolve(_ context.Context, user, box string) (machines.Endpoint, string, error) {
+func (r fakeResolver) Resolve(ctx context.Context, user, box string) (machines.Endpoint, string, error) {
 	if !r.users.HasBox(user, box) {
 		return machines.Endpoint{}, "", status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+	}
+	if r.waking.slow.Load() {
+		r.waking.entered <- struct{}{}
+		select {
+		case <-ctx.Done():
+			return machines.Endpoint{}, "", status.FromContextError(ctx.Err()).Err()
+		case <-time.After(5 * time.Second):
+		}
 	}
 	return machines.TCPEndpoint(r.addr), "w1", nil
 }
 
 func (fakeResolver) Reached(string) func() { return func() {} }
+
+type wakeGate struct {
+	slow    atomic.Bool
+	entered chan struct{}
+}
 
 type fakeCredentials struct{}
 

@@ -162,18 +162,22 @@ func TestACredentialsLifetimeEndsWithItsRevokeAndWithItsUser(t *testing.T) {
 		t.Errorf("another api reloading the revoke = %v, its lifetime %v", err, cliElsewhere.Err())
 	}
 	svc.EndCredential("oag_0123")
-	if grantLife.Err() == nil || lifetime(svc, u.ID, "oag_0123").Err() != nil {
-		t.Errorf("after EndCredential the grant's lifetime %v, a new one %v", grantLife.Err(), lifetime(svc, u.ID, "oag_0123").Err())
+	if grantLife.Err() == nil || lifetime(svc, u.ID, "oag_0123").Err() == nil {
+		t.Errorf("after EndCredential the grant's lifetime %v, a later Bind's %v, want both ended", grantLife.Err(), lifetime(svc, u.ID, "oag_0123").Err())
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil || appLife.Err() == nil {
 		t.Errorf("disable = %v, a device's lifetime %v", err, appLife.Err())
 	}
 }
 
-func TestOnlyCredentialsWithOpenCallsStayIndexed(t *testing.T) {
+func TestARevokedGrantStaysEndedForALaterBindAndOnlyOpenCallsStayIndexed(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
 	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
+	svc.EndCredential("oag_revoked")
+	if life, _ := svc.Lifetime(u.ID, "oag_revoked"); life.Err() == nil {
+		t.Error("a grant revoked before its Bind gets a live lifetime")
+	}
 	first, releaseFirst := svc.Lifetime(u.ID, sum(device))
 	second, releaseSecond := svc.Lifetime(u.ID, "oag_live")
 	third, releaseThird := svc.Lifetime(u.ID, "oag_live")
@@ -188,6 +192,13 @@ func TestOnlyCredentialsWithOpenCallsStayIndexed(t *testing.T) {
 	releaseThird()
 	if len(svc.creds) != 0 {
 		t.Errorf("%d credentials stay indexed with no open call", len(svc.creds))
+	}
+	svc.mu.Lock()
+	svc.tombs["oag_old"] = time.Now().Add(-endedGrace - time.Second)
+	svc.mu.Unlock()
+	svc.EndCredential("oag_new")
+	if _, kept := svc.tombs["oag_old"]; kept || len(svc.tombs) != 2 {
+		t.Errorf("tombstones after a revoke past the grace of an older one: %v", svc.tombs)
 	}
 }
 

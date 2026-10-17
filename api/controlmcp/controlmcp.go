@@ -64,6 +64,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.refuse(w, r, err)
 		return
 	}
+	ctx, stop := s.authn.Bind(auth.WithUser(r.Context(), user), user, credential)
+	defer stop()
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", http.MethodPost)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -87,8 +89,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	ctx, stop := s.authn.Bind(auth.WithUser(r.Context(), user), user, credential)
-	defer stop()
 	caller := user
 	if grant != nil {
 		ctx = context.WithValue(ctx, grantKey{}, grant)

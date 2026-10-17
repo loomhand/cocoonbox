@@ -41,6 +41,7 @@ const (
 
 	tokenMissInterval = 100 * time.Millisecond
 	listenRetry       = 2 * time.Second
+	endedGrace        = 10 * time.Minute
 
 	columnGWKey    = "gw_key"
 	columnTenant   = "tenant_token"
@@ -150,6 +151,7 @@ type Service struct {
 	lifeMu sync.Mutex
 	lives  map[string]life
 	creds  map[string]*credLife
+	tombs  map[string]time.Time
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -170,7 +172,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
-		creds: map[string]*credLife{},
+		creds: map[string]*credLife{}, tombs: map[string]time.Time{},
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
@@ -767,7 +769,8 @@ func (s *Service) Residential(id string) bool {
 func (s *Service) Lifetime(id, credential string) (context.Context, func()) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if r, ok := s.byID[id]; !ok || r.Disabled || hexSHA256.MatchString(credential) && s.byToken[credential].user != id {
+	_, tomb := s.tombs[credential]
+	if r, ok := s.byID[id]; !ok || r.Disabled || tomb || hexSHA256.MatchString(credential) && s.byToken[credential].user != id {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		return ctx, func() {}
@@ -788,11 +791,17 @@ func (s *Service) Lifetime(id, credential string) (context.Context, func()) {
 	return c.ctx, func() { s.release(credential, c) }
 }
 
-// EndCredential ends the calls bound to credential, a token's sha256 or a grant id.
+// EndCredential ends the calls bound to credential, a token's sha256 or a grant id; an ended grant id stays ended.
 func (s *Service) EndCredential(credential string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.endCredential(credential)
+	if credential == "" || hexSHA256.MatchString(credential) {
+		return
+	}
+	now := time.Now()
+	maps.DeleteFunc(s.tombs, func(_ string, at time.Time) bool { return now.Sub(at) > endedGrace })
+	s.tombs[credential] = now
 }
 
 // OnResidential registers fn to run after a user's residential setting changes.
