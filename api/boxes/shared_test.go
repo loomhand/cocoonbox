@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -91,34 +92,57 @@ func TestAWatchResumedInAnotherProcessGetsTheEventsAfterItsOffset(t *testing.T) 
 	}
 }
 
-func TestAParkReleaseLosesToASupersedeAnotherProcessWroteFirst(t *testing.T) {
+func TestAParkClaimAndASupersedeFromAnotherProcessExcludeEachOther(t *testing.T) {
 	a, b, db := newSharedPair(t, t.Context())
 	park := func() *operation {
 		op, _ := a.svc.ops.begin(a.ctx, &operation{user: alice, boxID: aliceBox, phase: controlv1.Phase_PHASE_SAVING, park: true, gen: 1}, time.Minute)
-		clustertest.WaitFor(t, "a's park reaches the table", func() bool {
-			_, err := db.Operation(t.Context(), op.id)
-			return err == nil
+		clustertest.WaitFor(t, "b sees a's park", func() bool {
+			active := b.svc.ops.activeFor(aliceBox)
+			return active != nil && active.id == op.id
 		})
 		return op
 	}
 	superseded := park()
-	b.svc.ops.end(t.Context(), superseded.id, "superseded by operation of b")
-	if a.svc.ops.release(t.Context(), superseded, "parked") {
-		t.Error("a released a park b had superseded in the table")
+	if !b.svc.ops.end(t.Context(), superseded.id, "superseded by operation of b") {
+		t.Fatal("b could not end a's unclaimed park")
+	}
+	if a.svc.ops.claim(t.Context(), superseded) {
+		t.Error("a claimed a park b had superseded in the table")
 	}
 	clustertest.WaitFor(t, "a takes b's end of its park", func() bool {
 		_, done := superseded.finished()
 		return done
 	})
-	kept := park()
-	if !a.svc.ops.release(t.Context(), kept, "parked") {
-		t.Fatal("a could not release a park nobody superseded")
+	claimed := park()
+	if !a.svc.ops.claim(t.Context(), claimed) {
+		t.Fatal("a could not claim a park nobody superseded")
 	}
-	b.svc.ops.end(t.Context(), kept.id, "superseded too late")
-	rec, err := db.Operation(t.Context(), kept.id)
-	if events := fromEventRecords(rec.ID, rec.Events); err != nil || events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
-		t.Errorf("a released park ends with %v, %v; want its success to stand", events, err)
+	if op, started := b.svc.ops.start(b.ctx, alice, aliceBox, controlv1.Phase_PHASE_SAVING, 1, time.Minute); started || op.id != claimed.id {
+		t.Errorf("b's operation over a claimed park = %s started %t; want a's park kept", op.id, started)
 	}
+	if rec, err := db.Operation(t.Context(), claimed.id); err != nil || !rec.FinishedAt.IsZero() || !rec.Releasing {
+		t.Errorf("claimed park row = %+v, %v; want it unfinished and releasing", rec, err)
+	}
+}
+
+func TestASharedParkWhoseMachineRemovalFailsEndsFailed(t *testing.T) {
+	e := newParkEnv(t)
+	db := clustertest.Open(t)
+	e.svc.EnableLedger(t.Context(), db)
+	e.svc.EnableShared(t.Context(), db)
+	e.fake.deleteErr = errors.New("sandboxd refused the release")
+	op := e.park(t, e.clock.Add(parkAfter))
+	if op == nil {
+		t.Fatal("no park")
+	}
+	if last := lastEvent(op); last.GetPhase() != controlv1.Phase_PHASE_FAILED || !strings.Contains(last.GetDetail(), "hibernated again") {
+		t.Errorf("park whose removal failed ended with %v", last)
+	}
+	clustertest.WaitFor(t, "the table ends the park failed", func() bool {
+		rec, err := db.Operation(t.Context(), op.id)
+		events := fromEventRecords(rec.ID, rec.Events)
+		return err == nil && !rec.FinishedAt.IsZero() && len(events) > 0 && events[len(events)-1].GetPhase() == controlv1.Phase_PHASE_FAILED
+	})
 }
 
 func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {

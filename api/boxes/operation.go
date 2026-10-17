@@ -251,7 +251,15 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 		r.mu.Unlock()
 		return cur, false
 	}
-	op.id, op.changed, op.watchers, op.mirror, op.created = rand.Text(), make(chan struct{}), r.watchers, r.mirror, time.Now()
+	op.id = rand.Text()
+	if cur != nil && cur.remote {
+		r.mu.Unlock()
+		if !r.end(base, cur.id, "superseded by operation "+op.id) {
+			return cur, false
+		}
+		r.mu.Lock()
+	}
+	op.changed, op.watchers, op.mirror, op.created = make(chan struct{}), r.watchers, r.mirror, time.Now()
 	op.expires = op.created.Add(timeout)
 	if r.shared != nil {
 		op.lease = op.created.Add(cluster.Lease)
@@ -267,9 +275,6 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 	op.mirrorLocked()
 	op.mu.Unlock()
 	r.mu.Unlock()
-	if cur != nil && cur.remote {
-		r.end(base, cur.id, "superseded by operation "+op.id)
-	}
 	return op, true
 }
 
@@ -406,30 +411,10 @@ func (r *operations) forgetLocked(op *operation) {
 }
 
 // end finishes operation id in the shared table with a failure that says detail, so its process stops it.
-func (r *operations) end(ctx context.Context, id, detail string) {
-	if _, err := r.finish(ctx, id, controlv1.Phase_PHASE_FAILED, detail); err != nil {
-		log.WithFunc("boxes.operations.end").Warnf(ctx, "end operation %s in the shared table: %v", id, err)
-	}
-}
-
-func (r *operations) release(ctx context.Context, op *operation, detail string) bool {
-	if r.shared == nil {
-		return true
-	}
-	ended, err := r.finish(ctx, op.id, controlv1.Phase_PHASE_DONE, detail)
-	if err != nil {
-		log.WithFunc("boxes.operations.release").Warnf(ctx, "end operation %s in the shared table: %v", op.id, err)
-	}
-	if ended {
-		op.succeed(detail)
-	}
-	return ended
-}
-
-func (r *operations) finish(ctx context.Context, id string, phase controlv1.Phase, detail string) (bool, error) {
+func (r *operations) end(ctx context.Context, id, detail string) bool {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
 	defer cancel()
-	return r.shared.FinishOperation(ctx, id, func(raw []byte) ([]byte, error) {
+	ended, err := r.shared.FinishOperation(ctx, id, func(raw []byte) ([]byte, error) {
 		var events []eventRecord
 		if err := json.Unmarshal(raw, &events); err != nil {
 			return nil, fmt.Errorf("decode the events of %s: %w", id, err)
@@ -440,10 +425,27 @@ func (r *operations) finish(ctx context.Context, id string, phase controlv1.Phas
 			state, next = events[n-1].BoxState, offsetOf(events[n-1].OffsetKey)+1
 		}
 		events = append(events, eventRecord{
-			Phase: int32(phase), Detail: detail, OffsetKey: strconv.Itoa(next), AtMs: time.Now().UnixMilli(), BoxState: state,
+			Phase: int32(controlv1.Phase_PHASE_FAILED), Detail: detail, OffsetKey: strconv.Itoa(next), AtMs: time.Now().UnixMilli(), BoxState: state,
 		})
 		return json.Marshal(events)
 	})
+	if err != nil {
+		log.WithFunc("boxes.operations.end").Warnf(ctx, "end operation %s in the shared table: %v", id, err)
+	}
+	return ended
+}
+
+func (r *operations) claim(ctx context.Context, op *operation) bool {
+	if r.shared == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sharedTimeout)
+	defer cancel()
+	claimed, err := r.shared.ClaimOperation(ctx, op.id)
+	if err != nil {
+		log.WithFunc("boxes.operations.claim").Warnf(ctx, "claim operation %s in the shared table: %v", op.id, err)
+	}
+	return claimed
 }
 
 // renew extends the leases of this process's operations until ctx ends, then ends them in the shared table.
