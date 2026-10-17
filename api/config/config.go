@@ -116,6 +116,8 @@ func (g GC) validate(bucket string) error {
 type Cluster struct {
 	// Ledger copies every machine, box head and operation into the database and verifies the copy every minute.
 	Ledger bool `json:"ledger"`
+	// Shared makes the database the truth for machines, box heads and operations, so api processes may serve together.
+	Shared bool `json:"shared"`
 }
 
 // Provision names the edge signing key, gw's admin API for per-user gw keys and the residential exit.
@@ -344,6 +346,9 @@ func (c *Config) validate() error {
 	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate(), c.validateImageOwners(), absolute("operator_socket", c.OperatorSocket))
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
+	}
+	if c.Cluster.Shared && !c.Cluster.Ledger {
+		errs = append(errs, errors.New("cluster.shared needs cluster.ledger"))
 	}
 	return errors.Join(errs...)
 }

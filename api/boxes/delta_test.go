@@ -355,7 +355,7 @@ func (e *stateEnv) trySave() error {
 		return err
 	}
 	for {
-		events, done, changed := e.svc.ops.get(op.GetId()).since(0)
+		events, done, changed := e.svc.ops.local(op.GetId()).since(0)
 		if done {
 			if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
 				return fmt.Errorf("save ended with %v", last)

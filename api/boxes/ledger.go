@@ -107,7 +107,7 @@ func (s *Service) Verify(ctx context.Context) (Drift, error) {
 		}
 	}
 	for _, id := range ops {
-		if op := s.ops.get(id); op != nil {
+		if op := s.ops.local(id); op != nil {
 			op.mu.Lock()
 			op.mirrorLocked()
 			op.mu.Unlock()
@@ -122,7 +122,7 @@ func (s *Service) Verify(ctx context.Context) (Drift, error) {
 
 // headDifferences returns the cached heads whose ledger row differs, and those the ledger lacks.
 func (s *Service) headDifferences(ctx context.Context) ([]statePath, []statePath, error) {
-	if s.state == nil {
+	if s.state == nil || s.state.shared != nil {
 		return nil, nil, nil
 	}
 	rows, err := s.ledger.Heads(ctx)
@@ -191,6 +191,21 @@ func sameOperation(a, b cluster.Operation) bool {
 
 func comparePaths(a, b statePath) int {
 	return cmp.Or(cmp.Compare(a.user, b.user), cmp.Compare(a.box, b.box))
+}
+
+func fromEventRecords(id string, raw []byte) []*controlv1.OperationEvent {
+	var recs []eventRecord
+	if json.Unmarshal(raw, &recs) != nil {
+		return nil
+	}
+	events := make([]*controlv1.OperationEvent, len(recs))
+	for i, e := range recs {
+		events[i] = &controlv1.OperationEvent{
+			OperationId: id, Phase: controlv1.Phase(e.Phase), Detail: e.Detail, OffsetKey: e.OffsetKey, AtMs: e.AtMs,
+			BoxState: controlv1.BoxState(e.BoxState), DoneBytes: e.DoneBytes, TotalBytes: e.TotalBytes,
+		}
+	}
+	return events
 }
 
 func toEventRecords(events []*controlv1.OperationEvent) ([]byte, error) {

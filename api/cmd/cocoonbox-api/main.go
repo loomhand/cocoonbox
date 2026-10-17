@@ -143,7 +143,7 @@ func main() {
 		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts)
 		library = flows.NewLibrary(st, accounts)
 	}
-	enableLedger(ctx, ledger, backend, svc)
+	enableLedger(ctx, cfg, ledger, backend, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
@@ -470,7 +470,10 @@ func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flav
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
 	}
-	if ledger != nil {
+	switch {
+	case ledger != nil && cfg.Cluster.Shared:
+		opts.Shared = ledger
+	case ledger != nil:
 		opts.Ledger = ledger
 	}
 	return sandboxd.New(ctx, opts)
@@ -488,12 +491,15 @@ func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error)
 	return cluster.Open(ctx, dsn)
 }
 
-// enableLedger copies machines, heads and operations into ledger and verifies the copy, when there is a ledger.
-func enableLedger(ctx context.Context, ledger *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
+// enableLedger copies state into ledger, or with cluster.shared makes it the truth, and verifies it, when there is a ledger.
+func enableLedger(ctx context.Context, cfg *config.Config, ledger *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
 	if ledger == nil {
 		return
 	}
 	svc.EnableLedger(ctx, ledger)
+	if cfg.Cluster.Shared {
+		svc.EnableShared(ctx, ledger)
+	}
 	go verifyLedger(ctx, backend, svc)
 }
 

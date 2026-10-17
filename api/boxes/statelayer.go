@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/dialer"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
@@ -128,11 +129,16 @@ type stateLayer struct {
 	versioned store.Versioned
 	// mirror, when set, gets every committed head and, as nil, every forgotten one.
 	mirror func(p statePath, h *head)
+	// shared, when set, holds the heads: a commit swaps the head on the version its save read.
+	shared SharedHeads
 
-	mu      sync.Mutex
-	locks   map[string]*sync.Mutex
-	users   map[string]*sync.RWMutex
-	heads   map[statePath]head
+	mu       sync.Mutex
+	locks    map[string]*sync.Mutex
+	users    map[string]*sync.RWMutex
+	heads    map[statePath]head
+	versions map[statePath]int64
+	// dropped counts the invalidations, so a head read before one is not cached after it.
+	dropped uint64
 	pins    map[statePath]map[string]int
 	browsed map[statePath]browsed
 	// deltaUsers are the users whose saves write delta records.
@@ -143,7 +149,7 @@ type stateLayer struct {
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay,
-		locks: map[string]*sync.Mutex{}, users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
+		locks: map[string]*sync.Mutex{}, users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, versions: map[statePath]int64{}, pins: map[statePath]map[string]int{},
 		browsed: map[statePath]browsed{}, deltaUsers: map[string]bool{}, bases: map[statePath]*snapshotRecord{},
 	}
 }
@@ -160,7 +166,7 @@ func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint
 	if err != nil {
 		return nil, fmt.Errorf("state key: %w", err)
 	}
-	h, err := l.head(ctx, p)
+	h, version, err := l.headVersion(ctx, p)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +186,7 @@ func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint
 	if err != nil {
 		return nil, err
 	}
-	if err := l.commit(ctx, p, key.ID, rec, base, head{Image: image, Parked: parked}); err != nil {
+	if err := l.commit(ctx, p, key.ID, rec, base, head{Image: image, Parked: parked}, version); err != nil {
 		return nil, err
 	}
 	return rec, nil
@@ -352,7 +358,8 @@ func (l *stateLayer) lastSaved(ctx context.Context, p statePath) int64 {
 }
 
 // commit adds the uploaded chunks to the index, then writes the snapshot record (a delta against base when set), the timeline and the head, so a crash leaves the previous head valid.
-func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, base *snapshotRecord, h head) error {
+// version is the shared version of the head the save planned on, which the commit swaps.
+func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, base *snapshotRecord, h head, version int64) error {
 	if err := l.retry(ctx, func() error { return l.addToIndex(ctx, p, keyID, rec.Chunks, rec.indexGeneration) }); err != nil {
 		return err
 	}
@@ -363,16 +370,41 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 		return err
 	}
 	h.Latest, h.SavedAtMs = rec.ID, rec.SavedAtMs
+	l.mu.Lock()
+	dropped := l.dropped
+	l.mu.Unlock()
+	if l.shared != nil {
+		var err error
+		if version, err = l.swapHead(ctx, p, h, version); err != nil {
+			return err
+		}
+	}
 	if err := l.retry(ctx, func() error { return putJSON(ctx, l.store, p.head(), h) }); err != nil {
 		return err
 	}
 	l.mu.Lock()
-	l.heads[p] = h
+	if l.dropped == dropped {
+		l.heads[p], l.versions[p] = h, version
+	}
 	l.mu.Unlock()
-	if l.mirror != nil {
+	if l.mirror != nil && l.shared == nil {
 		l.mirror(p, &h)
 	}
 	return nil
+}
+
+// swapHead writes h as p's shared head on version and returns the new one, failing when another process committed first.
+func (l *stateLayer) swapHead(ctx context.Context, p statePath, h head, version int64) (int64, error) {
+	raw, err := json.Marshal(h)
+	if err != nil {
+		return 0, fmt.Errorf("encode head: %w", err)
+	}
+	next, err := l.shared.SwapHead(ctx, p.user, p.box, raw, version)
+	if errors.Is(err, cluster.ErrStale) {
+		l.invalidate(p)
+		return 0, fmt.Errorf("another api process committed a save of box %s first: %w", p.box, err)
+	}
+	return next, err
 }
 
 // addToIndex merges chunks into the user's index, failing the save when a gc rewrote the index after its read at generation.
@@ -504,19 +536,80 @@ func (l *stateLayer) writeVersion(ctx context.Context, key string, v any, versio
 }
 
 func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
+	h, _, err := l.headVersion(ctx, p)
+	return h, err
+}
+
+// headVersion returns p's head and its shared version, 0 without one; it caches both until a notify invalidates them.
+func (l *stateLayer) headVersion(ctx context.Context, p statePath) (head, int64, error) {
 	l.mu.Lock()
 	h, ok := l.heads[p]
+	version, dropped := l.versions[p], l.dropped
 	l.mu.Unlock()
 	if ok {
-		return h, nil
+		return h, version, nil
 	}
-	if err := getJSON(ctx, l.store, p.head(), &h); err != nil && !errors.Is(err, store.ErrNotFound) {
-		return head{}, err
+	if l.shared != nil {
+		var err error
+		if h, version, err = l.sharedHead(ctx, p); err != nil {
+			return head{}, 0, err
+		}
+	} else if err := getJSON(ctx, l.store, p.head(), &h); err != nil && !errors.Is(err, store.ErrNotFound) {
+		return head{}, 0, err
 	}
 	l.mu.Lock()
-	l.heads[p] = h
+	if l.dropped == dropped {
+		l.heads[p], l.versions[p] = h, version
+	}
 	l.mu.Unlock()
-	return h, nil
+	return h, version, nil
+}
+
+// sharedHead reads p's shared head, filling it from the store's head the first time.
+func (l *stateLayer) sharedHead(ctx context.Context, p statePath) (head, int64, error) {
+	for {
+		var h head
+		row, err := l.shared.Head(ctx, p.user, p.box)
+		if err == nil {
+			if err = json.Unmarshal(row.Head, &h); err != nil {
+				return head{}, 0, fmt.Errorf("decode the shared head of %s: %w", p.box, err)
+			}
+			return h, row.Version, nil
+		}
+		if !errors.Is(err, cluster.ErrNotFound) {
+			return head{}, 0, err
+		}
+		if err = getJSON(ctx, l.store, p.head(), &h); errors.Is(err, store.ErrNotFound) {
+			return head{}, 0, nil
+		} else if err != nil {
+			return head{}, 0, err
+		}
+		raw, err := json.Marshal(h)
+		if err != nil {
+			return head{}, 0, fmt.Errorf("encode head: %w", err)
+		}
+		version, err := l.shared.SwapHead(ctx, p.user, p.box, raw, 0)
+		if !errors.Is(err, cluster.ErrStale) {
+			return h, version, err
+		}
+	}
+}
+
+// invalidate drops p's cached head, which another process changed.
+func (l *stateLayer) invalidate(p statePath) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.heads, p)
+	delete(l.versions, p)
+	l.dropped++
+}
+
+func (l *stateLayer) invalidateAll() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	clear(l.heads)
+	clear(l.versions)
+	l.dropped++
 }
 
 func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[string]bool, int64, error) {

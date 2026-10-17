@@ -50,7 +50,7 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Heads)+len(d.Operations) != 0 {
 		t.Errorf("Verify after the repair = %+v, %v, want no drift", d, err)
 	}
-	op := env.svc.ops.get(ops[0].ID)
+	op := env.svc.ops.local(ops[0].ID)
 	op.mu.Lock()
 	op.finishedAt = op.finishedAt.Add(-2 * operationRetention)
 	op.mu.Unlock()
