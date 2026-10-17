@@ -132,7 +132,11 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		if err := b.reload(ctx); err != nil {
 			return nil, fmt.Errorf("read the shared machines: %w", err)
 		}
-		go opts.Shared.Listen(ctx, cluster.ChannelMachines, func() { b.reloadLogged(ctx) }, func(id string) { b.notified(ctx, id) })
+		go opts.Shared.Listen(ctx, cluster.ChannelMachines, func() {
+			if err := b.reload(ctx); err != nil {
+				log.WithFunc("sandboxd.New").Warnf(ctx, "reload the shared machines: %v", err)
+			}
+		}, func(payload string) { b.changed(ctx, payload) })
 	case opts.Ledger != nil:
 		b.mirror = cluster.NewMirror()
 		go b.mirror.Run(ctx)
@@ -545,9 +549,12 @@ func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*ent
 		if next == nil || !changed {
 			return false, nil
 		}
-		version := m.Version
-		*m = next.record()
-		m.Version = version
+		rec := next.record()
+		if rec.Equal(*m) {
+			return false, nil
+		}
+		rec.Version = m.Version
+		*m = rec
 		return true, nil
 	})
 	if err != nil {
@@ -991,9 +998,18 @@ func (b *Backend) reload(ctx context.Context) error {
 	return nil
 }
 
-func (b *Backend) reloadLogged(ctx context.Context) {
-	if err := b.reload(ctx); err != nil {
-		log.WithFunc("sandboxd.Backend.reloadLogged").Warnf(ctx, "reload the shared machines: %v", err)
+func (b *Backend) changed(ctx context.Context, payload string) {
+	c, err := cluster.ParseChange(payload)
+	if err != nil {
+		log.WithFunc("sandboxd.Backend.changed").Warnf(ctx, "take a machines notify: %v", err)
+		return
+	}
+	b.mu.Lock()
+	e := b.entries[c.ID]
+	current := e != nil && c.Version != 0 && e.version >= c.Version
+	b.mu.Unlock()
+	if !current {
+		b.notified(ctx, c.ID)
 	}
 }
 

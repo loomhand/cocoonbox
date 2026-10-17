@@ -311,6 +311,13 @@ func (r *operations) local(id string) *operation {
 	return r.byID[id]
 }
 
+func (r *operations) runsHere(id string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	op := r.byID[id]
+	return op != nil && !op.remote
+}
+
 // all returns the operations this process runs or ran.
 func (r *operations) all() []*operation {
 	r.mu.Lock()

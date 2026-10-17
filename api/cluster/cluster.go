@@ -4,6 +4,7 @@ package cluster
 import (
 	"context"
 	"embed"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"time"
@@ -36,6 +37,13 @@ var (
 
 // Notified takes the payload of one notify.
 type Notified func(payload string)
+
+// Change is what a notify on ChannelMachines or ChannelOperations carries: the row, a machine's new version, 0 once removed, and whether an operation finished.
+type Change struct {
+	ID       string
+	Version  int64 `json:",omitzero"`
+	Finished bool  `json:",omitzero"`
+}
 
 // Store is the shared state in one PostgreSQL database.
 type Store struct {
@@ -92,6 +100,23 @@ func (s *Store) listen(ctx context.Context, channel string, reset func(), fn Not
 		}
 		fn(n.Payload)
 	}
+}
+
+// ParseChange returns the change a notify on ChannelMachines or ChannelOperations carries.
+func ParseChange(payload string) (Change, error) {
+	var c Change
+	if err := json.Unmarshal([]byte(payload), &c); err != nil {
+		return Change{}, fmt.Errorf("decode a notify: %w", err)
+	}
+	return c, nil
+}
+
+func notifyChange(ctx context.Context, tx pgx.Tx, channel string, c Change) error {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("encode a notify of %s: %w", c.ID, err)
+	}
+	return notify(ctx, tx, channel, string(raw))
 }
 
 func notify(ctx context.Context, tx pgx.Tx, channel, payload string) error {
