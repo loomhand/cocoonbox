@@ -161,7 +161,7 @@ func TestACredentialsLifetimeEndsWithItsRevokeAndWithItsUser(t *testing.T) {
 	if err := elsewhere.Load(t.Context()); err != nil || cliElsewhere.Err() == nil {
 		t.Errorf("another api reloading the revoke = %v, its lifetime %v", err, cliElsewhere.Err())
 	}
-	svc.EndCredential("oag_0123")
+	svc.EndCredential(t.Context(), "oag_0123")
 	if grantLife.Err() == nil || lifetime(svc, u.ID, "oag_0123").Err() == nil {
 		t.Errorf("after EndCredential the grant's lifetime %v, a later Bind's %v, want both ended", grantLife.Err(), lifetime(svc, u.ID, "oag_0123").Err())
 	}
@@ -174,7 +174,7 @@ func TestARevokedGrantStaysEndedForALaterBindAndOnlyOpenCallsStayIndexed(t *test
 	svc, _, _, _ := newTestService(t)
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
 	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
-	svc.EndCredential("oag_revoked")
+	svc.EndCredential(t.Context(), "oag_revoked")
 	if life, _ := svc.Lifetime(u.ID, "oag_revoked"); life.Err() == nil {
 		t.Error("a grant revoked before its Bind gets a live lifetime")
 	}
@@ -196,7 +196,7 @@ func TestARevokedGrantStaysEndedForALaterBindAndOnlyOpenCallsStayIndexed(t *test
 	svc.mu.Lock()
 	svc.tombs["oag_old"] = time.Now().Add(-endedGrace - time.Second)
 	svc.mu.Unlock()
-	svc.EndCredential("oag_new")
+	svc.EndCredential(t.Context(), "oag_new")
 	if _, kept := svc.tombs["oag_old"]; kept || len(svc.tombs) != 2 {
 		t.Errorf("tombstones after a revoke past the grace of an older one: %v", svc.tombs)
 	}
@@ -224,5 +224,28 @@ func TestADeviceRecordsItsUseOncePerMinute(t *testing.T) {
 	second, err := svc.Devices(t.Context(), u.ID)
 	if err != nil || len(second) != 1 || second[0].UsedAt == nil || !second[0].UsedAt.Equal(*first[0].UsedAt) {
 		t.Errorf("Devices after a second use within a minute = %+v, %v, want used_at %v", second, err, first[0].UsedAt)
+	}
+}
+
+func TestAnEndedCredentialEndsItsCallsInEveryApi(t *testing.T) {
+	a, gw, tenants, dsn := newTestService(t)
+	b := openTestService(t, dsn, gw, tenants)
+	go b.Listen(t.Context())
+	u, err := a.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, ok := within(2*time.Second, func() bool { _, err := b.Get(u.ID); return err == nil }); !ok {
+		t.Fatal("the other api does not know the user")
+	}
+	call := lifetime(b, u.ID, "oag_shared")
+	a.EndCredential(t.Context(), "oag_shared")
+	select {
+	case <-call.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("a call on the other api outlived the grant another api ended")
+	}
+	if later := lifetime(b, u.ID, "oag_shared"); later.Err() == nil {
+		t.Error("the other api admits a new call on the ended grant")
 	}
 }

@@ -137,14 +137,16 @@ type Service struct {
 	// dummyHash keeps a sign-in for an unknown name as slow as one for a known name.
 	dummyHash []byte
 
-	mu            sync.RWMutex
-	byID          map[string]record
-	byToken       map[string]tokenOwner
-	deviceUse     sync.Map
-	boxes         map[string][]Box
-	boxGen        int
-	shares        map[string]*shareRecord
-	shareSecrets  map[string]string
+	mu           sync.RWMutex
+	byID         map[string]record
+	byToken      map[string]tokenOwner
+	deviceUse    sync.Map
+	boxes        map[string][]Box
+	boxGen       int
+	shares       map[string]*shareRecord
+	shareSecrets map[string]string
+	// shareGen counts this api's share changes, so a sync read before one does not undo it.
+	shareGen      int
 	onResidential []func(context.Context, string, bool)
 	onShareEnd    []func(context.Context, Share)
 
@@ -397,6 +399,7 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 	if err != nil {
 		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil), s.gw.Revoke(context.WithoutCancel(ctx), id))
 	}
+	s.published(ctx, "created user "+r.Name)
 	s.put(r)
 	s.mu.Lock()
 	s.putBox(first)
@@ -421,6 +424,7 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	if err := s.store.remove(ctx, id); err != nil {
 		return err
 	}
+	s.published(ctx, "deleted user "+id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if r, ok := s.byID[id]; ok {
@@ -491,6 +495,7 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 			return User{}, err
 		}
 	}
+	s.published(ctx, "updated user "+id)
 	s.put(r)
 	if r.Disabled && !old.Disabled {
 		s.mu.Lock()
@@ -540,11 +545,9 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 	r.tokenSHA256, r.HasToken = sum, true
 	s.put(r)
 	if old != sum {
-		s.EndCredential(old)
+		s.EndCredential(ctx, old)
 	}
-	if err := s.store.notify(ctx); err != nil {
-		log.WithFunc("users.Service.SetTokenSHA256").Warnf(ctx, "set the token of %s; other apis reload on their next notify: %v", id, err)
-	}
+	s.published(ctx, "set the token of "+id)
 	return nil
 }
 
@@ -569,10 +572,8 @@ func (s *Service) RevokeToken(ctx context.Context, id string) error {
 	old := r.tokenSHA256
 	r.tokenSHA256, r.HasToken = "", false
 	s.put(r)
-	s.EndCredential(old)
-	if err := s.store.notify(ctx); err != nil {
-		log.WithFunc("users.Service.RevokeToken").Warnf(ctx, "revoked the token of %s; other apis reload on their next notify: %v", id, err)
-	}
+	s.EndCredential(ctx, old)
+	s.published(ctx, "revoked the token of "+id)
 	return nil
 }
 
@@ -597,9 +598,7 @@ func (s *Service) SignOut(ctx context.Context, id string) error {
 	}
 	s.end(id)
 	s.mu.Unlock()
-	if err := s.store.notify(ctx); err != nil {
-		log.WithFunc("users.Service.SignOut").Warnf(ctx, "signed %s out everywhere; other apis reload on their next notify: %v", id, err)
-	}
+	s.published(ctx, "signed "+id+" out everywhere")
 	return nil
 }
 
@@ -750,6 +749,7 @@ func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) err
 	if err := s.store.setStateKey(ctx, r); err != nil {
 		return err
 	}
+	s.published(ctx, "set the state key of "+id)
 	s.put(r)
 	return nil
 }
@@ -794,8 +794,26 @@ func (s *Service) Lifetime(id, credential string) (context.Context, func()) {
 	return c.ctx, func() { s.release(credential, c) }
 }
 
-// EndCredential ends the calls bound to credential, a token's sha256 or a grant id; an ended grant id stays ended.
-func (s *Service) EndCredential(credential string) {
+// EndCredential ends the calls bound to credential, a token's sha256 or a grant id, in every api; an ended grant id stays ended.
+func (s *Service) EndCredential(ctx context.Context, credential string) {
+	s.endLocally(credential)
+	if credential == "" {
+		return
+	}
+	if err := s.store.notifyEnded(ctx, credential); err != nil {
+		log.WithFunc("users.Service.EndCredential").Warnf(ctx, "other apis end the calls of an ended credential at their next reload only: %v", err)
+	}
+}
+
+// OnResidential registers fn to run after a user's residential setting changes.
+func (s *Service) OnResidential(fn func(ctx context.Context, id string, on bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onResidential = append(s.onResidential, fn)
+}
+
+// endLocally ends the calls bound to credential in this api, for an ended credential of any api.
+func (s *Service) endLocally(credential string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.endCredential(credential)
@@ -807,26 +825,37 @@ func (s *Service) EndCredential(credential string) {
 	s.tombs[credential] = now
 }
 
-// OnResidential registers fn to run after a user's residential setting changes.
-func (s *Service) OnResidential(fn func(ctx context.Context, id string, on bool)) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.onResidential = append(s.onResidential, fn)
-}
-
 func (s *Service) listen(ctx context.Context) error {
 	conn, err := s.store.listen(ctx)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
+	reload := true
 	for {
-		if err := s.Load(ctx); err != nil {
+		if reload {
+			if err := s.Load(ctx); err != nil {
+				return err
+			}
+			if err := s.syncShares(ctx); err != nil {
+				return err
+			}
+		}
+		n, err := conn.WaitForNotification(ctx)
+		if err != nil {
 			return err
 		}
-		if _, err := conn.WaitForNotification(ctx); err != nil {
-			return err
+		reload = n.Channel != endedChannel
+		if !reload {
+			s.endLocally(n.Payload)
 		}
+	}
+}
+
+// published tells every api to reload after a write; a failed notify reaches them with the next one.
+func (s *Service) published(ctx context.Context, what string) {
+	if err := s.store.notify(ctx); err != nil {
+		log.WithFunc("users.Service.published").Warnf(ctx, "%s; other apis reload on their next notify: %v", what, err)
 	}
 }
 

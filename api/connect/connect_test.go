@@ -1079,6 +1079,34 @@ func TestTheCatalogInjectsTheGitHubAndGoogleRecipes(t *testing.T) {
 	}
 }
 
+func TestAWatcherChangeReachesTheWatchersOfAnotherApi(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.svc, newService(t, e.dsn, e.sessions)
+	go b.RunSignals(t.Context())
+	watch, stop := b.watchers.add("u-1", true)
+	defer stop()
+	deadline := time.After(5 * time.Second)
+	for changed := false; !changed; {
+		a.changedFor(t.Context(), "u-1")
+		select {
+		case <-watch.changed:
+			changed = true
+		case <-time.After(100 * time.Millisecond):
+		case <-deadline:
+			t.Fatal("the other api's watcher missed the change")
+		}
+	}
+	a.answerFor(t.Context(), "u-1", []byte(`{"answer":1}`))
+	select {
+	case msg := <-watch.answered:
+		if string(msg) != `{"answer":1}` {
+			t.Errorf("the other api's watcher got %s", msg)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the other api's watcher missed the approval answer")
+	}
+}
+
 type env struct {
 	svc      *Service
 	vendor   *connecttest.Vendor

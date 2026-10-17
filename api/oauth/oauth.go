@@ -84,7 +84,7 @@ type Accounts interface {
 	Get(id string) (users.User, error)
 	IssueDevice(ctx context.Context, user, client, label string) (string, error)
 	RevokeDeviceSHA256(ctx context.Context, sum string) error
-	EndCredential(credential string)
+	EndCredential(ctx context.Context, credential string)
 }
 
 // Options names the database, the public origin, the protected resource and the users.
@@ -256,7 +256,7 @@ func (s *Service) Revoke(ctx context.Context, user, id string) error {
 	if err := s.store.revoke(ctx, user, id); err != nil {
 		return err
 	}
-	s.accounts.EndCredential(id)
+	s.accounts.EndCredential(ctx, id)
 	return nil
 }
 
@@ -267,7 +267,7 @@ func (s *Service) RevokeAll(ctx context.Context, user string) error {
 		return err
 	}
 	for _, id := range ids {
-		s.accounts.EndCredential(id)
+		s.accounts.EndCredential(ctx, id)
 	}
 	return nil
 }

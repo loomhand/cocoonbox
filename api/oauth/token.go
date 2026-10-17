@@ -56,7 +56,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		var replayed string
 		replayed, err = s.store.refresh(r.Context(), hashHex(f.Get(refreshToken)), clientID, tokens)
 		if replayed != "" {
-			s.accounts.EndCredential(replayed)
+			s.accounts.EndCredential(r.Context(), replayed)
 		}
 	default:
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be authorization_code or refresh_token")
@@ -125,7 +125,7 @@ func (s *Service) ServeRevoke(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(token, AccessPrefix), strings.HasPrefix(token, refreshPrefix):
 		var revoked string
 		if revoked, err = s.store.revokeByToken(r.Context(), hashHex(token), cmp.Or(r.PostForm.Get("client_id"), basicUser(r))); revoked != "" {
-			s.accounts.EndCredential(revoked)
+			s.accounts.EndCredential(r.Context(), revoked)
 		}
 	case strings.HasPrefix(token, users.TokenPrefix):
 		err = s.accounts.RevokeDeviceSHA256(r.Context(), hashHex(token))
