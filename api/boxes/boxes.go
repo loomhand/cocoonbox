@@ -27,13 +27,12 @@ import (
 // ErrNoBox answers every box id the caller does not own alike: another user's, a deleted one, an unknown one.
 var ErrNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
 
-// Defaults size new boxes, name their images and the users of each, and bound how many boxes of one user run at once.
+// Defaults size new boxes, name their images, and bound how many boxes of one user run at once.
 type Defaults struct {
 	Flavor       machines.Flavor
 	Flavors      []machines.Flavor
 	Image        string
 	RebaseImages []string
-	ImageOwners  map[string][]string
 	MaxRunning   int
 }
 
@@ -49,17 +48,17 @@ func (d Defaults) offered(ref string) (string, bool) {
 	return latest, strings.HasPrefix(latest, ref+":")
 }
 
-// kept returns image while it is offered, else what user's box on image upgrades to.
-func (d Defaults) kept(user, image string) string {
+// kept returns image while it is offered, else what a box on image upgrades to with the user's own image own.
+func (d Defaults) kept(own, image string) string {
 	if offered, ok := d.offered(image); ok {
 		return offered
 	}
-	return d.upgrade(user, image)
+	return d.upgrade(own, image)
 }
 
-// upgrade is the image user's box on image upgrades to: the image user owns, else the newest image of image's family.
-func (d Defaults) upgrade(user, image string) string {
-	return cmp.Or(d.ownImage(user), d.latest(image))
+// upgrade is the image a box on image upgrades to with the user's own image own: own, else the newest image of image's family.
+func (d Defaults) upgrade(own, image string) string {
+	return cmp.Or(own, d.latest(image))
 }
 
 // latest is the newest image of image's family (the name before ':'): the default image for its family, else the first rebase image of that family.
@@ -74,15 +73,6 @@ func (d Defaults) latest(image string) string {
 	return d.Image
 }
 
-func (d Defaults) ownImage(user string) string {
-	for image, owners := range d.ImageOwners {
-		if slices.Contains(owners, user) {
-			return image
-		}
-	}
-	return ""
-}
-
 // Registry keeps each user's boxes and their names; users.Service is the production one.
 type Registry interface {
 	Boxes(owner string) []users.Box
@@ -92,6 +82,7 @@ type Registry interface {
 	RemoveBox(ctx context.Context, owner, id string) error
 	// MaxRunning is the owner's own running limit, 0 for MaxRunning of the defaults.
 	MaxRunning(owner string) int
+	Policy(owner string) users.Policy
 }
 
 // MachineSync reads an owner's machines from the shared table into a backend's cache.
@@ -193,11 +184,11 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		}
 		switch {
 		case saved.Latest == "":
-			spec.Image = s.defaults.ownImage(user)
+			spec.Image = s.ownImage(user)
 		case saved.Parked:
-			spec.ID, spec.Image = newMachineID(box), s.defaults.kept(user, saved.Image)
+			spec.ID, spec.Image = newMachineID(box), s.defaults.kept(s.ownImage(user), saved.Image)
 		default:
-			spec.ID, spec.Image = newMachineID(box), s.defaults.upgrade(user, saved.Image)
+			spec.ID, spec.Image = newMachineID(box), s.defaults.upgrade(s.ownImage(user), saved.Image)
 		}
 	}
 	m, action, err := s.machines.Ensure(ctx, spec)
@@ -458,6 +449,15 @@ func (s *Service) boxName(user, box string) string {
 	return ""
 }
 
+// ownImage is the image the user's policy names while Rebase offers it, else empty.
+func (s *Service) ownImage(user string) string {
+	image := s.registry.Policy(user).Image
+	if image == s.defaults.Image || slices.Contains(s.defaults.RebaseImages, image) {
+		return image
+	}
+	return ""
+}
+
 // lockStarts serializes the requests that may start or delete a machine of user, in every api with a shared table.
 func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 	s.mu.Lock()
@@ -559,7 +559,7 @@ func (s *Service) toBox(ctx context.Context, user, box string, m machines.Machin
 	if m.State == machines.StateRunning && !s.ready(m) {
 		b.State = controlv1.BoxState_BOX_STATE_STARTING
 	}
-	b.LatestImage = s.defaults.upgrade(user, m.Image)
+	b.LatestImage = s.defaults.upgrade(s.ownImage(user), m.Image)
 	if s.state != nil {
 		b.LastSavedAtMs = s.state.lastSaved(ctx, statePath{user: user, box: box})
 	}

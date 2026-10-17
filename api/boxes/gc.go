@@ -26,10 +26,8 @@ const (
 
 // GCOptions configures the retention and chunk collection passes.
 type GCOptions struct {
-	Interval time.Duration
-	DryRun   bool
-	// Users limits the passes to these user ids; empty means every user.
-	Users       []string
+	Interval    time.Duration
+	DryRun      bool
 	DeleteBatch int
 	// DeletedRetention keeps a deleted box's state this long after the first pass that finds its box gone.
 	DeletedRetention time.Duration
@@ -77,7 +75,7 @@ func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []st
 		verb = "dry run, would remove"
 	}
 	for _, user := range users {
-		if len(opts.Users) > 0 && !slices.Contains(opts.Users, user) {
+		if s.registry.Policy(user).NoGC {
 			continue
 		}
 		start := time.Now()

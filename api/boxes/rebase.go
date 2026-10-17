@@ -26,7 +26,7 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	image := cmp.Or(req.GetImage(), s.defaults.upgrade(user, m.Image))
+	image := cmp.Or(req.GetImage(), s.defaults.upgrade(s.ownImage(user), m.Image))
 	if image != s.defaults.Image && !slices.Contains(s.defaults.RebaseImages, image) {
 		return nil, status.Errorf(codes.InvalidArgument, "image %q is not a rebase target", image)
 	}

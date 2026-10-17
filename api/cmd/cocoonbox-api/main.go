@@ -115,7 +115,6 @@ func main() {
 		Flavors:      flavors,
 		Image:        cfg.Image,
 		RebaseImages: cfg.RebaseImages,
-		ImageOwners:  cfg.ImageOwners,
 		MaxRunning:   cfg.MaxRunningBoxes,
 	}, accounts)
 	svc.EnableAccounts(accounts)
@@ -556,20 +555,19 @@ func machineFlavor(f config.Flavor) machines.Flavor {
 
 func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, agents *dialer.Dialer, st *s3.S3, accounts *users.Service, loops *leaderLoops) {
 	svc.EnableState(agents, st, accounts)
-	svc.EnableDeltas(cfg.State.DeltaUsers)
 	if cfg.State.ConditionalWrites {
 		svc.EnableConditionalWrites(st)
 	}
 	loops.add(func(ctx context.Context) { svc.RunScheduler(ctx, time.Duration(cfg.State.Interval)) })
 	logger := log.WithFunc("main.enableState")
-	logger.Infof(ctx, "state layer on %s/%s, saves every %s, delta records for %q, conditional writes %t", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval), cfg.State.DeltaUsers, cfg.State.ConditionalWrites)
+	logger.Infof(ctx, "state layer on %s/%s, saves every %s, conditional writes %t", cfg.State.Endpoint, cfg.State.Bucket, time.Duration(cfg.State.Interval), cfg.State.ConditionalWrites)
 	if after := time.Duration(cfg.State.ParkAfter); after > 0 {
-		svc.EnableParking(after, cfg.State.ParkOwners)
+		svc.EnableParking(after)
 		loops.add(func(ctx context.Context) { svc.RunParking(ctx, parkInterval) })
-		logger.Infof(ctx, "parking boxes hibernated for %s, owners %q (empty: everyone)", after, cfg.State.ParkOwners)
+		logger.Infof(ctx, "parking boxes hibernated for %s, except those of users set -no-park", after)
 	}
 	if gc := cfg.State.GC; gc.Interval > 0 {
-		gcOpts := boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, DeleteBatch: gc.DeleteBatch, DeletedRetention: time.Duration(gc.DeletedRetention)}
+		gcOpts := boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, DeleteBatch: gc.DeleteBatch, DeletedRetention: time.Duration(gc.DeletedRetention)}
 		loops.add(func(ctx context.Context) {
 			svc.RunGC(ctx, gcOpts, func() []string {
 				var ids []string
@@ -579,7 +577,7 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 				return ids
 			})
 		})
-		logger.Infof(ctx, "state gc every %s, dry run %t, users %q, deleted boxes kept %s", time.Duration(gc.Interval), gc.DryRun, gc.Users, time.Duration(gc.DeletedRetention))
+		logger.Infof(ctx, "state gc every %s, dry run %t, deleted boxes kept %s", time.Duration(gc.Interval), gc.DryRun, time.Duration(gc.DeletedRetention))
 	}
 }
 

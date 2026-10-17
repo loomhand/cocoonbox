@@ -39,7 +39,6 @@ listen: 127.0.0.1:18200
 mcp_listen: 127.0.0.1:18201
 image: $CB_IMAGE
 rebase_images: [$CB_IMAGE]
-image_owners: {}
 agent_port: 7443
 flavor:
   vcpus: 4
@@ -56,12 +55,9 @@ state:
   interval: 15m
   presign_ttl: 10m
   park_after: ${CB_PARK_AFTER:-12h}
-  park_owners: []
-  delta_users: []
   gc:
     interval: 24h
     dry_run: false
-    users: []
 provision:
   signing_key_file: edge-signing.key
   gw_admin:

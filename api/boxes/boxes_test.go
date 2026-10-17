@@ -63,19 +63,22 @@ func TestLatestStaysInTheImageFamily(t *testing.T) {
 	}
 }
 
-func TestImageOwnersGetTheirImageForNewBoxesAndUpgrades(t *testing.T) {
+func TestTheImageOfAUsersPolicyStartsAndUpgradesItsBoxes(t *testing.T) {
 	fake := newFakeMachines()
 	st := newFakeStore()
 	defaults := testDefaults
 	defaults.Image, defaults.RebaseImages, defaults.MaxRunning = "cbdesk:v25", []string{"cbcore:v2", "cbcore:v1"}, 9
-	defaults.ImageOwners = map[string][]string{"cbcore:v1": {alice}}
-	svc := New(fake, defaults, newFakeRegistry())
+	registry := newFakeRegistry()
+	registry.setPolicy(alice, users.Policy{Image: "cbcore:v1"})
+	registry.setPolicy("carol", users.Policy{Image: "cbcore:v0"})
+	svc := New(fake, defaults, registry)
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	for _, tt := range []struct {
 		user, want string
 	}{
 		{alice, "cbcore:v1"},
 		{"bob", ""},
+		{"carol", ""},
 	} {
 		ctx := auth.WithUser(t.Context(), tt.user)
 		if _, err := svc.Ensure(ctx, &controlv1.EnsureRequest{}); err != nil || fake.lastSpec().Image != tt.want {
@@ -89,13 +92,13 @@ func TestImageOwnersGetTheirImageForNewBoxesAndUpgrades(t *testing.T) {
 		}
 	}
 
-	if got := defaults.upgrade("bob", "cbdesk:v25"); got != "cbdesk:v25" {
+	if got := defaults.upgrade(svc.ownImage("bob"), "cbdesk:v25"); got != "cbdesk:v25" {
 		t.Errorf("bob's upgrade = %q, want cbdesk:v25", got)
 	}
 
 	running := newFakeMachines()
 	running.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "cbdesk:v25", Revision: 1})
-	svc = New(running, defaults, newFakeRegistry())
+	svc = New(running, defaults, registry)
 	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
 	ctx := auth.WithUser(t.Context(), alice)
 	box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox})
@@ -346,14 +349,15 @@ func TestResolve(t *testing.T) {
 
 // fakeRegistry gives every user the first box BoxID(user), as users.Service does at sign-up.
 type fakeRegistry struct {
-	mu      sync.Mutex
-	boxes   map[string][]users.Box
-	max     int
-	running map[string]int
+	mu       sync.Mutex
+	boxes    map[string][]users.Box
+	max      int
+	running  map[string]int
+	policies map[string]users.Policy
 }
 
 func newFakeRegistry() *fakeRegistry {
-	return &fakeRegistry{boxes: map[string][]users.Box{}, max: 3, running: map[string]int{}}
+	return &fakeRegistry{boxes: map[string][]users.Box{}, max: 3, running: map[string]int{}, policies: map[string]users.Policy{}}
 }
 
 func (r *fakeRegistry) Boxes(owner string) []users.Box {
@@ -399,6 +403,12 @@ func (r *fakeRegistry) RenameBox(_ context.Context, owner, id, name string) (use
 	return users.Box{}, users.ErrNotFound
 }
 
+func (r *fakeRegistry) Policy(owner string) users.Policy {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.policies[owner]
+}
+
 func (r *fakeRegistry) MaxRunning(owner string) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -410,6 +420,12 @@ func (r *fakeRegistry) RemoveBox(_ context.Context, owner, id string) error {
 	defer r.mu.Unlock()
 	r.boxes[owner] = slices.DeleteFunc(r.boxes[owner], func(b users.Box) bool { return b.ID == id })
 	return nil
+}
+
+func (r *fakeRegistry) setPolicy(owner string, p users.Policy) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.policies[owner] = p
 }
 
 type execCall struct {

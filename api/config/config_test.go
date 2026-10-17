@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,8 +35,8 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Wake != (Wake{MaxSchedules: 3, Floor: Duration(time.Hour), MaxAwakeFor: Duration(time.Hour)}) {
 		t.Errorf("wake = %+v, want 3 schedules, a 1h floor and 1h awake at most", cfg.Wake)
 	}
-	if cfg.State.ParkAfter != 0 || cfg.State.ParkOwners != nil {
-		t.Errorf("park after = %s for %q, want parking off", time.Duration(cfg.State.ParkAfter), cfg.State.ParkOwners)
+	if cfg.State.ParkAfter != 0 {
+		t.Errorf("park after = %s, want parking off", time.Duration(cfg.State.ParkAfter))
 	}
 	if cfg.UserIdleHibernate != 0 {
 		t.Errorf("user idle hibernate = %s, want off", time.Duration(cfg.UserIdleHibernate))
@@ -51,17 +50,23 @@ func TestLoadUserIdleHibernate(t *testing.T) {
 	}
 }
 
-func TestLoadParkingForSomeOwners(t *testing.T) {
-	cfg, err := Load(writeConfig(t, required+"state:\n  park_after: 30m\n  park_owners: [u-a, u-b]\n"))
-	if err != nil || cfg.State.ParkAfter != Duration(30*time.Minute) || !slices.Equal(cfg.State.ParkOwners, []string{"u-a", "u-b"}) {
-		t.Errorf("Load = %+v, %v, want parking after 30m for u-a and u-b", cfg.State, err)
+func TestLoadParking(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"state:\n  park_after: 30m\n"))
+	if err != nil || cfg.State.ParkAfter != Duration(30*time.Minute) {
+		t.Errorf("Load = %+v, %v, want parking after 30m", cfg.State, err)
 	}
 }
 
-func TestLoadImageOwners(t *testing.T) {
-	cfg, err := Load(writeConfig(t, required+"rebase_images: [cbdesk:v34, cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a, u-b]}\n"))
-	if err != nil || !slices.Equal(cfg.ImageOwners["cbcore:v1"], []string{"u-a", "u-b"}) {
-		t.Errorf("Load = %+v, %v, want cbcore:v1 for u-a and u-b", cfg.ImageOwners, err)
+func TestLoadRefusesTheListsTheUsersTableHolds(t *testing.T) {
+	for _, body := range []string{
+		"rebase_images: [cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a]}\n",
+		"state:\n  park_owners: [u-a]\n",
+		"state:\n  delta_users: [u-a]\n",
+		"state:\n  gc:\n    users: [u-a]\n",
+	} {
+		if _, err := Load(writeConfig(t, required+body)); err == nil {
+			t.Errorf("Load of %q took a list the users table holds now", body)
+		}
 	}
 }
 
@@ -107,8 +112,6 @@ func TestLoadRejects(t *testing.T) {
 		{name: "negative idle hibernate", body: required + "oauth:\n  idle_hibernate: -1m\n", want: "oauth.idle_hibernate must not be negative"},
 		{name: "negative park after", body: required + "state:\n  park_after: -1h\n", want: "state.park_after must not be negative"},
 		{name: "negative user idle hibernate", body: required + "user_idle_hibernate: -1h\n", want: "user_idle_hibernate must not be negative"},
-		{name: "image owners of an image not offered", body: required + "rebase_images: [cbdesk:v34]\nimage_owners: {\"cbcore:v1\": [u-a]}\n", want: `image_owners image "cbcore:v1" must be in rebase_images`},
-		{name: "image owner under two images", body: required + "rebase_images: [cbdesk:v34, cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a], \"cbdesk:v34\": [u-a]}\n", want: `image_owners lists user "u-a" under`},
 		{name: "relative operator socket", body: required + "operator_socket: operator.sock\n", want: "operator_socket must be an absolute path"},
 	}
 	for _, tt := range tests {

@@ -347,17 +347,19 @@ func TestGCRefusesToPruneAHeadMissingFromTheTimeline(t *testing.T) {
 	}
 }
 
-func TestGCSkipsUsersOffTheAllowList(t *testing.T) {
+func TestGCSkipsTheUsersWhosePolicySaysSo(t *testing.T) {
 	env := newStateEnv(t)
 	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
 		env.agent.chunks = hexIDs(chunks...)
 		env.save(t)
 	}
 	before := len(env.store.objects)
-	env.svc.collectGarbage(env.ctx, GCOptions{Users: []string{"bob"}, DeleteBatch: 1000}, []string{alice, "bob"}, time.Now().Add(40*24*time.Hour))
+	env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{NoGC: true})
+	env.svc.collectGarbage(env.ctx, GCOptions{DeleteBatch: 1000}, []string{alice, "bob"}, time.Now().Add(40*24*time.Hour))
 	if len(env.store.objects) != before {
-		t.Errorf("a pass for bob changed alice's state: %d objects, want %d", len(env.store.objects), before)
+		t.Errorf("a pass changed the state of a user whose policy skips the gc: %d objects, want %d", len(env.store.objects), before)
 	}
+	env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{})
 	env.svc.collectGarbage(env.ctx, GCOptions{DeleteBatch: 1000}, []string{alice, "bob"}, time.Now().Add(40*24*time.Hour))
 	if env.store.has(alice + "/chunks/" + hexID("c1")) {
 		t.Error("a pass for every user kept alice's dropped chunk")

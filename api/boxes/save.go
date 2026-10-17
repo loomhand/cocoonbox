@@ -25,18 +25,12 @@ const (
 // EnableState turns on saves and restores through agents into st, with per-user keys from keys.
 func (s *Service) EnableState(agents StateAgents, st store.Store, keys keyring.Keyring) {
 	s.state = newStateLayer(agents, st, keys)
+	s.state.deltaFor = func(user string) bool { return s.registry.Policy(user).Delta }
 }
 
 // EnableConditionalWrites makes each index and timeline rewrite land only on the version it read, so api processes on one store keep each other's writes.
 func (s *Service) EnableConditionalWrites(v store.Versioned) {
 	s.state.versioned = v
-}
-
-// EnableDeltas makes the saves of users write delta records against the day's first full snapshot, and lets the GC compact their manifests.
-func (s *Service) EnableDeltas(users []string) {
-	for _, u := range users {
-		s.state.deltaUsers[u] = true
-	}
 }
 
 func (s *Service) SaveState(ctx context.Context, ref *controlv1.BoxRef) (*controlv1.Operation, error) {

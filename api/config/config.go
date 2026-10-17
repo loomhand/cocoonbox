@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -78,10 +77,7 @@ type State struct {
 	PresignTTL      Duration `json:"presign_ttl"`
 	GC              GC       `json:"gc"`
 	// ParkAfter parks a box hibernated this long: its machine and memory image go, and the next Ensure restores its saved state; "0s" turns parking off.
-	ParkAfter  Duration `json:"park_after"`
-	ParkOwners []string `json:"park_owners"`
-	// DeltaUsers are the user ids whose saves write delta records (design §25.8); empty writes only full ones.
-	DeltaUsers []string `json:"delta_users"`
+	ParkAfter Duration `json:"park_after"`
 	// ConditionalWrites makes each index and timeline rewrite land only on the version it read; the store must honor If-Match.
 	ConditionalWrites bool `json:"conditional_writes"`
 }
@@ -90,8 +86,6 @@ type State struct {
 type GC struct {
 	Interval Duration `json:"interval"`
 	DryRun   bool     `json:"dry_run"`
-	// Users limits the passes to these user ids; empty means every user.
-	Users []string `json:"users"`
 	// DeleteBatch is the number of keys per DeleteObjects request.
 	DeleteBatch int `json:"delete_batch"`
 	// DeletedRetention keeps a deleted box's state this long after the first pass that finds it deleted.
@@ -202,9 +196,7 @@ type Config struct {
 	MCPListen    string   `json:"mcp_listen"`
 	Image        string   `json:"image"`
 	RebaseImages []string `json:"rebase_images"`
-	// ImageOwners maps a rebase image to the user ids whose new boxes start from it and whose boxes upgrade to it.
-	ImageOwners map[string][]string `json:"image_owners"`
-	AgentPort   int                 `json:"agent_port"`
+	AgentPort    int      `json:"agent_port"`
 	// Provision configures every box's identity file and gw key.
 	Provision Provision `json:"provision"`
 	Accounts  Accounts  `json:"accounts"`
@@ -342,7 +334,7 @@ func (c *Config) validate() error {
 	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
 		errs = append(errs, fmt.Errorf("connect.box_listen must be an ip:port of one address, with connect.public_url set, got %q", c.Connect.BoxListen))
 	}
-	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate(), c.validateImageOwners(), absolute("operator_socket", c.OperatorSocket))
+	errs = append(errs, c.State.GC.validate(c.State.Bucket), c.Wake.validate(), c.OAuth.validate(), absolute("operator_socket", c.OperatorSocket))
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
@@ -351,24 +343,6 @@ func (c *Config) validate() error {
 	}
 	if c.Cluster.Shared {
 		errs = append(errs, errors.New("cluster.shared stays off until cross-process restore pins land"))
-	}
-	return errors.Join(errs...)
-}
-
-// validateImageOwners refuses an image that Rebase does not offer and a user listed under two images.
-func (c *Config) validateImageOwners() error {
-	var errs []error
-	owned := map[string]string{}
-	for image, owners := range c.ImageOwners {
-		if !slices.Contains(c.RebaseImages, image) {
-			errs = append(errs, fmt.Errorf("image_owners image %q must be in rebase_images", image))
-		}
-		for _, user := range owners {
-			if other, ok := owned[user]; ok {
-				errs = append(errs, fmt.Errorf("image_owners lists user %q under %s and %s", user, other, image))
-			}
-			owned[user] = image
-		}
 	}
 	return errors.Join(errs...)
 }

@@ -82,6 +82,17 @@ func TestCheckRefusesWhatStartupRefuses(t *testing.T) {
 	}
 }
 
+func TestUserSetRefusesAnImageRebaseDoesNotOfferAndAnEmptyChange(t *testing.T) {
+	cfg := &config.Config{Image: "cbcore:v2", RebaseImages: []string{"cbcore:v1"}}
+	var out bytes.Buffer
+	if err := runCLI(t.Context(), cfg, []string{"user", "set", "qa1", "-image", "cbcore:v9"}, nil, &out); err == nil || !strings.Contains(err.Error(), "neither the default image nor in rebase_images") {
+		t.Errorf("user set of an image not offered = %v", err)
+	}
+	if err := runCLI(t.Context(), cfg, []string{"user", "set", "qa1"}, nil, &out); err == nil || !strings.Contains(err.Error(), "needs -image") {
+		t.Errorf("user set without a flag = %v", err)
+	}
+}
+
 func TestOperatorSocketActsAsTheNamedUser(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "s")
 	boxes := &fakeBoxes{}

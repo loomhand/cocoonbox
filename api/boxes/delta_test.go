@@ -13,6 +13,7 @@ import (
 
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 func TestDeltaRecordsHoldOnlyTheChangeAndReadBackFull(t *testing.T) {
@@ -305,7 +306,7 @@ func TestMetadataBytesPerSave(t *testing.T) {
 	for _, deltas := range []bool{false, true} {
 		env := newStateEnv(t)
 		if deltas {
-			env.svc.EnableDeltas([]string{alice})
+			env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{Delta: true})
 		}
 		p := statePath{user: alice, box: aliceBox}
 		env.agent.files = manyFiles(files, 0)
@@ -345,7 +346,7 @@ func TestMetadataBytesPerSave(t *testing.T) {
 func newDeltaEnv(t *testing.T) *stateEnv {
 	t.Helper()
 	env := newStateEnv(t)
-	env.svc.EnableDeltas([]string{alice})
+	env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{Delta: true})
 	return env
 }
 

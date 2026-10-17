@@ -26,6 +26,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/store"
 	"github.com/loomhand/cocoonbox/api/store/s3"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 func TestSaveStateIsIncremental(t *testing.T) {
@@ -498,7 +499,7 @@ func TestEnsureRestoresAMissingMachineIntoItsImageFamily(t *testing.T) {
 			env := newStateEnv(t)
 			env.svc.defaults.Image, env.svc.defaults.RebaseImages = "cbdesk:v25", []string{"cbcore:v7", "cbcore:v6", "cbdesk:v24", "cbcore:v8"}
 			if tt.owner {
-				env.svc.defaults.ImageOwners = map[string][]string{"cbcore:v8": {alice}}
+				env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{Image: "cbcore:v8"})
 			}
 			env.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: tt.image, Revision: 1})
 			env.agent.chunks = []string{hexID("c1")}
