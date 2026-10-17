@@ -44,6 +44,26 @@ func TestPutMachineRoundTripsEveryField(t *testing.T) {
 	}
 }
 
+func TestEqualComparesEveryFieldAsTheRowStoresIt(t *testing.T) {
+	at := time.Now()
+	m := cluster.Machine{ID: "cb-1", CreatedAt: at, Meta: map[string]string{}, Claim: []byte{}, Version: 3}
+	stored := cluster.Machine{ID: "cb-1", CreatedAt: at.Truncate(time.Microsecond).In(time.FixedZone("x", 3600)), Version: 9}
+	if !m.Equal(stored) {
+		t.Errorf("%+v and %+v differ only as the row stores them", m, stored)
+	}
+	for _, change := range []func(*cluster.Machine){
+		func(m *cluster.Machine) { m.OwnerAddr = "10.0.0.2:17780" },
+		func(m *cluster.Machine) { m.ReadyRestarts = 1 },
+		func(m *cluster.Machine) { m.OpUntil = at.Add(time.Second) },
+	} {
+		changed := m
+		change(&changed)
+		if m.Equal(changed) {
+			t.Errorf("%+v equals %+v", m, changed)
+		}
+	}
+}
+
 func TestUpdateMachineRerunsTheEditOnAConcurrentWrite(t *testing.T) {
 	st := clustertest.Open(t)
 	if err := st.PutMachine(t.Context(), cluster.Machine{ID: "cb-1", Owner: "u-1", CreatedAt: time.Now()}); err != nil {

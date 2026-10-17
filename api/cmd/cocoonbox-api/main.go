@@ -500,13 +500,12 @@ func enableLedger(ctx context.Context, ledger *cluster.Store, backend *sandboxd.
 // verifyLedger compares the ledger with this process's machines, heads and operations every minute and repairs it.
 func verifyLedger(ctx context.Context, backend *sandboxd.Backend, svc *boxes.Service) {
 	logger := log.WithFunc("main.verifyLedger")
-	ticker := time.NewTicker(verifyInterval)
-	defer ticker.Stop()
+	tick := time.Tick(verifyInterval)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 		verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
 		machineDrift, machineErr := backend.Verify(verifyCtx)
@@ -520,7 +519,7 @@ func verifyLedger(ctx context.Context, backend *sandboxd.Backend, svc *boxes.Ser
 			logger.Warnf(ctx, "ledger drift repaired: machines %q, heads %q, operations %q", machineDrift, drift.Heads, drift.Operations)
 			continue
 		}
-		logger.Infof(ctx, "ledger verified: no drift, %d heads backfilled", drift.Backfilled)
+		logger.Debug(ctx, "ledger verified: no drift")
 	}
 }
 
