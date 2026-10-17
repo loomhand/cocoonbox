@@ -5,7 +5,11 @@ S=127.0.0.1:5555
 BRIDGE=172.18.0.1
 PROXY=$BRIDGE:3128
 
+exec 9>/run/cocoonbox-android.lock
+flock 9
+/usr/local/lib/cocoonbox/android-mount
 systemctl start docker.service
+flock -u 9
 for p in udp tcp; do
 	iptables -t nat -C PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53" 2>/dev/null ||
 		iptables -t nat -I PREROUTING -i docker0 -p "$p" --dport 53 -j DNAT --to-destination "$BRIDGE:53"

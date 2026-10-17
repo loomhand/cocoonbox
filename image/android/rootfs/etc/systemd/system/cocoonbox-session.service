@@ -1,0 +1,11 @@
+[Unit]
+Description=cocoonbox Android data (applies a restored /data; State.Restore stops and starts it around the swap)
+After=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/lib/cocoonbox/android-apply
+
+[Install]
+WantedBy=multi-user.target
