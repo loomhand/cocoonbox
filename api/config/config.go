@@ -112,6 +112,12 @@ func (g GC) validate(bucket string) error {
 	return errors.Join(errs...)
 }
 
+// Cluster configures the state api processes share in the users database.
+type Cluster struct {
+	// Ledger copies every machine, box head and operation into the database and verifies the copy every minute.
+	Ledger bool `json:"ledger"`
+}
+
 // Provision names the edge signing key, gw's admin API for per-user gw keys and the residential exit.
 type Provision struct {
 	SigningKeyFile string  `json:"signing_key_file"`
@@ -212,6 +218,8 @@ type Config struct {
 	OperatorSocket string `json:"operator_socket"`
 	Wake           Wake   `json:"wake"`
 	OAuth          OAuth  `json:"oauth"`
+	// Cluster configures the state api processes share in the users database.
+	Cluster Cluster `json:"cluster"`
 }
 
 // Load reads, defaults and validates the file at path.

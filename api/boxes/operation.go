@@ -4,10 +4,13 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
+	"maps"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
@@ -34,6 +37,8 @@ type operation struct {
 	ctx      context.Context
 	stop     context.CancelFunc
 	watchers *watchers
+	mirror   func(cluster.Operation)
+	created  time.Time
 
 	mu         sync.Mutex
 	events     []*controlv1.OperationEvent
@@ -82,6 +87,7 @@ func (o *operation) progress(phase controlv1.Phase, detail string, done, total u
 	o.appendLocked(phase, detail, o.last.state)
 	ev := o.events[len(o.events)-1]
 	ev.DoneBytes, ev.TotalBytes = done, total
+	o.mirrorLocked()
 }
 
 func (o *operation) succeed(detail string) {
@@ -140,10 +146,27 @@ func (o *operation) appendLocked(phase controlv1.Phase, detail string, state con
 	close(o.changed)
 	o.changed = make(chan struct{})
 	o.watchers.wake(o.user)
+	o.mirrorLocked()
+}
+
+// recordLocked is o as the ledger keeps it.
+func (o *operation) recordLocked() cluster.Operation {
+	events, _ := toEventRecords(o.events)
+	return cluster.Operation{
+		ID: o.id, User: o.user, Box: o.boxID, Phase: int32(o.phase), Park: o.park, Gen: o.gen, Events: events,
+		FinishedAt: o.finishedAt, CreatedAt: o.created,
+	}
+}
+
+func (o *operation) mirrorLocked() {
+	if o.mirror != nil {
+		o.mirror(o.recordLocked())
+	}
 }
 
 type operations struct {
 	watchers *watchers
+	mirror   func(cluster.Operation)
 
 	mu     sync.Mutex
 	byID   map[string]*operation
@@ -169,7 +192,7 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 			return cur, false
 		}
 	}
-	op.id, op.changed, op.watchers = rand.Text(), make(chan struct{}), r.watchers
+	op.id, op.changed, op.watchers, op.mirror, op.created = rand.Text(), make(chan struct{}), r.watchers, r.mirror, time.Now()
 	op.ctx, op.stop = context.WithTimeout(base, timeout)
 	if cur := r.active[op.boxID]; cur != nil {
 		cur.fail("superseded by operation " + op.id)
@@ -177,6 +200,9 @@ func (r *operations) begin(base context.Context, op *operation, timeout time.Dur
 	r.byID[op.id] = op
 	r.active[op.boxID] = op
 	r.watchers.wake(op.user)
+	op.mu.Lock()
+	op.mirrorLocked()
+	op.mu.Unlock()
 	return op, true
 }
 
@@ -184,6 +210,12 @@ func (r *operations) get(id string) *operation {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.byID[id]
+}
+
+func (r *operations) all() []*operation {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Collect(maps.Values(r.byID))
 }
 
 // activeFor returns the unfinished operation on boxID, nil when none runs.

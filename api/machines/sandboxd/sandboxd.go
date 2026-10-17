@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"regexp"
@@ -21,6 +22,7 @@ import (
 	"github.com/projecteru2/core/log"
 	"golang.org/x/sync/errgroup"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -58,6 +60,15 @@ type Options struct {
 	DiskGiB           uint32
 	AgentPort         int
 	TenantEgressClass string
+	// Ledger, when set, receives a copy of every machine record for other api processes.
+	Ledger Ledger
+}
+
+// Ledger keeps the machine records api processes share.
+type Ledger interface {
+	Machines(ctx context.Context) ([]cluster.Machine, error)
+	PutMachine(ctx context.Context, m cluster.Machine) error
+	DeleteMachine(ctx context.Context, id string) error
 }
 
 var (
@@ -69,9 +80,10 @@ var (
 type Backend struct {
 	*Tenants
 
-	opts Options
-	api  *client
-	ctx  context.Context
+	opts   Options
+	api    *client
+	ctx    context.Context
+	mirror *cluster.Mirror
 
 	mu      sync.Mutex
 	entries map[string]*entry
@@ -98,6 +110,10 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		entries: map[string]*entry{},
 		owners:  map[string]chan struct{}{},
 		views:   map[string]view{},
+	}
+	if opts.Ledger != nil {
+		b.mirror = cluster.NewMirror()
+		go b.mirror.Run(ctx)
 	}
 	if err := b.refresh(ctx); err != nil {
 		return nil, fmt.Errorf("read sandboxd claims: %w", err)
@@ -245,7 +261,7 @@ func (b *Backend) Delete(ctx context.Context, id string) error {
 	e := b.entries[id]
 	unclaimed := e != nil && e.row == nil && e.op == ""
 	if unclaimed {
-		delete(b.entries, id)
+		b.dropLocked(id)
 	}
 	b.mu.Unlock()
 	sandbox, err := b.sandboxOf(ctx, id)
@@ -259,7 +275,7 @@ func (b *Backend) Delete(ctx context.Context, id string) error {
 		return err
 	}
 	b.mu.Lock()
-	delete(b.entries, id)
+	b.dropLocked(id)
 	b.mu.Unlock()
 	return nil
 }
@@ -280,6 +296,7 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	if e := b.entries[id]; e != nil {
 		e.meta[key] = value
 		e.notifyLocked()
+		b.touchLocked(e)
 	}
 	return nil
 }
@@ -339,6 +356,7 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 	defer b.mu.Unlock()
 	if e := b.entries[id]; e != nil {
 		e.routed = upstream != ""
+		b.touchLocked(e)
 	}
 	return nil
 }
@@ -408,10 +426,36 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	return nil
 }
 
+// Verify rewrites the ledger rows that still differ from the machines once the queued writes landed, and returns their ids.
+func (b *Backend) Verify(ctx context.Context) ([]string, error) {
+	if b.mirror == nil {
+		return nil, nil
+	}
+	differ, err := b.differences(ctx, nil)
+	if err != nil || len(differ) == 0 {
+		return nil, err
+	}
+	if differ, err = b.differences(ctx, differ); err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, id := range differ {
+		if e := b.entries[id]; e != nil {
+			e.mirrored = nil
+			b.touchLocked(e)
+		} else {
+			b.dropLocked(id)
+		}
+	}
+	return differ, nil
+}
+
 // startLocked marks e as running op and runs fn off the caller's request.
 func (b *Backend) startLocked(e *entry, op string, fn func(context.Context) error) {
 	e.op, e.opErr = op, ""
 	e.revision++
+	b.touchLocked(e)
 	go func() {
 		ctx, cancel := context.WithTimeout(b.ctx, opTimeout)
 		defer cancel()
@@ -429,6 +473,7 @@ func (b *Backend) startLocked(e *entry, op string, fn func(context.Context) erro
 		case err != nil:
 			e.opErr = op + " failed"
 		}
+		b.touchLocked(e)
 	}()
 }
 
@@ -459,6 +504,7 @@ func (b *Backend) wake(ctx context.Context, e *entry, sandbox string) error {
 	}
 	b.mu.Lock()
 	e.wakes, e.ready = wakes, false
+	b.touchLocked(e)
 	b.mu.Unlock()
 	return b.reread(ctx, e, sandbox)
 }
@@ -473,6 +519,7 @@ func (b *Backend) reread(ctx context.Context, e *entry, sandbox string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	e.row = &r
+	b.touchLocked(e)
 	return nil
 }
 
@@ -554,7 +601,7 @@ func (b *Backend) forget(id, sandbox string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if e := b.entries[id]; e != nil && e.op == "" && (e.row == nil || e.row.ID == sandbox) {
-		delete(b.entries, id)
+		b.dropLocked(id)
 	}
 }
 
@@ -622,6 +669,7 @@ func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
 		}
 		cur := r
 		e.row, e.image = &cur, r.Key.Template
+		b.touchLocked(e)
 		b.mu.Unlock()
 	}
 	if !complete {
@@ -631,7 +679,7 @@ func (b *Backend) index(ctx context.Context, rows []row, complete bool) error {
 	defer b.mu.Unlock()
 	for id, e := range b.entries {
 		if !present[id] && e.op == "" && e.row != nil {
-			delete(b.entries, id)
+			b.dropLocked(id)
 		}
 	}
 	return nil
@@ -684,6 +732,7 @@ func (b *Backend) probe(ctx context.Context, id string) {
 	defer b.mu.Unlock()
 	if e.row != nil && e.row.ID == sandbox && e.row.Restarts == restarts {
 		e.ready, e.readyRestarts = true, restarts
+		b.touchLocked(e)
 	}
 }
 
@@ -704,6 +753,67 @@ func (b *Backend) renew(ctx context.Context) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// touchLocked queues e's record for the ledger when it changed since the last one queued.
+func (b *Backend) touchLocked(e *entry) {
+	if b.mirror == nil || b.entries[e.id] != e {
+		return
+	}
+	rec := e.record()
+	if e.mirrored != nil && e.mirrored.Equal(rec) {
+		return
+	}
+	e.mirrored = &rec
+	b.mirror.Put(e.id, func(ctx context.Context) error { return b.opts.Ledger.PutMachine(ctx, rec) })
+}
+
+// dropLocked forgets machine id and queues its removal from the ledger.
+func (b *Backend) dropLocked(id string) {
+	delete(b.entries, id)
+	if b.mirror != nil {
+		b.mirror.Put(id, func(ctx context.Context) error { return b.opts.Ledger.DeleteMachine(ctx, id) })
+	}
+}
+
+// differences flushes the queued writes and returns the ids, of only, or of all when only is nil, whose ledger row differs from the entry.
+func (b *Backend) differences(ctx context.Context, only []string) ([]string, error) {
+	if err := b.mirror.Flush(ctx); err != nil {
+		return nil, err
+	}
+	b.mu.Lock()
+	want := make(map[string]cluster.Machine, len(b.entries))
+	for id, e := range b.entries {
+		want[id] = e.record()
+	}
+	b.mu.Unlock()
+	rows, err := b.opts.Ledger.Machines(ctx)
+	if err != nil {
+		return nil, err
+	}
+	have := make(map[string]cluster.Machine, len(rows))
+	for _, r := range rows {
+		have[r.ID] = r
+	}
+	ids := only
+	if ids == nil {
+		ids = slices.Collect(maps.Keys(want))
+		for id := range have {
+			if _, ok := want[id]; !ok {
+				ids = append(ids, id)
+			}
+		}
+		slices.Sort(ids)
+	}
+	var differ []string
+	for _, id := range ids {
+		w, inMemory := want[id]
+		h, inLedger := have[id]
+		if inMemory != inLedger || (inMemory && !w.Equal(h)) {
+			differ = append(differ, id)
+		}
+	}
+	return differ, nil
 }
 
 func (b *Backend) loop(interval time.Duration, fn func(context.Context) error) {

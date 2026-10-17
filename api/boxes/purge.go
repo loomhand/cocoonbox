@@ -104,4 +104,7 @@ func (l *stateLayer) forget(p statePath) {
 	maps.DeleteFunc(l.heads, func(k statePath, _ head) bool { return match(k) })
 	maps.DeleteFunc(l.browsed, func(k statePath, _ browsed) bool { return match(k) })
 	maps.DeleteFunc(l.bases, func(k statePath, _ *snapshotRecord) bool { return match(k) })
+	if l.mirror != nil {
+		l.mirror(p, nil)
+	}
 }

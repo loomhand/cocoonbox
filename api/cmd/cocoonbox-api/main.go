@@ -22,6 +22,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/account"
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/config"
 	"github.com/loomhand/cocoonbox/api/connect"
 	"github.com/loomhand/cocoonbox/api/console"
@@ -50,6 +51,8 @@ const (
 	idleInterval        = time.Minute
 	injectionTimeout    = time.Minute
 	shutdownGrace       = 5 * time.Second
+	verifyInterval      = time.Minute
+	verifyTimeout       = 30 * time.Second
 	readHeaderTimeout   = 10 * time.Second
 	endShareTimeout     = 10 * time.Second
 )
@@ -82,7 +85,12 @@ func main() {
 	}
 	pool := dialer.NewPool()
 	defer pool.Close()
-	backend, err := newBackend(ctx, cfg, flavors)
+	ledger, err := openLedger(ctx, cfg)
+	if err != nil {
+		logger.Fatalf(ctx, err, "open the cluster ledger")
+	}
+	defer ledger.Close()
+	backend, err := newBackend(ctx, cfg, flavors, ledger)
 	if err != nil {
 		logger.Fatalf(ctx, err, "start sandboxd backend")
 	}
@@ -135,6 +143,7 @@ func main() {
 		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts)
 		library = flows.NewLibrary(st, accounts)
 	}
+	enableLedger(ctx, ledger, backend, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts)
 	if err != nil {
 		logger.Fatalf(ctx, err, "enable provisioning")
@@ -447,12 +456,12 @@ func openUsersWith(ctx context.Context, cfg *config.Config, tenants machines.Ten
 	})
 }
 
-func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor) (*sandboxd.Backend, error) {
+func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flavor, ledger *cluster.Store) (*sandboxd.Backend, error) {
 	token, err := cfg.SandboxdToken()
 	if err != nil {
 		return nil, err
 	}
-	return sandboxd.New(ctx, sandboxd.Options{
+	opts := sandboxd.Options{
 		URL:               cfg.Sandboxd.URL,
 		Token:             token,
 		Image:             cfg.Image,
@@ -460,7 +469,59 @@ func newBackend(ctx context.Context, cfg *config.Config, flavors []machines.Flav
 		DiskGiB:           cfg.Flavor.DiskGiB,
 		AgentPort:         cfg.AgentPort,
 		TenantEgressClass: cfg.Sandboxd.TenantEgressClass,
-	})
+	}
+	if ledger != nil {
+		opts.Ledger = ledger
+	}
+	return sandboxd.New(ctx, opts)
+}
+
+// openLedger opens the cluster tables in the users database when cluster.ledger is on, nil otherwise.
+func openLedger(ctx context.Context, cfg *config.Config) (*cluster.Store, error) {
+	if !cfg.Cluster.Ledger {
+		return nil, nil
+	}
+	dsn, err := cfg.DSN()
+	if err != nil {
+		return nil, err
+	}
+	return cluster.Open(ctx, dsn)
+}
+
+// enableLedger copies machines, heads and operations into ledger and verifies the copy, when there is a ledger.
+func enableLedger(ctx context.Context, ledger *cluster.Store, backend *sandboxd.Backend, svc *boxes.Service) {
+	if ledger == nil {
+		return
+	}
+	svc.EnableLedger(ctx, ledger)
+	go verifyLedger(ctx, backend, svc)
+}
+
+// verifyLedger compares the ledger with this process's machines, heads and operations every minute and repairs it.
+func verifyLedger(ctx context.Context, backend *sandboxd.Backend, svc *boxes.Service) {
+	logger := log.WithFunc("main.verifyLedger")
+	ticker := time.NewTicker(verifyInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
+		machineDrift, machineErr := backend.Verify(verifyCtx)
+		drift, err := svc.Verify(verifyCtx)
+		cancel()
+		if err = errors.Join(machineErr, err); err != nil {
+			logger.Error(ctx, err, "verify the ledger")
+			continue
+		}
+		if n := len(machineDrift) + len(drift.Heads) + len(drift.Operations); n > 0 {
+			logger.Warnf(ctx, "ledger drift repaired: machines %q, heads %q, operations %q", machineDrift, drift.Heads, drift.Operations)
+			continue
+		}
+		logger.Infof(ctx, "ledger verified: no drift, %d heads backfilled", drift.Backfilled)
+	}
 }
 
 func machineFlavor(f config.Flavor) machines.Flavor {

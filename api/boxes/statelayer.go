@@ -126,6 +126,8 @@ type stateLayer struct {
 	retryDelay time.Duration
 	// versioned, when set, makes every index and timeline rewrite conditional on the version it read.
 	versioned store.Versioned
+	// mirror, when set, gets every committed head and, as nil, every forgotten one.
+	mirror func(p statePath, h *head)
 
 	mu      sync.Mutex
 	locks   map[string]*sync.Mutex
@@ -367,6 +369,9 @@ func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec 
 	l.mu.Lock()
 	l.heads[p] = h
 	l.mu.Unlock()
+	if l.mirror != nil {
+		l.mirror(p, &h)
+	}
 	return nil
 }
 

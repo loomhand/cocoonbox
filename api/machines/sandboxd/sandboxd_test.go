@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -647,6 +649,51 @@ func TestRenewExtendsEveryLeaseButArchivedOnes(t *testing.T) {
 	}
 	if got := fake.renewed(); !slices.Equal(got, []string{"sb_a 3600 archive"}) {
 		t.Errorf("renewed %v", got)
+	}
+}
+
+func TestTheLedgerMirrorsEveryMachineAndVerifyRepairsIt(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	ledger := clustertest.Open(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Ledger: ledger})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	m := claimRunning(t, b)
+	if err := b.SetMeta(t.Context(), boxID, "slept", "1"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
+		t.Fatalf("Verify after a claim = %v, %v, want no difference", differ, err)
+	}
+	row, err := ledger.Machine(t.Context(), boxID)
+	if err != nil || row.Owner != owner || row.Image != template || row.Meta["slept"] != "1" || !row.Ready || row.Revision != m.Revision || row.Claim == nil {
+		t.Fatalf("ledger row = %+v, %v", row, err)
+	}
+	row.Meta = map[string]string{"slept": "2"}
+	if err := ledger.PutMachine(t.Context(), row); err != nil {
+		t.Fatalf("PutMachine: %v", err)
+	}
+	if err := ledger.PutMachine(t.Context(), cluster.Machine{ID: "cb-ghost", Owner: owner}); err != nil {
+		t.Fatalf("PutMachine ghost: %v", err)
+	}
+	if differ, err := b.Verify(t.Context()); err != nil || !slices.Equal(differ, []string{boxID, "cb-ghost"}) {
+		t.Fatalf("Verify after tampering = %v, %v, want the box and the ghost", differ, err)
+	}
+	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
+		t.Errorf("Verify after the repair = %v, %v, want no difference", differ, err)
+	}
+	fake.remove(fake.only())
+	if _, err := b.Get(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {
+		t.Fatalf("Get after the claim vanished = %v", err)
+	}
+	if differ, err := b.Verify(t.Context()); err != nil || len(differ) != 0 {
+		t.Fatalf("Verify after a removal = %v, %v", differ, err)
+	}
+	if rows, err := ledger.Machines(t.Context()); err != nil || len(rows) != 0 {
+		t.Errorf("ledger after the removal = %+v, %v, want empty", rows, err)
 	}
 }
 
