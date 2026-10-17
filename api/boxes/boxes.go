@@ -27,8 +27,7 @@ import (
 // ErrNoBox answers every box id the caller does not own alike: another user's, a deleted one, an unknown one.
 var ErrNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
 
-// Defaults size new boxes, name the image they start from, list the other flavors Ensure and images Rebase accept,
-// name the users who start from and upgrade to one of those images, and bound how many boxes of one user run at once.
+// Defaults size new boxes, name their images and the users of each, and bound how many boxes of one user run at once.
 type Defaults struct {
 	Flavor       machines.Flavor
 	Flavors      []machines.Flavor
@@ -337,13 +336,12 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 	if err == nil {
 		ep, err = s.machines.Address(ctx, cur.ID)
 	}
-	var notRunning *machines.NotRunningError
-	switch {
+	switch notRunning, isNotRunning := errors.AsType[*machines.NotRunningError](err); {
 	case err == nil:
 		return ep, wakeOf(cur), nil
 	case errors.Is(err, machines.ErrNotFound):
 		return none, "", ErrNoBox
-	case errors.As(err, &notRunning):
+	case isNotRunning:
 		return none, "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
 	default:
 		log.WithFunc("boxes.Service.Resolve").WithField("box", boxID).Error(ctx, err, "resolve box")
@@ -398,8 +396,7 @@ func (s *Service) firstBox(ctx context.Context, user string) (string, error) {
 	return b.ID, nil
 }
 
-// checkRunning refuses to start box of the user's own while others hold the user's running limit; a box being parked
-// holds none, and an agent's boxes are bounded by the agent's caps instead.
+// checkRunning refuses box while the user's other running boxes, parked and agent boxes aside, hold the running limit.
 func (s *Service) checkRunning(user, box string, current map[string]machines.Machine) error {
 	if s.agentBox(user, box) {
 		return nil

@@ -96,7 +96,7 @@ func (l *stateLayer) purge(ctx context.Context, p statePath, opts GCOptions, r *
 	return nil
 }
 
-// forget drops the cached state of p's box, or of every box of p's user when p names none, and its ledger head.
+// forget is forgetCache that also drops the ledger head.
 func (l *stateLayer) forget(p statePath) {
 	l.forgetCache(p)
 	if l.mirror != nil {

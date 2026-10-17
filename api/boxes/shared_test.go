@@ -18,13 +18,13 @@ func TestTwoProcessesCommitHeadsInTurnAndRefuseAStaleOne(t *testing.T) {
 	a.agent.chunks = hexIDs("c1")
 	a.save(t)
 	p := statePath{user: alice, box: aliceBox}
-	waitFor(t, "b sees a's head and no operation", func() bool {
+	clustertest.WaitFor(t, "b sees a's head and no operation", func() bool {
 		h, err := b.svc.state.head(t.Context(), p)
 		return err == nil && h.Latest == snapshotID(1) && b.svc.ops.activeFor(aliceBox) == nil
 	})
 	b.agent.chunks = hexIDs("c1", "c2")
 	b.save(t)
-	waitFor(t, "a sees b's head and no operation", func() bool {
+	clustertest.WaitFor(t, "a sees b's head and no operation", func() bool {
 		h, err := a.svc.state.head(t.Context(), p)
 		return err == nil && h.Latest == snapshotID(2) && a.svc.ops.activeFor(aliceBox) == nil
 	})
@@ -43,7 +43,7 @@ func TestAHeadsNotifyFillsTheCacheWithoutDroppingANewerHead(t *testing.T) {
 	settle := func(latest string) {
 		t.Helper()
 		puts := 0
-		waitFor(t, "both take a notify of "+latest, func() bool {
+		clustertest.WaitFor(t, "both take a notify of "+latest, func() bool {
 			if puts%10 == 0 {
 				if err := db.PutHead(t.Context(), alice, mark.box, headBytes(head{Latest: latest, SavedAtMs: int64(puts)})); err != nil {
 					t.Fatalf("PutHead: %v", err)
@@ -77,7 +77,7 @@ func TestAWatchResumedInAnotherProcessGetsTheEventsAfterItsOffset(t *testing.T) 
 	events, _, _ := op.since(0)
 	from := events[len(events)-1].GetOffsetKey()
 	op.succeed("saved")
-	waitFor(t, "b reads a's finished operation", func() bool {
+	clustertest.WaitFor(t, "b reads a's finished operation", func() bool {
 		remote, err := b.svc.ops.get(t.Context(), op.id)
 		if err != nil || remote == nil {
 			return false
@@ -100,7 +100,7 @@ func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveState: %v", err)
 	}
-	waitFor(t, "b sees a's save running", func() bool {
+	clustertest.WaitFor(t, "b sees a's save running", func() bool {
 		active := b.svc.ops.activeFor(aliceBox)
 		return active != nil && active.id == op.GetId() && active.remote
 	})
@@ -112,7 +112,7 @@ func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("b watched a's save end with %v", last)
 	}
-	waitFor(t, "b forgets a's finished save", func() bool { return b.svc.ops.activeFor(aliceBox) == nil })
+	clustertest.WaitFor(t, "b forgets a's finished save", func() bool { return b.svc.ops.activeFor(aliceBox) == nil })
 }
 
 func TestAnOperationAnotherProcessSupersedesFailsWhereItRuns(t *testing.T) {
@@ -125,13 +125,13 @@ func TestAnOperationAnotherProcessSupersedesFailsWhereItRuns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveState: %v", err)
 	}
-	waitFor(t, "b sees a's save running", func() bool { return b.svc.ops.activeFor(aliceBox) != nil })
+	clustertest.WaitFor(t, "b sees a's save running", func() bool { return b.svc.ops.activeFor(aliceBox) != nil })
 	next, started := b.svc.ops.start(b.ctx, alice, aliceBox, controlv1.Phase_PHASE_DELETING, 1, time.Minute)
 	if !started {
 		t.Fatal("b did not start its operation over a's")
 	}
 	defer next.succeed("done")
-	waitFor(t, "a's save fails as superseded", func() bool {
+	clustertest.WaitFor(t, "a's save fails as superseded", func() bool {
 		local := a.svc.ops.local(op.GetId())
 		at, done := local.finished()
 		return done && !at.IsZero() && strings.Contains(local.last.detail+lastEventDetail(local), "superseded by operation "+next.id)
@@ -152,9 +152,9 @@ func TestTheOperationsOfAStoppedProcessEndAndFreeTheBox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SaveState: %v", err)
 	}
-	waitFor(t, "b sees a's save running", func() bool { return b.svc.ops.activeFor(aliceBox) != nil })
+	clustertest.WaitFor(t, "b sees a's save running", func() bool { return b.svc.ops.activeFor(aliceBox) != nil })
 	stopA()
-	waitFor(t, "b sees the box free once a stopped", func() bool { return b.svc.ops.activeFor(aliceBox) == nil })
+	clustertest.WaitFor(t, "b sees the box free once a stopped", func() bool { return b.svc.ops.activeFor(aliceBox) == nil })
 	events := watch(t, b.svc, b.ctx, op.GetId(), "")
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || !strings.Contains(last.GetDetail(), "stopped") {
 		t.Errorf("a's save ended with %v, want a failure saying its process stopped", last)
@@ -169,8 +169,8 @@ func TestAnOperationPastItsLeaseCountsAsGone(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("PutOperation: %v", err)
 	}
-	waitFor(t, "b sees the operation", func() bool { return b.svc.ops.activeFor(aliceBox) != nil })
-	waitFor(t, "b takes the operation as gone past its lease", func() bool { return b.svc.ops.activeFor(aliceBox) == nil })
+	clustertest.WaitFor(t, "b sees the operation", func() bool { return b.svc.ops.activeFor(aliceBox) != nil })
+	clustertest.WaitFor(t, "b takes the operation as gone past its lease", func() bool { return b.svc.ops.activeFor(aliceBox) == nil })
 	events := watch(t, b.svc, b.ctx, "op-dead", "")
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED {
 		t.Errorf("watching an operation past its lease ended with %v", last)
@@ -190,17 +190,6 @@ func newSharedPair(t *testing.T, aCtx context.Context) (*stateEnv, *stateEnv, *c
 	b.svc.EnableLedger(t.Context(), db)
 	b.svc.EnableShared(t.Context(), db)
 	return a, b, db
-}
-
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("%s: not within 5 s", what)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
 }
 
 func lastEventDetail(op *operation) string {

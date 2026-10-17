@@ -190,9 +190,9 @@ func (e *entry) load(rec cluster.Machine) {
 
 // loadEnv reads the service meta, the wake count, whether an upstream is set and the names from the claim's env entries.
 func (e *entry) loadEnv(env map[string]envVar) {
-	e.meta = map[string]string{}
-	e.env = envNames(env)
+	e.meta, e.env = map[string]string{}, make(map[string]string, len(env))
 	for name, v := range env {
+		e.env[name] = ""
 		if key, ok := strings.CutPrefix(name, envMetaPrefix); ok {
 			e.meta[key] = v.Value
 		}
