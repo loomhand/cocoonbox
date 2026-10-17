@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -359,9 +360,9 @@ func TestALeaderWhoseLinkGoesSilentStopsAndAnotherTakesOver(t *testing.T) {
 func TestTheLeaderLeadsWhileStartLocksHoldEveryLockConnection(t *testing.T) {
 	st := clustertest.Open(t)
 	for _, user := range []string{"u-1", "u-2", "u-3", "u-4"} {
-		unlock, err := st.LockUser(t.Context(), user)
+		unlock, err := st.Lock(t.Context(), user)
 		if err != nil {
-			t.Fatalf("LockUser %s: %v", user, err)
+			t.Fatalf("Lock %s: %v", user, err)
 		}
 		defer unlock()
 	}
@@ -403,23 +404,23 @@ func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 	t.Cleanup(b.Close)
-	unlock, err := a.LockUser(t.Context(), "u-1")
+	unlock, err := a.Lock(t.Context(), "u-1")
 	if err != nil {
-		t.Fatalf("LockUser: %v", err)
+		t.Fatalf("Lock: %v", err)
 	}
-	other, err := b.LockUser(t.Context(), "u-2")
+	other, err := b.Lock(t.Context(), "u-2")
 	if err != nil {
-		t.Fatalf("LockUser of another user: %v", err)
+		t.Fatalf("Lock of another user: %v", err)
 	}
 	other()
 	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
 	defer cancel()
-	if _, err := b.LockUser(ctx, "u-1"); err == nil {
+	if _, err := b.Lock(ctx, "u-1"); err == nil {
 		t.Fatal("b took the lock a holds")
 	}
 	got := make(chan error, 1)
 	go func() {
-		release, err := b.LockUser(t.Context(), "u-1")
+		release, err := b.Lock(t.Context(), "u-1")
 		if err == nil {
 			release()
 		}
@@ -429,10 +430,27 @@ func TestAUserLockHeldByOneProcessHoldsOffAnotherUntilReleased(t *testing.T) {
 	select {
 	case err := <-got:
 		if err != nil {
-			t.Errorf("LockUser after the release: %v", err)
+			t.Errorf("Lock after the release: %v", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("b did not take the lock a released")
+	}
+}
+
+func TestFlushKeysWaitsForItsKeysAndReportsTheirFailedWrites(t *testing.T) {
+	m := cluster.NewMirror()
+	go m.Run(t.Context())
+	m.Put("op:ok", func(context.Context) error { return nil })
+	m.Put("op:bad", func(context.Context) error { return errors.New("database gone") })
+	if err := m.FlushKeys(t.Context(), []string{"op:ok"}); err != nil {
+		t.Errorf("FlushKeys of a written key = %v", err)
+	}
+	if err := m.FlushKeys(t.Context(), []string{"op:bad"}); err == nil || !strings.Contains(err.Error(), "database gone") {
+		t.Errorf("FlushKeys of a key whose write failed = %v, want its error", err)
+	}
+	m.Put("op:bad", func(context.Context) error { return nil })
+	if err := m.FlushKeys(t.Context(), []string{"op:bad"}); err != nil {
+		t.Errorf("FlushKeys after the key's write succeeded = %v", err)
 	}
 }
 
