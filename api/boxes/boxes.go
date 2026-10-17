@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -112,6 +113,8 @@ type Service struct {
 	usage     *usageMeter
 	idle      *idling
 	activity  Activity
+	ledger    Ledger
+	mirror    *cluster.Mirror
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex

@@ -1,12 +1,14 @@
 package sandboxd
 
 import (
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -62,6 +64,8 @@ type entry struct {
 	// ready means the agent answered on its port since the claim, a wake or the last restart.
 	ready         bool
 	readyRestarts int
+	// mirrored is the record last queued for the ledger.
+	mirrored *cluster.Machine
 }
 
 func (e *entry) state() (machines.State, string) {
@@ -119,6 +123,18 @@ func (e *entry) machine(disk uint32) machines.Machine {
 		e.row.Hibernated, e.row.Archived, e.row.Restarts, e.ready, e.op)
 	if e.row.Failed != "" {
 		m.Detail += " failed: " + e.row.Failed
+	}
+	return m
+}
+
+// record is e as the ledger keeps it.
+func (e *entry) record() cluster.Machine {
+	m := cluster.Machine{
+		ID: e.id, Owner: e.owner, Image: e.image, CreatedAt: e.created, Op: e.op, OpErr: e.opErr, Revision: e.revision,
+		Meta: maps.Clone(e.meta), Wakes: e.wakes, Routed: e.routed, Ready: e.ready, ReadyRestarts: e.readyRestarts,
+	}
+	if e.row != nil {
+		m.Claim, _ = json.Marshal(e.row, json.Deterministic(true))
 	}
 	return m
 }

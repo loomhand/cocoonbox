@@ -45,3 +45,5 @@ wake:                          # scheduled box wakes (design §15.13)
   max_schedules: 3             # wake schedules per user
   floor: 1h                    # least time between two wakes of one box from hibernation
   max_awake_for: 1h            # longest awake_for a schedule may ask
+cluster:                       # state api processes share in the users database
+  ledger: false                # copy machines, box heads and operations there and verify the copy every minute
