@@ -145,6 +145,7 @@ func main() {
 		enableState(ctx, cfg, svc, dialer.New(pool), st, accounts, &loops)
 		library = flows.NewLibrary(st, accounts)
 	}
+	svc.EnablePolicies(accounts)
 	enableLedger(ctx, cfg, ledger, backend, svc)
 	signer, err := enableProvisioning(ctx, cfg, svc, accounts, &loops)
 	if err != nil {
@@ -555,7 +556,10 @@ func enableState(ctx context.Context, cfg *config.Config, svc *boxes.Service, ag
 		logger.Infof(ctx, "parking boxes hibernated for %s, owners %q (empty: everyone)", after, cfg.State.ParkOwners)
 	}
 	if gc := cfg.State.GC; gc.Interval > 0 {
-		gcOpts := boxes.GCOptions{Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, DeleteBatch: gc.DeleteBatch, DeletedRetention: time.Duration(gc.DeletedRetention)}
+		gcOpts := boxes.GCOptions{
+			Interval: time.Duration(gc.Interval), DryRun: gc.DryRun, Users: gc.Users, Flagged: svc.GCUsers, DeleteBatch: gc.DeleteBatch,
+			DeletedRetention: time.Duration(gc.DeletedRetention),
+		}
 		loops.add(func(ctx context.Context) {
 			svc.RunGC(ctx, gcOpts, func() []string {
 				var ids []string

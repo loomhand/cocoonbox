@@ -193,8 +193,14 @@ type parking struct {
 	after  time.Duration
 	owners []string
 	now    func() time.Time
+	// flagged, when set, lists the users whose policy parks their boxes, beside owners.
+	flagged func() []string
 }
 
 func (p *parking) covers(owner string) bool {
-	return len(p.owners) == 0 || slices.Contains(p.owners, owner)
+	owners := p.owners
+	if p.flagged != nil {
+		owners = slices.Concat(owners, p.flagged())
+	}
+	return len(owners) == 0 || slices.Contains(owners, owner)
 }

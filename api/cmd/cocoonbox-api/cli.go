@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/boxes"
@@ -27,6 +28,7 @@ const (
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
+  cocoonbox-api [-config FILE] user set NAME [-image IMAGE] [-delta=BOOL] [-park=BOOL] [-gc=BOOL]
   cocoonbox-api [-config FILE] state migrate [-keyring DIR]
   cocoonbox-api [-config FILE] state expand [-user ID]
   cocoonbox-api [-config FILE] box rebase USER BOX IMAGE`
@@ -68,6 +70,10 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	verb, name := args[1], args[2]
 	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
 	id := fs.String("id", "", "user id; migrated users keep their old name so their box id stays")
+	image := fs.String("image", "", "user set: the rebase image the user's boxes start from and upgrade to; empty follows image_owners")
+	delta := fs.Bool("delta", false, "user set: the user's saves write delta records, beside state.delta_users")
+	park := fs.Bool("park", false, "user set: the user's boxes park, beside state.park_owners")
+	gc := fs.Bool("gc", false, "user set: the gc collects the user's state, beside state.gc.users")
 	admin := fs.Bool("admin", false, "make the user an admin")
 	fromStdin := fs.Bool("stdin", false, "read the secret from the first line of stdin")
 	if err := fs.Parse(args[3:]); err != nil {
@@ -95,6 +101,9 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	u, err := accounts.ByName(name)
 	if err != nil {
 		return err
+	}
+	if verb == "set" {
+		return setPolicy(ctx, cfg, accounts, u.ID, fs, policyFlags{*image, *delta, *park, *gc}, written)
 	}
 	if verb == "delete" {
 		// A user who never had an API token never owned a box, so there is nothing to release.
@@ -127,6 +136,49 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return err
 	}
 	return written("%s of user %s updated\n", verb, u.Name)
+}
+
+// policyFlags are the values of the flags user set takes.
+type policyFlags struct {
+	image           string
+	delta, park, gc bool
+}
+
+// setPolicy applies to user id the policy flags user set was given and prints the result with written.
+func setPolicy(ctx context.Context, cfg *config.Config, accounts *users.Service, id string, fs *flag.FlagSet, flags policyFlags, written func(string, ...any) error) error {
+	set, err := policySettings(cfg, fs, flags)
+	if err != nil {
+		return err
+	}
+	u, err := accounts.Update(ctx, id, set)
+	if err != nil {
+		return err
+	}
+	return written("policy of user %s: image %q, delta %t, park %t, gc %t\n", u.Name, u.Policy.Image, u.Policy.Delta, u.Policy.Park, u.Policy.GC)
+}
+
+// policySettings turns the flags user set was given into the settings to apply, refusing an image Rebase does not offer.
+func policySettings(cfg *config.Config, fs *flag.FlagSet, flags policyFlags) (users.Settings, error) {
+	var set users.Settings
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "image":
+			set.Image = &flags.image
+		case "delta":
+			set.Delta = &flags.delta
+		case "park":
+			set.Park = &flags.park
+		case "gc":
+			set.GC = &flags.gc
+		}
+	})
+	if set.Image == nil && set.Delta == nil && set.Park == nil && set.GC == nil {
+		return set, errors.New("user set needs -image, -delta, -park or -gc")
+	}
+	if flags.image != "" && flags.image != cfg.Image && !slices.Contains(cfg.RebaseImages, flags.image) {
+		return set, fmt.Errorf("image %q is neither the default image nor in rebase_images", flags.image)
+	}
+	return set, nil
 }
 
 func removeUser(ctx context.Context, cfg *config.Config, accounts *users.Service, u users.User) (int, error) {

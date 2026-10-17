@@ -26,8 +26,9 @@ const (
 type GCOptions struct {
 	Interval time.Duration
 	DryRun   bool
-	// Users limits the passes to these user ids; empty means every user.
+	// Users limits the passes to these user ids and those Flagged returns; both empty means every user.
 	Users       []string
+	Flagged     func() []string
 	DeleteBatch int
 	// DeletedRetention keeps a deleted box's state this long after the first pass that finds its box gone.
 	DeletedRetention time.Duration
@@ -74,8 +75,12 @@ func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []st
 	if opts.DryRun {
 		verb = "dry run, would remove"
 	}
+	allowed := opts.Users
+	if opts.Flagged != nil {
+		allowed = slices.Concat(allowed, opts.Flagged())
+	}
 	for _, user := range users {
-		if len(opts.Users) > 0 && !slices.Contains(opts.Users, user) {
+		if len(allowed) > 0 && !slices.Contains(allowed, user) {
 			continue
 		}
 		start := time.Now()

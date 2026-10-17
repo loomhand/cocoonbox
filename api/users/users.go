@@ -76,6 +76,15 @@ type User struct {
 	MaxAgentBoxes *int      `json:"max_agent_boxes"`
 	HasToken      bool      `json:"has_token"`
 	CreatedAt     time.Time `json:"created_at"`
+	Policy        Policy    `json:"policy"`
+}
+
+// Policy places a user on the per-user lists beside the config's: its boxes' image and its delta, park and gc lists.
+type Policy struct {
+	Image string `json:"image,omitempty"`
+	Delta bool   `json:"delta,omitzero"`
+	Park  bool   `json:"park,omitzero"`
+	GC    bool   `json:"gc,omitzero"`
 }
 
 // NewUser describes a user to create; an empty ID draws a fresh one, an empty Password leaves password sign-in off, an empty IDP
@@ -100,6 +109,11 @@ type Settings struct {
 	MaxBoxesCap   *int  `json:"max_boxes_cap,omitempty"`
 	MaxRunning    *int  `json:"max_running,omitempty"`
 	MaxAgentBoxes *int  `json:"max_agent_boxes,omitempty"`
+
+	Image *string `json:"image,omitempty"`
+	Delta *bool   `json:"delta,omitempty"`
+	Park  *bool   `json:"park,omitempty"`
+	GC    *bool   `json:"gc,omitempty"`
 }
 
 // GWKeys issues, revokes and meters each user's gw key and keeps the user's own daily cap, found by owner = user id.
@@ -460,6 +474,10 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	r.Admin = deref(set.Admin, r.Admin)
 	r.Disabled = deref(set.Disabled, r.Disabled)
 	r.Residential = deref(set.Residential, r.Residential)
+	r.Policy.Image = deref(set.Image, r.Policy.Image)
+	r.Policy.Delta = deref(set.Delta, r.Policy.Delta)
+	r.Policy.Park = deref(set.Park, r.Policy.Park)
+	r.Policy.GC = deref(set.GC, r.Policy.GC)
 	switch {
 	case r.MaxBoxesCap < 1 || r.MaxBoxesCap > maxBoxesCap:
 		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d", ErrInvalid, maxBoxesCap)
@@ -750,6 +768,29 @@ func (s *Service) SetStateKey(ctx context.Context, id string, k keyring.Key) err
 	s.published(ctx, "set the state key of "+id)
 	s.put(r)
 	return nil
+}
+
+// Policy returns user id's place on the per-user lists; an unknown user is on none.
+func (s *Service) Policy(id string) Policy {
+	r, err := s.record(id)
+	if err != nil {
+		return Policy{}
+	}
+	return r.Policy
+}
+
+// Flagged returns the ids of the users pick holds for.
+func (s *Service) Flagged(pick func(Policy) bool) []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var ids []string
+	for id, r := range s.byID {
+		if pick(r.Policy) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 // MaxRunning returns how many of user id's boxes may run at once, 0 when the user takes the api's default.

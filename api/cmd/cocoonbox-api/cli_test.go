@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/config"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/store"
@@ -105,6 +107,29 @@ func TestDeleteUserRevokesConnectionsBeforeTheRow(t *testing.T) {
 	calls = nil
 	if _, err := deleteUser(t.Context(), st, nil, accounts, users.User{ID: "u-3", Name: "carol"}); err != nil || strings.Join(calls, " ") != "delete u-3" {
 		t.Errorf("deleteUser without Connect = %v, calls %v", err, calls)
+	}
+}
+
+func TestUserSetTakesOnlyTheFlagsGivenAndAnOfferedImage(t *testing.T) {
+	cfg := &config.Config{Image: "cbdesk:v25", RebaseImages: []string{"cbcore:v1"}}
+	parse := func(args ...string) (users.Settings, error) {
+		fs := flag.NewFlagSet("set", flag.ContinueOnError)
+		image, delta := fs.String("image", "", ""), fs.Bool("delta", false, "")
+		park, gc := fs.Bool("park", false, ""), fs.Bool("gc", false, "")
+		if err := fs.Parse(args); err != nil {
+			return users.Settings{}, err
+		}
+		return policySettings(cfg, fs, policyFlags{*image, *delta, *park, *gc})
+	}
+	set, err := parse("-image", "cbcore:v1", "-park=false")
+	if err != nil || set.Image == nil || *set.Image != "cbcore:v1" || set.Park == nil || *set.Park || set.Delta != nil || set.GC != nil {
+		t.Errorf("user set -image cbcore:v1 -park=false = %+v, %v", set, err)
+	}
+	if _, err := parse("-image", "cbcore:v9"); err == nil {
+		t.Error("user set took an image Rebase does not offer")
+	}
+	if _, err := parse(); err == nil {
+		t.Error("user set took no flag")
 	}
 }
 

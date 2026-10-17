@@ -15,6 +15,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const (
@@ -30,6 +31,32 @@ func (s *Service) EnableState(agents StateAgents, st store.Store, keys keyring.K
 // EnableConditionalWrites makes each index and timeline rewrite land only on the version it read, so api processes on one store keep each other's writes.
 func (s *Service) EnableConditionalWrites(v store.Versioned) {
 	s.state.versioned = v
+}
+
+// Policies places each user on the per-user lists beside the config's; users.Service is the production one.
+type Policies interface {
+	Policy(id string) users.Policy
+	Flagged(pick func(users.Policy) bool) []string
+}
+
+// EnablePolicies adds the users p places on the image, delta, park and gc lists to the config's, after state and parking.
+func (s *Service) EnablePolicies(p Policies) {
+	s.policies = p
+	s.defaults.Owned = func(user string) string { return p.Policy(user).Image }
+	if s.state != nil {
+		s.state.deltaFor = func(user string) bool { return p.Policy(user).Delta }
+	}
+	if s.park != nil {
+		s.park.flagged = func() []string { return p.Flagged(func(pol users.Policy) bool { return pol.Park }) }
+	}
+}
+
+// GCUsers returns the users whose policy has the gc collect their state, for GCOptions.Flagged.
+func (s *Service) GCUsers() []string {
+	if s.policies == nil {
+		return nil
+	}
+	return s.policies.Flagged(func(pol users.Policy) bool { return pol.GC })
 }
 
 // EnableDeltas makes the saves of users write delta records against the day's first full snapshot, and lets the GC compact their manifests.

@@ -344,6 +344,29 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestAUsersPolicyAddsToTheConfigsListsAndPicksItsImage(t *testing.T) {
+	st := newFakeStore()
+	defaults := testDefaults
+	defaults.Image, defaults.RebaseImages = "cbdesk:v25", []string{"cbcore:v2", "cbcore:v1"}
+	svc := New(newFakeMachines(), defaults, newFakeRegistry())
+	svc.EnableState(newFakeAgent(st), st, &fakeKeys{})
+	svc.EnableParking(time.Hour, nil)
+	policies := fakePolicies{alice: {Image: "cbcore:v1", Delta: true, Park: true}, "bob": {Image: "gone:v9", GC: true}}
+	svc.EnablePolicies(policies)
+	switch {
+	case svc.defaults.ownImage(alice) != "cbcore:v1":
+		t.Errorf("alice's own image = %q, want her policy's", svc.defaults.ownImage(alice))
+	case svc.defaults.ownImage("bob") != "":
+		t.Errorf("bob's own image = %q, want none for an image no longer offered", svc.defaults.ownImage("bob"))
+	case !svc.state.deltaFor(alice) || svc.state.deltaFor("bob"):
+		t.Error("delta records follow the wrong users")
+	case !svc.park.covers(alice) || svc.park.covers("bob"):
+		t.Error("with one user's policy parking, parking covers the wrong users")
+	case !slices.Equal(svc.GCUsers(), []string{"bob"}):
+		t.Errorf("gc users = %q, want bob", svc.GCUsers())
+	}
+}
+
 // fakeRegistry gives every user the first box BoxID(user), as users.Service does at sign-up.
 type fakeRegistry struct {
 	mu      sync.Mutex
@@ -737,4 +760,20 @@ func (s *eventStream) Context() context.Context { return s.ctx }
 func (s *eventStream) Send(ev *controlv1.OperationEvent) error {
 	s.events = append(s.events, ev)
 	return nil
+}
+
+// fakePolicies maps a user id to its policy.
+type fakePolicies map[string]users.Policy
+
+func (p fakePolicies) Policy(id string) users.Policy { return p[id] }
+
+func (p fakePolicies) Flagged(pick func(users.Policy) bool) []string {
+	var ids []string
+	for id, pol := range p {
+		if pick(pol) {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return ids
 }

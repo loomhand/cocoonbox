@@ -36,6 +36,8 @@ type Defaults struct {
 	RebaseImages []string
 	ImageOwners  map[string][]string
 	MaxRunning   int
+	// Owned, when set, is the image a user's own policy names, before ImageOwners.
+	Owned func(user string) string
 }
 
 // offered resolves ref, an image or the family of one (such as cbdesk), to an offered image; empty is the default image.
@@ -76,6 +78,13 @@ func (d Defaults) latest(image string) string {
 }
 
 func (d Defaults) ownImage(user string) string {
+	if d.Owned != nil {
+		if own := d.Owned(user); own != "" {
+			if image, ok := d.offered(own); ok {
+				return image
+			}
+		}
+	}
 	for image, owners := range d.ImageOwners {
 		if slices.Contains(owners, user) {
 			return image
@@ -118,6 +127,7 @@ type Service struct {
 	mirror    *cluster.Mirror
 	reaches   *reaches
 	userLocks UserLocks
+	policies  Policies
 
 	mu     sync.Mutex
 	starts map[string]*sync.Mutex

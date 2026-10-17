@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -557,6 +558,32 @@ func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
 	}
 	if _, ok := gw.caps[root.ID]; ok {
 		t.Errorf("a demoted admin keeps gw cap %d, want the tenant's default", gw.caps[root.ID])
+	}
+}
+
+func TestAPolicyIsStoredAndReachesAnotherApi(t *testing.T) {
+	a, gw, tenants, dsn := newTestService(t)
+	b := openTestService(t, dsn, gw, tenants)
+	go b.Listen(t.Context())
+	u, err := a.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := a.Update(t.Context(), u.ID, Settings{Image: new("cbcore:v1"), Park: new(true)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	want := Policy{Image: "cbcore:v1", Park: true}
+	if took, ok := within(2*time.Second, func() bool { return b.Policy(u.ID) == want }); !ok {
+		t.Fatalf("the other api's policy of the user = %+v %s later, want %+v", b.Policy(u.ID), took, want)
+	}
+	if got := b.Flagged(func(p Policy) bool { return p.Park }); !slices.Equal(got, []string{u.ID}) {
+		t.Errorf("Flagged(park) = %q", got)
+	}
+	if _, err := a.Update(t.Context(), u.ID, Settings{Image: new(""), Park: new(false), GC: new(true)}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if reopened := openTestService(t, dsn, gw, tenants); reopened.Policy(u.ID) != (Policy{GC: true}) {
+		t.Errorf("the stored policy = %+v, want only gc", reopened.Policy(u.ID))
 	}
 }
 

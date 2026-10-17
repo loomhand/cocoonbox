@@ -141,8 +141,9 @@ type stateLayer struct {
 	dropped uint64
 	pins    map[statePath]map[string]int
 	browsed map[statePath]browsed
-	// deltaUsers are the users whose saves write delta records.
+	// deltaUsers are the users whose saves write delta records, beside those deltaFor holds for.
 	deltaUsers map[string]bool
+	deltaFor   func(user string) bool
 	bases      map[statePath]*snapshotRecord
 }
 

@@ -24,7 +24,8 @@ const (
 	uniqueViolation = "23505"
 
 	recordColumns = `id, name, idp, admin, disabled, residential, max_boxes, max_boxes_cap, coalesce(max_running, 0), max_agent_boxes, created_at,
-		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed`
+		coalesce(token_sha256, ''), gw_ak_id, gw_key_sealed, tenant_token_sealed, coalesce(state_key_id, ''), state_key_sealed,
+		image, delta, park, gc`
 )
 
 //go:embed migrations/*.sql
@@ -83,7 +84,7 @@ func (s *store) all(ctx context.Context) ([]record, error) {
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (record, error) {
 		var r record
 		err := row.Scan(&r.ID, &r.Name, &r.IDP, &r.Admin, &r.Disabled, &r.Residential, &r.MaxBoxes, &r.MaxBoxesCap, &r.MaxRunning, &r.MaxAgentBoxes, &r.CreatedAt,
-			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey)
+			&r.tokenSHA256, &r.gwAKID, &r.gwKey, &r.tenantToken, &r.stateKeyID, &r.stateKey, &r.Policy.Image, &r.Policy.Delta, &r.Policy.Park, &r.Policy.GC)
 		r.HasToken = r.tokenSHA256 != ""
 		return r, err
 	})
@@ -190,7 +191,8 @@ func (s *store) remove(ctx context.Context, id string) error {
 
 func (s *store) update(ctx context.Context, r record) error {
 	return s.exec(ctx, `UPDATE users SET disabled = $2, residential = $3, max_boxes = $4, max_boxes_cap = $5, max_running = nullif($6, 0),
-		max_agent_boxes = $7, admin = $8 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes, r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes, r.Admin)
+		max_agent_boxes = $7, admin = $8, image = $9, delta = $10, park = $11, gc = $12 WHERE id = $1`, r.ID, r.Disabled, r.Residential, r.MaxBoxes,
+		r.MaxBoxesCap, r.MaxRunning, r.MaxAgentBoxes, r.Admin, r.Policy.Image, r.Policy.Delta, r.Policy.Park, r.Policy.GC)
 }
 
 func (s *store) setPassword(ctx context.Context, id, hash string) error {
