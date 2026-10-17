@@ -68,6 +68,15 @@ func (s *Store) Machines(ctx context.Context) ([]Machine, error) {
 	return pgx.CollectRows(rows, scanMachine)
 }
 
+// MachinesOf returns the machines of owner.
+func (s *Store) MachinesOf(ctx context.Context, owner string) ([]Machine, error) {
+	rows, err := s.pool.Query(ctx, "SELECT "+machineColumns+" FROM machines WHERE owner = $1 ORDER BY id", owner)
+	if err != nil {
+		return nil, fmt.Errorf("list the machines of %s: %w", owner, err)
+	}
+	return pgx.CollectRows(rows, scanMachine)
+}
+
 // Machine returns machine id, ErrNotFound when there is none.
 func (s *Store) Machine(ctx context.Context, id string) (Machine, error) {
 	rows, err := s.pool.Query(ctx, "SELECT "+machineColumns+" FROM machines WHERE id = $1", id)

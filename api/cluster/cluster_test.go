@@ -223,7 +223,7 @@ func TestOperationsKeepTheirEventsUntilPurged(t *testing.T) {
 	if err != nil || string(got.Events) != string(op.Events) || got.FinishedAt.IsZero() || got.Gen != 4 {
 		t.Fatalf("Operation = %+v, %v", got, err)
 	}
-	if recent, err := st.Operations(t.Context(), time.Now().Add(-time.Hour)); err != nil || len(recent) != 0 {
+	if recent, err := st.Operations(t.Context(), "", time.Now().Add(-time.Hour)); err != nil || len(recent) != 0 {
 		t.Errorf("Operations since an hour ago = %v, %v, want none", recent, err)
 	}
 	abandoned := cluster.Operation{ID: "op-2", User: "u-1", Box: "cb-1", Events: []byte(`[]`), ExpiresAt: time.Now().Add(-2 * time.Hour), CreatedAt: time.Now().Add(-3 * time.Hour)}

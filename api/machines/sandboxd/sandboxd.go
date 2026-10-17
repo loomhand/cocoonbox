@@ -122,11 +122,11 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	}
 	switch {
 	case opts.Shared != nil:
-		if err := b.reload(ctx); err != nil {
+		if err := b.reload(ctx, ""); err != nil {
 			return nil, fmt.Errorf("read the shared machines: %w", err)
 		}
 		go opts.Shared.Listen(ctx, cluster.ChannelMachines, func() {
-			if err := b.reload(ctx); err != nil {
+			if err := b.reload(ctx, ""); err != nil {
 				log.WithFunc("sandboxd.New").Warnf(ctx, "reload the shared machines: %v", err)
 			}
 		}, func(payload string) { b.changed(ctx, payload) })
@@ -517,7 +517,11 @@ func (b *Backend) Verify(ctx context.Context) ([]string, error) {
 	return differ, nil
 }
 
-// mutate applies fn to machine id's entry, nil for none, under the lock in memory or on the shared row's version, rerun on a conflict.
+// SyncOwner reads owner's machines from the shared table into the cache, for a start that must not act on a stale one.
+func (b *Backend) SyncOwner(ctx context.Context, owner string) error {
+	return b.reload(ctx, owner)
+}
+
 func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*entry, bool)) (machines.Machine, error) {
 	if b.opts.Shared == nil {
 		b.mu.Lock()
@@ -991,8 +995,15 @@ func (b *Backend) renew(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (b *Backend) reload(ctx context.Context) error {
-	recs, err := b.opts.Shared.Machines(ctx)
+// reload reads the shared table into the cache, only owner's machines unless owner is empty.
+func (b *Backend) reload(ctx context.Context, owner string) error {
+	var recs []cluster.Machine
+	var err error
+	if owner == "" {
+		recs, err = b.opts.Shared.Machines(ctx)
+	} else {
+		recs, err = b.opts.Shared.MachinesOf(ctx, owner)
+	}
 	if err != nil {
 		return err
 	}
@@ -1003,7 +1014,7 @@ func (b *Backend) reload(ctx context.Context) error {
 		present[rec.ID] = true
 		b.loadLocked(rec)
 	}
-	maps.DeleteFunc(b.entries, func(id string, _ *entry) bool { return !present[id] })
+	maps.DeleteFunc(b.entries, func(id string, e *entry) bool { return (owner == "" || e.owner == owner) && !present[id] })
 	b.publishLocked()
 	return nil
 }

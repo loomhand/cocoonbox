@@ -145,6 +145,59 @@ func TestASharedParkWhoseMachineRemovalFailsEndsFailed(t *testing.T) {
 	})
 }
 
+func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T) {
+	db := clustertest.Open(t)
+	bCtx, deaf := context.WithCancel(t.Context())
+	a := newStateEnv(t)
+	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
+	b.svc = New(a.fake, testDefaults, a.svc.registry)
+	b.svc.EnableState(a.agent, a.store, a.keys)
+	a.svc.EnableLedger(t.Context(), db)
+	a.svc.EnableShared(t.Context(), db)
+	b.svc.EnableLedger(t.Context(), db)
+	b.svc.EnableShared(bCtx, db)
+	e := &parkEnv{stateEnv: a}
+	e.agent.chunks = []string{hexID("c1")}
+	e.save(t)
+	p := statePath{user: alice, box: aliceBox}
+	if h, err := b.svc.state.head(t.Context(), p); err != nil || h.Latest != snapshotID(1) {
+		t.Fatalf("b's head before the park = %+v, %v", h, err)
+	}
+	e.clock = time.Now()
+	e.svc.EnableParking(parkAfter, nil)
+	e.svc.park.now = func() time.Time { return e.clock }
+	if _, err := e.svc.Hibernate(e.ctx, &controlv1.BoxRef{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	e.fake.push(machines.Machine{ID: aliceBox, State: machines.StateHibernated})
+	e.idle(t)
+	e.agent.onUpload = func(machines.Endpoint) {
+		e.agent.onUpload = nil
+		clustertest.WaitFor(t, "b sees a's park running", func() bool {
+			active := b.svc.ops.activeFor(aliceBox)
+			return active != nil && active.park
+		})
+		deaf()
+	}
+	if op := e.park(t, e.clock.Add(parkAfter)); op == nil || lastEvent(op).GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("a's park = %v", op)
+	}
+	if _, err := b.svc.Ensure(b.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+		t.Fatalf("Ensure on b after a's park: %v", err)
+	}
+	spec := e.fake.waitSpec(t, 2)
+	if !strings.HasPrefix(spec.ID, aliceBox+"-r") {
+		t.Fatalf("b's Ensure made machine %q, want a restore of the parked box", spec.ID)
+	}
+	clustertest.WaitFor(t, "b's restore ends", func() bool {
+		e.fake.push(machines.Machine{ID: spec.ID, State: machines.StateRunning})
+		return b.svc.ops.activeFor(aliceBox) == nil
+	})
+	if restore := e.agent.lastRestore(); len(restore.reqs) == 0 || restore.reqs[0].GetManifest().GetChunkId() != snapshotID(2) {
+		t.Errorf("b restored %v, want the park's snapshot", restore.reqs)
+	}
+}
+
 func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	gate := make(chan struct{})

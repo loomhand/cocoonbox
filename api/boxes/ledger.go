@@ -115,7 +115,7 @@ func (s *Service) headDifferences(ctx context.Context) ([]string, error) {
 
 func (s *Service) operationDifferences(ctx context.Context) ([]string, error) {
 	since := time.Now().Add(-operationRetention)
-	rows, err := s.ledger.Operations(ctx, since)
+	rows, err := s.ledger.Operations(ctx, "", since)
 	if err != nil {
 		return nil, err
 	}

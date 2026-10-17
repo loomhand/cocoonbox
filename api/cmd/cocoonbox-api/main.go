@@ -512,6 +512,7 @@ func enableLedger(ctx context.Context, cfg *config.Config, ledger *cluster.Store
 	svc.EnableLedger(ctx, ledger)
 	if cfg.Cluster.Shared {
 		svc.EnableShared(ctx, ledger)
+		svc.SyncMachines(backend.SyncOwner)
 	}
 	go verifyLedger(ctx, backend, svc)
 }

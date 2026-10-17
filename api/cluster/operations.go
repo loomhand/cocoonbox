@@ -27,9 +27,10 @@ type Operation struct {
 	Releasing bool
 }
 
-// Operations returns the operations unfinished or finished after since.
-func (s *Store) Operations(ctx context.Context, since time.Time) ([]Operation, error) {
-	rows, err := s.pool.Query(ctx, "SELECT "+operationColumns+" FROM operations WHERE finished_at IS NULL OR finished_at > $1 ORDER BY id", since)
+// Operations returns the operations of user, of every user when empty, unfinished or finished after since.
+func (s *Store) Operations(ctx context.Context, user string, since time.Time) ([]Operation, error) {
+	rows, err := s.pool.Query(ctx, "SELECT "+operationColumns+" FROM operations WHERE ($1 = '' OR user_id = $1) AND (finished_at IS NULL OR finished_at > $2) ORDER BY id",
+		user, since)
 	if err != nil {
 		return nil, fmt.Errorf("list operations: %w", err)
 	}

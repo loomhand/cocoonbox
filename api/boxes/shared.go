@@ -28,7 +28,7 @@ func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 	s.reaches, s.userLocks = newReaches(ctx, shared, now), shared
 	go s.reaches.run(ctx, s.openBoxes)
 	go shared.Listen(ctx, cluster.ChannelOperations, func() {
-		if err := s.ops.reload(ctx); err != nil {
+		if err := s.ops.reload(ctx, ""); err != nil {
 			logger.Warnf(ctx, "reload the shared operations: %v", err)
 		}
 	}, func(payload string) {
