@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const machineColumns = `id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes, routed,
@@ -85,14 +84,15 @@ func (s *Store) Machine(ctx context.Context, id string) (Machine, error) {
 // PutMachine writes m whatever the stored version.
 func (s *Store) PutMachine(ctx context.Context, m Machine) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO machines (id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes,
+		var version int64
+		if err := tx.QueryRow(ctx, `INSERT INTO machines (id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes,
 			routed, ready, ready_restarts, env) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
 			ON CONFLICT (id) DO UPDATE SET owner = $2, image = $3, created_at = $4, claim = $5, owner_addr = $6, op = $7, op_err = $8,
 			op_until = $9, revision = $10, meta = $11, wakes = $12, routed = $13, ready = $14, ready_restarts = $15, env = $16,
-			version = nextval('machines_version'), updated_at = now()`, machineArgs(m)...); err != nil {
+			version = nextval('machines_version'), updated_at = now() RETURNING version`, machineArgs(m)...).Scan(&version); err != nil {
 			return fmt.Errorf("put machine %s: %w", m.ID, err)
 		}
-		return notify(ctx, tx, ChannelMachines, m.ID)
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Version: version})
 	})
 }
 
@@ -125,7 +125,7 @@ func (s *Store) DeleteMachine(ctx context.Context, id string) error {
 		if _, err := tx.Exec(ctx, "DELETE FROM machines WHERE id = $1", id); err != nil {
 			return fmt.Errorf("delete machine %s: %w", id, err)
 		}
-		return notify(ctx, tx, ChannelMachines, id)
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: id})
 	})
 }
 
@@ -153,7 +153,7 @@ func (s *Store) deleteVersion(ctx context.Context, id string, version int64) (bo
 		if removed = cmd.RowsAffected() == 1; !removed {
 			return nil
 		}
-		return notify(ctx, tx, ChannelMachines, id)
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: id})
 	})
 	return removed, err
 }
@@ -161,26 +161,24 @@ func (s *Store) deleteVersion(ctx context.Context, id string, version int64) (bo
 // writeMachine inserts m when it was not found, else updates it while it keeps m.Version; ErrStale when another write came first.
 func (s *Store) writeMachine(ctx context.Context, m Machine, found bool) (Machine, error) {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		var (
-			cmd pgconn.CommandTag
-			err error
-		)
+		var err error
 		if found {
-			cmd, err = tx.Exec(ctx, `UPDATE machines SET owner = $2, image = $3, created_at = $4, claim = $5, owner_addr = $6, op = $7, op_err = $8,
+			err = tx.QueryRow(ctx, `UPDATE machines SET owner = $2, image = $3, created_at = $4, claim = $5, owner_addr = $6, op = $7, op_err = $8,
 				op_until = $9, revision = $10, meta = $11, wakes = $12, routed = $13, ready = $14, ready_restarts = $15, env = $16,
-				version = nextval('machines_version'), updated_at = now() WHERE id = $1 AND version = $17`, append(machineArgs(m), m.Version)...)
+				version = nextval('machines_version'), updated_at = now() WHERE id = $1 AND version = $17 RETURNING version`,
+				append(machineArgs(m), m.Version)...).Scan(&m.Version)
 		} else {
-			cmd, err = tx.Exec(ctx, `INSERT INTO machines (id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta,
+			err = tx.QueryRow(ctx, `INSERT INTO machines (id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta,
 				wakes, routed, ready, ready_restarts, env) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-				ON CONFLICT (id) DO NOTHING`, machineArgs(m)...)
+				ON CONFLICT (id) DO NOTHING RETURNING version`, machineArgs(m)...).Scan(&m.Version)
 		}
 		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			return ErrStale
 		case err != nil:
 			return err
-		case cmd.RowsAffected() == 0:
-			return ErrStale
 		}
-		return notify(ctx, tx, ChannelMachines, m.ID)
+		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Version: m.Version})
 	})
 	if errors.Is(err, ErrStale) {
 		return Machine{}, ErrStale
@@ -188,7 +186,7 @@ func (s *Store) writeMachine(ctx context.Context, m Machine, found bool) (Machin
 	if err != nil {
 		return Machine{}, fmt.Errorf("write machine %s: %w", m.ID, err)
 	}
-	return s.Machine(ctx, m.ID)
+	return m, nil
 }
 
 func machineArgs(m Machine) []any {
