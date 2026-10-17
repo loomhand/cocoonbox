@@ -130,7 +130,7 @@ func TestSwapHeadWritesOnlyOnTheVersionRead(t *testing.T) {
 
 func TestOperationsKeepTheirEventsUntilPurged(t *testing.T) {
 	st := clustertest.Open(t)
-	op := cluster.Operation{ID: "op-1", User: "u-1", Box: "cb-1", Phase: 3, Gen: 4, Events: []byte(`[{"phase":3}]`), CreatedAt: time.Now()}
+	op := cluster.Operation{ID: "op-1", User: "u-1", Box: "cb-1", Phase: 3, Gen: 4, Events: []byte(`[{"phase":3}]`), ExpiresAt: time.Now().Add(time.Hour), CreatedAt: time.Now()}
 	if err := st.PutOperation(t.Context(), op); err != nil {
 		t.Fatalf("PutOperation: %v", err)
 	}

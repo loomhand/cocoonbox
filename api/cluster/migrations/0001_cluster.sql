@@ -38,6 +38,7 @@ CREATE TABLE operations (
     gen         bigint      NOT NULL DEFAULT 0,
     events      json        NOT NULL DEFAULT '[]',
     finished_at timestamptz,
+    expires_at  timestamptz NOT NULL,
     created_at  timestamptz NOT NULL DEFAULT now()
 );
 
