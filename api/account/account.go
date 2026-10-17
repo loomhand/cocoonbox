@@ -53,7 +53,7 @@ func (s *Server) ListDevices(ctx context.Context, _ *controlv1.ListDevicesReques
 	}
 	devices, err := s.users.Devices(ctx, user)
 	if err != nil {
-		return nil, usersError(ctx, err, "list devices")
+		return nil, internal(ctx, err, "list devices")
 	}
 	current := s.users.TokenDevice(auth.Credential(ctx))
 	resp := &controlv1.ListDevicesResponse{Devices: make([]*controlv1.Device, 0, len(devices))}
@@ -76,7 +76,7 @@ func (s *Server) RevokeDevice(ctx context.Context, req *controlv1.RevokeDeviceRe
 	case errors.Is(err, users.ErrNotFound):
 		return nil, status.Error(codes.NotFound, "device not found")
 	case err != nil:
-		return nil, usersError(ctx, err, "revoke device")
+		return nil, internal(ctx, err, "revoke device")
 	}
 	log.WithFunc("account.Server.RevokeDevice").Infof(ctx, "user %s revoked device %s", user, req.GetDeviceId())
 	return &controlv1.RevokeDeviceResponse{}, nil
@@ -88,7 +88,7 @@ func (s *Server) RevokeToken(ctx context.Context, _ *controlv1.RevokeTokenReques
 		return nil, err
 	}
 	if err := s.users.RevokeToken(ctx, user); err != nil {
-		return nil, usersError(ctx, err, "revoke token")
+		return nil, internal(ctx, err, "revoke token")
 	}
 	log.WithFunc("account.Server.RevokeToken").Infof(ctx, "user %s revoked the personal token", user)
 	return &controlv1.RevokeTokenResponse{}, nil
@@ -101,17 +101,17 @@ func (s *Server) SignOutEverywhere(ctx context.Context, _ *controlv1.SignOutEver
 	}
 	if s.grants != nil {
 		if err := s.grants.RevokeAll(ctx, user); err != nil {
-			return nil, usersError(ctx, err, "sign out everywhere")
+			return nil, internal(ctx, err, "sign out everywhere")
 		}
 	}
 	if err := s.users.SignOut(ctx, user); err != nil {
-		return nil, usersError(ctx, err, "sign out everywhere")
+		return nil, internal(ctx, err, "sign out everywhere")
 	}
 	log.WithFunc("account.Server.SignOutEverywhere").Infof(ctx, "user %s signed out everywhere", user)
 	return &controlv1.SignOutEverywhereResponse{}, nil
 }
 
-func usersError(ctx context.Context, err error, action string) error {
-	log.WithFunc("account.usersError").Error(ctx, err, action)
+func internal(ctx context.Context, err error, action string) error {
+	log.WithFunc("account.internal").Error(ctx, err, action)
 	return status.Errorf(codes.Internal, "%s failed", action)
 }

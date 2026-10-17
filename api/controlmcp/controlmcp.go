@@ -78,7 +78,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var req request
 	if err := json.Unmarshal(body, &req); err != nil {
-		if typeErr := (*json.UnmarshalTypeError)(nil); errors.As(err, &typeErr) {
+		if _, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
 			writeFailure(w, http.StatusBadRequest, mcpwire.CodeInvalidRequest, "expected one JSON-RPC message")
 			return
 		}
@@ -326,7 +326,7 @@ func handle(method string) (any, *mcpwire.Error) {
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	var buf bytes.Buffer
 	_, err := buf.ReadFrom(http.MaxBytesReader(w, r.Body, mcpwire.MaxBody))
-	if maxErr := (*http.MaxBytesError)(nil); errors.As(err, &maxErr) {
+	if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 		return nil, fmt.Errorf("body exceeds %d bytes", mcpwire.MaxBody)
 	}
 	return buf.Bytes(), err
