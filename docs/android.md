@@ -50,4 +50,4 @@ Restore stops and starts `cocoonbox-session.service`, which runs `android-apply`
 
 ## Pool
 
-`cbsbx-conf` gives a `cbdroid` pool a warmup that waits for the agent only (`ANDROID_FAMILIES`).
+`cbsbx-conf` gives a `cbdroid` pool a warmup that waits for the agent only, and egress on ports 22, 80, 443 and 5228-5230, where Android's push channel (FCM) holds its connection.

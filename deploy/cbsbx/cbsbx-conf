@@ -19,6 +19,9 @@ CONNECT_PORT = 18091
 APT_PORT = 3142
 RESIDENTIAL = "10.203.1.2"
 STORAGE = "40G"
+SSH_PORT = 22
+WEB_PORTS = [80, 443]
+FCM_PORTS = [5228, 5229, 5230]
 WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
           "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
           "sleep 0.2; done; exit 1")
@@ -29,7 +32,6 @@ CHROME_WARMUP = ("(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user t
 # an Android golden holds the outer VM only: Android boots per box once the api writes the box identity
 ANDROID_WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-toolhost cocoonbox-agent "
                   "&& (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; sleep 0.2; done; exit 1")
-ANDROID_FAMILIES = ("cbdroid",)
 CHROME_WARMUP_FROM = 15
 INJECT_FROM = 23
 CONNECT_FROM = 24
@@ -38,25 +40,29 @@ if len(sys.argv) < 2 or any("=" not in a for a in sys.argv[1:]):
     sys.exit(__doc__)
 gw = {"host": GATEWAY, "ports": [GW_PORT], "secret": "GW_KEY"}
 connect = {"host": GATEWAY, "ports": [CONNECT_PORT], "secret": "CB_CONNECT_KEY"}
-inject = {"host": "*", "intercept": "inject"}
-rest = [{"host": "*"}]
-egress = {"allow": [gw, *rest]}
-inject_egress = {"allow": [gw, inject, *rest]}
+apt = {"host": GATEWAY, "ports": [APT_PORT]}
+inject = {"host": "*", "intercept": "inject", "ports": WEB_PORTS}
+public = {"host": "*", "ports": [SSH_PORT, *WEB_PORTS]}
+egress = {"allow": [gw, apt, public]}
+inject_egress = {"allow": [gw, apt, inject, public]}
 # the door key rule precedes the inject rule, since a plain request takes the first rule that matches
-connect_egress = {"allow": [gw, connect, inject, *rest]}
+connect_egress = {"allow": [gw, connect, apt, inject, public]}
+# Android's push channel (FCM) holds a connection on 5228-5230
+android_egress = {"allow": [gw, connect, apt, inject, {"host": "*", "ports": [SSH_PORT, *WEB_PORTS, *FCM_PORTS]}]}
+# the tenant class narrows nothing; the pool rules hold the ports
+tenant_egress = {"allow": [gw, {"host": "*"}]}
 pools = []
 for arg in sys.argv[1:]:
     template, warm = arg.rsplit("=", 1)
     version = re.fullmatch(r"([a-z0-9]+):v(\d+)(-\w+)?", template)
     # every family but cbdesk is cut from a template with the newest rules
     n = 0 if not version else int(version[2]) if version[1] == "cbdesk" else CONNECT_FROM
-    if version and version[1] in ANDROID_FAMILIES:
-        warmup = ANDROID_WARMUP
-    else:
-        warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
+    android = bool(version) and version[1] == "cbdroid"
+    warmup = ANDROID_WARMUP if android else CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
     pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
                   "warmup": ["bash", "-c", warmup],
-                  "egress": connect_egress if n >= CONNECT_FROM else inject_egress if n >= INJECT_FROM else egress})
+                  "egress": android_egress if android else
+                  connect_egress if n >= CONNECT_FROM else inject_egress if n >= INJECT_FROM else egress})
 conf = {
     "listen": LISTEN,
     "advertise_addr": LISTEN,
@@ -73,7 +79,7 @@ conf = {
     "audit_log": True,
     "egress_internal_allow": [f"{GATEWAY}/32:{GW_PORT},{CONNECT_PORT},{APT_PORT}"],
     "egress_upstream": {"claim_env": "EGRESS_UPSTREAM", "allow": [f"{RESIDENTIAL}/32"]},
-    "egress_classes": [{"name": "cbdesk", "egress": egress}],
+    "egress_classes": [{"name": "cbdesk", "egress": tenant_egress}],
     "secrets": [{"name": "GW_KEY", "header": "Authorization"}, {"name": "CB_CONNECT_KEY", "header": "Authorization"}],
     "pools": pools,
 }
