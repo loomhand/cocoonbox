@@ -32,8 +32,9 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 		t.Fatalf("ledger operations = %+v, %v", ops, err)
 	}
 	var recs []eventRecord
-	if err := json.Unmarshal(ops[0].Events, &recs); err != nil || len(recs) != len(events) || recs[len(recs)-1].Phase != int32(controlv1.Phase_PHASE_DONE) {
-		t.Fatalf("ledger events = %+v, %v, want the %d events watched", recs, err, len(events))
+	kept := collapseTransfers(events)
+	if err := json.Unmarshal(ops[0].Events, &recs); err != nil || len(recs) != len(kept) || len(kept) >= len(events) || recs[len(recs)-1].Phase != int32(controlv1.Phase_PHASE_DONE) {
+		t.Fatalf("ledger events = %+v, %v, want the %d of %d watched events left after collapsing the transfers", recs, err, len(kept), len(events))
 	}
 
 	if _, err := ledger.PutHead(t.Context(), alice, aliceBox, []byte(`{"latest":"stale"}`)); err != nil {
