@@ -123,7 +123,7 @@ func TestRebase(t *testing.T) {
 	if !strings.HasPrefix(newID, aliceBox+"-r") {
 		t.Fatalf("rebase machine id = %q", newID)
 	}
-	if pins := env.svc.state.pinned(statePath{user: alice, box: aliceBox}); !pins[snapshotID(1)] {
+	if pins, _ := env.svc.state.pinned(t.Context(), statePath{user: alice, box: aliceBox}); !pins[snapshotID(1)] {
 		t.Errorf("pins while the rebase machine starts = %v, want its snapshot", pins)
 	}
 	if ep, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); err != nil || ep.Key != aliceBox+":7443" {

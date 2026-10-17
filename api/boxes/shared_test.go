@@ -198,6 +198,33 @@ func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T
 	}
 }
 
+func TestASnapshotOneProcessPinsIsKeptByTheGCOfAnother(t *testing.T) {
+	a, b, _ := newSharedPair(t, t.Context())
+	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
+		a.agent.chunks = hexIDs(chunks...)
+		a.save(t)
+	}
+	p := statePath{user: alice, box: aliceBox}
+	unpin, err := a.svc.state.pin(t.Context(), p, snapshotID(1))
+	if err != nil {
+		t.Fatalf("pin: %v", err)
+	}
+	later := time.Now().Add(40 * 24 * time.Hour)
+	if _, err := b.svc.state.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, later, everyBoxLive); err != nil {
+		t.Fatalf("collect while pinned: %v", err)
+	}
+	if !a.store.has(p.record(snapshotID(1))) {
+		t.Fatal("the other process's gc removed a snapshot this one pinned")
+	}
+	unpin()
+	if _, err := b.svc.state.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, later, everyBoxLive); err != nil {
+		t.Fatalf("collect after the unpin: %v", err)
+	}
+	if a.store.has(p.record(snapshotID(1))) {
+		t.Error("the other process's gc kept a snapshot no pin holds")
+	}
+}
+
 func TestAnOperationOfOneProcessRunsAndEndsInTheOther(t *testing.T) {
 	a, b, _ := newSharedPair(t, t.Context())
 	gate := make(chan struct{})

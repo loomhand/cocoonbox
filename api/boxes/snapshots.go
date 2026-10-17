@@ -138,7 +138,13 @@ func (s *Service) RestorePaths(ctx context.Context, req *controlv1.RestorePathsR
 func (s *Service) runRestorePaths(op *operation, user string, m machines.Machine, e timelineEntry, paths []boxPath) {
 	logger := log.WithFunc("boxes.Service.runRestorePaths").WithField("box", op.boxID)
 	p := statePath{user: user, box: op.boxID}
-	defer s.state.pin(p, e.ID)()
+	unpin, err := s.state.pin(op.ctx, p, e.ID)
+	defer unpin()
+	if err != nil {
+		logger.Error(op.ctx, err, "pin the snapshot")
+		op.fail("pin the snapshot failed")
+		return
+	}
 	savedAt := time.UnixMilli(e.SavedAtMs).UTC().Format(time.RFC3339)
 	op.note(controlv1.Phase_PHASE_RESTORING_FILES, controlv1.BoxState_BOX_STATE_RUNNING, fmt.Sprintf("copying %d paths of the snapshot saved at %s", len(paths), savedAt))
 	ep, err := s.machines.Address(op.ctx, m.ID)

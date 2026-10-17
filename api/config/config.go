@@ -349,9 +349,6 @@ func (c *Config) validate() error {
 	if c.Cluster.Shared && !c.Cluster.Ledger {
 		errs = append(errs, errors.New("cluster.shared needs cluster.ledger"))
 	}
-	if c.Cluster.Shared {
-		errs = append(errs, errors.New("cluster.shared stays off until cross-process restore pins land"))
-	}
 	return errors.Join(errs...)
 }
 
