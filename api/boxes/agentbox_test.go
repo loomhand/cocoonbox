@@ -12,6 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -151,6 +152,27 @@ func TestAnAgentCreateRecordsItsBoxFirstAndSkipsTheOwnersLimits(t *testing.T) {
 	}
 	if err := svc.checkRunning(alice, aliceBox, map[string]machines.Machine{recorded: {State: machines.StateRunning}}); err != nil {
 		t.Errorf("waking the owner's box with the agent box running = %v", err)
+	}
+}
+
+func TestAReachWrittenAfterTheSweepsReadKeepsAnAgentBoxUp(t *testing.T) {
+	svc, _, clock, box := newIdleService(t, true)
+	db := clustertest.Open(t)
+	svc.EnableLedger(t.Context(), db)
+	svc.EnableShared(t.Context(), db)
+	if svc.idle.idleAt(box, *clock, idleAfter, time.Time{}) {
+		t.Fatal("a box seen for the first time is idle")
+	}
+	*clock = clock.Add(idleAfter)
+	svc.readReaches(t.Context())
+	if err := db.PutActivity(t.Context(), map[string]time.Time{box: *clock}); err != nil {
+		t.Fatalf("PutActivity: %v", err)
+	}
+	if !svc.idle.idleAt(box, *clock, idleAfter, svc.reachedElsewhere(box)) {
+		t.Fatal("the sweep's read already saw the reach")
+	}
+	if svc.stillIdle(t.Context(), box, idleAfter) {
+		t.Error("a box reached elsewhere after the sweep's read stays idle at the check before its hibernation")
 	}
 }
 

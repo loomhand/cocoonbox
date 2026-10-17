@@ -76,6 +76,9 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 			s.sleepIdle(ctx, m)
 			continue
 		}
+		if !s.stillIdle(ctx, box, after) {
+			continue
+		}
 		if _, err := s.Hibernate(auth.WithUser(ctx, m.Owner), &controlv1.BoxRef{BoxId: box}); err != nil {
 			logger.Warnf(ctx, "hibernate idle agent box %s: %v", box, err)
 			continue
@@ -131,6 +134,11 @@ func (s *Service) keepAwake(ctx context.Context, m machines.Machine) string {
 	return ""
 }
 
+func (s *Service) stillIdle(ctx context.Context, box string, after time.Duration) bool {
+	s.readReaches(ctx)
+	return s.idle.idleAt(box, s.idle.now(), after, s.reachedElsewhere(box))
+}
+
 func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
 	logger := log.WithFunc("boxes.Service.runIdleSleep").WithField("box", op.boxID)
 	detail := "saved the idle box; hibernating it"
@@ -140,8 +148,7 @@ func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
 			detail = "save failed; hibernating it"
 		}
 	}
-	s.readReaches(op.ctx)
-	if !s.idle.idleAt(op.boxID, s.idle.now(), s.idle.user, s.reachedElsewhere(op.boxID)) {
+	if !s.stillIdle(op.ctx, op.boxID, s.idle.user) {
 		op.succeed("a client came back while saving; the box stays up")
 		return
 	}

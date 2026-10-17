@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/projecteru2/core/log"
 )
 
@@ -72,11 +73,10 @@ func (s *Store) LockUser(ctx context.Context, user string) (func(), error) {
 
 // leadOnce waits for the leader lock and runs lead until the lock is lost; it reports whether it held the lock.
 func (s *Store) leadOnce(ctx context.Context, lead Work) (bool, error) {
-	pooled, err := s.locks.Acquire(ctx)
+	conn, err := pgx.ConnectConfig(ctx, s.leader.Copy())
 	if err != nil {
 		return false, err
 	}
-	conn := pooled.Hijack()
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
 	if _, err = conn.Exec(ctx, fmt.Sprintf("SET idle_session_timeout = %d", leaderIdle.Milliseconds())); err != nil {
 		return false, err
