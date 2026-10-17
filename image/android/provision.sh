@@ -169,7 +169,7 @@ setup_cocoonbox_dirs() {
 # docker stays off until the box has its identity: a docker start replays the container, and a stopped one would not replay
 enable_units() {
 	log "units"
-	systemctl daemon-reload
+	[ ! -d /run/systemd/system ] || systemctl daemon-reload
 	systemctl disable docker.service docker.socket containerd.service >/dev/null 2>&1
 	systemctl is-active -q docker.service && { echo "docker is running in the template" >&2; exit 1; }
 	systemctl mask dnscrypt-proxy.socket dnscrypt-proxy.service dnscrypt-proxy-resolvconf.service >/dev/null 2>&1
