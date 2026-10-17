@@ -431,11 +431,8 @@ func (b *Backend) Verify(ctx context.Context) ([]string, error) {
 	if b.mirror == nil {
 		return nil, nil
 	}
-	differ, err := b.differences(ctx, nil)
-	if err != nil || len(differ) == 0 {
-		return nil, err
-	}
-	if differ, err = b.differences(ctx, differ); err != nil {
+	differ, err := b.mirror.Verify(ctx, b.differences)
+	if err != nil {
 		return nil, err
 	}
 	b.mu.Lock()
@@ -780,11 +777,8 @@ func (b *Backend) dropLocked(id string) {
 	}
 }
 
-// differences flushes the queued writes and returns the ids, of only, or of all when only is nil, whose ledger row differs from the entry.
+// differences returns the ids, of only or of all when only is nil, whose ledger row differs from the entry.
 func (b *Backend) differences(ctx context.Context, only []string) ([]string, error) {
-	if err := b.mirror.Flush(ctx); err != nil {
-		return nil, err
-	}
 	b.mu.Lock()
 	want := make(map[string]cluster.Machine, len(b.entries))
 	for id, e := range b.entries {

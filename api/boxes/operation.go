@@ -20,6 +20,16 @@ const (
 	operationRetention = time.Hour
 )
 
+type eventRecord struct {
+	Phase      int32  `json:"phase"`
+	Detail     string `json:"detail,omitempty"`
+	OffsetKey  string `json:"offset_key"`
+	AtMs       int64  `json:"at_ms"`
+	BoxState   int32  `json:"box_state,omitzero"`
+	DoneBytes  uint64 `json:"done_bytes,omitzero"`
+	TotalBytes uint64 `json:"total_bytes,omitzero"`
+}
+
 type observation struct {
 	state  controlv1.BoxState
 	detail string

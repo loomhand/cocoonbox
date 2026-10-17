@@ -516,6 +516,9 @@ func (l *stateLayer) head(ctx context.Context, p statePath) (head, error) {
 	l.mu.Lock()
 	l.heads[p] = h
 	l.mu.Unlock()
+	if l.mirror != nil && h != (head{}) {
+		l.mirror(p, &h)
+	}
 	return h, nil
 }
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
+	"reflect"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -38,11 +38,21 @@ type Machine struct {
 	Version int64
 }
 
-// Equal reports whether m and o record the same machine, Version aside.
+// Equal reports whether m and o record the same machine, Version aside, every field compared as PostgreSQL keeps it.
 func (m Machine) Equal(o Machine) bool {
-	return m.ID == o.ID && m.Owner == o.Owner && m.Image == o.Image && sameTime(m.CreatedAt, o.CreatedAt) && string(m.Claim) == string(o.Claim) &&
-		m.OwnerAddr == o.OwnerAddr && m.Op == o.Op && m.OpErr == o.OpErr && sameTime(m.OpUntil, o.OpUntil) && m.Revision == o.Revision &&
-		maps.Equal(m.Meta, o.Meta) && m.Wakes == o.Wakes && m.Routed == o.Routed && m.Ready == o.Ready && m.ReadyRestarts == o.ReadyRestarts
+	return reflect.DeepEqual(m.stored(), o.stored())
+}
+
+// stored is m as a read of its row returns it: times at the microsecond, empty bytes and maps as nil, no version.
+func (m Machine) stored() Machine {
+	m.CreatedAt, m.OpUntil, m.Version = microseconds(m.CreatedAt), microseconds(m.OpUntil), 0
+	if len(m.Claim) == 0 {
+		m.Claim = nil
+	}
+	if len(m.Meta) == 0 {
+		m.Meta = nil
+	}
+	return m
 }
 
 // Machines returns every machine.
@@ -178,14 +188,6 @@ func scanMachine(row pgx.CollectableRow) (Machine, error) {
 	return m, err
 }
 
-// sameTime compares at the microsecond PostgreSQL keeps.
-func sameTime(a, b time.Time) bool {
-	return a.Truncate(time.Microsecond).Equal(b.Truncate(time.Microsecond))
-}
-
-func notify(ctx context.Context, tx pgx.Tx, channel, payload string) error {
-	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload); err != nil {
-		return fmt.Errorf("notify %s: %w", channel, err)
-	}
-	return nil
+func microseconds(t time.Time) time.Time {
+	return time.UnixMicro(t.UnixMicro()).UTC()
 }

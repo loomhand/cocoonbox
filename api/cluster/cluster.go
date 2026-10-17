@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/projecteru2/core/log"
 
@@ -89,4 +90,11 @@ func (s *Store) listen(ctx context.Context, channel string, reset func(), fn fun
 		}
 		fn(n.Payload)
 	}
+}
+
+func notify(ctx context.Context, tx pgx.Tx, channel, payload string) error {
+	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload); err != nil {
+		return fmt.Errorf("notify %s: %w", channel, err)
+	}
+	return nil
 }

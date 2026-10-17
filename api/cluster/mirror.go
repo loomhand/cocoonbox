@@ -22,6 +22,7 @@ type Mirror struct {
 	changed  chan struct{}
 }
 
+// NewMirror returns a mirror that applies nothing until Run.
 func NewMirror() *Mirror {
 	return &Mirror{pending: map[string]Write{}, changed: make(chan struct{})}
 }
@@ -70,6 +71,22 @@ func (m *Mirror) Run(ctx context.Context) {
 		m.wakeLocked()
 		m.mu.Unlock()
 	}
+}
+
+// Verify returns the keys diff finds different once the queued writes landed, asking diff again for only those after a
+// second flush, so a write queued during the first diff does not count.
+func (m *Mirror) Verify(ctx context.Context, diff func(ctx context.Context, only []string) ([]string, error)) ([]string, error) {
+	if err := m.Flush(ctx); err != nil {
+		return nil, err
+	}
+	differ, err := diff(ctx, nil)
+	if err != nil || len(differ) == 0 {
+		return nil, err
+	}
+	if err := m.Flush(ctx); err != nil {
+		return nil, err
+	}
+	return diff(ctx, differ)
 }
 
 // Flush waits until no write is queued or running.

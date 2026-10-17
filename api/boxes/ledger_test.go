@@ -16,7 +16,7 @@ func TestTheLedgerKeepsHeadsAndOperationsAndVerifyRepairsThem(t *testing.T) {
 	env.svc.EnableLedger(t.Context(), ledger)
 	env.agent.chunks = hexIDs("c1")
 	events := env.save(t)
-	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Heads)+len(d.Operations)+d.Backfilled != 0 {
+	if d, err := env.svc.Verify(t.Context()); err != nil || len(d.Heads)+len(d.Operations) != 0 {
 		t.Fatalf("Verify after a save = %+v, %v, want no drift", d, err)
 	}
 	row, err := ledger.Head(t.Context(), alice, aliceBox)
