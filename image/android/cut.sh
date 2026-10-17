@@ -70,7 +70,7 @@ PROXY_PID=$!
 step "docker data $DOCKER"
 tar -C "$DOCKER" --numeric-owner --xattrs --xattrs-include='*' -cf - . | guest -i "$VM" -- sh -c 'rm -rf /var/lib/docker && mkdir /var/lib/docker && tar -C /var/lib/docker --numeric-owner --xattrs --xattrs-include="*" -xpf -'
 step "provision"
-tar -C "$SRC/.." -cf - android | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
+tar -C "$SRC/.." -cf - android desk/rootfs/opt/desk/lib desk/rootfs/usr/local/bin/desk | guest -i "$VM" -- sh -c 'rm -rf /tmp/cb-image && mkdir -p /tmp/cb-image && tar -xf - -C /tmp/cb-image'
 guest -e "http_proxy=$PROXY" -e "https_proxy=$PROXY" -e "no_proxy=$NO_PROXY" "$VM" -- bash /tmp/cb-image/android/provision.sh
 stop_proxy
 step "agent $(sha256sum "$AGENT" | cut -c1-16)"

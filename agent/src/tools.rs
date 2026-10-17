@@ -35,7 +35,6 @@ const SHOT_POINT: &str = "or x,y in the pixels of your latest screenshot.";
 const SCALED_STATE: &str = "Screenshot of the whole screen, scaled to a long edge of 1024 pixels unless max_edge says otherwise, the visible windows (pid, window_id), and the accessibility elements [index] of the frontmost window or of the given pid.";
 const REGION_HINT: &str = "Only this part of the screen, at full resolution: x, y, w, h in the pixels of your last screenshot";
 const SHELL_HINT: &str = " Keep each command's wait well under the time left; save the required output early and improve it after.";
-const ANDROID_SHOT: &str = "Look at the phone: a read-only screenshot of the whole 720x1280 Android screen; x,y of computer_act are its pixels.";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
 /// Remote tools that only read the box: all a read-only share offers.
@@ -48,8 +47,7 @@ pub const READ_ONLY: [&str; 6] = [
     "browser_read",
 ];
 
-/// Tools of the main agent; a vision model also gets a read-only screenshot, a box that runs GUI plans
-/// `gui_plan`, its script tool and `browser_fetch`.
+/// Tools of the main agent: a vision model adds a screenshot, a desk box `gui_plan`, its scripts and `browser_fetch`, Android its own.
 pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     let mut tools = vec![
         ToolSpec {
@@ -190,22 +188,24 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     ];
     if automation == Automation::Android {
         tools.retain(|t| !t.name.starts_with("browser_"));
+        tools.extend([android_plan_tool(), android_script_tool()]);
     }
     if vision {
-        tools.push(if automation == Automation::Android {
-            ToolSpec {
-                name: Cow::Borrowed("screenshot"),
-                description: Cow::Borrowed(ANDROID_SHOT),
-                parameters: json!({"type": "object", "properties": {}}),
-            }
+        let (description, parameters) = if automation == Automation::Android {
+            (
+                "Look at the phone: a read-only screenshot of the whole 720x1280 Android screen; x,y of computer_act are its pixels.",
+                json!({"type": "object", "properties": {}}),
+            )
         } else {
-            ToolSpec {
-                name: Cow::Borrowed("screenshot"),
-                description: Cow::Borrowed(
-                    "Look at the desktop: a read-only screenshot of the whole 1280x800 screen.",
-                ),
-                parameters: json!({"type": "object", "properties": {"max_edge": max_edge()}}),
-            }
+            (
+                "Look at the desktop: a read-only screenshot of the whole 1280x800 screen.",
+                json!({"type": "object", "properties": {"max_edge": max_edge()}}),
+            )
+        };
+        tools.push(ToolSpec {
+            name: Cow::Borrowed("screenshot"),
+            description: Cow::Borrowed(description),
+            parameters,
         });
     }
     if let Some(script) = script_tool(automation) {
@@ -224,22 +224,17 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     tools
 }
 
-/// Tools served over MCP to external agents; the names are the contract, and `gui_plan`, the script tool,
-/// `browser_fetch`, `desk` and the `computer_act` hint exist only on a box that runs GUI plans.
+/// Tools served over MCP to external agents, the names a contract; a desk box adds its plan, script, fetch and desk tools, Android its own.
 pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
-    if automation == Automation::Android {
-        let mut tools: Vec<ToolSpec> = main_tools(true, automation)
-            .into_iter()
-            .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
-            .collect();
-        tools.extend(computer_tools(automation));
-        return tools;
-    }
-    let mut tools: Vec<ToolSpec> = main_tools(true, Automation::Plain)
+    let base = match automation {
+        Automation::Android => Automation::Android,
+        Automation::Plain | Automation::Desk => Automation::Plain,
+    };
+    let mut tools: Vec<ToolSpec> = main_tools(true, base)
         .into_iter()
         .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
         .collect();
-    tools.extend(computer_tools(Automation::Plain));
+    tools.extend(computer_tools(base));
     if let Some(script) = script_tool(automation) {
         if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
             act.description = Cow::Owned(format!("{PLAN_HINT}{}{LIST_HINT}", act.description));
@@ -417,17 +412,17 @@ pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
     tools
 }
 
-/// computer_state and computer_act on Android: UI elements from uiautomator, touch and keys through adb.
+/// computer_state and computer_act on Android: UI elements from the UI server, touch and keys through adb.
 fn android_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
             name: Cow::Borrowed("computer_state"),
             description: Cow::Borrowed(
-                "Screenshot of the whole 720x1280 Android screen and its UI elements [index]: text or description, id, center x,y, and whether it is clickable, editable or checked.",
+                "Screenshot of the whole 720x1280 Android screen and its UI elements [index]: role, name, center x,y, states (checked, disabled, focused, selected) and a text field's value.",
             ),
             parameters: json!({
                 "type": "object",
-                "properties": {"query": {"type": "string", "description": "Only elements whose text contains this"}}
+                "properties": {"query": {"type": "string", "description": "Only elements whose name or value contains this"}}
             }),
         },
         ToolSpec {
@@ -445,8 +440,8 @@ fn android_tools() -> Vec<ToolSpec> {
                     "to_x": {"type": "number", "description": "swipe end"},
                     "to_y": {"type": "number", "description": "swipe end"},
                     "text": {"type": "string", "description": "type: any Unicode text, pasted into the focused field, or into the field at element or x,y"},
-                    "key": {"type": "string", "description": "key: back, home, enter, tab, delete, escape, recents, menu, up, down, left, right, or an Android keycode"},
-                    "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "description": "scroll: the direction the content moves into view"},
+                    "key": {"type": "string", "description": "key: back, home_screen, recents, return, tab, backspace, escape, up, down, left, right, a letter, or a combination such as ctrl+a"},
+                    "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "description": "scroll: down shows what is below"},
                     "amount": {"type": "integer"},
                     "app": {"type": "string", "description": "launch_app: package name, e.g. com.android.settings"},
                     "seconds": {"type": "number", "description": "wait: up to 10"}
@@ -544,6 +539,35 @@ A passing plan that starts with an app step is saved as a flow: name it with sav
                 "timeout_s": {"type": "integer", "description": "Default 90, max 110"}
             }
         }),
+    }
+}
+
+fn android_plan_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("gui_plan"),
+        description: Cow::Borrowed(
+            "Run an Android GUI plan in ONE call: the box runs each step on the accessibility tree, checks it, and stops at the first surprise. Use it for app UI work (settings, toggles, forms, several taps in a row). Write the whole plan at once, without looking first.\n\
+One op per step; optional window: title text of the window the step acts in (waited for). Windows are titled \"<title> - <package>\":\n\
+{app: \"com.android.settings\"} open or bring up an app by package; {click: \"Display\"} tap an element by its label; {check: \"Dark theme\", on: true} a switch or check box; {set: \"Name\", value: \"x\"} a text field; {type: \"text\"} into the focused field; {key: \"back\"} (back, home_screen, recents, return, tab, ctrl+a); {wait: \"Display\"} a window title; {verify: \"Dark theme\", on: true} (or value); {close: true} back out of the focused dialog.\n\
+Returns {ok: true, trace} or {ok: false, escalate: {step, reason, window, outline}}. Trust ok: true: each step was verified. On escalate, handle the reason, then call again with only the remaining steps. An element must be on the screen: scroll with computer_act first. A passing plan that starts with an app step can be saved with save: \"app-action\" and replayed with {flow: \"name\", params: {...}}; {flows: true} lists them. screenshot: true adds a screenshot (default: only on escalate).",
+        ),
+        parameters: gui_plan_tool().parameters,
+    }
+}
+
+fn android_script_tool() -> ToolSpec {
+    ToolSpec {
+        name: Cow::Borrowed("script_run"),
+        description: Cow::Borrowed(
+            "Run one script for Android work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 on the box's Ubuntu that drives the phone through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, taps, screen crops) and adb from child_process. Read /opt/android/AGENTS.md first. Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Returns JSON {result, logs, error?, duration_ms, exit_code, stderr, screenshot_path} and a screenshot taken after the run.",
+        ),
+        parameters: {
+            let mut parameters = desk_script_tool().parameters;
+            if let Some(p) = parameters["properties"].as_object_mut() {
+                p.remove("max_edge");
+            }
+            parameters
+        },
     }
 }
 
