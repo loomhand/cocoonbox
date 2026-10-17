@@ -61,6 +61,8 @@ const NUDGE_STREAK: u32 = 2;
 const MAX_INSTRUCTIONS: usize = 1600;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
 const MAX_FLOWS: usize = 30;
+const MAX_SHARE_SESSIONS: usize = 4;
+const SHARE_SESSIONS_FULL: &str = "a share holds at most 4 open MCP sessions: close one first";
 const DESK_RESOURCES: [Resource; 1] = [Resource {
     uri: Cow::Borrowed("cocoonbox://desk/AGENTS.md"),
     path: Cow::Borrowed("/opt/desk/AGENTS.md"),
@@ -83,6 +85,7 @@ pub struct Mcp {
     /// The line that names the box's OS, desktop and screen, once the toolhost has read all three.
     machine: tokio::sync::OnceCell<String>,
     routing_capped: AtomicBool,
+    opening: tokio::sync::Mutex<()>,
 }
 
 impl Mcp {
@@ -127,6 +130,7 @@ impl Mcp {
             sessions: Mutex::new(HashMap::new()),
             machine: tokio::sync::OnceCell::new(),
             routing_capped: AtomicBool::new(false),
+            opening: tokio::sync::Mutex::new(()),
         })
     }
 
@@ -280,7 +284,25 @@ impl Mcp {
         &self,
         params: &Value,
         principal: &Principal,
-    ) -> Result<(Arc<Session>, Value), String> {
+    ) -> Result<(Arc<Session>, Value), (StatusCode, i64, String)> {
+        let _opening = match principal {
+            Principal::Owner => None,
+            Principal::Share { .. } => {
+                let opening = self.opening.lock().await;
+                let open = lock(&self.sessions)
+                    .values()
+                    .filter(|s| s.opened_by(principal))
+                    .count();
+                if open >= MAX_SHARE_SESSIONS {
+                    return Err((
+                        StatusCode::TOO_MANY_REQUESTS,
+                        -32000,
+                        SHARE_SESSIONS_FULL.to_owned(),
+                    ));
+                }
+                Some(opening)
+            }
+        };
         let client = params["clientInfo"]["name"].as_str().unwrap_or("client");
         let version = params["clientInfo"]["version"].as_str().unwrap_or_default();
         let guest = match principal {
@@ -305,8 +327,14 @@ impl Mcp {
                         client_nonce: String::new(),
                     })
                     .await
-                    .map_err(|e| e.message().to_owned())?;
-                let turn_id = self.rt.journal.store.open_turn(agent.id.clone()).await?;
+                    .map_err(|e| internal(e.message().to_owned()))?;
+                let turn_id = self
+                    .rt
+                    .journal
+                    .store
+                    .open_turn(agent.id.clone())
+                    .await
+                    .map_err(internal)?;
                 Some(Record {
                     agent_id: agent.id,
                     turn_id,
@@ -746,7 +774,7 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
                 }
                 resp
             }
-            Err(e) => rpc_failure(StatusCode::INTERNAL_SERVER_ERROR, -32603, &e),
+            Err((status, code, message)) => rpc_failure(status, code, &message),
         };
     }
     let (batch, mut messages) = match msg {
@@ -1004,6 +1032,10 @@ fn json_response(status: StatusCode, body: &Value) -> Response {
         header::HeaderValue::from_static("application/json"),
     );
     resp
+}
+
+fn internal(message: String) -> (StatusCode, i64, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, -32603, message)
 }
 
 fn rpc_failure(status: StatusCode, code: i64, message: &str) -> Response {

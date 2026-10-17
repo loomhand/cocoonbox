@@ -4526,6 +4526,57 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
 }
 
 #[tokio::test]
+async fn a_share_principal_holds_at_most_four_open_sessions() {
+    let h = Harness::start(Vec::new(), false).await;
+    let edge = Edge::provision(&h);
+    let reader = edge.share("share:sh-1:read");
+    let mut open = Vec::new();
+    for _ in 0..4 {
+        open.push(McpClient::connect_as(&h, Some(reader.clone())).await);
+    }
+    let fifth = McpClient {
+        http: reqwest::Client::new(),
+        url: open[0].url.clone(),
+        session: String::new(),
+        next_id: 0,
+        credential: Some(reader.clone()),
+    };
+    let init = json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "test-client", "version": "1.0"}
+    }});
+    let refused = fifth.post(init).await;
+    assert_eq!(refused.status(), 429);
+    let body: Value = refused.json().await.unwrap();
+    assert_eq!(body["error"]["code"], -32000, "{body}");
+    let listed = h
+        .agents()
+        .await
+        .list(signed(pb::ListAgentsRequest {}, &edge.owner()))
+        .await
+        .unwrap()
+        .into_inner();
+    assert_eq!(
+        listed.agents.len(),
+        4,
+        "the refused initialize created an agent"
+    );
+
+    McpClient::connect_as(&h, Some(edge.share("share:sh-1:read:u-1"))).await;
+    for _ in 0..5 {
+        McpClient::connect_as(&h, Some(edge.owner())).await;
+    }
+    let closed = open[0]
+        .authorize(reqwest::Client::new().delete(&open[0].url))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(closed.status(), 204);
+    McpClient::connect_as(&h, Some(reader)).await;
+}
+
+#[tokio::test]
 async fn a_read_share_of_a_desk_box_does_not_read_its_saved_flows() {
     let h = Harness::with_desk(Vec::new()).await;
     let edge = Edge::provision(&h);
