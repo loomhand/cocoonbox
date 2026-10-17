@@ -29,7 +29,7 @@ const (
   cocoonbox-api [-config FILE] user delete NAME
   cocoonbox-api [-config FILE] user passwd NAME -stdin
   cocoonbox-api [-config FILE] user token-sha256 NAME -stdin
-  cocoonbox-api [-config FILE] user set NAME [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]
+  cocoonbox-api [-config FILE] user set NAME|ID [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]
   cocoonbox-api [-config FILE] state migrate [-keyring DIR]
   cocoonbox-api [-config FILE] state expand [-user ID]
   cocoonbox-api [-config FILE] state heads
@@ -129,7 +129,7 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	return written("%s of user %s updated\n", verb, u.Name)
 }
 
-// setPolicy sets the policy fields of user name that args name, refusing an image Rebase does not offer.
+// setPolicy sets the policy fields that args name of the user named or with id name, refusing an image Rebase does not offer.
 func setPolicy(ctx context.Context, cfg *config.Config, name string, args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("set", flag.ContinueOnError)
 	image := flags.String("image", "", "the image the user's boxes start from and upgrade to; empty takes the default")
@@ -165,7 +165,9 @@ func setPolicy(ctx context.Context, cfg *config.Config, name string, args []stri
 	defer accounts.Close()
 	u, err := accounts.ByName(name)
 	if err != nil {
-		return err
+		if u, err = accounts.Get(name); err != nil {
+			return err
+		}
 	}
 	if u, err = accounts.Update(ctx, u.ID, set); err != nil {
 		return err
