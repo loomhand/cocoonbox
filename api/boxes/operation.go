@@ -30,6 +30,8 @@ type eventRecord struct {
 	TotalBytes uint64 `json:"total_bytes,omitzero"`
 }
 
+type operationMirror func(cluster.Operation)
+
 type observation struct {
 	state  controlv1.BoxState
 	detail string
@@ -47,7 +49,7 @@ type operation struct {
 	ctx      context.Context
 	stop     context.CancelFunc
 	watchers *watchers
-	mirror   func(cluster.Operation)
+	mirror   operationMirror
 	created  time.Time
 	expires  time.Time
 
@@ -179,7 +181,7 @@ func (o *operation) mirrorLocked() {
 
 type operations struct {
 	watchers *watchers
-	mirror   func(cluster.Operation)
+	mirror   operationMirror
 
 	mu     sync.Mutex
 	byID   map[string]*operation
