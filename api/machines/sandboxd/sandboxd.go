@@ -41,9 +41,6 @@ const (
 	probeFanout     = 8
 	finishTimeout   = 10 * time.Second
 	sharedTimeout   = 10 * time.Second
-	// opLease bounds how long a shared op outlives its process, which renews it every opRenew while it runs.
-	opLease = time.Minute
-	opRenew = 20 * time.Second
 )
 
 var (
@@ -90,8 +87,8 @@ func (o Options) client() (*client, error) {
 type Shared interface {
 	Machines(ctx context.Context) ([]cluster.Machine, error)
 	Machine(ctx context.Context, id string) (cluster.Machine, error)
-	UpdateMachine(ctx context.Context, id string, edit func(m *cluster.Machine, found bool) (bool, error)) (cluster.Machine, error)
-	DeleteMachineIf(ctx context.Context, id string, cond func(m cluster.Machine) bool) (bool, error)
+	UpdateMachine(ctx context.Context, id string, edit cluster.MachineEdit) (cluster.Machine, error)
+	DeleteMachineIf(ctx context.Context, id string, cond cluster.MachineCond) (bool, error)
 	Listen(ctx context.Context, channel string, reset func(), fn cluster.Notified)
 }
 
@@ -591,7 +588,7 @@ func (b *Backend) drop(ctx context.Context, id string, cond func(e *entry) bool)
 		e.load(m)
 		return cond(e)
 	})
-	if err != nil && !errors.Is(err, cluster.ErrNotFound) || err == nil && !removed {
+	if (err != nil && !errors.Is(err, cluster.ErrNotFound)) || (err == nil && !removed) {
 		return false, err
 	}
 	b.mu.Lock()
@@ -613,7 +610,7 @@ func (b *Backend) run(id, op string, revision int64, fn func(context.Context) er
 		}
 		err := fn(ctx)
 		if err != nil {
-			logger.Errorf(ctx, err, "%s", op)
+			logger.Error(ctx, err, op)
 		}
 		opErr := ""
 		switch {
@@ -639,9 +636,9 @@ func (b *Backend) run(id, op string, revision int64, fn func(context.Context) er
 	}()
 }
 
-// renewOp extends the lease of op on machine id every opRenew until ctx ends or the op does.
+// renewOp extends the lease of op on machine id every cluster.LeaseRenew until ctx ends or the op does.
 func (b *Backend) renewOp(ctx context.Context, id, op string, revision int64) {
-	ticker := time.NewTicker(opRenew)
+	ticker := time.NewTicker(cluster.LeaseRenew)
 	defer ticker.Stop()
 	for {
 		select {
@@ -654,7 +651,7 @@ func (b *Backend) renewOp(ctx context.Context, id, op string, revision int64) {
 			if running = e != nil && e.op == op && e.revision == revision; !running {
 				return e, false
 			}
-			e.opUntil = time.Now().Add(opLease)
+			e.opUntil = time.Now().Add(cluster.Lease)
 			return e, true
 		}); err != nil {
 			log.WithFunc("sandboxd.Backend.renewOp").WithField("machine", id).Warnf(ctx, "renew the lease of %s: %v", op, err)
@@ -669,7 +666,7 @@ func (b *Backend) lease() time.Duration {
 	if b.opts.Shared == nil {
 		return 0
 	}
-	return opLease
+	return cluster.Lease
 }
 
 func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size string) error {
@@ -1166,12 +1163,4 @@ func fingerprint(v *envVar) string {
 	raw, _ := json.Marshal(v)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
-}
-
-func envNames(env map[string]envVar) map[string]string {
-	names := make(map[string]string, len(env))
-	for name := range env {
-		names[name] = ""
-	}
-	return names
 }

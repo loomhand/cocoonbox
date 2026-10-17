@@ -11,6 +11,9 @@ import (
 
 const operationColumns = "id, user_id, box, phase, park, gen, events, finished_at, expires_at, created_at"
 
+// EventsEdit returns the encoded events of an operation with a change.
+type EventsEdit func(events []byte) ([]byte, error)
+
 // Operation is one box operation and the events it logged, encoded by the service.
 type Operation struct {
 	ID         string
@@ -59,7 +62,7 @@ func (s *Store) PutRunningOperation(ctx context.Context, op Operation) error {
 }
 
 // FinishOperation ends unfinished operation id with edit's change of its events, rerunning edit after a concurrent write.
-func (s *Store) FinishOperation(ctx context.Context, id string, edit func(events []byte) ([]byte, error)) (bool, error) {
+func (s *Store) FinishOperation(ctx context.Context, id string, edit EventsEdit) (bool, error) {
 	for {
 		op, err := s.Operation(ctx, id)
 		if err != nil || !op.FinishedAt.IsZero() {

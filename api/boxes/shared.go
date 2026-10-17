@@ -21,8 +21,7 @@ type Shared interface {
 	Listen(ctx context.Context, channel string, reset func(), fn cluster.Notified)
 }
 
-// EnableShared makes the shared tables the truth for box heads and operations: a save commits its head on the version
-// it planned on, and the operations of other processes count as running here until ctx ends.
+// EnableShared makes the shared tables the truth for box heads and operations until ctx ends.
 func (s *Service) EnableShared(ctx context.Context, shared Shared) {
 	logger := log.WithFunc("boxes.Service.EnableShared")
 	s.ops.mu.Lock()

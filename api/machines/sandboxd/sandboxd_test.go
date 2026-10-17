@@ -735,7 +735,7 @@ func TestTwoBackendsOnASharedTableClaimOnceAndSeeEachOthersChanges(t *testing.T)
 	if err := b.SetMeta(t.Context(), boxID, "slept", "7"); err != nil {
 		t.Fatalf("SetMeta: %v", err)
 	}
-	waitFor(t, "a sees b's meta", func() bool {
+	clustertest.WaitFor(t, "a sees b's meta", func() bool {
 		m, err := a.cached(boxID)
 		return err == nil && m.Meta["slept"] == "7"
 	})
@@ -790,7 +790,7 @@ func TestAKeyOneBackendWroteIsPrunedByTheOther(t *testing.T) {
 	if err := a.SetCredentials(t.Context(), boxID, machines.Credentials{Secrets: map[string]*machines.Secret{"CBV_k": key}, Prune: "CBV_"}); err != nil {
 		t.Fatalf("SetCredentials on a: %v", err)
 	}
-	waitFor(t, "b knows the key name", func() bool {
+	clustertest.WaitFor(t, "b knows the key name", func() bool {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if e := b.entries[boxID]; e != nil {
@@ -835,7 +835,7 @@ func TestAnOpOfAGoneProcessEndsAtItsDeadline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateMachine: %v", err)
 	}
-	waitFor(t, "a takes the dead op as ended", func() bool {
+	clustertest.WaitFor(t, "a takes the dead op as ended", func() bool {
 		m, err := a.cached(boxID)
 		return err == nil && m.State == machines.StateRunning && m.Revision == 2
 	})
@@ -1195,17 +1195,6 @@ func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Back
 	return b
 }
 
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("%s: not within 5 s", what)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 func claimRunning(t *testing.T, b *Backend) machines.Machine {
 	t.Helper()
 	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
@@ -1239,8 +1228,8 @@ func isClosed(ch <-chan struct{}) bool {
 }
 
 func isNotRunning(err error, state machines.State) bool {
-	var nr *machines.NotRunningError
-	return errors.As(err, &nr) && nr.State == state
+	nr, ok := errors.AsType[*machines.NotRunningError](err)
+	return ok && nr.State == state
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

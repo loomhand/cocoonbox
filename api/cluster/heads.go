@@ -17,15 +17,6 @@ type Head struct {
 	Version int64
 }
 
-// ParseHeadNotify returns the head a notify on ChannelHeads carries; Version 0 reports a removal, of every box of User when Box is empty.
-func ParseHeadNotify(payload string) (Head, error) {
-	var h Head
-	if err := json.Unmarshal([]byte(payload), &h); err != nil {
-		return Head{}, fmt.Errorf("decode a heads notify: %w", err)
-	}
-	return h, nil
-}
-
 // Heads returns every box head.
 func (s *Store) Heads(ctx context.Context) ([]Head, error) {
 	rows, err := s.pool.Query(ctx, "SELECT user_id, box, head, version FROM box_heads ORDER BY user_id, box")
@@ -96,6 +87,15 @@ func (s *Store) DeleteHeads(ctx context.Context, user, box string) error {
 		}
 		return notifyHead(ctx, tx, Head{User: user, Box: box})
 	})
+}
+
+// ParseHeadNotify returns the head a notify on ChannelHeads carries; Version 0 reports a removal, of every box of User when Box is empty.
+func ParseHeadNotify(payload string) (Head, error) {
+	var h Head
+	if err := json.Unmarshal([]byte(payload), &h); err != nil {
+		return Head{}, fmt.Errorf("decode a heads notify: %w", err)
+	}
+	return h, nil
 }
 
 func notifyHead(ctx context.Context, tx pgx.Tx, h Head) error {
