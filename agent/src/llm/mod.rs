@@ -95,8 +95,6 @@ pub struct Request<'a> {
     pub vision: bool,
     /// Offers `tools` but forbids calling them, so the cached prompt prefix still matches.
     pub forbid_calls: bool,
-    /// Reasoning effort sent as `reasoning.effort` on the chat wire; `None` keeps the model's default.
-    pub effort: Option<&'a str>,
 }
 
 /// Token usage of one or more requests.

@@ -682,7 +682,6 @@ impl Runtime {
                 max_tokens: MAIN_MAX_TOKENS,
                 vision,
                 forbid_calls: false,
-                effort: None,
             };
             if steps == cap {
                 return Err(match self.cap_report(ctx, &req, cap, "", usage).await {
