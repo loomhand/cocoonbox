@@ -403,7 +403,7 @@ Every tool but `box_list`, `box_create` and `usage` takes an optional `box`: a b
 | `box_list` | `{}` | `{boxes: [{box_id, name, state, image, last_saved_at_ms}]}`, oldest first |
 | `box_status` | `{box}` | `{box_id, name, state, image, latest_image, upgrade_available, last_saved_at_ms}` |
 | `box_ensure` | `{box, "wait": boolean, default true}` | `{box_id, state, operation_id}`. `operation_id` is `""` when the box was already running. With `wait` the result arrives when the operation is done. |
-| `box_create` | `{"name": string, required; "wait": boolean, default true}` | `{box_id, name, state, operation_id}` |
+| `box_create` | `{"name": string, required; "image": string; "wait": boolean, default true}` | `{box_id, name, state, operation_id}` |
 | `box_hibernate` | `{box}` | `{box_id, state, operation_id}` after the operation is done |
 | `box_save` | `{box}` | `{box_id, last_saved_at_ms, operation_id, bytes}`; `bytes` is the last `total_bytes` of the saving phase |
 | `box_upgrade` | `{box, "confirm": boolean, required}`; it always targets `latest_image` | `{box_id, state, image, operation_id}` after the operation is done |
@@ -419,7 +419,7 @@ Tool descriptions (model-facing; the api returns these exactly):
 - `box_save`: "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save."
 - `box_upgrade`: "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true."
 - `box_list`: "List your cocoonbox cloud desktops with their names, states and images."
-- `box_create`: "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once." It sends no `CreateBoxRequest.image`, so the box runs the default image.
+- `box_create`: "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once." Its `image` ("An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop.") goes to `CreateBoxRequest.image` as given; without it the box runs the user's policy image, else the default image.
 - `box_delete`: "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true."
 - `usage`: "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it."
 

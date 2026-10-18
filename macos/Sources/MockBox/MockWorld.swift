@@ -193,9 +193,10 @@ actor MockWorld {
         return response
     }
 
-    // create adds a box within the quota and starts it, as Boxes.Create does; image cbcore is the one other family offered.
+    // create adds a box within the quota and starts it, as Boxes.Create does; families cbcore and cbdroid are the others offered.
     func create(name: String, image: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
-        guard image.isEmpty || image == "cbcore" else { throw RPCError(code: .invalidArgument, message: "image \"\(image)\" is not offered") }
+        let offered = ["cbcore": "cbcore:v1", "cbdroid": "cbdroid:v1"]
+        guard image.isEmpty || offered[image] != nil else { throw RPCError(code: .invalidArgument, message: "image \"\(image)\" is not offered") }
         guard !name.isEmpty, name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }), !name.hasPrefix("cb-") else {
             throw RPCError(code: .invalidArgument, message: "invalid request: a box name is 1 to 32 lowercase letters, digits, - or _")
         }
@@ -207,7 +208,7 @@ actor MockWorld {
         boxesCreated += 1
         created.name = name
         created.state = .starting
-        if image == "cbcore" { created.latestImage = "cbcore:v1" }
+        if let family = offered[image] { created.latestImage = family }
         created.image = created.latestImage
         created.lastSavedAtMs = 0
         created.createdAtMs = Self.now()
