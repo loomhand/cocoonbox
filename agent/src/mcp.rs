@@ -21,7 +21,7 @@ use tonic::Status;
 
 use crate::config::Automation;
 use crate::dispatch::{Caller, ToolOutput, uses_driver};
-use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
+use crate::identity::{CREDENTIAL_HEADER, Denied, Gate, Principal};
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, event, transcript_entry::Body as Entry};
 use crate::runner::Runtime;
@@ -257,10 +257,9 @@ impl Mcp {
     }
 
     fn admit(&self, headers: &HeaderMap) -> Result<Principal, StatusCode> {
-        let verdict = self.gate.check(
-            headers.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()),
-            headers.get(EDGE_TOKEN_HEADER).map(|v| v.as_bytes()),
-        );
+        let verdict = self
+            .gate
+            .check(headers.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()));
         verdict.map_err(|d| match d {
             Denied::Unprovisioned(_) => StatusCode::SERVICE_UNAVAILABLE,
             Denied::Unauthenticated(_) => StatusCode::UNAUTHORIZED,

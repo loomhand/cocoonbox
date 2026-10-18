@@ -28,7 +28,7 @@ toolhost: shell · files · CDP browser · cua-driver
 | File | Role |
 |---|---|
 | `server.rs` | gRPC services behind the edge check of `identity.rs` |
-| `identity.rs` | Box identity from `/run/cocoonbox-identity/identity` and the `x-cocoonbox-credential` check; the edge token only while that file is absent |
+| `identity.rs` | Box identity from `/run/cocoonbox-identity/identity` and the `x-cocoonbox-credential` check |
 | `dispatch.rs` | The one tool path: `Tools` interface, `Dispatcher` (record call and result, ComputerAction, driver-session injection) |
 | `journal.rs` | Store plus event bus: every transcript and status write is persisted, then published |
 | `runner.rs` | Per-agent turn queue, the main agent loop, take-over approvals, cancel |
@@ -96,7 +96,7 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 
 ## Environment
 
-These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER`, `AGENT_LISTEN`, and `EDGE_TOKEN` while boxes switch to credentials.
+These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER` and `AGENT_LISTEN`.
 
 Optional overrides with contract defaults, used by tests:
 

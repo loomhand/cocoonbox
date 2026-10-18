@@ -14,7 +14,7 @@ const DEFAULT_OFFLOAD_SOCKET: &str = "/run/cocoonbox/offload.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
 const DEFAULT_WORKSPACE: &str = "/workspace";
 const IDENTITY_PATH: &str = "/run/cocoonbox-identity/identity";
-const ROOT_UID: u32 = 0;
+const ROOT_UID: &str = "0";
 const REDACTED: &str = "<redacted>";
 const DESKTOP_UNIT: &str = "cocoonbox-session.service";
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
@@ -70,7 +70,6 @@ pub struct ServeConfig {
     pub gw_api_key: String,
     pub model_main: String,
     pub model_computer: String,
-    pub edge_token: Option<String>,
     pub identity_path: PathBuf,
     pub identity_owner: u32,
     pub listen: SocketAddr,
@@ -103,7 +102,6 @@ impl std::fmt::Debug for ServeConfig {
             .field("gw_api_key", &REDACTED)
             .field("model_main", &self.model_main)
             .field("model_computer", &self.model_computer)
-            .field("edge_token", &self.edge_token.as_ref().map(|_| REDACTED))
             .field("identity_path", &self.identity_path)
             .field("identity_owner", &self.identity_owner)
             .field("listen", &self.listen)
@@ -134,9 +132,10 @@ impl ServeConfig {
             gw_api_key: required("GW_API_KEY")?,
             model_main: required("MODEL_MAIN")?,
             model_computer: required("MODEL_COMPUTER")?,
-            edge_token: env::var("EDGE_TOKEN").ok().filter(|v| !v.is_empty()),
             identity_path: optional("CB_IDENTITY_PATH", IDENTITY_PATH).into(),
-            identity_owner: ROOT_UID,
+            identity_owner: optional("CB_IDENTITY_OWNER", ROOT_UID)
+                .parse()
+                .map_err(|e| format!("parse CB_IDENTITY_OWNER: {e}"))?,
             listen: listen
                 .parse()
                 .map_err(|e| format!("parse AGENT_LISTEN {listen}: {e}"))?,
@@ -270,7 +269,6 @@ mod tests {
             gw_api_key: "sk-secret-key".into(),
             model_main: "m".into(),
             model_computer: "c".into(),
-            edge_token: Some("edge-secret".into()),
             identity_path: "/i".into(),
             identity_owner: 0,
             listen: "127.0.0.1:1".parse().unwrap(),
@@ -290,10 +288,7 @@ mod tests {
             routing_extra: Vec::new(),
         };
         let shown = format!("{cfg:?}");
-        assert!(
-            !shown.contains("sk-secret-key") && !shown.contains("edge-secret"),
-            "{shown}"
-        );
+        assert!(!shown.contains("sk-secret-key"), "{shown}");
         assert!(
             shown.contains("<redacted>") && shown.contains("http://gw/v1"),
             "{shown}"

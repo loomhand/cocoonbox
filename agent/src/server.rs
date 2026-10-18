@@ -16,7 +16,7 @@ use tonic::{Request, Response, Status, Streaming};
 
 use crate::config::{Automation, ServeConfig};
 use crate::exec;
-use crate::identity::{CREDENTIAL_HEADER, Denied, EDGE_TOKEN_HEADER, Gate, Principal};
+use crate::identity::{CREDENTIAL_HEADER, Denied, Gate, Principal};
 use crate::llm;
 use crate::mcp::Mcp;
 use crate::offload;
@@ -54,10 +54,9 @@ pub struct EdgeAuth {
 impl Interceptor for EdgeAuth {
     fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
         let md = req.metadata();
-        let verdict = self.gate.check(
-            md.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()),
-            md.get(EDGE_TOKEN_HEADER).map(|v| v.as_bytes()),
-        );
+        let verdict = self
+            .gate
+            .check(md.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()));
         match verdict {
             Ok(Principal::Share { .. }) if self.owner_only => Err(share_refused()),
             Ok(principal) => {
@@ -443,7 +442,6 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     let gate = Arc::new(Gate::new(
         rt.cfg.identity_path.clone(),
         rt.cfg.identity_owner,
-        rt.cfg.edge_token.clone(),
     ));
     let auth = EdgeAuth {
         gate: Arc::clone(&gate),
