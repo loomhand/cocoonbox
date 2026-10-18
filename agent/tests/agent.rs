@@ -3636,37 +3636,78 @@ async fn mcp_lists_a_plugin_after_the_script_tool_with_its_resource() {
 }
 
 #[tokio::test]
-async fn a_plain_box_ignores_its_plugins() {
+async fn a_box_without_the_desk_ignores_its_plugins() {
     let day = Duration::from_secs(24 * 3600);
-    let h = Harness::boot(
-        Vec::new(),
-        false,
-        Duration::from_secs(600),
-        day,
-        None,
-        None,
-        Automation::Plain,
-        true,
-    )
-    .await;
-    let mut mcp = McpClient::connect(&h).await;
-
-    let listed = mcp.rpc("tools/list", json!({})).await;
-    let names: Vec<&str> = listed["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
-    assert!(!names.contains(&"demo_run"), "{names:?}");
-    let out = mcp
-        .rpc(
-            "tools/call",
-            json!({"name": "demo_run", "arguments": {"code": "1"}}),
+    for automation in [Automation::Plain, Automation::Android] {
+        let h = Harness::boot(
+            Vec::new(),
+            false,
+            Duration::from_secs(600),
+            day,
+            None,
+            None,
+            automation,
+            true,
         )
         .await;
-    assert_eq!(out["error"]["message"], "unknown tool: demo_run", "{out}");
-    assert!(!h.workspace.join("plugin.log").exists());
+        let mut mcp = McpClient::connect(&h).await;
+
+        let listed = mcp.rpc("tools/list", json!({})).await;
+        let names: Vec<&str> = listed["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(!names.contains(&"demo_run"), "{automation:?}: {names:?}");
+        let resources = mcp.rpc("resources/list", json!({})).await;
+        assert!(
+            !resources.to_string().contains("cocoonbox://demo/"),
+            "{automation:?}: {resources}"
+        );
+        let out = mcp
+            .rpc(
+                "tools/call",
+                json!({"name": "demo_run", "arguments": {"code": "1"}}),
+            )
+            .await;
+        assert_eq!(
+            out["error"]["message"], "unknown tool: demo_run",
+            "{automation:?}: {out}"
+        );
+        assert!(!h.workspace.join("plugin.log").exists(), "{automation:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_android_box_keeps_its_mcp_texts_within_the_caps() {
+    let h = Harness::with_android().await;
+    let init: Value = reqwest::Client::new()
+        .post(format!("{}/mcp", h.endpoint))
+        .header("accept", "application/json, text/event-stream")
+        .header("x-cocoonbox-credential", owner())
+        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let instructions = init["result"]["instructions"].as_str().unwrap();
+    assert!(
+        instructions.chars().count() <= 1600,
+        "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",
+        instructions.chars().count()
+    );
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    for tool in listed["result"]["tools"].as_array().unwrap() {
+        assert!(
+            tool["description"].as_str().unwrap().chars().count() <= 2048,
+            "{}: Claude Code cuts a description at 2048 characters",
+            tool["name"]
+        );
+    }
 }
 
 #[tokio::test]
@@ -4713,7 +4754,7 @@ async fn a_share_principal_holds_at_most_four_open_sessions() {
 }
 
 #[tokio::test]
-async fn a_read_share_of_a_desk_box_does_not_read_its_saved_flows() {
+async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
     let h = Harness::with_desk(Vec::new()).await;
     let edge = Edge::provision(&h);
     std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
@@ -4741,6 +4782,19 @@ async fn a_read_share_of_a_desk_box_does_not_read_its_saved_flows() {
         .call("read_file", json!({"path": "flows/save.json"}))
         .await;
     assert!(text(&out).contains("typed"), "{out}");
+
+    let android = Harness::with_android().await;
+    let edge = Edge::provision(&android);
+    std::fs::create_dir_all(android.workspace.join("flows")).unwrap();
+    std::fs::write(android.workspace.join("flows/save.json"), "{}").unwrap();
+    let mut reader = McpClient::connect_as(&android, Some(edge.share("share:sh-1:read"))).await;
+    let out = reader
+        .call("read_file", json!({"path": "flows/save.json"}))
+        .await;
+    assert!(
+        text(&out).contains("does not read saved flows"),
+        "an Android read share: {out}"
+    );
 
     let desk = Harness::start(Vec::new(), false).await;
     let edge = Edge::provision(&desk);
