@@ -98,11 +98,13 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 
 These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER` and `AGENT_LISTEN`.
 
-Optional overrides with contract defaults, used by tests:
+Optional overrides with contract defaults, used by tests and non-standard layouts. Boxes set none of them; the identity pair moves the trust anchor, so only whoever writes the agent's environment, already root, can change it:
 
 | Key | Default |
 |---|---|
 | `CB_STATE_DIR` | `/var/lib/cocoonbox` |
+| `CB_IDENTITY_PATH` | `/run/cocoonbox-identity/identity` |
+| `CB_IDENTITY_OWNER` | `0` (root): the uid that must own the identity file and its directory |
 | `TOOLHOST_SOCKET` | `/run/cocoonbox/toolhost.sock` |
 | `VNC_ADDR` | `127.0.0.1:5900` |
 | `CB_WORKSPACE` | `/workspace` |

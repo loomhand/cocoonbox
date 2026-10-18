@@ -246,7 +246,7 @@ The adversary is the box's own user (`user`, unprivileged), or root inside one b
 **Credential format.** `x-cocoonbox-credential: v1.<b64url(key_id|box_id|wake_id|exp_unix)>.<b64url(ed25519 signature over the first part)>`: base64url without padding, `|`-separated fields.
 - `key_id` is the first 16 hex of sha256(public key).
 - The edge caches one credential per (box, `wake_id`) and re-signs when less than 2 min of `exp` remain, so the hot path is a map lookup; a stream signs once at open.
-- The edge strips any client-sent `x-cocoonbox-credential` on gRPC and MCP, as it does `x-cocoonbox-edge-token` today. During the switch it sends both headers until the agent drops `EDGE_TOKEN`.
+- The edge strips any client-sent `x-cocoonbox-credential` on gRPC and MCP, as it does `x-cocoonbox-edge-token`. During the switch it sent both headers until no image set `EDGE_TOKEN`; the agent has since dropped the token.
 
 **Where the agent learns its identity and the edge key.** On every boot and wake, the api writes `/run/cocoonbox-identity/identity`, `{"box_id":…,"wake_id":<random>,"key_id":…,"public_key":<ed25519>}`, through sandboxd exec (silkd over vsock, running as root in the guest).
 - The directory is root 0755 and the file root 0644, both tmpfs. It is not `/run/cocoonbox`: that directory is `user:cbagent 2770` for the toolhost socket, so `user` could replace a file in it and point the agent at its own key.
