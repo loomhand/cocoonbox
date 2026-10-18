@@ -54,7 +54,7 @@ var toolSpecs = []toolSpec{
 	{
 		Name:         "box_create",
 		Description:  "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"wait":{"type":"boolean","default":true}},"required":["name"],"additionalProperties":false}`),
+		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"image":{"type":"string","description":"An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop."},"wait":{"type":"boolean","default":true}},"required":["name"],"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","name","state","operation_id"]}`),
 	},
 	{
@@ -225,11 +225,12 @@ func (s *Server) call(ctx context.Context, call *callParams, progress progressFu
 		})
 	case "box_create":
 		var args struct {
-			Name string `json:"name"`
-			Wait *bool  `json:"wait"`
+			Name  string `json:"name"`
+			Image string `json:"image"`
+			Wait  *bool  `json:"wait"`
 		}
 		return withArguments(call.Arguments, &args, func() (any, error) {
-			return s.create(ctx, args.Name, args.Wait == nil || *args.Wait, progress)
+			return s.create(ctx, &controlv1.CreateBoxRequest{Name: args.Name, Image: args.Image}, args.Wait == nil || *args.Wait, progress)
 		})
 	case "box_hibernate":
 		var args boxArgs
@@ -305,8 +306,8 @@ func (s *Server) ensure(ctx context.Context, ref string, wait bool, progress pro
 	return res, err
 }
 
-func (s *Server) create(ctx context.Context, name string, wait bool, progress progressFunc) (*createResult, error) {
-	resp, err := s.startCreate(ctx, name)
+func (s *Server) create(ctx context.Context, req *controlv1.CreateBoxRequest, wait bool, progress progressFunc) (*createResult, error) {
+	resp, err := s.startCreate(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -473,10 +474,10 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 }
 
 // startCreate adds a box; a grant's call stays within its caps and records the box as the grant's before its machine starts.
-func (s *Server) startCreate(ctx context.Context, name string) (*controlv1.EnsureResponse, error) {
+func (s *Server) startCreate(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
 	g := grantOf(ctx)
 	if g == nil {
-		return s.boxes.Create(ctx, &controlv1.CreateBoxRequest{Name: name})
+		return s.boxes.Create(ctx, req)
 	}
 	defer s.lock(g.ID)()
 	list, err := s.visible(ctx)
@@ -490,7 +491,7 @@ func (s *Server) startCreate(ctx context.Context, name string) (*controlv1.Ensur
 		return nil, err
 	}
 	record := func(ctx context.Context, box string) error { return s.grants.AddBox(ctx, g.ID, box) }
-	return s.boxes.Create(boxes.WithAgent(ctx, record), &controlv1.CreateBoxRequest{Name: name})
+	return s.boxes.Create(boxes.WithAgent(ctx, record), req)
 }
 
 // checkRunning refuses to start another box of grant g while its running cap is held.
