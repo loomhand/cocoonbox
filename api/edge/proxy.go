@@ -1,4 +1,4 @@
-// Package edge forwards cocoonbox.agent.v1 calls to the caller's box without decoding them.
+// Package edge forwards cocoonbox.agent.v1 calls to the caller's box without decoding them; it serves Session.Screen from the box's RFB server.
 package edge
 
 import (
@@ -32,6 +32,7 @@ const (
 	stateServicePrefix = "/cocoonbox.agent.v1.State/"
 	// sessionEvents only watches the box, so it keeps no box up.
 	sessionEvents = "/cocoonbox.agent.v1.Session/Events"
+	sessionScreen = "/cocoonbox.agent.v1.Session/Screen"
 )
 
 var droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, credential.Header, "content-type", "user-agent", "te"}
@@ -88,21 +89,30 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	if method != sessionEvents {
 		defer p.resolver.Reached(boxes[0])()
 	}
-	conn, err := p.conn(ctx, boxes[0], ep)
-	if err != nil {
-		return err
-	}
 
 	start := time.Now()
-	upCtx, cancel := context.WithCancel(metadata.NewOutgoingContext(ctx, p.outgoing(md, boxes[0], wake)))
-	defer cancel()
-	up, err := conn.NewStream(upCtx, &grpc.StreamDesc{ServerStreams: true, ClientStreams: true}, method, grpc.ForceCodecV2(p.codec))
-	if err == nil {
-		err = p.pump(ctx, ss, up, cancel)
+	if method == sessionScreen {
+		err = p.relayScreen(ctx, ss, boxes[0], ep)
+	} else {
+		err = p.forward(ctx, ss, method, boxes[0], p.outgoing(md, boxes[0], wake), ep)
 	}
 	log.WithFunc("edge.Proxy.Handle").Infof(ctx, "%s user=%s box=%q addr=%s code=%s in %s",
 		method, user, boxes[0], ep.Key, status.Code(err), time.Since(start).Round(time.Millisecond))
 	return err
+}
+
+func (p *Proxy) forward(ctx context.Context, down grpc.ServerStream, method, box string, md metadata.MD, ep machines.Endpoint) error {
+	conn, err := p.conn(ctx, box, ep)
+	if err != nil {
+		return err
+	}
+	upCtx, cancel := context.WithCancel(metadata.NewOutgoingContext(ctx, md))
+	defer cancel()
+	up, err := conn.NewStream(upCtx, &grpc.StreamDesc{ServerStreams: true, ClientStreams: true}, method, grpc.ForceCodecV2(p.codec))
+	if err != nil {
+		return err
+	}
+	return p.pump(ctx, down, up, cancel)
 }
 
 func (p *Proxy) pump(ctx context.Context, down grpc.ServerStream, up grpc.ClientStream, cancel context.CancelFunc) error {

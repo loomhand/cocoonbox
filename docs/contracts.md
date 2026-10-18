@@ -52,13 +52,14 @@ The agent's toolhost (`/run/cocoonbox/toolhost.sock`), the desk API (`/opt/desk/
 
 ## Edge (api) ↔ agent
 
-- The edge forwards every `cocoonbox.agent.v1.*` call unchanged to the box's port 7443 through the sandboxd port relay, adding `x-cocoonbox-credential`; it sends no `x-cocoonbox-edge-token`, and `agent.env` carries no `EDGE_TOKEN`. It drops the client's `authorization` and any client-sent `x-cocoonbox-credential` or `x-cocoonbox-edge-token`.
+- The edge forwards every `cocoonbox.agent.v1.*` call but `Session.Screen` unchanged to the box's port 7443 through the sandboxd port relay, adding `x-cocoonbox-credential`; it sends no `x-cocoonbox-edge-token`, and `agent.env` carries no `EDGE_TOKEN`. It drops the client's `authorization` and any client-sent `x-cocoonbox-credential` or `x-cocoonbox-edge-token`.
 - Credential: `v1.<p>.<s>`. `p` is base64url without padding of `key_id|box_id|wake_id|exp`, with `exp` in unix seconds. `s` is base64url without padding of the ed25519 signature over the ASCII bytes `v1.<p>`. A v1 credential is the box's owner.
 - Share credential: `v2.<p>.<s>`, with a fifth field `principal = share:<share id>:<read|write>[:<user id>]` in `p` and the signature over `v2.<p>`. The agent takes the caller only from this field. A share principal reaches `Session.Screen` and `/mcp` only; every other agent method answers `PERMISSION_DENIED`.
 - A `read` share's `read_file` and `list_dir` reach only paths that resolve beneath `/workspace`, `..` and symlinks included (design §23.6). Any other path is a tool error: `<path> is refused: a read-only share reads files only under /workspace`. The agent sets `workspace_only: true` in the arguments of every call of a read share, and the guest cannot unset it. On a cbcore box a path that resolves into `/workspace/flows` is refused too: `<path> is refused: a read-only share does not read saved flows` (design §28.3).
 - With the identity file present, the agent accepts a call only with a credential whose `key_id`, `box_id` and `wake_id` equal the file's, whose signature verifies with the file's key, and whose `exp` is at most 2 min in the past; otherwise `UNAUTHENTICATED`.
 - Without the file, the agent answers `UNAVAILABLE` "identity not provisioned". A file it refuses (owner, mode, content) gives `UNAVAILABLE` "identity invalid". Every service answers this way, `Session.Hello` included.
-- Streams (`Events`, `Screen`, `Exec`) are proxied frame by frame with no buffering; a client's half-close reaches the agent as one.
+- Streams (`Events`, `Exec`) are proxied frame by frame with no buffering; a client's half-close reaches the agent as one.
+- `Session.Screen` does not reach the agent: the edge serves it from the box's `127.0.0.1:5900` through the sandboxd port relay, with the same caller, ownership and readiness checks as a proxied call. The first client frame must be `open`; data frames carry raw RFB both ways, a client's half-close half-closes the RFB connection, and the stream ends `OK` when the RFB server closes. A share's viewer reaches the same server through the console bridge, filtered to view-only.
 
 ## State objects (agent ↔ api)
 
