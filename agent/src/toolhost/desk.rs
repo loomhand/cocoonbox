@@ -790,6 +790,18 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_name_finds_no_element_not_the_unnamed_ones() {
+        let node = |name: &str| Node {
+            name: name.into(),
+            ..Node::default()
+        };
+        let nodes = [node(""), node("Save"), node("")];
+        assert!(matches(&nodes, "", None).is_empty());
+        assert!(matches(&nodes, "...", None).is_empty());
+        assert_eq!(matches(&nodes, "save", None), [1]);
+    }
+
+    #[test]
     fn a_window_is_picked_by_exact_then_trimmed_then_contained_title() {
         let frames = vec![
             frame("Untitled 1 - Mousepad", 23, false, 7),
