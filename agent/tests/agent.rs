@@ -2820,7 +2820,7 @@ async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
         .unwrap()
         .into_inner();
     let mut seen = Vec::new();
-    while !String::from_utf8_lossy(&seen).contains("30 100") {
+    while !String::from_utf8_lossy(&seen).contains("30 100\r\n") {
         match frames.message().await.unwrap().unwrap().body.unwrap() {
             exec_server_frame::Body::Stdout(d) => seen.extend_from_slice(&d),
             other => panic!("unexpected frame before the size: {other:?}"),
