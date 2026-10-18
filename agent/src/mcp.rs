@@ -52,6 +52,7 @@ shell is one persistent bash session on that Ubuntu, with adb on PATH already co
 relative file paths resolve under /workspace. \
 Prefer adb commands (am start, pm, settings, content) for anything a command can do, and use computer_state / computer_act for app UI. \
 gui_plan runs several app UI steps in one call (open an app by package, tap by label, set a switch or field, verify), and script_run one script for loops over many items; computer_state lists the screen's UI elements by [index]; computer_act taps, swipes, types any Unicode text into the focused field, presses keys (back, home_screen) or launches an app by package, then returns a fresh screenshot; trust the screenshot, not the action's report. \
+A passing gui_plan can be saved as a flow and replayed (save, flow, flows: true); read_file /opt/android/AGENTS.md for the phone's windows, keys and adb details. \
 The phone reaches the internet only through the egress proxy, over TCP. \
 The user watches the screen live and sees every call.";
 const PLAN_HEAD: &str =

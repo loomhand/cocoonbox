@@ -31,7 +31,7 @@ The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) rea
 
 ## Agent
 
-`/opt/android/AGENTS.md` makes the agent's automation `Android`: the MCP instructions and prompts describe the phone, there are no browser tools, and `Session.Hello` reports `AUTOMATION_ANDROID` with the image's nominal 720x1280 boot size, not a later `wm size` override (desktop boxes report `AUTOMATION_DESK` or `AUTOMATION_PLAIN` and 1280x800), which clients use to tell a phone from a desktop.
+`/opt/android/AGENTS.md` makes the agent's automation `Android`: the MCP instructions and prompts describe the phone, there are no browser tools, `tools.d` plugins are not offered, a read share does not read the saved flows in `/workspace/flows`, and `Session.Hello` reports `AUTOMATION_ANDROID` with the image's nominal 720x1280 boot size, not a later `wm size` override (desktop boxes report `AUTOMATION_DESK` or `AUTOMATION_PLAIN` and 1280x800), which clients use to tell a phone from a desktop.
 
 The toolhost answers these tools in one of two modes:
 - **Without `SHUTTLE_SOCKET`**, it answers them itself, with its own adb calls, UI server and paste server, as the table below says.
