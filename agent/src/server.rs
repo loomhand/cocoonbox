@@ -7,10 +7,11 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
-use tokio_stream::wrappers::{ReceiverStream, TcpListenerStream};
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::service::interceptor::InterceptedService;
 use tonic::service::{Interceptor, Routes};
 use tonic::transport::Server;
+use tonic::transport::server::TcpIncoming;
 use tonic::{Request, Response, Status, Streaming};
 
 use crate::config::{Automation, ServeConfig};
@@ -497,10 +498,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         .initial_connection_window_size(CONNECTION_WINDOW)
         .accept_http1(true)
         .add_routes(Routes::from(routes))
-        .serve_with_incoming_shutdown(
-            TcpListenerStream::new(listener),
-            rt.stop.clone().cancelled_owned(),
-        );
+        .serve_with_incoming_shutdown(incoming(listener), rt.stop.clone().cancelled_owned());
     let grace = async {
         rt.stop.cancelled().await;
         tokio::time::sleep(CONNECTION_GRACE).await;
@@ -512,6 +510,10 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     mcp.close_all().await;
     rt.drain(DRAIN_LIMIT).await;
     Ok(())
+}
+
+fn incoming(listener: TcpListener) -> TcpIncoming {
+    TcpIncoming::from(listener).with_nodelay(Some(true))
 }
 
 /// Refuses `req` unless the owner sent it: a share reaches only `Session.Screen` and MCP.
@@ -572,5 +574,23 @@ fn state_status(e: StateError) -> Status {
         StateError::Busy(m) => Status::unavailable(m),
         StateError::Invalid(m) => Status::invalid_argument(m),
         StateError::Failed(m) => Status::internal(m),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn accepted_sockets_send_without_delay() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut accepted = incoming(listener);
+        let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let stream = accepted.next().await.unwrap().unwrap();
+        assert!(
+            stream.nodelay().unwrap(),
+            "TCP_NODELAY is off on an accepted socket"
+        );
     }
 }
