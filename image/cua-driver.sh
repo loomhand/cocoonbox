@@ -7,8 +7,8 @@ set -euo pipefail
 export LC_ALL=C
 
 REPO=https://github.com/loomhand/cua.git
-COMMIT=${COMMIT:-4924a74c34ab99e2d05b54cbfc67eacb890f2525}
-VERSION=${VERSION:-0.35.4-loomhand.1}
+COMMIT=${COMMIT:-c8adcaf42eec7740ad1b3bd044bfcce32c650ba9}
+VERSION=${VERSION:-0.36.0-loomhand.4}
 DEBIAN=sha256:c0a2ad73611131275b0e9a2e7544cfe3725f4268d4085d8c6f61fdd55aef7917
 SNAPSHOT=20260901T000000Z
 RUST=1.97.1
