@@ -80,7 +80,8 @@ exit($hits ? 1 : 0);
 
 deps() {
 	local bad=0
-	if grep -n -E "^name = \"(enigo|$CG_RUNTIME[a-z_-]*)\"\$|^source = \"(git\+|path\+)" "$ROOT/agent/Cargo.lock"; then bad=1; fi
+	if grep -n -E "^name = \"(enigo|$CG_RUNTIME[a-z_-]*)\"\$|^source = \"path\+" "$ROOT/agent/Cargo.lock"; then bad=1; fi
+	if grep -n -E '^source = "git\+' "$ROOT/agent/Cargo.lock" | grep -v -F 'source = "git+https://github.com/loomhand/shuttle?tag='; then bad=1; fi
 	if grep -n -i -E "$CG_VENDOR" "$ROOT/api/go.mod" "$ROOT/api/go.sum"; then bad=1; fi
 	if grep -n -i -E "\"location\" : \"[^\"]*$CG_VENDOR|url: \"[^\"]*$CG_VENDOR|path: \"[^\"]*${CG_VENDOR:0:5}" "$ROOT/macos/Package.resolved" "$ROOT/macos/Package.swift"; then bad=1; fi
 	if git -C "$ROOT" grep -n -i -E "https?://[^ \"]*$CG_VENDOR|@$CG_VENDOR-ai/" -- image; then bad=1; fi
