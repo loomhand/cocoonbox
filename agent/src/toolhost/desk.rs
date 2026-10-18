@@ -546,7 +546,7 @@ async fn focus(cua: &Cua, a: &WindowArgs) -> Result<String, String> {
     Ok(json!({"ok": true, "title": titled(w), "pid": w["pid"]}).to_string())
 }
 
-/// Lists the windows until they differ from `since` or `limit` of waiting passes, listing time excluded, 5 s at most.
+/// Lists the windows until they differ from `since` or `limit` passes, 5 s at most.
 pub(super) async fn wait_for<F, Fut>(
     since: Value,
     limit: Duration,
@@ -557,16 +557,15 @@ where
     Fut: std::future::Future<Output = Result<Value, String>>,
 {
     let started = tokio::time::Instant::now();
-    let (mut listing, mut last) = (Duration::ZERO, Duration::ZERO);
+    let limit = limit.min(WAIT_MAX);
+    let mut last = Duration::ZERO;
     loop {
         tokio::time::sleep(last.max(WAIT_POLL)).await;
         let at = tokio::time::Instant::now();
         let windows = read().await?;
         last = at.elapsed();
-        listing += last;
-        let t = started.elapsed();
         let same = windows == since;
-        if !same || t >= WAIT_MAX || t.saturating_sub(listing) >= limit {
+        if !same || started.elapsed() >= limit {
             return Ok(json!({"changed": !same, "windows": windows}));
         }
     }
@@ -874,8 +873,29 @@ mod tests {
         );
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn a_wait_whose_lists_take_a_millisecond_ends_at_its_timeout_in_wall_time() {
+        let since = json!([{"title": "user - Thunar"}]);
+        let started = tokio::time::Instant::now();
+        let out = wait_for(since.clone(), Duration::from_millis(480), || {
+            let since = since.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+                Ok(since)
+            }
+        })
+        .await
+        .unwrap();
+        let t = started.elapsed();
+        assert_eq!(out["changed"], false);
+        assert!(
+            t >= Duration::from_millis(480) && t <= Duration::from_millis(491),
+            "{t:?}"
+        );
+    }
+
     #[tokio::test]
-    async fn slow_lists_do_not_count_against_the_timeout_but_the_cap_holds() {
+    async fn slow_lists_count_against_the_timeout() {
         let since = json!([]);
         let started = Instant::now();
         let out = wait_for(since.clone(), Duration::from_millis(200), || {
@@ -889,8 +909,10 @@ mod tests {
         .unwrap();
         let t = started.elapsed();
         assert_eq!(out["changed"], false);
-        assert!(t >= Duration::from_millis(1000), "{t:?}");
-        assert!(t < WAIT_MAX + Duration::from_secs(1), "{t:?}");
+        assert!(
+            t >= Duration::from_millis(200) && t < Duration::from_millis(900),
+            "{t:?}"
+        );
     }
 
     #[test]
