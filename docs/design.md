@@ -514,7 +514,7 @@ Leases and tiers:
 
 ### 14.4 Edge → agent: `Address` returns a dialer
 
-The agent is reachable only through `GET /v1/sandboxes/{id}/ports/7443` with `Upgrade: tcp`. There is no IP. `Session.Screen` already carries the RFB bytes inside the 7443 gRPC stream, so no second port is relayed.
+The agent is reachable only through `GET /v1/sandboxes/{id}/ports/7443` with `Upgrade: tcp`. There is no IP. The edge serves `Session.Screen` itself through `GET /v1/sandboxes/{id}/ports/5900`, the box's RFB server; no other port is relayed.
 
 The interface change, backend-neutral:
 
@@ -2058,7 +2058,7 @@ Decided 2026-10-02, revised 2026-10-03. A box owner shares one box through a sha
 - **Share:** one per box, created by the owner in the app or the console. It always expires: 24 h by default, and the owner picks a longer expiry when creating it. The owner can revoke it or regenerate it at any time. Revoking, regenerating, expiry and deleting the box all cut every open share session at once.
 - **Who may use it:** anyone holding the link, or only named cocoonbox users. An open share needs no account. A named share also needs the caller's user token. Both reach the box over the same connection.
 - **Link:** `https://<endpoint>/cb/s/#<secret>`, a 128-bit random secret. The secret sits in the fragment, so it reaches neither the server's access logs nor a `Referer`. The page reads it and sends it on its WebSocket. The api looks it up by its SHA-256 and keeps it sealed so the owner can see the link again (23.5).
-- **Live view:** the page shows the box screen with noVNC, view-only. The api bridges a WebSocket to the box's existing `Session.Screen` RFB stream and drops every client input message. The owner can use the same page.
+- **Live view:** the page shows the box screen with noVNC, view-only. The api bridges a WebSocket to the box's RFB server, which it reaches through the sandboxd port relay to 5900, and drops every client input message. The owner can use the same page.
 - **Guest agents:** an MCP endpoint per share. The guest's CLI uses the share secret as its bearer, plus the guest's own user token for a named share.
   - **Read by default:** the read-only tools (screenshot and `computer_state`, file read and list, the browser page snapshot). File read and list reach only `/workspace` (23.6).
   - **Write:** the owner turns on "allow write" for the share in the app or the console. That adds every other in-box tool. It takes effect on the next call, and turning it off does too. Write includes `shell`, so it cannot be confined: the app and the console warn next to the switch that it hands the guest every login in the box.
@@ -2119,7 +2119,7 @@ Decisions made while building, on top of 23.1 and 23.2:
 - **Share page.**
   - `/cb/s/` is static: noVNC v1.7.0 `core/` and `vendor/pako/`, unmodified, under `console/static/s/novnc/`, with `LICENSE.txt` and the license texts.
   - The page opens `wss://<host>/cb/s/ws`. The api checks that its `Origin` host is the page's host. The page sends the secret from the fragment as the first text message; nothing travels in the URL.
-  - The api answers `{"ok":true}` or `{"error":…, "code":…}`, then bridges binary RFB to `Session.Screen` with the share principal.
+  - The api answers `{"ok":true}` or `{"error":…, "code":…}`, then bridges binary RFB to the box's RFB server through the sandboxd port relay to 5900, view-only both ways.
   - A named share takes the viewer from the console session cookie (`cb_session`, `Path=/cb/`, `SameSite=Strict`, sent on the same-origin WebSocket). Without one, the page asks the viewer to sign in at `/cb/`.
   - CSP for `/cb/s/`: `default-src 'self'; img-src 'self' data:; connect-src 'self' wss://<host>; frame-ancestors 'none'`. `data:` images are noVNC's JPEG rects and cursor.
 - **View-only filter**, parsed message by message in both directions without decoding pixels:

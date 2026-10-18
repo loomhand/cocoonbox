@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -33,6 +34,8 @@ const (
 	// sessionEvents only watches the box, so it keeps no box up.
 	sessionEvents = "/cocoonbox.agent.v1.Session/Events"
 	sessionScreen = "/cocoonbox.agent.v1.Session/Screen"
+	// maxScreensPerBox bounds the RFB relays one box holds open, owner and share streams together.
+	maxScreensPerBox = 8
 )
 
 var droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, credential.Header, "content-type", "user-agent", "te"}
@@ -56,11 +59,14 @@ type Proxy struct {
 	creds    Credentials
 	codec    Codec
 	pool     *dialer.Pool
+
+	screensMu sync.Mutex
+	screens   map[string]int
 }
 
 // NewProxy builds a Proxy that reaches agents over pool and authenticates to them with box credentials from creds.
 func NewProxy(resolver Resolver, creds Credentials, pool *dialer.Pool) *Proxy {
-	return &Proxy{resolver: resolver, creds: creds, codec: NewCodec(), pool: pool}
+	return &Proxy{resolver: resolver, creds: creds, codec: NewCodec(), pool: pool, screens: map[string]int{}}
 }
 
 // Handle proxies one call; install it with grpc.UnknownServiceHandler.
