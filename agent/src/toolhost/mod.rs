@@ -10,6 +10,7 @@ mod exec;
 mod files;
 pub(crate) mod flows;
 mod ground;
+mod model;
 pub mod rpc;
 mod scope;
 mod script;
@@ -40,6 +41,7 @@ use android::Android;
 use browser::Browser;
 use cua::Cua;
 use desk::Desk;
+use model::Models;
 use rpc::{Call, Output};
 use script::Scripts;
 use shell::Shell;
@@ -60,6 +62,7 @@ struct Host {
     /// The screen tools of an Android box, in place of cua-driver.
     android: Option<Android>,
     desk: Desk,
+    models: Models,
     scripts: Scripts,
     /// The program of each plugin script tool, on a box that runs GUI plans.
     plugins: HashMap<String, PathBuf>,
@@ -89,7 +92,12 @@ impl Host {
             android: (cfg.automation == Automation::Android)
                 .then(|| Android::new(cfg.adb_bin.clone())),
             desk: Desk::default(),
-            scripts: Scripts::new(cfg.script_bin.clone(), PathBuf::from(SCRIPT_DIR)),
+            models: Models::new(cfg.gw_base_url.as_deref()),
+            scripts: Scripts::new(
+                cfg.script_bin.clone(),
+                PathBuf::from(SCRIPT_DIR),
+                cfg.socket.clone(),
+            ),
             plugins: cfg
                 .plugins
                 .iter()
@@ -176,6 +184,7 @@ impl Host {
             "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
             "computer_end" => self.cua.end(call.args).await.map(Output::text),
             t if t.starts_with("desk_") => self.desk.run(&self.cua, t, call.args).await,
+            t if t.starts_with("model_") => self.models.run(t, call.args).await.map(Output::text),
             "script_run" => {
                 self.scripts
                     .run(&self.cua, &self.workspace, call.args)

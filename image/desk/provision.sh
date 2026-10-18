@@ -13,6 +13,8 @@ ENV_FILE=/etc/cocoonbox/desk.env
 AGENT_ENV=/etc/cocoonbox/agent.env
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=image/desk/shuttle.sh
+. "$SRC/shuttle.sh"
 
 log() { printf '[desk] %s\n' "$*"; }
 
@@ -30,6 +32,13 @@ install_cua_driver() {
 	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
 	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
 	systemctl --user -M user@ restart cua-driver.service
+}
+
+install_runtime() {
+	log "desk runtime of shuttle $SHUTTLE_VERSION"
+	local tarball="$SRC/vendor/$SHUTTLE_TARBALL"
+	[ -f "$tarball" ] || { echo "missing $tarball: fetch it with image/desk/shuttle.sh fetch image/desk/vendor" >&2; exit 1; }
+	install_shuttle_runtime "$tarball"
 }
 
 install_rootfs() {
@@ -69,6 +78,7 @@ check() {
 	[ "$(readlink -f /usr/local/bin/node)" = "/opt/node/$NODE_VERSION/bin/node" ]
 	runuser -u user -- /usr/local/bin/node -e "import('$ROOT/lib/desk.mts').then((d) => { if (typeof d.snapshot !== 'function') process.exit(1) })"
 	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
+	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	grep -q '^GW_BASE_URL=http' "$ENV_FILE"
@@ -83,6 +93,7 @@ check() {
 }
 
 install_cua_driver
+install_runtime
 install_rootfs
 write_env
 apt_sources
