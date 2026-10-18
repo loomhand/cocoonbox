@@ -38,7 +38,7 @@ The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) rea
 | `screenshot` | `adb exec-out screencap -p`, 720x1280 PNG |
 | `computer_state` | the UI server's tree as the desk's elements `[index]`: role, name, centre, states |
 | `computer_act` | `adb shell input` taps, swipes and keys; `type` pastes through a control-only scrcpy session as uid 1000, since key injection drops text outside Latin-1; `launch_app` by package |
-| `gui_plan`, `script_run` | `desk.mts` and `gui_plan.mts` unchanged; the toolhost serves `desk_<op>` from Android (`agent/src/toolhost/android_desk.rs`) |
+| `gui_plan`, `script_run` | the pinned shuttle runtime (`desk.mts`, `gui_plan.mts`) as on cbcore; the toolhost serves `desk_<op>` from Android (`agent/src/toolhost/android_desk.rs`) and the `model_*` calls |
 
 On the desk wire a window is an app's activity or dialog titled `<title> - <package>`, and an element id is `package:path:role:name`, since a list reuses its rows as it scrolls and an app recreates its window on a theme change. A press scrolls an off-screen row into view. Only one accessibility client runs at a time, so `uiautomator dump` fails while the UI server runs.
 
