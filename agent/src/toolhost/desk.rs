@@ -33,7 +33,7 @@ const TYPE_SETTLE: Duration = Duration::from_millis(100);
 const TYPE_POLL: Duration = Duration::from_millis(10);
 const TYPE_TAIL: usize = 16;
 const WAIT_MAX: Duration = Duration::from_secs(5);
-const WAIT_CHECK: Duration = Duration::from_millis(100);
+const WAIT_POLL: Duration = Duration::from_millis(10);
 const KEY_ALIASES: [(&str, &str); 47] = [
     ("control", "ctrl"),
     ("primary", "ctrl"),
@@ -559,7 +559,7 @@ where
     let started = Instant::now();
     let (mut listing, mut last) = (Duration::ZERO, Duration::ZERO);
     loop {
-        tokio::time::sleep(last.max(WAIT_CHECK)).await;
+        tokio::time::sleep(last.max(WAIT_POLL)).await;
         let at = Instant::now();
         let windows = read().await?;
         last = at.elapsed();
@@ -827,9 +827,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_wait_answers_on_the_first_list_that_differs() {
+    async fn a_wait_answers_on_the_first_list_that_differs_within_tens_of_ms() {
         let since = json!([{"title": "Untitled - Mousepad"}]);
         let lists = std::cell::Cell::new(0);
+        let started = Instant::now();
         let out = wait_for(since.clone(), Duration::from_secs(4), || {
             lists.set(lists.get() + 1);
             let n = lists.get();
@@ -847,6 +848,11 @@ mod tests {
         assert_eq!(out["changed"], true);
         assert_eq!(out["windows"][0]["title"], "Save As");
         assert_eq!(lists.get(), 3);
+        assert!(
+            started.elapsed() < Duration::from_millis(80),
+            "{:?}",
+            started.elapsed()
+        );
     }
 
     #[tokio::test]
