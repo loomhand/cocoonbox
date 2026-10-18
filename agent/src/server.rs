@@ -27,7 +27,6 @@ use crate::pb::session_server::{Session, SessionServer};
 use crate::pb::state_server::{State, StateServer};
 use crate::pb::{self, Event, fill_credential_request::Secret};
 use crate::runner::Runtime;
-use crate::screen;
 use crate::shuttle::Split;
 use crate::state::{Pause, StateEngine, StateError};
 use crate::toolhost::rpc::{self, Call};
@@ -48,25 +47,23 @@ const CONNECTION_GRACE: Duration = Duration::from_millis(1000);
 const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 const CLOSE_LIMIT: Duration = Duration::from_secs(2);
 
-/// Rejects calls the gate does not admit and puts the call's [`Principal`] in its extensions;
-/// with `owner_only`, a share's call is refused too.
+/// Admits only the owner's calls: a share reaches the box through MCP alone.
 #[derive(Clone)]
 pub struct EdgeAuth {
     gate: Arc<Gate>,
-    owner_only: bool,
 }
 
 impl Interceptor for EdgeAuth {
-    fn call(&mut self, mut req: Request<()>) -> Result<Request<()>, Status> {
-        let md = req.metadata();
-        let verdict = self
-            .gate
-            .check(md.get(CREDENTIAL_HEADER).and_then(|v| v.to_str().ok()));
+    fn call(&mut self, req: Request<()>) -> Result<Request<()>, Status> {
+        let verdict = self.gate.check(
+            req.metadata()
+                .get(CREDENTIAL_HEADER)
+                .and_then(|v| v.to_str().ok()),
+        );
         match verdict {
-            Ok(Principal::Share { .. }) if self.owner_only => Err(share_refused()),
-            Ok(principal) => {
-                req.extensions_mut().insert(principal);
-                Ok(req)
+            Ok(Principal::Owner) => Ok(req),
+            Ok(Principal::Share { .. }) => {
+                Err(Status::permission_denied("a share reaches only MCP"))
             }
             Err(Denied::Unprovisioned(m)) => Err(Status::unavailable(m)),
             Err(Denied::Unauthenticated(m)) => Err(Status::unauthenticated(m)),
@@ -210,14 +207,13 @@ impl SessionSvc {
 #[tonic::async_trait]
 impl Session for SessionSvc {
     type EventsStream = ReceiverStream<Result<Event, Status>>;
-    type ScreenStream = screen::ServerStream;
+    type ScreenStream = ReceiverStream<Result<pb::ScreenServerFrame, Status>>;
     type ExecStream = exec::ServerStream;
 
     async fn hello(
         &self,
-        req: Request<pb::HelloRequest>,
+        _req: Request<pb::HelloRequest>,
     ) -> Result<Response<pb::HelloResponse>, Status> {
-        owner(&req)?;
         let cfg = &self.rt.cfg;
         let mut models = vec![cfg.model_main.clone()];
         if cfg.model_computer != cfg.model_main {
@@ -242,7 +238,6 @@ impl Session for SessionSvc {
         &self,
         req: Request<pb::EventsRequest>,
     ) -> Result<Response<Self::EventsStream>, Status> {
-        owner(&req)?;
         let sub = self
             .rt
             .journal
@@ -289,22 +284,15 @@ impl Session for SessionSvc {
 
     async fn screen(
         &self,
-        req: Request<Streaming<pb::ScreenClientFrame>>,
+        _req: Request<Streaming<pb::ScreenClientFrame>>,
     ) -> Result<Response<Self::ScreenStream>, Status> {
-        screen::relay(
-            &self.rt.cfg.vnc_addr,
-            req.into_inner(),
-            self.rt.stop.clone(),
-        )
-        .await
-        .map(Response::new)
+        Err(Status::unimplemented("the edge serves Session.Screen"))
     }
 
     async fn active_origin(
         &self,
-        req: Request<pb::ActiveOriginRequest>,
+        _req: Request<pb::ActiveOriginRequest>,
     ) -> Result<Response<pb::ActiveOriginResponse>, Status> {
-        owner(&req)?;
         let origin = self.toolhost("active_origin", json!({})).await?;
         Ok(Response::new(pb::ActiveOriginResponse { origin }))
     }
@@ -313,7 +301,6 @@ impl Session for SessionSvc {
         &self,
         req: Request<pb::FillCredentialRequest>,
     ) -> Result<Response<pb::FillCredentialResponse>, Status> {
-        owner(&req)?;
         let mut req = req.into_inner();
         let mut args = json!({
             "origin": req.origin,
@@ -345,7 +332,6 @@ impl Session for SessionSvc {
         &self,
         req: Request<Streaming<pb::ExecClientFrame>>,
     ) -> Result<Response<Self::ExecStream>, Status> {
-        owner(&req)?;
         exec::relay(&self.tools, req.into_inner(), self.rt.stop.clone())
             .await
             .map(Response::new)
@@ -463,11 +449,6 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     ));
     let auth = EdgeAuth {
         gate: Arc::clone(&gate),
-        owner_only: true,
-    };
-    let screen_auth = EdgeAuth {
-        gate: Arc::clone(&gate),
-        owner_only: false,
     };
     let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
     mcp.spawn_reaper();
@@ -506,7 +487,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     })
     .max_decoding_message_size(MAX_STATE_MESSAGE_BYTES);
     let routes = Routes::new(InterceptedService::new(agents, auth.clone()))
-        .add_service(InterceptedService::new(session, screen_auth))
+        .add_service(InterceptedService::new(session, auth.clone()))
         .add_service(InterceptedService::new(state, auth))
         .into_axum_router()
         .merge(Arc::clone(&mcp).router());
@@ -536,18 +517,6 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
 
 fn incoming(listener: TcpListener) -> TcpIncoming {
     TcpIncoming::from(listener).with_nodelay(Some(true))
-}
-
-/// Refuses `req` unless the owner sent it: a share reaches only `Session.Screen` and MCP.
-fn owner<T>(req: &Request<T>) -> Result<(), Status> {
-    match req.extensions().get::<Principal>() {
-        Some(Principal::Owner) => Ok(()),
-        _ => Err(share_refused()),
-    }
-}
-
-fn share_refused() -> Status {
-    Status::permission_denied("a share reaches only the screen and MCP")
 }
 
 /// Resolves on the first SIGTERM or SIGINT; on Windows, on Ctrl-C or the service stop.
