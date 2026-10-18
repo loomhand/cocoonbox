@@ -67,7 +67,7 @@ impl Syncer {
             tools,
             kick: Notify::new(),
             gate: tokio::sync::Mutex::new(()),
-            stale_index: AtomicBool::new(false),
+            stale_index: AtomicBool::new(true),
             refused: Mutex::default(),
         })
     }
@@ -532,15 +532,23 @@ mod tests {
         door.put("save.json", "{\"v\":1}");
         let b = Box_::new(&door);
         b.tools.stall_index.store(true, Ordering::SeqCst);
-        assert!(
-            tokio::time::timeout(Duration::from_millis(500), b.sync.pull())
-                .await
-                .is_err()
-        );
+        tokio::select! {
+            () = b.sync.pull() => panic!("the pull did not stall in flows_index"),
+            () = b.tools.index_started.notified() => {}
+        }
         assert_eq!(b.file("save.json").as_deref(), Some("{\"v\":1}"));
         assert_eq!(b.indexed(), 0);
         b.sync.pull().await;
         assert_eq!(b.indexed(), 1);
+        b.sync.pull().await;
+        assert_eq!(b.indexed(), 1);
+    }
+
+    #[tokio::test]
+    async fn the_first_pull_after_a_start_reindexes_once_with_nothing_to_write() {
+        let door = Door::start().await;
+        let b = Box_::new(&door);
+        b.sync.pull().await;
         b.sync.pull().await;
         assert_eq!(b.indexed(), 1);
     }
@@ -576,6 +584,7 @@ mod tests {
                 indexed: AtomicUsize::new(0),
                 stall_write: AtomicBool::new(false),
                 stall_index: AtomicBool::new(false),
+                index_started: Notify::new(),
                 writes: tokio::sync::watch::channel(0).0,
             });
             tokio::spawn(toolhost::flows::watch(ws.clone(), tools.writes.clone()));
@@ -607,6 +616,7 @@ mod tests {
         indexed: AtomicUsize,
         stall_write: AtomicBool,
         stall_index: AtomicBool,
+        index_started: Notify,
         writes: tokio::sync::watch::Sender<u64>,
     }
 
@@ -628,6 +638,7 @@ mod tests {
                 "flows_mark" => toolhost::flows::mark(ws, args).await,
                 "flows_wait" => toolhost::flows::wait(&self.writes, args).await,
                 "flows_index" => {
+                    self.index_started.notify_one();
                     if self.stall_index.swap(false, Ordering::SeqCst) {
                         tokio::time::sleep(PULL_BUDGET * 2).await;
                     }

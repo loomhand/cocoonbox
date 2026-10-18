@@ -186,6 +186,7 @@ impl Scripts {
     /// Rebuilds the flow index with the plan executor after the library sync changed flows.
     pub async fn reindex(&self, workspace: &Path) -> Result<Output, String> {
         let id = uuid::Uuid::new_v4().simple().to_string();
+        let _index = super::flows::INDEX_LOCK.lock().await;
         let report = self
             .run_script(
                 &self.bin,
