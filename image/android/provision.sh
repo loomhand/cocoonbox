@@ -133,8 +133,12 @@ setup_desk() {
 		rm -rf "$tmp"
 	fi
 	for b in node npm npx; do ln -sfn "$dir/bin/$b" "/usr/local/bin/$b"; done
-	install -D -m 0644 "$DESK/opt/desk/lib/desk.mts" /opt/desk/lib/desk.mts
-	install -D -m 0644 "$DESK/opt/desk/lib/gui_plan.mts" /opt/desk/lib/gui_plan.mts
+	# shellcheck source=image/desk/shuttle.sh
+	. "$DESK/../shuttle.sh"
+	tmp=$(mktemp -d)
+	curl -fsSL "$SHUTTLE_URL" -o "$tmp/$SHUTTLE_TARBALL"
+	install_shuttle_runtime "$tmp/$SHUTTLE_TARBALL"
+	rm -rf "$tmp"
 	install -D -m 0755 "$DESK/usr/local/bin/desk" /usr/local/bin/desk
 	install -d /etc/cocoonbox
 	printf 'GW_BASE_URL=%s\n' "$GW_BASE_URL" > /etc/cocoonbox/desk.env

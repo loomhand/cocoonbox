@@ -13,7 +13,7 @@ use x11rb::protocol::xproto::{AtomEnum, ClientMessageEvent, ConnectionExt as _, 
 
 use desk_core::args::{
     ActArgs, AtArgs, ClickArgs, FindArgs, IdArgs, KeyArgs, LaunchArgs, ReadArgs, ShotArgs,
-    SnapArgs, TypeArgs, WindowArgs, parse,
+    SnapArgs, TypeArgs, WaitArgs, WindowArgs, parse,
 };
 use desk_core::press::{MENU_POLL, MENU_POLLS, SELECTED_ROLES};
 use desk_core::text::{MAX_FOUND, NAME_CHARS, Named, cli_args, matches, ms, quote};
@@ -32,6 +32,8 @@ const READ_CHARS: i32 = 64 << 10;
 const TYPE_SETTLE: Duration = Duration::from_millis(100);
 const TYPE_POLL: Duration = Duration::from_millis(10);
 const TYPE_TAIL: usize = 16;
+const WAIT_MAX: Duration = Duration::from_secs(5);
+const WAIT_CHECK: Duration = Duration::from_millis(100);
 const KEY_ALIASES: [(&str, &str); 47] = [
     ("control", "ctrl"),
     ("primary", "ctrl"),
@@ -93,6 +95,15 @@ impl Desk {
     pub async fn run(&self, cua: &Cua, tool: &str, args: Value) -> Result<Output, String> {
         let text = match tool {
             "desk_windows" => self.windows(cua).await?,
+            "desk_wait" => {
+                let a: WaitArgs = parse(args)?;
+                wait_for(a.since, Duration::from_millis(a.timeout_ms), || async {
+                    serde_json::from_str(&self.windows(cua).await?)
+                        .map_err(|e| format!("decode windows: {e}"))
+                })
+                .await?
+                .to_string()
+            }
             "desk_snapshot" => self.snapshot(parse(args)?).await?,
             "desk_find" => self.find(parse(args)?).await?,
             "desk_read" => self.read(parse(args)?).await?,
@@ -125,8 +136,15 @@ impl Desk {
             }
             "desk_launch" => {
                 let app = parse::<LaunchArgs>(args)?.app;
-                let v = cua.desk_call("launch_app", json!({"name": app})).await?;
-                json!({"ok": true, "launched": text_of(&v)}).to_string()
+                match cua.desk_call("launch_app", json!({"name": app})).await {
+                    Ok(v) => json!({"ok": true, "launched": text_of(&v)}).to_string(),
+                    Err(e) if spawnable(&app) => {
+                        spawn_app(&app).map_err(|s| format!("{e}; {s}"))?;
+                        json!({"ok": true, "launched": format!("started {app} directly")})
+                            .to_string()
+                    }
+                    Err(e) => return Err(e),
+                }
             }
             "desk_shot" => return shot(cua, parse(args)?).await,
             "desk_screen" => {
@@ -535,6 +553,53 @@ async fn focus(cua: &Cua, a: &WindowArgs) -> Result<String, String> {
     Ok(json!({"ok": true, "title": titled(w), "pid": w["pid"]}).to_string())
 }
 
+/// Lists the windows until they differ from `since` or `limit` of waiting passes, listing time excluded, 5 s at most.
+pub(super) async fn wait_for<F, Fut>(
+    since: Value,
+    limit: Duration,
+    mut read: F,
+) -> Result<Value, String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Value, String>>,
+{
+    let started = Instant::now();
+    let (mut listing, mut last) = (Duration::ZERO, Duration::ZERO);
+    loop {
+        tokio::time::sleep(last.max(WAIT_CHECK)).await;
+        let at = Instant::now();
+        let windows = read().await?;
+        last = at.elapsed();
+        listing += last;
+        let t = started.elapsed();
+        let same = windows == since;
+        if !same || t >= WAIT_MAX || t.saturating_sub(listing) >= limit {
+            return Ok(json!({"changed": !same, "windows": windows}));
+        }
+    }
+}
+
+fn spawnable(app: &str) -> bool {
+    !app.is_empty()
+        && app
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
+fn spawn_app(app: &str) -> Result<(), String> {
+    let mut child = tokio::process::Command::new(app)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map_err(|e| format!("no app \"{app}\": {e}"))?;
+    tokio::spawn(async move {
+        let _ = child.wait().await;
+    });
+    Ok(())
+}
+
 /// Asks the window manager to close the window titled `window`, as its close button does.
 fn close(a: &WindowArgs) -> Result<String, String> {
     let (conn, n) = x11rb::connect(None).map_err(|e| format!("connect X: {e}"))?;
@@ -787,6 +852,83 @@ mod tests {
             states: if active { 1 << 1 } else { 0 },
             pid: Some(pid),
         }
+    }
+
+    #[tokio::test]
+    async fn a_wait_answers_on_the_first_list_that_differs() {
+        let since = json!([{"title": "Untitled - Mousepad"}]);
+        let lists = std::cell::Cell::new(0);
+        let out = wait_for(since.clone(), Duration::from_secs(4), || {
+            lists.set(lists.get() + 1);
+            let n = lists.get();
+            let since = since.clone();
+            async move {
+                Ok(if n < 3 {
+                    since
+                } else {
+                    json!([{"title": "Save As"}, {"title": "Untitled - Mousepad"}])
+                })
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["windows"][0]["title"], "Save As");
+        assert_eq!(lists.get(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_wait_with_no_change_ends_at_its_timeout_with_the_same_list() {
+        let since = json!([{"title": "Desktop"}]);
+        let started = Instant::now();
+        let out = wait_for(since.clone(), Duration::from_millis(300), || {
+            let since = since.clone();
+            async move { Ok(since) }
+        })
+        .await
+        .unwrap();
+        let t = started.elapsed();
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["windows"], since);
+        assert!(
+            t >= Duration::from_millis(300) && t < Duration::from_millis(600),
+            "{t:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_lists_do_not_count_against_the_timeout_but_the_cap_holds() {
+        let since = json!([]);
+        let started = Instant::now();
+        let out = wait_for(since.clone(), Duration::from_millis(200), || {
+            let since = since.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(400)).await;
+                Ok(since)
+            }
+        })
+        .await
+        .unwrap();
+        let t = started.elapsed();
+        assert_eq!(out["changed"], false);
+        assert!(t >= Duration::from_millis(1000), "{t:?}");
+        assert!(t < WAIT_MAX + Duration::from_secs(1), "{t:?}");
+    }
+
+    #[test]
+    fn only_a_bare_command_name_is_started_directly() {
+        assert!(spawnable("gnome-calculator"));
+        assert!(spawnable("org.gnome.Calculator"));
+        assert!(!spawnable(""));
+        assert!(!spawnable("libreoffice --calc"));
+        assert!(!spawnable("/usr/bin/xterm"));
+    }
+
+    #[tokio::test]
+    async fn a_direct_start_names_a_missing_app_and_reaps_a_present_one() {
+        assert!(spawn_app("true").is_ok());
+        let e = spawn_app("no-such-app-m2").unwrap_err();
+        assert!(e.starts_with("no app \"no-such-app-m2\""), "{e}");
     }
 
     #[test]

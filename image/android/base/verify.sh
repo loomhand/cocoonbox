@@ -8,7 +8,7 @@ modinfo -k "$kver" btrfs >/dev/null
 test -s /usr/local/share/cocoonbox/cb-ui.jar
 ldd /usr/local/bin/scrcpy-rfb | grep -q 'not found' && exit 1
 command -v adb dnscrypt-proxy redsocks mkfs.btrfs node git >/dev/null
-test -f /opt/desk/lib/gui_plan.mts
+for f in desk gui_plan png; do test -s /opt/desk/lib/$f.mts; done
 test -f /opt/android/AGENTS.md
 test -d /var/lib/redroid-data && test -z "$(ls -A /var/lib/redroid-data)"
 cfgs=(/var/lib/docker/containers/*/config.v2.json)

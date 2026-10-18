@@ -250,6 +250,7 @@ impl Harness {
             automation,
             plugins: plugins.clone(),
             adb_bin,
+            gw_base_url: None,
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -3546,7 +3547,7 @@ async fn mcp_surface_of_a_plain_box_matches_the_cbdesk_agent_byte_for_byte() {
         assert_eq!(
             String::from_utf8_lossy(&body),
             String::from_utf8_lossy(&want),
-            "{file} differs from agent 7c3c59a"
+            "{file} differs from the golden surface"
         );
     }
 }
