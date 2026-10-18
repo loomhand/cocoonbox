@@ -50,6 +50,7 @@ install_rootfs() {
 		esac
 	done
 	sed -i -e "/^<!-- routing -->\$/{r $SRC/routing.md" -e 'd}' "$ROOT/AGENTS.md"
+	systemctl daemon-reload
 }
 
 # the gw endpoint of the agent's contract, for the plan executor and scripts that run as user
@@ -79,6 +80,7 @@ check() {
 	runuser -u user -- /usr/local/bin/node -e "import('$ROOT/lib/desk.mts').then((d) => { if (typeof d.snapshot !== 'function') process.exit(1) })"
 	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
+	for u in cocoonbox-toolhost cocoonbox-session; do systemctl show -p Environment "$u" | grep -q 'TOOLHOST_SOCKET=/run/cocoonbox/toolhost.sock'; done
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	grep -q '^GW_BASE_URL=http' "$ENV_FILE"
