@@ -136,15 +136,8 @@ impl Desk {
             }
             "desk_launch" => {
                 let app = parse::<LaunchArgs>(args)?.app;
-                match cua.desk_call("launch_app", json!({"name": app})).await {
-                    Ok(v) => json!({"ok": true, "launched": text_of(&v)}).to_string(),
-                    Err(e) if spawnable(&app) => {
-                        spawn_app(&app).map_err(|s| format!("{e}; {s}"))?;
-                        json!({"ok": true, "launched": format!("started {app} directly")})
-                            .to_string()
-                    }
-                    Err(e) => return Err(e),
-                }
+                let v = cua.desk_call("launch_app", json!({"name": app})).await?;
+                json!({"ok": true, "launched": text_of(&v)}).to_string()
             }
             "desk_shot" => return shot(cua, parse(args)?).await,
             "desk_screen" => {
@@ -579,27 +572,6 @@ where
     }
 }
 
-fn spawnable(app: &str) -> bool {
-    !app.is_empty()
-        && app
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
-}
-
-fn spawn_app(app: &str) -> Result<(), String> {
-    let mut child = tokio::process::Command::new(app)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0)
-        .spawn()
-        .map_err(|e| format!("no app \"{app}\": {e}"))?;
-    tokio::spawn(async move {
-        let _ = child.wait().await;
-    });
-    Ok(())
-}
-
 /// Asks the window manager to close the window titled `window`, as its close button does.
 fn close(a: &WindowArgs) -> Result<String, String> {
     let (conn, n) = x11rb::connect(None).map_err(|e| format!("connect X: {e}"))?;
@@ -913,22 +885,6 @@ mod tests {
         assert_eq!(out["changed"], false);
         assert!(t >= Duration::from_millis(1000), "{t:?}");
         assert!(t < WAIT_MAX + Duration::from_secs(1), "{t:?}");
-    }
-
-    #[test]
-    fn only_a_bare_command_name_is_started_directly() {
-        assert!(spawnable("gnome-calculator"));
-        assert!(spawnable("org.gnome.Calculator"));
-        assert!(!spawnable(""));
-        assert!(!spawnable("libreoffice --calc"));
-        assert!(!spawnable("/usr/bin/xterm"));
-    }
-
-    #[tokio::test]
-    async fn a_direct_start_names_a_missing_app_and_reaps_a_present_one() {
-        assert!(spawn_app("true").is_ok());
-        let e = spawn_app("no-such-app-m2").unwrap_err();
-        assert!(e.starts_with("no app \"no-such-app-m2\""), "{e}");
     }
 
     #[test]
