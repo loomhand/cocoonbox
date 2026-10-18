@@ -556,11 +556,11 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<Value, String>>,
 {
-    let started = Instant::now();
+    let started = tokio::time::Instant::now();
     let (mut listing, mut last) = (Duration::ZERO, Duration::ZERO);
     loop {
         tokio::time::sleep(last.max(WAIT_POLL)).await;
-        let at = Instant::now();
+        let at = tokio::time::Instant::now();
         let windows = read().await?;
         last = at.elapsed();
         listing += last;
@@ -826,11 +826,11 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_wait_answers_on_the_first_list_that_differs_within_tens_of_ms() {
         let since = json!([{"title": "Untitled - Mousepad"}]);
         let lists = std::cell::Cell::new(0);
-        let started = Instant::now();
+        let started = tokio::time::Instant::now();
         let out = wait_for(since.clone(), Duration::from_secs(4), || {
             lists.set(lists.get() + 1);
             let n = lists.get();
