@@ -28,7 +28,7 @@ public enum ToolCatalog {
     ]
 
     public static var boxFallback: [[String: Any]] {
-        boxNames.map { ["name": $0, "description": "A tool on your cocoonbox cloud desktop. Its full schema loads once the box has run.", "inputSchema": ["type": "object"]] }
+        boxNames.filter { !$0.hasPrefix("browser_") }.map { ["name": $0, "description": "A tool on your cocoonbox. Its full schema loads once the box has run.", "inputSchema": ["type": "object"]] }
     }
 
     public static func loadBox(from file: URL) -> [[String: Any]]? {

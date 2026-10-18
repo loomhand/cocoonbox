@@ -8,8 +8,8 @@ import Foundation
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
-    static let version = "0.15.0"
-    static let summary = "Drive your cocoonbox cloud desktop: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
+    static let version = "0.16.0"
+    static let summary = "Drive your cocoonbox, a cloud desktop or Android phone: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
     public static func files(command: String) -> [String: String] {
@@ -65,15 +65,15 @@ public enum Plugin {
     static let skill = """
     ---
     name: cocoonbox
-    description: Work on the user's cocoonbox cloud desktop (a Linux desktop in the cloud, not this Mac) through the cocoonbox MCP tools. Use when the user asks for something on their box, their cloud desktop or cocoonbox.
+    description: Work on the user's cocoonbox (a Linux desktop or an Android phone in the cloud, not this Mac) through the cocoonbox MCP tools. Use when the user asks for something on their box, their cloud desktop, their cloud phone or cocoonbox.
     ---
 
-    The cocoonbox tools act on the user's cocoonbox cloud desktop, not on this Mac. Local files are not the target.
+    The cocoonbox tools act on the user's cocoonbox, a cloud desktop or Android phone, not on this Mac. Local files are not the target.
 
     - Check `box_status` first when the state matters. A box tool wakes a hibernated box by itself; `box_ensure` wakes it on purpose.
     - The user may have several boxes. `box_list` lists them; every other tool takes `box`, a box name or id, and acts on the session's default box without it. Only a limited number of boxes run at once: hibernate one before waking another when a tool says so.
     - `box_create` adds a box. `box_delete` removes one and needs `box` and `confirm: true`, so ask the user first.
-    - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser, and `computer_state`, `computer_act` and `screenshot` for its desktop.
+    - Use `shell`, `read_file`, `write_file`, `edit_file` and `list_dir` for files and commands on the box, the `browser_*` tools for its browser where the box has them, and `computer_state`, `computer_act` and `screenshot` for its screen. On an Android box, `shell` runs on the Ubuntu host with `adb` connected to the phone.
     - After a GUI action, take a `screenshot` to confirm it worked.
     - Call `box_save` before the user leaves for a long time. It closes the box's browser during the save.
     - `box_upgrade` restarts running programs and keeps files, logins and agent history; ask the user first, then call it with `confirm: true`.
