@@ -23,7 +23,7 @@ The redroid image in the docker data decides what the box ships; a public base c
 
 ## Boot
 
-The golden holds the Ubuntu VM only; docker stays off. When the api writes `/run/cocoonbox-identity/identity`, `cocoonbox-android.path` starts `android-up`: it starts docker, the DNS and TCP redirect, then `cocoonbox-redroid.service`, which runs the container and restarts it when Android fails; Android cold-boots with a fresh `/data`, so no two boxes share an Android identity. `android-up` then sets Android's global proxy and starts the screen: scrcpy-rfb on 127.0.0.1:5900, 720x1280, no password, which the agent's Screen relay serves as is. adb listens on 127.0.0.1:5555.
+The golden holds the Ubuntu VM only; docker stays off. When the api writes `/run/cocoonbox-identity/identity`, `cocoonbox-android.path` starts `android-up`: it starts docker, the DNS and TCP redirect, then `cocoonbox-redroid.service`, which runs the container and restarts it when Android fails; Android cold-boots with a fresh `/data`, so no two boxes share an Android identity. `android-up` then sets Android's global proxy and starts the screen: scrcpy-rfb on 127.0.0.1:5900, 720x1280, no password, which the agent's Screen relay serves as is. The capture orientation is locked (`capture_orientation=@0`): scrcpy-rfb cannot change its size, so a rotated display shows sideways in the same 720x1280 frame instead of freezing the view, and touches still land where they are drawn. adb listens on 127.0.0.1:5555.
 
 ## Network
 

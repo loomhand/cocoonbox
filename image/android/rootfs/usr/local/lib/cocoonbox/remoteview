@@ -33,7 +33,7 @@ adb -s "$S" push /usr/local/share/scrcpy/su1000 "$SU" >/dev/null
 adb -s "$S" forward "tcp:$PORT" "localabstract:scrcpy_$SCID"
 adb -s "$S" shell CLASSPATH="$JAR" "$SU" app_process / com.genymobile.scrcpy.Server 4.1 \
 	"scid=$SCID" log_level=info tunnel_forward=true audio=false send_device_meta=false send_dummy_byte=false \
-	video_codec=h264 video_bit_rate=8000000 max_fps=60 'video_codec_options=profile=1,i-frame-interval=1' cleanup=false &
+	video_codec=h264 video_bit_rate=8000000 max_fps=60 'video_codec_options=profile=1,i-frame-interval=1' capture_orientation=@0 cleanup=false &
 server_pid=$!
 until adb -s "$S" shell cat /proc/net/unix 2>/dev/null | grep -q "@scrcpy_$SCID"; do
 	kill -0 "$server_pid"
