@@ -22,7 +22,7 @@ use cocoonbox_agent::pb::agents_client::AgentsClient;
 use cocoonbox_agent::pb::session_client::SessionClient;
 use cocoonbox_agent::pb::state_client::StateClient;
 use cocoonbox_agent::pb::transcript_entry::Body;
-use cocoonbox_agent::pb::{self, exec_client_frame, exec_server_frame, screen_client_frame};
+use cocoonbox_agent::pb::{self, exec_client_frame, exec_server_frame};
 
 const USAGE: &str =
     "usage: boxgate <identity|cred|hello|origin|fill|exec|snap|store|plan|upload|restore|mcp> [args]
@@ -36,7 +36,7 @@ const USAGE: &str =
                                          call Session.FillCredential
   exec [--tty RxC] [--resize-after MS --resize RxC] [--int-after MS] -- COMMAND
                                          run COMMAND through Session.Exec; stdin is forwarded
-  snap --out PNG (--screen | --tcp ADDR) [--settle MS]
+  snap --out PNG --tcp ADDR [--settle MS]
                                          read one full RFB frame plus the updates of MS more, and write it as a PNG
   store --listen ADDR --dir DIR          serve PUT and GET of DIR/<name> for presigned URLs
   plan [--quiesced] --out FILE           call State.Plan and save the response
@@ -252,16 +252,11 @@ async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
                 .transpose()
                 .map_err(|e| format!("--settle: {e}"))?
                 .map_or(Duration::ZERO, Duration::from_millis);
-            let (w, h, name) = if args.has("--screen") {
-                let (mut rd, mut wr) = screen_pipe(&edge, &serve).await?;
-                snap(&mut rd, &mut wr, &out, settle).await?
-            } else {
-                let tcp = TcpStream::connect(args.need("--tcp")?)
-                    .await
-                    .map_err(|e| format!("connect: {e}"))?;
-                let (mut rd, mut wr) = tcp.into_split();
-                snap(&mut rd, &mut wr, &out, settle).await?
-            };
+            let tcp = TcpStream::connect(args.need("--tcp")?)
+                .await
+                .map_err(|e| format!("connect: {e}"))?;
+            let (mut rd, mut wr) = tcp.into_split();
+            let (w, h, name) = snap(&mut rd, &mut wr, &out, settle).await?;
             println!(
                 "{}",
                 json!({"width": w, "height": h, "name": name, "png": out})
@@ -427,51 +422,6 @@ fn window(s: &str) -> Result<pb::ExecWindow, String> {
         rows: rows.parse().map_err(|e| format!("rows {rows}: {e}"))?,
         cols: cols.parse().map_err(|e| format!("cols {cols}: {e}"))?,
     })
-}
-
-/// Bridges Session.Screen to a pair of local byte pipes.
-async fn screen_pipe(
-    edge: &Edge,
-    serve: &str,
-) -> Result<(tokio::io::DuplexStream, tokio::io::DuplexStream), String> {
-    let (tx, rx) = mpsc::channel(16);
-    tx.send(pb::ScreenClientFrame {
-        body: Some(screen_client_frame::Body::Open(pb::ScreenOpen {})),
-    })
-    .await
-    .map_err(|e| format!("send open: {e}"))?;
-    let mut session = SessionClient::new(channel(serve).await?);
-    let mut inbound = session
-        .screen(edge.signed(ReceiverStream::new(rx))?)
-        .await
-        .map_err(|e| format!("screen: {e}"))?
-        .into_inner();
-    let (mut down_w, down_r) = tokio::io::duplex(1 << 20);
-    let (up_w, mut up_r) = tokio::io::duplex(1 << 20);
-    // detached pumps: each ends when its side closes
-    tokio::spawn(async move {
-        while let Some(Ok(f)) = inbound.next().await {
-            if down_w.write_all(&f.data).await.is_err() {
-                break;
-            }
-        }
-    });
-    tokio::spawn(async move {
-        let mut buf = vec![0; EXEC_CHUNK];
-        while let Ok(n) = up_r.read(&mut buf).await {
-            if n == 0
-                || tx
-                    .send(pb::ScreenClientFrame {
-                        body: Some(screen_client_frame::Body::Data(buf[..n].to_vec().into())),
-                    })
-                    .await
-                    .is_err()
-            {
-                break;
-            }
-        }
-    });
-    Ok((down_r, up_w))
 }
 
 /// An RFB frame as RGBA, with the pixels the server has sent.
