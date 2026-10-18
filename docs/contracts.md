@@ -38,7 +38,7 @@ CONNECT_URL=http://10.203.0.1:18091/mcp   <the Connect box door, through the san
 
 ## Toolhost wire (agent ↔ toolhost, desk API ↔ desk host)
 
-The agent's toolhost (`/run/cocoonbox/toolhost.sock`), the desk API (`/opt/desk/lib/desk.mts`, `desk`) and the desk host of macOS and Windows (`deskhost/`: `~/Library/Caches/cocoonbox/desk.sock`, 0600, or the named pipe `\\.\pipe\cocoonbox-desk`; `TOOLHOST_SOCKET` overrides the endpoint for the desk API and the desk host) speak one wire, implemented once in `desk-core/` (`desk_core::wire`), which both hosts also take the desk call arguments and the window and name matching from:
+The agent's toolhost (`/run/cocoonbox/toolhost.sock`), the desk API (`/opt/desk/lib/desk.mts`, `desk`) and the desk host of macOS and Windows (`deskhost/`: `~/Library/Caches/cocoonbox/desk.sock`, 0600, or the named pipe `\\.\pipe\cocoonbox-desk`; `TOOLHOST_SOCKET` overrides the endpoint for the desk API and the desk host) speak one wire, implemented once in shuttle's `shuttle-desk-core` (`desk_core::wire`, a git dependency pinned to a shuttle tag), which both hosts also take the desk call arguments and the window and name matching from:
 
 - **One call per connection.** The client writes one frame and reads one frame; closing the connection cancels the call.
 - **Frame:** a big-endian u32 length, then that many bytes of JSON. A frame over 64 MiB is refused.

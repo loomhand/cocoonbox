@@ -264,7 +264,6 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bytes",
- "cocoonbox-desk-core",
  "ed25519-dalek",
  "fastcdc",
  "futures-util",
@@ -280,6 +279,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "shuttle-desk-core",
  "tar",
  "tempfile",
  "tokio",
@@ -294,16 +294,6 @@ dependencies = [
  "zbus",
  "zeroize",
  "zstd",
-]
-
-[[package]]
-name = "cocoonbox-desk-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "tokio",
- "zeroize",
 ]
 
 [[package]]
@@ -1864,6 +1854,17 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "shuttle-desk-core"
+version = "0.1.1"
+source = "git+https://github.com/loomhand/shuttle?tag=v0.1.1#0a0b3f96b4563135931b4c29f2e675387d3b81f8"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tokio",
+ "zeroize",
+]
 
 [[package]]
 name = "signal-hook-registry"
