@@ -257,6 +257,56 @@ func TestExecAnswersAfterTheClientHalfCloses(t *testing.T) {
 	}
 }
 
+func TestScreenRelaysPerBoxAreCapped(t *testing.T) {
+	env := newProxyEnv(t)
+	open := func(ctx context.Context) (agentv1.Session_ScreenClient, error) {
+		stream, err := env.client.Screen(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := stream.Send(&agentv1.ScreenClientFrame{Body: &agentv1.ScreenClientFrame_Open{Open: &agentv1.ScreenOpen{}}}); err != nil {
+			return nil, err
+		}
+		if err := stream.Send(screenData([]byte("x"))); err != nil {
+			return nil, err
+		}
+		_, err = stream.Recv()
+		return stream, err
+	}
+	cancels := make([]context.CancelFunc, 0, maxScreensPerBox)
+	for i := range maxScreensPerBox {
+		ctx, cancel := context.WithCancel(env.aliceCtx(t))
+		t.Cleanup(cancel)
+		cancels = append(cancels, cancel)
+		if _, err := open(ctx); err != nil {
+			t.Fatalf("screen %d: %v", i, err)
+		}
+	}
+	if _, err := open(env.aliceCtx(t)); status.Code(err) != codes.ResourceExhausted {
+		t.Fatalf("screen %d: %v, want ResourceExhausted", maxScreensPerBox+1, err)
+	}
+	grant := auth.Grant{Share: auth.Share{ID: "sh-1", Owner: "alice", Box: boxes.BoxID("alice"), Cut: make(chan struct{})}}
+	viewer, _ := net.Pipe()
+	if err := env.proxy.Screen(t.Context(), grant, viewer); status.Code(err) != codes.ResourceExhausted {
+		t.Errorf("share viewer at the cap: %v, want ResourceExhausted", err)
+	}
+	if n := env.screen.accepted.Load(); n != maxScreensPerBox {
+		t.Errorf("the screen accepted %d connections, want %d", n, maxScreensPerBox)
+	}
+	cancels[0]()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := open(env.aliceCtx(t))
+		if err == nil {
+			break
+		}
+		if status.Code(err) != codes.ResourceExhausted || time.Now().After(deadline) {
+			t.Fatalf("screen after one closed: %v", err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
 func TestStreamPropagatesStatus(t *testing.T) {
 	env := newProxyEnv(t)
 	stream, err := env.client.Exec(env.aliceCtx(t))

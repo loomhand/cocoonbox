@@ -41,6 +41,11 @@ func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) 
 		return err
 	}
 	defer p.resolver.Reached(g.Box)()
+	release, err := p.holdScreen(g.Box)
+	if err != nil {
+		return err
+	}
+	defer release()
 	vnc, err := dialScreen(ctx, g.Box, ep)
 	if err != nil {
 		return err
@@ -98,6 +103,11 @@ func (p *Proxy) relayScreen(ctx context.Context, down grpc.ServerStream, box str
 	if open.GetOpen() == nil {
 		return status.Error(codes.InvalidArgument, "the first Screen frame must be open")
 	}
+	release, err := p.holdScreen(box)
+	if err != nil {
+		return err
+	}
+	defer release()
 	vnc, err := dialScreen(ctx, box, ep)
 	if err != nil {
 		return err
@@ -116,6 +126,23 @@ func (p *Proxy) relayScreen(ctx context.Context, down grpc.ServerStream, box str
 			return screenEnd(ctx, err)
 		}
 	}
+}
+
+// holdScreen takes one of the box's screen relay slots and returns its release.
+func (p *Proxy) holdScreen(box string) (func(), error) {
+	p.screensMu.Lock()
+	defer p.screensMu.Unlock()
+	if p.screens[box] >= maxScreensPerBox {
+		return nil, status.Errorf(codes.ResourceExhausted, "box %s has %d screens open", box, maxScreensPerBox)
+	}
+	p.screens[box]++
+	return func() {
+		p.screensMu.Lock()
+		defer p.screensMu.Unlock()
+		if p.screens[box]--; p.screens[box] == 0 {
+			delete(p.screens, box)
+		}
+	}, nil
 }
 
 // dialScreen connects to the box's RFB server; the connection closes when ctx ends.
