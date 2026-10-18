@@ -27,11 +27,19 @@ func TestTwoProcessesCommitHeadsInTurnAndRefuseAStaleOne(t *testing.T) {
 	})
 	b.agent.chunks = hexIDs("c1", "c2")
 	b.save(t)
-	clustertest.WaitFor(t, "a sees b's head and no operation", func() bool {
+	clustertest.WaitFor(t, "a sees b's head", func() bool {
 		h, err := a.svc.state.head(t.Context(), p)
-		return err == nil && h.Latest == snapshotID(2) && a.svc.ops.activeFor(aliceBox) == nil
+		return err == nil && h.Latest == snapshotID(2)
 	})
-	a.save(t)
+	var op *controlv1.Operation
+	clustertest.WaitFor(t, "a takes b's save as ended", func() bool {
+		var err error
+		op, err = a.svc.SaveState(a.ctx, &controlv1.BoxRef{BoxId: aliceBox})
+		return err == nil
+	})
+	if events := watch(t, a.svc, a.ctx, op.GetId(), ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("a's save ended with %v", events[len(events)-1])
+	}
 	if parent := a.agent.lastPlan().GetParent(); parent != snapshotID(2) {
 		t.Errorf("a planned on %q, want b's snapshot", parent)
 	}
