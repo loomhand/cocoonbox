@@ -2,7 +2,9 @@ package boxes
 
 import (
 	"context"
+	"encoding/json/v2"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -195,6 +197,39 @@ func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T
 	})
 	if restore := e.agent.lastRestore(); len(restore.reqs) == 0 || restore.reqs[0].GetManifest().GetChunkId() != snapshotID(2) {
 		t.Errorf("b restored %v, want the park's snapshot", restore.reqs)
+	}
+}
+
+func TestAStaleRowNeverReopensOrRewindsAnotherProcesssOperation(t *testing.T) {
+	_, b, _ := newSharedPair(t, t.Context())
+	events := func(n int) []byte {
+		recs := make([]eventRecord, n)
+		for i := range recs {
+			recs[i] = eventRecord{Phase: int32(controlv1.Phase_PHASE_SAVING), OffsetKey: strconv.Itoa(i + 1)}
+		}
+		raw, _ := json.Marshal(recs)
+		return raw
+	}
+	row := cluster.Operation{
+		ID: "op-x", User: alice, Box: aliceBox, Phase: int32(controlv1.Phase_PHASE_SAVING), Events: events(3),
+		ExpiresAt: time.Now().Add(time.Minute), CreatedAt: time.Now(),
+	}
+	r := b.svc.ops
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	op := r.takeLocked(row)
+	older := row
+	older.Events = events(2)
+	r.takeLocked(older)
+	if got, _, _ := op.since(0); len(got) != 3 {
+		t.Errorf("an older row rewound the copy to %d events, want 3", len(got))
+	}
+	finished := row
+	finished.Events, finished.FinishedAt = events(4), time.Now()
+	r.takeLocked(finished)
+	r.takeLocked(row)
+	if _, done := op.finished(); !done || r.activeLocked(aliceBox) != nil {
+		t.Error("a row read before the operation ended reopened it")
 	}
 }
 

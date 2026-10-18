@@ -216,6 +216,13 @@ func (o *operation) adoptLocked(rec cluster.Operation) {
 	o.watchers.wake(o.user)
 }
 
+func (o *operation) olderLocked(rec cluster.Operation) bool {
+	if !o.finishedAt.IsZero() && rec.FinishedAt.IsZero() {
+		return true
+	}
+	return lastOffset(fromEventRecords(rec.ID, rec.Events)) < lastOffset(o.events)
+}
+
 func (o *operation) mirrorLocked() {
 	if o.mirror != nil {
 		o.mirror(o.recordLocked())
@@ -391,7 +398,7 @@ func (r *operations) takeLocked(rec cluster.Operation) *operation {
 		r.byID[op.id] = op
 	default:
 		op.mu.Lock()
-		if op.remote || op.finishedAt.IsZero() && !rec.FinishedAt.IsZero() {
+		if op.remote && !op.olderLocked(rec) || !op.remote && op.finishedAt.IsZero() && !rec.FinishedAt.IsZero() {
 			op.adoptLocked(rec)
 		}
 		op.mu.Unlock()
@@ -517,6 +524,13 @@ func collapseTransfers(events []*controlv1.OperationEvent) []*controlv1.Operatio
 
 func transfer(ev *controlv1.OperationEvent) bool {
 	return ev.GetTotalBytes() > 0
+}
+
+func lastOffset(events []*controlv1.OperationEvent) int {
+	if len(events) == 0 {
+		return 0
+	}
+	return offsetOf(events[len(events)-1].GetOffsetKey())
 }
 
 func offsetOf(key string) int {
