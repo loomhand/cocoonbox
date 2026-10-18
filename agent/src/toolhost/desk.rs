@@ -546,7 +546,7 @@ async fn focus(cua: &Cua, a: &WindowArgs) -> Result<String, String> {
     Ok(json!({"ok": true, "title": titled(w), "pid": w["pid"]}).to_string())
 }
 
-/// Lists the windows until they differ from `since` or `limit` passes, 5 s at most.
+/// Lists the windows until they differ from `since` or `limit` of wall time passes, list reads included, 5 s at most.
 pub(super) async fn wait_for<F, Fut>(
     since: Value,
     limit: Duration,
@@ -560,7 +560,11 @@ where
     let limit = limit.min(WAIT_MAX);
     let mut last = Duration::ZERO;
     loop {
-        tokio::time::sleep(last.max(WAIT_POLL)).await;
+        tokio::time::sleep(
+            last.max(WAIT_POLL)
+                .min(limit.saturating_sub(started.elapsed())),
+        )
+        .await;
         let at = tokio::time::Instant::now();
         let windows = read().await?;
         last = at.elapsed();
@@ -892,6 +896,44 @@ mod tests {
             t >= Duration::from_millis(480) && t <= Duration::from_millis(491),
             "{t:?}"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_zero_timeout_reads_the_list_once_at_once() {
+        let since = json!([{"title": "Desktop"}]);
+        let lists = std::cell::Cell::new(0);
+        let started = tokio::time::Instant::now();
+        let out = wait_for(since.clone(), Duration::ZERO, || {
+            lists.set(lists.get() + 1);
+            let since = since.clone();
+            async move { Ok(since) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(out["changed"], false);
+        assert_eq!(lists.get(), 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn after_a_slow_first_read_the_last_read_starts_at_the_deadline() {
+        let since = json!([{"title": "Desktop"}]);
+        let lists = std::cell::Cell::new(0);
+        let started = tokio::time::Instant::now();
+        let out = wait_for(since.clone(), Duration::from_millis(150), || {
+            lists.set(lists.get() + 1);
+            let slow = lists.get() == 1;
+            let since = since.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(if slow { 100 } else { 1 })).await;
+                Ok(since)
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(out["changed"], false);
+        assert_eq!(lists.get(), 2);
+        assert_eq!(started.elapsed(), Duration::from_millis(151));
     }
 
     #[tokio::test]
