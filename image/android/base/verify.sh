@@ -9,6 +9,7 @@ test -s /usr/local/share/cocoonbox/cb-ui.jar
 ldd /usr/local/bin/scrcpy-rfb | grep -q 'not found' && exit 1
 command -v adb dnscrypt-proxy redsocks mkfs.btrfs node git >/dev/null
 for f in desk gui_plan png; do test -s /opt/desk/lib/$f.mts; done
+grep -qx 'Environment=TOOLHOST_SOCKET=/run/cocoonbox/toolhost.sock' /etc/systemd/system/cocoonbox-toolhost.service
 test -f /opt/android/AGENTS.md
 test -d /var/lib/redroid-data && test -z "$(ls -A /var/lib/redroid-data)"
 cfgs=(/var/lib/docker/containers/*/config.v2.json)
