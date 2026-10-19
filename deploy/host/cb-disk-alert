@@ -10,6 +10,7 @@ STATE=/run/cb-disk-alert
 now=$(date +%s)
 touch "$STATE"
 next=$(mktemp)
+trap 'rm -f "$next" "$next.q"' EXIT
 
 check() {
 	name=$1 pct=$2
@@ -36,14 +37,22 @@ track() {
 }
 
 for m in / /srv/cb; do
-	check "$m" "$(df --output=pcent "$m" | tail -1 | tr -dc 0-9)"
-done
-xfs_quota -x -c 'report -p -b -N' /srv/cb 2>/dev/null > "$next.q"
-while read -r name used _ hard _; do
-	if [ "$hard" -gt 0 ] 2>/dev/null; then
-		check "project:$name" $((used * 100 / hard))
+	pct=$(df --output=pcent "$m" 2>/dev/null | tail -1 | tr -dc 0-9)
+	if [ -n "$pct" ]; then
+		check "$m" "$pct"
+	else
+		track "$m" CRIT "disk $m unreadable (df failed)"
 	fi
-done < "$next.q"
+done
+if xfs_quota -x -c 'report -p -b -N' /srv/cb > "$next.q" 2>/dev/null; then
+	while read -r name used _ hard _; do
+		if [ "$hard" -gt 0 ] 2>/dev/null; then
+			check "project:$name" $((used * 100 / hard))
+		fi
+	done < "$next.q"
+else
+	track quota CRIT "xfs_quota report on /srv/cb failed"
+fi
 info=$(printf 'header = "Authorization: Bearer %s"\n' "$(cat /etc/cocoonbox/sandboxd-token)" |
 	curl -fsS -m 5 -K - http://127.0.0.1:17780/v1/info 2>/dev/null)
 reason=$(printf '%s' "$info" | python3 -c 'import json, sys; i = json.load(sys.stdin); print(i.get("at_capacity_reason", "at capacity") if i.get("at_capacity") else "")' 2>/dev/null) ||
@@ -53,5 +62,6 @@ if [ -n "$reason" ]; then
 else
 	track sandboxd ok "sandboxd admits work"
 fi
+awk 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$next" "$STATE" > "$next.q"
+cat "$next.q" >> "$next"
 mv "$next" "$STATE"
-rm -f "$next.q"
