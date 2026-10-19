@@ -33,6 +33,10 @@ The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) rea
 
 `/opt/android/AGENTS.md` makes the agent's automation `Android`: the MCP instructions and prompts describe the phone, there are no browser tools, and `Session.Hello` reports `AUTOMATION_ANDROID` with the image's nominal 720x1280 boot size, not a later `wm size` override (desktop boxes report `AUTOMATION_DESK` or `AUTOMATION_PLAIN` and 1280x800), which clients use to tell a phone from a desktop.
 
+The toolhost answers these tools in one of two modes:
+- **Without `SHUTTLE_SOCKET`**, it answers them itself, with its own adb calls, UI server and paste server, as the table below says.
+- **With `SHUTTLE_SOCKET`** (an image that runs `cocoon-shuttle serve` on its adb backend), it relays them to shuttle: `screenshot` as `desk_look`, `computer_*` as `desk_computer_*`, and `desk_*` as they are, each within the desk deadline. `script_run` and `gui_plan` run on shuttle's runner, and their screenshots come from `desk_look` too. The toolhost then runs no adb for these tools: shuttle owns the device's UI server and its paste session.
+
 | Tool | On Android |
 |---|---|
 | `screenshot` | `adb exec-out screencap -p`, 720x1280 PNG |
