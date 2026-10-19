@@ -59,6 +59,7 @@ final class AppModel {
     var confirmUpgrade = false
     var deletingAgent: Agent?
     var showNewBox = false
+    var imageChoices: [ImageChoice] = []
     var renamingBox: Box?
     var deletingBox: Box?
     // boxes is oldest first, as the api lists them; the screen, agents and lifecycle follow the selected one.
@@ -608,7 +609,7 @@ final class AppModel {
         guard let connection else { return }
         boxesTask = Task {
             await connection.watchBoxes(
-                onBoxes: { list in await self.received(boxes: list) },
+                onBoxes: { list, offered in await self.received(boxes: list, offered: offered) },
                 onDisconnect: { error in await self.boxesDropped(error) }
             )
         }
@@ -625,7 +626,8 @@ final class AppModel {
     }
 
     // received takes a list from Boxes.Watch; the first one of a connection also loads the offloads and connectors.
-    private func received(boxes list: [Box]) async {
+    private func received(boxes list: [Box], offered: [String]) async {
+        imageChoices = ImageChoice.choices(offered)
         apply(boxes: list)
         guard !boxesLive else { return }
         boxesLive = true
@@ -712,14 +714,14 @@ final class AppModel {
 
     // MARK: boxes
 
-    func createBox(name: String) {
+    func createBox(name: String, image: String = "") {
         guard let connection else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         busy = true
         Task {
             defer { busy = false }
             do {
-                let response = try await connection.createBox(name: name)
+                let response = try await connection.createBox(name: name, image: image)
                 apply(box: response.box)
                 selectBox(response.box.id)
                 if response.hasOperation, !response.operation.id.isEmpty {

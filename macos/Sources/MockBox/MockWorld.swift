@@ -193,6 +193,8 @@ actor MockWorld {
         return response
     }
 
+    static let offeredImages = ["cbdesk:v22", "cbcore:v1", "cbdroid:v1"]
+
     // create adds a box within the quota and starts it, as Boxes.Create does; cbcore:v1 and cbdroid:v1, or their families, are the others offered.
     func create(name: String, image: String = "") throws -> Cocoonbox_Control_V1_EnsureResponse {
         let offered = ["cbcore": "cbcore:v1", "cbdroid": "cbdroid:v1"]
