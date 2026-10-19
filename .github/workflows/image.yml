@@ -78,8 +78,8 @@ jobs:
           agent_rev=${agent_rev##*+}
           cua_commit=$(sed -n 's/^COMMIT=${COMMIT:-\(.*\)}$/\1/p' image/cua-driver.sh)
           cua_version=$(sed -n 's/^VERSION=${VERSION:-\(.*\)}$/\1/p' image/cua-driver.sh)
-          shuttle_version=$(sed -n 's/^SHUTTLE_VERSION=//p' image/desk/shuttle.sh)
-          shuttle_sha=$(sed -n 's/^SHUTTLE_SHA256=//p' image/desk/shuttle.sh)
+          shuttle_version=$(SHUTTLE_ARCH=x64 && . image/desk/shuttle.sh && echo "$SHUTTLE_VERSION")
+          shuttle_sha=$(SHUTTLE_ARCH=x64 && . image/desk/shuttle.sh && echo "$SHUTTLE_SHA256")
           echo "$GH_TOKEN" | oras login ghcr.io --registry-config "$cfg" --username "${{ github.actor }}" --password-stdin
           if oras resolve --registry-config "$cfg" "$image:$VERSION" >/dev/null 2>&1; then
             echo "$image:$VERSION exists; a published version is never overwritten" >&2
