@@ -25,6 +25,7 @@ DISK_RESERVE = "100G"
 CONN_RATE = {"per_second": 30, "burst": 600}
 SSH_PORT = 22
 WEB_PORTS = [80, 443]
+FCM_PORTS = [5228, 5229, 5230]
 WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
           "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
           "sleep 0.2; done; exit 1")
@@ -62,6 +63,8 @@ egress = {"allow": [gw, apt, public]}
 inject_egress = {"allow": [gw, apt, inject, public]}
 # the door key rule precedes the inject rule, since a plain request takes the first rule that matches
 connect_egress = {"allow": [gw, connect, apt, inject, public]}
+# Android's push channel (FCM) holds a connection on 5228-5230
+android_egress = {"allow": [gw, connect, apt, inject, {"host": "*", "ports": [SSH_PORT, *WEB_PORTS, *FCM_PORTS]}]}
 # the tenant class narrows nothing; the pool rules hold the ports
 tenant_egress = {"allow": [gw, {"host": "*"}]}
 pools = []
@@ -71,12 +74,12 @@ for arg in sys.argv[1:]:
     # every family but cbdesk is cut from a template with the newest rules
     n = 0 if not version else int(version[2]) if version[1] == "cbdesk" else CONNECT_FROM
     if version and version[1] in ANDROID_FAMILIES:
-        warmup = ANDROID_WARMUP
+        warmup, pool_egress = ANDROID_WARMUP, android_egress
     else:
         warmup = CHROME_WARMUP if n >= CHROME_WARMUP_FROM else WARMUP
+        pool_egress = connect_egress if n >= CONNECT_FROM else inject_egress if n >= INJECT_FROM else egress
     pools.append({"template": template, "net": "none", "size": "xlarge", "storage": STORAGE, "warm": int(warm),
-                  "warmup": ["bash", "-c", warmup],
-                  "egress": connect_egress if n >= CONNECT_FROM else inject_egress if n >= INJECT_FROM else egress})
+                  "warmup": ["bash", "-c", warmup], "egress": pool_egress})
 conf = {
     "listen": LISTEN,
     "advertise_addr": LISTEN,
