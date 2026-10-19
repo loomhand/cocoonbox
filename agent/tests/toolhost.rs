@@ -1,9 +1,13 @@
 #![cfg(test)]
 
+use std::path::Path;
 use std::time::Duration;
 
-use cocoonbox_agent::toolhost::rpc::{Call, Client};
-use serde_json::json;
+use cocoonbox_agent::toolhost::rpc::{Call, Client, Output, read_frame, write_frame};
+use serde_json::{Value, json};
+use tokio::io::AsyncReadExt;
+use tokio::net::UnixListener;
+use tokio::sync::mpsc;
 
 const SCRIPT: &str = r"
 const { createConnection } = require('node:net')
@@ -27,22 +31,7 @@ async fn a_node_script_in_the_agent_shell_reaches_the_toolhost_it_runs_under() {
         return;
     };
     let dir = tempfile::tempdir().unwrap();
-    let socket = dir.path().join("toolhost.sock");
-    let _toolhost = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("toolhost")
-        .env("TOOLHOST_SOCKET", &socket)
-        .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
-        .env("CB_WORKSPACE", dir.path())
-        .env("HOME", dir.path())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    for _ in 0..500 {
-        if socket.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), None).await;
     std::fs::write(dir.path().join("probe.js"), SCRIPT).unwrap();
     let command = format!(
         "\"{}\" {}",
@@ -63,4 +52,144 @@ async fn a_node_script_in_the_agent_shell_reaches_the_toolhost_it_runs_under() {
         "{}",
         out.text
     );
+}
+
+#[tokio::test]
+async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_the_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let desk = dir.path().join("desk.sock");
+    let (seen, mut calls) = mpsc::unbounded_channel::<(Call, bool)>();
+    let listener = UnixListener::bind(&desk).unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let call: Call = read_frame(&mut conn).await.unwrap();
+                let out = match call.tool.as_str() {
+                    "desk_windows" => Output {
+                        text: "[]".into(),
+                        is_error: false,
+                        image_b64: Some("aW1n".into()),
+                        secrets: vec![("number".into(), "4242".into())],
+                    },
+                    "script_run" => Output::text(
+                        json!({"duration_ms": 3, "logs": "", "stderr": "", "exit_code": 1, "error": {"kind": "exception", "message": "boom"}, "result": null}).to_string(),
+                    ),
+                    "gui_plan" if call.args["hold"] == true => {
+                        let mut probe = [0u8; 1];
+                        let closed = conn.read(&mut probe).await.unwrap() == 0;
+                        seen.send((call, closed)).unwrap();
+                        return;
+                    }
+                    "gui_plan" => Output::text(r#"{"ok":true,"steps":1}"#),
+                    _ => Output::text("{}"),
+                };
+                seen.send((call, false)).unwrap();
+                write_frame(&mut conn, &out).await.unwrap();
+            });
+        }
+    });
+    std::fs::write(dir.path().join("s.mts"), "export function main() {}").unwrap();
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), Some(&desk)).await;
+    let th = Client::new(socket.clone());
+    let call = |tool: &str, args: Value| Call {
+        agent_id: "ag".into(),
+        tool: tool.into(),
+        args,
+    };
+
+    let out = th.call(&call("desk_windows", json!({}))).await.unwrap();
+    assert_eq!(
+        (out.text.as_str(), out.image_b64.as_deref(), out.secrets),
+        ("[]", Some("aW1n"), vec![("number".into(), "4242".into())])
+    );
+    let (got, _) = calls.recv().await.unwrap();
+    assert_eq!(
+        (got.agent_id.as_str(), got.tool.as_str()),
+        ("ag", "desk_windows")
+    );
+
+    th.call(&call("desk", json!({"op": "click", "x": 1, "y": 2})))
+        .await
+        .unwrap();
+    let (got, _) = calls.recv().await.unwrap();
+    assert_eq!(
+        (got.tool.as_str(), &got.args["x"]),
+        ("desk_click", &json!(1))
+    );
+
+    th.call(&call("model_ask", json!({"prompt": "p"})))
+        .await
+        .unwrap();
+    assert_eq!(calls.recv().await.unwrap().0.tool, "model_ask");
+
+    let out = th
+        .call(&call(
+            "script_run",
+            json!({"script": "s.mts", "screenshot": false, "timeout_s": 500}),
+        ))
+        .await
+        .unwrap();
+    assert!(out.is_error, "{}", out.text);
+    assert!(out.text.contains("\n  \"error\": {"), "{}", out.text);
+    let (got, _) = calls.recv().await.unwrap();
+    assert_eq!(
+        got.args["script"],
+        dir.path().join("s.mts").to_string_lossy().as_ref()
+    );
+    assert_eq!(
+        (&got.args["timeout_s"], &got.args["params"]),
+        (&json!(110), &json!({}))
+    );
+
+    let out = th
+        .call(&call(
+            "gui_plan",
+            json!({"steps": [{"app": "x"}], "screenshot": false}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        (out.is_error, out.text.as_str()),
+        (false, r#"{"ok":true,"steps":1}"#)
+    );
+    let (got, _) = calls.recv().await.unwrap();
+    assert_eq!(got.args, json!({"steps": [{"app": "x"}], "timeout_s": 90}));
+
+    let held = call("gui_plan", json!({"hold": true}));
+    let pending = tokio::spawn(async move { Client::new(socket).call(&held).await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    pending.abort();
+    let (got, closed) = tokio::time::timeout(Duration::from_secs(5), calls.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(got.tool, "gui_plan");
+    assert!(closed, "a dropped call closes its shuttle connection");
+}
+
+async fn spawn_toolhost(
+    dir: &Path,
+    shuttle: Option<&Path>,
+) -> (tokio::process::Child, std::path::PathBuf) {
+    let socket = dir.join("toolhost.sock");
+    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"));
+    cmd.arg("toolhost")
+        .env("TOOLHOST_SOCKET", &socket)
+        .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
+        .env("CB_WORKSPACE", dir)
+        .env("HOME", dir)
+        .kill_on_drop(true);
+    if let Some(shuttle) = shuttle {
+        cmd.env("SHUTTLE_SOCKET", shuttle);
+    }
+    let child = cmd.spawn().unwrap();
+    for _ in 0..500 {
+        if socket.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    (child, socket)
 }

@@ -16,7 +16,7 @@ use tokio::process::Command;
 use super::android::Android;
 use super::cua::Cua;
 use super::files;
-use super::rpc::{self, Output};
+use super::rpc::{self, Call, Client, Output};
 use super::shell::Capture;
 use super::timing;
 use crate::llm::image_mime;
@@ -45,17 +45,23 @@ if (globalThis.$snapshot !== undefined) writeFileSync(env.CB_SNAPSHOT, String(gl
 setTimeout(() => process.exit(), 500).unref()
 "#;
 
-/// Runs scripts with Node at `bin`, one scratch directory per run under `dir`.
+/// Runs scripts with Node at `bin`, one scratch directory per run under `dir`, or on shuttle when set.
 pub struct Scripts {
     bin: PathBuf,
     dir: PathBuf,
     socket: PathBuf,
+    shuttle: Option<Client>,
 }
 
 impl Scripts {
-    /// Creates the runner of `bin` with its scratch root `dir`; scripts reach the toolhost at `socket`.
-    pub fn new(bin: PathBuf, dir: PathBuf, socket: PathBuf) -> Self {
-        Self { bin, dir, socket }
+    /// Creates the runner of `bin` with its scratch root `dir`; scripts reach the toolhost at `socket`, and run on `shuttle` when set.
+    pub fn new(bin: PathBuf, dir: PathBuf, socket: PathBuf, shuttle: Option<Client>) -> Self {
+        Self {
+            bin,
+            dir,
+            socket,
+            shuttle,
+        }
     }
 
     /// Runs one script and reports it as JSON text, with a screenshot taken after the run unless turned off.
@@ -65,12 +71,14 @@ impl Scripts {
         workspace: &Path,
         args: Value,
     ) -> Result<Output, String> {
-        self.run_with(&self.bin, screen, workspace, args).await
+        self.run_with("script_run", &self.bin, screen, workspace, args)
+            .await
     }
 
-    /// Runs one script as [`Scripts::run`] does, with the program at `bin` in place of Node.
+    /// Runs one script as [`Scripts::run`] does, with the program at `bin` in place of Node; shuttle runs it as tool `tool`.
     pub async fn run_with(
         &self,
+        tool: &str,
         bin: &Path,
         screen: &impl Screen,
         workspace: &Path,
@@ -90,10 +98,15 @@ impl Scripts {
             _ => return Err("pass exactly one of code or script".to_owned()),
         };
         let id = uuid::Uuid::new_v4().simple().to_string();
-        let params = Value::Object(params.unwrap_or_default()).to_string();
-        let mut report = self
-            .run_script(bin, script, &params, workspace, timeout_of(timeout_s), &id)
-            .await?;
+        let params = Value::Object(params.unwrap_or_default());
+        let timeout = timeout_of(timeout_s);
+        let mut report = match &self.shuttle {
+            Some(shuttle) => run_report(shuttle, tool, script, params, timeout).await?,
+            None => {
+                self.run_script(bin, script, &params.to_string(), workspace, timeout, &id)
+                    .await?
+            }
+        };
         let mut out = Output::default();
         if screenshot {
             match self.screenshot(screen, max_edge, &id).await {
@@ -132,16 +145,8 @@ impl Scripts {
                 index
             }));
         }
-        let id = uuid::Uuid::new_v4().simple().to_string();
         let mut report = self
-            .run_script(
-                &self.bin,
-                Script::File(PathBuf::from(DESK_PLAN)),
-                &Value::Object(params).to_string(),
-                workspace,
-                timeout_of(timeout_s),
-                &id,
-            )
+            .plan_report(Value::Object(params), workspace, timeout_of(timeout_s))
             .await?;
         let mut out = Output::default();
         let body = match report.get_mut("error") {
@@ -165,18 +170,8 @@ impl Scripts {
         target: &str,
         press: bool,
     ) -> Result<Value, String> {
-        let id = uuid::Uuid::new_v4().simple().to_string();
-        let params = json!({"locate": {"target": target, "press": press}}).to_string();
-        let mut report = self
-            .run_script(
-                &self.bin,
-                Script::File(PathBuf::from(DESK_PLAN)),
-                &params,
-                workspace,
-                LOCATE_TIMEOUT,
-                &id,
-            )
-            .await?;
+        let params = json!({"locate": {"target": target, "press": press}});
+        let mut report = self.plan_report(params, workspace, LOCATE_TIMEOUT).await?;
         if let Some(error) = report.get("error") {
             return Err(format!("locate: {error}"));
         }
@@ -185,17 +180,9 @@ impl Scripts {
 
     /// Rebuilds the flow index with the plan executor after the library sync changed flows.
     pub async fn reindex(&self, workspace: &Path) -> Result<Output, String> {
-        let id = uuid::Uuid::new_v4().simple().to_string();
         let _index = super::flows::INDEX_LOCK.lock().await;
         let report = self
-            .run_script(
-                &self.bin,
-                Script::File(PathBuf::from(DESK_PLAN)),
-                r#"{"reindex":true}"#,
-                workspace,
-                RELEASE_TIMEOUT,
-                &id,
-            )
+            .plan_report(json!({"reindex": true}), workspace, RELEASE_TIMEOUT)
             .await?;
         if let Some(error) = report.get("error") {
             return Err(format!("reindex flows: {error}"));
@@ -208,6 +195,37 @@ impl Scripts {
         tokio::fs::read_to_string(super::flows::index(workspace))
             .await
             .unwrap_or_default()
+    }
+
+    /// The report of one run of the plan executor with `params`; on shuttle it holds the plan's result only.
+    async fn plan_report(
+        &self,
+        mut params: Value,
+        workspace: &Path,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        let Some(shuttle) = &self.shuttle else {
+            let id = uuid::Uuid::new_v4().simple().to_string();
+            return self
+                .run_script(
+                    &self.bin,
+                    Script::File(PathBuf::from(DESK_PLAN)),
+                    &params.to_string(),
+                    workspace,
+                    timeout,
+                    &id,
+                )
+                .await;
+        };
+        params["timeout_s"] = timeout.as_secs().into();
+        let text = relay(shuttle, "gui_plan", params).await?;
+        let mut report = json!({});
+        report["result"] =
+            serde_json::from_str(&text).map_err(|e| format!("decode the plan result: {e}"))?;
+        if text.len() as u64 > MAX_RESULT_BYTES {
+            cap(&mut report["result"]);
+        }
+        Ok(report)
     }
 
     /// Runs one script in its own scratch directory.
@@ -500,6 +518,58 @@ fn launched(own: &str, cgroup: &str) -> bool {
             .any(|l| l.contains("/app.slice/") && l.trim_end().ends_with(".scope"))
 }
 
+/// The text of shuttle's answer to `tool` with `args`; an error answer is an error.
+async fn relay(shuttle: &Client, tool: &str, args: Value) -> Result<String, String> {
+    let call = Call {
+        agent_id: String::new(),
+        tool: tool.to_owned(),
+        args,
+    };
+    let out = shuttle.call(&call).await?;
+    if out.is_error {
+        Err(out.text)
+    } else {
+        Ok(out.text)
+    }
+}
+
+/// The report of shuttle's run of `script` as tool `tool`.
+async fn run_report(
+    shuttle: &Client,
+    tool: &str,
+    script: Script,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let mut args = json!({"timeout_s": timeout.as_secs()});
+    match script {
+        Script::Code(code) => args["code"] = code.into(),
+        Script::File(path) => {
+            if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
+                return Err(format!("script {} does not exist", path.display()));
+            }
+            args["script"] = path.display().to_string().into();
+        }
+    }
+    args["params"] = params;
+    let text = relay(shuttle, tool, args).await?;
+    let mut report: Value =
+        serde_json::from_str(&text).map_err(|e| format!("decode the run report: {e}"))?;
+    if text.len() as u64 > MAX_RESULT_BYTES {
+        cap(&mut report["result"]);
+    }
+    Ok(report)
+}
+
+/// Replaces a `result` past the size cap with the notice a local run gives.
+fn cap(result: &mut Value) {
+    if serde_json::to_vec(result).is_ok_and(|raw| raw.len() as u64 > MAX_RESULT_BYTES) {
+        *result =
+            format!("more than {MAX_RESULT_BYTES} bytes; write it to a file and return the path")
+                .into();
+    }
+}
+
 fn default_screenshot() -> bool {
     true
 }
@@ -584,7 +654,7 @@ mod tests {
             return;
         };
         let dir = tempfile::tempdir().unwrap();
-        let scripts = Scripts::new(node.into(), dir.path().into(), "/run/t.sock".into());
+        let scripts = Scripts::new(node.into(), dir.path().into(), "/run/t.sock".into(), None);
         for code in [
             "setInterval(() => {}, 1000)\nexport function main(p) { console.log('tick'); return p.n }",
             "import { createServer } from 'node:net'\ncreateServer().listen(0)\nexport async function main(p) { console.log('tick'); return p.n }",
@@ -616,7 +686,7 @@ mod tests {
             return;
         };
         let dir = tempfile::tempdir().unwrap();
-        let scripts = Scripts::new(node.into(), dir.path().into(), "/run/t.sock".into());
+        let scripts = Scripts::new(node.into(), dir.path().into(), "/run/t.sock".into(), None);
         let report = scripts
             .run_script(
                 &scripts.bin,
@@ -695,12 +765,13 @@ mod tests {
             plugins: Vec::new(),
             adb_bin: "adb".into(),
             gw_base_url: Some(base),
+            shuttle_socket: None,
         };
         tokio::spawn(crate::toolhost::run(cfg));
         while !socket.exists() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        let scripts = Scripts::new(node.into(), dir.path().into(), socket);
+        let scripts = Scripts::new(node.into(), dir.path().into(), socket, None);
         let code = r"
 import { createConnection } from 'node:net'
 export function main() {
@@ -780,6 +851,19 @@ export function main() {
             own,
             "0::/user.slice/user-1000.slice/user@1000.service/app.slice/cua-driver.service\n"
         ));
+    }
+
+    #[test]
+    fn a_relayed_result_past_the_cap_becomes_the_local_notice() {
+        let mut small = json!({"n": 1});
+        cap(&mut small);
+        assert_eq!(small, json!({"n": 1}));
+        let mut big = Value::String("x".repeat(MAX_RESULT_BYTES as usize));
+        cap(&mut big);
+        assert_eq!(
+            big,
+            "more than 262144 bytes; write it to a file and return the path"
+        );
     }
 
     #[test]

@@ -88,9 +88,18 @@ const KEY_ALIASES: [(&str, &str); 47] = [
 #[derive(Default)]
 pub struct Desk {
     atspi: Atspi,
+    shuttle: Option<Client>,
 }
 
 impl Desk {
+    /// A desk whose point lookups go to shuttle, when set.
+    pub fn new(shuttle: Option<Client>) -> Self {
+        Self {
+            shuttle,
+            ..Self::default()
+        }
+    }
+
     /// Runs desk tool `tool`; input, window and launch calls go through `cua`.
     pub async fn run(&self, cua: &Cua, tool: &str, args: Value) -> Result<Output, String> {
         let text = match tool {
@@ -363,14 +372,29 @@ impl Desk {
 
     /// The element of the focused window at the screen point `(x, y)`, as the `at` op answers.
     pub async fn at_point(&self, x: i32, y: i32) -> Result<Value, String> {
-        let text = self
-            .at(AtArgs {
-                x,
-                y,
-                window: None,
-                pid: None,
-            })
-            .await?;
+        let text = match &self.shuttle {
+            Some(shuttle) => {
+                let call = Call {
+                    agent_id: String::new(),
+                    tool: "desk_at".to_owned(),
+                    args: json!({"x": x, "y": y}),
+                };
+                let out = shuttle.call(&call).await?;
+                if out.is_error {
+                    return Err(out.text);
+                }
+                out.text
+            }
+            None => {
+                self.at(AtArgs {
+                    x,
+                    y,
+                    window: None,
+                    pid: None,
+                })
+                .await?
+            }
+        };
         serde_json::from_str(&text).map_err(|e| format!("at: {e}"))
     }
 
