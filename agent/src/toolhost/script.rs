@@ -15,7 +15,7 @@ use tokio::process::Command;
 use super::android::Android;
 use super::cua::Cua;
 use super::files;
-use super::rpc::{self, Client, Output};
+use super::rpc::{self, Call, Client, Output};
 use super::shell::Capture;
 use super::timing;
 use crate::llm::image_mime;
@@ -377,6 +377,24 @@ impl Screen for Cua {
 impl Screen for Android {
     async fn screenshot_once(&self, _max_edge: Option<u32>) -> Result<Option<String>, String> {
         Ok(self.look().await?.image_b64)
+    }
+}
+
+/// The screen of the desk shuttle serves, through its `desk_look`.
+pub struct ShuttleScreen<'a>(pub &'a Client);
+
+impl Screen for ShuttleScreen<'_> {
+    async fn screenshot_once(&self, _max_edge: Option<u32>) -> Result<Option<String>, String> {
+        let call = Call {
+            agent_id: "toolhost".to_owned(),
+            tool: "desk_look".to_owned(),
+            args: json!({}),
+        };
+        let out = self.0.desk(&call, rpc::DESK_DEADLINE).await?;
+        if out.is_error {
+            return Err(out.text);
+        }
+        Ok(out.image_b64)
     }
 }
 
