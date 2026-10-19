@@ -161,7 +161,7 @@ pub async fn finish_plan(
     shots: &impl Shots,
 ) -> Result<Output, String> {
     let mut out = Output::default();
-    let body = match report.get_mut("error").filter(|e| !e.is_null()) {
+    let mut body = match report.get_mut("error").filter(|e| !e.is_null()) {
         Some(error) => {
             out.is_error = true;
             json!({"error": error.take()})
@@ -169,7 +169,11 @@ pub async fn finish_plan(
         None => report["result"].take(),
     };
     if screenshot.unwrap_or(body["ok"] != true) {
-        out.image_b64 = shots.shot(max_edge, false).await?.map(|s| s.image_b64);
+        match shots.shot(max_edge, false).await {
+            Ok(shot) => out.image_b64 = shot.map(|s| s.image_b64),
+            Err(e) if body.is_object() => body["screenshot_error"] = e.into(),
+            Err(e) => return Err(e),
+        }
     }
     out.text = body.to_string();
     Ok(out)

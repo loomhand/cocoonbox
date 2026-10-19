@@ -256,6 +256,15 @@ async fn a_failed_run_shuttle_answers_as_an_error_keeps_its_report_and_shape() {
     assert_eq!(body["error"]["kind"], "exception", "{body}");
 
     let out = th
+        .call(&call("gui_plan", json!({"case": "fail"})))
+        .await
+        .unwrap();
+    assert!(out.is_error && out.image_b64.is_none(), "{}", out.text);
+    let body: Value = serde_json::from_str(&out.text).unwrap();
+    assert_eq!(body["error"]["kind"], "exception", "{body}");
+    assert!(body["screenshot_error"].is_string(), "{body}");
+
+    let out = th
         .call(&call(
             "script_run",
             json!({"code": "busy", "screenshot": false}),
