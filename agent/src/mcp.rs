@@ -42,11 +42,8 @@ const PREEMPTED: &str =
     "interrupted: the owner's save or upgrade of the box needed it; the shell session was reset";
 const LIST_CHANGED: &[u8] =
     b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}\n\n";
-const INSTRUCTIONS: &str = "These tools act on a cloud computer: Ubuntu 24.04 with an XFCE desktop at 1280x800. \
-Relative file paths resolve under /workspace, and shell is one persistent bash session. \
-Prefer shell and file tools, then browser_* (pages as ref-tagged element lists), and use computer_state / computer_act only for GUI work. \
-Every computer_act returns a fresh screenshot; trust the screenshot, not the action's report. \
-The user watches the screen live and sees every call.";
+const INSTRUCTIONS: &str = "These tools act on a cloud computer: Ubuntu 24.04, with no desktop tools on this box. \
+Relative file paths resolve under /workspace, and shell is one persistent bash session.";
 const ANDROID_INSTRUCTIONS: &str = "These tools act on an Android 16 phone (720x1280) that runs in a cloud computer: Ubuntu 24.04 with no desktop. \
 shell is one persistent bash session on that Ubuntu, with adb on PATH already connected to the phone (adb shell, adb install, adb push/pull); \
 relative file paths resolve under /workspace. \
@@ -117,7 +114,7 @@ impl Mcp {
             })
             .collect();
         let mut resources = match automation {
-            Automation::Plain | Automation::Android => Vec::new(),
+            Automation::Minimal | Automation::Android => Vec::new(),
             Automation::Desk => DESK_RESOURCES.to_vec(),
         };
         if automation.plans() {
@@ -722,7 +719,7 @@ struct Record {
     blocks: AtomicU32,
 }
 
-/// The cua-driver session behind an MCP session; the label rotates each time it is ended.
+/// The driver session behind an MCP session; the label rotates each time it is ended.
 struct Driver {
     label: String,
     used: bool,

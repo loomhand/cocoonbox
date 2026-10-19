@@ -26,6 +26,20 @@ How to work:
 - Never invent results. If something fails, say what failed and what you tried.
 - End with a short answer: what you did and the outcome.";
 
+const MINIMAL_MAIN: &str = "\
+You are {model}, served through the cocoonbox gateway. If asked which model you are, say exactly \"{model}\".
+
+You are the agent that lives in the user's cloud computer: an Ubuntu 24.04 machine that keeps its disk between conversations. Your tools are a shell and file tools; this box offers no desktop or browser tools. You act for the user with them and report back.
+
+How to work:
+- Plan briefly, then act.
+- /workspace is your working directory and persists. Relative file paths resolve there.
+- shell is one persistent bash session: cd and exported variables carry over between calls. Commands get no stdin, so use non-interactive flags.
+- Ask the user only when the request is ambiguous or an action is destructive or irreversible. Otherwise proceed.
+- The box configuration (/etc/cocoonbox) and your own state are not readable by your tools. Do not try, and do not use sudo.
+- Never invent results. If something fails, say what failed and what you tried.
+- End with a short answer: what you did and the outcome.";
+
 const COMPUTER: &str = "\
 You are {model}, served through the cocoonbox gateway. If asked which model you are, say exactly \"{model}\".
 
@@ -79,9 +93,6 @@ Loop: observe, act, verify.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
-const SCREEN_POINTS: &str =
-    "Coordinates are screen pixels of the 1280x800 screenshot, origin at the top-left.";
-
 const IMAGE_POINTS: &str = "Coordinates are pixels of the latest screenshot image as you see it, origin at the top-left; the box maps them to the screen, so never scale them yourself.";
 
 /// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
@@ -107,17 +118,17 @@ pub fn main(
     } else {
         "You cannot see screenshots; rely on its report."
     };
-    let template = if automation == Automation::Android {
-        ANDROID_MAIN
-    } else {
-        MAIN
+    let template = match automation {
+        Automation::Minimal => MINIMAL_MAIN,
+        Automation::Desk => MAIN,
+        Automation::Android => ANDROID_MAIN,
     };
     let mut prompt = template
         .replace("{model}", model)
         .replace("{computer_model}", computer_model)
         .replace("{eyes}", eyes);
     match automation {
-        Automation::Plain | Automation::Android => {}
+        Automation::Minimal | Automation::Android => {}
         Automation::Desk => {
             prompt.push_str("\n\nThis box runs GUI plans and desk scripts.\n\n");
             prompt.push_str(ROUTING);
@@ -130,19 +141,14 @@ pub fn main(
     prompt
 }
 
-/// Renders the computer subagent's prompt: observe, act, verify on the desktop, with x,y in the space `automation` maps.
+/// Renders the computer subagent's prompt: observe, act, verify on the phone or on the desktop, whose x,y shuttle maps.
 pub fn computer(model: &str, automation: Automation) -> String {
     if automation == Automation::Android {
         return ANDROID_COMPUTER.replace("{model}", model);
     }
-    let points = if automation.plans() {
-        IMAGE_POINTS
-    } else {
-        SCREEN_POINTS
-    };
     COMPUTER
         .replace("{model}", model)
-        .replace("{points}", points)
+        .replace("{points}", IMAGE_POINTS)
 }
 
 /// Renders the line that names the box's API keys from the records of [`KEYS_FILE`]; None without keys.
@@ -191,28 +197,30 @@ mod tests {
             "deepseek/deepseek-v4.1-flash",
             "anthropic/claude-sonnet-5",
             false,
-            Automation::Plain,
+            Automation::Minimal,
             &[],
         );
         assert!(p.starts_with(
             "You are deepseek/deepseek-v4.1-flash, served through the cocoonbox gateway."
         ));
         assert!(p.contains("say exactly \"deepseek/deepseek-v4.1-flash\""));
-        assert!(p.contains("The subagent runs anthropic/claude-sonnet-5."));
-        assert!(p.contains("You cannot see screenshots"));
         assert!(p.contains("/etc/cocoonbox"));
-        assert!(p.contains("Never drive or inspect it from shell (no cua-driver"));
         assert!(!p.contains('{'), "unrendered placeholder: {p}");
-        let without_subagent = p.replace("anthropic/claude-sonnet-5", "");
         for vendor in ["Claude", "Anthropic", "GPT", "OpenAI", "Gemini"] {
-            assert!(!without_subagent.contains(vendor), "mentions {vendor}");
+            assert!(!p.contains(vendor), "mentions {vendor}");
         }
+        let desk = MAIN
+            .replace("{model}", "m")
+            .replace("{computer_model}", "anthropic/claude-sonnet-5")
+            .replace("{eyes}", "");
+        assert!(desk.contains("The subagent runs anthropic/claude-sonnet-5."));
+        assert!(desk.contains("Never drive or inspect it from shell"));
         assert!(
             main(
                 "anthropic/claude-sonnet-5",
                 "x",
                 true,
-                Automation::Plain,
+                Automation::Desk,
                 &[]
             )
             .contains("call screenshot")
@@ -220,14 +228,27 @@ mod tests {
     }
 
     #[test]
+    fn main_prompt_on_a_box_without_a_guide_names_only_shell_and_files() {
+        let p = main("m", "c", true, Automation::Minimal, &[]);
+        assert!(p.contains("no desktop or browser tools"), "{p}");
+        for tool in [
+            "browser_",
+            "delegate_computer",
+            "request_take_over",
+            "screenshot",
+        ] {
+            assert!(!p.contains(tool), "{tool}: {p}");
+        }
+    }
+
+    #[test]
     fn main_prompt_on_a_desk_box_ends_with_its_routing() {
-        let plain = main("m", "c", false, Automation::Plain, &[]);
         let p = main("m", "c", false, Automation::Desk, &[]);
-        assert!(p.starts_with(&plain), "{p}");
+        assert!(p.contains("delegate_computer hands one task"), "{p}");
         assert!(p.ends_with(ROUTING), "{p}");
         assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
         assert!(ROUTING.contains("nor rebuild documents in code"));
-        assert!(!plain.contains("not /workspace"));
+        assert!(!MAIN.contains("not /workspace"));
         assert!(ROUTING.contains(
             "Save deliverables at the path the user names, else in their home, not /workspace."
         ));
@@ -251,7 +272,7 @@ mod tests {
             p.ends_with(&format!("{ROUTING}\n\nUse x_run for x.")),
             "{p}"
         );
-        assert!(!main("m", "c", false, Automation::Plain, &extra).contains("x_run"));
+        assert!(!main("m", "c", false, Automation::Minimal, &extra).contains("x_run"));
     }
 
     #[test]
@@ -297,7 +318,7 @@ mod tests {
 
     #[test]
     fn computer_prompt_names_the_serving_model() {
-        let p = computer("anthropic/claude-sonnet-5", Automation::Plain);
+        let p = computer("anthropic/claude-sonnet-5", Automation::Desk);
         assert!(p.starts_with(
             "You are anthropic/claude-sonnet-5, served through the cocoonbox gateway."
         ));
@@ -306,8 +327,6 @@ mod tests {
 
     #[test]
     fn computer_prompt_on_a_desk_box_takes_x_y_in_screenshot_pixels() {
-        let plain = computer("m", Automation::Plain);
-        assert!(plain.contains(SCREEN_POINTS), "{plain}");
         let desk = computer("m", Automation::Desk);
         assert!(desk.contains(IMAGE_POINTS), "{desk}");
         assert!(!desk.contains("1280x800 screenshot"), "{desk}");

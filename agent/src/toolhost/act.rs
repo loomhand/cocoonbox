@@ -48,7 +48,7 @@ pub(super) async fn scale(shuttle: &Client, owner: &str, session: &Value) -> Res
 }
 
 /// Reads `field` of the card in a link-cli `--output-file` JSON file under /tmp or $HOME; no error carries a value.
-pub(super) async fn card_field(path: &str, field: &str) -> Result<String, String> {
+async fn card_field(path: &str, field: &str) -> Result<String, String> {
     let real = tokio::fs::canonicalize(path)
         .await
         .map_err(|e| format!("{path}: {e}"))?;
@@ -89,7 +89,7 @@ pub(super) async fn card_field(path: &str, field: &str) -> Result<String, String
 }
 
 /// Whether `launch_app` names Chrome or Chromium by command, display name or desktop file id.
-pub(super) fn is_chrome(app: &str) -> bool {
+fn is_chrome(app: &str) -> bool {
     let app = app.to_lowercase();
     app.contains("chrome") || app.contains("chromium")
 }

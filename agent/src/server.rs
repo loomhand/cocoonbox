@@ -222,7 +222,7 @@ impl Session for SessionSvc {
             models.push(cfg.model_computer.clone());
         }
         let (automation, (screen_width, screen_height)) = match cfg.automation {
-            Automation::Plain => (pb::Automation::Plain, SCREEN),
+            Automation::Minimal => (pb::Automation::Unspecified, SCREEN),
             Automation::Desk => (pb::Automation::Desk, SCREEN),
             Automation::Android => (pb::Automation::Android, ANDROID_SCREEN),
         };

@@ -1,4 +1,4 @@
-//! The computer subagent: a vision model driving the desktop through cua-driver.
+//! The computer subagent: a vision model driving the desktop through shuttle's computer verbs.
 
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ pub async fn run(
     guard.armed = false;
     let end = rt.dispatcher.end_driver(&ctx.agent_id, &driver).await;
     if end.is_error {
-        eprintln!("end cua session {driver}: {}", end.text);
+        eprintln!("end driver session {driver}: {}", end.text);
     }
     result
 }

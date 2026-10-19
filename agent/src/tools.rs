@@ -37,6 +37,9 @@ const REGION_HINT: &str = "Only this part of the screen, at full resolution: x, 
 const SHELL_HINT: &str = " Keep each command's wait well under the time left; save the required output early and improve it after.";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
+/// The tools of a box without desktop automation: shell and files.
+const FILE_TOOLS: [&str; 5] = ["shell", "read_file", "write_file", "edit_file", "list_dir"];
+
 /// Remote tools that only read the box: all a read-only share offers.
 pub const READ_ONLY: [&str; 6] = [
     "screenshot",
@@ -49,6 +52,100 @@ pub const READ_ONLY: [&str; 6] = [
 
 /// Tools of the main agent: a vision model adds a screenshot, a desk box `gui_plan`, its scripts and `browser_fetch`, Android its own.
 pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
+    let mut tools = base_tools(vision, automation);
+    if let Some(script) = script_tool(automation) {
+        with_tab(&mut tools);
+        with_select(&mut tools);
+        tools.extend([
+            gui_plan_tool(),
+            script,
+            fetch_tool(),
+            fill_tool(),
+            tabs_tool(),
+        ]);
+        with_scale(&mut tools);
+        with_budget(&mut tools);
+    }
+    tools
+}
+
+/// Tools served over MCP to external agents, the names a contract; a desk box adds its plan, script, fetch and desk tools, Android its own.
+pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
+    let mut tools: Vec<ToolSpec> = base_tools(true, automation)
+        .into_iter()
+        .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
+        .collect();
+    tools.extend(match automation {
+        Automation::Minimal => Vec::new(),
+        Automation::Desk => desktop_tools(),
+        Automation::Android => android_tools(),
+    });
+    if let Some(script) = script_tool(automation) {
+        if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
+            act.description = Cow::Owned(format!("{PLAN_HINT}{}{LIST_HINT}", act.description));
+            if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
+                actions.insert(3, "triple_click".into());
+            }
+            let mut step = act.parameters.clone();
+            if let Some(props) = step["properties"].as_object_mut() {
+                props.remove("max_edge");
+            }
+            act.parameters["properties"]["actions"] = json!({"type": "array", "items": step});
+            with_target(&mut act.parameters);
+            if let Some(schema) = act.parameters.as_object_mut() {
+                schema.remove("required");
+            }
+        }
+        with_tab(&mut tools);
+        with_select(&mut tools);
+        tools.extend([
+            script,
+            gui_plan_tool(),
+            fetch_tool(),
+            fill_tool(),
+            tabs_tool(),
+            desk_tool(),
+        ]);
+        with_scale(&mut tools);
+        with_region(&mut tools);
+        with_budget(&mut tools);
+    }
+    tools
+}
+
+/// Adds `plugins` after the script tool, each with that tool's parameters; a box without one gets none.
+pub fn with_plugins(tools: &mut Vec<ToolSpec>, plugins: &[Plugin]) {
+    let Some(at) = tools.iter().position(|t| t.name == "script_run") else {
+        return;
+    };
+    let parameters = tools[at].parameters.clone();
+    let specs = plugins.iter().map(|p| ToolSpec {
+        name: Cow::Owned(p.name.clone()),
+        description: Cow::Owned(p.description.clone()),
+        parameters: parameters.clone(),
+    });
+    tools.splice(at + 1..at + 1, specs);
+}
+
+/// Tools of the computer subagent: a desk box's with the described target and the default scale, Android's, else none.
+pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
+    match automation {
+        Automation::Minimal => Vec::new(),
+        Automation::Android => android_tools(),
+        Automation::Desk => {
+            let mut tools = desktop_tools();
+            if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
+                with_target(&mut act.parameters);
+            }
+            with_scale(&mut tools);
+            tools
+        }
+    }
+}
+
+/// The tools a box of `automation` starts from: shell and files, on a desktop also the browser, the computer
+/// subagent and take-over, on Android its plan and script tools; a vision model adds a screenshot.
+fn base_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     let mut tools = vec![
         ToolSpec {
             name: Cow::Borrowed("shell"),
@@ -186,9 +283,16 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
             }),
         },
     ];
-    if automation == Automation::Android {
-        tools.retain(|t| !t.name.starts_with("browser_"));
-        tools.extend([android_plan_tool(), android_script_tool()]);
+    match automation {
+        Automation::Minimal => {
+            tools.retain(|t| FILE_TOOLS.contains(&t.name.as_ref()));
+            return tools;
+        }
+        Automation::Android => {
+            tools.retain(|t| !t.name.starts_with("browser_"));
+            tools.extend([android_plan_tool(), android_script_tool()]);
+        }
+        Automation::Desk => {}
     }
     if vision {
         let (description, parameters) = if automation == Automation::Android {
@@ -208,78 +312,7 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
             parameters,
         });
     }
-    if let Some(script) = script_tool(automation) {
-        with_tab(&mut tools);
-        with_select(&mut tools);
-        tools.extend([
-            gui_plan_tool(),
-            script,
-            fetch_tool(),
-            fill_tool(),
-            tabs_tool(),
-        ]);
-        with_scale(&mut tools);
-        with_budget(&mut tools);
-    }
     tools
-}
-
-/// Tools served over MCP to external agents, the names a contract; a desk box adds its plan, script, fetch and desk tools, Android its own.
-pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
-    let base = match automation {
-        Automation::Android => Automation::Android,
-        Automation::Plain | Automation::Desk => Automation::Plain,
-    };
-    let mut tools: Vec<ToolSpec> = main_tools(true, base)
-        .into_iter()
-        .filter(|t| !LOOP_ONLY.contains(&t.name.as_ref()))
-        .collect();
-    tools.extend(computer_tools(base));
-    if let Some(script) = script_tool(automation) {
-        if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            act.description = Cow::Owned(format!("{PLAN_HINT}{}{LIST_HINT}", act.description));
-            if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
-                actions.insert(3, "triple_click".into());
-            }
-            let mut step = act.parameters.clone();
-            if let Some(props) = step["properties"].as_object_mut() {
-                props.remove("max_edge");
-            }
-            act.parameters["properties"]["actions"] = json!({"type": "array", "items": step});
-            with_target(&mut act.parameters);
-            if let Some(schema) = act.parameters.as_object_mut() {
-                schema.remove("required");
-            }
-        }
-        with_tab(&mut tools);
-        with_select(&mut tools);
-        tools.extend([
-            script,
-            gui_plan_tool(),
-            fetch_tool(),
-            fill_tool(),
-            tabs_tool(),
-            desk_tool(),
-        ]);
-        with_scale(&mut tools);
-        with_region(&mut tools);
-        with_budget(&mut tools);
-    }
-    tools
-}
-
-/// Adds `plugins` after the script tool, each with that tool's parameters; a box without one gets none.
-pub fn with_plugins(tools: &mut Vec<ToolSpec>, plugins: &[Plugin]) {
-    let Some(at) = tools.iter().position(|t| t.name == "script_run") else {
-        return;
-    };
-    let parameters = tools[at].parameters.clone();
-    let specs = plugins.iter().map(|p| ToolSpec {
-        name: Cow::Owned(p.name.clone()),
-        description: Cow::Owned(p.description.clone()),
-        parameters: parameters.clone(),
-    });
-    tools.splice(at + 1..at + 1, specs);
 }
 
 /// Gives the screenshots of a box that runs GUI plans their default scale in place of the screen size.
@@ -346,17 +379,14 @@ fn with_select(tools: &mut [ToolSpec]) {
 /// The automation's script tool; none on a box without one.
 fn script_tool(automation: Automation) -> Option<ToolSpec> {
     match automation {
-        Automation::Plain | Automation::Android => None,
+        Automation::Minimal | Automation::Android => None,
         Automation::Desk => Some(desk_script_tool()),
     }
 }
 
-/// Tools of the computer subagent; on a box that runs GUI plans their screenshots name the default scale.
-pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
-    if automation == Automation::Android {
-        return android_tools();
-    }
-    let mut tools = vec![
+/// `computer_state` and `computer_act` on a desktop, before a desk box's target and scale.
+fn desktop_tools() -> Vec<ToolSpec> {
+    vec![
         ToolSpec {
             name: Cow::Borrowed("computer_state"),
             description: Cow::Borrowed(
@@ -402,14 +432,7 @@ pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
                 "required": ["action"]
             }),
         },
-    ];
-    if automation.plans() {
-        if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            with_target(&mut act.parameters);
-        }
-        with_scale(&mut tools);
-    }
-    tools
+    ]
 }
 
 /// computer_state and computer_act on Android: UI elements from the UI server, touch and keys through adb.

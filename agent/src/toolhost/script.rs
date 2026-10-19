@@ -8,7 +8,6 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::{Value, json};
 
-use super::cua::Cua;
 use super::files;
 use super::rpc::{self, Call, Client, Output};
 use crate::llm::image_mime;
@@ -150,12 +149,6 @@ pub trait Screen: Sync {
         &self,
         max_edge: Option<u32>,
     ) -> impl Future<Output = Result<Option<String>, String>> + Send;
-}
-
-impl Screen for Cua {
-    async fn screenshot_once(&self, max_edge: Option<u32>) -> Result<Option<String>, String> {
-        Cua::screenshot_once(self, max_edge).await
-    }
 }
 
 /// The screen of the desk shuttle serves, through its `desk_look`.

@@ -257,7 +257,6 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         .env("CHROME_BIN", &wrapper)
         .env("CHROME_PROFILE", dir.path().join("profile"))
         .env("CDP_PORT", free_port().await.to_string())
-        .env("CUA_DRIVER_SOCKET", dir.path().join("cua.sock"))
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -480,7 +479,6 @@ async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client)> {
         .env("CHROME_BIN", &wrapper)
         .env("CHROME_PROFILE", dir.join("profile"))
         .env("CDP_PORT", free_port().await.to_string())
-        .env("CUA_DRIVER_SOCKET", dir.join("cua.sock"))
         .kill_on_drop(true)
         .spawn()
         .unwrap();

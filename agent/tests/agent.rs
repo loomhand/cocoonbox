@@ -33,17 +33,6 @@ use common::{owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
-const THUMB: &str =
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGP4DwQACfsD/fteaysAAAAASUVORK5CYII=";
-const TARGET_TOOLS: [&str; 7] = [
-    "move_cursor",
-    "click",
-    "drag",
-    "scroll",
-    "type_text",
-    "press_key",
-    "hotkey",
-];
 
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
@@ -55,7 +44,7 @@ struct Harness {
     home: PathBuf,
     endpoint: String,
     gw_log: Log,
-    cua_log: Log,
+    desk_log: Log,
     session_save: PathBuf,
     cdp_port: u16,
 }
@@ -79,7 +68,23 @@ impl Harness {
             mcp_prune_after,
             None,
             None,
-            Automation::Plain,
+            Automation::Minimal,
+            false,
+        )
+        .await
+    }
+
+    /// A desk box whose MCP sessions close after `mcp_idle`.
+    async fn desk_with_idle(mcp_idle: Duration) -> Self {
+        let day = Duration::from_secs(24 * 3600);
+        Self::boot(
+            Vec::new(),
+            false,
+            mcp_idle,
+            day,
+            None,
+            None,
+            Automation::Desk,
             false,
         )
         .await
@@ -95,7 +100,7 @@ impl Harness {
             day,
             Some(chrome),
             None,
-            Automation::Plain,
+            Automation::Desk,
             false,
         )
         .await
@@ -111,7 +116,7 @@ impl Harness {
             day,
             None,
             Some(connect_url),
-            Automation::Plain,
+            Automation::Minimal,
             false,
         )
         .await
@@ -151,10 +156,15 @@ impl Harness {
 
     /// A harness of a box with the desk runtime, which runs GUI plans and scripts on Node.
     async fn with_desk(script: Vec<(&'static str, String)>) -> Self {
+        Self::with_desk_wire(script, false).await
+    }
+
+    /// A desk box whose loop speaks the Messages wire to `anthropic/` models when `anthropic_messages`.
+    async fn with_desk_wire(script: Vec<(&'static str, String)>, anthropic_messages: bool) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
             script,
-            false,
+            anthropic_messages,
             Duration::from_secs(600),
             day,
             None,
@@ -185,9 +195,7 @@ impl Harness {
         common::provision(&identity);
         let gw_log = Log::default();
         let gw = mock_gw(script, Arc::clone(&gw_log)).await;
-        let cua_log = Log::default();
-        let cua_socket = dir.path().join("cua.sock");
-        fake_cua(&cua_socket, Arc::clone(&cua_log));
+        let desk_log = Log::default();
         let session_save = dir.path().join("session-save");
         write_script(&session_save, "echo saved >> \"$0.log\"");
         let tools_dir = dir.path().join("tools.d");
@@ -206,9 +214,13 @@ impl Harness {
         }
         let plugins = cocoonbox_agent::plugins::load(&tools_dir);
         let toolhost_socket = dir.path().join("toolhost.sock");
-        let shuttle_socket = (automation != Automation::Plain).then(|| {
+        let shuttle_socket = (automation != Automation::Minimal).then(|| {
             let socket = dir.path().join("desk.sock");
-            fake_shuttle(&socket, dir.path().join("shuttle.log"));
+            fake_shuttle(
+                &socket,
+                dir.path().join("shuttle.log"),
+                Arc::clone(&desk_log),
+            );
             socket
         });
         let (chrome_bin, cdp_port) = match chrome {
@@ -232,7 +244,6 @@ impl Harness {
             chrome_bin,
             chrome_profile: dir.path().join("chrome"),
             cdp_port,
-            cua_socket,
             session_save: session_save.clone(),
             home: home.clone(),
             automation,
@@ -303,7 +314,7 @@ impl Harness {
             home,
             endpoint,
             gw_log,
-            cua_log,
+            desk_log,
             session_save,
             cdp_port,
         }
@@ -646,70 +657,11 @@ async fn mock_door(
     url
 }
 
-fn fake_cua(path: &Path, log: Log) {
+/// A fake shuttle on `path` that logs each call's tool to `log` and the call to `calls`: a run answers as shuttle's
+/// runner, a plan with `ok`, a computer call with a screenshot.
+fn fake_shuttle(path: &Path, log: PathBuf, calls: Log) {
     let listener = UnixListener::bind(path).unwrap();
-    let ended: Arc<Mutex<HashSet<String>>> = Arc::default();
-    tokio::spawn(async move {
-        loop {
-            let (stream, _) = listener.accept().await.unwrap();
-            let log = Arc::clone(&log);
-            let ended = Arc::clone(&ended);
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(stream);
-                let mut line = String::new();
-                reader.read_line(&mut line).await.unwrap();
-                let req: Value = serde_json::from_str(&line).unwrap();
-                let name = req["name"].as_str().unwrap().to_owned();
-                log.lock()
-                    .unwrap()
-                    .push((name.clone(), req["args"].clone()));
-                let session = req["args"]["session"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned();
-                let mut stream = reader.into_inner();
-                if name == "end_session" {
-                    ended.lock().unwrap().insert(session);
-                } else if ended.lock().unwrap().contains(&session) {
-                    let error = format!(
-                        "session has ended; Call start_session with session '{session}' to start it again, or use a new session label"
-                    );
-                    let reply = json!({"ok": false, "error": error}).to_string() + "\n";
-                    stream.write_all(reply.as_bytes()).await.unwrap();
-                    return;
-                }
-                let result = match name.as_str() {
-                    n if req["args"]["target"].is_object() && !TARGET_TOOLS.contains(&n) => json!({
-                        "isError": true,
-                        "content": [{"type": "text", "text": format!("{n} does not accept a per-call target")}]
-                    }),
-                    "get_window_state" => json!({
-                        "content": [{"type": "text", "text": "tree"}],
-                        "structuredContent": {"window_id": 7, "window_bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "elements": [{"element_index": 0, "element_token": "tok-0", "role": "text", "label": "editor", "depth": 0, "frame": {"x": 10, "y": 20, "w": 100, "h": 40}}]}
-                    }),
-                    "get_desktop_state" if req["args"]["max_image_dimension"] == 160 => json!({
-                        "content": [{"type": "image", "mimeType": "image/png", "data": THUMB}]
-                    }),
-                    "get_desktop_state" => json!({
-                        "content": [{"type": "image", "mimeType": "image/png", "data": PNG}],
-                        "structuredContent": {
-                            "windows": fake_windows(),
-                            "frame_scale": req["args"]["max_image_dimension"].as_f64().map_or(1.0, |edge| 1280.0 / edge)
-                        }
-                    }),
-                    "list_windows" => json!({"structuredContent": {"windows": fake_windows()}}),
-                    _ => json!({"content": [{"type": "text", "text": format!("✅ {name} done")}]}),
-                };
-                let reply = json!({"ok": true, "result": result}).to_string() + "\n";
-                stream.write_all(reply.as_bytes()).await.unwrap();
-            });
-        }
-    });
-}
-
-/// A fake shuttle on `path` that logs each call's tool to `log`: a run answers as shuttle's runner, a plan with `ok`.
-fn fake_shuttle(path: &Path, log: PathBuf) {
-    let listener = UnixListener::bind(path).unwrap();
+    let mut ended = HashSet::new();
     tokio::spawn(async move {
         loop {
             let (mut conn, _) = listener.accept().await.unwrap();
@@ -718,11 +670,38 @@ fn fake_shuttle(path: &Path, log: PathBuf) {
             logged.push_str(&call.tool);
             logged.push('\n');
             std::fs::write(&log, logged).unwrap();
+            calls
+                .lock()
+                .unwrap()
+                .push((call.tool.clone(), call.args.clone()));
+            let session = call.args["session"].as_str().unwrap_or_default().to_owned();
             let out = match call.tool.as_str() {
+                "desk_computer_end" => {
+                    ended.insert(session.clone());
+                    Output::text(format!("ended session {session}"))
+                }
+                tool if tool.starts_with("desk_computer_") && ended.contains(&session) => {
+                    Output::error(format!(
+                        "session has ended; Call start_session with session '{session}' to start it again, or use a new session label"
+                    ))
+                }
                 "gui_plan" => Output::text(json!({"ok": true}).to_string()),
                 "desk_look" => Output {
                     image_b64: Some(PNG.into()),
                     ..Output::text("screenshot")
+                },
+                "desk_computer_state" => Output {
+                    image_b64: Some(PNG.into()),
+                    ..Output::text(
+                        "Windows (frontmost first):\n- pid=42 window_id=7 Mousepad \"Untitled\" at (100,50) 800x600",
+                    )
+                },
+                "desk_computer_act" => Output {
+                    image_b64: Some(PNG.into()),
+                    ..Output::text(format!(
+                        "{} done",
+                        call.args["action"].as_str().unwrap_or("list")
+                    ))
                 },
                 tool if tool.starts_with("desk_") => Output::text("{}"),
                 tool => {
@@ -737,18 +716,16 @@ fn fake_shuttle(path: &Path, log: PathBuf) {
                     }
                 }
             };
-            write_frame(&mut conn, &out).await.unwrap();
+            let wait = (call.tool == "desk_computer_act" && call.args["action"] == "wait")
+                .then(|| call.args["seconds"].as_f64().unwrap_or(1.0));
+            tokio::spawn(async move {
+                if let Some(secs) = wait {
+                    tokio::time::sleep(Duration::from_secs_f64(secs)).await;
+                }
+                let _ = write_frame(&mut conn, &out).await;
+            });
         }
     });
-}
-
-fn fake_windows() -> Value {
-    json!([
-        {"pid": 1, "window_id": 2, "app_name": "Xfdesktop", "title": "Desktop", "bounds": {"x": 0, "y": 0, "width": 1280, "height": 800}, "z_index": 0},
-        {"pid": 42, "window_id": 7, "app_name": "Mousepad", "title": "Untitled", "bounds": {"x": 100, "y": 50, "width": 800, "height": 600}, "z_index": 3},
-        {"pid": 5, "window_id": 9, "app_name": "Xfce4-panel", "title": "hidden", "bounds": {"x": -9999, "y": -9999, "width": 3, "height": 3}, "z_index": 4},
-        {"pid": 5, "window_id": 10, "app_name": "Xfce4-panel", "title": "panel", "bounds": {"x": 0, "y": 0, "width": 1280, "height": 27}, "z_index": 5}
-    ])
 }
 
 async fn fake_vnc() -> String {
@@ -1296,7 +1273,7 @@ async fn run_delegate(messages_wire: bool) {
     )];
     script.extend(sub);
     script.push(("chat/completions", chat_text("Done.")));
-    let h = Harness::start(script, messages_wire).await;
+    let h = Harness::with_desk_wire(script, messages_wire).await;
     let mut agents = h.agents().await;
     let mut session = h.session().await;
     let agent_id = create_agent(&mut agents).await;
@@ -1339,16 +1316,10 @@ async fn run_delegate(messages_wire: bool) {
         })
         .unwrap();
     assert!(
-        state.text.contains("[0] text \"editor\" center=(60,40)"),
+        state.text.starts_with("Windows (frontmost first):"),
         "{}",
         state.text
     );
-    assert!(
-        state.text.find("Mousepad") < state.text.find("Xfdesktop"),
-        "{}",
-        state.text
-    );
-    assert!(!state.text.contains("hidden"), "{}", state.text);
     assert!(state.image.starts_with(b"\x89PNG"));
     let delegate = entries
         .iter()
@@ -1364,61 +1335,39 @@ async fn run_delegate(messages_wire: bool) {
     );
     assert!(delegate.image.starts_with(b"\x89PNG"));
 
-    let typed = h
-        .cua_log
+    let calls: Vec<(String, Value)> = h
+        .desk_log
         .lock()
         .unwrap()
         .iter()
-        .find(|(n, _)| n == "type_text")
-        .map(|(_, a)| a.clone())
-        .unwrap();
-    assert_eq!(typed["element_token"], "tok-0");
-    assert_eq!(typed["pid"], 42);
-    assert_eq!(typed["text"], "hello");
-    assert_eq!(typed["window_id"], 7);
-    let pressed = h
-        .cua_log
-        .lock()
-        .unwrap()
-        .iter()
-        .find(|(n, _)| n == "press_key")
-        .map(|(_, a)| a.clone())
-        .unwrap();
+        .filter(|(n, _)| n.starts_with("desk_computer_"))
+        .cloned()
+        .collect();
+    let names: Vec<&str> = calls.iter().map(|(n, _)| n.as_str()).collect();
     assert_eq!(
-        (pressed["pid"].clone(), pressed["window_id"].clone()),
-        (json!(42), json!(7))
+        names,
+        [
+            "desk_computer_state",
+            "desk_computer_act",
+            "desk_computer_act",
+            "desk_computer_end"
+        ]
     );
-    let cua_calls = h.cua_log.lock().unwrap().clone();
-    let session = cua_calls[0].1["session"].as_str().unwrap().to_owned();
+    let session = calls[0].1["session"].as_str().unwrap().to_owned();
     assert!(session.starts_with("cu-"), "{session}");
-    let names: Vec<&str> = cua_calls.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(
-        names[..3],
-        ["list_windows", "get_window_state", "get_desktop_state"]
-    );
-    for input in [&typed, &pressed] {
-        let once = input["session"].as_str().unwrap();
-        assert!(once.starts_with("input-"), "{once}");
-        let calls: Vec<&str> = cua_calls
-            .iter()
-            .filter(|(_, a)| a["session"] == once)
-            .map(|(n, _)| n.as_str())
-            .collect();
-        assert_eq!(calls.last(), Some(&"end_session"), "{cua_calls:?}");
-    }
     assert!(
-        cua_calls
-            .iter()
-            .all(|(_, a)| a["session"] == session.as_str()
-                || a["session"].as_str().unwrap().starts_with("input-")),
-        "{cua_calls:?}"
+        calls.iter().all(|(_, a)| a["session"] == session.as_str()),
+        "{calls:?}"
     );
     assert_eq!(
-        cua_calls
-            .last()
-            .map(|(n, a)| (n.as_str(), a["session"].clone())),
-        Some(("end_session", json!(session)))
+        (
+            &calls[1].1["action"],
+            &calls[1].1["element"],
+            &calls[1].1["text"]
+        ),
+        (&json!("type"), &json!(0), &json!("hello"))
     );
+    assert_eq!(calls[2].1["key"], "return");
 
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     let main_after = if messages_wire {
@@ -1553,7 +1502,7 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
         chat_text("Opened the editor; the save dialog never came up."),
     ));
     script.push(("chat/completions", chat_text("Done.")));
-    let h = Harness::start(script, false).await;
+    let h = Harness::with_desk(script).await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "look", "").await;
@@ -3096,7 +3045,7 @@ async fn exec_needs_start_first() {
 
 #[tokio::test]
 async fn cancel_during_computer_task_ends_the_driver_session() {
-    let h = Harness::start(
+    let h = Harness::with_desk_wire(
         vec![
             (
                 "chat/completions",
@@ -3147,8 +3096,8 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
         matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.error == "cancelled")
     );
     for _ in 0..200 {
-        if h.cua_log.lock().unwrap().iter().any(|(n, a)| {
-            n == "end_session" && a["session"].as_str().is_some_and(|s| s.starts_with("cu-"))
+        if h.desk_log.lock().unwrap().iter().any(|(n, a)| {
+            n == "desk_computer_end" && a["session"].as_str().is_some_and(|s| s.starts_with("cu-"))
         }) {
             return;
         }
@@ -3156,13 +3105,13 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
     }
     panic!(
         "cancel did not end the driver session: {:?}",
-        h.cua_log.lock().unwrap()
+        h.desk_log.lock().unwrap()
     );
 }
 
 #[tokio::test]
 async fn vision_main_model_gets_a_screenshot_tool() {
-    let h = Harness::start(
+    let h = Harness::with_desk_wire(
         vec![
             (
                 "chat/completions",
@@ -3210,25 +3159,16 @@ async fn vision_main_model_gets_a_screenshot_tool() {
             .unwrap()
             .starts_with("data:image/png;base64,")
     );
-    assert!(
-        !chats[0]["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t["function"]["name"] == "script_run")
-    );
-    let system = chats[0]["messages"][0]["content"][0]["text"]
-        .as_str()
-        .unwrap();
-    assert!(!system.contains("script_run"), "{system}");
-    assert!(gw_bodies(&h.gw_log, "decisions").is_empty());
-    let cua = h.cua_log.lock().unwrap().clone();
-    let names: Vec<&str> = cua.iter().map(|(n, _)| n.as_str()).collect();
-    assert_eq!(names, ["get_desktop_state", "end_session"]);
-    assert!(
-        cua.iter()
-            .all(|(_, a)| a["session"].as_str().unwrap().starts_with("shot-"))
-    );
+    let looks: Vec<Value> = h
+        .desk_log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(n, _)| n == "desk_look")
+        .map(|(_, a)| a.clone())
+        .collect();
+    assert_eq!(looks.len(), 1, "{looks:?}");
+    assert!(looks[0].get("session").is_none(), "{looks:?}");
 }
 
 struct McpClient {
@@ -3329,7 +3269,7 @@ impl McpClient {
 }
 
 fn driver_calls(h: &Harness, name: &str) -> Vec<Value> {
-    h.cua_log
+    h.desk_log
         .lock()
         .unwrap()
         .iter()
@@ -3340,7 +3280,7 @@ fn driver_calls(h: &Harness, name: &str) -> Vec<Value> {
 
 #[tokio::test]
 async fn mcp_owner_sessions_drive_every_tool_untracked() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::with_desk(Vec::new()).await;
     let http = reqwest::Client::new();
     let denied = http
         .post(format!("{}/mcp", h.endpoint))
@@ -3359,24 +3299,10 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     let mut mcp = McpClient::connect(&h).await;
 
     let listed = mcp.rpc("tools/list", json!({})).await;
-    assert_eq!(
-        McpClient::tool_names(&listed),
-        [
-            "browser_click",
-            "browser_navigate",
-            "browser_read",
-            "browser_snapshot",
-            "browser_type",
-            "computer_act",
-            "computer_state",
-            "edit_file",
-            "list_dir",
-            "read_file",
-            "screenshot",
-            "shell",
-            "write_file"
-        ]
-    );
+    let names = McpClient::tool_names(&listed);
+    for tool in ["computer_act", "computer_state", "screenshot", "shell"] {
+        assert!(names.contains(&tool.to_owned()), "{names:?}");
+    }
     assert!(listed["result"]["tools"][0]["inputSchema"]["type"] == "object");
 
     let shell = mcp
@@ -3399,8 +3325,8 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     assert_eq!(shot["content"][1]["type"], "image");
     assert_eq!(shot["content"][1]["mimeType"], "image/png");
     assert_eq!(shot["content"][1]["data"], PNG);
-    let captures = driver_calls(&h, "get_desktop_state");
-    assert_eq!(captures[0]["max_image_dimension"], 640);
+    let captures = driver_calls(&h, "desk_look");
+    assert_eq!(captures[0]["max_edge"], 640);
     let label = captures[0]["session"].as_str().unwrap().to_owned();
     assert!(label.starts_with("cu-"), "{label}");
 
@@ -3408,7 +3334,10 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
         .call("computer_act", json!({"action": "click", "x": 10, "y": 20}))
         .await;
     assert_eq!(act["isError"], false, "{act}");
-    assert_eq!(driver_calls(&h, "click")[0]["session"], label.as_str());
+    assert_eq!(
+        driver_calls(&h, "desk_computer_act")[0]["session"],
+        label.as_str()
+    );
 
     let unknown = mcp
         .rpc(
@@ -3454,7 +3383,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
     let discover: Value = discover.json().await.unwrap();
     assert_eq!(discover["error"]["code"], -32601);
     assert_eq!(discover["id"], 8);
-    let unknown_in_session = mcp.rpc("resources/list", json!({})).await;
+    let unknown_in_session = mcp.rpc("prompts/list", json!({})).await;
     assert_eq!(unknown_in_session["error"]["code"], -32601);
 
     let no_session = reqwest::Client::new()
@@ -3476,7 +3405,7 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
         .await
         .unwrap();
     assert_eq!(deleted.status(), 204);
-    let ended = driver_calls(&h, "end_session");
+    let ended = driver_calls(&h, "desk_computer_end");
     assert_eq!(ended.len(), 1);
     assert_eq!(ended[0]["session"], label.as_str());
     assert!(
@@ -3487,60 +3416,6 @@ async fn mcp_owner_sessions_drive_every_tool_untracked() {
         .post(json!({"jsonrpc": "2.0", "id": 10, "method": "tools/list"}))
         .await;
     assert_eq!(gone.status(), 404);
-}
-
-#[tokio::test]
-async fn mcp_surface_of_a_plain_box_matches_the_cbdesk_agent_byte_for_byte() {
-    let h = Harness::start(Vec::new(), false).await;
-    let http = reqwest::Client::new();
-    let url = format!("{}/mcp", h.endpoint);
-    let post = |body: Value, session: Option<String>| {
-        let mut req = http
-            .post(&url)
-            .header("accept", "application/json, text/event-stream")
-            .header("x-cocoonbox-credential", owner())
-            .json(&body);
-        if let Some(s) = session {
-            req = req.header("mcp-session-id", s);
-        }
-        req.send()
-    };
-    let init = post(
-        json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "golden", "version": "1"}}}),
-        None,
-    )
-    .await
-    .unwrap();
-    let session = init.headers()["mcp-session-id"]
-        .to_str()
-        .unwrap()
-        .to_owned();
-    let mut got = vec![("mcp-initialize.json", init.bytes().await.unwrap())];
-    for (file, method) in [
-        ("mcp-tools-list.json", "tools/list"),
-        ("mcp-resources-list.json", "resources/list"),
-    ] {
-        let reply = post(
-            json!({"jsonrpc": "2.0", "id": 1, "method": method}),
-            Some(session.clone()),
-        )
-        .await
-        .unwrap();
-        got.push((file, reply.bytes().await.unwrap()));
-    }
-    for (file, body) in got {
-        let want = std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/golden")
-                .join(file),
-        )
-        .unwrap();
-        assert_eq!(
-            String::from_utf8_lossy(&body),
-            String::from_utf8_lossy(&want),
-            "{file} differs from the golden surface"
-        );
-    }
 }
 
 #[tokio::test]
@@ -3606,7 +3481,7 @@ async fn mcp_plugin_runs_on_shuttle_as_its_own_tool() {
     let h = Harness::with_plugin(Vec::new()).await;
     reports_result_logs_and_a_screenshot(&h, "demo_run").await;
     let ran = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
-    let runs: Vec<&str> = ran.lines().filter(|t| *t != "desk_look").collect();
+    let runs: Vec<&str> = ran.lines().filter(|t| t.ends_with("_run")).collect();
     assert_eq!(runs, ["demo_run", "demo_run"], "{ran}");
 }
 
@@ -3647,7 +3522,7 @@ async fn mcp_lists_a_plugin_after_the_script_tool_with_its_resource() {
 #[tokio::test]
 async fn a_box_without_the_desk_ignores_its_plugins() {
     let day = Duration::from_secs(24 * 3600);
-    for automation in [Automation::Plain, Automation::Android] {
+    for automation in [Automation::Minimal, Automation::Android] {
         let h = Harness::boot(
             Vec::new(),
             false,
@@ -3723,11 +3598,37 @@ async fn an_android_box_keeps_its_mcp_texts_within_the_caps() {
 }
 
 #[tokio::test]
+async fn a_box_without_a_guide_offers_shell_and_files_only() {
+    let h = Harness::start(Vec::new(), false).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    assert_eq!(
+        McpClient::tool_names(&listed),
+        ["edit_file", "list_dir", "read_file", "shell", "write_file"]
+    );
+    let main: Vec<String> = cocoonbox_agent::tools::main_tools(true, Automation::Minimal)
+        .into_iter()
+        .map(|t| t.name.into_owned())
+        .collect();
+    assert_eq!(
+        main,
+        ["shell", "read_file", "write_file", "edit_file", "list_dir"]
+    );
+    let shot = mcp
+        .rpc("tools/call", json!({"name": "screenshot", "arguments": {}}))
+        .await;
+    assert_eq!(
+        shot["error"]["message"], "unknown tool: screenshot",
+        "{shot}"
+    );
+}
+
+#[tokio::test]
 async fn hello_names_the_box_automation_and_its_screen() {
     for (h, automation, screen) in [
         (
             Harness::start(Vec::new(), false).await,
-            pb::Automation::Plain,
+            pb::Automation::Unspecified,
             (1280, 800),
         ),
         (
@@ -3944,8 +3845,8 @@ fn the_shell_of_a_box_that_runs_gui_plans_names_its_time_budget() {
     for (tools, budget) in [
         (main_tools(false, Automation::Desk), true),
         (remote_tools(Automation::Desk), true),
-        (main_tools(false, Automation::Plain), false),
-        (remote_tools(Automation::Plain), false),
+        (main_tools(false, Automation::Minimal), false),
+        (remote_tools(Automation::Minimal), false),
     ] {
         let shell = tools.iter().find(|t| t.name == "shell").unwrap();
         assert_eq!(
@@ -3983,12 +3884,7 @@ fn screenshots_of_a_box_that_runs_gui_plans_name_the_default_scale_instead_of_th
         named.push(t.name);
     }
     assert_eq!(named, shots);
-    let plain = cocoonbox_agent::tools::computer_tools(Automation::Plain);
-    assert!(
-        plain[0].description.contains("whole 1280x800 screen"),
-        "{}",
-        plain[0].description
-    );
+    assert!(cocoonbox_agent::tools::computer_tools(Automation::Minimal).is_empty());
 }
 
 #[tokio::test]
@@ -4116,13 +4012,6 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
         (1250, 65, 100)
     );
 
-    let golden: Value = serde_json::from_slice(
-        &std::fs::read(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/mcp-initialize.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
     let init: Value = reqwest::Client::new()
         .post(format!("{}/mcp", h.endpoint))
         .header("accept", "application/json, text/event-stream")
@@ -4138,14 +4027,6 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     assert!(
         instructions.ends_with(&format!("\n\n{routing}")),
         "{instructions}"
-    );
-    assert_ne!(
-        instructions.lines().next(),
-        golden["result"]["instructions"]
-            .as_str()
-            .unwrap()
-            .lines()
-            .next()
     );
     let version = std::fs::read_to_string("/etc/os-release")
         .unwrap()
@@ -4238,27 +4119,8 @@ async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
 }
 
 #[tokio::test]
-async fn a_cbdesk_box_never_nudges_a_computer_act_streak() {
-    let h = Harness::start(Vec::new(), false).await;
-    let mut mcp = McpClient::connect(&h).await;
-    for _ in 0..5 {
-        let out = mcp
-            .call("computer_act", json!({"action": "key", "key": "a"}))
-            .await;
-        assert_eq!(out["isError"], false, "{out}");
-        assert!(
-            !out["content"][0]["text"]
-                .as_str()
-                .unwrap()
-                .contains("script_run"),
-            "{out}"
-        );
-    }
-}
-
-#[tokio::test]
 async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::with_desk(Vec::new()).await;
     let edge = Edge::provision(&h);
     let reader = edge.share("share:sh-1:read");
     let mut mcp = McpClient::connect_as(&h, Some(reader.clone())).await;
@@ -4330,7 +4192,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
     drop(stream);
     assert_eq!(
         McpClient::tool_names(&mcp.rpc("tools/list", json!({})).await).len(),
-        13
+        cocoonbox_agent::tools::remote_tools(Automation::Desk).len()
     );
     let shell = mcp
         .call("shell", json!({"command": "echo guest > g.txt"}))
@@ -4563,7 +4425,7 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
         .await;
     assert_eq!(
         out["isError"], false,
-        "a cbdesk read share is unchanged: {out}"
+        "a read share of a box without a guide is unchanged: {out}"
     );
 }
 
@@ -4685,11 +4547,10 @@ async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
 
 #[tokio::test]
 async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
-    let day = Duration::from_secs(24 * 3600);
-    let h = Harness::start_with(Vec::new(), false, Duration::from_millis(400), day).await;
+    let h = Harness::desk_with_idle(Duration::from_millis(400)).await;
     let mut mcp = McpClient::connect(&h).await;
     mcp.call("screenshot", json!({})).await;
-    let first = driver_calls(&h, "get_desktop_state")[0]["session"].clone();
+    let first = driver_calls(&h, "desk_look")[0]["session"].clone();
 
     let mut stream = mcp
         .http
@@ -4704,147 +4565,24 @@ async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
     assert!(stream.chunk().await.unwrap().is_some());
     drop(stream);
     for _ in 0..100 {
-        if !driver_calls(&h, "end_session").is_empty() {
+        if !driver_calls(&h, "desk_computer_end").is_empty() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    assert_eq!(driver_calls(&h, "end_session")[0]["session"], first);
+    assert_eq!(driver_calls(&h, "desk_computer_end")[0]["session"], first);
 
     mcp.call("screenshot", json!({})).await;
-    let second = driver_calls(&h, "get_desktop_state")[1]["session"].clone();
+    let second = driver_calls(&h, "desk_look")[1]["session"].clone();
     assert_ne!(first, second);
     tokio::time::sleep(Duration::from_millis(1200)).await;
-    let ended = driver_calls(&h, "end_session");
+    let ended = driver_calls(&h, "desk_computer_end");
     assert_eq!(ended.len(), 2, "{ended:?}");
     assert_eq!(ended[1]["session"], second);
     let gone = mcp
         .post(json!({"jsonrpc": "2.0", "id": 5, "method": "tools/list"}))
         .await;
     assert_eq!(gone.status(), 404);
-}
-
-#[tokio::test]
-async fn concurrent_computer_acts_do_not_interleave() {
-    let h = Harness::start(Vec::new(), false).await;
-    let mut a = McpClient::connect(&h).await;
-    let mut b = McpClient::connect(&h).await;
-    let (ra, rb) = tokio::join!(
-        a.call("computer_act", json!({"action": "click", "x": 1, "y": 1})),
-        b.call("computer_act", json!({"action": "click", "x": 2, "y": 2}))
-    );
-    assert_eq!(
-        (ra["isError"].clone(), rb["isError"].clone()),
-        (json!(false), json!(false))
-    );
-    let log: Vec<(String, String)> = h
-        .cua_log
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|(n, a)| {
-            (
-                n.clone(),
-                a["session"].as_str().unwrap_or_default().to_owned(),
-            )
-        })
-        .collect();
-    assert_eq!(log.len(), 4, "{log:?}");
-    assert_eq!(
-        (log[0].0.as_str(), log[1].0.as_str()),
-        ("click", "get_desktop_state")
-    );
-    assert_eq!(
-        (log[2].0.as_str(), log[3].0.as_str()),
-        ("click", "get_desktop_state")
-    );
-    assert_eq!(log[0].1, log[1].1);
-    assert_eq!(log[2].1, log[3].1);
-    assert_ne!(log[0].1, log[2].1);
-
-    let raw = a
-        .post(
-            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
-                "protocolVersion": "2099-01-01",
-                "clientInfo": {"name": "future"}
-            }}),
-        )
-        .await;
-    let init: Value = raw.json().await.unwrap();
-    assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
-}
-
-#[tokio::test]
-async fn pixel_double_and_right_clicks_are_desktop_clicks() {
-    let h = Harness::start(Vec::new(), false).await;
-    let mut mcp = McpClient::connect(&h).await;
-    for action in ["double_click", "right_click"] {
-        let act = mcp
-            .call("computer_act", json!({"action": action, "x": 30, "y": 40}))
-            .await;
-        assert_eq!(act["isError"], false, "{act}");
-    }
-    let clicks = driver_calls(&h, "click");
-    let desktop = json!({"kind": "desktop", "display_id": "primary"});
-    assert_eq!(
-        (&clicks[0]["count"], &clicks[0]["target"]),
-        (&json!(2), &desktop)
-    );
-    assert_eq!(
-        (&clicks[1]["button"], &clicks[1]["target"]),
-        (&json!("right"), &desktop)
-    );
-
-    mcp.call("computer_state", json!({})).await;
-    for action in ["double_click", "right_click"] {
-        let act = mcp
-            .call(
-                "computer_act",
-                json!({"action": action, "element": 0, "button": "left"}),
-            )
-            .await;
-        assert_eq!(act["isError"], false, "{act}");
-        let call = &driver_calls(&h, action)[0];
-        assert_eq!(
-            (&call["element_token"], &call["pid"]),
-            (&json!("tok-0"), &json!(42))
-        );
-        assert!(call.get("button").is_none(), "{call}");
-    }
-}
-
-#[tokio::test]
-async fn non_ascii_text_is_typed_in_calls_of_at_most_eight_distinct_characters() {
-    let h = Harness::start(Vec::new(), false).await;
-    let mut mcp = McpClient::connect(&h).await;
-    let out = mcp
-        .call(
-            "computer_act",
-            json!({"action": "type", "text": "hi — 你好 🙂 一二三四五六七"}),
-        )
-        .await;
-    assert_eq!(out["isError"], false, "{out}");
-    let typed: Vec<(String, Value, Value)> = driver_calls(&h, "type_text")
-        .into_iter()
-        .map(|a| {
-            (
-                a["text"].as_str().unwrap().to_owned(),
-                a["pid"].clone(),
-                a["window_id"].clone(),
-            )
-        })
-        .collect();
-    let texts: Vec<&str> = typed.iter().map(|t| t.0.as_str()).collect();
-    assert_eq!(texts, ["hi — 你好 🙂 一二三四", "五六七"]);
-    assert!(typed.iter().all(|t| t.1 == 42 && t.2 == 7), "{typed:?}");
-    let ascii = mcp
-        .call(
-            "computer_act",
-            json!({"action": "type", "text": "plain ascii"}),
-        )
-        .await;
-    assert_eq!(ascii["isError"], false);
-    assert_eq!(driver_calls(&h, "type_text").len(), 3);
 }
 
 #[tokio::test]
@@ -5177,28 +4915,12 @@ async fn a_desk_box_waits_for_the_content_a_page_script_loads() {
         return;
     };
     let page = format!("http://{}/spa", feed_pages().await);
-    let day = Duration::from_secs(24 * 3600);
-    let plain = Harness::with_chrome(Vec::new(), &chrome).await;
-    let desk = Harness::boot(
-        Vec::new(),
-        false,
-        Duration::from_secs(600),
-        day,
-        Some(&chrome),
-        None,
-        Automation::Desk,
-        false,
-    )
-    .await;
+    let desk = Harness::with_chrome(Vec::new(), &chrome).await;
     let text = |out: &Value| out["content"][0]["text"].as_str().unwrap().to_owned();
-    for (h, tool, want) in [
-        (&plain, "browser_navigate", "Loading your feed"),
-        (&desk, "browser_navigate", "feed item one"),
-        (&desk, "browser_fetch", "feed item one"),
-    ] {
-        let mut mcp = McpClient::connect(h).await;
+    for tool in ["browser_navigate", "browser_fetch"] {
+        let mut mcp = McpClient::connect(&desk).await;
         let out = text(&mcp.call(tool, json!({"url": page})).await);
-        assert!(out.contains(want), "{tool}: {out}");
+        assert!(out.contains("feed item one"), "{tool}: {out}");
     }
 }
 
@@ -5258,41 +4980,6 @@ async fn delete_closes_the_agents_chrome_window() {
         tab_gone(h.cdp_port, &page).await,
         "the deleted agent's window stayed open"
     );
-}
-
-#[tokio::test]
-async fn launch_app_reuses_a_running_apps_window() {
-    let h = Harness::start(Vec::new(), false).await;
-    let mut mcp = McpClient::connect(&h).await;
-    let running = mcp
-        .call(
-            "computer_act",
-            json!({"action": "launch_app", "app": "mousepad"}),
-        )
-        .await;
-    assert_eq!(running["isError"], false, "{running}");
-    assert!(
-        running["content"][0]["text"]
-            .as_str()
-            .unwrap()
-            .contains("already running"),
-        "{running}"
-    );
-    let raised = driver_calls(&h, "bring_to_front");
-    assert_eq!(
-        (raised[0]["pid"].clone(), raised[0]["window_id"].clone()),
-        (json!(42), json!(7))
-    );
-    assert!(driver_calls(&h, "launch_app").is_empty());
-
-    let fresh = mcp
-        .call(
-            "computer_act",
-            json!({"action": "launch_app", "app": "gedit"}),
-        )
-        .await;
-    assert_eq!(fresh["isError"], false, "{fresh}");
-    assert_eq!(driver_calls(&h, "launch_app")[0]["name"], "gedit");
 }
 
 type Objects = Arc<Mutex<HashMap<String, Vec<u8>>>>;
@@ -6332,11 +6019,11 @@ async fn restore_fetches_a_chunk_shared_by_several_files_once() {
 
 #[tokio::test]
 async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let ok = mcp.call("computer_state", json!({})).await;
     assert_eq!(ok["isError"], false, "{ok}");
-    let first = driver_calls(&h, "list_windows")[0]["session"].clone();
+    let first = driver_calls(&h, "desk_computer_state")[0]["session"].clone();
 
     let toolhost =
         cocoonbox_agent::toolhost::rpc::Client::new(h.home.parent().unwrap().join("toolhost.sock"));
@@ -6349,12 +6036,12 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
 
     let again = mcp.call("computer_state", json!({})).await;
     assert_eq!(again["isError"], false, "{again}");
-    let lists = driver_calls(&h, "list_windows");
+    let lists = driver_calls(&h, "desk_computer_state");
     assert_eq!(lists.len(), 3, "{lists:?}");
     assert_eq!(lists[1]["session"], first);
     let second = lists[2]["session"].clone();
     assert_ne!(second, first);
-    let ends: Vec<Value> = driver_calls(&h, "end_session")
+    let ends: Vec<Value> = driver_calls(&h, "desk_computer_end")
         .into_iter()
         .filter(|a| a["session"] == first)
         .collect();
@@ -6364,8 +6051,8 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
         .call("computer_act", json!({"action": "key", "key": "Return"}))
         .await;
     assert_eq!(act["isError"], false, "{act}");
-    let shots = driver_calls(&h, "get_desktop_state");
-    assert_eq!(shots.last().unwrap()["session"], second);
+    let acts = driver_calls(&h, "desk_computer_act");
+    assert_eq!(acts.last().unwrap()["session"], second);
 }
 
 #[tokio::test]

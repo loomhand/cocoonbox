@@ -29,10 +29,10 @@ const QUIESCE_WAIT: Duration = Duration::from_secs(30);
 /// The desktop automation of the box's image family, found by its guide at start.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Automation {
-    /// cua-driver only: the cbdesk family.
+    /// No desktop automation: shell and files only, on a box whose image has no guide.
     #[default]
-    Plain,
-    /// GUI plans and scripts on Node with the desk API.
+    Minimal,
+    /// The desktop on shuttle, with GUI plans and scripts on Node with the desk API: the cbcore family.
     Desk,
     /// Android in the box, driven by shuttle's adb backend: the cbdroid family.
     Android,
@@ -46,7 +46,7 @@ impl Automation {
         } else if Path::new(DESK_GUIDE).exists() {
             Self::Desk
         } else {
-            Self::Plain
+            Self::Minimal
         }
     }
 
@@ -57,7 +57,7 @@ impl Automation {
 
     /// Whether the box runs GUI plans and scripts on the desk API: a desk box, and an Android box on shuttle.
     pub fn scripts(self) -> bool {
-        self != Self::Plain
+        self != Self::Minimal
     }
 }
 
@@ -172,7 +172,6 @@ pub struct ToolhostConfig {
     pub chrome_bin: String,
     pub chrome_profile: PathBuf,
     pub cdp_port: u16,
-    pub cua_socket: PathBuf,
     pub session_save: PathBuf,
     pub home: PathBuf,
     /// The box's desktop automation.
@@ -210,10 +209,6 @@ impl ToolhostConfig {
             cdp_port: optional("CDP_PORT", "9222")
                 .parse()
                 .map_err(|e| format!("parse CDP_PORT: {e}"))?,
-            cua_socket: env::var("CUA_DRIVER_SOCKET").map_or_else(
-                |_| format!("{home}/.cache/cua-driver/cua-driver.sock").into(),
-                Into::into,
-            ),
             session_save: SESSION_SAVE.into(),
             home: home.into(),
             automation: Automation::detect(),
@@ -289,7 +284,7 @@ mod tests {
             state_roots: Vec::new(),
             desktop_unit: None,
             connect_url: None,
-            automation: Automation::Plain,
+            automation: Automation::Minimal,
             plugins: Vec::new(),
             routing_extra: Vec::new(),
             shuttle_socket: None,

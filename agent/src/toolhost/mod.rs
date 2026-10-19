@@ -2,20 +2,16 @@
 
 mod act;
 mod browser;
-mod cua;
 pub mod desk;
 mod exec;
 pub(crate) mod files;
 pub(crate) mod flows;
 mod ground;
 pub mod rpc;
-mod scope;
 mod script;
 mod shell;
 pub mod state;
 mod timing;
-mod volatile;
-mod xshm;
 
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
@@ -30,12 +26,10 @@ use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
-use x11rb::connection::Connection as _;
 
 use crate::config::{Automation, ToolhostConfig};
 use crate::runs::Shots;
 use browser::Browser;
-use cua::Cua;
 use desk::Desk;
 use rpc::{Call, Client, Output};
 use script::{Screen, Scripts, ShuttleScreen};
@@ -46,6 +40,7 @@ const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
 const OS_RELEASE: &str = "/etc/os-release";
 const DESKTOP_VAR: &str = "XDG_CURRENT_DESKTOP";
+const SCREEN_WAIT: Duration = Duration::from_secs(2);
 
 /// Shared tool state for all connections.
 struct Host {
@@ -53,7 +48,6 @@ struct Host {
     scratch: PathBuf,
     shells: Mutex<HashMap<String, Arc<Mutex<Option<Shell>>>>>,
     browser: Browser,
-    cua: Cua,
     /// An Android box, whose screen, desk and script tools run on shuttle.
     android: bool,
     desk: Desk,
@@ -85,7 +79,6 @@ impl Host {
                 cfg.cdp_port,
                 cfg.automation.plans(),
             ),
-            cua: Cua::new(cfg.cua_socket.clone(), cfg.automation.plans()),
             android: cfg.automation == Automation::Android,
             desk: Desk::new(shuttle.clone()),
             scripts: Scripts::new(PathBuf::from(SCRIPT_DIR), shuttle.clone()),
@@ -156,7 +149,7 @@ impl Host {
             "state_swap" => state::swap(call.args).await.map(Output::text),
             "state_place" => state::place(call.args).await.map(Output::text),
             "desktop_save" => self.desktop_save().await.map(Output::text),
-            "desktop_info" => Ok(Output::text(desktop_info())),
+            "desktop_info" => Ok(Output::text(desktop_info(self.shuttle.as_ref()).await)),
             "active_origin" => self.browser.origin().await.map(Output::text),
             "credential_fill" => {
                 let mut args = call.args;
@@ -169,24 +162,7 @@ impl Host {
                 .run(&call.agent_id, t, call.args)
                 .await
                 .map(Output::text),
-            "computer_state" => self.cua.state(call.args).await,
-            "computer_act" if call.args.get("target").is_some_and(|t| !t.is_null()) => Err(
-                "a described target needs shuttle's desk, which this box does not run".to_owned(),
-            ),
-            "computer_act" => self.cua.act(&self.browser, &call.agent_id, call.args).await,
-            "computer_end" => self.cua.end(call.args).await.map(Output::text),
-            "script_run" => {
-                self.scripts
-                    .run(&self.cua, &self.workspace, call.args)
-                    .await
-            }
-            "gui_plan" => {
-                self.scripts
-                    .plan(&self.cua, &self.workspace, call.args)
-                    .await
-            }
             "gui_flows" => Ok(Output::text(Scripts::flows(&self.workspace).await)),
-            "run_screenshot" => self.run_screenshot(&self.cua, &call.args).await,
             "flows_scan" => flows::scan(&self.workspace).await.map(Output::text),
             "flows_read" => flows::read(&self.workspace, call.args)
                 .await
@@ -204,12 +180,6 @@ impl Host {
             "flows_wait" => flows::wait(&self.flow_writes, call.args)
                 .await
                 .map(Output::text),
-            "screenshot" | "computer_screenshot" => self.cua.look(&call.args).await,
-            other if self.plugins.contains(other) => {
-                self.scripts
-                    .run_with(other, &self.cua, &self.workspace, call.args)
-                    .await
-            }
             other => Err(format!("unknown tool {other}")),
         };
         let out = result.unwrap_or_else(Output::error);
@@ -318,7 +288,7 @@ impl Host {
     async fn held(&self, changes: impl Fn(&str) -> bool) -> String {
         let titles = match &self.shuttle {
             Some(shuttle) if self.plans => window_titles(shuttle).await,
-            _ => self.cua.window_titles(),
+            _ => Vec::new(),
         };
         files::held_note(&titles, changes)
     }
@@ -472,8 +442,8 @@ fn group_id(name: &str) -> Option<u32> {
     })
 }
 
-/// The box's OS release, desktop and X screen size as JSON, with the fields it could read.
-fn desktop_info() -> String {
+/// The box's OS release, desktop and the screen size shuttle reports as JSON, with the fields it could read.
+async fn desktop_info(shuttle: Option<&Client>) -> String {
     let mut info = json!({});
     if let Some(os) = std::fs::read_to_string(OS_RELEASE)
         .ok()
@@ -485,10 +455,17 @@ fn desktop_info() -> String {
     if let Some(desktop) = desktop.as_deref().and_then(desktop_name) {
         info["desktop"] = desktop.into();
     }
-    if let Ok((conn, n)) = x11rb::connect(None) {
-        let screen = &conn.setup().roots[n];
-        info["width"] = screen.width_in_pixels.into();
-        info["height"] = screen.height_in_pixels.into();
+    let call = Call {
+        agent_id: "toolhost".to_owned(),
+        tool: "desk_screen".to_owned(),
+        args: json!({}),
+    };
+    if let Some(shuttle) = shuttle
+        && let Ok(out) = shuttle.desk(&call, SCREEN_WAIT).await
+        && let Ok(mut screen) = serde_json::from_str::<Value>(&out.text)
+    {
+        info["width"] = screen["width"].take();
+        info["height"] = screen["height"].take();
     }
     info.to_string()
 }
@@ -584,9 +561,10 @@ mod tests {
     #[tokio::test]
     async fn every_tool_of_the_shuttle_service_spec_is_one_the_toolhost_answers() {
         let dir = tempfile::tempdir().unwrap();
-        let cua = tokio::net::UnixListener::bind(dir.path().join("cua.sock")).unwrap();
+        let desk = dir.path().join("desk.sock");
+        let shuttle = tokio::net::UnixListener::bind(&desk).unwrap();
         tokio::spawn(async move {
-            while let Ok((conn, _)) = cua.accept().await {
+            while let Ok((conn, _)) = shuttle.accept().await {
                 drop(conn);
             }
         });
@@ -597,12 +575,11 @@ mod tests {
             chrome_bin: "false".into(),
             chrome_profile: dir.path().join("chrome"),
             cdp_port: 1,
-            cua_socket: dir.path().join("cua.sock"),
             session_save: "false".into(),
             home: dir.path().into(),
             automation: Automation::Desk,
             plugins: Vec::new(),
-            shuttle_socket: None,
+            shuttle_socket: Some(desk),
         };
         let host = Host::new(&cfg);
         host.flow_writes.send_modify(|w| *w += 1);
@@ -703,7 +680,6 @@ mod tests {
             chrome_bin: "false".into(),
             chrome_profile: dir.path().join("chrome"),
             cdp_port: 1,
-            cua_socket: dir.path().join("cua.sock"),
             session_save: dir.path().join("session-save"),
             home: dir.path().into(),
             automation: Automation::Android,
@@ -807,7 +783,6 @@ mod tests {
             chrome_bin: "false".into(),
             chrome_profile: dir.path().join("chrome"),
             cdp_port: 1,
-            cua_socket: dir.path().join("cua.sock"),
             session_save: dir.path().join("session-save"),
             home: dir.path().into(),
             automation: Automation::Desk,
