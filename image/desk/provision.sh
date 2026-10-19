@@ -122,7 +122,7 @@ check() {
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
 	[ "$(readlink -f /usr/local/bin/cocoon-shuttle)" = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/cocoon-shuttle" ]
 	systemctl --user -M user@ -q is-enabled cocoon-shuttle.service
-	! systemctl --user -M user@ -q is-enabled cua-driver.service
+	[ "$(systemctl --user -M user@ is-enabled cua-driver.service 2>/dev/null)" != enabled ]
 	[ ! -e /etc/xdg/autostart/cocoonbox-cua-driver.desktop ]
 	for _ in $(seq 60); do [ -S /run/cocoonbox/desk.sock ] && [ -S /run/cocoonbox/driver.sock ] && break; sleep 0.5; done
 	[ "$(stat -c %a /run/cocoonbox/desk.sock)" = 600 ]
