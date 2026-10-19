@@ -3,8 +3,8 @@
 # Android base install in /opt/desk/lib. Sourced by image/desk/provision.sh and image/android/provision.sh; run as
 # `shuttle.sh fetch DIR` it downloads the pinned archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the
 # runner's vendor tarballs there).
-SHUTTLE_VERSION=main-e857605
-SHUTTLE_SHA256=6a0cb6fa24987d4e5531af7d1503049db97678a12399b7f77e14d0b12af15160
+SHUTTLE_VERSION=v0.1.5
+SHUTTLE_SHA256=3c2a32168b976a3844e2e79b9b6851dd40cb28df7c4854daf0b4cc28e69d42ab
 SHUTTLE_TARBALL="cocoon-shuttle-${SHUTTLE_VERSION}-linux-x64.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
 
