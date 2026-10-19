@@ -72,6 +72,8 @@ final class AppModel {
     var transcripts: [String: [Entry]] = [:]
     var live: [String: [LiveBlock]] = [:]
     var hello: Cocoonbox_Agent_V1_HelloResponse?
+    // automations keeps each box's automation from its last Hello, so a hibernated phone keeps its wording.
+    var automations: [String: Cocoonbox_Agent_V1_Automation] = [:]
     var eventsLive = false
     var lastError: String?
     var busy = false
@@ -904,11 +906,19 @@ final class AppModel {
         screen.stop()
     }
 
+    var wording: BoxWording { wording(box) }
+
+    func wording(_ box: Box?) -> BoxWording {
+        BoxWording(box.flatMap { automations[$0.id] })
+    }
+
     private func loadHello() async {
         guard let connection else { return }
+        let boxID = selectedBoxID
         for attempt in 0..<8 {
             do {
                 hello = try await connection.hello(clientVersion: "cocoonbox-macos/0.1")
+                if let boxID, let hello { automations[boxID] = hello.automation }
                 Perf.mark("hello", "agent=\(hello?.agentVersion ?? "") screen=\(hello?.screenWidth ?? 0)x\(hello?.screenHeight ?? 0)")
                 return
             } catch {
