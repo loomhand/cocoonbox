@@ -22,7 +22,10 @@ maxmemory 256mb
 maxmemory-policy noeviction
 EOF
 fi
-id gw >/dev/null 2>&1 && usermod -a -G redis gw
+if id gw >/dev/null 2>&1 && ! id -nG gw | grep -qw redis; then
+	usermod -a -G redis gw
+	systemctl try-restart gw
+fi
 systemctl enable redis-server >/dev/null
 systemctl restart redis-server
 redis-cli -s /run/redis/redis-server.sock ping
