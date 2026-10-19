@@ -452,9 +452,17 @@ struct BoxSwitcher: View {
         .help("Switch, create, rename or delete boxes")
         .alert("New box", isPresented: $model.showNewBox) {
             TextField("Name", text: $name)
-            Button("Create") {
-                model.createBox(name: name)
-                name = ""
+            if model.imageChoices.isEmpty {
+                Button("Create") {
+                    model.createBox(name: name)
+                    name = ""
+                }
+            }
+            ForEach(model.imageChoices, id: \.image) { choice in
+                Button("Create \(choice.label)") {
+                    model.createBox(name: name, image: choice.image)
+                    name = ""
+                }
             }
             Button("Cancel", role: .cancel) { name = "" }
         } message: {
