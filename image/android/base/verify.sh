@@ -18,8 +18,8 @@ shuttle=$(dirname "$(readlink -f /usr/local/bin/cocoon-shuttle)")
 test -x "$shuttle/node" && test -s "$shuttle/runtime/gui_plan.mts"
 case $(dpkg --print-architecture) in arm64) machine=00b7 ;; *) machine=003e ;; esac
 [ "$(od -An -tx2 -j18 -N2 "$shuttle/cocoon-shuttle" | tr -d ' ')" = "$machine" ]
-grep -Fqx "ui_jar = \"$shuttle/android/cb-ui.jar\"" /etc/cocoonbox/shuttle.toml
-test -s "$shuttle/android/cb-ui.jar"
+grep -Fqx "ui_jar = \"$shuttle/android/shuttle-ui.jar\"" /etc/cocoonbox/shuttle.toml
+test -s "$shuttle/android/shuttle-ui.jar"
 test -f /opt/android/AGENTS.md
 test -d /var/lib/redroid-data && test -z "$(ls -A /var/lib/redroid-data)"
 cfgs=(/var/lib/docker/containers/*/config.v2.json)

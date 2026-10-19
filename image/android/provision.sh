@@ -161,7 +161,7 @@ script_run = true
 
 [android]
 serial = "127.0.0.1:5555"
-ui_jar = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/android/cb-ui.jar"
+ui_jar = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/android/shuttle-ui.jar"
 scrcpy_jar = "/usr/local/share/scrcpy/scrcpy-server.jar"
 su = "/usr/local/share/scrcpy/su1000"
 EOF
