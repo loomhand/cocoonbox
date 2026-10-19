@@ -43,7 +43,7 @@ use cua::Cua;
 use desk::Desk;
 use model::Models;
 use rpc::{Call, Client, Output};
-use script::Scripts;
+use script::{Scripts, ShuttleScreen};
 use shell::Shell;
 
 const SOCKET_MODE: u32 = 0o660;
@@ -251,11 +251,18 @@ impl Host {
         let Some(android) = &self.android else {
             return Err(call);
         };
-        if self.shuttle.is_some() && !matches!(call.tool.as_str(), "script_run" | "gui_plan") {
-            if let Some(tool) = shuttle_tool(&call.tool) {
-                call.tool = tool;
-            }
-            return Err(call);
+        if let Some(shuttle) = &self.shuttle {
+            let screen = ShuttleScreen(shuttle);
+            return Ok(match call.tool.as_str() {
+                "script_run" => self.scripts.run(&screen, &self.workspace, call.args).await,
+                "gui_plan" => self.scripts.plan(&screen, &self.workspace, call.args).await,
+                _ => {
+                    if let Some(tool) = shuttle_tool(&call.tool) {
+                        call.tool = tool;
+                    }
+                    return Err(call);
+                }
+            });
         }
         Ok(match call.tool.as_str() {
             "screenshot" => android.look().await,
@@ -558,6 +565,28 @@ mod tests {
         assert_eq!(desktop_name(""), None);
     }
 
+    const SHUTTLE_ANDROID: [&str; 19] = [
+        "desk_windows",
+        "desk_wait",
+        "desk_snapshot",
+        "desk_find",
+        "desk_read",
+        "desk_press",
+        "desk_act",
+        "desk_at",
+        "desk_key",
+        "desk_type",
+        "desk_click",
+        "desk_focus",
+        "desk_close",
+        "desk_launch",
+        "desk_screen",
+        "desk_shot",
+        "desk_computer_state",
+        "desk_computer_act",
+        "desk_computer_end",
+    ];
+
     #[tokio::test]
     async fn an_android_box_with_shuttle_sends_its_screen_desk_and_run_calls_there_and_runs_no_adb()
     {
@@ -577,11 +606,16 @@ mod tests {
             loop {
                 let (mut conn, _) = listener.accept().await.unwrap();
                 let call: Call = rpc::read_frame(&mut conn).await.unwrap();
-                let out = Output::text(if call.tool == "gui_plan" {
-                    r#"{"ok":true}"#
-                } else {
-                    "{}"
-                });
+                let out = match call.tool.as_str() {
+                    "desk_look" => Output {
+                        image_b64: Some("aW1n".into()),
+                        ..Output::text("720x1280 screen")
+                    },
+                    "gui_plan" => Output::text(r#"{"ok":true}"#),
+                    "script_run" => Output::text(r#"{"result":null,"logs":"","duration_ms":1}"#),
+                    tool if SHUTTLE_ANDROID.contains(&tool) => Output::text("{}"),
+                    tool => Output::error(format!("unknown desk tool {tool}")),
+                };
                 seen.send(call.tool).unwrap();
                 rpc::write_frame(&mut conn, &out).await.unwrap();
             }
@@ -623,8 +657,14 @@ mod tests {
                 "gui_plan",
                 json!({"steps": [{"app": "x"}], "screenshot": false}),
             ),
+            ("script_run", json!({"code": "export function main() {}"})),
+            (
+                "gui_plan",
+                json!({"steps": [{"app": "x"}], "screenshot": true}),
+            ),
         ];
         for (tool, args) in calls {
+            let shot = args["screenshot"] != false && matches!(tool, "script_run" | "gui_plan");
             let out = toolhost
                 .call(&Call {
                     agent_id: "ag".into(),
@@ -634,6 +674,9 @@ mod tests {
                 .await
                 .unwrap();
             assert!(!out.is_error, "{tool}: {}", out.text);
+            if shot {
+                assert_eq!(out.image_b64.as_deref(), Some("aW1n"), "{tool}");
+            }
         }
         let mut got = Vec::new();
         while let Ok(tool) = tools.try_recv() {
@@ -648,7 +691,11 @@ mod tests {
                 "desk_computer_end",
                 "desk_type",
                 "desk_windows",
-                "gui_plan"
+                "gui_plan",
+                "script_run",
+                "desk_look",
+                "gui_plan",
+                "desk_look"
             ]
         );
         assert!(
