@@ -128,7 +128,7 @@ func TestCreateResolvesAnImageFamily(t *testing.T) {
 	noCore := testDefaults
 	noCore.Image, noCore.RebaseImages = "cbdesk:v25", []string{"cbdesk:v24"}
 	_, err := New(newFakeMachines(), noCore, newFakeRegistry()).Create(auth.WithUser(t.Context(), alice), &controlv1.CreateBoxRequest{Name: "kind", Image: "cbcore"})
-	if want := `image "cbcore" is not offered; choose cbdesk:v25, cbdesk:v24, or the family of one (the name before ':')`; status.Code(err) != codes.InvalidArgument || status.Convert(err).Message() != want {
+	if want := `image "cbcore" is not offered; choose cbdesk:v25, cbdesk:v24, or the family of one (the name before the tag's ':' after the last '/')`; status.Code(err) != codes.InvalidArgument || status.Convert(err).Message() != want {
 		t.Errorf("Create(cbcore) with no cbcore image offered = %v, want InvalidArgument %q", err, want)
 	}
 }

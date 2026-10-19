@@ -87,7 +87,7 @@ func (d Defaults) newest(family string) (string, bool) {
 }
 
 func (d Defaults) choices() string {
-	return strings.Join(slices.Concat([]string{d.Image}, d.RebaseImages), ", ") + ", or the family of one (the name before ':')"
+	return strings.Join(slices.Concat([]string{d.Image}, d.RebaseImages), ", ") + ", or the family of one (the name before the tag's ':' after the last '/')"
 }
 
 // images lists the default image, then each rebase image once.
