@@ -42,7 +42,7 @@ use browser::Browser;
 use cua::Cua;
 use desk::Desk;
 use model::Models;
-use rpc::{Call, Output};
+use rpc::{Call, Client, Output};
 use script::Scripts;
 use shell::Shell;
 
@@ -73,11 +73,14 @@ struct Host {
     /// The saved flows of a box that runs GUI plans, which a read-only share does not read.
     hidden: Option<PathBuf>,
     flow_writes: watch::Sender<u64>,
+    /// shuttle's daemon, which answers the desk verbs, model calls and runs of a box that runs it.
+    shuttle: Option<Client>,
 }
 
 impl Host {
     /// Creates a host from its configuration.
     fn new(cfg: &ToolhostConfig) -> Self {
+        let shuttle = cfg.shuttle_socket.clone().map(Client::new);
         Self {
             workspace: cfg.workspace.clone(),
             scratch: PathBuf::from(SCRATCH_DIR),
@@ -91,12 +94,13 @@ impl Host {
             cua: Cua::new(cfg.cua_socket.clone(), cfg.automation.plans()),
             android: (cfg.automation == Automation::Android)
                 .then(|| Android::new(cfg.adb_bin.clone())),
-            desk: Desk::default(),
+            desk: Desk::new(shuttle.clone()),
             models: Models::new(cfg.gw_base_url.as_deref()),
             scripts: Scripts::new(
                 cfg.script_bin.clone(),
                 PathBuf::from(SCRIPT_DIR),
                 cfg.socket.clone(),
+                shuttle.clone(),
             ),
             plugins: cfg
                 .plugins
@@ -109,6 +113,7 @@ impl Host {
             plans: cfg.automation.plans(),
             hidden: cfg.automation.plans().then(|| flows::dir(&cfg.workspace)),
             flow_writes: watch::channel(0).0,
+            shuttle,
         }
     }
 
@@ -117,6 +122,13 @@ impl Host {
         let call = match self.android_call(call).await {
             Ok(result) => {
                 let out = result.unwrap_or_else(Output::error);
+                timing::note("error", out.is_error);
+                return out;
+            }
+            Err(call) => call,
+        };
+        let call = match self.relay(call).await {
+            Ok(out) => {
                 timing::note("error", out.is_error);
                 return out;
             }
@@ -223,7 +235,7 @@ impl Host {
             other => match self.plugins.get(other) {
                 Some(bin) => {
                     self.scripts
-                        .run_with(bin, &self.cua, &self.workspace, call.args)
+                        .run_with(other, bin, &self.cua, &self.workspace, call.args)
                         .await
                 }
                 None => Err(format!("unknown tool {other}")),
@@ -249,6 +261,20 @@ impl Host {
             "gui_plan" => self.scripts.plan(android, &self.workspace, call.args).await,
             _ => return Err(call),
         })
+    }
+
+    /// Sends a desk verb or model call as it came to shuttle, on a box that runs it; every other call comes back.
+    async fn relay(&self, mut call: Call) -> Result<Output, Call> {
+        let Some(shuttle) = &self.shuttle else {
+            return Err(call);
+        };
+        if call.tool == "desk" {
+            call.tool = format!("desk_{}", call.args["op"].as_str().unwrap_or_default());
+        }
+        if !(call.tool.starts_with("desk_") || call.tool.starts_with("model_")) {
+            return Err(call);
+        }
+        Ok(shuttle.call(&call).await.unwrap_or_else(Output::error))
     }
 
     async fn shell(&self, agent_id: &str, args: Value) -> Result<String, String> {

@@ -179,6 +179,8 @@ pub struct ToolhostConfig {
     pub adb_bin: PathBuf,
     /// The gw endpoint of the desk runtime's model calls.
     pub gw_base_url: Option<String>,
+    /// shuttle's desk endpoint, which answers the desk verbs, model calls and runs when set.
+    pub shuttle_socket: Option<PathBuf>,
 }
 
 impl ToolhostConfig {
@@ -211,6 +213,9 @@ impl ToolhostConfig {
                 .ok()
                 .filter(|v| !v.is_empty())
                 .or_else(|| env_file_value(Path::new(DESK_ENV), "GW_BASE_URL")),
+            shuttle_socket: env::var_os("SHUTTLE_SOCKET")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from),
         })
     }
 }

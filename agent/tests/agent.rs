@@ -255,6 +255,7 @@ impl Harness {
             plugins: plugins.clone(),
             adb_bin,
             gw_base_url: None,
+            shuttle_socket: None,
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
