@@ -50,8 +50,11 @@ if xfs_quota -x -c 'report -p -b -N' /srv/cb > "$next.q" 2>/dev/null; then
 			check "project:$name" $((used * 100 / hard))
 		fi
 	done < "$next.q"
+	track quota ok "xfs_quota report on /srv/cb"
+	quota_failed=
 else
 	track quota CRIT "xfs_quota report on /srv/cb failed"
+	quota_failed=1
 fi
 info=$(printf 'header = "Authorization: Bearer %s"\n' "$(cat /etc/cocoonbox/sandboxd-token)" |
 	curl -fsS -m 5 -K - http://127.0.0.1:17780/v1/info 2>/dev/null)
@@ -62,6 +65,7 @@ if [ -n "$reason" ]; then
 else
 	track sandboxd ok "sandboxd admits work"
 fi
-awk 'NR == FNR { seen[$1] = 1; next } !($1 in seen)' "$next" "$STATE" > "$next.q"
-cat "$next.q" >> "$next"
+if [ -n "$quota_failed" ]; then
+	grep '^project:' "$STATE" >> "$next"
+fi
 mv "$next" "$STATE"
