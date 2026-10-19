@@ -129,6 +129,7 @@ check() {
 	tr '\0' '\n' <"/proc/$(pgrep -u user -x cua-driver)/cmdline" | grep -qx -- --no-overlay
 	[ "$(readlink -f /home/user/.config/cocoon-shuttle/flows)" = /workspace/flows ]
 	[ "$(stat -c %a /home/user/.config/cocoon-shuttle/config.toml)" = 600 ]
+	grep -qx 'plugins = "/etc/cocoonbox/tools.d"' /home/user/.config/cocoon-shuttle/config.toml
 	systemctl show -p Environment cocoonbox-toolhost | grep -q 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
 	for u in cocoonbox-toolhost cocoonbox-session; do systemctl show -p Environment "$u" | grep -q 'TOOLHOST_SOCKET=/run/cocoonbox/toolhost.sock'; done
 	systemctl --user -M user@ show-environment | grep -qx 'TOOLHOST_SOCKET=/run/cocoonbox/toolhost.sock'
