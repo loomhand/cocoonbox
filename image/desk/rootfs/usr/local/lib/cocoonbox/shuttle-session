@@ -1,0 +1,10 @@
+#!/bin/sh
+# restarts shuttle with this session's SESSION_MANAGER, without host parts and with matching ICE auth entries, so the apps its
+# driver launches register with xfce4-session and are saved also after the box renames its host
+set -eu
+sm=$(printf %s "$SESSION_MANAGER" | sed 's#/[^/:,]*:#/:#g')
+iceauth list | while read -r proto _ net name cookie; do
+	case ",$SESSION_MANAGER," in *",$net,"*) iceauth add "$proto" "" "$(printf %s "$net" | sed 's#/[^/:]*:#/:#')" "$name" "$cookie" ;; esac
+done
+systemctl --user set-environment SESSION_MANAGER="$sm"
+exec systemctl --user restart cocoon-shuttle.service
