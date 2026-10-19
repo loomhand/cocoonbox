@@ -300,7 +300,8 @@ func boxCommand() async {
         fail("usage: cocoonbox box create NAME [--image IMAGE]")
     }
     let image = value(of: "--image")
-    if arguments.contains("--image"), image?.isEmpty != false || image?.hasPrefix("--") == true {
+    if arguments.contains(where: { $0.hasPrefix("--image=") })
+        || arguments.contains("--image") && (image?.isEmpty != false || image?.hasPrefix("--") == true) {
         fail("usage: cocoonbox box create NAME [--image IMAGE]")
     }
     let connection = connection()
