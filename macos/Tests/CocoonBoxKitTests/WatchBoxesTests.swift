@@ -59,6 +59,15 @@ import Testing
         #expect(ImageChoice.choices(["cbcore:v25", "cbcore:v24"]).isEmpty)
     }
 
+    @Test func aChoiceIsNamedByItsFamilyAfterTheLastSlashNotByItsPlace() {
+        let android = ImageChoice.choices(["cbdroid:v3", "cbcore:v25"])
+        #expect(android.map(\.label) == ["Android", "Desktop"] && android.map(\.image) == ["cbdroid", "cbcore"])
+        let registry = ImageChoice.choices(["host:5000/cbcore:v1", "host:5000/cbdroid:v1"])
+        #expect(registry.map(\.label) == ["Desktop", "Android"])
+        #expect(registry.map(\.image) == ["host:5000/cbcore", "host:5000/cbdroid"])
+        #expect(ImageChoice.choices(["host:5000/cbcore:v1", "host:5000/cbcore:v2"]).isEmpty)
+    }
+
     @Test func aResubscriptionDeliversTheWholeListAgain() async {
         let calls = Mutex(0)
         let seen = Mutex<[String]>([])
