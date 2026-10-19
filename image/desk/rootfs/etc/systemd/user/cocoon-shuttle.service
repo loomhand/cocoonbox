@@ -12,6 +12,7 @@ ExecStartPre=/usr/local/lib/cocoonbox/shuttle-config
 ExecStart=/usr/local/bin/cocoon-shuttle serve /run/cocoonbox/desk.sock
 TimeoutStartSec=300
 Restart=always
+OOMPolicy=continue
 RestartSec=3s
 
 [Install]
