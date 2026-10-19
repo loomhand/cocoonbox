@@ -105,7 +105,6 @@ jobs:
             echo "commit $GITHUB_SHA"
             echo "agent-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-amd64 | cut -d' ' -f1)"
             echo "agent-arm64-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-arm64 | cut -d' ' -f1)"
-            sed -n -e 's/^COMMIT=${COMMIT:-\(.*\)}$/cua-driver-commit \1/p' -e 's/^VERSION=${VERSION:-\(.*\)}$/cua-driver-version \1/p' image/cua-driver.sh
             (SHUTTLE_ARCH=x64 && . image/desk/shuttle.sh && echo "shuttle-version $SHUTTLE_VERSION" && echo "shuttle-sha256 $SHUTTLE_SHA256")
           } > "$RUNNER_TEMP/$recipe/PINS"
           cat "$RUNNER_TEMP/$recipe/PINS"

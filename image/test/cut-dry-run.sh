@@ -58,11 +58,15 @@ stop
 export /srv/cb/sbx/build/cocoonbox-fam-v2.tar.gz
 import fam:v2" -f fam -a "$WORK/agent" -r "$WORK/one" -r "$WORK/later" base:v1 v2
 
-expect "cbdesk keeps its tarball name" "boot base:v1 as cbcut-v2
+expect "the family is cbcore by default" "boot base:v1 as cbcut-cbcore-v2
+runtime $IMAGE/desk
+clean gate
 seal
 stop
-export /srv/cb/sbx/build/cocoonbox-desktop-v2.tar.gz
-import cbdesk:v2" base:v1 v2
+export /srv/cb/sbx/build/cocoonbox-cbcore-v2.tar.gz
+import cbcore:v2" base:v1 v2
+
+expect "cbdesk is refused" "exit 2: family cbdesk is frozen: its boxes keep the agent their image carries" -f cbdesk base:v1 v2
 
 expect "a runtime without provision.sh is refused" "exit 2: runtime $WORK/empty has no provision.sh" -f fam -r "$WORK/empty" base:v1 v2
 expect "a family off the grammar is refused" "exit 2: family Fam is not [a-z][a-z0-9]*" -f Fam base:v1 v2

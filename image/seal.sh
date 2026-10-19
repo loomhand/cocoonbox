@@ -26,9 +26,7 @@ find /var/log/journal -mindepth 1 -maxdepth 1 -type d ! -name "$(cat /etc/machin
 
 systemctl restart cocoonbox-xorg.service cocoonbox-session.service
 systemctl --user -M user@ reset-failed
-for u in cua-driver.service cocoon-shuttle.service; do
-	! systemctl --user -M user@ -q is-enabled "$u" 2>/dev/null || systemctl --user -M user@ restart "$u"
-done
+! systemctl --user -M user@ -q is-enabled cocoon-shuttle.service 2>/dev/null || systemctl --user -M user@ restart cocoon-shuttle.service
 systemctl --user -M user@ restart cocoonbox-offload-inbox.service
 systemctl reset-failed
 abandoned=$(systemctl list-units 'session-*.scope' --state=abandoned --no-legend --plain | awk '{print $1}')

@@ -4,10 +4,6 @@
 # Runs as root inside the guest from an unpacked copy of image/desk (see cut.sh -f cbcore).
 set -euo pipefail
 
-# loomhand/cua dev, built by cua-driver.sh; cut.sh brings it in as vendor/
-CUA_VERSION=0.36.0-loomhand.5
-CUA_SHA256=e54c05edb2c96953da381b9a196f0dbb8970a9930c60832c7112f96e9e9ffffb
-CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
 NODE_VERSION=24.21.0
 ROOT=/opt/desk
 ENV_FILE=/etc/cocoonbox/desk.env
@@ -20,21 +16,6 @@ SRC="$(cd "$(dirname "$0")" && pwd)"
 . "$SRC/shuttle.sh"
 
 log() { printf '[desk] %s\n' "$*"; }
-
-install_cua_driver() {
-	log "cua-driver $CUA_VERSION"
-	local dir=/opt/cua-driver/$CUA_VERSION tarball="$SRC/vendor/$CUA_TARBALL"
-	if [ ! -x "$dir/cua-driver" ]; then
-		[ -f "$tarball" ] || { echo "missing $tarball: build it with image/cua-driver.sh image/desk/vendor" >&2; exit 1; }
-		echo "$CUA_SHA256  $tarball" | sha256sum -c --quiet -
-		install -d "$dir"
-		tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
-	fi
-	ln -sfn "$dir/cua-driver" /usr/local/bin/cua-driver
-	find /opt/cua-driver -mindepth 1 -maxdepth 1 ! -name "$CUA_VERSION" -exec rm -rf {} +
-	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
-	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
-}
 
 install_runtime() {
 	log "shuttle $SHUTTLE_VERSION and its desk runtime"
@@ -91,12 +72,15 @@ EOF
 	mv -f "$SHUTTLE_CONFIG.tmp" "$SHUTTLE_CONFIG"
 }
 
-# shuttle's own cua-driver child replaces the box's cua-driver unit and its session restart
+# shuttle's own cua-driver child replaces the box's cua-driver; the mask keeps a restored home's wants link inert
 switch_driver() {
 	log "shuttle in the session"
-	systemctl --user -M user@ disable --now cua-driver.service
-	rm -f /etc/xdg/autostart/cocoonbox-cua-driver.desktop /etc/systemd/user/cua-driver.service \
-		/etc/systemd/user/cua-driver.service.d/no-overlay.conf /etc/systemd/user/cua-driver.service.d/no-update-check.conf
+	if [ -f /etc/systemd/user/cua-driver.service ] && [ ! -L /etc/systemd/user/cua-driver.service ]; then
+		systemctl --user -M user@ disable --now cua-driver.service
+	fi
+	rm -rf /etc/xdg/autostart/cocoonbox-cua-driver.desktop /etc/systemd/user/cua-driver.service \
+		/etc/systemd/user/cua-driver.service.d /usr/local/lib/cocoonbox/cua-driver-session \
+		/opt/cua-driver /usr/local/bin/cua-driver "$WANTS/cua-driver.service"
 	systemctl --global mask cua-driver.service
 	install -d -o user -g user "$WANTS"
 	sed -i 's#^d /run/cocoonbox 2770 user cbagent -$#d /run/cocoonbox 2750 user cbagent -#' /etc/tmpfiles.d/cocoonbox.conf
@@ -104,7 +88,6 @@ switch_driver() {
 	ln -sfn /etc/systemd/user/cocoon-shuttle.service "$WANTS/cocoon-shuttle.service"
 	chown -h user:user "$WANTS/cocoon-shuttle.service"
 	systemctl --user -M user@ daemon-reload
-	systemctl --user -M user@ stop cua-driver.service
 	systemctl --user -M user@ restart cocoon-shuttle.service
 }
 
@@ -148,7 +131,7 @@ check() {
 	grep -q '^GW_BASE_URL=http' "$ENV_FILE"
 	[ "$(stat -c %a "$ENV_FILE")" = 644 ]
 	[ -x /usr/local/bin/desk ]
-	[ "$(readlink -f /usr/local/bin/cua-driver)" = "/opt/cua-driver/$CUA_VERSION/cua-driver" ]
+	[ ! -e /opt/cua-driver ] && [ ! -e /usr/local/bin/cua-driver ] && [ ! -e /usr/local/lib/cocoonbox/cua-driver-session ]
 	[ "$(readlink -f /usr/bin/x-www-browser)" = /usr/local/bin/cocoonbox-chrome ]
 	for f in google-chrome com.google.Chrome; do grep -qx 'Exec=/usr/local/bin/cocoonbox-chrome %U' "/usr/local/share/applications/$f.desktop"; done
 	grep -qx 'URIs: mirror+file:/etc/apt/cocoonbox-ubuntu.mirrors' /etc/apt/sources.list.d/ubuntu.sources
@@ -156,7 +139,6 @@ check() {
 	[ -s /var/lib/apt/lists/_etc_apt_cocoonbox-ubuntu-security.mirrors_dists_noble-security_InRelease ]
 }
 
-install_cua_driver
 install_runtime
 install_rootfs
 write_env

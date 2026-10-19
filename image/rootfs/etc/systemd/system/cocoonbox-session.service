@@ -23,7 +23,6 @@ Environment=QT_ACCESSIBILITY=1
 Environment="PROMPT_COMMAND=history -a"
 ExecStartPre=-/usr/local/lib/cocoonbox/egress-ca-nss
 ExecStart=/usr/local/lib/cocoonbox/desktop-session
-ExecStopPost=-/usr/bin/systemctl --user stop cua-driver.service
 Restart=always
 RestartSec=3s
 

@@ -3,11 +3,6 @@
 # Runs as root inside the guest from an unpacked copy of image/ (see cut.sh -p).
 set -euo pipefail
 
-# loomhand/cua dev, built by cua-driver.sh; cut.sh -p brings it in as vendor/
-CUA_COMMIT=65a232e40abbb4f2665b26b46dc30bdfb8e33489
-CUA_VERSION=0.36.0-loomhand.5
-CUA_SHA256=e54c05edb2c96953da381b9a196f0dbb8970a9930c60832c7112f96e9e9ffffb
-CUA_TARBALL="cua-driver-rs-${CUA_VERSION}-linux-x86_64.tar.gz"
 MISE_VERSION=2026.10.0
 MISE_SHA256=6ae3d2bda39cca86713501317edf623b59b75cd8afa2e31c20b1ee6500b4b739
 MISE_TARBALL="mise-v${MISE_VERSION}-linux-x64.tar.gz"
@@ -102,26 +97,9 @@ setup_desktop() {
 	install -m 0644 -o user -g user "$SRC"/rootfs/etc/skel-cocoonbox/.config/xfce4/xfconf/xfce-perchannel-xml/*.xml "$xfconf/"
 	[ -f "$xfconf/xfce4-panel.xml" ] || install -m 0644 -o user -g user /etc/xdg/xfce4/panel/default.xml "$xfconf/xfce4-panel.xml"
 	sed -i 's|name="ThemeName" type="string" value="Greybird"|name="ThemeName" type="string" value="Adwaita"|' /etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml
-	ln -sfn /etc/systemd/user/cua-driver.service "$cfg/systemd/user/default.target.wants/cua-driver.service"
-	chown -h user:user "$cfg/systemd/user/default.target.wants/cua-driver.service"
 	dconf update
 	install -d -m 0755 /var/lib/systemd/linger
 	touch /var/lib/systemd/linger/user
-}
-
-setup_cua_driver() {
-	log "cua-driver $CUA_VERSION"
-	local dir=/opt/cua-driver/$CUA_VERSION tarball="$SRC/vendor/$CUA_TARBALL"
-	if [ ! -x "$dir/cua-driver" ]; then
-		[ -f "$tarball" ] || { echo "missing $tarball: build it with COMMIT=$CUA_COMMIT VERSION=$CUA_VERSION image/cua-driver.sh image/vendor" >&2; exit 1; }
-		echo "$CUA_SHA256  $tarball" | sha256sum -c --quiet -
-		install -d "$dir"
-		tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
-	fi
-	ln -sfn "$dir/cua-driver" /usr/local/bin/cua-driver
-	find /opt/cua-driver -mindepth 1 -maxdepth 1 ! -name "$CUA_VERSION" -exec rm -rf {} +
-	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
-	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
 }
 
 setup_mise() {
@@ -179,14 +157,13 @@ enable_units() {
 	systemctl start user@1000.service
 	systemctl restart cocoonbox-xorg.service cocoonbox-session.service
 	systemctl --user -M user@ daemon-reload
-	systemctl --user -M user@ restart cua-driver.service cocoonbox-offload-inbox.service
+	systemctl --user -M user@ restart cocoonbox-offload-inbox.service
 }
 
 setup_packages
 setup_users
 install_rootfs
 setup_desktop
-setup_cua_driver
 setup_mise
 setup_node
 setup_cocoonbox_dirs

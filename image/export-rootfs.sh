@@ -69,7 +69,7 @@ WantedBy=sysinit.target
 EOF
 ln -s ../silkd.service "$add/etc/systemd/system/sysinit.target.wants/silkd.service"
 ln -s /dev/null "$add/etc/systemd/system/systemd-networkd-wait-online.service"
-for u in system/cocoonbox-agent system/cocoonbox-toolhost system/cocoonbox-session user/cocoonbox-offload-inbox user/cua-driver user/cocoon-shuttle; do
+for u in system/cocoonbox-agent system/cocoonbox-toolhost system/cocoonbox-session user/cocoonbox-offload-inbox user/cocoon-shuttle; do
 	install -d "$add/etc/systemd/$u.service.d"
 	cat > "$add/etc/systemd/$u.service.d/10-sbx-proxy.conf" <<EOF
 [Service]
