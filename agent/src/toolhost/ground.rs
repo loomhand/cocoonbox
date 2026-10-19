@@ -2,7 +2,6 @@
 //! unique OCR match of the target's visible text, or of the label its description names, outside window
 //! titles; neither finding it, or either failing, leaves the grounding to the caller.
 
-use std::path::Path;
 use std::time::{Duration, Instant};
 
 use base64::Engine;
@@ -85,7 +84,6 @@ pub async fn act(
     owner: &str,
     desk: &Desk,
     scripts: &Scripts,
-    workspace: &Path,
     args: Value,
 ) -> Result<Output, String> {
     let k = act::scale(shuttle, owner, &args["session"]).await?;
@@ -97,7 +95,7 @@ pub async fn act(
     };
     let start = Instant::now();
     let mut found = scripts
-        .locate(workspace, &a.target.description, press)
+        .locate(&a.target.description, press)
         .await
         .unwrap_or_else(|e| json!({"found": false, "why": e}));
     timing::mark("a11y");

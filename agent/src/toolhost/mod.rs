@@ -19,7 +19,7 @@ mod timing;
 mod volatile;
 mod xshm;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -61,8 +61,8 @@ struct Host {
     android: Option<Android>,
     desk: Desk,
     scripts: Scripts,
-    /// The program of each plugin script tool, on a box that runs GUI plans.
-    plugins: HashMap<String, PathBuf>,
+    /// The plugin script tools, on a box that runs GUI plans.
+    plugins: HashSet<String>,
     session_save: PathBuf,
     home: PathBuf,
     /// A box that runs GUI plans.
@@ -92,17 +92,12 @@ impl Host {
             android: (cfg.automation == Automation::Android)
                 .then(|| Android::new(cfg.adb_bin.clone())),
             desk: Desk::new(shuttle.clone()),
-            scripts: Scripts::new(
-                cfg.script_bin.clone(),
-                PathBuf::from(SCRIPT_DIR),
-                cfg.socket.clone(),
-                shuttle.clone(),
-            ),
+            scripts: Scripts::new(PathBuf::from(SCRIPT_DIR), shuttle.clone()),
             plugins: cfg
                 .plugins
                 .iter()
                 .filter(|_| cfg.automation.plans())
-                .map(|p| (p.name.clone(), p.bin.clone()))
+                .map(|p| p.name.clone())
                 .collect(),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
@@ -217,19 +212,17 @@ impl Host {
             "flows_mark" => flows::mark(&self.workspace, call.args)
                 .await
                 .map(Output::text),
-            "flows_index" => self.scripts.reindex(&self.workspace).await,
+            "flows_index" => self.scripts.reindex().await,
             "flows_wait" => flows::wait(&self.flow_writes, call.args)
                 .await
                 .map(Output::text),
             "screenshot" | "computer_screenshot" => self.cua.look(&call.args).await,
-            other => match self.plugins.get(other) {
-                Some(bin) => {
-                    self.scripts
-                        .run_with(other, bin, &self.cua, &self.workspace, call.args)
-                        .await
-                }
-                None => Err(format!("unknown tool {other}")),
-            },
+            other if self.plugins.contains(other) => {
+                self.scripts
+                    .run_with(other, &self.cua, &self.workspace, call.args)
+                    .await
+            }
+            other => Err(format!("unknown tool {other}")),
         };
         let out = result.unwrap_or_else(Output::error);
         timing::note("error", out.is_error);
@@ -251,7 +244,6 @@ impl Host {
                     &call.agent_id,
                     &self.desk,
                     &self.scripts,
-                    &self.workspace,
                     call.args,
                 )
                 .await
@@ -262,9 +254,9 @@ impl Host {
             "run_screenshot" => self.run_screenshot(&screen, &call.args).await,
             "script_run" => self.scripts.run(&screen, &self.workspace, call.args).await,
             "gui_plan" => self.scripts.plan(&screen, &self.workspace, call.args).await,
-            t if let Some(bin) = self.plugins.get(t) => {
+            t if self.plugins.contains(t) => {
                 self.scripts
-                    .run_with(t, bin, &screen, &self.workspace, call.args)
+                    .run_with(t, &screen, &self.workspace, call.args)
                     .await
             }
             _ => {
@@ -635,7 +627,6 @@ mod tests {
             chrome_profile: dir.path().join("chrome"),
             cdp_port: 1,
             cua_socket: dir.path().join("cua.sock"),
-            script_bin: "false".into(),
             session_save: "false".into(),
             home: dir.path().into(),
             automation: Automation::Desk,
@@ -752,7 +743,6 @@ mod tests {
             chrome_profile: dir.path().join("chrome"),
             cdp_port: 1,
             cua_socket: dir.path().join("cua.sock"),
-            script_bin: "false".into(),
             session_save: dir.path().join("session-save"),
             home: dir.path().into(),
             automation: Automation::Android,
@@ -863,7 +853,6 @@ mod tests {
             chrome_profile: dir.path().join("chrome"),
             cdp_port: 1,
             cua_socket: dir.path().join("cua.sock"),
-            script_bin: "false".into(),
             session_save: dir.path().join("session-save"),
             home: dir.path().into(),
             automation: Automation::Desk,
