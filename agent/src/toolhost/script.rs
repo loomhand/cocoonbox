@@ -8,27 +8,24 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
-use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
 
 use super::android::Android;
 use super::cua::Cua;
 use super::files;
-use super::rpc::{self, Call, Client, Output};
+use super::rpc::{self, Client, Output};
 use super::shell::Capture;
 use super::timing;
 use crate::llm::image_mime;
+use crate::runs::{self, MAX_RESULT_BYTES, PlanArgs, RunArgs, Script, Shot, Shots, timeout_of};
 use crate::sys;
 
-const DEFAULT_TIMEOUT: Duration = Duration::from_secs(90);
-const MAX_TIMEOUT: Duration = Duration::from_secs(110);
 const TERM_GRACE: Duration = Duration::from_secs(2);
 const PIPE_GRACE: Duration = Duration::from_millis(500);
 const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
 const LOCATE_TIMEOUT: Duration = Duration::from_secs(20);
-const MAX_RESULT_BYTES: u64 = 256 << 10;
 const KEPT_SHOTS: usize = 20;
 const ERROR_LINES: usize = 12;
 const DESK_PLAN: &str = "/opt/desk/lib/gui_plan.mts";
@@ -84,44 +81,25 @@ impl Scripts {
         workspace: &Path,
         args: Value,
     ) -> Result<Output, String> {
-        let RunArgs {
-            code,
-            script,
-            params,
-            timeout_s,
-            screenshot,
-            max_edge,
-        } = rpc::parse(args)?;
-        let script = match (code, script) {
-            (Some(code), None) => Script::Code(code),
-            (None, Some(path)) => Script::File(files::resolve(workspace, &path)),
-            _ => return Err("pass exactly one of code or script".to_owned()),
-        };
-        let id = uuid::Uuid::new_v4().simple().to_string();
-        let params = Value::Object(params.unwrap_or_default());
-        let timeout = timeout_of(timeout_s);
-        let mut report = match &self.shuttle {
-            Some(shuttle) => run_report(shuttle, tool, script, params, timeout).await?,
-            None => {
-                self.run_script(bin, script, &params.to_string(), workspace, timeout, &id)
-                    .await?
-            }
-        };
-        let mut out = Output::default();
-        if screenshot {
-            match self.screenshot(screen, max_edge, &id).await {
-                Ok(Some((path, image_b64))) => {
-                    report["screenshot_path"] = path.display().to_string().into();
-                    out.image_b64 = Some(image_b64);
-                }
-                Ok(None) => {}
-                Err(e) => report["screenshot_error"] = e.into(),
-            }
+        let shots = self.kept(screen);
+        if let Some(shuttle) = &self.shuttle {
+            return runs::script(shuttle, &shots, workspace, tool, args).await;
         }
-        out.is_error = report.get("error").is_some();
-        out.text =
-            serde_json::to_string_pretty(&report).map_err(|e| format!("encode report: {e}"))?;
-        Ok(out)
+        let a: RunArgs = rpc::parse(args)?;
+        let script = Script::of(a.code, a.script, workspace)?;
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let params = Value::Object(a.params.unwrap_or_default()).to_string();
+        let report = self
+            .run_script(
+                bin,
+                script,
+                &params,
+                workspace,
+                timeout_of(a.timeout_s),
+                &id,
+            )
+            .await?;
+        runs::finish_run(report, a.screenshot, a.max_edge, &shots).await
     }
 
     /// Runs the plan executor and reports its result as compact JSON, with a screenshot only after an escalation or on request.
@@ -131,13 +109,8 @@ impl Scripts {
         workspace: &Path,
         args: Value,
     ) -> Result<Output, String> {
-        let PlanArgs {
-            params,
-            timeout_s,
-            screenshot,
-            max_edge,
-        } = rpc::parse(args)?;
-        if params.get("flows") == Some(&Value::Bool(true)) {
+        let a: PlanArgs = rpc::parse(args)?;
+        if a.params.get("flows") == Some(&Value::Bool(true)) {
             let index = Self::flows(workspace).await;
             return Ok(Output::text(if index.trim().is_empty() {
                 "no saved flows yet".to_owned()
@@ -145,22 +118,10 @@ impl Scripts {
                 index
             }));
         }
-        let mut report = self
-            .plan_report(Value::Object(params), workspace, timeout_of(timeout_s))
+        let report = self
+            .plan_report(Value::Object(a.params), workspace, timeout_of(a.timeout_s))
             .await?;
-        let mut out = Output::default();
-        let body = match report.get_mut("error") {
-            Some(error) => {
-                out.is_error = true;
-                json!({"error": error.take()})
-            }
-            None => report["result"].take(),
-        };
-        if screenshot.unwrap_or(body["ok"] != true) {
-            out.image_b64 = screen.screenshot_once(max_edge).await?;
-        }
-        out.text = body.to_string();
-        Ok(out)
+        runs::finish_plan(report, a.screenshot, a.max_edge, &self.kept(screen)).await
     }
 
     /// The plan executor's resolve of `target` in the focused window, pressed by action when `press`; its result.
@@ -200,7 +161,7 @@ impl Scripts {
     /// The report of one run of the plan executor with `params`; on shuttle it holds the plan's result only.
     async fn plan_report(
         &self,
-        mut params: Value,
+        params: Value,
         workspace: &Path,
         timeout: Duration,
     ) -> Result<Value, String> {
@@ -217,15 +178,15 @@ impl Scripts {
                 )
                 .await;
         };
-        params["timeout_s"] = timeout.as_secs().into();
-        let text = relay(shuttle, "gui_plan", params).await?;
-        let mut report = json!({});
-        report["result"] =
-            serde_json::from_str(&text).map_err(|e| format!("decode the plan result: {e}"))?;
-        if text.len() as u64 > MAX_RESULT_BYTES {
-            cap(&mut report["result"]);
+        runs::plan_report(shuttle, params, timeout).await
+    }
+
+    /// The screenshots of runs on `screen`, kept in the scripts' folder.
+    pub fn kept<'a, S>(&'a self, screen: &'a S) -> Kept<'a, S> {
+        Kept {
+            scripts: self,
+            screen,
         }
-        Ok(report)
     }
 
     /// Runs one script in its own scratch directory.
@@ -399,7 +360,7 @@ impl Scripts {
 }
 
 /// The screen a script's or plan's screenshot comes from.
-pub trait Screen {
+pub trait Screen: Sync {
     /// One screenshot as base64, its long edge at most `max_edge` where the screen can scale it.
     fn screenshot_once(
         &self,
@@ -419,37 +380,28 @@ impl Screen for Android {
     }
 }
 
-#[derive(Deserialize)]
-struct RunArgs {
-    #[serde(default)]
-    code: Option<String>,
-    #[serde(default)]
-    script: Option<String>,
-    #[serde(default)]
-    params: Option<Map<String, Value>>,
-    #[serde(default)]
-    timeout_s: Option<u64>,
-    #[serde(default = "default_screenshot")]
-    screenshot: bool,
-    #[serde(default)]
-    max_edge: Option<u32>,
+/// The screenshots of the toolhost's runs: from `screen`, kept in the scripts' folder when asked.
+pub struct Kept<'a, S> {
+    scripts: &'a Scripts,
+    screen: &'a S,
 }
 
-#[derive(Deserialize)]
-struct PlanArgs {
-    #[serde(flatten)]
-    params: Map<String, Value>,
-    #[serde(default)]
-    timeout_s: Option<u64>,
-    #[serde(default)]
-    screenshot: Option<bool>,
-    #[serde(default)]
-    max_edge: Option<u32>,
-}
-
-enum Script {
-    Code(String),
-    File(PathBuf),
+impl<S: Screen> Shots for Kept<'_, S> {
+    async fn shot(&self, max_edge: Option<u32>, keep: bool) -> Result<Option<Shot>, String> {
+        if !keep {
+            let shot = self.screen.screenshot_once(max_edge).await?;
+            return Ok(shot.map(|image_b64| Shot {
+                image_b64,
+                path: None,
+            }));
+        }
+        let id = uuid::Uuid::new_v4().simple().to_string();
+        let shot = self.scripts.screenshot(self.screen, max_edge, &id).await?;
+        Ok(shot.map(|(path, image_b64)| Shot {
+            image_b64,
+            path: Some(path),
+        }))
+    }
 }
 
 /// Signals the run's process group on drop unless disarmed.
@@ -516,68 +468,6 @@ fn launched(own: &str, cgroup: &str) -> bool {
         && cgroup
             .lines()
             .any(|l| l.contains("/app.slice/") && l.trim_end().ends_with(".scope"))
-}
-
-/// The text of shuttle's answer to `tool` with `args`; an error answer is an error.
-async fn relay(shuttle: &Client, tool: &str, args: Value) -> Result<String, String> {
-    let call = Call {
-        agent_id: String::new(),
-        tool: tool.to_owned(),
-        args,
-    };
-    let out = shuttle.call(&call).await?;
-    if out.is_error {
-        Err(out.text)
-    } else {
-        Ok(out.text)
-    }
-}
-
-/// The report of shuttle's run of `script` as tool `tool`.
-async fn run_report(
-    shuttle: &Client,
-    tool: &str,
-    script: Script,
-    params: Value,
-    timeout: Duration,
-) -> Result<Value, String> {
-    let mut args = json!({"timeout_s": timeout.as_secs()});
-    match script {
-        Script::Code(code) => args["code"] = code.into(),
-        Script::File(path) => {
-            if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
-                return Err(format!("script {} does not exist", path.display()));
-            }
-            args["script"] = path.display().to_string().into();
-        }
-    }
-    args["params"] = params;
-    let text = relay(shuttle, tool, args).await?;
-    let mut report: Value =
-        serde_json::from_str(&text).map_err(|e| format!("decode the run report: {e}"))?;
-    if text.len() as u64 > MAX_RESULT_BYTES {
-        cap(&mut report["result"]);
-    }
-    Ok(report)
-}
-
-/// Replaces a `result` past the size cap with the notice a local run gives.
-fn cap(result: &mut Value) {
-    if serde_json::to_vec(result).is_ok_and(|raw| raw.len() as u64 > MAX_RESULT_BYTES) {
-        *result =
-            format!("more than {MAX_RESULT_BYTES} bytes; write it to a file and return the path")
-                .into();
-    }
-}
-
-fn default_screenshot() -> bool {
-    true
-}
-
-fn timeout_of(timeout_s: Option<u64>) -> Duration {
-    timeout_s
-        .map_or(DEFAULT_TIMEOUT, Duration::from_secs)
-        .clamp(Duration::from_secs(1), MAX_TIMEOUT)
 }
 
 async fn drain(mut r: impl AsyncRead + Unpin, capture: &mut Capture) {
@@ -851,19 +741,6 @@ export function main() {
             own,
             "0::/user.slice/user-1000.slice/user@1000.service/app.slice/cua-driver.service\n"
         ));
-    }
-
-    #[test]
-    fn a_relayed_result_past_the_cap_becomes_the_local_notice() {
-        let mut small = json!({"n": 1});
-        cap(&mut small);
-        assert_eq!(small, json!({"n": 1}));
-        let mut big = Value::String("x".repeat(MAX_RESULT_BYTES as usize));
-        cap(&mut big);
-        assert_eq!(
-            big,
-            "more than 262144 bytes; write it to a file and return the path"
-        );
     }
 
     #[test]

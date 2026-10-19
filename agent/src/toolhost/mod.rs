@@ -7,7 +7,7 @@ mod browser;
 mod cua;
 pub mod desk;
 mod exec;
-mod files;
+pub(crate) mod files;
 pub(crate) mod flows;
 mod ground;
 mod model;
