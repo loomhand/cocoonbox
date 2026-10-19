@@ -10,6 +10,7 @@ An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs A
 | ashmem for the 24.04 kernel, which Android's gralloc needs | `image/android/ashmem/` (GPL-2.0, built in the base) |
 | the UI server: the accessibility tree from a resident `app_process`, built in the base | `image/android/ui/` |
 | Node and the desk runtime of cbcore, for GUI plans and scripts | `image/android/provision.sh` (`setup_desk`) |
+| shuttle, the box's desk: the pinned archive in `/opt/cocoon-shuttle`, its box config `/etc/cocoonbox/shuttle.toml` with an `[android]` section, and `cocoon-shuttle.service` as `user` on `/run/cocoonbox/desk.sock` | `image/desk/shuttle.sh`, `image/android/provision.sh` (`setup_desk`), `image/android/rootfs/` |
 | cut, from the base and a release's agent | `image/android/cut.sh` |
 
 The base is `ghcr.io/loomhand/cocoonbox/android-base`, built by `.github/workflows/android-base.yml` from `image/android/base/`: `bake.sh` bakes a created container of AOSP redroid 16 (`redroid.Dockerfile`, no Google apps) into docker data, and `Dockerfile` provisions cocoon's Ubuntu 24.04 image with it. A template is the base plus a release's agent:
@@ -31,7 +32,7 @@ The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) rea
 
 ## Agent
 
-`/opt/android/AGENTS.md` makes the agent's automation `Android`: the MCP instructions and prompts describe the phone, and there are no browser tools.
+`/opt/android/AGENTS.md` makes the agent's automation `Android`: the MCP instructions and prompts describe the phone, and there are no browser tools. The toolhost relays the screen and desk tools to shuttle's adb backend (`SHUTTLE_SOCKET`): `screenshot` as `desk_look`, `computer_*` as `desk_computer_*`, `desk_*` as they are, and runs go to shuttle's runner. shuttle drives the device with its own UI server (the archive's `android/cb-ui.jar`) and one resident paste session; the toolhost's Android desk in the table below stays in the image unused until M7.
 
 | Tool | On Android |
 |---|---|
