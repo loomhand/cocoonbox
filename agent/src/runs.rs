@@ -112,11 +112,17 @@ pub async fn plan_report(
     timeout: Duration,
 ) -> Result<Value, String> {
     params["timeout_s"] = timeout.as_secs().into();
-    let text = relay(shuttle, "gui_plan", params, timeout).await?;
-    let mut report = json!({});
-    report["result"] =
-        serde_json::from_str(&text).map_err(|e| format!("decode the plan result: {e}"))?;
-    if text.len() as u64 > MAX_RESULT_BYTES {
+    let out = relay(shuttle, "gui_plan", params, timeout).await?;
+    let len = out.text.len() as u64;
+    let mut report = if out.is_error {
+        failed(out.text)?
+    } else {
+        let mut report = json!({});
+        report["result"] =
+            serde_json::from_str(&out.text).map_err(|e| format!("decode the plan result: {e}"))?;
+        report
+    };
+    if len > MAX_RESULT_BYTES {
         cap(&mut report["result"]);
     }
     Ok(report)
@@ -142,7 +148,7 @@ pub async fn finish_run(
             Err(e) => report["screenshot_error"] = e.into(),
         }
     }
-    out.is_error = report.get("error").is_some();
+    out.is_error = !report["error"].is_null();
     out.text = serde_json::to_string_pretty(&report).map_err(|e| format!("encode report: {e}"))?;
     Ok(out)
 }
@@ -155,7 +161,7 @@ pub async fn finish_plan(
     shots: &impl Shots,
 ) -> Result<Output, String> {
     let mut out = Output::default();
-    let body = match report.get_mut("error") {
+    let body = match report.get_mut("error").filter(|e| !e.is_null()) {
         Some(error) => {
             out.is_error = true;
             json!({"error": error.take()})
@@ -195,32 +201,39 @@ async fn run_report(
         }
     }
     args["params"] = params;
-    let text = relay(shuttle, tool, args, timeout).await?;
-    let mut report: Value =
-        serde_json::from_str(&text).map_err(|e| format!("decode the run report: {e}"))?;
-    if text.len() as u64 > MAX_RESULT_BYTES {
+    let out = relay(shuttle, tool, args, timeout).await?;
+    let len = out.text.len() as u64;
+    let mut report: Value = if out.is_error {
+        failed(out.text)?
+    } else {
+        serde_json::from_str(&out.text).map_err(|e| format!("decode the run report: {e}"))?
+    };
+    if len > MAX_RESULT_BYTES {
         cap(&mut report["result"]);
     }
     Ok(report)
 }
 
-/// The text of shuttle's answer to a run of `tool` with `args` and `timeout`; an error answer is an error.
+/// shuttle's answer to a run of `tool` with `args` and `timeout`.
 async fn relay(
     shuttle: &Client,
     tool: &str,
     args: Value,
     timeout: Duration,
-) -> Result<String, String> {
+) -> Result<Output, String> {
     let call = Call {
         agent_id: String::new(),
         tool: tool.to_owned(),
         args,
     };
-    let out = shuttle.desk(&call, timeout + RUN_MARGIN).await?;
-    if out.is_error {
-        Err(out.text)
-    } else {
-        Ok(out.text)
+    shuttle.desk(&call, timeout + RUN_MARGIN).await
+}
+
+/// The report of a failed run that shuttle answers as an error; an error answer that is no such report is an error.
+fn failed(text: String) -> Result<Value, String> {
+    match serde_json::from_str::<Value>(&text) {
+        Ok(report) if report.is_object() && !report["error"].is_null() => Ok(report),
+        _ => Err(text),
     }
 }
 

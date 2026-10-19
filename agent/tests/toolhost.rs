@@ -193,3 +193,86 @@ async fn spawn_toolhost(
     }
     (child, socket)
 }
+
+#[tokio::test]
+async fn a_failed_run_shuttle_answers_as_an_error_keeps_its_report_and_shape() {
+    let dir = tempfile::tempdir().unwrap();
+    let desk = dir.path().join("desk.sock");
+    let listener = UnixListener::bind(&desk).unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let call: Call = read_frame(&mut conn).await.unwrap();
+                let failed = json!({"duration_ms": 2, "logs": "", "stderr": "", "exit_code": 1, "error": {"kind": "exception", "message": "boom"}, "result": null}).to_string();
+                let out = match (
+                    call.tool.as_str(),
+                    call.args["code"].as_str().or(call.args["case"].as_str()),
+                ) {
+                    (_, Some("fail")) => Output::error(failed),
+                    (_, Some("busy")) => {
+                        Output::error("desk busy: another run or action is still going")
+                    }
+                    (_, Some("null")) => Output::text(
+                        json!({"duration_ms": 1, "error": null, "result": 3}).to_string(),
+                    ),
+                    _ => Output::text("{}"),
+                };
+                write_frame(&mut conn, &out).await.unwrap();
+            });
+        }
+    });
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), Some(&desk)).await;
+    let th = Client::new(socket);
+    let call = |tool: &str, args: Value| Call {
+        agent_id: "ag".into(),
+        tool: tool.into(),
+        args,
+    };
+
+    let out = th
+        .call(&call(
+            "script_run",
+            json!({"code": "fail", "screenshot": false}),
+        ))
+        .await
+        .unwrap();
+    assert!(
+        out.is_error && out.text.contains("\n  \"error\": {"),
+        "{}",
+        out.text
+    );
+    assert!(out.text.contains("\"message\": \"boom\""), "{}", out.text);
+
+    let out = th
+        .call(&call(
+            "gui_plan",
+            json!({"case": "fail", "screenshot": false}),
+        ))
+        .await
+        .unwrap();
+    assert!(out.is_error, "{}", out.text);
+    let body: Value = serde_json::from_str(&out.text).unwrap();
+    assert_eq!(body["error"]["kind"], "exception", "{body}");
+
+    let out = th
+        .call(&call(
+            "script_run",
+            json!({"code": "busy", "screenshot": false}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        (out.is_error, out.text.as_str()),
+        (true, "desk busy: another run or action is still going")
+    );
+
+    let out = th
+        .call(&call(
+            "script_run",
+            json!({"code": "null", "screenshot": false}),
+        ))
+        .await
+        .unwrap();
+    assert!(!out.is_error, "{}", out.text);
+}
