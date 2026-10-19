@@ -56,10 +56,16 @@ until adb -s "$S" shell cat /proc/net/unix 2>/dev/null | grep -q "@scrcpy_$SCID"
 	kill -0 "$server_pid"
 	sleep 0.1
 done
-for _ in $(seq 100); do
-	adb -s "$S" shell cat /proc/net/unix 2>/dev/null | grep -q "@scrcpy_$CLIP_SCID" && break
+clip_args=(--clipboard-port "$CLIP_PORT")
+deadline=$((SECONDS + 10))
+until timeout 1 adb -s "$S" shell cat /proc/net/unix 2>/dev/null | grep -q "@scrcpy_$CLIP_SCID"; do
+	if [ "$SECONDS" -ge "$deadline" ]; then
+		echo "remoteview: the clipboard session did not start within 10 s; serving the screen without the clipboard" >&2
+		clip_args=()
+		break
+	fi
 	sleep 0.1
 done
-/usr/local/bin/scrcpy-rfb -rfbport 5900 -listen 127.0.0.1 -desktop Android --clipboard-port "$CLIP_PORT" &
+/usr/local/bin/scrcpy-rfb -rfbport 5900 -listen 127.0.0.1 -desktop Android "${clip_args[@]}" &
 rfb_pid=$!
 wait -n "$server_pid" "$rfb_pid"
