@@ -86,6 +86,8 @@ message HelloRequest {
 
 message HelloResponse {
   string agent_version = 1;
+  // The screen size the image boots at: 1280x800 on a desktop, 720x1280 on
+  // Android. A later change in the box, such as `wm size`, is not reflected.
   uint32 screen_width = 2;
   uint32 screen_height = 3;
   repeated string models = 4;

@@ -417,6 +417,8 @@ public nonisolated struct Cocoonbox_Agent_V1_HelloResponse: Sendable {
 
   public var agentVersion: String = String()
 
+  /// The screen size the image boots at: 1280x800 on a desktop, 720x1280 on
+  /// Android. A later change in the box, such as `wm size`, is not reflected.
   public var screenWidth: UInt32 = 0
 
   public var screenHeight: UInt32 = 0

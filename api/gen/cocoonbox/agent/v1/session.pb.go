@@ -723,13 +723,15 @@ func (x *HelloRequest) GetClientVersion() string {
 }
 
 type HelloResponse struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	AgentVersion     string                 `protobuf:"bytes,1,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
-	ScreenWidth      uint32                 `protobuf:"varint,2,opt,name=screen_width,json=screenWidth,proto3" json:"screen_width,omitempty"`
-	ScreenHeight     uint32                 `protobuf:"varint,3,opt,name=screen_height,json=screenHeight,proto3" json:"screen_height,omitempty"`
-	Models           []string               `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
-	DefaultMainModel string                 `protobuf:"bytes,5,opt,name=default_main_model,json=defaultMainModel,proto3" json:"default_main_model,omitempty"`
-	Automation       Automation             `protobuf:"varint,6,opt,name=automation,proto3,enum=cocoonbox.agent.v1.Automation" json:"automation,omitempty"`
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	AgentVersion string                 `protobuf:"bytes,1,opt,name=agent_version,json=agentVersion,proto3" json:"agent_version,omitempty"`
+	// The screen size the image boots at: 1280x800 on a desktop, 720x1280 on
+	// Android. A later change in the box, such as `wm size`, is not reflected.
+	ScreenWidth      uint32     `protobuf:"varint,2,opt,name=screen_width,json=screenWidth,proto3" json:"screen_width,omitempty"`
+	ScreenHeight     uint32     `protobuf:"varint,3,opt,name=screen_height,json=screenHeight,proto3" json:"screen_height,omitempty"`
+	Models           []string   `protobuf:"bytes,4,rep,name=models,proto3" json:"models,omitempty"`
+	DefaultMainModel string     `protobuf:"bytes,5,opt,name=default_main_model,json=defaultMainModel,proto3" json:"default_main_model,omitempty"`
+	Automation       Automation `protobuf:"varint,6,opt,name=automation,proto3,enum=cocoonbox.agent.v1.Automation" json:"automation,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
