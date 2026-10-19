@@ -2,9 +2,10 @@
 # The shuttle archive cbcore runs as its desk daemon, and whose desk runtime (desk.mts, gui_plan.mts, png.mts) cbcore and the
 # Android base install in /opt/desk/lib. Sourced by image/desk/provision.sh and image/android/provision.sh; run as
 # `shuttle.sh fetch DIR` it downloads the pinned archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the
-# runner's vendor tarballs there).
+# runner's vendor tarballs there). The archive follows the machine's architecture; SHUTTLE_ARCH (x64 or arm64) names
+# another one, as a fetch for a different machine needs.
 SHUTTLE_VERSION=v0.1.5
-case $(uname -m) in
+case ${SHUTTLE_ARCH:-$(uname -m)} in
 aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=882082cae86215e79cb0f349f418dd5f8b7662d0595c58075ad52c5dfe1b0cf0 ;;
 *) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=3c2a32168b976a3844e2e79b9b6851dd40cb28df7c4854daf0b4cc28e69d42ab ;;
 esac
