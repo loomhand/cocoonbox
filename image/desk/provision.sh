@@ -94,6 +94,7 @@ switch_driver() {
 	systemctl --user -M user@ disable --now cua-driver.service
 	rm -f /etc/xdg/autostart/cocoonbox-cua-driver.desktop /etc/systemd/user/cua-driver.service.d/no-overlay.conf \
 		/etc/systemd/user/cua-driver.service.d/no-update-check.conf
+	install -d -o user -g user "$WANTS"
 	ln -sfn /etc/systemd/user/cocoon-shuttle.service "$WANTS/cocoon-shuttle.service"
 	chown -h user:user "$WANTS/cocoon-shuttle.service"
 	systemctl --user -M user@ daemon-reload
