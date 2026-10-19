@@ -35,8 +35,9 @@ const MAX_STATE_MESSAGE_BYTES: usize = 16 << 20;
 const DEFAULT_PAGE: u32 = 100;
 const MAX_PAGE: u32 = 1000;
 const EVENT_BUFFER: usize = 256;
-const SCREEN_WIDTH: u32 = 1280;
-const SCREEN_HEIGHT: u32 = 800;
+const SCREEN: (u32, u32) = (1280, 800);
+// redroid's boot size in image/android/base/bake.sh.
+const ANDROID_SCREEN: (u32, u32) = (720, 1280);
 // h2 frees connection credit only as a stream is read, so each stalled Exec stdin holds one stream window.
 const STREAM_WINDOW: u32 = 1 << 20;
 const CONNECTION_WINDOW: u32 = 64 << 20;
@@ -218,12 +219,18 @@ impl Session for SessionSvc {
         if cfg.model_computer != cfg.model_main {
             models.push(cfg.model_computer.clone());
         }
+        let (automation, (screen_width, screen_height)) = match cfg.automation {
+            Automation::Plain => (pb::Automation::Plain, SCREEN),
+            Automation::Desk => (pb::Automation::Desk, SCREEN),
+            Automation::Android => (pb::Automation::Android, ANDROID_SCREEN),
+        };
         Ok(Response::new(pb::HelloResponse {
             agent_version: env!("CB_AGENT_VERSION").to_owned(),
-            screen_width: SCREEN_WIDTH,
-            screen_height: SCREEN_HEIGHT,
+            screen_width,
+            screen_height,
             models,
             default_main_model: cfg.model_main.clone(),
+            automation: automation.into(),
         }))
     }
 

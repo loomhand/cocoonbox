@@ -31,7 +31,7 @@ The box has no NIC. Android on the docker bridge (pinned to `172.18.0.1/16`) rea
 
 ## Agent
 
-`/opt/android/AGENTS.md` makes the agent's automation `Android`: the MCP instructions and prompts describe the phone, and there are no browser tools.
+`/opt/android/AGENTS.md` makes the agent's automation `Android`: the MCP instructions and prompts describe the phone, there are no browser tools, and `Session.Hello` reports `AUTOMATION_ANDROID` with the 720x1280 screen (desktop boxes report `AUTOMATION_DESK` or `AUTOMATION_PLAIN` and 1280x800), which clients use to tell a phone from a desktop.
 
 | Tool | On Android |
 |---|---|

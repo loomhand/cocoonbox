@@ -3669,6 +3669,41 @@ async fn a_plain_box_ignores_its_plugins() {
 }
 
 #[tokio::test]
+async fn hello_names_the_box_automation_and_its_screen() {
+    for (h, automation, screen) in [
+        (
+            Harness::start(Vec::new(), false).await,
+            pb::Automation::Plain,
+            (1280, 800),
+        ),
+        (
+            Harness::with_desk(Vec::new()).await,
+            pb::Automation::Desk,
+            (1280, 800),
+        ),
+        (
+            Harness::with_android().await,
+            pb::Automation::Android,
+            (720, 1280),
+        ),
+    ] {
+        let hello = h
+            .session()
+            .await
+            .hello(authed(pb::HelloRequest::default()))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(hello.automation(), automation);
+        assert_eq!(
+            (hello.screen_width, hello.screen_height),
+            screen,
+            "{automation:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn mcp_on_an_android_box_drives_the_phone_through_adb() {
     let h = Harness::with_android().await;
     let init: Value = reqwest::Client::new()
