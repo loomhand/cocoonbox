@@ -115,6 +115,15 @@ func TestTheImageOfAUsersPolicyStartsAndUpgradesItsBoxes(t *testing.T) {
 	}
 }
 
+func TestListNamesTheOfferedImagesOnce(t *testing.T) {
+	defaults := testDefaults
+	defaults.Image, defaults.RebaseImages = "cbcore:v25", []string{"cbcore:v25", "cbdroid:v3", "cbcore:v24"}
+	resp, err := New(newFakeMachines(), defaults, newFakeRegistry()).List(auth.WithUser(t.Context(), alice), &controlv1.ListBoxesRequest{})
+	if want := []string{"cbcore:v25", "cbdroid:v3", "cbcore:v24"}; err != nil || !slices.Equal(resp.GetOfferedImages(), want) {
+		t.Errorf("List offered %v, %v, want %v", resp.GetOfferedImages(), err, want)
+	}
+}
+
 func TestEnsureCreatesBox(t *testing.T) {
 	fake := newFakeMachines()
 	svc := New(fake, testDefaults, newFakeRegistry())

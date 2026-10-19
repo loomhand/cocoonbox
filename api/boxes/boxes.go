@@ -73,6 +73,17 @@ func (d Defaults) latest(image string) string {
 	return d.Image
 }
 
+// images lists the default image, then each rebase image once.
+func (d Defaults) images() []string {
+	images := []string{d.Image}
+	for _, image := range d.RebaseImages {
+		if !slices.Contains(images, image) {
+			images = append(images, image)
+		}
+	}
+	return images
+}
+
 // Registry keeps each user's boxes and their names; users.Service is the production one.
 type Registry interface {
 	Boxes(owner string) []users.Box
@@ -241,7 +252,7 @@ func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*con
 	if err != nil {
 		return nil, serviceError(ctx, log.WithFunc("boxes.Service.List").WithField("user", user), err, "list boxes")
 	}
-	resp := &controlv1.ListBoxesResponse{}
+	resp := &controlv1.ListBoxesResponse{OfferedImages: s.defaults.images()}
 	for _, b := range s.registry.Boxes(user) {
 		resp.Boxes = append(resp.Boxes, s.toBox(ctx, user, b.ID, current[b.ID]))
 	}
