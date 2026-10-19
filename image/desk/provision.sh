@@ -92,12 +92,14 @@ EOF
 switch_driver() {
 	log "shuttle in the session"
 	systemctl --user -M user@ disable --now cua-driver.service
-	rm -f /etc/xdg/autostart/cocoonbox-cua-driver.desktop /etc/systemd/user/cua-driver.service.d/no-overlay.conf \
-		/etc/systemd/user/cua-driver.service.d/no-update-check.conf
+	rm -f /etc/xdg/autostart/cocoonbox-cua-driver.desktop /etc/systemd/user/cua-driver.service \
+		/etc/systemd/user/cua-driver.service.d/no-overlay.conf /etc/systemd/user/cua-driver.service.d/no-update-check.conf
+	systemctl --global mask cua-driver.service
 	install -d -o user -g user "$WANTS"
 	ln -sfn /etc/systemd/user/cocoon-shuttle.service "$WANTS/cocoon-shuttle.service"
 	chown -h user:user "$WANTS/cocoon-shuttle.service"
 	systemctl --user -M user@ daemon-reload
+	systemctl --user -M user@ stop cua-driver.service
 	systemctl --user -M user@ restart cocoon-shuttle.service
 }
 
@@ -122,7 +124,7 @@ check() {
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
 	[ "$(readlink -f /usr/local/bin/cocoon-shuttle)" = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/cocoon-shuttle" ]
 	systemctl --user -M user@ -q is-enabled cocoon-shuttle.service
-	[ "$(systemctl --user -M user@ is-enabled cua-driver.service 2>/dev/null)" != enabled ]
+	[ "$(systemctl --user -M user@ is-enabled cua-driver.service 2>/dev/null)" = masked ]
 	[ ! -e /etc/xdg/autostart/cocoonbox-cua-driver.desktop ]
 	for _ in $(seq 60); do [ -S /run/cocoonbox/desk.sock ] && [ -S /run/cocoonbox/driver.sock ] && break; sleep 0.5; done
 	[ "$(stat -c %a /run/cocoonbox/desk.sock)" = 600 ]
