@@ -18,13 +18,12 @@ use tokio::time::Instant;
 use super::act::{card_field, is_chrome};
 use super::browser::Browser;
 use super::desk::key_names;
-use super::ground::{libreoffice, png_rgb};
+use super::ground::libreoffice;
 use super::rpc::{self, Output};
 use super::scope;
 use super::timing;
 use super::volatile::{Block, Shown, Volatile};
 use super::xshm::{self, Grabber, Modal, Placement, SHELL_APPS};
-use super::xtest;
 
 const STATE_ELEMENTS: u64 = 300;
 const TREE_CHARS: usize = 15_000;
@@ -1567,67 +1566,6 @@ impl Cua {
         let _ = self
             .desktop_input("press_key", json!({"key": "Escape"}))
             .await;
-    }
-
-    /// The desk tools' input: `req` of `tool` addressed to the desktop, serialized with every other input.
-    pub async fn desk_input(&self, tool: &str, req: Value) -> Result<Value, String> {
-        let _input = self.input.lock().await;
-        self.desktop_input(tool, req).await
-    }
-
-    /// The desk tools' typing: XTest when the keyboard map holds every character, else the driver's, serialized with every other input.
-    pub async fn desk_type(&self, text: &str) -> Result<(), String> {
-        let _input = self.input.lock().await;
-        if xtest::type_mapped(text)? {
-            return Ok(());
-        }
-        for run in text_runs(text) {
-            self.desktop_input("type_text", json!({"text": run}))
-                .await?;
-        }
-        Ok(())
-    }
-
-    /// The desk tools' other driver calls, each in a driver session of its own.
-    pub async fn desk_call(&self, tool: &str, req: Value) -> Result<Value, String> {
-        let once = crate::new_id("desk");
-        let done = self.request(&once, tool, req).await;
-        self.end_once(Some(once)).await;
-        done
-    }
-
-    /// The whole screen as `(width, height, RGB)` over MIT-SHM.
-    pub fn screen_rgb(&self) -> Option<(u32, u32, Vec<u8>)> {
-        self.shm(Grabber::rgb)
-    }
-
-    /// Whether the screen point `(x, y)` shows a window title: a desktop panel or a window manager's title bar.
-    pub fn title_at(&self, x: f64, y: f64) -> bool {
-        self.shm(|g| g.title_at(x.round() as i32, y.round() as i32))
-            .unwrap_or(false)
-    }
-
-    /// Base64 of the screen rectangle `[x, y, w, h]` clipped to the screen, encoded like a screenshot.
-    pub fn crop(&self, rect: [f64; 4]) -> Option<String> {
-        let (rect, rgb) = self.region_rgb(rect).ok()?;
-        encode(rect[2].unsigned_abs(), rect[3].unsigned_abs(), &rgb).map(|i| B64.encode(i))
-    }
-
-    /// Screen pixels per pixel of the last screenshot of the session `args` name, so a screen point maps to it.
-    pub fn screenshot_scale(&self, args: &Value) -> f64 {
-        self.scale_of(&session_of(args))
-    }
-
-    /// The fixed wait after an input that has no frame from before it.
-    pub async fn settled(&self) {
-        self.settle(None, 1.0).await;
-    }
-
-    /// The screen rectangle `[x, y, w, h]`, clipped to the screen, as `(width, height, PNG)` over MIT-SHM.
-    pub fn region_png(&self, rect: [f64; 4]) -> Result<(u32, u32, Vec<u8>), String> {
-        let (rect, rgb) = self.region_rgb(rect)?;
-        let (rw, rh) = (rect[2].unsigned_abs(), rect[3].unsigned_abs());
-        Ok((rw, rh, png_rgb(rw, rh, &rgb)?))
     }
 
     /// The screen rectangle `[x, y, w, h]` clipped to the screen, and its RGB rows over MIT-SHM.

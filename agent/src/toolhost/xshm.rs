@@ -635,38 +635,6 @@ impl Grabber {
         }))
     }
 
-    /// Whether the screen point `(x, y)` shows a window title rather than a window's content: a desktop
-    /// panel, whose task buttons carry the titles, or the band of a window manager frame above its client.
-    pub fn title_at(&self, x: i32, y: i32) -> Result<bool, String> {
-        let Some(top) = self.top_at(x, y)? else {
-            return Ok(false);
-        };
-        if top.popup {
-            return Ok(false);
-        }
-        if self.class(top.id) == PANEL_APP {
-            return Ok(true);
-        }
-        Ok(y < i32::from(top.y) + i32::from(self.client_offset(top.id)))
-    }
-
-    /// How far below the top of frame `w` its client starts, the height of its title bar; 0 for a window
-    /// that is its own client.
-    fn client_offset(&self, w: Window) -> i16 {
-        let children = self.kids(w);
-        children
-            .into_iter()
-            .find(|&c| {
-                self.conn
-                    .get_property(false, c, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 1)
-                    .ok()
-                    .and_then(|r| r.reply().ok())
-                    .is_some_and(|r| !r.value.is_empty())
-            })
-            .and_then(|c| self.conn.get_geometry(c).ok()?.reply().ok())
-            .map_or(0, |g| g.y)
-    }
-
     /// The child of the root that holds window `w`: its window manager frame, or `w` itself.
     pub fn top_level(&self, mut w: Window) -> Result<Window, String> {
         loop {
