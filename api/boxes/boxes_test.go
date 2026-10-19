@@ -48,18 +48,41 @@ func TestBoxID(t *testing.T) {
 }
 
 func TestLatestStaysInTheImageFamily(t *testing.T) {
-	d := Defaults{Image: "cbdesk:v25", RebaseImages: []string{"cbcore:v2", "cbdesk:v24", "cbcore:v1"}}
+	d := Defaults{Image: "cbdesk:v25", RebaseImages: []string{"cbcore:v2", "cbdesk:v24", "cbcore:v1", "host:5000/cbcore:v3"}}
 	tests := []struct{ image, want string }{
 		{"cbdesk:v22", "cbdesk:v25"},
 		{"cbdesk:v25", "cbdesk:v25"},
 		{"cbcore:v1", "cbcore:v2"},
 		{"cbdroid:v3", "cbdroid:v3"},
 		{"", "cbdesk:v25"},
+		{"host:5000/cbcore:v1", "host:5000/cbcore:v3"},
+		{"host:5000/cbdesk:v1", "host:5000/cbdesk:v1"},
 	}
 	for _, tt := range tests {
 		if got := d.latest(tt.image); got != tt.want {
 			t.Errorf("latest(%q) = %q, want %q", tt.image, got, tt.want)
 		}
+	}
+}
+
+func TestAFamilyIsTheNameBeforeTheTagAfterTheLastSlash(t *testing.T) {
+	for image, want := range map[string]string{
+		"cbcore:v1":           "cbcore",
+		"cbcore":              "cbcore",
+		"host:5000/cbcore:v1": "host:5000/cbcore",
+		"host:5000/cbcore":    "host:5000/cbcore",
+		"":                    "",
+	} {
+		if got := familyOf(image); got != want {
+			t.Errorf("familyOf(%q) = %q, want %q", image, got, want)
+		}
+	}
+	d := Defaults{Image: "cbcore:v2", RebaseImages: []string{"host:5000/cbcore:v3"}}
+	if got, ok := d.offered("host:5000/cbcore"); !ok || got != "host:5000/cbcore:v3" {
+		t.Errorf("offered(host:5000/cbcore) = %q, %v, want host:5000/cbcore:v3", got, ok)
+	}
+	if got, ok := d.offered("host"); ok {
+		t.Errorf("offered(host) = %q, want refused", got)
 	}
 }
 
