@@ -41,7 +41,7 @@ func (d Defaults) offered(ref string) (string, bool) {
 	if ref == "" || ref == d.Image || slices.Contains(d.RebaseImages, ref) {
 		return cmp.Or(ref, d.Image), true
 	}
-	if strings.Contains(ref, ":") {
+	if familyOf(ref) != ref {
 		return "", false
 	}
 	return d.newest(ref)
@@ -76,10 +76,10 @@ func (d Defaults) latest(image string) string {
 
 // newest is the newest offered image of family: the default image for its family, else the first rebase image of it.
 func (d Defaults) newest(family string) (string, bool) {
-	if strings.HasPrefix(d.Image, family+":") {
+	if familyOf(d.Image) == family {
 		return d.Image, true
 	}
-	i := slices.IndexFunc(d.RebaseImages, func(r string) bool { return strings.HasPrefix(r, family+":") })
+	i := slices.IndexFunc(d.RebaseImages, func(r string) bool { return familyOf(r) == family })
 	if i < 0 {
 		return "", false
 	}
@@ -631,6 +631,9 @@ func serviceError(ctx context.Context, logger *log.Fields, err error, action str
 }
 
 func familyOf(image string) string {
-	family, _, _ := strings.Cut(image, ":")
-	return family
+	name := strings.LastIndexByte(image, '/') + 1
+	if tag := strings.IndexByte(image[name:], ':'); tag >= 0 {
+		return image[:name+tag]
+	}
+	return image
 }
