@@ -14,7 +14,6 @@ use crate::toolhost::rpc::{self, Call, Client, Output};
 pub const MAX_RESULT_BYTES: u64 = 256 << 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_TIMEOUT: Duration = Duration::from_secs(110);
-// shuttle holds a run for up to 15 s while another one owns the desk
 const RUN_MARGIN: Duration = Duration::from_secs(15);
 
 /// Where a run result's screenshot comes from.
