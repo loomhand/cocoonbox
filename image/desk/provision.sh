@@ -1,5 +1,6 @@
 #!/bin/bash
-# Adds the cbcore family's desk runtime and its own cua-driver to a provisioned desktop guest; idempotent.
+# Adds the cbcore family's desk daemon (shuttle, with its own cua-driver child) and desk runtime to a provisioned desktop guest;
+# idempotent.
 # Runs as root inside the guest from an unpacked copy of image/desk (see cut.sh -f cbcore).
 set -euo pipefail
 
@@ -11,6 +12,8 @@ NODE_VERSION=24.21.0
 ROOT=/opt/desk
 ENV_FILE=/etc/cocoonbox/desk.env
 AGENT_ENV=/etc/cocoonbox/agent.env
+SHUTTLE_CONFIG=/etc/cocoonbox/shuttle.toml
+WANTS=/home/user/.config/systemd/user/default.target.wants
 
 SRC="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=image/desk/shuttle.sh
@@ -31,13 +34,13 @@ install_cua_driver() {
 	find /opt/cua-driver -mindepth 1 -maxdepth 1 ! -name "$CUA_VERSION" -exec rm -rf {} +
 	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry disable >/dev/null
 	runuser -u user -- env HOME=/home/user /usr/local/bin/cua-driver telemetry reset-id >/dev/null
-	systemctl --user -M user@ restart cua-driver.service
 }
 
 install_runtime() {
-	log "desk runtime of shuttle $SHUTTLE_VERSION"
+	log "shuttle $SHUTTLE_VERSION and its desk runtime"
 	local tarball="$SRC/vendor/$SHUTTLE_TARBALL"
 	[ -f "$tarball" ] || { echo "missing $tarball: fetch it with image/desk/shuttle.sh fetch image/desk/vendor" >&2; exit 1; }
+	install_shuttle "$tarball"
 	install_shuttle_runtime "$tarball"
 }
 
@@ -45,7 +48,7 @@ install_rootfs() {
 	log "rootfs files"
 	(cd "$SRC/rootfs" && find . -type f) | while read -r f; do
 		case "$f" in
-		./usr/local/bin/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
+		./usr/local/bin/* | ./usr/local/lib/cocoonbox/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
 		*) install -D -m 0644 "$SRC/rootfs/$f" "/${f#./}" ;;
 		esac
 	done
@@ -60,6 +63,41 @@ write_env() {
 	grep '^GW_BASE_URL=' "$AGENT_ENV" >"$ENV_FILE.tmp"
 	chmod 0644 "$ENV_FILE.tmp"
 	mv -f "$ENV_FILE.tmp" "$ENV_FILE"
+	local gw
+	gw=$(sed -n 's/^GW_BASE_URL=//p' "$ENV_FILE")
+	cat >"$SHUTTLE_CONFIG.tmp" <<EOF
+base_url = "$gw"
+decisions_url = "$gw/decisions"
+api_key = "unprovisioned"
+decide_build = "typesafe/jev-1.14-########"
+
+[safety]
+indicator = false
+confirm = "off"
+apps = []
+kill_hotkey = "off"
+
+[tools]
+script_run = true
+plugins = "/etc/cocoonbox/tools.d"
+
+[driver]
+overlay = false
+EOF
+	chmod 0644 "$SHUTTLE_CONFIG.tmp"
+	mv -f "$SHUTTLE_CONFIG.tmp" "$SHUTTLE_CONFIG"
+}
+
+# shuttle's own cua-driver child replaces the box's cua-driver unit and its session restart
+switch_driver() {
+	log "shuttle in the session"
+	systemctl --user -M user@ disable --now cua-driver.service
+	rm -f /etc/xdg/autostart/cocoonbox-cua-driver.desktop /etc/systemd/user/cua-driver.service.d/no-overlay.conf \
+		/etc/systemd/user/cua-driver.service.d/no-update-check.conf
+	ln -sfn /etc/systemd/user/cocoon-shuttle.service "$WANTS/cocoon-shuttle.service"
+	chown -h user:user "$WANTS/cocoon-shuttle.service"
+	systemctl --user -M user@ daemon-reload
+	systemctl --user -M user@ restart cocoon-shuttle.service
 }
 
 apt_sources() {
@@ -81,6 +119,17 @@ check() {
 	runuser -u user -- /usr/local/bin/node -e "import('$ROOT/lib/desk.mts').then((d) => { if (typeof d.snapshot !== 'function') process.exit(1) })"
 	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
+	[ "$(readlink -f /usr/local/bin/cocoon-shuttle)" = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/cocoon-shuttle" ]
+	systemctl --user -M user@ -q is-enabled cocoon-shuttle.service
+	! systemctl --user -M user@ -q is-enabled cua-driver.service
+	[ ! -e /etc/xdg/autostart/cocoonbox-cua-driver.desktop ]
+	for _ in $(seq 60); do [ -S /run/cocoonbox/desk.sock ] && [ -S /run/cocoonbox/driver.sock ] && break; sleep 0.5; done
+	[ "$(stat -c %a /run/cocoonbox/desk.sock)" = 600 ]
+	[ "$(pgrep -u user -x cua-driver | wc -l)" = 1 ]
+	tr '\0' '\n' <"/proc/$(pgrep -u user -x cua-driver)/cmdline" | grep -qx -- --no-overlay
+	[ "$(readlink -f /home/user/.config/cocoon-shuttle/flows)" = /workspace/flows ]
+	[ "$(stat -c %a /home/user/.config/cocoon-shuttle/config.toml)" = 600 ]
+	systemctl show -p Environment cocoonbox-toolhost | grep -q 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
 	for u in cocoonbox-toolhost cocoonbox-session; do systemctl show -p Environment "$u" | grep -q 'TOOLHOST_SOCKET=/run/cocoonbox/toolhost.sock'; done
 	systemctl --user -M user@ show-environment | grep -qx 'TOOLHOST_SOCKET=/run/cocoonbox/toolhost.sock'
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
@@ -100,6 +149,7 @@ install_cua_driver
 install_runtime
 install_rootfs
 write_env
+switch_driver
 apt_sources
 route_chrome
 check
