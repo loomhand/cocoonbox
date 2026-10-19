@@ -13,7 +13,7 @@ import Foundation
 public actor Bridge {
     static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
     static let connectWait = Duration.seconds(3)
-    public static let instructions = "These tools run on the user's cocoonbox cloud desktops, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box."
+    public static let instructions = "These tools run on the user's cocoonbox boxes, not on this Mac. box_* tools manage the boxes; the box tools act on one box, the one their box argument names, else the default box of this session. Tools named <connector>_<tool> act on the user's connected accounts, such as GitHub, through CocoonBox Connect, not on a box."
     static let codexClient = "codex-mcp-client"
     // maxInstructions is Claude Code's cap on a server's instructions and on a tool's description.
     public static let maxInstructions = 2048
@@ -103,7 +103,7 @@ public actor Bridge {
             reply(id, [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": true], "resources": [:] as [String: Any]],
-                "serverInfo": ["name": "cocoonbox", "version": "0.1.0"],
+                "serverInfo": ["name": "cocoonbox", "version": "0.16.0"],
                 "instructions": await instructionsText(),
             ])
         case "ping":
