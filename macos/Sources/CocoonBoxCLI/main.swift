@@ -299,10 +299,14 @@ func boxCommand() async {
     guard words.first == "create", let name = words.dropFirst().first else {
         fail("usage: cocoonbox box create NAME [--image IMAGE]")
     }
+    let image = value(of: "--image")
+    if arguments.contains("--image"), image?.isEmpty != false || image?.hasPrefix("--") == true {
+        fail("usage: cocoonbox box create NAME [--image IMAGE]")
+    }
     let connection = connection()
     defer { connection.close() }
     do {
-        let response = try await connection.createBox(name: name, image: value(of: "--image") ?? "")
+        let response = try await connection.createBox(name: name, image: image ?? "")
         if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
         printBox(try await connection.listBoxes().first { $0.id == response.box.id }, json: flags.contains("--json"))
     } catch {
