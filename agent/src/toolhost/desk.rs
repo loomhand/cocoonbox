@@ -379,7 +379,7 @@ impl Desk {
                     tool: "desk_at".to_owned(),
                     args: json!({"x": x, "y": y}),
                 };
-                let out = shuttle.call(&call).await?;
+                let out = shuttle.desk(&call, super::rpc::DESK_DEADLINE).await?;
                 if out.is_error {
                     return Err(out.text);
                 }
