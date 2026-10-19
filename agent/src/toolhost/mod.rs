@@ -246,11 +246,17 @@ impl Host {
         out
     }
 
-    /// Runs the screen, desk and script tools of an Android box; every other call comes back.
-    async fn android_call(&self, call: Call) -> Result<Result<Output, String>, Call> {
+    /// Runs the screen, desk and script tools of an Android box; on a box that runs shuttle, every call but a run comes back, its screen tools under shuttle's names.
+    async fn android_call(&self, mut call: Call) -> Result<Result<Output, String>, Call> {
         let Some(android) = &self.android else {
             return Err(call);
         };
+        if self.shuttle.is_some() && !matches!(call.tool.as_str(), "script_run" | "gui_plan") {
+            if let Some(tool) = shuttle_tool(&call.tool) {
+                call.tool = tool;
+            }
+            return Err(call);
+        }
         Ok(match call.tool.as_str() {
             "screenshot" => android.look().await,
             "computer_state" => android.state(call.args).await,
@@ -521,6 +527,15 @@ fn safe_name(s: &str) -> String {
         .collect()
 }
 
+/// shuttle's name for an Android screen tool: `screenshot` is `desk_look`, `computer_X` is `desk_computer_X`.
+fn shuttle_tool(tool: &str) -> Option<String> {
+    match tool {
+        "screenshot" => Some("desk_look".to_owned()),
+        "computer_state" | "computer_act" | "computer_end" => Some(format!("desk_{tool}")),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -538,5 +553,105 @@ mod tests {
         assert_eq!(desktop_name("ubuntu:GNOME"), Some("GNOME"));
         assert_eq!(desktop_name("XFCE"), Some("XFCE"));
         assert_eq!(desktop_name(""), None);
+    }
+
+    #[tokio::test]
+    async fn an_android_box_with_shuttle_sends_its_screen_desk_and_run_calls_there_and_runs_no_adb()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let ran = dir.path().join("adb-ran");
+        let adb = dir.path().join("adb");
+        std::fs::write(
+            &adb,
+            format!("#!/bin/sh\necho \"$@\" >> {}\n", ran.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&adb, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let desk = dir.path().join("desk.sock");
+        let (seen, mut tools) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let listener = UnixListener::bind(&desk).unwrap();
+        tokio::spawn(async move {
+            loop {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let call: Call = rpc::read_frame(&mut conn).await.unwrap();
+                let out = Output::text(if call.tool == "gui_plan" {
+                    r#"{"ok":true}"#
+                } else {
+                    "{}"
+                });
+                seen.send(call.tool).unwrap();
+                rpc::write_frame(&mut conn, &out).await.unwrap();
+            }
+        });
+        let socket = dir.path().join("toolhost.sock");
+        let cfg = ToolhostConfig {
+            socket: socket.clone(),
+            socket_group: "no-such-group".into(),
+            workspace: dir.path().into(),
+            chrome_bin: "false".into(),
+            chrome_profile: dir.path().join("chrome"),
+            cdp_port: 1,
+            cua_socket: dir.path().join("cua.sock"),
+            script_bin: "false".into(),
+            session_save: dir.path().join("session-save"),
+            home: dir.path().into(),
+            automation: Automation::Android,
+            plugins: Vec::new(),
+            adb_bin: adb,
+            gw_base_url: None,
+            shuttle_socket: Some(desk),
+        };
+        tokio::spawn(run(cfg));
+        while !socket.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let toolhost = Client::new(socket);
+        let calls = [
+            ("screenshot", json!({})),
+            ("computer_state", json!({"session": "cu"})),
+            (
+                "computer_act",
+                json!({"session": "cu", "action": "tap", "x": 1, "y": 2}),
+            ),
+            ("computer_end", json!({"session": "cu"})),
+            ("desk_type", json!({"text": "你好"})),
+            ("desk", json!({"op": "windows"})),
+            (
+                "gui_plan",
+                json!({"steps": [{"app": "x"}], "screenshot": false}),
+            ),
+        ];
+        for (tool, args) in calls {
+            let out = toolhost
+                .call(&Call {
+                    agent_id: "ag".into(),
+                    tool: tool.into(),
+                    args,
+                })
+                .await
+                .unwrap();
+            assert!(!out.is_error, "{tool}: {}", out.text);
+        }
+        let mut got = Vec::new();
+        while let Ok(tool) = tools.try_recv() {
+            got.push(tool);
+        }
+        assert_eq!(
+            got,
+            [
+                "desk_look",
+                "desk_computer_state",
+                "desk_computer_act",
+                "desk_computer_end",
+                "desk_type",
+                "desk_windows",
+                "gui_plan"
+            ]
+        );
+        assert!(
+            !ran.exists(),
+            "the toolhost ran adb: {:?}",
+            std::fs::read_to_string(&ran)
+        );
     }
 }
