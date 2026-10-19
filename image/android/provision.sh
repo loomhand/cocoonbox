@@ -26,7 +26,7 @@ NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 DESK=$(cd "$(dirname "$0")/../desk/rootfs" && pwd)
 # the gw endpoint of the agent's contract (export-rootfs.sh), for the plan executor and scripts
 GW_BASE_URL=http://10.203.0.1:18090/v1
-# cocoonstack/scrcpy-rfb immutable release master-827baf531 (827baf531715d6b86482c7ac6c63fd31030c58aa, run 39217674630); the jar run as shell is vanilla scrcpy 4.1
+# cocoonstack/scrcpy-rfb commit-tagged release master-827baf531 (tag protected by ruleset; 827baf531715d6b86482c7ac6c63fd31030c58aa, run 39217674630); the jar run as shell is vanilla scrcpy 4.1
 SCRCPY_URL=https://github.com/cocoonstack/scrcpy-rfb/releases/download/master-827baf531
 SCRCPY_FILES=(
 	"$SCRCPY_RFB /usr/local/bin/scrcpy-rfb 0755"
