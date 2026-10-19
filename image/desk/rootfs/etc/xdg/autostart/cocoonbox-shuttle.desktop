@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=cocoon-shuttle in the session
+Exec=/usr/local/lib/cocoonbox/cua-driver-session cocoon-shuttle.service
+OnlyShowIn=XFCE;
+NoDisplay=true

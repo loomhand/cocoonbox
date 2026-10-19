@@ -28,7 +28,7 @@ A runtime is a directory with a `provision.sh`; each `-r <dir>` copies one into 
 ## Versions and pins
 
 - `<family>:vN` counts up per family and is never re-cut: a fix is a new N. `cbcore:vN` is the template name on the sandboxd host; the published image is `base` (below).
-- A release tag `vX.Y.Z` of this repository publishes the agent and api binaries and `cocoonbox-image-recipe-vX.Y.Z.tar.gz`, the `image/` tree of that commit with `PINS` naming the agent binary's sha256 and the cua-driver commit and version. An image cut from a release uses that release's agent, so the pins name exactly what the image carries.
+- A release tag `vX.Y.Z` of this repository publishes the agent and api binaries and `cocoonbox-image-recipe-vX.Y.Z.tar.gz`, the `image/` tree of that commit with `PINS` naming the agent binary's sha256, the cua-driver commit and version, and the shuttle archive's version and sha256. An image cut from a release uses that release's agent, so the pins name exactly what the image carries.
 - A new image becomes a pool default only after a full boot and the box acceptance on a host.
 
 ## Publishing
@@ -48,6 +48,8 @@ cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/.
   | `io.github.loomhand.cocoonbox.agent-rev` | the revision the agent reports (`0.1.0+<rev>`) |
   | `io.github.loomhand.cocoonbox.cua-driver-version` | the cua-driver build version |
   | `io.github.loomhand.cocoonbox.cua-driver-commit` | the [loomhand/cua](https://github.com/loomhand/cua) commit cua-driver is built from |
+  | `io.github.loomhand.cocoonbox.shuttle-version` | the [loomhand/shuttle](https://github.com/loomhand/shuttle) archive the desk daemon and runtime come from |
+  | `io.github.loomhand.cocoonbox.shuttle-sha256` | sha256 of that linux-x64 archive |
 
 - a host imports a version as its template: `oras pull ghcr.io/loomhand/cocoonbox/base:vN` and `cocoon image import cbcore:vN cocoonbox-cbcore-vN.tar.gz`;
 - `.github/workflows/image.yml` cuts and publishes on a self-hosted runner labelled `cocoon` on the sandboxd host, installed by `deploy/runner/install`:
