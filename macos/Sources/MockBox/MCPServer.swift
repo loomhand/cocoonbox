@@ -170,7 +170,15 @@ final class MCPServer: Sendable {
         ["shell", "gui_plan", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
     }
     nonisolated(unsafe) static let planTools = scriptTools.filter { $0["name"] as? String != "script_run" }
-    nonisolated(unsafe) static let androidTools = scriptTools.filter { !($0["name"] as? String ?? "").hasPrefix("browser_") }
+    nonisolated(unsafe) static let androidTools: [[String: Any]] = (tools.filter { !($0["name"] as? String ?? "").hasPrefix("browser_") && !["computer_state", "computer_act", "screenshot"].contains($0["name"] as? String) } + [
+        tool("computer_state", "List the phone screen's UI elements.", [:]),
+        tool("computer_act", "Tap, swipe, type or press keys on the phone.", ["action": "string", "element": "integer", "text": "string"]),
+        tool("screenshot", "Take a PNG screenshot of the phone.", ["max_edge": "integer"]),
+        tool("gui_plan", "Run an Android GUI plan on the phone.", ["steps": "array"]),
+        tool("script_run", "Run a script on the phone.", ["code": "string"]),
+    ]).map { tool in
+        ["shell", "gui_plan", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
+    }
     static let androidInstructions = "These tools act on an Android 16 phone (720x1280) that runs in a cloud computer: Ubuntu 24.04 with no desktop. shell has adb."
 
     private let world: MockWorld

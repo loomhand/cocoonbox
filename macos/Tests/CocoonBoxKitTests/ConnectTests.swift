@@ -107,7 +107,9 @@ import Testing
         #expect(fresh.instructions == Bridge.instructions, "a phone that never answered adds no instructions")
         let names = { (client: BridgeClient) in try await client.tools().compactMap { $0["name"] as? String } }
         #expect(try await names(fresh) == Self.plain)
+        #expect(fresh.listChanged == 0)
         _ = try await fresh.tool("shell", ["command": "true"])
+        #expect(await until { fresh.listChanged == 1 }, "the bridge sends tools/list_changed once the woken phone answers")
         let live = try await names(fresh)
         #expect(live.contains("gui_plan") && live.contains("script_run") && !live.contains { $0.hasPrefix("browser_") }, "\(live)")
         fresh.close()

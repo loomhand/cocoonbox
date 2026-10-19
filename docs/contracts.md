@@ -418,7 +418,7 @@ Tool descriptions (model-facing; the api returns these exactly):
 - `box_status`: "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, and when your files were last saved."
 - `box_ensure`: "Start or wake your cocoonbox box and wait until it is running. Waking takes a few seconds; creating a new box takes longer."
 - `box_hibernate`: "Hibernate your cocoonbox box. Running programs and memory are kept and come back on the next wake."
-- `box_save`: "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save."
+- `box_save`: "Save your files, logins and agent history from the box to storage now. On a desktop box the browser closes during the save."
 - `box_upgrade`: "Move your box to the latest image of its kind. Running programs restart; files, logins and agent history are kept. Requires confirm: true."
 - `box_list`: "List your cocoonbox boxes with their names, states and images."
 - `box_create`: "Create another cocoonbox box with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once." Its `image` ("An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop.") goes to `CreateBoxRequest.image` as given; without it the box runs the user's policy image, else the default image.

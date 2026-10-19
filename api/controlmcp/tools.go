@@ -65,7 +65,7 @@ var toolSpecs = []toolSpec{
 	},
 	{
 		Name:         "box_save",
-		Description:  "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save.",
+		Description:  "Save your files, logins and agent history from the box to storage now. On a desktop box the browser closes during the save.",
 		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
 		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"last_saved_at_ms":{"type":"integer"},"operation_id":{"type":"string"},"bytes":{"type":"integer"}},"required":["box_id","last_saved_at_ms","operation_id","bytes"]}`),
 	},
