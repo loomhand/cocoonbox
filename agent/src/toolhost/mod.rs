@@ -274,7 +274,10 @@ impl Host {
         if !(call.tool.starts_with("desk_") || call.tool.starts_with("model_")) {
             return Err(call);
         }
-        Ok(shuttle.call(&call).await.unwrap_or_else(Output::error))
+        Ok(shuttle
+            .desk(&call, rpc::DESK_DEADLINE)
+            .await
+            .unwrap_or_else(Output::error))
     }
 
     async fn shell(&self, agent_id: &str, args: Value) -> Result<String, String> {

@@ -14,6 +14,8 @@ use crate::toolhost::rpc::{self, Call, Client, Output};
 pub const MAX_RESULT_BYTES: u64 = 256 << 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_TIMEOUT: Duration = Duration::from_secs(110);
+// shuttle holds a run for up to 15 s while another one owns the desk
+const RUN_MARGIN: Duration = Duration::from_secs(15);
 
 /// Where a run result's screenshot comes from.
 pub trait Shots {
@@ -111,7 +113,7 @@ pub async fn plan_report(
     timeout: Duration,
 ) -> Result<Value, String> {
     params["timeout_s"] = timeout.as_secs().into();
-    let text = relay(shuttle, "gui_plan", params).await?;
+    let text = relay(shuttle, "gui_plan", params, timeout).await?;
     let mut report = json!({});
     report["result"] =
         serde_json::from_str(&text).map_err(|e| format!("decode the plan result: {e}"))?;
@@ -194,7 +196,7 @@ async fn run_report(
         }
     }
     args["params"] = params;
-    let text = relay(shuttle, tool, args).await?;
+    let text = relay(shuttle, tool, args, timeout).await?;
     let mut report: Value =
         serde_json::from_str(&text).map_err(|e| format!("decode the run report: {e}"))?;
     if text.len() as u64 > MAX_RESULT_BYTES {
@@ -203,14 +205,19 @@ async fn run_report(
     Ok(report)
 }
 
-/// The text of shuttle's answer to `tool` with `args`; an error answer is an error.
-async fn relay(shuttle: &Client, tool: &str, args: Value) -> Result<String, String> {
+/// The text of shuttle's answer to a run of `tool` with `args` and `timeout`; an error answer is an error.
+async fn relay(
+    shuttle: &Client,
+    tool: &str,
+    args: Value,
+    timeout: Duration,
+) -> Result<String, String> {
     let call = Call {
         agent_id: String::new(),
         tool: tool.to_owned(),
         args,
     };
-    let out = shuttle.call(&call).await?;
+    let out = shuttle.desk(&call, timeout + RUN_MARGIN).await?;
     if out.is_error {
         Err(out.text)
     } else {
