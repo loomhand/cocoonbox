@@ -4,10 +4,12 @@
 # read from stdin and never written to disk.
 set -euo pipefail
 export LC_ALL=C
+unset PGHOST PGHOSTADDR PGPORT PGSERVICE PGSERVICEFILE PGDATABASE
 
 DB=${1:?usage: cb-pg-drill DB [STAMP] < age-identity}
 BUCKET=cocoonbox-backup
 W=/srv/cb/pgdrill
+SOCK=$W/run
 PORT=5499
 
 pg() { runuser -u postgres -- "$@"; }
@@ -30,22 +32,22 @@ echo "drill: $key"
 
 [ ! -e "$W" ] || { echo "$W exists: another drill or a leftover" >&2; exit 1; }
 trap cleanup EXIT
-install -d -o postgres -g postgres -m 0700 "$W"
+install -d -o postgres -g postgres -m 0700 "$W" "$SOCK"
 cb-s3 get "$BUCKET" "$key" "$W/dump.age"
 age -d -i <(printf '%s\n' "$identity") -o "$W/dump" "$W/dump.age"
 chown postgres "$W/dump"
 echo "dump: $(stat -c %s "$W/dump") bytes, encrypted $(stat -c %s "$W/dump.age") bytes"
 
-pg_createcluster 16 drill -p "$PORT" -d "$W/data" -e UTF8 -o "listen_addresses=" --start >/dev/null
-pg createdb -p "$PORT" "$DB"
-pg pg_restore -p "$PORT" -d "$DB" --no-owner --no-privileges --exit-on-error "$W/dump"
+pg_createcluster 16 drill -p "$PORT" -d "$W/data" -s "$SOCK" -e UTF8 -o "listen_addresses=" --start >/dev/null
+pg createdb -h "$SOCK" -p "$PORT" "$DB"
+pg pg_restore -h "$SOCK" -p "$PORT" -d "$DB" --no-owner --no-privileges --exit-on-error "$W/dump"
 
 want=$(pg pg_restore --data-only -f - "$W/dump" | data | sort | sha256sum)
-got=$(pg pg_dump -p "$PORT" --data-only "$DB" | data | sort | sha256sum)
+got=$(pg pg_dump -h "$SOCK" -p "$PORT" --data-only "$DB" | data | sort | sha256sum)
 echo "dump data   $want"
 echo "restored    $got"
-pg psql -p "$PORT" -d "$DB" -XAt -c "SELECT format('SELECT %L, count(*) FROM %I.%I;', relname, schemaname, relname) FROM pg_stat_user_tables ORDER BY schemaname, relname" |
-	pg psql -p "$PORT" -d "$DB" -XAt -F ' '
+pg psql -h "$SOCK" -p "$PORT" -d "$DB" -XAt -c "SELECT format('SELECT %L, count(*) FROM %I.%I;', relname, schemaname, relname) FROM pg_stat_user_tables ORDER BY schemaname, relname" |
+	pg psql -h "$SOCK" -p "$PORT" -d "$DB" -XAt -F ' '
 if [ "$want" != "$got" ]; then
 	echo "drill: FAIL (data differs)"
 	exit 1
