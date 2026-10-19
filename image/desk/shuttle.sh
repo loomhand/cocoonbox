@@ -4,8 +4,11 @@
 # `shuttle.sh fetch DIR` it downloads the pinned archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the
 # runner's vendor tarballs there).
 SHUTTLE_VERSION=v0.1.5
-SHUTTLE_SHA256=3c2a32168b976a3844e2e79b9b6851dd40cb28df7c4854daf0b4cc28e69d42ab
-SHUTTLE_TARBALL="cocoon-shuttle-${SHUTTLE_VERSION}-linux-x64.tar.gz"
+case $(uname -m) in
+aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=882082cae86215e79cb0f349f418dd5f8b7662d0595c58075ad52c5dfe1b0cf0 ;;
+*) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=3c2a32168b976a3844e2e79b9b6851dd40cb28df7c4854daf0b4cc28e69d42ab ;;
+esac
+SHUTTLE_TARBALL="cocoon-shuttle-${SHUTTLE_VERSION}-linux-${SHUTTLE_ARCH}.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
 
 # install_shuttle TARBALL: the daemon with its bundled Node, cua-driver and runtime in /opt/cocoon-shuttle/VERSION, on PATH
