@@ -5,7 +5,6 @@
 .DS_Store
 /api/coverage.out
 /image/desk/vendor/
-/image/vendor/
 /dist/
 /dist-extra/
 /.build/
