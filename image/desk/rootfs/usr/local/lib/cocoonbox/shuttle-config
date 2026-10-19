@@ -1,0 +1,7 @@
+#!/bin/sh
+# runs before each shuttle start: the box config from the image, and the flows directory as the workspace's, which a restore can replace
+set -eu
+d=$HOME/.config/cocoon-shuttle
+install -d -m 0700 "$d" /workspace/flows
+install -m 0600 /etc/cocoonbox/shuttle.toml "$d/config.toml"
+[ -L "$d/flows" ] || { [ ! -e "$d/flows" ] || rmdir "$d/flows"; ln -s /workspace/flows "$d/flows"; }

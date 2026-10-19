@@ -106,6 +106,7 @@ jobs:
             echo "agent-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-amd64 | cut -d' ' -f1)"
             echo "agent-arm64-sha256 $(sha256sum dist-extra/cocoonbox-agent-linux-arm64 | cut -d' ' -f1)"
             sed -n -e 's/^COMMIT=${COMMIT:-\(.*\)}$/cua-driver-commit \1/p' -e 's/^VERSION=${VERSION:-\(.*\)}$/cua-driver-version \1/p' image/cua-driver.sh
+            sed -n -e 's/^SHUTTLE_VERSION=\(.*\)$/shuttle-version \1/p' -e 's/^SHUTTLE_SHA256=\(.*\)$/shuttle-sha256 \1/p' image/desk/shuttle.sh
           } > "$RUNNER_TEMP/$recipe/PINS"
           cat "$RUNNER_TEMP/$recipe/PINS"
           tar -czf "dist-extra/$recipe.tar.gz" -C "$RUNNER_TEMP" "$recipe"

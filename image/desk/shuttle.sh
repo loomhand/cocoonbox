@@ -1,11 +1,22 @@
 #!/bin/bash
-# The shuttle release whose desk runtime (desk.mts, gui_plan.mts, png.mts) cbcore and the Android base install in /opt/desk/lib.
-# Sourced by image/desk/provision.sh and image/android/provision.sh; run as `shuttle.sh fetch DIR` it downloads the pinned
-# archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the runner's vendor tarballs there).
-SHUTTLE_VERSION=v0.1.1
-SHUTTLE_SHA256=f9b2e0a8ead8156d2a727be1d1050edfaaf2d3b6740d6d0df23285af66a374d6
+# The shuttle archive cbcore runs as its desk daemon, and whose desk runtime (desk.mts, gui_plan.mts, png.mts) cbcore and the
+# Android base install in /opt/desk/lib. Sourced by image/desk/provision.sh and image/android/provision.sh; run as
+# `shuttle.sh fetch DIR` it downloads the pinned archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the
+# runner's vendor tarballs there).
+SHUTTLE_VERSION=main-e857605
+SHUTTLE_SHA256=6a0cb6fa24987d4e5531af7d1503049db97678a12399b7f77e14d0b12af15160
 SHUTTLE_TARBALL="cocoon-shuttle-${SHUTTLE_VERSION}-linux-x64.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
+
+# install_shuttle TARBALL: the daemon with its bundled Node, cua-driver and runtime in /opt/cocoon-shuttle/VERSION, on PATH
+install_shuttle() {
+	local tarball=$1 dir=/opt/cocoon-shuttle/$SHUTTLE_VERSION
+	echo "$SHUTTLE_SHA256  $tarball" | sha256sum -c --quiet -
+	install -d "$dir"
+	tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
+	ln -sfn "$dir/cocoon-shuttle" /usr/local/bin/cocoon-shuttle
+	find /opt/cocoon-shuttle -mindepth 1 -maxdepth 1 ! -name "$SHUTTLE_VERSION" -exec rm -rf {} +
+}
 
 install_shuttle_runtime() {
 	local tarball=$1 tmp
