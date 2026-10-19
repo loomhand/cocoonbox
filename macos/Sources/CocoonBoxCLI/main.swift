@@ -29,7 +29,7 @@ usage: cocoonbox <command> [options]
   status [--json]                       show the box
   ensure | save                         wake or save the box, with progress
   hibernate [--yes]                     hibernate the box, with progress
-  upgrade [--yes]                       move the box to the latest desktop image
+  upgrade [--yes]                       move the box to the latest image of its kind
   box create NAME [--image IMAGE] [--json]
                                         create another box and wait until it runs; IMAGE is an offered image
                                         or its family, such as cbdroid for an Android phone
@@ -278,7 +278,7 @@ func lifecycle(_ command: String) async {
             printBox(try await selectedBox(connection), json: flags.contains("--json"))
         case "upgrade":
             guard let box = try await selectedBox(connection) else { fail("no box yet") }
-            guard !box.latestImage.isEmpty, box.latestImage != box.image else { return print("already on the latest desktop (\(box.image))") }
+            guard !box.latestImage.isEmpty, box.latestImage != box.image else { return print("already on the latest image (\(box.image))") }
             guard flags.contains("--yes") else {
                 let busy = await working(connection, box).map { " \($0); the upgrade restarts it from its last hand-over." } ?? ""
                 fail("upgrading to \(box.latestImage) restarts running programs; files, logins and agent history are kept.\(busy) Run again with --yes.")

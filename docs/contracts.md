@@ -380,7 +380,7 @@ The api serves the lifecycle of the caller's own boxes as MCP tools, so a local 
 
 **Errors.** A tool that runs but cannot do what was asked returns a result with `isError: true` and one `text` block, and no `structuredContent`:
 - `box_upgrade` without `confirm: true`: `Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true.`
-- `box_upgrade` when the box already runs `latest_image`: `Already on the latest desktop.`
+- `box_upgrade` when the box already runs `latest_image`: `Already on the latest image.`
 - `box_delete` without `confirm: true`: `Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true.`
 - `box_delete` without `box`: `Name the box to delete in box.`
 - A `box` that is neither the name nor the id of one of the caller's boxes: `You have no box "<box>"; box_list lists your boxes.`
@@ -415,14 +415,14 @@ Every tool but `box_list`, `box_create` and `usage` takes an optional `box`: a b
 Field types: `box_id`, `name`, `state`, `image`, `latest_image` and `operation_id` are strings; `upgrade_available` is a boolean; `last_saved_at_ms` and `bytes` are integers (0 means never, or nothing moved). For a user without a box, `box_status` returns `state: "absent"` with empty strings, and `box_ensure` creates the box.
 
 Tool descriptions (model-facing; the api returns these exactly):
-- `box_status`: "Show the state of your cocoonbox cloud desktop: running or hibernated, its image, whether an upgrade is available, and when your files were last saved."
-- `box_ensure`: "Start or wake your cocoonbox cloud desktop and wait until it is running. Waking takes a few seconds; creating a new box takes longer."
-- `box_hibernate`: "Hibernate your cocoonbox cloud desktop. Running programs and memory are kept and come back on the next wake."
+- `box_status`: "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, and when your files were last saved."
+- `box_ensure`: "Start or wake your cocoonbox box and wait until it is running. Waking takes a few seconds; creating a new box takes longer."
+- `box_hibernate`: "Hibernate your cocoonbox box. Running programs and memory are kept and come back on the next wake."
 - `box_save`: "Save your files, logins and agent history from the box to storage now. The browser in the box closes during the save."
-- `box_upgrade`: "Move your box to the latest desktop image. Running programs restart; files, logins and agent history are kept. Requires confirm: true."
-- `box_list`: "List your cocoonbox cloud desktops with their names, states and images."
-- `box_create`: "Create another cocoonbox cloud desktop with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once." Its `image` ("An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop.") goes to `CreateBoxRequest.image` as given; without it the box runs the user's policy image, else the default image.
-- `box_delete`: "Delete one of your cocoonbox cloud desktops. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true."
+- `box_upgrade`: "Move your box to the latest image of its kind. Running programs restart; files, logins and agent history are kept. Requires confirm: true."
+- `box_list`: "List your cocoonbox boxes with their names, states and images."
+- `box_create`: "Create another cocoonbox box with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once." Its `image` ("An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop.") goes to `CreateBoxRequest.image` as given; without it the box runs the user's policy image, else the default image.
+- `box_delete`: "Delete one of your cocoonbox boxes. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true."
 - `usage`: "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it."
 
 ## Model usage

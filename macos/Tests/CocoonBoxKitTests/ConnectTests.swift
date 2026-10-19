@@ -95,6 +95,28 @@ import Testing
         #expect(again.instructions == Bridge.instructions)
     }
 
+    @Test func anAndroidBoxListsTheFallbackUntilItAnswersThenItsOwnToolsAndInstructions() async throws {
+        let mock = try await MockBoxProcess()
+        defer { mock.stop() }
+        let phone = try await mock.connection.createBox(name: "phone", image: "cbdroid").box.id
+        #expect(await until(seconds: 10) { (try? await mock.connection.listBoxes())?.first { $0.id == phone }?.state == .running })
+        _ = try await mock.connection.hibernate(boxID: phone)
+        #expect(await until(seconds: 10) { (try? await mock.connection.listBoxes())?.first { $0.id == phone }?.state == .hibernated })
+
+        let fresh = try await BridgeClient(mock, box: "phone")
+        #expect(fresh.instructions == Bridge.instructions, "a phone that never answered adds no instructions")
+        let names = { (client: BridgeClient) in try await client.tools().compactMap { $0["name"] as? String } }
+        #expect(try await names(fresh) == Self.plain)
+        _ = try await fresh.tool("shell", ["command": "true"])
+        let live = try await names(fresh)
+        #expect(live.contains("gui_plan") && live.contains("script_run") && !live.contains { $0.hasPrefix("browser_") }, "\(live)")
+        fresh.close()
+
+        let again = try await BridgeClient(mock, box: "phone")
+        defer { again.close() }
+        #expect(again.instructions == Bridge.instructions + " The default box's own instructions follow. These tools act on an Android 16 phone (720x1280) that runs in a cloud computer: Ubuntu 24.04 with no desktop. shell has adb.")
+    }
+
     @Test func aBoxMovedToAnotherImageGetsItsNewInstructions() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }

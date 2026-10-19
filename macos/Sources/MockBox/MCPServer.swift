@@ -170,6 +170,8 @@ final class MCPServer: Sendable {
         ["shell", "gui_plan", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
     }
     nonisolated(unsafe) static let planTools = scriptTools.filter { $0["name"] as? String != "script_run" }
+    nonisolated(unsafe) static let androidTools = scriptTools.filter { !($0["name"] as? String ?? "").hasPrefix("browser_") }
+    static let androidInstructions = "These tools act on an Android 16 phone (720x1280) that runs in a cloud computer: Ubuntu 24.04 with no desktop. shell has adb."
 
     private let world: MockWorld
     private let token: String
@@ -257,10 +259,10 @@ final class MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "cocoonbox-mock", "version": "0.1"],
-                "instructions": box.image.hasPrefix("cbcore:") ? "Mock cbcore box: write one script with script_run for a multi-step task." : box.image.hasPrefix("cbdesk:") ? "Mock cbdesk box." : "Mock box that runs GUI plans.",
+                "instructions": box.image.hasPrefix("cbdroid:") ? Self.androidInstructions : box.image.hasPrefix("cbcore:") ? "Mock cbcore box: write one script with script_run for a multi-step task." : box.image.hasPrefix("cbdesk:") ? "Mock cbdesk box." : "Mock box that runs GUI plans.",
             ]
         case "tools/list":
-            result = ["tools": box.image.hasPrefix("cbcore:") ? Self.scriptTools : box.image.hasPrefix("cbdesk:") ? Self.tools : Self.planTools]
+            result = ["tools": box.image.hasPrefix("cbdroid:") ? Self.androidTools : box.image.hasPrefix("cbcore:") ? Self.scriptTools : box.image.hasPrefix("cbdesk:") ? Self.tools : Self.planTools]
         case "tools/call":
             guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")

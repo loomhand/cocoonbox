@@ -9,7 +9,7 @@ public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"
     static let version = "0.16.0"
-    static let summary = "Drive your cocoonbox, a cloud desktop or Android phone: its shell, files, browser and screen, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
+    static let summary = "Drive your cocoonbox, a cloud desktop or Android phone: its shell, files and screen, a desktop's browser, and its lifecycle (wake, save, upgrade, hibernate); move a coding task into it and back."
 
     // files maps paths under the marketplace root to their contents.
     public static func files(command: String) -> [String: String] {
@@ -87,7 +87,7 @@ public enum Plugin {
         """
         ---
         name: cocoonbox-offload
-        description: Hand this coding task to an agent in the user's cocoonbox (their cloud desktop) and take it back. Use when the user says offload, "move this to my box", "keep working while I'm away", "I'm back" or "bring it back", or when a message is exactly OFFLOAD or BACK.
+        description: Hand this coding task to an agent in the user's cocoonbox (their box in the cloud) and take it back. Use when the user says offload, "move this to my box", "keep working while I'm away", "I'm back" or "bring it back", or when a message is exactly OFFLOAD or BACK.
         ---
 
         The agent in the box starts fresh. It knows only what your hand-over says, plus the repo.
