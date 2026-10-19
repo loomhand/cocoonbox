@@ -6,7 +6,7 @@ use desk_core::text::cli_args;
 
 use super::rpc::{Call, Client};
 
-const DEFAULT_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
+const DEFAULT_SOCKET: &str = "/run/cocoonbox/desk.sock";
 const CLI_USAGE: &str = "usage: desk VERB [key=value ...|JSON]; verbs: windows, snapshot, find, read, press, act, at, key, type, click, focus, close, launch, shot, screen";
 
 /// The desk shuttle serves, when the box runs it.
@@ -36,7 +36,7 @@ impl Desk {
     }
 }
 
-/// `cocoonbox-agent desk VERB [key=value ...|JSON]`: calls the toolhost's `desk_VERB` and prints its result.
+/// `cocoonbox-agent desk VERB [key=value ...|JSON]`: calls shuttle's `desk_VERB` at `SHUTTLE_SOCKET` and prints its result.
 pub async fn cli(args: Vec<String>) -> u8 {
     let Some((verb, rest)) = args.split_first() else {
         eprintln!("{CLI_USAGE}");
@@ -49,7 +49,7 @@ pub async fn cli(args: Vec<String>) -> u8 {
             return 2;
         }
     };
-    let socket = std::env::var("TOOLHOST_SOCKET")
+    let socket = std::env::var("SHUTTLE_SOCKET")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| DEFAULT_SOCKET.to_owned());

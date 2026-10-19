@@ -195,10 +195,7 @@ impl ToolhostConfig {
                 Some(_) => String::new(),
                 None => optional("TOOLHOST_SOCKET_GROUP", "cbagent"),
             },
-            shuttle_socket: match service {
-                Some(_) => Some(endpoint.clone()),
-                None => shuttle_socket(),
-            },
+            shuttle_socket: shuttle_socket(),
             socket: service.unwrap_or(endpoint),
             workspace: optional("CB_WORKSPACE", DEFAULT_WORKSPACE).into(),
             chrome_bin: optional("CHROME_BIN", "google-chrome"),

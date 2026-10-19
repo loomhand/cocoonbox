@@ -105,7 +105,7 @@ Optional overrides with contract defaults, used by tests and non-standard layout
 | `CB_STATE_DIR` | `/var/lib/cocoonbox` |
 | `CB_IDENTITY_PATH` | `/run/cocoonbox-identity/identity` |
 | `CB_IDENTITY_OWNER` | `0` (root): the uid that must own the identity file and its directory |
-| `TOOLHOST_SOCKET` | `/run/cocoonbox/toolhost.sock` |
+| `TOOLHOST_SOCKET` | `/run/cocoonbox/toolhost.sock`: the toolhost's own endpoint, which serve calls |
 | `VNC_ADDR` | `127.0.0.1:5900` |
 | `CB_WORKSPACE` | `/workspace` |
 | `CHROME_BIN` | `google-chrome` |
