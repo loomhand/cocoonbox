@@ -16,7 +16,7 @@ transports: server.rs (gRPC Agents, Session) · mcp.rs (/mcp)
 dispatch.rs: records every call and result (journal.rs), publishes ComputerAction, injects the desktop session
         │ Tools interface (dispatch::Tools; production impl: toolhost RPC client)
         ▼
-toolhost: shell · files · CDP browser · cua-driver
+toolhost: shell · files · CDP browser · shuttle (desk and computer verbs, runs)
 ```
 
 - The loop reaches models only through `llm::Model`. Its production implementation is `llm::Client`, which speaks the chat wire to the gw URL.
@@ -38,7 +38,7 @@ toolhost: shell · files · CDP browser · cua-driver
 | `bus.rs` | Event fan-out. Offsets start at boot time in µs. A bounded replay ring serves `Events(from_offset)` |
 | `mcp.rs` | MCP Streamable HTTP at `/mcp` for external agents (mode B), next to gRPC on the same listener |
 | `screen.rs` | Raw RFB relay to `127.0.0.1:5900` after the `open` frame |
-| `toolhost/` | `rpc.rs` (u32-length-prefixed JSON, one call per connection), `shell.rs`, `files.rs`, `browser.rs` (Chrome over CDP), `cua.rs` (cua-driver socket client) |
+| `toolhost/` | `rpc.rs` (u32-length-prefixed JSON, one call per connection), `shell.rs`, `files.rs`, `browser.rs` (Chrome over CDP), `act.rs` and `ground.rs` (`computer_act` on shuttle's computer verbs) |
 | `prompts.rs`, `tools.rs` | System prompts and tool schemas |
 
 ## Behaviour
@@ -49,7 +49,7 @@ toolhost: shell · files · CDP browser · cua-driver
 - **Shell.** Each agent has one persistent bash session with cwd `/workspace`. Commands are sourced from a script file with stdin set to `/dev/null`. Output is capped to about 30 KB (head and tail). The default timeout is 120 s, up to 600 s. A timeout or cancel kills the session's process group, and the next call starts a fresh session.
 - **File paths.** A relative path resolves under `/workspace`. An absolute path is used as given, so the uid `user` is the access boundary.
 - **Browser.** The toolhost attaches to Chrome on `127.0.0.1:9222`, or launches it with the `/home/user/.config/cocoonbox-chrome` profile. A snapshot is a ref-tagged list (`- link "Learn more" [ref=e1]`) of at most 300 lines. It includes open shadow roots but not iframes. Clicks are CDP mouse events at the element's center.
-- **Computer.** Each `delegate_computer` task runs in its own cua-driver session (`cu-…`). Every call of the task carries that label. `end_session` runs when the task ends, or from a detached task if a cancel drops it. `computer_state` returns the desktop screenshot, the window list and the AT-SPI elements of one window. `computer_act` targets an element by index from the latest state, or screen pixels. Keyboard input with neither goes to the frontmost app window at the moment of the action, and `foreground: true` escalates delivery. A fresh screenshot follows every action, and a `ComputerAction` event is published before each input. For `anthropic/` models on the chat wire, the system prompt and the newest user message carry `cache_control`. Screenshots are pruned in batches (above 6, keep 3) so the cached prefix survives most steps.
+- **Computer.** Each `delegate_computer` task runs in its own driver session on shuttle (`cu-…`). Every call of the task carries that label. `desk_computer_end` ends it when the task ends, or from a detached task if a cancel drops it. `computer_state` returns the desktop screenshot, the window list and the AT-SPI elements of one window. `computer_act` targets an element by index from the latest state, or screen pixels. Keyboard input with neither goes to the frontmost app window at the moment of the action, and `foreground: true` escalates delivery. A fresh screenshot follows every action, and a `ComputerAction` event is published before each input. For `anthropic/` models on the chat wire, the system prompt and the newest user message carry `cache_control`. Screenshots are pruned in batches (above 6, keep 3) so the cached prefix survives most steps.
 
 ## MCP (mode B)
 
@@ -58,8 +58,8 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 - `initialize` returns an `Mcp-Session-Id`. The session appears as an agent `mcp:<clientInfo.name>` whose status is RUNNING while the session lives.
 - Each tool call and its result go into that agent's transcript and onto `Session.Events`. `computer_act` also publishes a `ComputerAction` event.
 - Tools: `shell`, `read_file`, `write_file`, `edit_file`, `list_dir`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_read`, `computer_state`, `computer_act`, `screenshot`. They run in the toolhost exactly as the loop's calls do.
-- Screenshots come back as MCP `image` content (PNG). `max_edge` scales a screenshot, and pixel coordinates then refer to the scaled image: cua-driver maps them back to the screen.
-- Each MCP session owns one cua-driver session label. It is ended by `DELETE`, by closing the GET stream (a later call starts a new label), or after 10 min without activity, which also closes the MCP session.
+- Screenshots come back as MCP `image` content (PNG). `max_edge` scales a screenshot, and pixel coordinates then refer to the scaled image: shuttle maps them back to the screen.
+- Each MCP session owns one driver session label on shuttle. It is ended by `DELETE`, by closing the GET stream (a later call starts a new label), or after 10 min without activity, which also closes the MCP session.
 - The toolhost holds one input lock per display, so a `computer_act` from mode A and one over MCP never interleave.
 - An `mcp:*` agent whose session has closed is deleted, together with its transcript, once it has gone untouched for 24 h.
 - Unknown methods get JSON-RPC `-32601` with HTTP 200. Without a session this applies to everything except `tools/*`, which needs `Mcp-Session-Id`.
@@ -79,7 +79,7 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 - **Restore.** A bidi stream: the first message carries the key and the manifest URL, later ones pages of chunk URLs (2048 at most). Fetching starts with the first page, and the next page is read only when the queue runs low. After the last page, every chunk the manifest references must have had a URL (`no url for chunk` otherwise).
   - It downloads and verifies every chunk (authentication and id) before touching anything. Then it pauses turns, closes Chrome and writes each root into a staging dir as `user`.
   - Each top-level entry is swapped in with one rename; entries missing from the snapshot are removed, except excluded top-level dirs such as `.cache`.
-  - The desktop session (`cocoonbox-session.service`, which also stops and starts cua-driver) is stopped for the swaps and started after them, under the contract's polkit grant. Xorg and VNC stay up.
+  - The desktop session (`cocoonbox-session.service`) is stopped for the swaps and started after them, under the contract's polkit grant. Xorg and VNC stay up.
   - `agent.db` is restored through the SQLite backup API, then open turns are marked interrupted.
 
 ## Limits
@@ -110,7 +110,6 @@ Optional overrides with contract defaults, used by tests and non-standard layout
 | `CB_WORKSPACE` | `/workspace` |
 | `CHROME_BIN` | `google-chrome` |
 | `CHROME_PROFILE` | `~/.config/cocoonbox-chrome` |
-| `CUA_DRIVER_SOCKET` | `~/.cache/cua-driver/cua-driver.sock` |
 | `SHUTTLE_SOCKET` | unset; shuttle's desk endpoint: the toolhost relays its desk verbs, model calls and runs there and answers none of them without it, and serve, when its own environment sets it, sends its desk calls and runs there itself |
 | `GW_ANTHROPIC_WIRE` | `chat` (`messages` switches `anthropic/` models to `/v1/messages`) |
 

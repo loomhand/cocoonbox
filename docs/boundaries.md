@@ -49,7 +49,7 @@ loop (mode A only) ── Model interface (chat wire → gw URL)
         ▼
 toolhost RPC (unix socket, user `user`)
         ▼
-executors: shell · files · CDP browser · cua-driver
+executors: shell · files · CDP browser · shuttle (desk and computer verbs, runs)
 ```
 
 Mode A and mode B differ only at the top layer. Nothing below the dispatcher knows which mode issued a call.
