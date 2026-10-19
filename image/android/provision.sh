@@ -26,12 +26,12 @@ NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 DESK=$(cd "$(dirname "$0")/../desk/rootfs" && pwd)
 # the gw endpoint of the agent's contract (export-rootfs.sh), for the plan executor and scripts
 GW_BASE_URL=http://10.203.0.1:18090/v1
-# cocoonstack/scrcpy-rfb master release at f1535589879d93da5cfac95db0e07521179bed23 (run 39195867273); the jar run as shell is vanilla scrcpy 4.1
-SCRCPY_URL=https://github.com/cocoonstack/scrcpy-rfb/releases/download/master
+# cocoonstack/scrcpy-rfb immutable release master-827baf531 (827baf531715d6b86482c7ac6c63fd31030c58aa, run 39217674630); the jar run as shell is vanilla scrcpy 4.1
+SCRCPY_URL=https://github.com/cocoonstack/scrcpy-rfb/releases/download/master-827baf531
 SCRCPY_FILES=(
 	"$SCRCPY_RFB /usr/local/bin/scrcpy-rfb 0755"
 	"$SU1000 /usr/local/share/scrcpy/su1000 0755"
-	"scrcpy-server-secure.jar 48e6098a0cd97a1cc5fb69f1120cc44e7aa4976080367a9aca663656fa991fad /usr/local/share/scrcpy/scrcpy-server.jar 0644"
+	"scrcpy-server-secure.jar 8f027776c89888d2fe5cab5be4bfd1a460119d210054ce21b2f6bf53f1fe820e /usr/local/share/scrcpy/scrcpy-server.jar 0644"
 	"scrcpy-server.jar deacb991ed2509715160ffdc7907e47b4160eb30d1566217e9047fd5b8850cae /usr/local/share/scrcpy/scrcpy-server-shell.jar 0644"
 )
 
