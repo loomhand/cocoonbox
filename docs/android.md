@@ -23,7 +23,7 @@ The redroid image in the docker data decides what the box ships; a public base c
 
 ## Boot
 
-The golden holds the Ubuntu VM only; docker stays off. When the api writes `/run/cocoonbox-identity/identity`, `cocoonbox-android.path` starts `android-up`: it starts docker, the DNS and TCP redirect, then `cocoonbox-redroid.service`, which runs the container and restarts it when Android fails; Android cold-boots with a fresh `/data`, so no two boxes share an Android identity. `android-up` then sets Android's global proxy and starts the screen: scrcpy-rfb on 127.0.0.1:5900, 720x1280, no password, which the agent's Screen relay serves as is. The capture orientation is locked (`capture_orientation=@0`): scrcpy-rfb cannot change its size, so a rotated display shows sideways in the same 720x1280 frame instead of freezing the view, and touches still land where they are drawn. adb listens on 127.0.0.1:5555.
+The golden holds the Ubuntu VM only; docker stays off. When the api writes `/run/cocoonbox-identity/identity`, `cocoonbox-android.path` starts `android-up`: it starts docker, the DNS and TCP redirect, then `cocoonbox-redroid.service`, which runs the container and restarts it when Android fails; Android cold-boots with a fresh `/data`, so no two boxes share an Android identity. `android-up` then sets Android's global proxy and starts the screen: scrcpy-rfb on 127.0.0.1:5900, 720x1280, no password, which the agent's Screen relay serves as is. The capture orientation is locked (`capture_orientation=@0`): scrcpy-rfb cannot change its size, so a rotated display shows sideways in the same 720x1280 frame instead of freezing the view, and touches still land where they are drawn. The clipboard rides a second, control-only scrcpy session that runs as shell, the unpatched `scrcpy-server.jar` (vanilla 4.1), since Android does not let the system uid read the clipboard: scrcpy-rfb's `--clipboard-port 27184` turns a client's cut text into Android's clipboard and every new Android clipboard into ServerCutText. `remoteview` runs that session in a restart loop, outside the `wait -n` of the screen, so its end does not restart the unit; scrcpy-rfb then reconnects with backoff, 250 ms to 8 s. adb listens on 127.0.0.1:5555.
 
 ## Network
 
@@ -47,6 +47,14 @@ On the desk wire a window is an app's activity or dialog titled `<title> - <pack
 Android's `/data` is a btrfs subvolume in a sparse loop image (`android-mount`). A quiesced save (Rebase, Delete, SaveState, park) runs `session-save`, which takes a read-only snapshot while Android runs and writes it as a plain tar, sorted by name with numeric owners and without `dalvik-cache` and `cache`, to `/home/user/.android/data.tar` with its sha256, both by rename; the `home` root then carries it. A failed save fails the quiesced save, so a snapshot never carries a stale tar. Live saves every 15 minutes and idle hibernation do not refresh it, so after a restore `/data` is as of the last quiesced save.
 
 Restore stops and starts `cocoonbox-session.service`, which runs `android-apply`: a tar whose sha256 does not match, or that was applied before, is left alone; otherwise Android shuts down, the tar extracts into a new subvolume, and only a whole extract replaces `/data`. On any failure Android boots on its old `/data` and the journal says why. A Rebase from an Android image without this unit fails at the restore and the api keeps the box on its old image.
+
+## Gate
+
+Box checks for a new template, from an RFB client in the box (Settings search focused) and the toolhost's `computer_state`:
+
+| Check | Pass |
+|---|---|
+| Clipboard session restart | `adb shell pkill -f scid=4a264fb1`; the unit stays active and its journal shows "scrcpy clipboard session ended; reconnecting in …"; after that, a client's cut text pasted with Shift+Insert reads back in the field, and Ctrl+A, Ctrl+C in the field arrives at the client as ServerCutText |
 
 ## Pool
 
