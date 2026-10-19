@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.20.1
-	github.com/minio/minio-go/v7 v7.3.0
+	github.com/minio/minio-go/v7 v7.4.1
 	github.com/projecteru2/core v0.1.7
 	github.com/robfig/cron/v3 v3.0.1
 	golang.org/x/crypto v0.58.0
