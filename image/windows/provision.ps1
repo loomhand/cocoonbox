@@ -31,6 +31,7 @@ $Chrome = @{ Name = 'googlechromestandaloneenterprise64.msi'; Url = 'https://dl.
 $BoxUser = if ($env:BOX_USER) { $env:BOX_USER } else { 'cocoon' }
 $Service = 'cocoonbox-agent'
 $ServiceAccount = "NT SERVICE\$Service"
+$ServiceSid = 'S-1-5-80-946905139-3423092567-543426227-2568855936-1891501187'
 $Data = 'C:\ProgramData\cocoonbox'
 $AgentDir = 'C:\Program Files\cocoonbox'
 $ShuttleDir = 'C:\Program Files\cocoon-shuttle'
@@ -177,7 +178,7 @@ function Shuttle {
     $tmp = Join-Path $env:TEMP "shuttle-$PID"
     Expand-Archive -Force (Join-Path $Vendor 'cocoon-shuttle-v0.1.8-windows-x64.zip') $tmp
     Get-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue | Stop-ScheduledTask
-    Get-Process cocoon-shuttle, cua-driver -ErrorAction SilentlyContinue | Stop-Process -Force
+    Get-Process | Where-Object { $_.Path -like "$ShuttleDir\*" } | Stop-Process -Force -PassThru | Wait-Process -Timeout 30
     if (Test-Path $ShuttleDir) { Remove-Item -Recurse -Force $ShuttleDir }
     Move-Item (Join-Path $tmp 'cocoon-shuttle') $ShuttleDir
     Remove-Item -Recurse -Force $tmp
@@ -190,7 +191,7 @@ function Shuttle {
     if ($env:SHUTTLE_DECIDE -ne '0') {
         $toml += "base_url = `"$env:GW_BASE_URL`"`ndecisions_url = `"$env:GW_BASE_URL/decisions`"`napi_key = `"unprovisioned`"`ndecide_build = `"typesafe/jev-1.14-########`"`n`n"
     }
-    $toml += "[safety]`nindicator = false`nconfirm = `"off`"`napps = []`nkill_hotkey = `"off`"`n`n[tools]`nscript_run = true`nplugins = '$Data\tools.d'`n`n[driver]`noverlay = false`n`n[daemon]`nsocket_group = '$ServiceAccount'`n"
+    $toml += "[safety]`nindicator = false`nconfirm = `"off`"`napps = []`nkill_hotkey = `"off`"`n`n[tools]`nscript_run = true`nplugins = '$Data\tools.d'`n`n[driver]`noverlay = false`n`n[daemon]`nsocket_group = '$ServiceSid'`n"
     [IO.File]::WriteAllText("$Data\shuttle.toml", $toml)
     Copy-Item -Force (Join-Path $PSScriptRoot 'rootfs\ProgramData\cocoonbox\shuttle-session.ps1') "$Data\shuttle-session.ps1"
     $a = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Data\shuttle-session.ps1`""
@@ -216,6 +217,8 @@ function Agent {
     & sc.exe config $Service obj= $ServiceAccount | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "sc config exit $LASTEXITCODE" }
     & sc.exe failure $Service reset= 0 actions= restart/3000/restart/3000/restart/3000 | Out-Null
+    & sc.exe failureflag $Service 1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "sc failureflag exit $LASTEXITCODE" }
     $env_ = @(
         'AGENT_LISTEN=127.0.0.1:7443',
         "GW_BASE_URL=$env:GW_BASE_URL", "GW_API_KEY=$env:GW_API_KEY", "MODEL_MAIN=$env:MODEL_MAIN", "MODEL_COMPUTER=$env:MODEL_COMPUTER",
@@ -223,7 +226,11 @@ function Agent {
         "CB_HOME=C:\Users\$BoxUser", "CB_WORKSPACE=$Workspace", "CB_LOG=$Data\agent.log"
     )
     foreach ($v in 'GW_BASE_URL', 'GW_API_KEY', 'MODEL_MAIN', 'MODEL_COMPUTER') { if (-not (Get-Item "env:$v" -ErrorAction SilentlyContinue)) { throw "missing $v" } }
-    New-ItemProperty -Force -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$Service" -Name Environment -PropertyType MultiString -Value $env_ | Out-Null
+    $key = "HKLM:\SYSTEM\CurrentControlSet\Services\$Service"
+    New-ItemProperty -Force -Path $key -Name Environment -PropertyType MultiString -Value $env_ | Out-Null
+    $acl = Get-Acl $key
+    $acl.SetSecurityDescriptorSddlForm('D:P(A;CI;KA;;;SY)')
+    Set-Acl $key $acl
     Acl "$Data\state" @('SYSTEM:(OI)(CI)F', 'Administrators:(OI)(CI)F', "${ServiceAccount}:(OI)(CI)M")
     Acl "$Data\identity" @('SYSTEM:(OI)(CI)F', 'Administrators:(OI)(CI)F', "${ServiceAccount}:(OI)(CI)RX")
     if (-not (Test-Path "$Data\agent.log")) { New-Item -ItemType File "$Data\agent.log" | Out-Null }
@@ -237,6 +244,8 @@ function Check {
     if ((Get-Service $Service).Status -ne 'Running') { throw "$Service is $((Get-Service $Service).Status)" }
     $svc = Get-CimInstance Win32_Service -Filter "Name='$Service'"
     if ($svc.StartName -ne $ServiceAccount) { throw "$Service runs as $($svc.StartName)" }
+    if ((& sc.exe showsid $Service | Out-String) -notmatch [regex]::Escape($ServiceSid)) { throw "$Service SID is not $ServiceSid" }
+    if ((Get-Acl "HKLM:\SYSTEM\CurrentControlSet\Services\$Service").Sddl -notmatch 'D:PAI?\(A;CI;KA;;;SY\)$') { throw "the $Service key is readable beyond SYSTEM" }
     if (-not (Get-Process tvnserver -ErrorAction SilentlyContinue | Where-Object SessionId -ne 0)) { throw 'tvnserver does not run in the console session' }
     if (-not (Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 5900 -ErrorAction SilentlyContinue)) { throw 'nothing listens on 127.0.0.1:5900' }
     if (-not (Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort 7443 -ErrorAction SilentlyContinue)) { throw 'serve does not listen on 127.0.0.1:7443' }
