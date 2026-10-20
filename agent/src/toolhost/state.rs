@@ -16,6 +16,7 @@ pub const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 
 const READ_BLOCK: usize = 1 << 20;
 const TRASH_PREFIX: &str = ".cb-trash-";
+const FAILED_PREFIX: &str = ".cb-restore-failed-";
 const PLACE_TRIES: u32 = 100;
 
 /// A tree to walk, named in the manifest.
@@ -330,14 +331,15 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
         .join(format!("{TRASH_PREFIX}{}", uuid::Uuid::new_v4().simple()));
     fs::create_dir_all(&trash).map_err(|e| format!("mkdir {}: {e}", trash.display()))?;
     let mut moved = Vec::new();
-    let swapped = swap_moves(a, &trash, &mut moved);
-    if swapped.is_err() {
-        for (from, to) in moved.iter().rev() {
-            let _ = fs::rename(to, from);
+    let removed = match swap_moves(a, &trash, &mut moved) {
+        Ok(removed) => removed,
+        Err(e) => {
+            return Err(match roll_back(&a.root, &trash, &moved) {
+                Some(kept) => format!("{e}; {kept}"),
+                None => e,
+            });
         }
-        let _ = fs::remove_dir(&trash);
-    }
-    let removed = swapped?;
+    };
     if let Err(e) = remove_tree(&trash) {
         eprintln!(
             "toolhost: state_swap: leave {} for the next swap: {e}",
@@ -348,6 +350,29 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
     Ok(format!(
         "swapped {} entries, removed {removed}",
         a.names.len()
+    ))
+}
+
+fn roll_back(root: &Path, trash: &Path, moved: &[(PathBuf, PathBuf)]) -> Option<String> {
+    let mut stuck = 0;
+    for (from, to) in moved.iter().rev() {
+        if fs::rename(to, from).is_err() {
+            stuck += 1;
+        }
+    }
+    if stuck == 0 {
+        let _ = fs::remove_dir(trash);
+        return None;
+    }
+    let kept = root.join(format!("{FAILED_PREFIX}{}", uuid::Uuid::new_v4().simple()));
+    let kept = if fs::rename(trash, &kept).is_ok() {
+        kept
+    } else {
+        trash.to_owned()
+    };
+    Some(format!(
+        "{stuck} entries could not move back and stay in {}",
+        kept.display()
     ))
 }
 
@@ -367,7 +392,9 @@ fn swap_moves(
     let mut removed = 0;
     for entry in current.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let special = Some(&name) == staging_name.as_ref() || Some(&name) == trash_name.as_ref();
+        let special = Some(&name) == staging_name.as_ref()
+            || Some(&name) == trash_name.as_ref()
+            || name.starts_with(FAILED_PREFIX);
         let unwalked =
             a.excludes.matches(&name) || entry.file_type().is_ok_and(|t| sys::is_dir_link(&t));
         if special || unwalked || a.keep.contains(&name) || a.names.contains(&name) {
@@ -670,6 +697,36 @@ mod tests {
                 ("workspace", "Library/x/f")
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn an_entry_that_cannot_move_back_survives_the_next_swap() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let trash = root.join(format!("{TRASH_PREFIX}t"));
+        fs::create_dir_all(trash.join("docs")).unwrap();
+        fs::write(trash.join("docs/original"), b"o").unwrap();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("docs/recreated"), b"r").unwrap();
+        let moved = [(root.join("docs"), trash.join("docs"))];
+        let kept = roll_back(&root, &trash, &moved).expect("a rename back fails");
+        assert!(!trash.exists(), "{kept}");
+        let failed = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .find(|p| {
+                p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with(FAILED_PREFIX)
+            })
+            .expect("the trash moved to a failed-restore name");
+        assert!(kept.contains(&*failed.to_string_lossy()), "{kept}");
+        let staging = root.join(".cb-restore");
+        fs::create_dir_all(staging.join("docs")).unwrap();
+        let args = serde_json::json!({"root": root, "staging": staging, "names": ["docs"]});
+        swap(args).await.unwrap();
+        assert!(failed.join("docs/original").exists());
     }
 
     #[tokio::test]
