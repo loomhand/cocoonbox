@@ -216,10 +216,9 @@ fn on_terminal(mut cmd: Command, rows: u16, cols: u16) -> Result<Started, String
 fn on_terminal(cmd: Command, rows: u16, cols: u16) -> Result<Started, String> {
     let on = sys::spawn_on_pty(cmd.as_std(), rows, cols)
         .map_err(|e| format!("spawn bash on a console: {e}"))?;
-    let tree = on.process.tree().map_err(|e| format!("hold bash: {e}"))?;
     Ok(Started {
         exit: Box::pin(async move { on.process.wait().await.map(msys_code) }),
-        tree,
+        tree: on.tree,
         stdin: Box::new(tokio::fs::File::from_std(on.input)),
         stdout: Box::new(tokio::fs::File::from_std(on.output)),
         stderr: None,
@@ -564,6 +563,37 @@ mod tests {
                 .unwrap();
             assert_eq!(code, want, "signal {signal}: {out:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn hanging_up_with_stdin_queued_for_a_command_that_never_reads_it_ends_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = toolhost(dir.path()).await;
+        let conn = client
+            .exec("(sleep 2; touch late) & sleep 30", None)
+            .await
+            .unwrap();
+        let (rd, mut wr) = tokio::io::split(conn);
+        let writer = tokio::spawn(async move {
+            let block = vec![b'x'; 1 << 20];
+            for _ in 0..16 {
+                if rpc::write_tagged(&mut wr, rpc::STDIN, &block)
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        writer.abort();
+        let _ = writer.await;
+        drop(rd);
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        assert!(
+            !dir.path().join("late").exists(),
+            "the command outlived the hang-up"
+        );
     }
 
     #[cfg(windows)]

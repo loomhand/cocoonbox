@@ -53,7 +53,7 @@ type Conn = UnixStream;
 /// One accepted toolhost connection.
 #[cfg(windows)]
 type Conn = NamedPipeServer;
-const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
+const SCRATCH_DIR: &str = "cocoonbox-shell";
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
 const OS_RELEASE: &str = "/etc/os-release";
 const SYSTEM_VERSION: &str = "/System/Library/CoreServices/SystemVersion.plist";
@@ -89,7 +89,7 @@ impl Host {
         let shuttle = cfg.shuttle_socket.clone().map(Client::new);
         Self {
             workspace: cfg.workspace.clone(),
-            scratch: PathBuf::from(SCRATCH_DIR),
+            scratch: scratch_dir(),
             shells: Mutex::new(HashMap::new()),
             browser: Browser::new(
                 cfg.chrome_bin.clone(),
@@ -582,6 +582,17 @@ fn session_desktop() -> Option<String> {
         })
 }
 
+/// The directory of the shell's scratch files: under `/tmp`, or on Windows under the temp directory, a path with a drive
+/// that Git Bash reads as it is.
+fn scratch_dir() -> PathBuf {
+    let root = if cfg!(windows) {
+        std::env::temp_dir()
+    } else {
+        PathBuf::from("/tmp")
+    };
+    root.join(SCRATCH_DIR)
+}
+
 fn safe_name(s: &str) -> String {
     s.chars()
         .map(|c| {
@@ -688,6 +699,38 @@ mod tests {
                 out.text
             );
         }
+    }
+
+    #[tokio::test]
+    async fn the_shell_tool_keeps_its_state_between_calls() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = ToolhostConfig {
+            socket: crate::testing::endpoint(dir.path(), "toolhost.sock"),
+            socket_group: String::new(),
+            workspace: dir.path().into(),
+            chrome_bin: "false".into(),
+            chrome_profile: dir.path().join("chrome"),
+            cdp_port: 1,
+            session_save: dir.path().join("session-save"),
+            home: dir.path().into(),
+            automation: Automation::Minimal,
+            plugins: Vec::new(),
+            shuttle_socket: None,
+        };
+        let host = Host::new(&cfg);
+        let agent = format!("shell-test-{}", std::process::id());
+        let call = |tool: &str, command: &str| Call {
+            agent_id: agent.clone(),
+            tool: tool.into(),
+            args: json!({"command": command}),
+        };
+        let out = host
+            .dispatch(call("shell", "mkdir sub && cd sub && echo hi"))
+            .await;
+        assert_eq!(out.text, "hi\n[exit status 0]", "{out:?}");
+        let out = host.dispatch(call("shell", "basename \"$PWD\"")).await;
+        assert_eq!(out.text, "sub\n[exit status 0]", "{out:?}");
+        host.dispatch(call("shell_close", "")).await;
     }
 
     #[test]

@@ -13,6 +13,10 @@ use std::time::UNIX_EPOCH;
 
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::process::{Child, Command};
+use windows::Wdk::Storage::FileSystem::{
+    FILE_PIPE_CONNECTED_STATE, FILE_PIPE_LOCAL_INFORMATION, FilePipeLocalInformation,
+    NtQueryInformationFile,
+};
 use windows::Win32::Foundation::{
     CloseHandle, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
 };
@@ -27,18 +31,19 @@ use windows::Win32::Security::{
 use windows::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
 };
+use windows::Win32::System::IO::IO_STATUS_BLOCK;
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
     SetInformationJobObject, TerminateJobObject,
 };
-use windows::Win32::System::Pipes::{CreatePipe, PeekNamedPipe};
+use windows::Win32::System::Pipes::CreatePipe;
 use windows::Win32::System::Threading::{
-    CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
+    CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
     InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
-    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
-    UpdateProcThreadAttribute, WaitForSingleObject,
+    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
+    STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
@@ -117,10 +122,21 @@ impl PipeEnd {
         Self(pipe.as_raw_handle() as usize)
     }
 
-    /// Whether the client closed its end; PeekNamedPipe fails on a broken pipe and takes no data.
+    /// Whether the client closed its end, even with data of its still unread: the pipe left the connected state.
     pub fn closed(&self) -> bool {
-        // SAFETY: the handle belongs to a pipe server that outlives this call, and no buffer is passed.
-        unsafe { PeekNamedPipe(HANDLE(self.0 as *mut c_void), None, 0, None, None, None) }.is_err()
+        let mut info = FILE_PIPE_LOCAL_INFORMATION::default();
+        let mut status = IO_STATUS_BLOCK::default();
+        // SAFETY: the handle belongs to a pipe server that outlives this call, and info is of the size passed.
+        let read = unsafe {
+            NtQueryInformationFile(
+                HANDLE(self.0 as *mut c_void),
+                &raw mut status,
+                (&raw mut info).cast(),
+                u32::try_from(size_of::<FILE_PIPE_LOCAL_INFORMATION>()).unwrap_or(u32::MAX),
+                FilePipeLocalInformation,
+            )
+        };
+        read.is_err() || info.NamedPipeState != FILE_PIPE_CONNECTED_STATE
     }
 }
 
@@ -216,11 +232,6 @@ pub struct Process(HANDLE);
 unsafe impl Send for Process {}
 
 impl Process {
-    /// Puts the process in a new [`Tree`].
-    pub fn tree(&self) -> io::Result<Tree> {
-        Tree::hold_process(self.0)
-    }
-
     /// Waits on a blocking thread for the process to exit; its exit code.
     pub async fn wait(self) -> io::Result<i32> {
         tokio::task::spawn_blocking(move || self.wait_blocking())
@@ -247,10 +258,11 @@ impl Drop for Process {
     }
 }
 
-/// A program started on a new pseudo console.
+/// A program started on a new pseudo console, in a [`Tree`] before its first instruction.
 pub struct OnPty {
     pub pty: Pty,
     pub process: Process,
+    pub tree: Tree,
     /// Bytes written here reach the program as typed input.
     pub input: File,
     /// What the console shows, as VT sequences.
@@ -285,10 +297,11 @@ pub fn spawn_on_pty(cmd: &std::process::Command, rows: u16, cols: u16) -> io::Re
     }?;
     drop((console_input, console_output));
     let pty = Pty(Mutex::new(Some(hpc)));
-    let process = spawn_on(&pty, cmd)?;
+    let (process, tree) = spawn_on(&pty, cmd)?;
     Ok(OnPty {
         pty,
         process,
+        tree,
         input,
         output,
     })
@@ -463,8 +476,8 @@ fn pipe() -> io::Result<(File, File)> {
     })
 }
 
-/// Starts `cmd` with the pseudo console of `pty` as its console.
-fn spawn_on(pty: &Pty, cmd: &std::process::Command) -> io::Result<Process> {
+/// Starts `cmd` with the pseudo console of `pty` as its console, suspended until a new [`Tree`] holds it.
+fn spawn_on(pty: &Pty, cmd: &std::process::Command) -> io::Result<(Process, Tree)> {
     let hpc = pty
         .0
         .lock()
@@ -511,7 +524,7 @@ fn spawn_on(pty: &Pty, cmd: &std::process::Command) -> io::Result<Process> {
                 None,
                 None,
                 false,
-                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT | CREATE_SUSPENDED,
                 Some(env.as_ptr().cast()),
                 dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
                 &raw const info.StartupInfo,
@@ -522,9 +535,18 @@ fn spawn_on(pty: &Pty, cmd: &std::process::Command) -> io::Result<Process> {
     // SAFETY: the list was initialized above and is deleted once, after its last use.
     unsafe { DeleteProcThreadAttributeList(attributes) };
     created?;
-    // SAFETY: the thread handle is this function's and is not used again.
-    let _ = unsafe { CloseHandle(started.hThread) };
-    Ok(Process(started.hProcess))
+    let process = Process(started.hProcess);
+    let tree = Tree::hold_process(process.0);
+    // SAFETY: the thread handle is this function's; the thread runs only once its process is in the tree.
+    unsafe {
+        if tree.is_ok() {
+            ResumeThread(started.hThread);
+        } else {
+            let _ = TerminateProcess(process.0, 1);
+        }
+        let _ = CloseHandle(started.hThread);
+    }
+    Ok((process, tree?))
 }
 
 /// The command line of `cmd`, quoted as the MSVC runtime splits it, NUL-terminated.
@@ -622,6 +644,26 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.raw_os_error(), Some(5), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_client_that_hung_up_with_its_data_unread_reads_as_closed() {
+        use tokio::io::AsyncWriteExt;
+
+        let path = PathBuf::from(format!(
+            r"\\.\pipe\cocoonbox-test-hangup-{}",
+            std::process::id()
+        ));
+        let server = PipeSecurity::new("").unwrap().create(&path, true).unwrap();
+        let mut client = tokio::net::windows::named_pipe::ClientOptions::new()
+            .open(&path)
+            .unwrap();
+        server.connect().await.unwrap();
+        let end = PipeEnd::of(&server);
+        client.write_all(b"queued").await.unwrap();
+        assert!(!end.closed());
+        drop(client);
+        assert!(end.closed());
     }
 
     #[test]
