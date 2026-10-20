@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -30,6 +31,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/store/s3"
 	"github.com/loomhand/cocoonbox/api/users"
 )
+
+const credentialLifetime = 10 * time.Minute
 
 func TestSaveStateIsIncremental(t *testing.T) {
 	env := newStateEnv(t)
@@ -253,6 +256,33 @@ func TestSaveCapsEachUploadAtAPage(t *testing.T) {
 	}
 }
 
+func TestSaveSendsEachAgentCallAFreshCredential(t *testing.T) {
+	env := newStateEnv(t)
+	env.fake.put(machines.Machine{
+		ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Image: "desktop:v1", Revision: 1,
+		Incarnation: "pod0/vm0", Meta: map[string]string{metaWake: "pod0/vm0|w0"},
+	})
+	signer := &clockSigner{now: time.Unix(1_000_000, 0)}
+	env.svc.EnableProvisioning(signer)
+	env.agent.size = 300 << 20
+	env.agent.chunks = []string{hexID("c1"), hexID("c2"), hexID("c3")}
+	var calls []time.Time
+	env.agent.onUpload = func(machines.Endpoint) {
+		calls = append(calls, signer.read())
+		signer.advance(credentialLifetime + time.Minute)
+	}
+	env.save(t)
+	creds := env.agent.uploadCredentials()
+	if len(creds) != 3 || len(calls) != 3 {
+		t.Fatalf("%d uploads with %d credentials, want 3 batches", len(calls), len(creds))
+	}
+	for i, cred := range creds {
+		if exp := credentialExpiry(t, cred); !exp.After(calls[i]) {
+			t.Errorf("upload %d at %v carried a credential that expired at %v", i, calls[i], exp)
+		}
+	}
+}
+
 func TestBatchesSplitByCountAndBytes(t *testing.T) {
 	small := make([]chunk, pageSize+1)
 	big := []chunk{{Size: 300 << 20}, {Size: 300 << 20}}
@@ -334,7 +364,7 @@ func TestAPageOfRealURLsFitsTheDefaultGRPCLimit(t *testing.T) {
 	}
 	key := &agentv1.StateKey{Key: make([]byte, keyring.KeySize), KeyId: "test:" + alice}
 	rec := &snapshotRecord{ID: snapshotID(1), UploadedBytes: uint64(len(ids)) << 10}
-	if err := l.upload(t.Context(), statePath{user: alice, box: aliceBox}, machines.Endpoint{}, rec, key, missing, func(*agentv1.TransferProgress) {}); err != nil {
+	if err := l.upload(t.Context(), noAuth, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, rec, key, missing, func(*agentv1.TransferProgress) {}); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	for i, up := range agent.allUploads() {
@@ -721,10 +751,10 @@ func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
 	agent.onUpload = func(ep machines.Endpoint) {
 		if ep.Key == "a" {
 			agent.onUpload = nil
-			_, inner = l.save(t.Context(), boxB, machines.Endpoint{Key: "b"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+			_, inner = l.save(t.Context(), noAuth, boxB, machines.Endpoint{Key: "b"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 		}
 	}
-	if _, err := l.save(t.Context(), boxA, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
+	if _, err := l.save(t.Context(), noAuth, boxA, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
 		t.Fatalf("save a: %v; save b during a's upload: %v", err, inner)
 	}
 	var idx chunkIndex
@@ -736,7 +766,7 @@ func TestBoxesOfOneUserShareTheirChunksAndIndex(t *testing.T) {
 			t.Errorf("store lacks %s", key)
 		}
 	}
-	if _, err := l.save(t.Context(), statePath{user: alice, box: "cb-00000000000c"}, machines.Endpoint{Key: "c"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+	if _, err := l.save(t.Context(), noAuth, statePath{user: alice, box: "cb-00000000000c"}, machines.Endpoint{Key: "c"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("save c: %v", err)
 	}
 	if n := len(agent.lastUpload().GetPuts()); n != 0 {
@@ -754,10 +784,10 @@ func TestTwoLayersOnAVersionedStoreMergeTheirIndexWrites(t *testing.T) {
 	agent.onUpload = func(ep machines.Endpoint) {
 		if ep.Key == "a" {
 			agent.onUpload = nil
-			_, inner = lb.save(t.Context(), boxB, machines.Endpoint{Key: "b"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+			_, inner = lb.save(t.Context(), noAuth, boxB, machines.Endpoint{Key: "b"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 		}
 	}
-	if _, err := la.save(t.Context(), boxA, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
+	if _, err := la.save(t.Context(), noAuth, boxA, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil || inner != nil {
 		t.Fatalf("save a: %v; save b on another layer during a's upload: %v", err, inner)
 	}
 	var idx chunkIndex
@@ -772,7 +802,7 @@ func TestASaveFailsWhenAnotherLayersGCRewroteTheIndexAfterItsPlan(t *testing.T) 
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
-	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 	agent.byBox["a"] = hexIDs("c1", "c2")
@@ -786,7 +816,7 @@ func TestASaveFailsWhenAnotherLayersGCRewroteTheIndexAfterItsPlan(t *testing.T) 
 			t.Errorf("rewrite the index as a gc would: %v", err)
 		}
 	}
-	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); !errors.Is(err, errIndexCollected) {
+	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); !errors.Is(err, errIndexCollected) {
 		t.Fatalf("save across a gc rewrite = %v, want errIndexCollected", err)
 	}
 	if h, err := collector.head(t.Context(), p); err != nil || h.Latest != snapshotID(1) {
@@ -801,7 +831,7 @@ func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) 
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 			t.Fatalf("save %v: %v", chunks, err)
 		}
 	}
@@ -812,7 +842,7 @@ func TestTheGCFailsWhenAnotherLayersSaveWroteTheIndexAfterItsRead(t *testing.T) 
 		}
 		saved = true
 		agent.byBox = map[string][]string{"a": hexIDs("c1", "c3")}
-		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 			t.Errorf("save during the gc sweep: %v", err)
 		}
 	}
@@ -832,7 +862,7 @@ func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	for _, chunks := range [][]string{{"c1", "c2"}, {"c2", "c3"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 			t.Fatalf("save %v: %v", chunks, err)
 		}
 	}
@@ -842,7 +872,7 @@ func TestAGCPassBumpsTheIndexGenerationAndFailsASavePlannedBeforeIt(t *testing.T
 		agent.onUpload = nil
 		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(40*24*time.Hour), everyBoxLive)
 	}
-	_, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	_, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 	if collected != nil {
 		t.Fatalf("collect during the save: %v", collected)
 	}
@@ -861,7 +891,7 @@ func TestAGCPassThatDeletesAnUnindexedUploadFailsTheSaveThatUploadedIt(t *testin
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 	agent.byBox = map[string][]string{"a": hexIDs("c1", "c2")}
@@ -874,7 +904,7 @@ func TestAGCPassThatDeletesAnUnindexedUploadFailsTheSaveThatUploadedIt(t *testin
 		ran = true
 		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now().Add(2*gcGrace), everyBoxLive)
 	}
-	_, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	_, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 	if !ran || collected != nil || st.has(p.chunk(hexID("c2"))) {
 		t.Fatalf("collect after the upload ran %t, %v, c2 left %t; want it to delete the unindexed c2", ran, collected, st.has(p.chunk(hexID("c2"))))
 	}
@@ -888,7 +918,7 @@ func TestAHeadReadBeforeASaveNeverReplacesTheHeadTheSaveCached(t *testing.T) {
 	agent := newFakeAgent(st)
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	if _, err := newStateLayer(agent, st, &fakeKeys{}).save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+	if _, err := newStateLayer(agent, st, &fakeKeys{}).save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 	slow := &afterGetStore{fakeStore: st}
@@ -901,7 +931,7 @@ func TestAHeadReadBeforeASaveNeverReplacesTheHeadTheSaveCached(t *testing.T) {
 			return
 		}
 		slow.after = nil
-		if _, err := l.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		if _, err := l.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 			t.Errorf("save during the head read: %v", err)
 		}
 	}
@@ -919,7 +949,7 @@ func TestTheGCKeepsTheChunksAndRecordsASaveWroteWithinItsGrace(t *testing.T) {
 	saver, collector := st.layer(agent), st.layer(agent)
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	agent.byBox = map[string][]string{"a": hexIDs("c1")}
-	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("first save: %v", err)
 	}
 	st.mu.Lock()
@@ -937,7 +967,7 @@ func TestTheGCKeepsTheChunksAndRecordsASaveWroteWithinItsGrace(t *testing.T) {
 		st.before = nil
 		r, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
 	}
-	if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+	if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 		t.Fatalf("save during the gc pass: %v", err)
 	}
 	if collected != nil || r.chunks != 0 || !st.has(p.chunk(hexID("c2"))) || !st.has(p.manifest(snapshotID(2))) {
@@ -952,7 +982,7 @@ func TestTheGCKeepsAnOldChunkASaveReusesBeforeItsTimelineNamesIt(t *testing.T) {
 	p := statePath{user: alice, box: "cb-00000000000a"}
 	for _, chunks := range [][]string{{"c1"}, {"c2"}} {
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 			t.Fatalf("save %v: %v", chunks, err)
 		}
 	}
@@ -984,7 +1014,7 @@ func TestTheGCKeepsAnOldChunkASaveReusesBeforeItsTimelineNamesIt(t *testing.T) {
 		ran = true
 		_, collected = collector.collect(t.Context(), alice, GCOptions{DeleteBatch: 1000}, time.Now(), everyBoxLive)
 	}
-	_, err = saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
+	_, err = saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress)
 	if !ran || collected != nil {
 		t.Fatalf("collect before the timeline write ran %t, %v", ran, collected)
 	}
@@ -1001,7 +1031,7 @@ func TestPruneWritesTheTimelineOnlyOnTheVersionItRead(t *testing.T) {
 	save := func(chunks ...string) {
 		t.Helper()
 		agent.byBox = map[string][]string{"a": hexIDs(chunks...)}
-		if _, err := saver.save(t.Context(), p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
+		if _, err := saver.save(t.Context(), noAuth, p, machines.Endpoint{Key: "a"}, "", false, agentv1.Consistency_CONSISTENCY_LIVE, noProgress); err != nil {
 			t.Fatalf("save %v: %v", chunks, err)
 		}
 	}
@@ -1058,6 +1088,41 @@ func (e *stateEnv) save(t *testing.T) []*controlv1.OperationEvent {
 		t.Fatalf("save ended with %v", last)
 	}
 	return events
+}
+
+func noAuth(ctx context.Context) context.Context { return ctx }
+
+// clockSigner issues credentials that expire credentialLifetime after the fake clock's reading.
+type clockSigner struct {
+	fakeSigner
+
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (c *clockSigner) Credential(string, string) string {
+	return "exp:" + strconv.FormatInt(c.read().Add(credentialLifetime).Unix(), 10)
+}
+
+func (c *clockSigner) read() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *clockSigner) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.now = c.now.Add(d)
+}
+
+func credentialExpiry(t *testing.T, cred string) time.Time {
+	t.Helper()
+	secs, err := strconv.ParseInt(strings.TrimPrefix(cred, "exp:"), 10, 64)
+	if err != nil {
+		t.Fatalf("credential %q: %v", cred, err)
+	}
+	return time.Unix(secs, 0)
 }
 
 func (f *fakeMachines) waitSpec(t *testing.T, n int) machines.Spec {
@@ -1324,6 +1389,7 @@ type fakeAgent struct {
 	pinned       map[string]pinnedPlan
 	planCred     string
 	restoreCred  string
+	uploadCreds  []string
 }
 
 func newFakeAgent(st *fakeStore) *fakeAgent {
@@ -1367,9 +1433,10 @@ func (a *fakeAgent) Plan(ctx context.Context, _ string, ep machines.Endpoint, re
 	return resp, nil
 }
 
-func (a *fakeAgent) Upload(_ context.Context, _ string, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+func (a *fakeAgent) Upload(ctx context.Context, _ string, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
 	a.mu.Lock()
 	a.uploads = append(a.uploads, req)
+	a.uploadCreds = append(a.uploadCreds, outgoingCredential(ctx))
 	plan, planned := a.pinned[ep.Key]
 	hook := a.onUpload
 	a.mu.Unlock()
@@ -1456,6 +1523,12 @@ func (a *fakeAgent) planCredential() string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.planCred
+}
+
+func (a *fakeAgent) uploadCredentials() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.uploadCreds)
 }
 
 func (a *fakeAgent) restoreCredential() string {

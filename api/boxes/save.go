@@ -126,7 +126,8 @@ func (s *Service) save(op *operation, user string, m machines.Machine, consisten
 		return nil, fmt.Errorf("address of %s: %w", m.ID, err)
 	}
 	op.note(controlv1.Phase_PHASE_SAVING, controlv1.BoxState_BOX_STATE_RUNNING, fmt.Sprintf("planning a %s snapshot", consistencyName(consistency)))
-	return s.state.save(s.agentContext(op.ctx, m), statePath{user: user, box: op.boxID}, ep, m.Image, op.park, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
+	auth := func(ctx context.Context) context.Context { return s.agentContext(ctx, m) }
+	return s.state.save(op.ctx, auth, statePath{user: user, box: op.boxID}, ep, m.Image, op.park, consistency, progressNotes(op, controlv1.Phase_PHASE_SAVING, "uploading"))
 }
 
 // progressNotes turns transfer progress into operation events, at most one per progressInterval.
