@@ -15,7 +15,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 #[cfg(windows)]
-use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
+use tokio::net::windows::named_pipe::ClientOptions;
 use zeroize::Zeroize;
 
 /// The bound of one desk or model call to shuttle's desk service.
@@ -48,7 +48,7 @@ const PIPE_BUSY_WAIT: Duration = Duration::from_millis(20);
 pub type Stream = UnixStream;
 /// A connection to the toolhost or to shuttle's desk service: a unix socket, or a named pipe on Windows.
 #[cfg(windows)]
-pub type Stream = NamedPipeClient;
+pub type Stream = crate::sys::PipeClient;
 
 /// Size and mtime of a file before or after it was streamed.
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -280,7 +280,7 @@ pub(crate) async fn connect(path: &Path) -> io::Result<Stream> {
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
                 tokio::time::sleep(PIPE_BUSY_WAIT).await;
             }
-            opened => return opened,
+            opened => return opened.map(crate::sys::PipeClient::new),
         }
     }
 }

@@ -8,10 +8,13 @@ use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::OpenOptionsExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::{Mutex, PoisonError};
+use std::task::{Context, Poll};
 use std::time::UNIX_EPOCH;
 
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer, ServerOptions};
 use tokio::process::{Child, Command};
 use windows::Wdk::Storage::FileSystem::{
     FILE_PIPE_CONNECTED_STATE, FILE_PIPE_LOCAL_INFORMATION, FilePipeLocalInformation,
@@ -31,7 +34,7 @@ use windows::Win32::Security::{
 use windows::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
 };
-use windows::Win32::System::IO::IO_STATUS_BLOCK;
+use windows::Win32::System::IO::{CancelIoEx, IO_STATUS_BLOCK};
 use windows::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
@@ -137,6 +140,53 @@ impl PipeEnd {
             )
         };
         read.is_err() || info.NamedPipeState != FILE_PIPE_CONNECTED_STATE
+    }
+}
+
+/// The client end of a named pipe that cancels its pending writes when dropped, so its server sees the
+/// hang-up at once; the runtime closes a pipe only after its writes finish, which a server that stopped
+/// reading never lets happen.
+pub struct PipeClient(NamedPipeClient);
+
+impl PipeClient {
+    /// Wraps the open client end `pipe`.
+    pub fn new(pipe: NamedPipeClient) -> Self {
+        Self(pipe)
+    }
+}
+
+impl AsyncRead for PipeClient {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for PipeClient {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        Pin::new(&mut self.0).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.0).poll_shutdown(cx)
+    }
+}
+
+impl Drop for PipeClient {
+    fn drop(&mut self) {
+        // SAFETY: the handle stays open until the inner pipe drops after this; no OVERLAPPED is named, so every pending call is cancelled.
+        let _ = unsafe { CancelIoEx(HANDLE(self.0.as_raw_handle()), None) };
     }
 }
 
@@ -663,6 +713,10 @@ mod tests {
         client.write_all(b"queued").await.unwrap();
         assert!(!end.closed());
         drop(client);
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        while !end.closed() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         assert!(end.closed());
     }
 
