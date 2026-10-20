@@ -8,16 +8,20 @@ use tokio_util::sync::CancellationToken;
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
 };
-use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+use windows_service::service_control_handler::{
+    self, ServiceControlHandlerResult, ServiceStatusHandle,
+};
 use windows_service::{define_windows_service, service_dispatcher};
 
 const NAME: &str = "cocoonbox-agent";
 /// ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: the process runs from a console, not under the service control manager.
 const NOT_A_SERVICE: i32 = 1063;
 const FAILED: u32 = 1;
+const STOP_HINT: Duration = Duration::from_secs(10);
 
 static STOP: LazyLock<CancellationToken> = LazyLock::new(CancellationToken::new);
 static SERVE: OnceLock<fn() -> Result<(), String>> = OnceLock::new();
+static STATUS: OnceLock<ServiceStatusHandle> = OnceLock::new();
 
 define_windows_service!(ffi_service_main, service_main);
 
@@ -47,25 +51,26 @@ fn service_main(_args: Vec<OsString>) {
 fn serve_service() -> Result<(), String> {
     let handler = |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
+            if let Some(handle) = STATUS.get() {
+                let _ = handle.set_service_status(status(
+                    ServiceState::StopPending,
+                    ServiceControlAccept::empty(),
+                    ServiceExitCode::Win32(0),
+                    STOP_HINT,
+                ));
+            }
             STOP.cancel();
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
         _ => ServiceControlHandlerResult::NotImplemented,
     };
-    let status = service_control_handler::register(NAME, handler)
+    let handle = service_control_handler::register(NAME, handler)
         .map_err(|e| format!("register the service control handler: {e}"))?;
+    let _ = STATUS.set(handle);
     let report = |state, accepted, exit_code| {
-        status
-            .set_service_status(ServiceStatus {
-                service_type: ServiceType::OWN_PROCESS,
-                current_state: state,
-                controls_accepted: accepted,
-                exit_code,
-                checkpoint: 0,
-                wait_hint: Duration::ZERO,
-                process_id: None,
-            })
+        handle
+            .set_service_status(status(state, accepted, exit_code, Duration::ZERO))
             .map_err(|e| format!("report the service state: {e}"))
     };
     report(
@@ -84,4 +89,21 @@ fn serve_service() -> Result<(), String> {
         exit_code,
     )?;
     served
+}
+
+fn status(
+    state: ServiceState,
+    accepted: ServiceControlAccept,
+    exit_code: ServiceExitCode,
+    wait_hint: Duration,
+) -> ServiceStatus {
+    ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: state,
+        controls_accepted: accepted,
+        exit_code,
+        checkpoint: 0,
+        wait_hint,
+        process_id: None,
+    }
 }

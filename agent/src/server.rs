@@ -46,6 +46,7 @@ const STREAM_WINDOW: u32 = 1 << 20;
 const CONNECTION_WINDOW: u32 = 64 << 20;
 const CONNECTION_GRACE: Duration = Duration::from_millis(1000);
 const DRAIN_LIMIT: Duration = Duration::from_millis(700);
+const CLOSE_LIMIT: Duration = Duration::from_secs(2);
 
 /// Rejects calls the gate does not admit and puts the call's [`Principal`] in its extensions;
 /// with `owner_only`, a share's call is refused too.
@@ -526,7 +527,12 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         r = server => r.map_err(|e| format!("grpc server: {e}"))?,
         () = grace => eprintln!("serve: connections still open after {CONNECTION_GRACE:?}; closing"),
     }
-    mcp.close_all().await;
+    if tokio::time::timeout(CLOSE_LIMIT, mcp.close_all())
+        .await
+        .is_err()
+    {
+        eprintln!("serve: MCP sessions still closing after {CLOSE_LIMIT:?}; exiting");
+    }
     rt.drain(DRAIN_LIMIT).await;
     Ok(())
 }
