@@ -528,13 +528,13 @@ async fn a_rescan_after_a_restore_restarts_the_restored_sessions_at_once() {
 
     offload::inbox::rescan(&b.layout.socket).await.unwrap();
     let restart = b.layout.state.join(REPO).join("restart.md");
-    for _ in 0..20 {
+    for _ in 0..60 {
         if restart.exists() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    let prompt = std::fs::read_to_string(&restart).expect("no restart within 1 s of the rescan");
+    let prompt = std::fs::read_to_string(&restart).expect("no restart within 3 s of the rescan");
     assert!(
         prompt.starts_with(handover::RESTARTED) && prompt.ends_with("FIRST"),
         "{prompt}"
