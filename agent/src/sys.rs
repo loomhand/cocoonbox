@@ -291,11 +291,17 @@ pub fn list_dir(dir: &File) -> io::Result<Vec<Listed>> {
         return Err(e);
     }
     let mut out = Vec::new();
-    loop {
+    let read = loop {
+        clear_errno();
         // SAFETY: stream is a live DIR from fdopendir.
         let entry = unsafe { libc::readdir(stream) };
         if entry.is_null() {
-            break;
+            let e = io::Error::last_os_error();
+            break if e.raw_os_error() == Some(0) {
+                Ok(())
+            } else {
+                Err(e)
+            };
         }
         // SAFETY: readdir returned an entry whose d_name is NUL-terminated and valid until the next readdir.
         let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
@@ -323,10 +329,24 @@ pub fn list_dir(dir: &File) -> io::Result<Vec<Listed>> {
             name: OsStr::from_bytes(name.to_bytes()).to_owned(),
             kind,
         });
-    }
+    };
     // SAFETY: stream came from fdopendir and is closed once, which closes fd too.
     unsafe { libc::closedir(stream) };
-    Ok(out)
+    read.map(|()| out)
+}
+
+fn clear_errno() {
+    // SAFETY: the errno location is valid for this thread, and readdir reads it next on the same thread.
+    unsafe {
+        #[cfg(target_os = "linux")]
+        {
+            *libc::__errno_location() = 0;
+        }
+        #[cfg(target_os = "macos")]
+        {
+            *libc::__error() = 0;
+        }
+    }
 }
 
 fn winsize(rows: u16, cols: u16) -> libc::winsize {
