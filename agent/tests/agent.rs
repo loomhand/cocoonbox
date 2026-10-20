@@ -4029,13 +4029,26 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
         instructions.ends_with(&format!("\n\n{routing}")),
         "{instructions}"
     );
-    let version = std::fs::read_to_string("/etc/os-release")
-        .unwrap()
-        .lines()
-        .find_map(|l| l.strip_prefix("VERSION_ID="))
-        .unwrap()
-        .trim_matches('"')
-        .to_owned();
+    let version = match std::fs::read_to_string("/etc/os-release") {
+        Ok(release) => release
+            .lines()
+            .find_map(|l| l.strip_prefix("VERSION_ID="))
+            .unwrap()
+            .trim_matches('"')
+            .to_owned(),
+        Err(_) => std::fs::read_to_string("/System/Library/CoreServices/SystemVersion.plist")
+            .unwrap()
+            .split_once("<key>ProductVersion</key>")
+            .unwrap()
+            .1
+            .split_once("<string>")
+            .unwrap()
+            .1
+            .split_once("</string>")
+            .unwrap()
+            .0
+            .to_owned(),
+    };
     let machine = instructions.lines().next().unwrap();
     assert!(
         machine.starts_with("These tools act on a cloud computer: ") && machine.contains(&version),

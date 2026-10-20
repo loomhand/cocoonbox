@@ -4,7 +4,6 @@
 
 use std::fmt::Write as _;
 use std::fs::File;
-use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -206,10 +205,7 @@ pub async fn list(
     } else {
         None
     };
-    let source = beneath.as_ref().map_or_else(
-        || path.clone(),
-        |d| PathBuf::from(format!("/proc/self/fd/{}", d.as_raw_fd())),
-    );
+    let source = beneath.as_ref().map_or_else(|| path.clone(), sys::fd_dir);
     let mut dir = tokio::fs::read_dir(&source)
         .await
         .map_err(|e| format!("list {}: {e}", path.display()))?;
@@ -372,8 +368,9 @@ fn open_beneath(
         _ => format!("open {}: {e}", path.display()),
     })?;
     if let Some(hidden) = hidden
-        && std::fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))
-            .is_ok_and(|real| real.starts_with(hidden))
+        && sys::fd_path(&file).is_some_and(|real| {
+            real.starts_with(std::fs::canonicalize(hidden).unwrap_or_else(|_| hidden.to_owned()))
+        })
     {
         return Err(format!(
             "{} is refused: a read-only share does not read saved flows",

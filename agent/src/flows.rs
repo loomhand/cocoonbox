@@ -489,6 +489,7 @@ mod tests {
         assert_eq!(door.content("big.json").as_deref(), Some("{}"));
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_flow_written_by_no_tool_is_pushed_within_a_second() {
         let door = Door::start().await;

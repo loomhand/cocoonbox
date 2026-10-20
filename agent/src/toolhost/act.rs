@@ -52,8 +52,11 @@ async fn card_field(path: &str, field: &str) -> Result<String, String> {
     let real = tokio::fs::canonicalize(path)
         .await
         .map_err(|e| format!("{path}: {e}"))?;
+    let tmp = tokio::fs::canonicalize("/tmp")
+        .await
+        .unwrap_or_else(|_| PathBuf::from("/tmp"));
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let allowed = real.starts_with("/tmp") || home.is_some_and(|h| real.starts_with(h));
+    let allowed = real.starts_with(tmp) || home.is_some_and(|h| real.starts_with(h));
     if !Path::new(path).is_absolute() || !allowed {
         return Err(format!("{path}: give an absolute path under /tmp or $HOME"));
     }

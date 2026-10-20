@@ -49,7 +49,11 @@ const WORKSPACE_ROOT: &str = "workspace";
 const RESTORED_DIR: &str = "Restored";
 const KNOWN_FILE: &str = "known-chunks.json";
 
+#[cfg(not(target_os = "macos"))]
 const EXCLUDED_PREFIXES: [&str; 2] = [".cache", ".local/share/Trash"];
+// a live session holds Library and .Trash open, and TCC guards .Trash
+#[cfg(target_os = "macos")]
+const EXCLUDED_PREFIXES: [&str; 4] = [".cache", ".local/share/Trash", ".Trash", "Library"];
 const EXCLUDED_NAMES: [&str; 17] = [
     "Cache",
     "Code Cache",
@@ -1354,16 +1358,16 @@ impl Meter {
     }
 }
 
-/// The contract layout: the desktop user's home and /workspace.
-pub fn default_roots() -> Vec<Root> {
+/// The contract layout: the desktop user's home and the workspace.
+pub fn default_roots(home: &Path, workspace: &Path) -> Vec<Root> {
     vec![
         Root {
             name: HOME_ROOT.to_owned(),
-            path: PathBuf::from("/home/user"),
+            path: home.to_owned(),
         },
         Root {
             name: WORKSPACE_ROOT.to_owned(),
-            path: PathBuf::from("/workspace"),
+            path: workspace.to_owned(),
         },
     ]
 }
@@ -1531,7 +1535,7 @@ mod tests {
         let engine = StateEngine::new(
             rpc::Client::new(socket),
             Store::open(&dir.path().join("agent.db")).unwrap(),
-            default_roots(),
+            default_roots(Path::new("/home/user"), Path::new("/workspace")),
             dir.path().join("work"),
             Pause {
                 turns: Arc::clone(&turns),
@@ -1595,7 +1599,7 @@ mod tests {
             let engine = StateEngine::new(
                 rpc::Client::new(dir.path().join("toolhost.sock")),
                 Store::open(&dir.path().join("agent.db")).unwrap(),
-                default_roots(),
+                default_roots(Path::new("/home/user"), Path::new("/workspace")),
                 dir.path().join("work"),
                 Pause {
                     turns: Arc::default(),

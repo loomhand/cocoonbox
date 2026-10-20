@@ -13,10 +13,14 @@ const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
 const DEFAULT_OFFLOAD_SOCKET: &str = "/run/cocoonbox/offload.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
 const DEFAULT_WORKSPACE: &str = "/workspace";
+const DEFAULT_HOME: &str = "/home/user";
 const IDENTITY_PATH: &str = "/run/cocoonbox-identity/identity";
 const ROOT_UID: &str = "0";
 const REDACTED: &str = "<redacted>";
-const DESKTOP_UNIT: &str = "cocoonbox-session.service";
+#[cfg(not(target_os = "macos"))]
+const DESKTOP_UNIT: Option<&str> = Some("cocoonbox-session.service");
+#[cfg(target_os = "macos")]
+const DESKTOP_UNIT: Option<&str> = None;
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
 const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
 const ANDROID_GUIDE: &str = "/opt/android/AGENTS.md";
@@ -151,8 +155,11 @@ impl ServeConfig {
             mcp_idle: MCP_IDLE,
             mcp_prune_after: MCP_PRUNE_AFTER,
             quiesce_wait: QUIESCE_WAIT,
-            state_roots: crate::state::default_roots(),
-            desktop_unit: Some(DESKTOP_UNIT.to_owned()),
+            state_roots: crate::state::default_roots(
+                Path::new(&optional("CB_HOME", DEFAULT_HOME)),
+                Path::new(&optional("CB_WORKSPACE", DEFAULT_WORKSPACE)),
+            ),
+            desktop_unit: DESKTOP_UNIT.map(str::to_owned),
             connect_url: env::var("CONNECT_URL").ok().filter(|v| !v.is_empty()),
             automation: Automation::detect(),
             plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),

@@ -15,7 +15,9 @@ const DIR: &str = "flows";
 const MARK: &str = ".sync-id";
 const INDEX: &str = "INDEX";
 const MAX_NAME: usize = 96;
+#[cfg(target_os = "linux")]
 const EVENT_HEADER: usize = 16;
+#[cfg(target_os = "linux")]
 const EVENT_BUF: usize = 64 << 10;
 
 pub static INDEX_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

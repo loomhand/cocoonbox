@@ -306,6 +306,7 @@ mod tests {
         assert!(sh.is_dead());
     }
 
+    #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_session_does_not_inherit_the_oom_protection_of_the_toolhost() {
         let adj = "/proc/self/oom_score_adj";

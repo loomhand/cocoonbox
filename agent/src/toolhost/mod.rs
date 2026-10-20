@@ -39,6 +39,7 @@ const SOCKET_MODE: u32 = 0o660;
 const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
 const OS_RELEASE: &str = "/etc/os-release";
+const SYSTEM_VERSION: &str = "/System/Library/CoreServices/SystemVersion.plist";
 const DESKTOP_VAR: &str = "XDG_CURRENT_DESKTOP";
 const SCREEN_WAIT: Duration = Duration::from_secs(2);
 
@@ -426,20 +427,11 @@ pub(crate) fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
     let listener = UnixListener::bind(path).map_err(|e| format!("bind {}: {e}", path.display()))?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(SOCKET_MODE))
         .map_err(|e| format!("chmod {}: {e}", path.display()))?;
-    if let Some(gid) = group_id(group) {
+    if let Some(gid) = crate::sys::group_id(group) {
         std::os::unix::fs::chown(path, None, Some(gid))
             .map_err(|e| format!("chgrp {} {group}: {e}", path.display()))?;
     }
     Ok(listener)
-}
-
-fn group_id(name: &str) -> Option<u32> {
-    let groups = std::fs::read_to_string("/etc/group").ok()?;
-    groups.lines().find_map(|line| {
-        let mut f = line.split(':');
-        (f.next()? == name).then_some(())?;
-        f.nth(1)?.parse().ok()
-    })
 }
 
 /// The box's OS release, desktop and the screen size shuttle reports as JSON, with the fields it could read.
@@ -448,6 +440,11 @@ async fn desktop_info(shuttle: Option<&Client>) -> String {
     if let Some(os) = std::fs::read_to_string(OS_RELEASE)
         .ok()
         .and_then(|r| os_name(&r))
+        .or_else(|| {
+            std::fs::read_to_string(SYSTEM_VERSION)
+                .ok()
+                .and_then(|v| product_name(&v))
+        })
     {
         info["os"] = os.into();
     }
@@ -483,6 +480,20 @@ fn os_name(release: &str) -> Option<String> {
         (Some(name), Some(version)) => Some(format!("{name} {version}")),
         _ => field("PRETTY_NAME").map(str::to_owned),
     }
+}
+
+/// `ProductName ProductVersion` of a macOS SystemVersion.plist.
+fn product_name(plist: &str) -> Option<String> {
+    let field = |key: &str| {
+        let rest = plist.split_once(&format!("<key>{key}</key>"))?.1;
+        let value = rest.split_once("<string>")?.1.split_once("</string>")?.0;
+        Some(value.trim()).filter(|v| !v.is_empty())
+    };
+    Some(format!(
+        "{} {}",
+        field("ProductName")?,
+        field("ProductVersion")?
+    ))
 }
 
 /// The desktop of a session such as `ubuntu:GNOME` in `XDG_CURRENT_DESKTOP`: its last name.
@@ -621,6 +632,9 @@ mod tests {
             Some("Debian GNU/Linux trixie/sid")
         );
         assert_eq!(os_name("ID=x\n"), None);
+        let mac = "<dict>\n\t<key>ProductName</key>\n\t<string>macOS</string>\n\t<key>ProductVersion</key>\n\t<string>26.5.2</string>\n</dict>";
+        assert_eq!(product_name(mac).as_deref(), Some("macOS 26.5.2"));
+        assert_eq!(product_name("<dict></dict>"), None);
         assert_eq!(desktop_name("ubuntu:GNOME"), Some("GNOME"));
         assert_eq!(desktop_name("XFCE"), Some("XFCE"));
         assert_eq!(desktop_name(""), None);

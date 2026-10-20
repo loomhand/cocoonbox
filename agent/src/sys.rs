@@ -7,6 +7,8 @@ use std::path::Path;
 
 use tokio::process::Command;
 
+const GROUP_BUF: usize = 16 << 10;
+
 /// Sends SIGKILL to every process in the group `pgid`.
 pub fn kill_group(pgid: u32) -> io::Result<()> {
     signal_group(pgid, libc::SIGKILL)
@@ -114,6 +116,26 @@ pub fn unprotect(cmd: &mut Command) {
     }
 }
 
+/// The id of the group `name` in the system's group database, which also holds directory groups; none when absent.
+pub fn group_id(name: &str) -> Option<u32> {
+    let name = std::ffi::CString::new(name).ok()?;
+    // SAFETY: group holds only integers and pointers, for which all zeros is valid.
+    let mut group: libc::group = unsafe { std::mem::zeroed() };
+    let mut found = std::ptr::null_mut();
+    let mut buf = vec![0; GROUP_BUF];
+    // SAFETY: name is NUL-terminated, and group, buf and found are live for the call with buf's length passed.
+    let rc = unsafe {
+        libc::getgrnam_r(
+            name.as_ptr(),
+            &raw mut group,
+            buf.as_mut_ptr(),
+            buf.len(),
+            &raw mut found,
+        )
+    };
+    (rc == 0 && !found.is_null()).then_some(group.gr_gid)
+}
+
 /// Opens `path` relative to `dir` with openat2 `RESOLVE_BENEATH`: a `..`, absolute path
 /// or symlink that leaves `dir` fails with `EXDEV`.
 #[cfg(target_os = "linux")]
@@ -181,10 +203,90 @@ pub fn inotify_unwatch(fd: &impl AsRawFd, wd: i32) {
     unsafe { libc::inotify_rm_watch(fd.as_raw_fd(), wd) };
 }
 
-/// Without openat2 nothing opens beneath a directory.
-#[cfg(not(target_os = "linux"))]
+/// Opens the relative `path` beneath `dir` with `O_NOFOLLOW_ANY`: a `..` that leaves `dir`, an
+/// absolute path or any symlink fails with `EXDEV`.
+#[cfg(target_os = "macos")]
+pub fn open_beneath(dir: &File, path: &Path, flags: libc::c_int) -> io::Result<File> {
+    use std::ffi::{CString, OsStr};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Component, PathBuf};
+
+    let leaves = || io::Error::from_raw_os_error(libc::EXDEV);
+    let mut parts: Vec<&OsStr> = Vec::new();
+    for c in path.components() {
+        match c {
+            Component::Normal(p) => parts.push(p),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop().ok_or_else(leaves)?;
+            }
+            Component::RootDir | Component::Prefix(_) => return Err(leaves()),
+        }
+    }
+    let rel: PathBuf = if parts.is_empty() {
+        ".".into()
+    } else {
+        parts.iter().collect()
+    };
+    let path = CString::new(rel.as_os_str().as_bytes()).map_err(io::Error::other)?;
+    // SAFETY: path is NUL-terminated and outlives the call; openat takes plain integers otherwise.
+    let fd = unsafe {
+        libc::openat(
+            dir.as_raw_fd(),
+            path.as_ptr(),
+            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW_ANY,
+        )
+    };
+    if fd < 0 {
+        let e = io::Error::last_os_error();
+        return Err(if e.raw_os_error() == Some(libc::ELOOP) {
+            io::Error::from_raw_os_error(libc::EXDEV)
+        } else {
+            e
+        });
+    }
+    // SAFETY: openat returned a new descriptor that nothing else owns.
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+/// Without openat2 or `O_NOFOLLOW_ANY` nothing opens beneath a directory.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn open_beneath(_dir: &File, _path: &Path, _flags: libc::c_int) -> io::Result<File> {
     Err(io::ErrorKind::Unsupported.into())
+}
+
+/// The path the open file `fd` resolves to now.
+#[cfg(target_os = "linux")]
+pub fn fd_path(fd: &impl AsRawFd) -> Option<std::path::PathBuf> {
+    std::fs::read_link(fd_dir(fd)).ok()
+}
+
+/// A path that opens the directory `fd` itself.
+#[cfg(target_os = "linux")]
+pub fn fd_dir(fd: &impl AsRawFd) -> std::path::PathBuf {
+    format!("/proc/self/fd/{}", fd.as_raw_fd()).into()
+}
+
+/// The path the open file `fd` resolves to now.
+#[cfg(target_os = "macos")]
+pub fn fd_path(fd: &impl AsRawFd) -> Option<std::path::PathBuf> {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    // SAFETY: F_GETPATH writes at most PATH_MAX bytes, NUL included, into buf, which lives for the call.
+    let rc = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) };
+    if rc < 0 {
+        return None;
+    }
+    let len = buf.iter().position(|b| *b == 0)?;
+    Some(OsStr::from_bytes(&buf[..len]).into())
+}
+
+/// A path that opens the directory `fd`: the path it resolves to now, as macOS lists no directory through `/dev/fd`.
+#[cfg(target_os = "macos")]
+pub fn fd_dir(fd: &impl AsRawFd) -> std::path::PathBuf {
+    fd_path(fd).unwrap_or_default()
 }
 
 fn winsize(rows: u16, cols: u16) -> libc::winsize {
@@ -193,5 +295,16 @@ fn winsize(rows: u16, cols: u16) -> libc::winsize {
         ws_col: cols,
         ws_xpixel: 0,
         ws_ypixel: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn group_id_reads_the_group_database() {
+        assert_eq!(group_id("root").or_else(|| group_id("wheel")), Some(0));
+        assert_eq!(group_id("no-such-group-cocoonbox"), None);
     }
 }
