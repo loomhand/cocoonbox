@@ -107,6 +107,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn mac_is_hmac_sha256_by_rfc_4231() {
+        assert_eq!(
+            hex::encode(mac(b"Jefe", b"what do ya want for nothing?").unwrap()),
+            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
+        );
+    }
+
+    #[test]
     fn seal_round_trips_and_rejects_tampering_and_swaps() {
         let keys = Keys::derive(&[7u8; 32]).unwrap();
         let data = b"hello hello hello hello".repeat(100);
