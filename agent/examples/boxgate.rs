@@ -39,7 +39,7 @@ const USAGE: &str =
   upload --plan FILE --dir DIR --url URL call State.Upload for the chunks DIR lacks
   restore --manifest ID --dir DIR --url URL [--paths P,P --target NAME]
                                          call State.Restore, or RestorePaths with --paths
-  mcp METHOD [PARAMS_JSON]               open an MCP session at serve and call METHOD";
+  mcp METHOD [PARAMS_JSON]               open an MCP session at serve and call METHOD; an error answer exits 1";
 const DEFAULT_SERVE: &str = "http://127.0.0.1:17443";
 const DEFAULT_BOX: &str = "cb-box";
 const DEFAULT_WAKE: &str = "w1";
@@ -491,6 +491,7 @@ where
     wr.write_all(&request).await.map_err(io)?;
     let (w, h) = (usize::from(width), usize::from(height));
     let mut rgba = vec![0u8; w * h * 4];
+    let mut seen = vec![false; w * h];
     let mut covered = 0usize;
     while covered < w * h {
         let kind = rd.read_u8().await.map_err(io)?;
@@ -510,18 +511,20 @@ where
             }
             let mut px = vec![0; rw * rh * 4];
             rd.read_exact(&mut px).await.map_err(io)?;
-            for row in 0..rh {
-                for col in 0..rw {
-                    let (sx, dx) = ((row * rw + col) * 4, ((y + row) * w + x + col) * 4);
-                    if dx + 3 < rgba.len() {
-                        rgba[dx] = px[sx + 2];
-                        rgba[dx + 1] = px[sx + 1];
-                        rgba[dx + 2] = px[sx];
-                        rgba[dx + 3] = 255;
+            for row in (0..rh).filter(|r| y + r < h) {
+                for col in (0..rw).filter(|c| x + c < w) {
+                    let (sx, at) = ((row * rw + col) * 4, (y + row) * w + x + col);
+                    let dx = at * 4;
+                    rgba[dx] = px[sx + 2];
+                    rgba[dx + 1] = px[sx + 1];
+                    rgba[dx + 2] = px[sx];
+                    rgba[dx + 3] = 255;
+                    if !seen[at] {
+                        seen[at] = true;
+                        covered += 1;
                     }
                 }
             }
-            covered += rw * rh;
         }
     }
     let file = std::fs::File::create(out).map_err(|e| format!("create {}: {e}", out.display()))?;
@@ -747,6 +750,9 @@ async fn mcp(edge: &Edge, serve: &str, args: &mut Args) -> Result<(), String> {
     let call = json!({"jsonrpc": "2.0", "id": 2, "method": method, "params": params});
     let (_, result) = post_mcp(&http, &url, edge, Some(&session), &call).await?;
     println!("{result}");
+    if result.get("error").is_some() || result["result"]["isError"] == true {
+        return Err(format!("{method} answered an error"));
+    }
     Ok(())
 }
 
