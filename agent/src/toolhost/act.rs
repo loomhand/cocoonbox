@@ -1,7 +1,7 @@
 //! `computer_act` on a box that runs shuttle: the toolhost runs a card field typed from a file and Chrome brought up
 //! as the agent's window itself, and sends every other action to shuttle's `desk_computer_act`.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
@@ -49,15 +49,17 @@ pub(super) async fn scale(shuttle: &Client, owner: &str, session: &Value) -> Res
 
 /// Reads `field` of the card in a link-cli `--output-file` JSON file under /tmp or $HOME; no error carries a value.
 async fn card_field(path: &str, field: &str) -> Result<String, String> {
-    let real = tokio::fs::canonicalize(path)
+    let native = native_path(path);
+    let real = tokio::fs::canonicalize(&native)
         .await
         .map_err(|e| format!("{path}: {e}"))?;
-    let tmp = tokio::fs::canonicalize("/tmp")
-        .await
-        .unwrap_or_else(|_| PathBuf::from("/tmp"));
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    let allowed = real.starts_with(tmp) || home.is_some_and(|h| real.starts_with(h));
-    if !Path::new(path).is_absolute() || !allowed {
+    let mut allowed = false;
+    for root in card_roots() {
+        allowed |= tokio::fs::canonicalize(&root)
+            .await
+            .is_ok_and(|root| real.starts_with(root));
+    }
+    if !native.is_absolute() || !allowed {
         return Err(format!("{path}: give an absolute path under /tmp or $HOME"));
     }
     let size = tokio::fs::metadata(&real)
@@ -95,6 +97,25 @@ async fn card_field(path: &str, field: &str) -> Result<String, String> {
 fn is_chrome(app: &str) -> bool {
     let app = app.to_lowercase();
     app.contains("chrome") || app.contains("chromium")
+}
+
+fn card_roots() -> Vec<PathBuf> {
+    let tmp = if cfg!(windows) {
+        std::env::temp_dir()
+    } else {
+        PathBuf::from("/tmp")
+    };
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    std::iter::once(tmp).chain(home).collect()
+}
+
+fn native_path(path: &str) -> PathBuf {
+    match path.strip_prefix("/tmp/") {
+        Some(rest) if cfg!(windows) => std::env::temp_dir().join(rest),
+        _ => PathBuf::from(path),
+    }
 }
 
 /// Runs the actions in order up to the first failure, each mapped by the screenshot the caller saw, as shuttle runs a list.
@@ -318,6 +339,7 @@ fn required<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -327,12 +349,10 @@ mod tests {
     use super::super::rpc::{read_frame, write_frame};
     use super::*;
 
-    #[cfg(unix)]
     const PAN: &str = "4000056655665556";
 
     type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
-    #[cfg(unix)]
     fn card_file(dir: &Path) -> String {
         let path = dir.join("card.json");
         let card = json!({"spend_request_id": "lsrq_1", "card": {"number": PAN, "cvc": "321", "exp_month": 3, "exp_year": 2029, "brand": "visa", "billing_address": {"postal_code": "94107"}}});
@@ -559,6 +579,34 @@ mod tests {
                 "{a}"
             );
         }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn card_field_reads_a_card_file_under_the_temp_dir_or_the_profile_in_any_slash_form() {
+        let tmp = tempfile::tempdir_in(std::env::temp_dir()).unwrap();
+        let path = card_file(tmp.path());
+        let name = Path::new(&path)
+            .strip_prefix(std::env::temp_dir())
+            .unwrap()
+            .display()
+            .to_string();
+        for p in [
+            path.clone(),
+            path.replace('\\', "/"),
+            format!("/tmp/{}", name.replace('\\', "/")),
+        ] {
+            assert_eq!(card_field(&p, "number").await.unwrap(), PAN, "{p}");
+        }
+        let profile = std::env::var_os("USERPROFILE").unwrap();
+        let home = tempfile::tempdir_in(&profile).unwrap();
+        let path = card_file(home.path());
+        assert_eq!(card_field(&path, "cvc").await.unwrap(), "321", "{path}");
+        let windows = std::env::var("SystemRoot").unwrap();
+        let err = card_field(&format!("{windows}\\win.ini"), "number")
+            .await
+            .unwrap_err();
+        assert!(err.contains("under /tmp or $HOME"), "{err}");
     }
 
     #[cfg(unix)]
