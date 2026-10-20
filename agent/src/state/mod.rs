@@ -49,11 +49,12 @@ const WORKSPACE_ROOT: &str = "workspace";
 const RESTORED_DIR: &str = "Restored";
 const KNOWN_FILE: &str = "known-chunks.json";
 
-#[cfg(not(target_os = "macos"))]
 const EXCLUDED_PREFIXES: [&str; 2] = [".cache", ".local/share/Trash"];
+#[cfg(not(target_os = "macos"))]
+const HOME_EXCLUDED: [&str; 0] = [];
 // a live session holds Library and .Trash open, and TCC guards .Trash
 #[cfg(target_os = "macos")]
-const EXCLUDED_PREFIXES: [&str; 4] = [".cache", ".local/share/Trash", ".Trash", "Library"];
+const HOME_EXCLUDED: [&str; 2] = [".Trash", "Library"];
 const EXCLUDED_NAMES: [&str; 17] = [
     "Cache",
     "Code Cache",
@@ -1364,10 +1365,12 @@ pub fn default_roots(home: &Path, workspace: &Path) -> Vec<Root> {
         Root {
             name: HOME_ROOT.to_owned(),
             path: home.to_owned(),
+            excluded: HOME_EXCLUDED.map(str::to_owned).to_vec(),
         },
         Root {
             name: WORKSPACE_ROOT.to_owned(),
             path: workspace.to_owned(),
+            excluded: Vec::new(),
         },
     ]
 }

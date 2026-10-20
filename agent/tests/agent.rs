@@ -17,7 +17,6 @@ use cocoonbox_agent::pb::{
 };
 use cocoonbox_agent::runner::Runtime;
 use cocoonbox_agent::toolhost::rpc::{Call, Output, read_frame, write_frame};
-use cocoonbox_agent::toolhost::state::Root;
 use cocoonbox_agent::{offload, server, toolhost};
 use ed25519_dalek::SigningKey;
 use futures_util::{SinkExt, StreamExt};
@@ -275,16 +274,7 @@ impl Harness {
             routing_extra: cocoonbox_agent::config::routing_extra(&routing_dir),
             shuttle_socket: None,
             workspace: workspace.clone(),
-            state_roots: vec![
-                Root {
-                    name: "home".into(),
-                    path: home.clone(),
-                },
-                Root {
-                    name: "workspace".into(),
-                    path: workspace.clone(),
-                },
-            ],
+            state_roots: cocoonbox_agent::state::default_roots(&home, &workspace),
         };
         let model = Arc::new(
             cocoonbox_agent::llm::Client::new(

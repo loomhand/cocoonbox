@@ -23,6 +23,9 @@ const PLACE_TRIES: u32 = 100;
 pub struct Root {
     pub name: String,
     pub path: PathBuf,
+    /// Relative path prefixes left out of this root alone, e.g. `Library` of a macOS home.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub excluded: Vec<String>,
 }
 
 /// Paths left out of a snapshot, matched against `/`-separated paths relative to a root.
@@ -42,12 +45,8 @@ pub struct Excludes {
 impl Excludes {
     /// Whether `rel` is excluded.
     pub fn matches(&self, rel: &str) -> bool {
-        self.prefixes.iter().any(|p| {
-            rel == p
-                || rel
-                    .strip_prefix(p.as_str())
-                    .is_some_and(|r| r.starts_with('/'))
-        }) || rel.split('/').any(|c| self.names.iter().any(|n| n == c))
+        self.prefixes.iter().any(|p| under(rel, p))
+            || rel.split('/').any(|c| self.names.iter().any(|n| n == c))
             || rel.rsplit('/').next().is_some_and(|f| {
                 self.name_prefixes.iter().any(|p| f.starts_with(p.as_str()))
                     || self.name_suffixes.iter().any(|x| f.ends_with(x.as_str()))
@@ -477,7 +476,10 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
             } else {
                 format!("{rel}/{name}")
             };
-            if excludes.matches(&path) || skip.contains(&path) {
+            if excludes.matches(&path)
+                || root.excluded.iter().any(|p| under(&path, p))
+                || skip.contains(&path)
+            {
                 continue;
             }
             let Ok(meta) = fs::symlink_metadata(child.path()) else {
@@ -526,6 +528,12 @@ fn stamp_of(path: &Path) -> Stamp {
             ..Stamp::default()
         },
     }
+}
+
+/// Whether the relative path `rel` is `prefix` or lies under it.
+fn under(rel: &str, prefix: &str) -> bool {
+    rel.strip_prefix(prefix)
+        .is_some_and(|r| r.is_empty() || r.starts_with('/'))
 }
 
 fn mtime_ms(t: Option<SystemTime>) -> i64 {
@@ -586,6 +594,37 @@ mod tests {
         assert_eq!(entries[2].target.as_deref(), Some("a.txt"));
         assert!(entries[1].ctime_ns.is_some());
         assert!(entries[0].ctime_ns.is_none() && entries[2].ctime_ns.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_root_excludes_its_own_prefixes_and_no_other_root_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, workspace) = (dir.path().join("home"), dir.path().join("workspace"));
+        for root in [&home, &workspace] {
+            fs::create_dir_all(root.join("Library/x")).unwrap();
+            fs::write(root.join("Library/x/f"), b"f").unwrap();
+        }
+        fs::create_dir_all(home.join("Libraryx")).unwrap();
+        let args = serde_json::json!({
+            "roots": [
+                {"name": "home", "path": home, "excluded": ["Library"]},
+                {"name": "workspace", "path": workspace},
+            ],
+        });
+        let entries: Vec<Entry> = serde_json::from_str(&walk(args).await.unwrap()).unwrap();
+        let paths: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|e| (e.root.as_str(), e.path.as_str()))
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                ("home", "Libraryx"),
+                ("workspace", "Library"),
+                ("workspace", "Library/x"),
+                ("workspace", "Library/x/f")
+            ]
+        );
     }
 
     #[tokio::test]

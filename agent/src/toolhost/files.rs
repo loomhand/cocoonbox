@@ -4,6 +4,7 @@
 
 use std::fmt::Write as _;
 use std::fs::File;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -205,24 +206,24 @@ pub async fn list(
     } else {
         None
     };
-    let source = beneath.as_ref().map_or_else(|| path.clone(), sys::fd_dir);
-    let mut dir = tokio::fs::read_dir(&source)
-        .await
-        .map_err(|e| format!("list {}: {e}", path.display()))?;
-    let mut entries = Vec::new();
-    while let Some(entry) = dir
-        .next_entry()
-        .await
-        .map_err(|e| format!("list {}: {e}", path.display()))?
-    {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let line = match entry.metadata().await {
-            Ok(m) if m.is_dir() => format!("{name}/"),
-            Ok(m) => format!("{name}  ({} bytes)", m.len()),
-            Err(_) => name,
-        };
-        entries.push(line);
+    let listed = match beneath {
+        Some(dir) => tokio::task::spawn_blocking(move || sys::list_dir(&dir))
+            .await
+            .map_err(|e| format!("list task: {e}"))?,
+        None => list_path(&path).await,
     }
+    .map_err(|e| format!("list {}: {e}", path.display()))?;
+    let mut entries: Vec<String> = listed
+        .into_iter()
+        .map(|sys::Listed { name, kind }| {
+            let name = name.to_string_lossy();
+            match kind {
+                Some((true, _)) => format!("{name}/"),
+                Some((false, size)) => format!("{name}  ({size} bytes)"),
+                None => name.into_owned(),
+            }
+        })
+        .collect();
     entries.sort();
     let total = entries.len();
     entries.truncate(LIST_ENTRIES);
@@ -380,6 +381,20 @@ fn open_beneath(
     Ok(file)
 }
 
+/// The entries of the directory `path`, as [`sys::list_dir`] gives them.
+async fn list_path(path: &Path) -> io::Result<Vec<sys::Listed>> {
+    let mut dir = tokio::fs::read_dir(path).await?;
+    let mut out = Vec::new();
+    while let Some(entry) = dir.next_entry().await? {
+        let kind = entry.metadata().await.ok().map(|m| (m.is_dir(), m.len()));
+        out.push(sys::Listed {
+            name: entry.file_name(),
+            kind,
+        });
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -506,6 +521,27 @@ mod tests {
         .await
         .unwrap();
         assert!(listing.contains("b.txt  (6 bytes)"), "{listing}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_read_only_share_lists_a_folder_beneath_the_workspace_without_following_its_links() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        write(ws, json!({"path": "a/b.txt", "content": "hello"}))
+            .await
+            .unwrap();
+        std::fs::create_dir(ws.join("a/sub")).unwrap();
+        std::os::unix::fs::symlink("/", ws.join("a/root")).unwrap();
+        let share = |path: &str| json!({"path": path, "workspace_only": true});
+        let listing = list(ws, None, share("a")).await.unwrap();
+        assert!(
+            listing.contains("b.txt  (5 bytes)\n") && listing.contains("sub/\n"),
+            "{listing}"
+        );
+        assert!(!listing.contains("root/"), "{listing}");
+        let err = list(ws, None, share("a/root")).await.unwrap_err();
+        assert!(err.contains("is refused"), "{err}");
     }
 
     #[cfg(target_os = "linux")]

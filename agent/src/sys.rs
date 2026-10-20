@@ -1,13 +1,22 @@
 //! Thin wrappers over libc calls that std does not expose.
 
+use std::ffi::{CStr, CString, OsStr, OsString};
 use std::fs::File;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use tokio::process::Command;
 
 const GROUP_BUF: usize = 16 << 10;
+
+/// One entry of a directory listing.
+pub struct Listed {
+    pub name: OsString,
+    /// Whether the entry is a directory, and its size; none when it went away during the listing.
+    pub kind: Option<(bool, u64)>,
+}
 
 /// Sends SIGKILL to every process in the group `pgid`.
 pub fn kill_group(pgid: u32) -> io::Result<()> {
@@ -118,7 +127,7 @@ pub fn unprotect(cmd: &mut Command) {
 
 /// The id of the group `name` in the system's group database, which also holds directory groups; none when absent.
 pub fn group_id(name: &str) -> Option<u32> {
-    let name = std::ffi::CString::new(name).ok()?;
+    let name = CString::new(name).ok()?;
     // SAFETY: group holds only integers and pointers, for which all zeros is valid.
     let mut group: libc::group = unsafe { std::mem::zeroed() };
     let mut found = std::ptr::null_mut();
@@ -140,9 +149,6 @@ pub fn group_id(name: &str) -> Option<u32> {
 /// or symlink that leaves `dir` fails with `EXDEV`.
 #[cfg(target_os = "linux")]
 pub fn open_beneath(dir: &File, path: &Path, flags: libc::c_int) -> io::Result<File> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
     let path = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
     // SAFETY: open_how holds only integers, for which all zeros is valid.
     let mut how: libc::open_how = unsafe { std::mem::zeroed() };
@@ -183,9 +189,6 @@ pub fn inotify() -> io::Result<tokio::io::unix::AsyncFd<File>> {
 /// Watches `path` for the events in `mask` on the inotify instance `fd`; returns the watch descriptor.
 #[cfg(target_os = "linux")]
 pub fn inotify_watch(fd: &impl AsRawFd, path: &Path, mask: u32) -> io::Result<i32> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
     let path = CString::new(path.as_os_str().as_bytes()).map_err(io::Error::other)?;
     // SAFETY: path is NUL-terminated and outlives the call.
     let wd = unsafe { libc::inotify_add_watch(fd.as_raw_fd(), path.as_ptr(), mask) };
@@ -207,8 +210,6 @@ pub fn inotify_unwatch(fd: &impl AsRawFd, wd: i32) {
 /// absolute path or any symlink fails with `EXDEV`.
 #[cfg(target_os = "macos")]
 pub fn open_beneath(dir: &File, path: &Path, flags: libc::c_int) -> io::Result<File> {
-    use std::ffi::{CString, OsStr};
-    use std::os::unix::ffi::OsStrExt;
     use std::path::{Component, PathBuf};
 
     let leaves = || io::Error::from_raw_os_error(libc::EXDEV);
@@ -258,21 +259,12 @@ pub fn open_beneath(_dir: &File, _path: &Path, _flags: libc::c_int) -> io::Resul
 /// The path the open file `fd` resolves to now.
 #[cfg(target_os = "linux")]
 pub fn fd_path(fd: &impl AsRawFd) -> Option<std::path::PathBuf> {
-    std::fs::read_link(fd_dir(fd)).ok()
-}
-
-/// A path that opens the directory `fd` itself.
-#[cfg(target_os = "linux")]
-pub fn fd_dir(fd: &impl AsRawFd) -> std::path::PathBuf {
-    format!("/proc/self/fd/{}", fd.as_raw_fd()).into()
+    std::fs::read_link(format!("/proc/self/fd/{}", fd.as_raw_fd())).ok()
 }
 
 /// The path the open file `fd` resolves to now.
 #[cfg(target_os = "macos")]
 pub fn fd_path(fd: &impl AsRawFd) -> Option<std::path::PathBuf> {
-    use std::ffi::OsStr;
-    use std::os::unix::ffi::OsStrExt;
-
     let mut buf = vec![0u8; libc::PATH_MAX as usize];
     // SAFETY: F_GETPATH writes at most PATH_MAX bytes, NUL included, into buf, which lives for the call.
     let rc = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, buf.as_mut_ptr()) };
@@ -283,10 +275,58 @@ pub fn fd_path(fd: &impl AsRawFd) -> Option<std::path::PathBuf> {
     Some(OsStr::from_bytes(&buf[..len]).into())
 }
 
-/// A path that opens the directory `fd`: the path it resolves to now, as macOS lists no directory through `/dev/fd`.
-#[cfg(target_os = "macos")]
-pub fn fd_dir(fd: &impl AsRawFd) -> std::path::PathBuf {
-    fd_path(fd).unwrap_or_default()
+/// The entries of the open directory `dir`, read through its descriptor and not a path; a symlink is not followed.
+pub fn list_dir(dir: &File) -> io::Result<Vec<Listed>> {
+    // SAFETY: dup takes an integer and returns a new descriptor or -1.
+    let fd = unsafe { libc::dup(dir.as_raw_fd()) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fdopendir takes over fd, which nothing else owns.
+    let stream = unsafe { libc::fdopendir(fd) };
+    if stream.is_null() {
+        let e = io::Error::last_os_error();
+        // SAFETY: fdopendir failed, so fd is still this function's to close.
+        unsafe { libc::close(fd) };
+        return Err(e);
+    }
+    let mut out = Vec::new();
+    loop {
+        // SAFETY: stream is a live DIR from fdopendir.
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break;
+        }
+        // SAFETY: readdir returned an entry whose d_name is NUL-terminated and valid until the next readdir.
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        if name == c"." || name == c".." {
+            continue;
+        }
+        // SAFETY: stat holds only integers, for which all zeros is valid.
+        let mut st: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: name is NUL-terminated and st is a live stat, both for the call.
+        let found = unsafe {
+            libc::fstatat(
+                dir.as_raw_fd(),
+                name.as_ptr(),
+                &raw mut st,
+                libc::AT_SYMLINK_NOFOLLOW,
+            )
+        } == 0;
+        let kind = found.then(|| {
+            (
+                st.st_mode & libc::S_IFMT == libc::S_IFDIR,
+                u64::try_from(st.st_size).unwrap_or(0),
+            )
+        });
+        out.push(Listed {
+            name: OsStr::from_bytes(name.to_bytes()).to_owned(),
+            kind,
+        });
+    }
+    // SAFETY: stream came from fdopendir and is closed once, which closes fd too.
+    unsafe { libc::closedir(stream) };
+    Ok(out)
 }
 
 fn winsize(rows: u16, cols: u16) -> libc::winsize {
