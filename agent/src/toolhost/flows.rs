@@ -159,14 +159,10 @@ pub async fn wait(writes: &watch::Sender<u64>, args: Value) -> Result<String, St
 pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(), String> {
     use std::io::Read;
 
-    use tokio::io::unix::AsyncFd;
-
     let root_events = libc::IN_CREATE | libc::IN_MOVED_TO | libc::IN_ONLYDIR;
     let removals = libc::IN_DELETE | libc::IN_MOVED_FROM;
     let flow_events = libc::IN_CLOSE_WRITE | libc::IN_MOVED_TO | removals;
-    let fd = crate::sys::inotify()
-        .and_then(|fd| AsyncFd::new(std::fs::File::from(fd)))
-        .map_err(|e| format!("inotify: {e}"))?;
+    let fd = crate::sys::inotify().map_err(|e| format!("inotify: {e}"))?;
     let root = crate::sys::inotify_watch(fd.get_ref(), &workspace, root_events)
         .map_err(|e| format!("watch {}: {e}", workspace.display()))?;
     let dir = dir(&workspace);

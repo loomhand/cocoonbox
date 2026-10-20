@@ -144,16 +144,18 @@ pub fn open_beneath(dir: &File, path: &Path, flags: libc::c_int) -> io::Result<F
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-/// A non-blocking, close-on-exec inotify instance.
+/// A non-blocking, close-on-exec inotify instance, registered with the tokio reactor.
 #[cfg(target_os = "linux")]
-pub fn inotify() -> io::Result<OwnedFd> {
+pub fn inotify() -> io::Result<tokio::io::unix::AsyncFd<File>> {
     // SAFETY: inotify_init1 takes flags only.
     let fd = unsafe { libc::inotify_init1(libc::IN_NONBLOCK | libc::IN_CLOEXEC) };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: inotify_init1 returned a new descriptor that nothing else owns.
-    Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+    let file = unsafe { File::from_raw_fd(fd) };
+    // SAFETY: the AsyncFd owns the File, so its descriptor stays open and the same until the AsyncFd drops.
+    unsafe { tokio::io::unix::AsyncFd::register(file) }.map_err(io::Error::from)
 }
 
 /// Watches `path` for the events in `mask` on the inotify instance `fd`; returns the watch descriptor.

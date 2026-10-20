@@ -96,7 +96,8 @@ impl Keys {
 }
 
 fn mac(key: &[u8], data: &[u8]) -> Result<[u8; 32], String> {
-    let mut m = <HmacSha256 as Mac>::new_from_slice(key).map_err(|e| format!("hmac key: {e}"))?;
+    let mut m =
+        <HmacSha256 as KeyInit>::new_from_slice(key).map_err(|e| format!("hmac key: {e}"))?;
     m.update(data);
     Ok(m.finalize().into_bytes().into())
 }

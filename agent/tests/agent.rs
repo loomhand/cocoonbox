@@ -6390,8 +6390,8 @@ fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {
                 format!("link {:?}", std::fs::read_link(&path).unwrap())
             } else {
                 format!(
-                    "file {mode:o} {:x}",
-                    Sha256::digest(std::fs::read(&path).unwrap())
+                    "file {mode:o} {}",
+                    hex::encode(Sha256::digest(std::fs::read(&path).unwrap()))
                 )
             };
             out.push((path, what));
