@@ -875,6 +875,7 @@ impl StateEngine {
     }
 
     async fn walk(&self) -> Result<Vec<Entry>, String> {
+        #[cfg(unix)]
         let listed = self
             .roots
             .iter()
@@ -883,6 +884,8 @@ impl StateEngine {
                 file: home.path.join(crate::offload::Layout::excludes_rel()),
                 root: WORKSPACE_ROOT.to_owned(),
             });
+        #[cfg(windows)]
+        let listed: Option<Listed> = None;
         let walked = self
             .tool(
                 "state_walk",

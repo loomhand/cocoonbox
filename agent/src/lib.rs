@@ -15,6 +15,7 @@ pub mod identity;
 pub mod journal;
 pub mod llm;
 pub mod mcp;
+#[cfg(unix)]
 pub mod offload;
 pub mod plugins;
 pub mod prompts;

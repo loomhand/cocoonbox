@@ -952,8 +952,8 @@ impl Browser {
             .env("LANGUAGE", "en_US")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0);
+            .stderr(Stdio::null());
+        sys::new_group(&mut cmd);
         sys::unprotect(&mut cmd);
         let mut chrome = cmd
             .spawn()

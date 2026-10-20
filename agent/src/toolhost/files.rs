@@ -101,15 +101,10 @@ pub async fn read(
     let path = resolve(workspace, &a.path);
     let data = if a.workspace_only {
         let mut data = Vec::new();
-        tokio::fs::File::from_std(open_beneath(
-            workspace,
-            hidden,
-            &path,
-            libc::O_RDONLY | libc::O_NONBLOCK,
-        )?)
-        .read_to_end(&mut data)
-        .await
-        .map(|_| data)
+        tokio::fs::File::from_std(open_beneath(workspace, hidden, &path, false)?)
+            .read_to_end(&mut data)
+            .await
+            .map(|_| data)
     } else {
         tokio::fs::read(&path).await
     }
@@ -202,7 +197,7 @@ pub async fn list(
     let a: ListArgs = rpc::parse(args)?;
     let path = resolve(workspace, a.path.as_deref().unwrap_or("."));
     let beneath = if a.workspace_only {
-        Some(open_beneath(workspace, hidden, &path, libc::O_DIRECTORY)?)
+        Some(open_beneath(workspace, hidden, &path, true)?)
     } else {
         None
     };
@@ -348,7 +343,7 @@ fn open_beneath(
     workspace: &Path,
     hidden: Option<&Path>,
     path: &Path,
-    flags: libc::c_int,
+    directory: bool,
 ) -> Result<File, String> {
     let refused = || {
         format!(
@@ -364,7 +359,7 @@ fn open_beneath(
         rel
     };
     let root = File::open(workspace).map_err(|e| format!("open {}: {e}", workspace.display()))?;
-    let file = sys::open_beneath(&root, rel, flags).map_err(|e| match e.raw_os_error() {
+    let file = sys::open_beneath(&root, rel, directory).map_err(|e| match e.raw_os_error() {
         Some(libc::EXDEV) => refused(),
         _ => format!("open {}: {e}", path.display()),
     })?;

@@ -2,6 +2,7 @@
 //! state transfers add raw data frames between them, and `exec` streams tagged frames
 //! both ways.
 
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -11,7 +12,10 @@ pub use desk_core::wire::{Call, Output, read_frame, write_frame};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+#[cfg(unix)]
 use tokio::net::UnixStream;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use zeroize::Zeroize;
 
 /// The bound of one desk or model call to shuttle's desk service.
@@ -33,6 +37,18 @@ pub const EOF: u8 = 5;
 pub const SIGNAL: u8 = 6;
 /// Tag of a terminal size, big-endian u16 rows and cols, to the toolhost.
 pub const RESIZE: u8 = 7;
+
+#[cfg(windows)]
+const ERROR_PIPE_BUSY: i32 = 231;
+#[cfg(windows)]
+const PIPE_BUSY_WAIT: Duration = Duration::from_millis(20);
+
+/// A connection to the toolhost or to shuttle's desk service: a unix socket, or a named pipe on Windows.
+#[cfg(unix)]
+pub type Stream = UnixStream;
+/// A connection to the toolhost or to shuttle's desk service: a unix socket, or a named pipe on Windows.
+#[cfg(windows)]
+pub type Stream = NamedPipeClient;
 
 /// Size and mtime of a file before or after it was streamed.
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -110,7 +126,7 @@ impl Client {
 
     /// Starts `command` as `user`, on a terminal when `tty` is `{term, rows, cols}`; the
     /// connection then carries [`write_tagged`] frames both ways. Closing it kills the command.
-    pub async fn exec(&self, command: &str, tty: Option<Value>) -> Result<UnixStream, String> {
+    pub async fn exec(&self, command: &str, tty: Option<Value>) -> Result<Stream, String> {
         let call = Call {
             agent_id: String::new(),
             tool: "exec".to_owned(),
@@ -126,8 +142,8 @@ impl Client {
     }
 
     /// Sends `call` and hands back the connection for a streamed exchange.
-    async fn open(&self, call: &Call) -> Result<UnixStream, String> {
-        let mut stream = UnixStream::connect(&self.socket)
+    async fn open(&self, call: &Call) -> Result<Stream, String> {
+        let mut stream = connect(&self.socket)
             .await
             .map_err(|e| format!("connect toolhost {}: {e}", self.socket.display()))?;
         write_frame(&mut stream, call).await?;
@@ -137,7 +153,7 @@ impl Client {
 
 /// Data of a file being read by the toolhost.
 pub struct FileReader {
-    stream: UnixStream,
+    stream: Stream,
 }
 
 impl FileReader {
@@ -154,7 +170,7 @@ impl FileReader {
 
 /// A file being written by the toolhost.
 pub struct FileWriter {
-    stream: UnixStream,
+    stream: Stream,
 }
 
 impl FileWriter {
@@ -248,6 +264,24 @@ pub async fn read_tagged<R: AsyncRead + Unpin>(r: &mut R) -> Result<(u8, Vec<u8>
         .await
         .map_err(|e| format!("read tagged frame: {e}"))?;
     Ok((head[0], data))
+}
+
+#[cfg(unix)]
+async fn connect(path: &Path) -> io::Result<Stream> {
+    UnixStream::connect(path).await
+}
+
+/// Opens the named pipe `path`, waiting while every instance of it is busy.
+#[cfg(windows)]
+async fn connect(path: &Path) -> io::Result<Stream> {
+    loop {
+        match ClientOptions::new().open(path) {
+            Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
+                tokio::time::sleep(PIPE_BUSY_WAIT).await;
+            }
+            opened => return opened,
+        }
+    }
 }
 
 #[cfg(test)]

@@ -30,9 +30,7 @@ pub struct Shell {
 impl Shell {
     /// Starts bash in `cwd`; `script` is the per-session scratch file for commands.
     pub async fn spawn(cwd: &Path, script: PathBuf) -> Result<Self, String> {
-        let mut child = bash(cwd)
-            .args(["--noprofile", "--norc"])
-            .process_group(0)
+        let mut child = sys::new_group(bash(cwd).args(["--noprofile", "--norc"]))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

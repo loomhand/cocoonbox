@@ -1,4 +1,4 @@
-# The agent runs in a Linux guest and in a macOS guest; the offload tests need rsync and tmux, the script tests Node 24 (NODE_BIN), the Chrome tests skip with CB_NO_BROWSER=1.
+# The agent runs in a Linux guest and in a macOS guest, and builds for a Windows guest; the offload tests need rsync and tmux, the script tests Node 24 (NODE_BIN), the Chrome tests skip with CB_NO_BROWSER=1.
 name: agent
 
 on:
@@ -55,3 +55,28 @@ jobs:
         env:
           CB_NO_BROWSER: "1"
         run: NODE_BIN=$(command -v node) make agent
+
+  agent-windows:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Allow the rootfs paths in the index
+        run: git config --system core.protectNTFS false
+
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          sparse-checkout: |
+            agent
+            docs/fixtures
+            image/desk
+            proto
+
+      - name: Install protoc
+        run: choco install protoc --no-progress -y
+
+      - name: clippy + build
+        working-directory: agent
+        run: cargo clippy --locked -- -D warnings && cargo build --locked

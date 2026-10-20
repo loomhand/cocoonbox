@@ -2,7 +2,6 @@
 
 use std::collections::HashSet;
 use std::fs::{self, FileTimes};
-use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -11,6 +10,7 @@ use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use super::rpc::{self, Output, Stamp};
+use crate::sys;
 
 pub const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 
@@ -275,7 +275,7 @@ pub async fn apply(args: Value) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         for d in &a.dirs {
             fs::create_dir_all(&d.path).map_err(|e| format!("mkdir {}: {e}", d.path.display()))?;
-            fs::set_permissions(&d.path, fs::Permissions::from_mode(d.mode & 0o7777))
+            sys::set_mode(&d.path, d.mode)
                 .map_err(|e| format!("chmod {}: {e}", d.path.display()))?;
         }
         for l in &a.symlinks {
@@ -284,13 +284,13 @@ pub async fn apply(args: Value) -> Result<String, String> {
                     .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
             }
             let _ = fs::remove_file(&l.path);
-            symlink(&l.target, &l.path)
+            sys::symlink(Path::new(&l.target), &l.path)
                 .map_err(|e| format!("symlink {}: {e}", l.path.display()))?;
         }
         a.modes
             .sort_by_key(|m| std::cmp::Reverse(m.path.components().count()));
         for m in &a.modes {
-            fs::set_permissions(&m.path, fs::Permissions::from_mode(m.mode & 0o7777))
+            sys::set_mode(&m.path, m.mode)
                 .map_err(|e| format!("chmod {}: {e}", m.path.display()))?;
         }
         Ok(format!(
@@ -366,9 +366,9 @@ fn open_up(dir: &Path) {
     if !meta.is_dir() {
         return;
     }
-    let mode = meta.permissions().mode();
+    let mode = sys::mode(&meta);
     if mode & 0o700 != 0o700 {
-        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(mode | 0o700));
+        let _ = sys::set_mode(dir, mode | 0o700);
     }
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -431,8 +431,7 @@ async fn write_file<R: AsyncRead + Unpin>(a: &WriteArgs, r: &mut R) -> Result<u6
         .await
         .map_err(|e| format!("flush {}: {e}", a.path.display()))?;
     let file = file.into_std().await;
-    file.set_permissions(fs::Permissions::from_mode(a.mode & 0o7777))
-        .map_err(|e| format!("chmod {}: {e}", a.path.display()))?;
+    sys::set_file_mode(&file, a.mode).map_err(|e| format!("chmod {}: {e}", a.path.display()))?;
     let mtime = UNIX_EPOCH + Duration::from_millis(u64::try_from(a.mtime_ms).unwrap_or(0));
     file.set_times(FileTimes::new().set_modified(mtime))
         .map_err(|e| format!("set mtime {}: {e}", a.path.display()))?;
@@ -503,12 +502,11 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
                 root: root.name.clone(),
                 path,
                 kind,
-                mode: meta.mode(),
+                mode: sys::mode(&meta),
                 mtime_ms: mtime_ms(meta.modified().ok()),
                 size: if kind == Kind::File { meta.len() } else { 0 },
                 target,
-                ctime_ns: (kind == Kind::File)
-                    .then(|| meta.ctime().saturating_mul(1_000_000_000) + meta.ctime_nsec()),
+                ctime_ns: (kind == Kind::File).then(|| sys::ctime_ns(&meta)),
             });
         }
     }
@@ -541,8 +539,10 @@ fn mtime_ms(t: Option<SystemTime>) -> i64 {
         .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
+    use std::os::unix::fs::symlink;
+
     use super::*;
 
     fn excludes() -> Excludes {

@@ -1,9 +1,10 @@
 //! Box identity and the edge credential check that admits every call into the agent.
 
 use std::collections::HashMap;
-use std::fs::{File, Metadata};
+use std::fs::Metadata;
 use std::io::{self, Read};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+#[cfg(unix)]
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
@@ -256,11 +257,7 @@ impl<'a> Credential<'a> {
 }
 
 fn load(path: &Path, owner: u32) -> Result<Option<Identity>, String> {
-    let file = match File::options()
-        .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)
-    {
+    let file = match crate::sys::open_nofollow(path) {
         Ok(f) => f,
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(format!("open {}: {e}", path.display())),
@@ -287,6 +284,7 @@ fn load(path: &Path, owner: u32) -> Result<Option<Identity>, String> {
     Identity::parse(&text).map(Some)
 }
 
+#[cfg(unix)]
 fn trusted(meta: &Metadata, owner: u32) -> Result<(), String> {
     if meta.uid() != owner {
         return Err(format!("owned by uid {}, want {owner}", meta.uid()));
@@ -298,6 +296,12 @@ fn trusted(meta: &Metadata, owner: u32) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Trusts no identity file until the Windows owner check lands.
+#[cfg(windows)]
+fn trusted(_meta: &Metadata, _owner: u32) -> Result<(), String> {
+    Err("no owner check on Windows".to_owned())
 }
 
 fn key_id(public_key: &[u8; 32]) -> String {

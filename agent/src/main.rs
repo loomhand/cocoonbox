@@ -2,7 +2,9 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use cocoonbox_agent::config::{ServeConfig, ToolhostConfig};
-use cocoonbox_agent::{offload, server, toolhost};
+#[cfg(unix)]
+use cocoonbox_agent::offload;
+use cocoonbox_agent::{server, toolhost};
 
 const RUNTIME_SHUTDOWN: Duration = Duration::from_millis(200);
 const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost|toolhost-service|offload|desk|version>";
@@ -17,6 +19,7 @@ fn main() -> ExitCode {
             Err(NO_SERVICE.to_owned())
         }
         "toolhost-service" => run(async { toolhost::run(ToolhostConfig::from_env()?).await }),
+        #[cfg(unix)]
         "offload" => {
             let args = std::env::args().skip(2).collect();
             return match run(async { Ok(offload::main(args).await) }) {

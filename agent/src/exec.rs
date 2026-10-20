@@ -47,11 +47,12 @@ pub async fn relay(
         let window = tty.window.unwrap_or_default();
         json!({"term": tty.term, "terminfo": tty.terminfo, "rows": window.rows, "cols": window.cols})
     });
-    let (mut rd, mut wr) = tools
-        .exec(&start.command, tty)
-        .await
-        .map_err(Status::unavailable)?
-        .into_split();
+    let (mut rd, mut wr) = tokio::io::split(
+        tools
+            .exec(&start.command, tty)
+            .await
+            .map_err(Status::unavailable)?,
+    );
     let (tx, rx) = mpsc::channel(OUT_FRAMES);
     let done = CancellationToken::new();
     let feeding = done.clone();

@@ -20,6 +20,7 @@ use crate::exec;
 use crate::identity::{CREDENTIAL_HEADER, Denied, Gate, Principal};
 use crate::llm;
 use crate::mcp::Mcp;
+#[cfg(unix)]
 use crate::offload;
 use crate::pb::agents_server::{Agents, AgentsServer};
 use crate::pb::session_server::{Session, SessionServer};
@@ -397,6 +398,7 @@ impl State for StateSvc {
             .map(|r| r.map_err(|s| format!("restore stream: {}", s.message())));
         Ok(Response::new(progress_stream(move |tx| async move {
             engine.restore(reqs, tx).await?;
+            #[cfg(unix)]
             if let Err(e) = offload::inbox::rescan(&rt.cfg.offload_socket).await
                 && rt.cfg.offload_socket.exists()
             {
@@ -472,6 +474,7 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     let mcp = Mcp::new(Arc::clone(&rt), rt.cfg.mcp_idle, gate);
     mcp.spawn_reaper();
     // detached: ends with rt.stop
+    #[cfg(unix)]
     tokio::spawn(offload::inbox::relay(
         rt.cfg.offload_socket.clone(),
         Arc::clone(&rt.journal),
@@ -546,6 +549,7 @@ fn share_refused() -> Status {
 
 /// Resolves on the first SIGTERM or SIGINT.
 pub(crate) async fn shutdown_signal() {
+    #[cfg(unix)]
     let term = async {
         match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
             Ok(mut s) => {
@@ -554,6 +558,8 @@ pub(crate) async fn shutdown_signal() {
             Err(_) => std::future::pending::<()>().await,
         }
     };
+    #[cfg(windows)]
+    let term = std::future::pending::<()>();
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         () = term => {}

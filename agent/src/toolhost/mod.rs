@@ -3,6 +3,7 @@
 mod act;
 mod browser;
 pub mod desk;
+#[cfg(unix)]
 mod exec;
 pub(crate) mod files;
 pub(crate) mod flows;
@@ -14,6 +15,8 @@ pub mod state;
 mod timing;
 
 use std::collections::{HashMap, HashSet};
+use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -24,6 +27,9 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
 
@@ -35,7 +41,15 @@ use rpc::{Call, Client, Output};
 use script::{Screen, Scripts, ShuttleScreen};
 use shell::Shell;
 
+#[cfg(unix)]
 const SOCKET_MODE: u32 = 0o660;
+
+/// One accepted toolhost connection.
+#[cfg(unix)]
+type Conn = UnixStream;
+/// One accepted toolhost connection.
+#[cfg(windows)]
+type Conn = NamedPipeServer;
 const SCRATCH_DIR: &str = "/tmp/cocoonbox-shell";
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
 const OS_RELEASE: &str = "/etc/os-release";
@@ -56,6 +70,7 @@ struct Host {
     /// The plugin script tools, on a box that runs GUI plans.
     plugins: HashSet<String>,
     session_save: PathBuf,
+    #[cfg(unix)]
     home: PathBuf,
     /// A box that runs GUI plans.
     plans: bool,
@@ -90,6 +105,7 @@ impl Host {
                 .map(|p| p.name.clone())
                 .collect(),
             session_save: cfg.session_save.clone(),
+            #[cfg(unix)]
             home: cfg.home.clone(),
             plans: cfg.automation.plans(),
             hidden: cfg.automation.scripts().then(|| flows::dir(&cfg.workspace)),
@@ -271,6 +287,7 @@ impl Host {
             tokio::fs::create_dir_all(&self.scratch)
                 .await
                 .map_err(|e| format!("create {}: {e}", self.scratch.display()))?;
+            #[cfg(unix)]
             let _ =
                 tokio::fs::set_permissions(&self.scratch, std::fs::Permissions::from_mode(0o700))
                     .await;
@@ -340,9 +357,16 @@ impl Host {
     }
 }
 
+/// The named pipe the toolhost serves: a client takes the waiting instance, and a new instance waits for the next one.
+#[cfg(windows)]
+pub(crate) struct Listener {
+    path: PathBuf,
+    next: NamedPipeServer,
+}
+
 /// Runs the toolhost until SIGTERM or SIGINT, which closes Chrome with its agent windows first.
 pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
-    let listener = bind(&cfg.socket, &cfg.socket_group)?;
+    let mut listener = bind(&cfg.socket, &cfg.socket_group)?;
     eprintln!("toolhost listening on {}", cfg.socket.display());
     let host = Arc::new(Host::new(&cfg));
     if cfg.automation.plans() {
@@ -363,8 +387,8 @@ pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
                 eprintln!("toolhost stopping: browser_close: {closed:?}");
                 return Ok(());
             }
-            accepted = listener.accept() => {
-                let (stream, _) = accepted.map_err(|e| format!("accept: {e}"))?;
+            accepted = accept(&mut listener) => {
+                let stream = accepted.map_err(|e| format!("accept: {e}"))?;
                 tokio::spawn(serve_conn(Arc::clone(&host), stream));
             }
         }
@@ -372,8 +396,11 @@ pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
 }
 
 /// Serves one request; the client closing its end cancels the tool.
-async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
+async fn serve_conn(host: Arc<Host>, stream: Conn) {
+    #[cfg(unix)]
     let (mut rd, mut wr) = stream.into_split();
+    #[cfg(windows)]
+    let (mut rd, mut wr) = tokio::io::split(stream);
     let call: Call = match rpc::read_frame(&mut rd).await {
         Ok(c) => c,
         Err(e) => {
@@ -388,6 +415,7 @@ async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
             }
             return;
         }
+        #[cfg(unix)]
         "exec" => {
             exec::run(&host.workspace, &host.home, &call.args, rd, wr).await;
             return;
@@ -412,7 +440,20 @@ async fn serve_conn(host: Arc<Host>, stream: UnixStream) {
     }
 }
 
+#[cfg(unix)]
+async fn accept(listener: &mut UnixListener) -> io::Result<Conn> {
+    listener.accept().await.map(|(stream, _)| stream)
+}
+
+#[cfg(windows)]
+async fn accept(listener: &mut Listener) -> io::Result<Conn> {
+    listener.next.connect().await?;
+    let next = ServerOptions::new().create(&listener.path)?;
+    Ok(std::mem::replace(&mut listener.next, next))
+}
+
 /// Binds a unix socket at `path`, mode 0660, owned by `group` when it exists; a socket another process still serves there stays.
+#[cfg(unix)]
 pub(crate) fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create {}: {e}", parent.display()))?;
@@ -432,6 +473,19 @@ pub(crate) fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
             .map_err(|e| format!("chgrp {} {group}: {e}", path.display()))?;
     }
     Ok(listener)
+}
+
+/// Creates the first instance of the named pipe `path`; a pipe another process serves there stays.
+#[cfg(windows)]
+pub(crate) fn bind(path: &Path, _group: &str) -> Result<Listener, String> {
+    let next = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(path)
+        .map_err(|e| format!("create pipe {}: {e}", path.display()))?;
+    Ok(Listener {
+        path: path.to_owned(),
+        next,
+    })
 }
 
 /// The box's OS release, desktop and the screen size shuttle reports as JSON, with the fields it could read.
