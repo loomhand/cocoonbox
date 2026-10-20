@@ -18,8 +18,10 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::Request;
 use tonic::transport::Channel;
 
+use cocoonbox_agent::pb::agents_client::AgentsClient;
 use cocoonbox_agent::pb::session_client::SessionClient;
 use cocoonbox_agent::pb::state_client::StateClient;
+use cocoonbox_agent::pb::transcript_entry::Body;
 use cocoonbox_agent::pb::{self, exec_client_frame, exec_server_frame, screen_client_frame};
 
 const USAGE: &str =
@@ -41,7 +43,8 @@ const USAGE: &str =
   upload --plan FILE --dir DIR --url URL call State.Upload for the chunks DIR lacks
   restore --manifest ID --dir DIR --url URL [--paths P,P --target NAME]
                                          call State.Restore, or RestorePaths with --paths
-  mcp METHOD [PARAMS_JSON]               open an MCP session at serve and call METHOD; an error answer exits 1";
+  mcp METHOD [PARAMS_JSON]               open an MCP session at serve and call METHOD; an error answer exits 1
+  turn --text T [--model M]              create an agent, send T, print the transcript until the turn ends; a failed turn exits 1";
 const DEFAULT_SERVE: &str = "http://127.0.0.1:17443";
 const DEFAULT_BOX: &str = "cb-box";
 const DEFAULT_WAKE: &str = "w1";
@@ -53,6 +56,7 @@ const RFB_VERSION: &[u8; 12] = b"RFB 003.008\n";
 const RFB_RAW: i32 = 0;
 const MAX_BODY: usize = 256 << 20;
 const DEFAULT_TIMEOUT_SECS: u64 = 900;
+const TRANSCRIPT_POLL: Duration = Duration::from_millis(500);
 
 /// The edge's signing key and the box it signs for.
 struct Edge {
@@ -296,6 +300,7 @@ async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
         "upload" => upload(&edge, &serve, args).await?,
         "restore" => restore(&edge, &serve, args).await?,
         "mcp" => mcp(&edge, &serve, args).await?,
+        "turn" => return turn(&edge, &serve, args).await,
         _ => {
             eprintln!("{USAGE}");
             return Ok(2);
@@ -818,6 +823,82 @@ async fn mcp(edge: &Edge, serve: &str, args: &mut Args) -> Result<(), String> {
         return Err(format!("{method} answered an error"));
     }
     Ok(())
+}
+
+async fn turn(edge: &Edge, serve: &str, args: &mut Args) -> Result<u8, String> {
+    let text = args.need("--text")?;
+    let model = args.take("--model").unwrap_or_default();
+    let mut agents = AgentsClient::new(channel(serve).await?);
+    let agent = agents
+        .create(edge.signed(pb::CreateAgentRequest {
+            name: "boxgate".into(),
+            client_nonce: uuid::Uuid::new_v4().to_string(),
+            main_model: model,
+        })?)
+        .await
+        .map_err(|e| format!("create agent: {e}"))?
+        .into_inner();
+    let turn_id = agents
+        .send(edge.signed(pb::SendRequest {
+            agent_id: agent.id.clone(),
+            text,
+            attachments: Vec::new(),
+            client_nonce: uuid::Uuid::new_v4().to_string(),
+        })?)
+        .await
+        .map_err(|e| format!("send: {e}"))?
+        .into_inner()
+        .turn_id;
+    println!(
+        "{}",
+        json!({"agent": agent.id, "main_model": agent.main_model, "turn": turn_id})
+    );
+    let mut after = 0;
+    loop {
+        let page = agents
+            .transcript(edge.signed(pb::TranscriptRequest {
+                agent_id: agent.id.clone(),
+                after_seq: after,
+                limit: 100,
+            })?)
+            .await
+            .map_err(|e| format!("transcript: {e}"))?
+            .into_inner();
+        for entry in page.entries {
+            after = entry.seq;
+            let line = match entry.body {
+                Some(Body::Text(t)) => json!({"text": t.text, "subagent": t.subagent}),
+                Some(Body::ToolCall(c)) => {
+                    json!({"tool_call": c.name, "arguments": c.arguments_json, "subagent": c.subagent})
+                }
+                Some(Body::ToolResult(r)) => {
+                    json!({"tool_result": r.text.chars().take(400).collect::<String>(), "is_error": r.is_error})
+                }
+                Some(Body::Approval(a)) => {
+                    println!("{}", json!({"approval": a.summary, "kind": a.kind}));
+                    return Ok(1);
+                }
+                Some(Body::TurnEnd(end)) if entry.turn_id == turn_id => {
+                    let models = end.usage.map(|u| {
+                        u.models
+                            .iter()
+                            .map(|m| json!({"model": m.model, "calls": m.calls}))
+                            .collect::<Vec<_>>()
+                    });
+                    println!(
+                        "{}",
+                        json!({"turn_end": end.ok, "error": end.error, "models": models})
+                    );
+                    return Ok(u8::from(!end.ok));
+                }
+                _ => continue,
+            };
+            println!("{line}");
+        }
+        if !page.has_more {
+            tokio::time::sleep(TRANSCRIPT_POLL).await;
+        }
+    }
 }
 
 async fn post_mcp(
