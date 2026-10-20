@@ -803,9 +803,13 @@ impl Browser {
             .position(|t| t.id == id)
             .ok_or_else(|| format!("new window {id} is not listed"))?;
         if let Some(startup) = self.startup.lock().await.take()
-            && targets
+            && let [only] = targets
                 .iter()
-                .any(|t| t.id == startup && t.url.starts_with(NEW_TAB))
+                .filter(|t| t.is_tab() && t.id != id)
+                .collect::<Vec<_>>()
+                .as_slice()
+            && only.id == startup
+            && only.url.starts_with(NEW_TAB)
         {
             let _ = browser
                 .call("Target.closeTarget", json!({"targetId": startup}))
@@ -2213,7 +2217,7 @@ pub(super) mod tests {
     async fn startup_chrome(
         delay: Duration,
         before: (&str, &str),
-        after: (&str, &str),
+        after: &[(&str, &str)],
     ) -> (u16, Arc<std::sync::Mutex<Vec<(String, Value)>>>) {
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
         socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
@@ -2223,7 +2227,7 @@ pub(super) mod tests {
         let tab = |(id, url): (&str, &str)| json!({"id": id, "type": "page", "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/{id}")});
         let lists = [
             json!([tab(before)]).to_string(),
-            json!([tab(after), tab(("1", AGENT_PAGE))]).to_string(),
+            Value::from_iter(after.iter().copied().chain([("1", AGENT_PAGE)]).map(tab)).to_string(),
         ];
         let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
             .to_string();
@@ -2303,16 +2307,17 @@ pub(super) mod tests {
     async fn the_first_agent_window_closes_the_new_tab_window_of_a_chrome_the_toolhost_started() {
         let ntp = ("S", "chrome://newtab/");
         let cases = [
-            (ntp, ntp, true, true),
+            (ntp, &[ntp][..], true, true),
             (
                 ("S", "https://user.test/"),
-                ("S", "https://user.test/"),
+                &[("S", "https://user.test/")],
                 true,
                 false,
             ),
-            (ntp, ntp, false, false),
-            (ntp, ("U", "chrome://newtab/"), true, false),
-            (ntp, ("S", "https://user.test/"), true, false),
+            (ntp, &[ntp], false, false),
+            (ntp, &[("U", "chrome://newtab/")], true, false),
+            (ntp, &[("S", "https://user.test/")], true, false),
+            (ntp, &[ntp, ("X", "https://user.test/")], true, false),
         ];
         futures_util::future::join_all(cases.into_iter().map(
             |(before, after, launch, closed)| async move {
