@@ -51,6 +51,9 @@ type StateAgents interface {
 	RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 }
 
+// agentAuth stamps the credential of the agent a call goes to on its context, afresh for each call.
+type agentAuth func(ctx context.Context) context.Context
+
 type chunk struct {
 	ID   string `json:"id"`
 	Size uint64 `json:"size"`
@@ -170,7 +173,7 @@ func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *st
 }
 
 // save snapshots the state of the agent at ep, a machine of image, and uploads the chunks the user's store lacks.
-func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint, image string, parked bool, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+func (l *stateLayer) save(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, image string, parked bool, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
 	unlock := l.lock(p.box)
 	defer unlock()
 	// The GC sweep takes this lock exclusively, so no save is between its index read and its commit.
@@ -186,10 +189,10 @@ func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint
 		return nil, err
 	}
 	stateKey := &agentv1.StateKey{Key: key.Secret, KeyId: key.ID}
-	rec, err := l.snapshot(ctx, p, ep, stateKey, consistency, h.Latest, progress)
+	rec, err := l.snapshot(ctx, auth, p, ep, stateKey, consistency, h.Latest, progress)
 	if h.Latest != "" && status.Code(err) == codes.InvalidArgument {
 		log.WithFunc("boxes.stateLayer.save").WithField("box", p.box).Warnf(ctx, "agent refused a plan on parent %s, planning without it: %v", h.Latest, err)
-		rec, err = l.snapshot(ctx, p, ep, stateKey, consistency, "", progress)
+		rec, err = l.snapshot(ctx, auth, p, ep, stateKey, consistency, "", progress)
 	}
 	if err != nil {
 		return nil, err
@@ -207,8 +210,8 @@ func (l *stateLayer) save(ctx context.Context, p statePath, ep machines.Endpoint
 	return rec, nil
 }
 
-func (l *stateLayer) snapshot(ctx context.Context, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	plan, err := l.agents.Plan(ctx, p.box, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent})
+func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
+	plan, err := l.agents.Plan(auth(ctx), p.box, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent})
 	if err != nil {
 		return nil, fmt.Errorf("plan: %w", err)
 	}
@@ -236,14 +239,14 @@ func (l *stateLayer) snapshot(ctx context.Context, p statePath, ep machines.Endp
 		rec.NewChunks++
 		rec.UploadedBytes += c.GetSize()
 	}
-	if err = l.upload(ctx, p, ep, rec, key, missing, progress); err != nil {
+	if err = l.upload(ctx, auth, p, ep, rec, key, missing, progress); err != nil {
 		return nil, err
 	}
 	return rec, nil
 }
 
 // upload sends missing in batches presigned just before each call, and the manifest with the last batch.
-func (l *stateLayer) upload(ctx context.Context, p statePath, ep machines.Endpoint, rec *snapshotRecord, key *agentv1.StateKey, missing []chunk, progress dialer.ProgressFunc) error {
+func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, rec *snapshotRecord, key *agentv1.StateKey, missing []chunk, progress dialer.ProgressFunc) error {
 	var sent uint64
 	all := batches(missing)
 	for i, batch := range all {
@@ -264,7 +267,7 @@ func (l *stateLayer) upload(ctx context.Context, p statePath, ep machines.Endpoi
 			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
 		}
 		offset, size := sent, batchBytes(batch)
-		final, err := l.agents.Upload(ctx, p.box, ep, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
+		final, err := l.agents.Upload(auth(ctx), p.box, ep, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
 			p.DoneBytes += offset
 			p.TotalBytes = rec.UploadedBytes
 			p.Finished = p.Finished && last
