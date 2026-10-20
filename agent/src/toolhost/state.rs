@@ -316,7 +316,18 @@ pub async fn swap(args: Value) -> Result<String, String> {
 }
 
 fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
-    let trash = a.root.join(format!("{TRASH_PREFIX}{}", std::process::id()));
+    for stale in fs::read_dir(&a.root).into_iter().flatten().flatten() {
+        if stale
+            .file_name()
+            .to_string_lossy()
+            .starts_with(TRASH_PREFIX)
+        {
+            let _ = remove_tree(&stale.path());
+        }
+    }
+    let trash = a
+        .root
+        .join(format!("{TRASH_PREFIX}{}", uuid::Uuid::new_v4().simple()));
     fs::create_dir_all(&trash).map_err(|e| format!("mkdir {}: {e}", trash.display()))?;
     let mut moved = Vec::new();
     let swapped = swap_moves(a, &trash, &mut moved);
@@ -327,7 +338,12 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
         let _ = fs::remove_dir(&trash);
     }
     let removed = swapped?;
-    remove_tree(&trash).map_err(|e| format!("remove {}: {e}", trash.display()))?;
+    if let Err(e) = remove_tree(&trash) {
+        eprintln!(
+            "toolhost: state_swap: leave {} for the next swap: {e}",
+            trash.display()
+        );
+    }
     let _ = remove_tree(&a.staging);
     Ok(format!(
         "swapped {} entries, removed {removed}",
