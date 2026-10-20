@@ -33,7 +33,8 @@ const USAGE: &str =
                                          call Session.FillCredential
   exec [--tty RxC] [--resize-after MS --resize RxC] [--int-after MS] -- COMMAND
                                          run COMMAND through Session.Exec; stdin is forwarded
-  snap --out PNG (--screen | --tcp ADDR) read one full RFB frame and write it as a PNG
+  snap --out PNG (--screen | --tcp ADDR) [--settle MS]
+                                         read one full RFB frame plus the updates of MS more, and write it as a PNG
   store --listen ADDR --dir DIR          serve PUT and GET of DIR/<name> for presigned URLs
   plan [--quiesced] --out FILE           call State.Plan and save the response
   upload --plan FILE --dir DIR --url URL call State.Upload for the chunks DIR lacks
@@ -226,15 +227,21 @@ async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
         "exec" => return exec(&edge, &serve, args).await,
         "snap" => {
             let out = PathBuf::from(args.need("--out")?);
+            let settle = args
+                .take("--settle")
+                .map(|s| s.parse::<u64>())
+                .transpose()
+                .map_err(|e| format!("--settle: {e}"))?
+                .map_or(Duration::ZERO, Duration::from_millis);
             let (w, h, name) = if args.has("--screen") {
                 let (mut rd, mut wr) = screen_pipe(&edge, &serve).await?;
-                snap(&mut rd, &mut wr, &out).await?
+                snap(&mut rd, &mut wr, &out, settle).await?
             } else {
                 let tcp = TcpStream::connect(args.need("--tcp")?)
                     .await
                     .map_err(|e| format!("connect: {e}"))?;
                 let (mut rd, mut wr) = tcp.into_split();
-                snap(&mut rd, &mut wr, &out).await?
+                snap(&mut rd, &mut wr, &out, settle).await?
             };
             println!(
                 "{}",
@@ -447,8 +454,73 @@ async fn screen_pipe(
     Ok((down_r, up_w))
 }
 
+/// An RFB frame as RGBA, with the pixels the server has sent.
+struct Frame {
+    w: usize,
+    h: usize,
+    rgba: Vec<u8>,
+    seen: Vec<bool>,
+    covered: usize,
+}
+
+impl Frame {
+    fn new(w: usize, h: usize) -> Self {
+        Self {
+            w,
+            h,
+            rgba: vec![0; w * h * 4],
+            seen: vec![false; w * h],
+            covered: 0,
+        }
+    }
+
+    /// Reads one FramebufferUpdate of Raw rectangles into the frame.
+    async fn update<R: tokio::io::AsyncRead + Unpin>(&mut self, rd: &mut R) -> Result<(), String> {
+        let io = |e: std::io::Error| format!("rfb: {e}");
+        let kind = rd.read_u8().await.map_err(io)?;
+        if kind != 0 {
+            return Err(format!("unexpected server message {kind} before the frame"));
+        }
+        rd.read_u8().await.map_err(io)?;
+        let rects = rd.read_u16().await.map_err(io)?;
+        for _ in 0..rects {
+            let x = usize::from(rd.read_u16().await.map_err(io)?);
+            let y = usize::from(rd.read_u16().await.map_err(io)?);
+            let rw = usize::from(rd.read_u16().await.map_err(io)?);
+            let rh = usize::from(rd.read_u16().await.map_err(io)?);
+            let enc = rd.read_i32().await.map_err(io)?;
+            if enc != RFB_RAW {
+                return Err(format!("server sent encoding {enc}; asked for Raw only"));
+            }
+            let mut px = vec![0; rw * rh * 4];
+            rd.read_exact(&mut px).await.map_err(io)?;
+            for row in (0..rh).filter(|r| y + r < self.h) {
+                for col in (0..rw).filter(|c| x + c < self.w) {
+                    let (sx, at) = ((row * rw + col) * 4, (y + row) * self.w + x + col);
+                    self.rgba[at * 4..at * 4 + 4].copy_from_slice(&[
+                        px[sx + 2],
+                        px[sx + 1],
+                        px[sx],
+                        255,
+                    ]);
+                    if !self.seen[at] {
+                        self.seen[at] = true;
+                        self.covered += 1;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Runs an RFB 3.8 handshake with security None, asks for one full Raw frame and writes it as a PNG.
-async fn snap<R, W>(rd: &mut R, wr: &mut W, out: &Path) -> Result<(u16, u16, String), String>
+async fn snap<R, W>(
+    rd: &mut R,
+    wr: &mut W,
+    out: &Path,
+    settle: Duration,
+) -> Result<(u16, u16, String), String>
 where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
@@ -489,44 +561,21 @@ where
     request.extend_from_slice(&width.to_be_bytes());
     request.extend_from_slice(&height.to_be_bytes());
     wr.write_all(&request).await.map_err(io)?;
-    let (w, h) = (usize::from(width), usize::from(height));
-    let mut rgba = vec![0u8; w * h * 4];
-    let mut seen = vec![false; w * h];
-    let mut covered = 0usize;
-    while covered < w * h {
-        let kind = rd.read_u8().await.map_err(io)?;
-        if kind != 0 {
-            return Err(format!("unexpected server message {kind} before the frame"));
-        }
-        rd.read_u8().await.map_err(io)?;
-        let rects = rd.read_u16().await.map_err(io)?;
-        for _ in 0..rects {
-            let x = usize::from(rd.read_u16().await.map_err(io)?);
-            let y = usize::from(rd.read_u16().await.map_err(io)?);
-            let rw = usize::from(rd.read_u16().await.map_err(io)?);
-            let rh = usize::from(rd.read_u16().await.map_err(io)?);
-            let enc = rd.read_i32().await.map_err(io)?;
-            if enc != RFB_RAW {
-                return Err(format!("server sent encoding {enc}; asked for Raw only"));
-            }
-            let mut px = vec![0; rw * rh * 4];
-            rd.read_exact(&mut px).await.map_err(io)?;
-            for row in (0..rh).filter(|r| y + r < h) {
-                for col in (0..rw).filter(|c| x + c < w) {
-                    let (sx, at) = ((row * rw + col) * 4, (y + row) * w + x + col);
-                    let dx = at * 4;
-                    rgba[dx] = px[sx + 2];
-                    rgba[dx + 1] = px[sx + 1];
-                    rgba[dx + 2] = px[sx];
-                    rgba[dx + 3] = 255;
-                    if !seen[at] {
-                        seen[at] = true;
-                        covered += 1;
-                    }
-                }
-            }
+    let mut frame = Frame::new(usize::from(width), usize::from(height));
+    while frame.covered < frame.seen.len() {
+        frame.update(rd).await?;
+    }
+    // a server can send its first frame before it grabbed the screen, as TightVNC does
+    let deadline = tokio::time::Instant::now() + settle;
+    request[1] = 1;
+    while tokio::time::Instant::now() < deadline {
+        wr.write_all(&request).await.map_err(io)?;
+        match tokio::time::timeout_at(deadline, frame.update(rd)).await {
+            Ok(updated) => updated?,
+            Err(_) => break,
         }
     }
+    let rgba = frame.rgba;
     let file = std::fs::File::create(out).map_err(|e| format!("create {}: {e}", out.display()))?;
     let mut encoder = png::Encoder::new(
         std::io::BufWriter::new(file),
