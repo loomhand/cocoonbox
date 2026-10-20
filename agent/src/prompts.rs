@@ -1,5 +1,7 @@
 //! System prompts for the main agent and the computer subagent.
 
+use serde_json::Value;
+
 use crate::config::Automation;
 
 /// Where the image lists the box's API keys, one `NAME=placeholder;hosts;how` record per line.
@@ -93,6 +95,10 @@ Loop: observe, act, verify.
 - Say little between tool calls.
 - Finish with a plain-text report: what you did, what the screen shows now, and anything that blocked you.";
 
+const LINUX_DESKTOP: &str = "an Ubuntu 24.04 desktop (XFCE, 1280x800)";
+const LINUX_MACHINE: &str = "an Ubuntu 24.04 XFCE machine (screen 1280x800)";
+const XFCE_HINT: &str = " The Applications menu is the button at the left end of the top panel; a launcher dock sits at the bottom.";
+
 const IMAGE_POINTS: &str = "Coordinates are pixels of the latest screenshot image as you see it, origin at the top-left; the box maps them to the screen, so never scale them yourself.";
 
 /// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
@@ -105,13 +111,15 @@ const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; li
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
 /// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a box that
-/// runs GUI plans adds the [`ROUTING`] and the image's `routing_extra`.
+/// runs GUI plans adds the [`ROUTING`] and the image's `routing_extra`. `machine` replaces the Ubuntu desktop of a
+/// box that is not Linux.
 pub fn main(
     model: &str,
     computer_model: &str,
     vision: bool,
     automation: Automation,
     routing_extra: &[String],
+    machine: Option<&str>,
 ) -> String {
     let eyes = if vision {
         "You can also call screenshot to look at the screen yourself."
@@ -127,6 +135,9 @@ pub fn main(
         .replace("{model}", model)
         .replace("{computer_model}", computer_model)
         .replace("{eyes}", eyes);
+    if let (Automation::Desk, Some(machine)) = (automation, machine) {
+        prompt = prompt.replace(LINUX_DESKTOP, &format!("a {machine} desktop"));
+    }
     match automation {
         Automation::Minimal | Automation::Android => {}
         Automation::Desk => {
@@ -142,13 +153,29 @@ pub fn main(
 }
 
 /// Renders the computer subagent's prompt: observe, act, verify on the phone or on the desktop, whose x,y shuttle maps.
-pub fn computer(model: &str, automation: Automation) -> String {
+/// `machine` replaces the Ubuntu desktop of a box that is not Linux.
+pub fn computer(model: &str, automation: Automation, machine: Option<&str>) -> String {
     if automation == Automation::Android {
         return ANDROID_COMPUTER.replace("{model}", model);
     }
-    COMPUTER
+    let prompt = COMPUTER
         .replace("{model}", model)
-        .replace("{points}", IMAGE_POINTS)
+        .replace("{points}", IMAGE_POINTS);
+    match machine {
+        Some(machine) => prompt
+            .replace(LINUX_MACHINE, &format!("a {machine} machine"))
+            .replace(XFCE_HINT, ""),
+        None => prompt,
+    }
+}
+
+/// The box's OS and desktop from its `desktop_info`, such as `Ubuntu 24.04 with the XFCE desktop`; none without an OS.
+pub fn machine(info: &Value) -> Option<String> {
+    let os = info["os"].as_str()?;
+    Some(match info["desktop"].as_str() {
+        Some(desktop) => format!("{os} with the {desktop} desktop"),
+        None => os.to_owned(),
+    })
 }
 
 /// Renders the line that names the box's API keys from the records of [`KEYS_FILE`]; None without keys.
@@ -189,6 +216,8 @@ pub fn cap_report(cap: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     #[test]
@@ -199,6 +228,7 @@ mod tests {
             false,
             Automation::Minimal,
             &[],
+            None,
         );
         assert!(p.starts_with(
             "You are deepseek/deepseek-v4.1-flash, served through the cocoonbox gateway."
@@ -221,7 +251,8 @@ mod tests {
                 "x",
                 true,
                 Automation::Desk,
-                &[]
+                &[],
+                None
             )
             .contains("call screenshot")
         );
@@ -229,7 +260,7 @@ mod tests {
 
     #[test]
     fn main_prompt_on_a_box_without_a_guide_names_only_shell_and_files() {
-        let p = main("m", "c", true, Automation::Minimal, &[]);
+        let p = main("m", "c", true, Automation::Minimal, &[], None);
         assert!(p.contains("no desktop or browser tools"), "{p}");
         for tool in [
             "browser_",
@@ -243,7 +274,7 @@ mod tests {
 
     #[test]
     fn main_prompt_on_a_desk_box_ends_with_its_routing() {
-        let p = main("m", "c", false, Automation::Desk, &[]);
+        let p = main("m", "c", false, Automation::Desk, &[], None);
         assert!(p.contains("delegate_computer hands one task"), "{p}");
         assert!(p.ends_with(ROUTING), "{p}");
         assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
@@ -267,12 +298,12 @@ mod tests {
     #[test]
     fn main_prompt_on_a_desk_box_ends_with_the_images_routing_extra() {
         let extra = ["Use x_run for x.".to_owned()];
-        let p = main("m", "c", false, Automation::Desk, &extra);
+        let p = main("m", "c", false, Automation::Desk, &extra, None);
         assert!(
             p.ends_with(&format!("{ROUTING}\n\nUse x_run for x.")),
             "{p}"
         );
-        assert!(!main("m", "c", false, Automation::Minimal, &extra).contains("x_run"));
+        assert!(!main("m", "c", false, Automation::Minimal, &extra, None).contains("x_run"));
     }
 
     #[test]
@@ -318,7 +349,7 @@ mod tests {
 
     #[test]
     fn computer_prompt_names_the_serving_model() {
-        let p = computer("anthropic/claude-sonnet-5", Automation::Desk);
+        let p = computer("anthropic/claude-sonnet-5", Automation::Desk, None);
         assert!(p.starts_with(
             "You are anthropic/claude-sonnet-5, served through the cocoonbox gateway."
         ));
@@ -327,9 +358,59 @@ mod tests {
 
     #[test]
     fn computer_prompt_on_a_desk_box_takes_x_y_in_screenshot_pixels() {
-        let desk = computer("m", Automation::Desk);
+        let desk = computer("m", Automation::Desk, None);
         assert!(desk.contains(IMAGE_POINTS), "{desk}");
         assert!(!desk.contains("1280x800 screenshot"), "{desk}");
         assert!(!desk.contains('{'), "unrendered placeholder: {desk}");
+    }
+
+    #[test]
+    fn a_linux_box_keeps_the_ubuntu_prompts_byte_for_byte() {
+        let main = main("m", "c", false, Automation::Desk, &[], None);
+        assert!(main.contains("You are the agent that lives in the user's cloud computer: an Ubuntu 24.04 desktop (XFCE, 1280x800) that keeps its disk between conversations. You act for the user with your tools and report back."), "{main}");
+        let computer = computer("m", Automation::Desk, None);
+        assert!(computer.contains("You operate the graphical desktop of an Ubuntu 24.04 XFCE machine (screen 1280x800) on behalf of another agent. You get one task. Do that task, then stop and report. The Applications menu is the button at the left end of the top panel; a launcher dock sits at the bottom."), "{computer}");
+        assert_eq!(
+            computer,
+            COMPUTER
+                .replace("{model}", "m")
+                .replace("{points}", IMAGE_POINTS)
+        );
+    }
+
+    #[test]
+    fn a_windows_or_macos_box_names_its_os_and_never_ubuntu() {
+        for os in ["Windows 11 25H2", "macOS 26.5"] {
+            let main = main("m", "c", false, Automation::Desk, &[], Some(os));
+            assert!(
+                main.contains(&format!(
+                    "cloud computer: a {os} desktop that keeps its disk"
+                )),
+                "{main}"
+            );
+            let computer = computer("m", Automation::Desk, Some(os));
+            assert!(
+                computer.contains(&format!("graphical desktop of a {os} machine on behalf")),
+                "{computer}"
+            );
+            for p in [main, computer] {
+                for linux in ["Ubuntu", "XFCE", "Applications menu"] {
+                    assert!(!p.contains(linux), "{os} prompt says {linux}: {p}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_machine_is_the_os_and_desktop_the_box_reports() {
+        assert_eq!(
+            machine(&json!({"os": "Windows 11 25H2", "width": 1280})).as_deref(),
+            Some("Windows 11 25H2")
+        );
+        assert_eq!(
+            machine(&json!({"os": "Ubuntu 24.04", "desktop": "XFCE"})).as_deref(),
+            Some("Ubuntu 24.04 with the XFCE desktop")
+        );
+        assert_eq!(machine(&Value::Null), None);
     }
 }

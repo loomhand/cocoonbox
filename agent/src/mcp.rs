@@ -967,11 +967,8 @@ fn with_routing(mut text: String, extra: &[String]) -> (String, Vec<usize>) {
 }
 
 fn machine_line(info: &Value) -> String {
-    let os = info["os"].as_str().unwrap_or("Linux");
-    let mut line = format!("These tools act on a cloud computer: {os}");
-    if let Some(desktop) = info["desktop"].as_str() {
-        let _ = write!(line, " with the {desktop} desktop");
-    }
+    let machine = prompts::machine(info).unwrap_or_else(|| "Linux".to_owned());
+    let mut line = format!("These tools act on a cloud computer: {machine}");
     if let (Some(w), Some(h)) = (info["width"].as_u64(), info["height"].as_u64()) {
         let _ = write!(line, " at {w}x{h}");
     }
