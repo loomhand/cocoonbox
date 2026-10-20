@@ -16,7 +16,7 @@ pub const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
 
 const READ_BLOCK: usize = 1 << 20;
 const TRASH_PREFIX: &str = ".cb-trash-";
-const FAILED_MARKER: &str = ".cb-restore-failed";
+const KEEP_MARKER: &str = ".cb-keep";
 const PLACE_TRIES: u32 = 100;
 
 /// A tree to walk, named in the manifest.
@@ -322,15 +322,15 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
             .file_name()
             .to_string_lossy()
             .starts_with(TRASH_PREFIX)
-            && !stale.path().join(FAILED_MARKER).exists()
+            && !stale.path().join(KEEP_MARKER).exists()
         {
             let _ = remove_tree(&stale.path());
         }
     }
-    let trash = a
-        .root
-        .join(format!("{TRASH_PREFIX}{}", uuid::Uuid::new_v4().simple()));
-    fs::create_dir_all(&trash).map_err(|e| format!("mkdir {}: {e}", trash.display()))?;
+    let trash = new_trash(
+        &a.root,
+        &format!("{TRASH_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+    )?;
     let mut moved = Vec::new();
     let removed = match swap_moves(a, &trash, &mut moved) {
         Ok(removed) => removed,
@@ -341,6 +341,7 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
             });
         }
     };
+    let _ = fs::remove_file(trash.join(KEEP_MARKER));
     if let Err(e) = remove_tree(&trash) {
         eprintln!(
             "toolhost: state_swap: leave {} for the next swap: {e}",
@@ -354,6 +355,16 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
     ))
 }
 
+fn new_trash(root: &Path, name: &str) -> Result<PathBuf, String> {
+    let trash = root.join(name);
+    fs::create_dir_all(&trash).map_err(|e| format!("mkdir {}: {e}", trash.display()))?;
+    if let Err(e) = fs::write(trash.join(KEEP_MARKER), b"") {
+        let _ = fs::remove_dir(&trash);
+        return Err(format!("mark {}: {e}", trash.display()));
+    }
+    Ok(trash)
+}
+
 fn roll_back(trash: &Path, moved: &[(PathBuf, PathBuf)]) -> Option<String> {
     let mut stuck = 0;
     for (from, to) in moved.iter().rev() {
@@ -362,15 +373,12 @@ fn roll_back(trash: &Path, moved: &[(PathBuf, PathBuf)]) -> Option<String> {
         }
     }
     if stuck == 0 {
+        let _ = fs::remove_file(trash.join(KEEP_MARKER));
         let _ = fs::remove_dir(trash);
         return None;
     }
-    let kept = match fs::write(trash.join(FAILED_MARKER), b"") {
-        Ok(()) => "kept from later sweeps",
-        Err(_) => "not marked, so the next swap removes them",
-    };
     Some(format!(
-        "{stuck} entries could not move back and stay in {}, {kept}",
+        "{stuck} entries could not move back and stay in {}, kept from later sweeps",
         trash.display()
     ))
 }
@@ -700,18 +708,19 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn an_entry_that_cannot_move_back_survives_the_next_swap_when_the_trash_cannot_move_either()
-     {
+    async fn an_entry_that_cannot_move_back_survives_the_next_swap_when_nothing_can_be_written() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
-        let trash = root.join(format!("{TRASH_PREFIX}t"));
+        let trash = new_trash(&root, &format!("{TRASH_PREFIX}t")).unwrap();
         fs::create_dir_all(trash.join("docs")).unwrap();
         fs::write(trash.join("docs/original"), b"o").unwrap();
         fs::create_dir_all(root.join("docs")).unwrap();
         fs::write(root.join("docs/recreated"), b"r").unwrap();
         let moved = [(root.join("docs"), trash.join("docs"))];
         sys::set_mode(&root, 0o555).unwrap();
+        sys::set_mode(&trash, 0o555).unwrap();
         let kept = roll_back(&trash, &moved);
+        sys::set_mode(&trash, 0o755).unwrap();
         sys::set_mode(&root, 0o755).unwrap();
         assert!(kept.is_some());
         let staging = root.join(".cb-restore");
@@ -725,7 +734,7 @@ mod tests {
     async fn an_entry_that_cannot_move_back_survives_the_next_swap() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
-        let trash = root.join(format!("{TRASH_PREFIX}t"));
+        let trash = new_trash(&root, &format!("{TRASH_PREFIX}t")).unwrap();
         fs::create_dir_all(trash.join("docs")).unwrap();
         fs::write(trash.join("docs/original"), b"o").unwrap();
         fs::create_dir_all(root.join("docs")).unwrap();
@@ -733,7 +742,6 @@ mod tests {
         let moved = [(root.join("docs"), trash.join("docs"))];
         let kept = roll_back(&trash, &moved).expect("a rename back fails");
         assert!(kept.contains(&*trash.to_string_lossy()), "{kept}");
-        assert!(trash.join(FAILED_MARKER).exists());
         let staging = root.join(".cb-restore");
         fs::create_dir_all(staging.join("docs")).unwrap();
         fs::create_dir_all(staging.join(format!("{TRASH_PREFIX}t"))).unwrap();
@@ -742,6 +750,40 @@ mod tests {
         });
         swap(args).await.unwrap();
         assert!(trash.join("docs/original").exists());
+    }
+
+    #[test]
+    fn a_trash_is_marked_before_it_takes_anything_and_an_unmarkable_one_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let trash = new_trash(&root, &format!("{TRASH_PREFIX}a")).unwrap();
+        assert_eq!(
+            fs::read_dir(&trash)
+                .unwrap()
+                .map(|e| e.unwrap().file_name())
+                .collect::<Vec<_>>(),
+            [KEEP_MARKER]
+        );
+        let blocked = format!("{TRASH_PREFIX}b");
+        fs::create_dir_all(root.join(&blocked).join(KEEP_MARKER)).unwrap();
+        let err = new_trash(&root, &blocked).unwrap_err();
+        assert!(err.starts_with("mark "), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_swap_that_succeeds_leaves_no_kept_trash() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let staging = root.join(".cb-restore");
+        fs::create_dir_all(staging.join("docs")).unwrap();
+        fs::write(root.join("stray"), b"x").unwrap();
+        let args = serde_json::json!({"root": root, "staging": staging, "names": ["docs"]});
+        swap(args).await.unwrap();
+        let names: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["docs"]);
     }
 
     #[tokio::test]
