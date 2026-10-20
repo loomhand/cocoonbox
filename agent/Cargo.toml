@@ -64,7 +64,7 @@ tonic-prost-build = "0.14"
 
 [dev-dependencies]
 tempfile = "3"
-tokio = { version = "1", features = ["test-util"] }
+tokio = { version = "1", features = ["io-std", "test-util"] }
 
 [lints.clippy]
 unwrap_used = "deny"
