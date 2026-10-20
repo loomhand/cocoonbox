@@ -341,12 +341,41 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
         }
         fs::rename(a.staging.join(name), &target).map_err(|e| format!("swap in {name}: {e}"))?;
     }
-    fs::remove_dir_all(&trash).map_err(|e| format!("remove {}: {e}", trash.display()))?;
-    let _ = fs::remove_dir_all(&a.staging);
+    remove_tree(&trash).map_err(|e| format!("remove {}: {e}", trash.display()))?;
+    let _ = remove_tree(&a.staging);
     Ok(format!(
         "swapped {} entries, removed {removed}",
         a.names.len()
     ))
+}
+
+/// Removes the tree at `path`; directories without owner write, such as a Go module cache, get it first.
+fn remove_tree(path: &Path) -> std::io::Result<()> {
+    match fs::remove_dir_all(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            open_up(path);
+            fs::remove_dir_all(path)
+        }
+        other => other,
+    }
+}
+
+fn open_up(dir: &Path) {
+    let Ok(meta) = fs::symlink_metadata(dir) else {
+        return;
+    };
+    if !meta.is_dir() {
+        return;
+    }
+    let mode = meta.permissions().mode();
+    if mode & 0o700 != 0o700 {
+        let _ = fs::set_permissions(dir, fs::Permissions::from_mode(mode | 0o700));
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            open_up(&entry.path());
+        }
+    }
 }
 
 /// `state_place`: renames `staging` to `dir/name`, or `name-2`, `name-3`, ... when that exists,
@@ -583,5 +612,31 @@ mod tests {
         assert_eq!(names, [".cache", "docs", "f"]);
         assert!(root.join("docs/new").exists());
         assert!(!root.join("docs/stale").exists());
+    }
+
+    #[tokio::test]
+    async fn swap_removes_a_replaced_tree_that_holds_read_only_dirs() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let staging = root.join(".cb-restore");
+        let module = root.join("go/pkg/mod/example.com/m@v1.0.0");
+        fs::create_dir_all(&module).unwrap();
+        fs::write(module.join("go.mod"), b"module m").unwrap();
+        for d in [module.as_path(), module.parent().unwrap()] {
+            fs::set_permissions(d, fs::Permissions::from_mode(0o555)).unwrap();
+        }
+        fs::create_dir_all(staging.join("go")).unwrap();
+        fs::write(staging.join("go/new"), b"n").unwrap();
+        let args =
+            serde_json::json!({"root": root, "staging": staging, "names": ["go"], "keep": []});
+        swap(args).await.unwrap();
+        let names: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["go"]);
+        assert!(root.join("go/new").exists());
     }
 }
