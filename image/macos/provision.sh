@@ -86,8 +86,8 @@ CB_HOME=/Users/$BOX_USER
 CB_WORKSPACE=/workspace
 EOF
 	umask 022
-	chown root:"$AGENT_GROUP" "$ETC/agent.env.tmp"
-	chmod 0640 "$ETC/agent.env.tmp"
+	chown _cbagent:wheel "$ETC/agent.env.tmp"
+	chmod 0600 "$ETC/agent.env.tmp"
 	mv -f "$ETC/agent.env.tmp" "$ETC/agent.env"
 	install -m 0644 "$SRC/rootfs/Library/LaunchDaemons/$DAEMON.plist" "/Library/LaunchDaemons/$DAEMON.plist"
 	launchctl bootout "system/$DAEMON" 2>/dev/null || true
@@ -164,7 +164,8 @@ check() {
 	[ -d /workspace ] && [ -d /run/cocoonbox ]
 	[ "$(stat -f %Su:%Sg:%Mp%Lp /run/cocoonbox)" = "$BOX_USER:$AGENT_GROUP:2750" ]
 	[ "$(stat -f %Su:%Lp "$STATE_DIR")" = _cbagent:700 ]
-	[ "$(stat -f %Sg:%Lp "$ETC/agent.env")" = "$AGENT_GROUP:640" ]
+	[ "$(stat -f %Su:%Sg:%Lp "$ETC/agent.env")" = _cbagent:wheel:600 ]
+	[ -z "$(sudo -u "$BOX_USER" sh -c "test -r $ETC/agent.env && echo readable")" ]
 	dseditgroup -o checkmember -m "$BOX_USER" "$AGENT_GROUP" >/dev/null
 	launchctl print "system/$DAEMON" | grep -q 'state = running'
 	/usr/local/bin/cocoonbox-agent version
