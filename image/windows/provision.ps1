@@ -65,7 +65,7 @@ function Fetch {
 }
 
 function System {
-    Log 'the clock in UTC, as the RTC is; no hibernation, boot repair or toasts; developer mode allows unprivileged symlinks'
+    Log 'the clock in UTC, as the RTC is; no hibernation, boot repair, toasts or automatic updates; developer mode allows unprivileged symlinks'
     Set-TimeZone -Id UTC
     if ($env:NOW_UTC) { Set-Date -Date ([DateTime]::Parse($env:NOW_UTC).ToUniversalTime()) | Out-Null }
     # fast startup turns a shutdown into a hibernation, which a cold start under a new Cloud Hypervisor cannot resume;
@@ -80,6 +80,9 @@ function System {
     $security = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications'
     New-Item -Force -Path $security | Out-Null
     New-ItemProperty -Force -Path $security -Name DisableNotifications -PropertyType DWord -Value 1 | Out-Null
+    $updates = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
+    New-Item -Force -Path $updates | Out-Null
+    New-ItemProperty -Force -Path $updates -Name NoAutoUpdate -PropertyType DWord -Value 1 | Out-Null
     New-Item -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' | Out-Null
     New-ItemProperty -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 | Out-Null
     $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
