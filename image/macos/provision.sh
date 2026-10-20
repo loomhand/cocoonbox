@@ -140,9 +140,11 @@ EOF
 }
 
 session() {
-	log "autologin of $BOX_USER and text substitution off"
+	log "autologin of $BOX_USER to an unlocked screen, which never locks, and text substitution off"
 	perl -e 'my @k=(0x7D,0x89,0x52,0x23,0xD2,0xBC,0xDD,0xEA,0xA3,0xB9,0x1F); my $p=$ARGV[0]; my $n=length($p)+1; $n+=12-($n%12) if $n%12; my @c=unpack("C*",$p); my $o=""; for my $i (0..$n-1){ my $b=$i<@c?$c[$i]:0; $o.=chr($b ^ $k[$i % @k]); } open(F,">","/etc/kcpassword") or die; binmode F; print F $o; close F; chmod 0600,"/etc/kcpassword";' "${BOX_PASSWORD:?}"
 	defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser "$BOX_USER"
+	defaults delete /Library/Preferences/com.apple.loginwindow autoLoginUserScreenLocked 2>/dev/null || true
+	sudo -u "$BOX_USER" sysadminctl -screenLock off -password "$BOX_PASSWORD" 2>/dev/null
 	for k in $SUBSTITUTIONS; do sudo -u "$BOX_USER" defaults write -g "$k" -bool false; done
 }
 
@@ -169,6 +171,7 @@ check() {
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	[ "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser)" = "$BOX_USER" ]
+	[ -z "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUserScreenLocked 2>/dev/null)" ]
 	plutil -lint -s /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist "/Library/LaunchDaemons/$DAEMON.plist"
 	echo check: ok
 }
