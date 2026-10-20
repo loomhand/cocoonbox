@@ -4,10 +4,10 @@
 # `shuttle.sh fetch DIR` it downloads the pinned archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the
 # runner's vendor tarballs there). The archive follows the machine's architecture; SHUTTLE_ARCH (x64 or arm64) names
 # another one, as a fetch for a different machine needs.
-SHUTTLE_VERSION=v0.1.9
+SHUTTLE_VERSION=v0.1.10
 case ${SHUTTLE_ARCH:-$(uname -m)} in
-aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=3792e9d81566f3c0e36528fc4deb3b0935d4d9ca269a943c45546da4a2452cd4 ;;
-*) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=def99a4b800175e2f12c10f86f789d49dbc2639400c7eae0f31f35808dc436b2 ;;
+aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=eb6804e32d6ba5bfb28871108026c5365c3809de718109407689d85f9a3517f6 ;;
+*) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=7db84e97a99a74fdc32c49cbf6317671cad09be6df6fe65e5262bb6a116b6119 ;;
 esac
 SHUTTLE_TARBALL="cocoon-shuttle-${SHUTTLE_VERSION}-linux-${SHUTTLE_ARCH}.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
