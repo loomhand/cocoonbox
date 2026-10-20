@@ -24,7 +24,8 @@ use cocoonbox_agent::pb::{self, exec_client_frame, exec_server_frame, screen_cli
 
 const USAGE: &str =
     "usage: boxgate <identity|cred|hello|origin|fill|exec|snap|store|plan|upload|restore|mcp> [args]
-  env: BOXGATE_SEED (64 hex: the edge key), BOXGATE_SERVE (default http://127.0.0.1:17443)
+  env: BOXGATE_SEED (64 hex: the edge key), BOXGATE_SERVE (default http://127.0.0.1:17443),
+       BOXGATE_TIMEOUT (seconds a command may take, default 900; store has none)
   identity [--wake W] [--box B]          print the identity file the api would write
   cred [--wake W] [--box B]              print an owner credential
   hello                                  call Session.Hello
@@ -51,6 +52,7 @@ const EXEC_CHUNK: usize = 32 << 10;
 const RFB_VERSION: &[u8; 12] = b"RFB 003.008\n";
 const RFB_RAW: i32 = 0;
 const MAX_BODY: usize = 256 << 20;
+const DEFAULT_TIMEOUT_SECS: u64 = 900;
 
 /// The edge's signing key and the box it signs for.
 struct Edge {
@@ -156,7 +158,7 @@ async fn main() {
     let mut argv = std::env::args().skip(1);
     let cmd = argv.next().unwrap_or_default();
     let mut args = Args(argv.collect());
-    let code = match run(&cmd, &mut args).await {
+    let code = match bounded(&cmd, &mut args).await {
         Ok(code) => i32::from(code),
         Err(e) => {
             eprintln!("boxgate {cmd}: {e}");
@@ -166,6 +168,19 @@ async fn main() {
     let _ = std::io::stdout().flush();
     // exits at once: a runtime shutdown waits for the blocking stdin reader of exec
     std::process::exit(code);
+}
+
+async fn bounded(cmd: &str, args: &mut Args) -> Result<u8, String> {
+    if cmd == "store" {
+        return run(cmd, args).await;
+    }
+    let secs = match std::env::var("BOXGATE_TIMEOUT") {
+        Ok(v) => v.parse().map_err(|e| format!("BOXGATE_TIMEOUT: {e}"))?,
+        Err(_) => DEFAULT_TIMEOUT_SECS,
+    };
+    tokio::time::timeout(Duration::from_secs(secs), run(cmd, args))
+        .await
+        .map_err(|_| format!("no answer within {secs} s"))?
 }
 
 async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
