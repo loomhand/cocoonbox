@@ -1584,6 +1584,70 @@ mod tests {
     }
 
     #[test]
+    fn a_chunk_keeps_its_transfer_slot_until_it_is_decrypted() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .max_blocking_threads(1)
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let dir = tempfile::tempdir().unwrap();
+            let engine = StateEngine::new(
+                rpc::Client::new(dir.path().join("toolhost.sock")),
+                Store::open(&dir.path().join("agent.db")).unwrap(),
+                default_roots(),
+                dir.path().join("work"),
+                Pause {
+                    turns: Arc::default(),
+                    guests: Arc::default(),
+                    wait: Duration::from_secs(30),
+                },
+                None,
+                false,
+            )
+            .unwrap();
+            let keys = Arc::new(Keys::derive(&[7u8; 32]).unwrap());
+            let plain = b"chunk body".to_vec();
+            let id = keys.id(&plain).unwrap();
+            let sealed = keys.seal(&id, &plain).unwrap();
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/chunk", listener.local_addr().unwrap());
+            tokio::spawn(async move {
+                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut request = [0u8; 1024];
+                let _ = conn.read(&mut request).await.unwrap();
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n",
+                    sealed.len()
+                );
+                conn.write_all(head.as_bytes()).await.unwrap();
+                conn.write_all(&sealed).await.unwrap();
+            });
+            let (release, held) = std::sync::mpsc::channel::<()>();
+            let blocker = tokio::task::spawn_blocking(move || held.recv().unwrap());
+            let (tx, _progress) = mpsc::channel(8);
+            let filled = Mutex::new(Filled {
+                meter: Meter::new(0, 1, tx),
+                sizes: HashMap::new(),
+                sqlite: HashSet::new(),
+            });
+            let gets = Semaphore::new(1);
+            let mut fetch = std::pin::pin!(engine.fetch_chunk(&keys, &id, &url, &gets, &filled));
+            let waited = tokio::time::timeout(Duration::from_millis(500), &mut fetch).await;
+            assert!(waited.is_err(), "decryption has no thread to run on yet");
+            assert_eq!(
+                gets.available_permits(),
+                0,
+                "the slot is free before decryption"
+            );
+            release.send(()).unwrap();
+            blocker.await.unwrap();
+            assert_eq!(fetch.await.unwrap(), plain);
+            assert_eq!(gets.available_permits(), 1);
+        });
+    }
+
+    #[test]
     fn chrome_comes_back_as_it_was_at_the_save() {
         assert_eq!(
             chrome_start(false, true),
