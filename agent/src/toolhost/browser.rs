@@ -2172,6 +2172,7 @@ pub(super) mod tests {
     }
 
     /// A stand-in Chrome binary in `dir` that lives 5 s.
+    #[cfg(unix)]
     fn alive_chrome(dir: &std::path::Path) -> String {
         let chrome = dir.join("chrome");
         std::fs::write(&chrome, "#!/bin/sh\nsleep 5\n").unwrap();
@@ -2180,6 +2181,7 @@ pub(super) mod tests {
         chrome.display().to_string()
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_start_after_agent_windows_were_left_open_scans_once() {
         let dir = tempfile::tempdir().unwrap();
@@ -2212,6 +2214,7 @@ pub(super) mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_browser_tool_waits_for_a_start_in_flight() {
         let dir = tempfile::tempdir().unwrap();
@@ -2256,7 +2259,7 @@ pub(super) mod tests {
         let asked = tokio::time::Instant::now();
         let err = b.run("a", "browser_start", json!({})).await.unwrap_err();
         assert!(
-            err.starts_with("chrome exited with exit status: 1"),
+            err.starts_with("chrome exited with exit") && err.contains(": 1 "),
             "{err}"
         );
         assert!(
@@ -2875,6 +2878,7 @@ pub(super) mod tests {
             format!("#!/bin/sh\nexec \"{chrome}\" --headless=new --use-mock-keychain \"$@\"\n"),
         )
         .unwrap();
+        #[cfg(unix)]
         std::fs::set_permissions(
             &wrapper,
             std::os::unix::fs::PermissionsExt::from_mode(0o755),

@@ -266,14 +266,15 @@ pub async fn read_tagged<R: AsyncRead + Unpin>(r: &mut R) -> Result<(u8, Vec<u8>
     Ok((head[0], data))
 }
 
+/// Connects to the endpoint `path`.
 #[cfg(unix)]
-async fn connect(path: &Path) -> io::Result<Stream> {
+pub(crate) async fn connect(path: &Path) -> io::Result<Stream> {
     UnixStream::connect(path).await
 }
 
 /// Opens the named pipe `path`, waiting while every instance of it is busy.
 #[cfg(windows)]
-async fn connect(path: &Path) -> io::Result<Stream> {
+pub(crate) async fn connect(path: &Path) -> io::Result<Stream> {
     loop {
         match ClientOptions::new().open(path) {
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY) => {
@@ -305,7 +306,7 @@ mod tests {
     #[tokio::test]
     async fn a_desk_call_past_its_deadline_or_without_a_service_is_down_without_a_path() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("desk.sock");
+        let path = crate::testing::endpoint(dir.path(), "desk.sock");
         let call = Call {
             agent_id: String::new(),
             tool: "desk_windows".into(),
@@ -313,7 +314,7 @@ mod tests {
         };
         let missing = Client::new(path.clone()).desk(&call, DESK_DEADLINE).await;
         assert_eq!(missing.unwrap_err(), DESK_DOWN);
-        let _silent = tokio::net::UnixListener::bind(&path).unwrap();
+        let _silent = crate::toolhost::bind(&path, "").unwrap();
         let late = Client::new(path)
             .desk(&call, Duration::from_millis(100))
             .await;

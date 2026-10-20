@@ -246,6 +246,7 @@ fn ceil_char(s: &str, mut i: usize) -> usize {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use super::*;
 

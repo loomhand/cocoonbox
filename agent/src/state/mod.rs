@@ -1533,11 +1533,11 @@ mod tests {
     #[tokio::test]
     async fn resume_returns_before_chrome_is_ready() {
         let dir = tempfile::tempdir().unwrap();
-        let socket = dir.path().join("toolhost.sock");
-        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
+        let mut listener = crate::toolhost::bind(&socket, "").unwrap();
         let (seen, mut calls) = mpsc::channel(4);
         tokio::spawn(async move {
-            while let Ok((mut s, _)) = listener.accept().await {
+            while let Ok(mut s) = crate::toolhost::accept(&mut listener).await {
                 let call: Call = rpc::read_frame(&mut s).await.unwrap();
                 seen.send(call.args).await.unwrap();
                 tokio::time::sleep(Duration::from_secs(1)).await;

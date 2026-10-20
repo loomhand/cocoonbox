@@ -77,6 +77,8 @@ jobs:
       - name: Install protoc
         run: choco install protoc --no-progress -y
 
-      - name: clippy + build
+      - name: clippy + build + lib tests
         working-directory: agent
-        run: cargo clippy --locked -- -D warnings && cargo build --locked
+        env:
+          CB_NO_BROWSER: "1"
+        run: cargo clippy --all-targets --locked -- -D warnings && cargo build --locked && cargo test --locked --lib

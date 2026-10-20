@@ -321,16 +321,18 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use tokio::net::UnixListener;
-
-    use super::super::browser::tests::{slow_chrome, web_chrome};
+    use super::super::browser::tests::slow_chrome;
+    #[cfg(unix)]
+    use super::super::browser::tests::web_chrome;
     use super::super::rpc::{read_frame, write_frame};
     use super::*;
 
+    #[cfg(unix)]
     const PAN: &str = "4000056655665556";
 
     type Calls = Arc<Mutex<Vec<(String, Value)>>>;
 
+    #[cfg(unix)]
     fn card_file(dir: &Path) -> String {
         let path = dir.join("card.json");
         let card = json!({"spend_request_id": "lsrq_1", "card": {"number": PAN, "cvc": "321", "exp_month": 3, "exp_year": 2029, "brand": "visa", "billing_address": {"postal_code": "94107"}}});
@@ -340,12 +342,12 @@ mod tests {
 
     /// A shuttle on `socket` that logs every call and types the first `typed` texts; acts answer with an image.
     fn fake_shuttle(socket: &Path, typed: usize) -> Calls {
-        let listener = UnixListener::bind(socket).unwrap();
+        let mut listener = super::super::bind(socket, "").unwrap();
         let calls = Calls::default();
         let log = Arc::clone(&calls);
         tokio::spawn(async move {
             loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut conn = super::super::accept(&mut listener).await.unwrap();
                 let call: Call = read_frame(&mut conn).await.unwrap();
                 let types = log
                     .lock()
@@ -387,7 +389,7 @@ mod tests {
     #[tokio::test]
     async fn an_action_or_a_list_without_an_own_step_goes_to_shuttle_as_it_came() {
         let dir = tempfile::tempdir().unwrap();
-        let socket = dir.path().join("desk.sock");
+        let socket = crate::testing::endpoint(dir.path(), "desk.sock");
         let calls = fake_shuttle(&socket, usize::MAX);
         let shuttle = Client::new(socket);
         let browser = Browser::new("/nonexistent/chrome".into(), dir.path().into(), 1, true);
@@ -408,11 +410,12 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn type_from_file_clicks_types_only_into_a_page_field_and_returns_only_its_length() {
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         let path = card_file(dir.path());
-        let socket = dir.path().join("desk.sock");
+        let socket = crate::testing::endpoint(dir.path(), "desk.sock");
         let calls = fake_shuttle(&socket, 1);
         let shuttle = Client::new(socket);
         let field = Browser::new(
@@ -482,7 +485,7 @@ mod tests {
     #[tokio::test]
     async fn chrome_by_any_name_brings_up_the_agent_window_of_the_browser_tools_chrome() {
         let dir = tempfile::tempdir().unwrap();
-        let socket = dir.path().join("desk.sock");
+        let socket = crate::testing::endpoint(dir.path(), "desk.sock");
         let calls = fake_shuttle(&socket, usize::MAX);
         let shuttle = Client::new(socket);
         let port = slow_chrome(Duration::ZERO).await;
@@ -516,11 +519,12 @@ mod tests {
         assert_eq!(calls.lock().unwrap()[1].1["session"], "cu-1");
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn a_list_with_an_own_step_runs_each_step_by_the_scale_the_caller_saw() {
         let dir = tempfile::tempdir_in("/tmp").unwrap();
         let path = card_file(dir.path());
-        let socket = dir.path().join("desk.sock");
+        let socket = crate::testing::endpoint(dir.path(), "desk.sock");
         let calls = fake_shuttle(&socket, usize::MAX);
         let shuttle = Client::new(socket);
         let browser = Browser::new(
@@ -557,6 +561,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn card_field_reads_a_link_cli_card_file_under_tmp_only() {
         let dir = tempfile::tempdir_in("/tmp").unwrap();

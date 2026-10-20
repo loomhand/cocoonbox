@@ -42,6 +42,15 @@ uuid = { version = "1", features = ["v4"] }
 zeroize = "1"
 zstd = { version = "0.14", default-features = false }
 
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+] }
+windows-service = "0.8"
+
 [build-dependencies]
 tonic-prost-build = "0.14"
 

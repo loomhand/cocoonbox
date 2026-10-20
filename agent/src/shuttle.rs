@@ -103,18 +103,19 @@ pub fn desk_verb(name: &str, args: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use tokio::net::UnixListener;
+    use std::path::Path;
+
     use tokio::sync::mpsc;
 
     use super::*;
     use crate::toolhost::rpc::{read_frame, write_frame};
 
     fn fake(path: &std::path::Path, answer: fn(&Call) -> Output) -> mpsc::UnboundedReceiver<Call> {
-        let listener = UnixListener::bind(path).unwrap();
+        let mut listener = crate::toolhost::bind(path, "").unwrap();
         let (seen, calls) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut conn = crate::toolhost::accept(&mut listener).await.unwrap();
                 let call: Call = read_frame(&mut conn).await.unwrap();
                 write_frame(&mut conn, &answer(&call)).await.unwrap();
                 seen.send(call).unwrap();
@@ -126,23 +127,27 @@ mod tests {
     #[tokio::test]
     async fn desk_calls_and_runs_go_to_shuttle_and_the_rest_and_run_screenshots_to_the_toolhost() {
         let dir = tempfile::tempdir().unwrap();
-        let mut shuttle = fake(&dir.path().join("desk.sock"), |c| match c.tool.as_str() {
-            "script_run" => Output::text(r#"{"duration_ms":1,"result":7}"#),
-            _ => Output::text("{}"),
-        });
-        let mut toolhost = fake(&dir.path().join("toolhost.sock"), |c| {
-            match c.tool.as_str() {
+        let mut shuttle = fake(
+            &crate::testing::endpoint(dir.path(), "desk.sock"),
+            |c| match c.tool.as_str() {
+                "script_run" => Output::text(r#"{"duration_ms":1,"result":7}"#),
+                _ => Output::text("{}"),
+            },
+        );
+        let mut toolhost = fake(
+            &crate::testing::endpoint(dir.path(), "toolhost.sock"),
+            |c| match c.tool.as_str() {
                 "run_screenshot" => Output {
                     text: "/tmp/shot.webp".into(),
                     image_b64: Some("aW1n".into()),
                     ..Output::default()
                 },
                 _ => Output::text("from the toolhost"),
-            }
-        });
+            },
+        );
         let split = Split::new(
-            Client::new(dir.path().join("desk.sock")),
-            Client::new(dir.path().join("toolhost.sock")),
+            Client::new(crate::testing::endpoint(dir.path(), "desk.sock")),
+            Client::new(crate::testing::endpoint(dir.path(), "toolhost.sock")),
             "/w".into(),
             vec!["demo_run".into()],
         );
@@ -158,7 +163,11 @@ mod tests {
             .run("ag", "script_run", json!({"script": "s.mts"}))
             .await;
         assert!(
-            out.is_error && out.text.contains("/w/s.mts does not exist"),
+            out.is_error
+                && out.text.contains(&format!(
+                    "{} does not exist",
+                    Path::new("/w").join("s.mts").display()
+                )),
             "{}",
             out.text
         );

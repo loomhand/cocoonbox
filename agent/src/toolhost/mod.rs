@@ -28,7 +28,7 @@ use base64::engine::general_purpose::STANDARD as B64;
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 #[cfg(windows)]
-use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
+use tokio::net::windows::named_pipe::NamedPipeServer;
 #[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
@@ -43,6 +43,10 @@ use shell::Shell;
 
 #[cfg(unix)]
 const SOCKET_MODE: u32 = 0o660;
+
+/// What creating the first instance of a pipe that exists fails with.
+#[cfg(windows)]
+const ERROR_ACCESS_DENIED: i32 = 5;
 
 /// One accepted toolhost connection.
 #[cfg(unix)]
@@ -361,6 +365,7 @@ impl Host {
 #[cfg(windows)]
 pub(crate) struct Listener {
     path: PathBuf,
+    security: crate::sys::PipeSecurity,
     next: NamedPipeServer,
 }
 
@@ -440,15 +445,17 @@ async fn serve_conn(host: Arc<Host>, stream: Conn) {
     }
 }
 
+/// Waits for the next connection to `listener`.
 #[cfg(unix)]
-async fn accept(listener: &mut UnixListener) -> io::Result<Conn> {
+pub(crate) async fn accept(listener: &mut UnixListener) -> io::Result<Conn> {
     listener.accept().await.map(|(stream, _)| stream)
 }
 
+/// Waits for the next connection to `listener`.
 #[cfg(windows)]
-async fn accept(listener: &mut Listener) -> io::Result<Conn> {
+pub(crate) async fn accept(listener: &mut Listener) -> io::Result<Conn> {
     listener.next.connect().await?;
-    let next = ServerOptions::new().create(&listener.path)?;
+    let next = listener.security.create(&listener.path, false)?;
     Ok(std::mem::replace(&mut listener.next, next))
 }
 
@@ -475,15 +482,20 @@ pub(crate) fn bind(path: &Path, group: &str) -> Result<UnixListener, String> {
     Ok(listener)
 }
 
-/// Creates the first instance of the named pipe `path`; a pipe another process serves there stays.
+/// Creates the first instance of the named pipe `path`, for SYSTEM, this user and `group` when it exists; a pipe another process serves there stays.
 #[cfg(windows)]
-pub(crate) fn bind(path: &Path, _group: &str) -> Result<Listener, String> {
-    let next = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(path)
-        .map_err(|e| format!("create pipe {}: {e}", path.display()))?;
+pub(crate) fn bind(path: &Path, group: &str) -> Result<Listener, String> {
+    let security = crate::sys::PipeSecurity::new(group)?;
+    let next = security.create(path, true).map_err(|e| {
+        if e.raw_os_error() == Some(ERROR_ACCESS_DENIED) {
+            format!("{} answers: another process serves it", path.display())
+        } else {
+            format!("create pipe {}: {e}", path.display())
+        }
+    })?;
     Ok(Listener {
         path: path.to_owned(),
+        security,
         next,
     })
 }
@@ -615,9 +627,11 @@ mod tests {
     #[tokio::test]
     async fn bind_keeps_a_socket_another_process_serves_and_replaces_a_stale_one() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("desk.sock");
-        let live = std::os::unix::net::UnixListener::bind(&path).unwrap();
-        let err = bind(&path, "").unwrap_err();
+        let path = crate::testing::endpoint(dir.path(), "desk.sock");
+        let live = bind(&path, "").unwrap();
+        let Err(err) = bind(&path, "") else {
+            panic!("a second bind of {} succeeded", path.display());
+        };
         assert!(err.ends_with("another process serves it"), "{err}");
         drop(live);
         bind(&path, "").unwrap();
@@ -626,15 +640,15 @@ mod tests {
     #[tokio::test]
     async fn every_tool_of_the_shuttle_service_spec_is_one_the_toolhost_answers() {
         let dir = tempfile::tempdir().unwrap();
-        let desk = dir.path().join("desk.sock");
-        let shuttle = tokio::net::UnixListener::bind(&desk).unwrap();
+        let desk = crate::testing::endpoint(dir.path(), "desk.sock");
+        let mut shuttle = bind(&desk, "").unwrap();
         tokio::spawn(async move {
-            while let Ok((conn, _)) = shuttle.accept().await {
+            while let Ok(conn) = accept(&mut shuttle).await {
                 drop(conn);
             }
         });
         let cfg = ToolhostConfig {
-            socket: dir.path().join("toolhost.sock"),
+            socket: crate::testing::endpoint(dir.path(), "toolhost.sock"),
             socket_group: String::new(),
             workspace: dir.path().into(),
             chrome_bin: "false".into(),
@@ -719,12 +733,12 @@ mod tests {
     #[tokio::test]
     async fn an_android_box_sends_its_screen_desk_and_run_calls_to_shuttle() {
         let dir = tempfile::tempdir().unwrap();
-        let desk = dir.path().join("desk.sock");
+        let desk = crate::testing::endpoint(dir.path(), "desk.sock");
         let (seen, mut tools) = tokio::sync::mpsc::unbounded_channel::<String>();
-        let listener = UnixListener::bind(&desk).unwrap();
+        let mut listener = bind(&desk, "").unwrap();
         tokio::spawn(async move {
             loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut conn = accept(&mut listener).await.unwrap();
                 let call: Call = rpc::read_frame(&mut conn).await.unwrap();
                 let out = match call.tool.as_str() {
                     "desk_look" => Output {
@@ -740,7 +754,7 @@ mod tests {
                 rpc::write_frame(&mut conn, &out).await.unwrap();
             }
         });
-        let socket = dir.path().join("toolhost.sock");
+        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
         let cfg = ToolhostConfig {
             socket: socket.clone(),
             socket_group: "no-such-group".into(),
@@ -755,9 +769,7 @@ mod tests {
             shuttle_socket: Some(desk),
         };
         tokio::spawn(run(cfg));
-        while !socket.exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        crate::testing::served(&socket).await;
         let toolhost = Client::new(socket);
         let calls = [
             ("screenshot", json!({})),
@@ -823,12 +835,12 @@ mod tests {
     #[tokio::test]
     async fn a_desk_box_with_shuttle_sends_its_computer_tools_and_the_window_titles_there() {
         let dir = tempfile::tempdir().unwrap();
-        let desk = dir.path().join("desk.sock");
+        let desk = crate::testing::endpoint(dir.path(), "desk.sock");
         let (seen, mut tools) = tokio::sync::mpsc::unbounded_channel::<(String, Value)>();
-        let listener = UnixListener::bind(&desk).unwrap();
+        let mut listener = bind(&desk, "").unwrap();
         tokio::spawn(async move {
             loop {
-                let (mut conn, _) = listener.accept().await.unwrap();
+                let mut conn = accept(&mut listener).await.unwrap();
                 let call: Call = rpc::read_frame(&mut conn).await.unwrap();
                 let out = match call.tool.as_str() {
                     "desk_look" => Output {
@@ -843,7 +855,7 @@ mod tests {
                 rpc::write_frame(&mut conn, &out).await.unwrap();
             }
         });
-        let socket = dir.path().join("toolhost.sock");
+        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
         let cfg = ToolhostConfig {
             socket: socket.clone(),
             socket_group: "no-such-group".into(),
@@ -858,9 +870,7 @@ mod tests {
             shuttle_socket: Some(desk),
         };
         tokio::spawn(run(cfg));
-        while !socket.exists() {
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
+        crate::testing::served(&socket).await;
         let toolhost = Client::new(socket);
         let calls = [
             ("computer_state", json!({"session": "cu"})),

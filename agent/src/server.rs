@@ -547,7 +547,7 @@ fn share_refused() -> Status {
     Status::permission_denied("a share reaches only the screen and MCP")
 }
 
-/// Resolves on the first SIGTERM or SIGINT.
+/// Resolves on the first SIGTERM or SIGINT; on Windows, on Ctrl-C or the service stop.
 pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
     let term = async {
@@ -559,7 +559,7 @@ pub(crate) async fn shutdown_signal() {
         }
     };
     #[cfg(windows)]
-    let term = std::future::pending::<()>();
+    let term = crate::service::stopped();
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
         () = term => {}

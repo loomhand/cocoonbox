@@ -1,4 +1,5 @@
 #![cfg(test)]
+#![cfg(unix)]
 
 mod common;
 

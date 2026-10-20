@@ -319,6 +319,7 @@ fn fresh(exp: i64, now: i64) -> Result<(), Denied> {
 }
 
 #[cfg(test)]
+#[cfg(unix)]
 mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;

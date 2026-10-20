@@ -100,6 +100,8 @@ pub fn load(dir: &Path) -> Vec<Plugin> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     fn write(dir: &Path, file: &str, body: &str) {
@@ -110,59 +112,41 @@ mod tests {
     fn loads_valid_plugins_in_file_name_order_and_skips_the_rest() {
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
-        write(
-            d,
-            "20-b.json",
-            r#"{"name": "beta_run", "description": "b", "bin": "/usr/bin/b"}"#,
-        );
+        let bin = |name: &str| d.join("bin").join(name);
+        let guide = d.join("a").join("GUIDE.md");
+        let plugin = |name: &str, description: &str, bin: &Path| {
+            json!({"name": name, "description": description, "bin": bin}).to_string()
+        };
+        write(d, "20-b.json", &plugin("beta_run", "b", &bin("b")));
         write(
             d,
             "10-a.json",
-            r#"{"name": "alpha_run", "description": "a", "bin": "/usr/bin/a", "resources": [{"uri": "cocoonbox://a/GUIDE.md", "path": "/opt/a/GUIDE.md", "mime": "text/markdown", "description": "g"}]}"#,
+            &json!({"name": "alpha_run", "description": "a", "bin": bin("a"), "resources": [{"uri": "cocoonbox://a/GUIDE.md", "path": guide, "mime": "text/markdown", "description": "g"}]}).to_string(),
         );
-        write(
-            d,
-            "30-badname.json",
-            r#"{"name": "Gamma", "description": "c", "bin": "/usr/bin/c"}"#,
-        );
-        write(
-            d,
-            "31-builtin.json",
-            r#"{"name": "script_run", "description": "c", "bin": "/usr/bin/c"}"#,
-        );
+        write(d, "30-badname.json", &plugin("Gamma", "c", &bin("c")));
+        write(d, "31-builtin.json", &plugin("script_run", "c", &bin("c")));
         write(
             d,
             "32-relative.json",
-            r#"{"name": "rel_run", "description": "c", "bin": "bin/c"}"#,
+            &plugin("rel_run", "c", Path::new("bin/c")),
         );
-        write(
-            d,
-            "33-dup.json",
-            r#"{"name": "alpha_run", "description": "c", "bin": "/usr/bin/c"}"#,
-        );
+        write(d, "33-dup.json", &plugin("alpha_run", "c", &bin("c")));
         write(
             d,
             "34-long.json",
-            &format!(
-                r#"{{"name": "long_run", "description": "{}", "bin": "/usr/bin/c"}}"#,
-                "x".repeat(MAX_DESCRIPTION + 1)
-            ),
+            &plugin("long_run", &"x".repeat(MAX_DESCRIPTION + 1), &bin("c")),
         );
         write(d, "35-broken.json", "{");
         write(
             d,
             "36-service.json",
-            r#"{"service": "cocoonbox", "bin": "/usr/local/bin/cocoonbox-agent", "args": ["toolhost"], "tools": []}"#,
+            &json!({"service": "cocoonbox", "bin": bin("cocoonbox-agent"), "args": ["toolhost"], "tools": []}).to_string(),
         );
-        write(
-            d,
-            "40-c.txt",
-            r#"{"name": "text_run", "description": "c", "bin": "/usr/bin/c"}"#,
-        );
+        write(d, "40-c.txt", &plugin("text_run", "c", &bin("c")));
         let got = load(d);
         let names: Vec<&str> = got.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["alpha_run", "beta_run"]);
-        assert_eq!(got[0].resources[0].path, PathBuf::from("/opt/a/GUIDE.md"));
+        assert_eq!(got[0].resources[0].path, guide);
         assert!(got[1].resources.is_empty());
     }
 
