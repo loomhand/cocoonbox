@@ -17,14 +17,20 @@ const TAIL_BYTES: usize = 20_000;
 const SLACK_BYTES: usize = 64 << 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TIMEOUT: Duration = Duration::from_secs(600);
+#[cfg(unix)]
+const BASH: &str = "bash";
+/// Git for Windows' bash, which puts its tools on PATH; a bare `bash` can be WSL's launcher.
+#[cfg(windows)]
+const BASH: &str = r"C:\Program Files\Git\bin\bash.exe";
 
 /// A live bash process; commands run by sourcing a script file so syntax errors stay contained.
 pub struct Shell {
-    child: Child,
+    _child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
     script: PathBuf,
     dead: bool,
+    tree: sys::Tree,
 }
 
 impl Shell {
@@ -36,6 +42,7 @@ impl Shell {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("spawn bash: {e}"))?;
+        let tree = sys::Tree::hold(&child).map_err(|e| format!("hold bash: {e}"))?;
         let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             return Err("bash pipes missing".to_owned());
         };
@@ -44,11 +51,12 @@ impl Shell {
             .await
             .map_err(|e| format!("init bash: {e}"))?;
         Ok(Self {
-            child,
+            _child: child,
             stdin,
             stdout,
             script,
             dead: false,
+            tree,
         })
     }
 
@@ -71,7 +79,7 @@ impl Shell {
         let marker = format!("\n{MARK}{nonce}:");
         let line = format!(
             "[ -r {VAULT} ] && . {VAULT}\n. '{}' </dev/null\nprintf '\\n{MARK}{nonce}:%s\\n' \"$?\"\n",
-            self.script.display()
+            bash_path(&self.script)
         );
         let mut guard = KillOnDrop {
             shell: self,
@@ -109,12 +117,10 @@ impl Shell {
         result
     }
 
-    /// Kills bash and every process of its group; the next call starts a fresh session.
+    /// Kills bash and every process of its tree; the next call starts a fresh session.
     pub fn kill(&mut self) {
         self.dead = true;
-        if let Some(pid) = self.child.id() {
-            let _ = sys::kill_group(pid);
-        }
+        let _ = self.tree.kill();
     }
 }
 
@@ -133,7 +139,7 @@ pub fn capped_note(timeout: Option<Duration>) -> String {
 
 /// bash in `cwd` with the environment of the shell tool.
 pub fn bash(cwd: &Path) -> Command {
-    let mut cmd = Command::new("bash");
+    let mut cmd = Command::new(BASH);
     cmd.current_dir(cwd)
         .env("TERM", "dumb")
         .env("PAGER", "cat")
@@ -245,8 +251,19 @@ fn ceil_char(s: &str, mut i: usize) -> usize {
     i
 }
 
-#[cfg(test)]
+/// `path` as a bash command line names it.
 #[cfg(unix)]
+fn bash_path(path: &Path) -> String {
+    path.display().to_string()
+}
+
+/// `path` as a bash command line names it: Git Bash reads `C:/x`, with forward slashes.
+#[cfg(windows)]
+fn bash_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

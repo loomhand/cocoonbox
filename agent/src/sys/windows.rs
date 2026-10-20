@@ -1,16 +1,21 @@
 //! The Windows side of `sys`: a call with no Windows port yet answers `Unsupported`.
 
-use std::ffi::c_void;
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString, c_void};
 use std::fs::{File, Metadata};
 use std::io;
+use std::os::windows::ffi::OsStrExt;
 use std::os::windows::fs::OpenOptionsExt;
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::time::UNIX_EPOCH;
 
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
-use tokio::process::Command;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
+use tokio::process::{Child, Command};
+use windows::Win32::Foundation::{
+    CloseHandle, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
+};
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
     ConvertStringSidToSidW, SDDL_REVISION_1,
@@ -19,10 +24,27 @@ use windows::Win32::Security::{
     GetTokenInformation, LookupAccountNameW, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
     SID_NAME_USE, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
-use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
-use windows::core::{HSTRING, PWSTR};
+use windows::Win32::System::Console::{
+    COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
+};
+use windows::Win32::System::JobObjects::{
+    AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+    SetInformationJobObject, TerminateJobObject,
+};
+use windows::Win32::System::Pipes::{CreatePipe, PeekNamedPipe};
+use windows::Win32::System::Threading::{
+    CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
+    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
+    InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST, OpenProcessToken,
+    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
+    UpdateProcThreadAttribute, WaitForSingleObject,
+};
+use windows::core::{HSTRING, PCWSTR, PWSTR};
 
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+const SIGKILL: i32 = 9;
 const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
 /// FILE_GENERIC_READ and FILE_GENERIC_WRITE without FILE_CREATE_PIPE_INSTANCE, as shuttle grants its socket_group.
 const GROUP_RIGHTS: &str = "0x12019b";
@@ -86,6 +108,155 @@ impl Drop for PipeSecurity {
     }
 }
 
+/// The server end of a named pipe, kept to ask whether its client hung up.
+pub struct PipeEnd(usize);
+
+impl PipeEnd {
+    /// The end of `pipe`, which must outlive every [`PipeEnd::closed`] call.
+    pub fn of(pipe: &NamedPipeServer) -> Self {
+        Self(pipe.as_raw_handle() as usize)
+    }
+
+    /// Whether the client closed its end; PeekNamedPipe fails on a broken pipe and takes no data.
+    pub fn closed(&self) -> bool {
+        // SAFETY: the handle belongs to a pipe server that outlives this call, and no buffer is passed.
+        unsafe { PeekNamedPipe(HANDLE(self.0 as *mut c_void), None, 0, None, None, None) }.is_err()
+    }
+}
+
+/// A Job object that holds a child's process tree; dropping it ends the tree.
+pub struct Tree(HANDLE);
+
+// SAFETY: a job handle may be used and closed from any thread.
+unsafe impl Send for Tree {}
+// SAFETY: as above; the methods only pass the handle to thread-safe calls.
+unsafe impl Sync for Tree {}
+
+impl Tree {
+    /// Puts `child`, spawned just now, in a new job that ends its tree when closed.
+    pub fn hold(child: &Child) -> io::Result<Self> {
+        let process = child
+            .raw_handle()
+            .ok_or_else(|| io::Error::other("the child has exited"))?;
+        Self::hold_process(HANDLE(process))
+    }
+
+    /// Ends every process in the tree with the exit code a SIGKILL gives on unix.
+    pub fn kill(&self) -> io::Result<()> {
+        self.signal(SIGKILL)
+    }
+
+    /// Ends every process in the tree with the exit code `signal` gives on unix, as Windows sends no signals.
+    pub fn signal(&self, signal: i32) -> io::Result<()> {
+        let code = u32::try_from(128 + signal).map_err(io::Error::other)?;
+        // SAFETY: self.0 is the job handle this value owns.
+        unsafe { TerminateJobObject(self.0, code) }.map_err(io::Error::from)
+    }
+
+    fn hold_process(process: HANDLE) -> io::Result<Self> {
+        // SAFETY: no attributes and no name; the new handle is owned by the Tree below.
+        let job = Self(unsafe { CreateJobObjectW(None, PCWSTR::null()) }?);
+        let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        // SAFETY: limits is a JOBOBJECT_EXTENDED_LIMIT_INFORMATION of the size passed.
+        unsafe {
+            SetInformationJobObject(
+                job.0,
+                JobObjectExtendedLimitInformation,
+                (&raw const limits).cast(),
+                u32::try_from(size_of_val(&limits)).unwrap_or(u32::MAX),
+            )
+        }?;
+        // SAFETY: process is the live handle of a child spawned just now.
+        unsafe { AssignProcessToJobObject(job.0, process) }?;
+        Ok(job)
+    }
+}
+
+impl Drop for Tree {
+    fn drop(&mut self) {
+        // SAFETY: self.0 is the job handle this value owns, closed once; kill-on-close then ends its processes.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// A pseudo console: what a program on it writes reaches its output pipe until the console closes.
+pub struct Pty(Mutex<Option<HPCON>>);
+
+impl Pty {
+    /// Sets the console size to `rows` by `cols`; a closed console ignores it.
+    pub fn resize(&self, rows: u16, cols: u16) -> io::Result<()> {
+        let console = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(hpc) = *console else {
+            return Ok(());
+        };
+        // SAFETY: the console is open while the lock holds it.
+        unsafe { ResizePseudoConsole(hpc, coord(rows, cols)) }.map_err(io::Error::from)
+    }
+
+    /// Closes the console, which ends its output pipe once the output is read; it blocks until then.
+    pub fn close(&self) {
+        if let Some(hpc) = self.0.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            // SAFETY: hpc came from CreatePseudoConsole and leaves the Option, so it is closed once.
+            unsafe { ClosePseudoConsole(hpc) };
+        }
+    }
+}
+
+impl Drop for Pty {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+/// A process this module started, whose handle it owns.
+pub struct Process(HANDLE);
+
+// SAFETY: a process handle may be used and closed from any thread.
+unsafe impl Send for Process {}
+
+impl Process {
+    /// Puts the process in a new [`Tree`].
+    pub fn tree(&self) -> io::Result<Tree> {
+        Tree::hold_process(self.0)
+    }
+
+    /// Waits on a blocking thread for the process to exit; its exit code.
+    pub async fn wait(self) -> io::Result<i32> {
+        tokio::task::spawn_blocking(move || self.wait_blocking())
+            .await
+            .map_err(io::Error::other)?
+    }
+
+    fn wait_blocking(&self) -> io::Result<i32> {
+        // SAFETY: self.0 is the live process handle this value owns.
+        if unsafe { WaitForSingleObject(self.0, INFINITE) } != WAIT_OBJECT_0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut code = 0u32;
+        // SAFETY: the process has exited, and code receives its exit code.
+        unsafe { GetExitCodeProcess(self.0, &raw mut code) }?;
+        Ok(code.cast_signed())
+    }
+}
+
+impl Drop for Process {
+    fn drop(&mut self) {
+        // SAFETY: self.0 is the process handle this value owns, closed once.
+        let _ = unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// A program started on a new pseudo console.
+pub struct OnPty {
+    pub pty: Pty,
+    pub process: Process,
+    /// Bytes written here reach the program as typed input.
+    pub input: File,
+    /// What the console shows, as VT sequences.
+    pub output: File,
+}
+
 /// Opens `path` to read; a symlink at `path` opens as the link itself, never its target.
 pub fn open_nofollow(path: &Path) -> io::Result<File> {
     File::options()
@@ -94,14 +265,33 @@ pub fn open_nofollow(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-/// Starts the child of `cmd` in a console process group of its own.
+/// Starts the child of `cmd` in a console process group of its own, without a console window.
 pub fn new_group(cmd: &mut Command) -> &mut Command {
-    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP)
+    cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW)
 }
 
-/// Ends every process the group of `pid` started; unsupported until a Job object holds the group.
-pub fn kill_group(_pid: u32) -> io::Result<()> {
-    Err(io::ErrorKind::Unsupported.into())
+/// Starts the program, arguments, environment changes and directory of `cmd` on a new pseudo console of `rows` by `cols`.
+pub fn spawn_on_pty(cmd: &std::process::Command, rows: u16, cols: u16) -> io::Result<OnPty> {
+    let (console_input, input) = pipe()?;
+    let (output, console_output) = pipe()?;
+    // SAFETY: both handles are live pipe ends, which the console duplicates.
+    let hpc = unsafe {
+        CreatePseudoConsole(
+            coord(rows, cols),
+            HANDLE(console_input.as_raw_handle()),
+            HANDLE(console_output.as_raw_handle()),
+            0,
+        )
+    }?;
+    drop((console_input, console_output));
+    let pty = Pty(Mutex::new(Some(hpc)));
+    let process = spawn_on(&pty, cmd)?;
+    Ok(OnPty {
+        pty,
+        process,
+        input,
+        output,
+    })
 }
 
 /// Windows has no OOM score to reset.
@@ -257,6 +447,156 @@ fn sid_string(sid: PSID, owned: bool) -> Result<String, String> {
     // SAFETY: text came from ConvertSidToStringSidW and is freed once.
     unsafe { LocalFree(Some(HLOCAL(text.0.cast()))) };
     formatted
+}
+
+/// The read and write ends of a new anonymous pipe.
+fn pipe() -> io::Result<(File, File)> {
+    let (mut read, mut write) = (HANDLE::default(), HANDLE::default());
+    // SAFETY: both pointers are live for the call and receive new handles.
+    unsafe { CreatePipe(&raw mut read, &raw mut write, None, 0) }?;
+    // SAFETY: CreatePipe returned two new handles that nothing else owns.
+    Ok(unsafe {
+        (
+            File::from_raw_handle(read.0),
+            File::from_raw_handle(write.0),
+        )
+    })
+}
+
+/// Starts `cmd` with the pseudo console of `pty` as its console.
+fn spawn_on(pty: &Pty, cmd: &std::process::Command) -> io::Result<Process> {
+    let hpc = pty
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .ok_or_else(|| io::Error::other("the console is closed"))?;
+    let mut list_size = 0;
+    // SAFETY: a first call without a list only reports its size.
+    let _ = unsafe { InitializeProcThreadAttributeList(None, 1, None, &raw mut list_size) };
+    let mut list = vec![0u64; list_size.div_ceil(8)];
+    let attributes = LPPROC_THREAD_ATTRIBUTE_LIST(list.as_mut_ptr().cast());
+    // SAFETY: list holds list_size bytes, aligned, and lives until the list is deleted below.
+    unsafe { InitializeProcThreadAttributeList(Some(attributes), 1, None, &raw mut list_size) }?;
+    // SAFETY: the pseudo console attribute takes the HPCON value itself, which stays open for the call.
+    let set = unsafe {
+        UpdateProcThreadAttribute(
+            attributes,
+            0,
+            PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
+            Some(hpc.0 as *const c_void),
+            size_of::<HPCON>(),
+            None,
+            None,
+        )
+    };
+    let mut info = STARTUPINFOEXW::default();
+    info.StartupInfo.cb = u32::try_from(size_of::<STARTUPINFOEXW>()).unwrap_or(u32::MAX);
+    // the child takes its stdio from the console, not from the redirected handles of this process
+    info.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    info.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+    info.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
+    info.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
+    info.lpAttributeList = attributes;
+    let mut line = command_line(cmd);
+    let env = environment(cmd);
+    let dir = cmd.get_current_dir().map(HSTRING::from);
+    let mut started = PROCESS_INFORMATION::default();
+    let created = set.and_then(|()| {
+        // SAFETY: line and env are NUL-terminated UTF-16 that outlive the call, dir is a live string or null,
+        // info carries the attribute list built above, and started receives the new handles.
+        unsafe {
+            CreateProcessW(
+                PCWSTR::null(),
+                Some(PWSTR(line.as_mut_ptr())),
+                None,
+                None,
+                false,
+                EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+                Some(env.as_ptr().cast()),
+                dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr())),
+                &raw const info.StartupInfo,
+                &raw mut started,
+            )
+        }
+    });
+    // SAFETY: the list was initialized above and is deleted once, after its last use.
+    unsafe { DeleteProcThreadAttributeList(attributes) };
+    created?;
+    // SAFETY: the thread handle is this function's and is not used again.
+    let _ = unsafe { CloseHandle(started.hThread) };
+    Ok(Process(started.hProcess))
+}
+
+/// The command line of `cmd`, quoted as the MSVC runtime splits it, NUL-terminated.
+fn command_line(cmd: &std::process::Command) -> Vec<u16> {
+    let mut line = Vec::new();
+    push_arg(&mut line, cmd.get_program(), true);
+    for arg in cmd.get_args() {
+        line.push(u16::from(b' '));
+        push_arg(&mut line, arg, false);
+    }
+    line.push(0);
+    line
+}
+
+/// Appends `arg`, in quotes when `force`, empty or holding a blank, with its quotes and the backslashes before them escaped.
+fn push_arg(line: &mut Vec<u16>, arg: &OsStr, force: bool) {
+    let (quote, backslash) = (u16::from(b'"'), u16::from(b'\\'));
+    let wide: Vec<u16> = arg.encode_wide().collect();
+    let quoted = force
+        || wide.is_empty()
+        || wide
+            .iter()
+            .any(|c| *c == u16::from(b' ') || *c == u16::from(b'\t'));
+    if quoted {
+        line.push(quote);
+    }
+    let mut backslashes = 0;
+    for c in wide {
+        if c == backslash {
+            backslashes += 1;
+        } else {
+            if c == quote {
+                line.extend(std::iter::repeat_n(backslash, backslashes + 1));
+            }
+            backslashes = 0;
+        }
+        line.push(c);
+    }
+    if quoted {
+        line.extend(std::iter::repeat_n(backslash, backslashes));
+        line.push(quote);
+    }
+}
+
+/// The environment block of `cmd`: this process's variables with its changes, sorted, as NUL-separated UTF-16.
+fn environment(cmd: &std::process::Command) -> Vec<u16> {
+    let mut vars: BTreeMap<String, (OsString, OsString)> = std::env::vars_os()
+        .map(|(k, v)| (k.to_string_lossy().to_uppercase(), (k, v)))
+        .collect();
+    for (k, v) in cmd.get_envs() {
+        let key = k.to_string_lossy().to_uppercase();
+        match v {
+            Some(v) => vars.insert(key, (k.to_owned(), v.to_owned())),
+            None => vars.remove(&key),
+        };
+    }
+    let mut block = Vec::new();
+    for (k, v) in vars.values() {
+        block.extend(k.encode_wide());
+        block.push(u16::from(b'='));
+        block.extend(v.encode_wide());
+        block.push(0);
+    }
+    block.push(0);
+    block
+}
+
+fn coord(rows: u16, cols: u16) -> COORD {
+    COORD {
+        X: i16::try_from(cols).unwrap_or(i16::MAX),
+        Y: i16::try_from(rows).unwrap_or(i16::MAX),
+    }
 }
 
 #[cfg(test)]

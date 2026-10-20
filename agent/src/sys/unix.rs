@@ -8,26 +8,39 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
-use tokio::process::Command;
+use tokio::process::{Child, Command};
 
 use super::Listed;
 
 const GROUP_BUF: usize = 16 << 10;
 
-/// Sends SIGKILL to every process in the group `pgid`.
-pub fn kill_group(pgid: u32) -> io::Result<()> {
-    signal_group(pgid, libc::SIGKILL)
-}
+/// The process group of a child that [`new_group`] made its leader.
+pub struct Tree(u32);
 
-/// Sends `signal` to every process in the group `pgid`.
-pub fn signal_group(pgid: u32, signal: i32) -> io::Result<()> {
-    let pgid = libc::pid_t::try_from(pgid).map_err(io::Error::other)?;
-    // SAFETY: killpg takes plain integers and touches no memory owned by this process.
-    let rc = unsafe { libc::killpg(pgid, signal) };
-    if rc == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::last_os_error())
+impl Tree {
+    /// The group of `child`, spawned just now through [`new_group`].
+    pub fn hold(child: &Child) -> io::Result<Self> {
+        child
+            .id()
+            .map(Self)
+            .ok_or_else(|| io::Error::other("the child has exited"))
+    }
+
+    /// Sends SIGKILL to every process in the group.
+    pub fn kill(&self) -> io::Result<()> {
+        self.signal(libc::SIGKILL)
+    }
+
+    /// Sends `signal` to every process in the group.
+    pub fn signal(&self, signal: i32) -> io::Result<()> {
+        let pgid = libc::pid_t::try_from(self.0).map_err(io::Error::other)?;
+        // SAFETY: killpg takes plain integers and touches no memory owned by this process.
+        let rc = unsafe { libc::killpg(pgid, signal) };
+        if rc == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        }
     }
 }
 
@@ -113,7 +126,7 @@ pub fn take_terminal(cmd: &mut Command) {
     }
 }
 
-/// Starts the child of `cmd` in a process group of its own, which [`kill_group`] ends as a whole.
+/// Starts the child of `cmd` in a process group of its own, which a [`Tree`] ends as a whole.
 pub fn new_group(cmd: &mut Command) -> &mut Command {
     cmd.process_group(0)
 }

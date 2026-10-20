@@ -3,7 +3,6 @@
 mod act;
 mod browser;
 pub mod desk;
-#[cfg(unix)]
 mod exec;
 pub(crate) mod files;
 pub(crate) mod flows;
@@ -74,7 +73,6 @@ struct Host {
     /// The plugin script tools, on a box that runs GUI plans.
     plugins: HashSet<String>,
     session_save: PathBuf,
-    #[cfg(unix)]
     home: PathBuf,
     /// A box that runs GUI plans.
     plans: bool,
@@ -109,7 +107,6 @@ impl Host {
                 .map(|p| p.name.clone())
                 .collect(),
             session_save: cfg.session_save.clone(),
-            #[cfg(unix)]
             home: cfg.home.clone(),
             plans: cfg.automation.plans(),
             hidden: cfg.automation.scripts().then(|| flows::dir(&cfg.workspace)),
@@ -405,7 +402,11 @@ async fn serve_conn(host: Arc<Host>, stream: Conn) {
     #[cfg(unix)]
     let (mut rd, mut wr) = stream.into_split();
     #[cfg(windows)]
-    let (mut rd, mut wr) = tokio::io::split(stream);
+    let (mut rd, mut wr) = {
+        let pipe = crate::sys::PipeEnd::of(&stream);
+        let (half, wr) = tokio::io::split(stream);
+        (exec::AgentRead { half, pipe }, wr)
+    };
     let call: Call = match rpc::read_frame(&mut rd).await {
         Ok(c) => c,
         Err(e) => {
@@ -420,7 +421,6 @@ async fn serve_conn(host: Arc<Host>, stream: Conn) {
             }
             return;
         }
-        #[cfg(unix)]
         "exec" => {
             exec::run(&host.workspace, &host.home, &call.args, rd, wr).await;
             return;
