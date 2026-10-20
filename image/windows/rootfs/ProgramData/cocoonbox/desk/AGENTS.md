@@ -82,18 +82,20 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 async function until(what: string, ok: () => Promise<boolean>, ms = 5000) {
   for (const end = Date.now() + ms; !(await ok()); await sleep(50)) if (Date.now() > end) throw new Error(`no ${what} within ${ms} ms`)
 }
-const front = async () => (await desk.focused())?.title ?? ''
+const notepad = async () => (await desk.windows()).find((w) => w.title.endsWith('- Notepad'))
 
 export async function main(p: { name?: string; text?: string } = {}) {
   const { name = 'note', text = 'hello' } = p
   await desk.launch('notepad')
-  await until('a Notepad window', async () => (await front()).endsWith('- Notepad'))
+  await until('a Notepad window', async () => (await notepad()) !== undefined)
+  await desk.focus((await notepad())!.title)
+  await desk.key('ctrl+n')
   await desk.typeText(text)
   await desk.key('ctrl+s')
   await until('the save dialog', async () => (await desk.find('File name:', {})).found.length > 0)
   await desk.typeText(`C:\\workspace\\${name}.txt\n`)
-  await until('saved document', async () => (await front()).startsWith(name))
-  return { saved: await front() }
+  await until('the saved document', async () => (await notepad())?.title.startsWith(name) ?? false)
+  return { saved: (await notepad())?.title }
 }
 ```
 
@@ -125,8 +127,7 @@ Save a script that works as `C:\workspace\flows\<name>.mts` and replay it with n
   window.
 - The save and open dialogs take a whole path in their File name field: type `C:\path\name.txt`
   and Enter.
-- File Explorer's navigation pane needs a real click to navigate: `press` on its tree selects an
-  item without opening it, so `click` its point or type the path into the address bar (`alt+d`).
+- File Explorer opens a folder from its address bar: `alt+d`, the path, Enter.
 - Closing an unsaved document asks whether to save it; press Don't save to discard it.
 - A snapshot of a Chrome window holds the browser's own controls and the start of the page;
   page content goes to the `browser_*` tools.

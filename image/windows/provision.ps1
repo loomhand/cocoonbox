@@ -77,6 +77,9 @@ function System {
     $toasts = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\PushNotifications'
     New-Item -Force -Path $toasts | Out-Null
     New-ItemProperty -Force -Path $toasts -Name NoToastApplicationNotification -PropertyType DWord -Value 1 | Out-Null
+    $security = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications'
+    New-Item -Force -Path $security | Out-Null
+    New-ItemProperty -Force -Path $security -Name DisableNotifications -PropertyType DWord -Value 1 | Out-Null
     New-Item -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' | Out-Null
     New-ItemProperty -Force -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock' -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 | Out-Null
     $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
