@@ -30,7 +30,7 @@ const CHUNK_MIN: u32 = 256 << 10;
 const CHUNK_AVG: u32 = 1 << 20;
 const CHUNK_MAX: u32 = 4 << 20;
 const MANIFEST_LIMIT: u64 = 256 << 20;
-// a restore holds at most RESTORE_WRITES × (RESTORE_AHEAD + 1) chunks plus TRANSFERS sealed bodies, each at most CHUNK_MAX (896 MiB)
+// a restore holds at most RESTORE_WRITES × (RESTORE_AHEAD + 1) plain chunks plus TRANSFERS in-flight chunks of sealed, packed and plain bodies, each at most CHUNK_MAX (1152 MiB)
 const RESTORE_WRITES: usize = 64;
 const RESTORE_AHEAD: usize = 2;
 const PLAN_READS: usize = 4;
@@ -999,12 +999,11 @@ impl StateEngine {
         Ok(size)
     }
 
-    async fn get(&self, url: &str) -> Result<Vec<u8>, String> {
+    async fn get(&self, url: &str) -> Result<Bytes, String> {
         send_retrying("get", || self.http.get(url))
             .await?
             .bytes()
             .await
-            .map(|b| b.to_vec())
             .map_err(|e| format!("get body: {e}"))
     }
 
@@ -1016,15 +1015,14 @@ impl StateEngine {
         gets: &Semaphore,
         filled: &Mutex<Filled>,
     ) -> Result<Vec<u8>, String> {
-        let sealed = {
-            let _slot = gets
-                .acquire()
-                .await
-                .map_err(|e| format!("transfer slot: {e}"))?;
-            self.get(url)
-                .await
-                .map_err(|e| format!("chunk {id}: {e}"))?
-        };
+        let slot = gets
+            .acquire()
+            .await
+            .map_err(|e| format!("transfer slot: {e}"))?;
+        let sealed = self
+            .get(url)
+            .await
+            .map_err(|e| format!("chunk {id}: {e}"))?;
         let size = sealed.len() as u64;
         let keys = Arc::clone(keys);
         let owned = id.to_owned();
@@ -1032,6 +1030,7 @@ impl StateEngine {
             tokio::task::spawn_blocking(move || keys.open(&owned, &sealed, u64::from(CHUNK_MAX)))
                 .await
                 .map_err(|e| format!("open task: {e}"))??;
+        drop(slot);
         let mut f = filled.lock().await;
         f.meter.add(size).await;
         f.sizes.insert(id.to_owned(), plain.len() as u64);
