@@ -5,6 +5,7 @@ use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
@@ -340,6 +341,7 @@ pub struct Browser {
     life: RwLock<()>,
     /// Held while Chrome starts; true once this toolhost has looked for agent windows an earlier one left.
     start: Mutex<bool>,
+    launched: AtomicBool,
     windows: Mutex<HashMap<String, Slot>>,
     last: Mutex<String>,
     fetch_wait: Duration,
@@ -357,6 +359,7 @@ impl Browser {
             http: reqwest::Client::new(),
             life: RwLock::new(()),
             start: Mutex::new(false),
+            launched: AtomicBool::new(false),
             windows: Mutex::new(HashMap::new()),
             last: Mutex::new(String::new()),
             fetch_wait: LOAD_WAIT,
@@ -785,9 +788,8 @@ impl Browser {
             return Ok(cdp);
         }
         self.running().await?;
-        let created = self
-            .browser()
-            .await?
+        let mut browser = self.browser().await?;
+        let created = browser
             .call(
                 "Target.createTarget",
                 json!({"url": AGENT_PAGE, "newWindow": true, "background": true}),
@@ -795,9 +797,20 @@ impl Browser {
             .await?;
         let _ = tokio::fs::write(self.profile.join(AGENT_MARKER), b"").await;
         let id = created["targetId"].as_str().unwrap_or_default();
-        let t = self
-            .targets()
-            .await?
+        let targets = self.targets().await?;
+        if self.launched.swap(false, Ordering::Relaxed)
+            && let [startup] = targets
+                .iter()
+                .filter(|t| t.is_tab() && t.id != id)
+                .collect::<Vec<_>>()
+                .as_slice()
+            && startup.url.starts_with("chrome://newtab")
+        {
+            let _ = browser
+                .call("Target.closeTarget", json!({"targetId": startup.id}))
+                .await;
+        }
+        let t = targets
             .into_iter()
             .find(|t| t.id == id)
             .ok_or_else(|| format!("new window {id} is not listed"))?;
@@ -849,6 +862,7 @@ impl Browser {
         let launched = self.targets().await.is_err();
         if launched {
             self.launch().await?;
+            self.launched.store(true, Ordering::Relaxed);
         }
         if (launched || !*swept)
             && tokio::fs::remove_file(self.profile.join(AGENT_MARKER))
@@ -2188,6 +2202,63 @@ pub(super) mod tests {
         (port, log)
     }
 
+    #[cfg(unix)]
+    async fn startup_chrome(
+        delay: Duration,
+        first: &str,
+    ) -> (u16, Arc<std::sync::Mutex<Vec<(String, Value)>>>) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = ws.local_addr().unwrap();
+        let list = json!([
+            {"id": "S", "type": "page", "url": first, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/S")},
+            {"id": "1", "type": "page", "url": AGENT_PAGE, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/1")},
+        ])
+        .to_string();
+        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
+            .to_string();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                let log = Arc::clone(&seen);
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        log.lock().unwrap().push((
+                            v["method"].as_str().unwrap().to_owned(),
+                            v["params"].clone(),
+                        ));
+                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "complete"}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let http = socket.listen(1024).unwrap();
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    &version
+                } else {
+                    &list
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        (port, log)
+    }
+
     /// A stand-in Chrome binary in `dir` that lives 5 s.
     #[cfg(unix)]
     fn alive_chrome(dir: &std::path::Path) -> String {
@@ -2211,6 +2282,46 @@ pub(super) mod tests {
             "running"
         );
         assert!(!marker.exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_first_agent_window_closes_the_new_tab_window_of_a_chrome_the_toolhost_started() {
+        for (first, launch, closed) in [
+            ("chrome://newtab/", true, true),
+            ("https://user.test/", true, false),
+            ("chrome://newtab/", false, false),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let delay = if launch {
+                Duration::from_millis(2500)
+            } else {
+                Duration::ZERO
+            };
+            let (port, log) = startup_chrome(delay, first).await;
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let bin = if launch {
+                alive_chrome(dir.path())
+            } else {
+                "/nonexistent/chrome".to_owned()
+            };
+            let b = Browser::new(bin, dir.path().into(), port, false);
+            b.run("a", "browser_snapshot", json!({})).await.unwrap();
+            b.run("b", "browser_snapshot", json!({})).await.unwrap();
+            let closes: Vec<Value> = log
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, _)| m == "Target.closeTarget")
+                .map(|(_, p)| p.clone())
+                .collect();
+            let want = if closed {
+                vec![json!({"targetId": "S"})]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(closes, want, "{first} launched={launch}");
+        }
     }
 
     #[tokio::test]
