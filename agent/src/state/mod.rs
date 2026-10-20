@@ -30,7 +30,7 @@ const CHUNK_MIN: u32 = 256 << 10;
 const CHUNK_AVG: u32 = 1 << 20;
 const CHUNK_MAX: u32 = 4 << 20;
 const MANIFEST_LIMIT: u64 = 256 << 20;
-// a restore holds at most RESTORE_WRITES × (RESTORE_AHEAD + 1) plain chunks plus TRANSFERS in-flight chunks of sealed, packed and plain bodies, each at most CHUNK_MAX (1152 MiB)
+// chunk-body budget per restore: RESTORE_WRITES × (RESTORE_AHEAD + 1) plain chunks plus TRANSFERS in-flight chunks of sealed, packed and plain bodies, each at most CHUNK_MAX (1152 MiB); the manifest (at most MANIFEST_LIMIT) and transport buffers come on top
 const RESTORE_WRITES: usize = 64;
 const RESTORE_AHEAD: usize = 2;
 const PLAN_READS: usize = 4;
@@ -1612,16 +1612,19 @@ mod tests {
             let sealed = keys.seal(&id, &plain).unwrap();
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let url = format!("http://{}/chunk", listener.local_addr().unwrap());
+            let (received, body_received) = tokio::sync::oneshot::channel();
             tokio::spawn(async move {
                 let (mut conn, _) = listener.accept().await.unwrap();
                 let mut request = [0u8; 1024];
                 let _ = conn.read(&mut request).await.unwrap();
                 let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-length: {}\r\n\r\n",
+                    "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-length: {}\r\n\r\n",
                     sealed.len()
                 );
                 conn.write_all(head.as_bytes()).await.unwrap();
                 conn.write_all(&sealed).await.unwrap();
+                while conn.read(&mut request).await.unwrap() > 0 {}
+                received.send(()).unwrap();
             });
             let (release, held) = std::sync::mpsc::channel::<()>();
             let blocker = tokio::task::spawn_blocking(move || held.recv().unwrap());
@@ -1633,8 +1636,12 @@ mod tests {
             });
             let gets = Semaphore::new(1);
             let mut fetch = std::pin::pin!(engine.fetch_chunk(&keys, &id, &url, &gets, &filled));
-            let waited = tokio::time::timeout(Duration::from_millis(500), &mut fetch).await;
-            assert!(waited.is_err(), "decryption has no thread to run on yet");
+            tokio::select! {
+                done = &mut fetch => panic!("the chunk finished before its decryption ran: {done:?}"),
+                received = body_received => received.unwrap(),
+            }
+            let early = tokio::time::timeout(Duration::from_millis(200), &mut fetch).await;
+            assert!(early.is_err(), "decryption has no thread to run on yet");
             assert_eq!(
                 gets.available_permits(),
                 0,

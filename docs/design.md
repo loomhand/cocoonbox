@@ -207,7 +207,7 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
   - Plan reads up to 4 files at a time. `-wal` and `-journal` sidecars go in a second pass, after their database.
   - Plan lists chunks in manifest order, so Restore pages arrive in the order files are written.
   - Restore writes each file into staging as soon as all its chunk URLs are in: 64 files in flight, each with 2 chunks fetched ahead, at most 32 GETs. Only a chunk used more than once goes through a local cache. Staging is built before the quiesce, which now covers only the swap.
-  - Memory bound of a restore: 64 × 3 plain chunks of up to 4 MiB, plus 32 chunks in flight at 3 bodies each (sealed, packed, plain); a transfer slot is held until the chunk is decrypted. Peak agent RSS on a 90k-file restore: 204 MiB with 32 files and 8 GETs in flight.
+  - Chunk-body budget per restore: 64 × 3 plain chunks of up to 4 MiB, plus 32 chunks in flight at 3 bodies each (sealed, packed, plain), 1152 MiB nominal; a transfer slot is held until the chunk is decrypted. The manifest (up to 256 MiB parsed) and transport buffers come on top. Peak agent RSS on a 90k-file restore: 204 MiB with 32 files and 8 GETs in flight.
   - Chrome restarts in the background after a state operation; a browser tool waits on the browser lock until CDP answers.
   - Effect on dev: a 90k-small-file Rebase went from 94.4 s (v14) to 36.1 s; a zero-change save of that tree from 40.1 s to 1.7 s; the browser stage of a Rebase from 2.2–4.0 s to under 20 ms.
 - **Known gaps (accepted 2026-09-30):**
