@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
 use tonic::Status;
 
-use crate::config::ServeConfig;
+use crate::config::{Automation, ServeConfig};
 use crate::connect::{self, Outcome};
 use crate::dispatch::{Caller, Dispatcher, ToolOutput, Tools};
 use crate::journal::Journal;
@@ -64,6 +64,8 @@ pub struct Runtime {
     pub(crate) model: Arc<dyn Model>,
     pub(crate) computer_tools: Vec<ToolSpec>,
     pub(crate) computer_prompt: String,
+    /// The OS and desktop of a box that is not Linux, once its toolhost has read them.
+    machine: tokio::sync::OnceCell<String>,
     pub(crate) screen: tokio::sync::Mutex<()>,
     /// Cancelled when the process starts shutting down.
     pub stop: CancellationToken,
@@ -131,7 +133,8 @@ impl Runtime {
             main_tools: loop_tools(false, &cfg),
             main_vision_tools: loop_tools(true, &cfg),
             computer_tools: tools::computer_tools(cfg.automation),
-            computer_prompt: prompts::computer(&cfg.model_computer, cfg.automation),
+            computer_prompt: prompts::computer(&cfg.model_computer, cfg.automation, None),
+            machine: tokio::sync::OnceCell::new(),
             screen: tokio::sync::Mutex::new(()),
             stop,
             connect,
@@ -348,6 +351,23 @@ impl Runtime {
         {
             token.cancel();
         }
+    }
+
+    /// The OS and desktop of a desk box that is not Linux, as its toolhost reads them once; none on Linux.
+    pub async fn machine(&self) -> Option<String> {
+        if cfg!(target_os = "linux") || self.cfg.automation != Automation::Desk {
+            return None;
+        }
+        if let Some(machine) = self.machine.get() {
+            return Some(machine.clone());
+        }
+        let out = self
+            .dispatcher
+            .run("", None, "desktop_info", serde_json::json!({}))
+            .await;
+        let machine = prompts::machine(&serde_json::from_str(&out.text).unwrap_or_default())?;
+        let _ = self.machine.set(machine.clone());
+        Some(machine)
     }
 
     /// Waits up to `limit` for interrupted turns and cleanups, then checkpoints the store.
@@ -630,12 +650,14 @@ impl Runtime {
         } else {
             &self.main_tools
         };
+        let machine = self.machine().await;
         let mut system = prompts::main(
             &ctx.model,
             &self.cfg.model_computer,
             vision,
             self.cfg.automation,
             &self.cfg.routing_extra,
+            machine.as_deref(),
         );
         if let Some(keys) = tokio::fs::read_to_string(prompts::KEYS_FILE)
             .await

@@ -3775,7 +3775,8 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(report["result"], json!({"params": {"n": 2}}), "{report}");
     let ran = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
-    assert_eq!(ran, "demo_run\n");
+    let ran: Vec<&str> = ran.lines().filter(|l| *l != "desk_screen").collect();
+    assert_eq!(ran, ["demo_run"]);
 }
 
 #[tokio::test]

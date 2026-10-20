@@ -1,5 +1,6 @@
 //! The computer subagent: a vision model driving the desktop through shuttle's computer verbs.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -7,8 +8,8 @@ use tokio_util::task::TaskTracker;
 
 use crate::dispatch::{Dispatcher, ToolOutput};
 use crate::llm::{Message, Part, Request, Tally, ToolSpec};
-use crate::new_id;
 use crate::runner::{Runtime, TurnCtx};
+use crate::{new_id, prompts};
 
 const SUBAGENT: &str = "computer";
 const MAX_STEPS: usize = 30;
@@ -75,6 +76,14 @@ async fn drive(
     let caller = ctx.caller(SUBAGENT, Some(driver));
     let mut messages = vec![Message::User(vec![Part::Text(task.to_owned())])];
     let tools: Vec<&ToolSpec> = rt.computer_tools.iter().collect();
+    let system = match rt.machine().await {
+        Some(machine) => Cow::Owned(prompts::computer(
+            &rt.cfg.model_computer,
+            rt.cfg.automation,
+            Some(&machine),
+        )),
+        None => Cow::Borrowed(rt.computer_prompt.as_str()),
+    };
     let mut steps = 0;
     let report = loop {
         // prune in batches so the cached prompt prefix survives most steps
@@ -83,7 +92,7 @@ async fn drive(
         }
         let req = Request {
             model: &rt.cfg.model_computer,
-            system: &rt.computer_prompt,
+            system: &system,
             messages: &messages,
             tools: &tools,
             max_tokens: MAX_TOKENS,
