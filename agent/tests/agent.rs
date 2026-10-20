@@ -5,6 +5,7 @@ mod common;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -4984,15 +4985,29 @@ async fn delete_closes_the_agents_chrome_window() {
 
 type Objects = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
+#[derive(Default)]
+struct Gets {
+    live: AtomicUsize,
+    peak: AtomicUsize,
+}
+
 async fn fake_store() -> (String, Objects) {
+    let (base, objects, _) = slow_store(Duration::ZERO).await;
+    (base, objects)
+}
+
+async fn slow_store(get_delay: Duration) -> (String, Objects, Arc<Gets>) {
+    let gets = Arc::new(Gets::default());
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}/bucket", listener.local_addr().unwrap());
     let objects = Objects::default();
     let shared = Arc::clone(&objects);
+    let counted = Arc::clone(&gets);
     tokio::spawn(async move {
         loop {
             let (stream, _) = listener.accept().await.unwrap();
             let objects = Arc::clone(&shared);
+            let gets = Arc::clone(&counted);
             tokio::spawn(async move {
                 let mut reader = BufReader::new(stream);
                 loop {
@@ -5026,6 +5041,10 @@ async fn fake_store() -> (String, Objects) {
                         objects.lock().unwrap().insert(name, body);
                         ("200 OK", Vec::new())
                     } else {
+                        let live = gets.live.fetch_add(1, Ordering::SeqCst) + 1;
+                        gets.peak.fetch_max(live, Ordering::SeqCst);
+                        tokio::time::sleep(get_delay).await;
+                        gets.live.fetch_sub(1, Ordering::SeqCst);
                         match objects.lock().unwrap().get(&name) {
                             Some(b) => ("200 OK", b.clone()),
                             None => ("404 Not Found", Vec::new()),
@@ -5042,7 +5061,7 @@ async fn fake_store() -> (String, Objects) {
             });
         }
     });
-    (base, objects)
+    (base, objects, gets)
 }
 
 fn state_key() -> pb::StateKey {
@@ -5580,6 +5599,27 @@ async fn restore_rejects_a_manifest_whose_chunks_never_all_got_urls() {
         std::fs::read(h.workspace.join("a.txt")).unwrap(),
         b"current"
     );
+}
+
+#[tokio::test]
+async fn restore_runs_as_many_gets_at_once_as_transfers_allow() {
+    let transfers = cocoonbox_agent::state::TRANSFERS;
+    let h = Harness::start(Vec::new(), false).await;
+    let (base, objects, gets) = slow_store(Duration::from_millis(100)).await;
+    for i in 0..transfers * 3 {
+        std::fs::write(
+            h.workspace.join(format!("f{i}.bin")),
+            noise(2_000, i as u64 + 1),
+        )
+        .unwrap();
+    }
+    let planned = plan(&h, pb::Consistency::Live, "").await;
+    upload_missing(&h, &base, &objects, &planned).await;
+    let done = restore(&h, &base, &objects, &planned.snapshot_id)
+        .await
+        .unwrap();
+    assert!(done.finished, "{done:?}");
+    assert_eq!(gets.peak.load(Ordering::SeqCst), transfers);
 }
 
 #[tokio::test]

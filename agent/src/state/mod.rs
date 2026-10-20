@@ -24,13 +24,14 @@ use crate::{Preempt, new_id, pb};
 use crypto::Keys;
 use manifest::{Blob, FileRecord, Manifest};
 
+pub const TRANSFERS: usize = 32;
+
 const CHUNK_MIN: u32 = 256 << 10;
 const CHUNK_AVG: u32 = 1 << 20;
 const CHUNK_MAX: u32 = 4 << 20;
 const MANIFEST_LIMIT: u64 = 256 << 20;
-const TRANSFERS: usize = 8;
-// a restore holds at most RESTORE_WRITES × (RESTORE_AHEAD + 1) chunks plus one sealed body per transfer
-const RESTORE_WRITES: usize = 32;
+// a restore holds at most RESTORE_WRITES × (RESTORE_AHEAD + 1) chunks plus TRANSFERS sealed bodies, each at most CHUNK_MAX (896 MiB)
+const RESTORE_WRITES: usize = 64;
 const RESTORE_AHEAD: usize = 2;
 const PLAN_READS: usize = 4;
 const ATTEMPTS: u32 = 3;

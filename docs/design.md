@@ -206,8 +206,8 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
   - The stamps live with `known-chunks.json` on the box disk. A plan without a parent, or under another key, ignores them; a new machine has none, so its first plan reads every file. A file whose ctime is within 1 s of the walk is never recorded, and SQLite files read through the online backup are never reused (WAL commits leave the main file's stamp unchanged).
   - Plan reads up to 4 files at a time. `-wal` and `-journal` sidecars go in a second pass, after their database.
   - Plan lists chunks in manifest order, so Restore pages arrive in the order files are written.
-  - Restore writes each file into staging as soon as all its chunk URLs are in: 32 files in flight, each with 2 chunks fetched ahead, at most 8 GETs. Only a chunk used more than once goes through a local cache. Staging is built before the quiesce, which now covers only the swap.
-  - Memory bound of a restore: 32 × 3 chunks of up to 4 MiB, plus one sealed body per GET. Peak agent RSS on a 90k-file restore: 204 MiB.
+  - Restore writes each file into staging as soon as all its chunk URLs are in: 64 files in flight, each with 2 chunks fetched ahead, at most 32 GETs. Only a chunk used more than once goes through a local cache. Staging is built before the quiesce, which now covers only the swap.
+  - Memory bound of a restore: 64 × 3 chunks of up to 4 MiB, plus one sealed body per GET (32 at most). Peak agent RSS on a 90k-file restore: 204 MiB with 32 files and 8 GETs in flight.
   - Chrome restarts in the background after a state operation; a browser tool waits on the browser lock until CDP answers.
   - Effect on dev: a 90k-small-file Rebase went from 94.4 s (v14) to 36.1 s; a zero-change save of that tree from 40.1 s to 1.7 s; the browser stage of a Rebase from 2.2–4.0 s to under 20 ms.
 - **Known gaps (accepted 2026-09-30):**
