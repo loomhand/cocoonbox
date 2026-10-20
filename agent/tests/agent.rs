@@ -5236,6 +5236,8 @@ async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
     std::fs::create_dir_all(h.home.join(".config/chrome/Default/Code Cache")).unwrap();
     std::fs::create_dir_all(h.home.join(".cache/fontconfig")).unwrap();
     std::fs::create_dir_all(h.home.join("Documents")).unwrap();
+    std::fs::create_dir_all(h.home.join("Library/app")).unwrap();
+    std::fs::write(h.home.join("Library/app/prefs"), b"prefs").unwrap();
     std::fs::write(h.home.join(".config/app/settings.json"), b"{\"a\":1}").unwrap();
     std::fs::write(
         h.home.join(".config/chrome/Default/Code Cache/js"),
@@ -5340,6 +5342,10 @@ async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
     assert!(
         h.home.join(".cache/fontconfig/c").exists(),
         "excluded top-level dirs are kept"
+    );
+    assert!(
+        h.home.join("Library/app/prefs").exists(),
+        "a root's own excluded dirs are kept, as on macOS, or restored"
     );
     let restored = rusqlite::Connection::open(&db).unwrap();
     let v: String = restored

@@ -427,11 +427,19 @@ impl StateEngine {
                 .iter()
                 .filter_map(|r| r.entry.path.split('/').next())
                 .collect();
+            let skipped = format!("{}/", root.name);
             let keep: Vec<&str> = self
                 .excludes
                 .prefixes
                 .iter()
+                .chain(&root.excluded)
                 .map(String::as_str)
+                .chain(
+                    manifest
+                        .skipped
+                        .iter()
+                        .filter_map(|k| k.strip_prefix(skipped.as_str())),
+                )
                 .filter(|p| !p.contains('/'))
                 .collect();
             swaps
