@@ -1,0 +1,6 @@
+#!/bin/sh
+# runs the agent's serve with the contract keys of /etc/cocoonbox/agent.env, as launchd has no environment file
+set -a
+. /etc/cocoonbox/agent.env
+set +a
+exec /usr/local/bin/cocoonbox-agent serve

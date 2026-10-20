@@ -1,0 +1,14 @@
+#!/bin/sh
+# runs shuttle in the Aqua session through LaunchServices, so TCC attributes its desk to the app bundle; the box config and the flows link are renewed first
+set -eu
+d=$HOME/.config/cocoon-shuttle
+install -d -m 0700 "$d"
+install -d /workspace/flows
+install -m 0600 /etc/cocoonbox/shuttle.toml "$d/config.toml"
+[ -L "$d/flows" ] || { [ ! -e "$d/flows" ] || rmdir "$d/flows"; ln -s /workspace/flows "$d/flows"; }
+exec /usr/bin/open -W -n -g -a "/Applications/Cocoon Shuttle.app" \
+	--env SHUTTLE_SOCKET=/usr/local/var/run/cocoonbox/desk.sock \
+	--env CHROME_BIN="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+	--env CUA_DRIVER_RS_TELEMETRY_ENABLED=false \
+	--env CUA_DRIVER_RS_UPDATE_CHECK=false \
+	--args serve /usr/local/var/run/cocoonbox/desk.sock
