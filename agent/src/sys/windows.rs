@@ -2,16 +2,15 @@
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString, c_void};
-use std::fs::{File, Metadata};
+use std::fs::{File, FileType, Metadata};
 use std::io;
-use std::os::windows::ffi::OsStrExt;
-use std::os::windows::fs::OpenOptionsExt;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+use std::os::windows::fs::{FileTypeExt, OpenOptionsExt};
 use std::os::windows::io::{AsRawHandle, FromRawHandle};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Mutex, PoisonError};
 use std::task::{Context, Poll};
-use std::time::UNIX_EPOCH;
 
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::net::windows::named_pipe::{NamedPipeClient, NamedPipeServer, ServerOptions};
@@ -21,7 +20,8 @@ use windows::Wdk::Storage::FileSystem::{
     NtQueryInformationFile,
 };
 use windows::Win32::Foundation::{
-    CloseHandle, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_FILE_EXISTS, ERROR_NO_MORE_FILES, HANDLE, HLOCAL,
+    INVALID_HANDLE_VALUE, LocalFree, WAIT_OBJECT_0,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -30,6 +30,13 @@ use windows::Win32::Security::Authorization::{
 use windows::Win32::Security::{
     GetTokenInformation, LookupAccountNameW, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
     SID_NAME_USE, TOKEN_QUERY, TOKEN_USER, TokenUser,
+};
+use windows::Win32::Storage::FileSystem::{
+    FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
+    FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_FULL_DIR_INFO,
+    FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FileBasicInfo, FileFullDirectoryInfo,
+    FileFullDirectoryRestartInfo, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+    MOVE_FILE_FLAGS, MoveFileExW,
 };
 use windows::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
@@ -53,7 +60,11 @@ use windows::core::{HSTRING, PCWSTR, PWSTR};
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const SIGKILL: i32 = 9;
-const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+/// The longest path a wide Windows call returns, in UTF-16 units.
+const PATH_UNITS: usize = 32 << 10;
+const LIST_BUF: usize = 64 << 10;
+/// 1970-01-01 in FILETIME units, 100 ns since 1601.
+const UNIX_EPOCH_FILETIME: i64 = 116_444_736_000_000_000;
 /// FILE_GENERIC_READ and FILE_GENERIC_WRITE without FILE_CREATE_PIPE_INSTANCE, as shuttle grants its socket_group.
 const GROUP_RIGHTS: &str = "0x12019b";
 
@@ -323,8 +334,32 @@ pub struct OnPty {
 pub fn open_nofollow(path: &Path) -> io::Result<File> {
     File::options()
         .read(true)
-        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT.0)
         .open(path)
+}
+
+/// Opens the directory at `path` to read.
+pub fn open_dir(path: &Path) -> io::Result<File> {
+    File::options()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0)
+        .open(path)
+}
+
+/// Renames the directory `from` to `to`, which must not exist: an existing `to` fails with `AlreadyExists` and stays.
+pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    // SAFETY: both strings are NUL-terminated and outlive the call.
+    unsafe { MoveFileExW(&HSTRING::from(from), &HSTRING::from(to), MOVE_FILE_FLAGS(0)) }.map_err(
+        |e| {
+            if e.code() == ERROR_ALREADY_EXISTS.to_hresult()
+                || e.code() == ERROR_FILE_EXISTS.to_hresult()
+            {
+                io::ErrorKind::AlreadyExists.into()
+            } else {
+                e.into()
+            }
+        },
+    )
 }
 
 /// Starts the child of `cmd` in a console process group of its own, without a console window.
@@ -370,12 +405,32 @@ pub fn mode(meta: &Metadata) -> u32 {
     }
 }
 
-/// The file's last write time in nanoseconds, which stands in for the change time.
-pub fn ctime_ns(meta: &Metadata) -> i64 {
-    meta.modified()
-        .ok()
-        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-        .map_or(0, |d| i64::try_from(d.as_nanos()).unwrap_or(i64::MAX))
+/// The NTFS change time in nanoseconds of the file at `path`; none when its attributes do not open.
+pub fn ctime_ns(path: &Path, _meta: &Metadata) -> Option<i64> {
+    let file = File::options()
+        .access_mode(FILE_READ_ATTRIBUTES.0)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0 | FILE_FLAG_OPEN_REPARSE_POINT.0)
+        .open(path)
+        .ok()?;
+    let mut info = FILE_BASIC_INFO::default();
+    // SAFETY: info is a FILE_BASIC_INFO of the size passed, and the handle is live for the call.
+    unsafe {
+        GetFileInformationByHandleEx(
+            HANDLE(file.as_raw_handle()),
+            FileBasicInfo,
+            (&raw mut info).cast(),
+            u32::try_from(size_of::<FILE_BASIC_INFO>()).unwrap_or(u32::MAX),
+        )
+    }
+    .ok()?;
+    info.ChangeTime
+        .checked_sub(UNIX_EPOCH_FILETIME)?
+        .checked_mul(100)
+}
+
+/// Whether `file_type` is a link to a directory, such as a junction, which a walk does not keep.
+pub fn is_dir_link(file_type: &FileType) -> bool {
+    file_type.is_symlink_dir()
 }
 
 /// Maps `mode` to the read-only attribute: no owner write bit makes `path` read-only.
@@ -397,19 +452,87 @@ pub fn symlink(target: &Path, path: &Path) -> io::Result<()> {
     std::os::windows::fs::symlink_file(target, path)
 }
 
-/// Nothing opens beneath a directory until the handle-based check lands.
-pub fn open_beneath(_dir: &File, _path: &Path, _directory: bool) -> io::Result<File> {
-    Err(io::ErrorKind::Unsupported.into())
+/// Opens the relative `path` beneath the directory `dir`: a `..` past `dir`, an absolute path, or a
+/// link whose final path leaves `dir` fails with `EXDEV`, checked on the opened handle.
+pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
+    let rel = super::beneath(path)?;
+    let root = fd_path(dir).ok_or_else(io::Error::last_os_error)?;
+    let mut options = File::options();
+    options.read(true);
+    if directory {
+        options.custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0);
+    }
+    let file = options.open(root.join(rel))?;
+    match fd_path(&file) {
+        Some(real) if real.starts_with(&root) => Ok(file),
+        _ => Err(io::Error::from_raw_os_error(libc::EXDEV)),
+    }
 }
 
-/// The path the open file `fd` resolves to now; none until the handle-based check lands.
-pub fn fd_path(_fd: &impl AsRawHandle) -> Option<PathBuf> {
-    None
+/// The final path the open file `fd` resolves to now, in its `\\?\` form.
+pub fn fd_path(fd: &impl AsRawHandle) -> Option<PathBuf> {
+    let mut buf = vec![0u16; PATH_UNITS];
+    // SAFETY: the handle is live for the call, and buf is a writable buffer of the length passed.
+    let len = unsafe {
+        GetFinalPathNameByHandleW(HANDLE(fd.as_raw_handle()), &mut buf, FILE_NAME_NORMALIZED)
+    } as usize;
+    (len > 0 && len < buf.len()).then(|| OsString::from_wide(&buf[..len]).into())
 }
 
-/// Unsupported until the handle-based check lands: nothing opens beneath a directory to list.
-pub fn list_dir(_dir: &File) -> io::Result<Vec<super::Listed>> {
-    Err(io::ErrorKind::Unsupported.into())
+/// The entries of the open directory `dir`, read through its handle; a reparse point is a link, not followed.
+pub fn list_dir(dir: &File) -> io::Result<Vec<super::Listed>> {
+    let mut buf = vec![0u64; LIST_BUF / 8];
+    let mut class = FileFullDirectoryRestartInfo;
+    let mut out = Vec::new();
+    loop {
+        // SAFETY: the handle is live for the call, and buf is a writable buffer of the size passed.
+        let read = unsafe {
+            GetFileInformationByHandleEx(
+                HANDLE(dir.as_raw_handle()),
+                class,
+                buf.as_mut_ptr().cast(),
+                u32::try_from(LIST_BUF).unwrap_or(u32::MAX),
+            )
+        };
+        if let Err(e) = read {
+            if e.code() == ERROR_NO_MORE_FILES.to_hresult() {
+                return Ok(out);
+            }
+            return Err(e.into());
+        }
+        class = FileFullDirectoryInfo;
+        let base = buf.as_ptr().cast::<u8>();
+        let mut at = 0usize;
+        loop {
+            // SAFETY: the call filled buf with FILE_FULL_DIR_INFO records, 8-byte aligned and chained by
+            // NextEntryOffset; each name holds FileNameLength bytes, all inside buf.
+            let (next, attributes, size, name) = unsafe {
+                let entry = base.add(at).cast::<FILE_FULL_DIR_INFO>();
+                let name = std::slice::from_raw_parts(
+                    (&raw const (*entry).FileName).cast::<u16>(),
+                    (*entry).FileNameLength as usize / 2,
+                );
+                (
+                    (*entry).NextEntryOffset,
+                    (*entry).FileAttributes,
+                    (*entry).EndOfFile,
+                    OsString::from_wide(name),
+                )
+            };
+            if name != "." && name != ".." {
+                let link = attributes & FILE_ATTRIBUTE_REPARSE_POINT.0 != 0;
+                let is_dir = attributes & FILE_ATTRIBUTE_DIRECTORY.0 != 0 && !link;
+                out.push(super::Listed {
+                    name,
+                    kind: Some((is_dir, u64::try_from(size).unwrap_or(0))),
+                });
+            }
+            if next == 0 {
+                break;
+            }
+            at += next as usize;
+        }
+    }
 }
 
 /// The SDDL of a pipe that admits SYSTEM and `user`, and `group` with read and write.
@@ -718,6 +841,60 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert!(end.closed());
+    }
+
+    #[test]
+    fn a_write_that_keeps_the_mtime_still_changes_the_change_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("f");
+        std::fs::write(&path, b"one").unwrap();
+        let meta = std::fs::metadata(&path).unwrap();
+        let (mtime, before) = (meta.modified().unwrap(), ctime_ns(&path, &meta).unwrap());
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let file = File::options().write(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut &file, b"two").unwrap();
+        file.set_modified(mtime).unwrap();
+        drop(file);
+        let meta = std::fs::metadata(&path).unwrap();
+        assert_eq!(meta.modified().unwrap(), mtime);
+        assert!(ctime_ns(&path, &meta).unwrap() > before);
+    }
+
+    #[test]
+    fn a_directory_renames_only_to_a_name_that_is_free() {
+        let dir = tempfile::tempdir().unwrap();
+        let (from, taken, free) = (
+            dir.path().join("from"),
+            dir.path().join("taken"),
+            dir.path().join("free"),
+        );
+        std::fs::create_dir_all(from.join("x")).unwrap();
+        std::fs::create_dir(&taken).unwrap();
+        let err = rename_new(&from, &taken).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists, "{err}");
+        assert!(from.join("x").exists() && taken.exists());
+        rename_new(&from, &free).unwrap();
+        assert!(free.join("x").exists() && !from.exists());
+    }
+
+    #[test]
+    fn a_directory_lists_through_its_handle_with_kinds_and_sizes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("f.txt"), b"hello").unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let mut got: Vec<(String, Option<(bool, u64)>)> = list_dir(&open_dir(dir.path()).unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|l| (l.name.to_string_lossy().into_owned(), l.kind))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                ("f.txt".to_owned(), Some((false, 5))),
+                ("sub".to_owned(), Some((true, 0)))
+            ]
+        );
     }
 
     #[test]

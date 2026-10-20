@@ -1,7 +1,7 @@
 //! The unix side of `sys`: thin wrappers over libc calls that std does not expose.
 
 use std::ffi::{CStr, CString, OsStr};
-use std::fs::{File, Metadata, Permissions};
+use std::fs::{File, FileType, Metadata, Permissions};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
@@ -136,9 +136,28 @@ pub fn mode(meta: &Metadata) -> u32 {
     meta.mode()
 }
 
-/// The file's change time in nanoseconds.
-pub fn ctime_ns(meta: &Metadata) -> i64 {
-    meta.ctime().saturating_mul(1_000_000_000) + meta.ctime_nsec()
+/// The change time in nanoseconds of the file at `path`, read from its `meta`.
+pub fn ctime_ns(_path: &Path, meta: &Metadata) -> Option<i64> {
+    Some(meta.ctime().saturating_mul(1_000_000_000) + meta.ctime_nsec())
+}
+
+/// Whether `file_type` is a link to a directory, which a walk does not keep; unix keeps every symlink.
+pub fn is_dir_link(_file_type: &FileType) -> bool {
+    false
+}
+
+/// Opens the directory at `path` to read.
+pub fn open_dir(path: &Path) -> io::Result<File> {
+    File::open(path)
+}
+
+/// Renames the directory `from` to `to`, which must not exist: an existing `to` fails with `AlreadyExists` and stays.
+pub fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+    // rename(2) replaces only an empty directory, so the one just created claims the name
+    std::fs::create_dir(to)?;
+    std::fs::rename(from, to).inspect_err(|_| {
+        let _ = std::fs::remove_dir(to);
+    })
 }
 
 /// Sets the permission bits of `path` to `mode`.
@@ -257,24 +276,11 @@ pub fn inotify_unwatch(fd: &impl AsRawFd, wd: i32) {
 /// absolute path or any symlink fails with `EXDEV`.
 #[cfg(target_os = "macos")]
 pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File> {
-    use std::path::{Component, PathBuf};
-
-    let leaves = || io::Error::from_raw_os_error(libc::EXDEV);
-    let mut parts: Vec<&OsStr> = Vec::new();
-    for c in path.components() {
-        match c {
-            Component::Normal(p) => parts.push(p),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                parts.pop().ok_or_else(leaves)?;
-            }
-            Component::RootDir | Component::Prefix(_) => return Err(leaves()),
-        }
-    }
-    let rel: PathBuf = if parts.is_empty() {
-        ".".into()
+    let rel = super::beneath(path)?;
+    let rel = if rel.as_os_str().is_empty() {
+        Path::new(".")
     } else {
-        parts.iter().collect()
+        &rel
     };
     let path = CString::new(rel.as_os_str().as_bytes()).map_err(io::Error::other)?;
     // SAFETY: path is NUL-terminated and outlives the call; openat takes plain integers otherwise.

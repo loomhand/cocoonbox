@@ -389,20 +389,16 @@ pub async fn place(args: Value) -> Result<String, String> {
                 format!("{}-{n}", a.name)
             };
             let target = a.dir.join(&name);
-            match fs::create_dir(&target) {
-                // rename(2) replaces only an empty directory, so the one just created claims the name
-                Ok(()) => {
-                    return fs::rename(&a.staging, &target).map(|()| name).map_err(|e| {
-                        let _ = fs::remove_dir(&target);
-                        format!(
-                            "rename {} to {}: {e}",
-                            a.staging.display(),
-                            target.display()
-                        )
-                    });
-                }
+            match sys::rename_new(&a.staging, &target) {
+                Ok(()) => return Ok(name),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(format!("mkdir {}: {e}", target.display())),
+                Err(e) => {
+                    return Err(format!(
+                        "rename {} to {}: {e}",
+                        a.staging.display(),
+                        target.display()
+                    ));
+                }
             }
         }
         Err(format!("{} and {PLACE_TRIES} variants exist", a.name))
@@ -485,7 +481,9 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
                 continue;
             };
             let ft = meta.file_type();
-            let (kind, target) = if ft.is_symlink() {
+            let (kind, target) = if sys::is_dir_link(&ft) {
+                continue;
+            } else if ft.is_symlink() {
                 let target = fs::read_link(child.path())
                     .ok()
                     .map(|t| t.to_string_lossy().into_owned());
@@ -506,7 +504,9 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
                 mtime_ms: mtime_ms(meta.modified().ok()),
                 size: if kind == Kind::File { meta.len() } else { 0 },
                 target,
-                ctime_ns: (kind == Kind::File).then(|| sys::ctime_ns(&meta)),
+                ctime_ns: (kind == Kind::File)
+                    .then(|| sys::ctime_ns(&child.path(), &meta))
+                    .flatten(),
             });
         }
     }

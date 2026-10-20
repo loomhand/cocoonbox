@@ -4,7 +4,7 @@ pub mod crypto;
 pub mod manifest;
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -50,11 +50,14 @@ const RESTORED_DIR: &str = "Restored";
 const KNOWN_FILE: &str = "known-chunks.json";
 
 const EXCLUDED_PREFIXES: [&str; 2] = [".cache", ".local/share/Trash"];
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 const HOME_EXCLUDED: [&str; 0] = [];
 // a live session holds Library and .Trash open, and TCC guards .Trash
 #[cfg(target_os = "macos")]
 const HOME_EXCLUDED: [&str; 2] = [".Trash", "Library"];
+// a live session holds AppData open, with caches and the registry's own files
+#[cfg(windows)]
+const HOME_EXCLUDED: [&str; 1] = ["AppData"];
 const EXCLUDED_NAMES: [&str; 17] = [
     "Cache",
     "Code Cache",
@@ -289,9 +292,7 @@ impl StateEngine {
         let mut modes = Vec::new();
         let mut targets = Vec::new();
         for (root, r) in records {
-            let path = staging
-                .join(root.path.strip_prefix("/").unwrap_or(&root.path))
-                .join(&r.entry.path);
+            let path = staging.join(relative(&root.path)).join(&r.entry.path);
             match r.entry.kind {
                 Kind::Dir => {
                     dirs.push(json!({"path": path, "mode": r.entry.mode | 0o700}));
@@ -1397,6 +1398,13 @@ pub fn excludes() -> Excludes {
     }
 }
 
+/// `path` without its prefix and root: `/home/user` is `home/user`, and `C:\\Users\\user` is `Users\\user`.
+fn relative(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|c| matches!(c, Component::Normal(_)))
+        .collect()
+}
+
 /// After a restore Chrome follows the restored profile's record of the save, otherwise the close.
 fn chrome_start(closed: bool, restored: bool) -> Option<serde_json::Value> {
     if restored {
@@ -1529,6 +1537,16 @@ fn retryable(status: reqwest::StatusCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restored_root_lands_under_its_path_without_prefix_or_root() {
+        assert_eq!(relative(Path::new("/home/user")), Path::new("home/user"));
+        #[cfg(windows)]
+        assert_eq!(
+            relative(Path::new(r"C:\Users\user")),
+            Path::new(r"Users\user")
+        );
+    }
 
     #[tokio::test]
     async fn resume_returns_before_chrome_is_ready() {

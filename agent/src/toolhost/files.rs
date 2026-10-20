@@ -358,7 +358,8 @@ fn open_beneath(
     } else {
         rel
     };
-    let root = File::open(workspace).map_err(|e| format!("open {}: {e}", workspace.display()))?;
+    let root =
+        sys::open_dir(workspace).map_err(|e| format!("open {}: {e}", workspace.display()))?;
     let file = sys::open_beneath(&root, rel, directory).map_err(|e| match e.raw_os_error() {
         Some(libc::EXDEV) => refused(),
         _ => format!("open {}: {e}", path.display()),
@@ -516,6 +517,30 @@ mod tests {
         .await
         .unwrap();
         assert!(listing.contains("b.txt  (6 bytes)"), "{listing}");
+    }
+
+    #[tokio::test]
+    async fn a_read_only_share_reads_beneath_the_workspace_and_refuses_a_way_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        write(&ws, json!({"path": "a/b.txt", "content": "hello"}))
+            .await
+            .unwrap();
+        std::fs::create_dir(ws.join("a/sub")).unwrap();
+        std::fs::write(dir.path().join("secret.txt"), "secret").unwrap();
+        sys::symlink(&dir.path().join("secret.txt"), &ws.join("a/out.txt")).unwrap();
+        let share = |path: &str| json!({"path": path, "workspace_only": true});
+        let listing = list(&ws, None, share("a")).await.unwrap();
+        assert!(
+            listing.contains("b.txt  (5 bytes)\n") && listing.contains("sub/\n"),
+            "{listing}"
+        );
+        let text = read(&ws, None, share("a/sub/../b.txt")).await.unwrap();
+        assert!(text.contains("hello"), "{text}");
+        for way_out in ["a/out.txt", "../secret.txt", "a/../../secret.txt"] {
+            let err = read(&ws, None, share(way_out)).await.unwrap_err();
+            assert!(err.contains("is refused"), "{way_out}: {err}");
+        }
     }
 
     #[cfg(unix)]
