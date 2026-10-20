@@ -77,8 +77,19 @@ const EXCLUDED_NAMES: [&str; 17] = [
     "optimization_guide_model_store",
     "OptGuideOnDeviceModel",
 ];
+#[cfg(not(windows))]
 const EXCLUDED_NAME_PREFIXES: [&str; 4] =
     ["Singleton", STAGING_PREFIX, ".cb-trash-", ".org.chromium."];
+// the registry hive and its logs, which a live session holds open
+#[cfg(windows)]
+const EXCLUDED_NAME_PREFIXES: [&str; 6] = [
+    "Singleton",
+    STAGING_PREFIX,
+    ".cb-trash-",
+    ".org.chromium.",
+    "NTUSER.DAT",
+    "ntuser.",
+];
 const EXCLUDED_NAME_SUFFIXES: [&str; 1] = ["-shm"];
 
 /// Snapshots, uploads and restores user state; one operation runs at a time.
@@ -444,7 +455,7 @@ impl StateEngine {
                 .filter(|p| !p.contains('/'))
                 .collect();
             swaps
-                .push(json!({"root": root.path, "staging": staging, "names": names, "keep": keep}));
+                .push(json!({"root": root.path, "staging": staging, "names": names, "keep": keep, "excludes": self.excludes}));
         }
         if let Some(db) = &manifest.agent_db {
             targets.push(Target {

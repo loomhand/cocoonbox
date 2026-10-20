@@ -139,6 +139,8 @@ struct SwapArgs {
     names: Vec<String>,
     #[serde(default)]
     keep: Vec<String>,
+    #[serde(default)]
+    excludes: Excludes,
 }
 
 #[derive(Deserialize)]
@@ -316,6 +318,30 @@ pub async fn swap(args: Value) -> Result<String, String> {
 fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
     let trash = a.root.join(format!("{TRASH_PREFIX}{}", std::process::id()));
     fs::create_dir_all(&trash).map_err(|e| format!("mkdir {}: {e}", trash.display()))?;
+    let mut moved = Vec::new();
+    let swapped = swap_moves(a, &trash, &mut moved);
+    if swapped.is_err() {
+        for (from, to) in moved.iter().rev() {
+            let _ = fs::rename(to, from);
+        }
+        let _ = fs::remove_dir(&trash);
+    }
+    let removed = swapped?;
+    remove_tree(&trash).map_err(|e| format!("remove {}: {e}", trash.display()))?;
+    let _ = remove_tree(&a.staging);
+    Ok(format!(
+        "swapped {} entries, removed {removed}",
+        a.names.len()
+    ))
+}
+
+/// The renames of a swap, each recorded in `moved` as it happens so a failure can undo them; returns how many entries
+/// absent from the snapshot went to `trash`. An entry a walk never keeps, excluded or a link to a directory, stays.
+fn swap_moves(
+    a: &SwapArgs,
+    trash: &Path,
+    moved: &mut Vec<(PathBuf, PathBuf)>,
+) -> Result<usize, String> {
     let staging_name = a
         .staging
         .file_name()
@@ -326,26 +352,28 @@ fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
     for entry in current.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let special = Some(&name) == staging_name.as_ref() || Some(&name) == trash_name.as_ref();
-        if special || a.keep.contains(&name) || a.names.contains(&name) {
+        let unwalked =
+            a.excludes.matches(&name) || entry.file_type().is_ok_and(|t| sys::is_dir_link(&t));
+        if special || unwalked || a.keep.contains(&name) || a.names.contains(&name) {
             continue;
         }
-        fs::rename(entry.path(), trash.join(&name))
-            .map_err(|e| format!("move aside {name}: {e}"))?;
+        let aside = trash.join(&name);
+        fs::rename(entry.path(), &aside).map_err(|e| format!("move aside {name}: {e}"))?;
+        moved.push((entry.path(), aside));
         removed += 1;
     }
     for name in &a.names {
         let target = a.root.join(name);
         if fs::symlink_metadata(&target).is_ok() {
-            fs::rename(&target, trash.join(name)).map_err(|e| format!("move aside {name}: {e}"))?;
+            let aside = trash.join(name);
+            fs::rename(&target, &aside).map_err(|e| format!("move aside {name}: {e}"))?;
+            moved.push((target.clone(), aside));
         }
-        fs::rename(a.staging.join(name), &target).map_err(|e| format!("swap in {name}: {e}"))?;
+        let staged = a.staging.join(name);
+        fs::rename(&staged, &target).map_err(|e| format!("swap in {name}: {e}"))?;
+        moved.push((staged, target));
     }
-    remove_tree(&trash).map_err(|e| format!("remove {}: {e}", trash.display()))?;
-    let _ = remove_tree(&a.staging);
-    Ok(format!(
-        "swapped {} entries, removed {removed}",
-        a.names.len()
-    ))
+    Ok(removed)
 }
 
 /// Removes the tree at `path`; directories without owner write, such as a Go module cache, get it first.
@@ -626,6 +654,41 @@ mod tests {
                 ("workspace", "Library/x/f")
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_swap_that_fails_midway_puts_every_entry_back_and_keeps_excluded_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        let staging = root.join(".cb-restore");
+        fs::create_dir_all(root.join("docs")).unwrap();
+        fs::write(root.join("docs/stale"), b"s").unwrap();
+        fs::write(root.join("stray"), b"x").unwrap();
+        fs::write(root.join("NTUSER.DAT"), b"hive").unwrap();
+        fs::create_dir_all(staging.join("docs")).unwrap();
+        fs::write(staging.join("docs/new"), b"n").unwrap();
+        let excludes = Excludes {
+            name_prefixes: vec!["NTUSER.".into()],
+            ..Excludes::default()
+        };
+        let args = serde_json::json!({
+            "root": root, "staging": staging, "names": ["docs", "missing"], "excludes": excludes,
+        });
+        let err = swap(args).await.unwrap_err();
+        assert!(err.starts_with("swap in missing"), "{err}");
+        let mut names: Vec<String> = fs::read_dir(&root)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        assert_eq!(names, [".cb-restore", "NTUSER.DAT", "docs", "stray"]);
+        assert!(root.join("docs/stale").exists() && staging.join("docs/new").exists());
+        let args = serde_json::json!({
+            "root": root, "staging": staging, "names": ["docs"], "excludes": excludes,
+        });
+        swap(args).await.unwrap();
+        assert!(root.join("docs/new").exists() && root.join("NTUSER.DAT").exists());
+        assert!(!root.join("stray").exists());
     }
 
     #[tokio::test]
