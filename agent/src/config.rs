@@ -8,24 +8,53 @@ use std::time::Duration;
 use crate::plugins::{self, Plugin};
 use crate::toolhost::state::Root;
 
+#[cfg(unix)]
 const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
+#[cfg(windows)]
+const DEFAULT_STATE_DIR: &str = r"C:\ProgramData\cocoonbox\state";
+#[cfg(unix)]
 const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
+/// shuttle's desk pipe, which routes the toolhost's tools to the toolhost service it runs.
+#[cfg(windows)]
+const DEFAULT_TOOLHOST_SOCKET: &str = r"\\.\pipe\cocoon-shuttle-desk";
 const DEFAULT_OFFLOAD_SOCKET: &str = "/run/cocoonbox/offload.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
+#[cfg(unix)]
 const DEFAULT_WORKSPACE: &str = "/workspace";
+#[cfg(windows)]
+const DEFAULT_WORKSPACE: &str = r"C:\workspace";
+#[cfg(unix)]
 const DEFAULT_HOME: &str = "/home/user";
+#[cfg(windows)]
+const DEFAULT_HOME: &str = r"C:\Users\user";
+#[cfg(unix)]
+const DEFAULT_CHROME: &str = "google-chrome";
+#[cfg(windows)]
+const DEFAULT_CHROME: &str = r"C:\Program Files\Google\Chrome\Application\chrome.exe";
+#[cfg(unix)]
 const IDENTITY_PATH: &str = "/run/cocoonbox-identity/identity";
+#[cfg(windows)]
+const IDENTITY_PATH: &str = r"C:\ProgramData\cocoonbox\identity\identity";
 const ROOT_UID: &str = "0";
 const REDACTED: &str = "<redacted>";
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const DESKTOP_UNIT: Option<&str> = Some("cocoonbox-session.service");
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "linux"))]
 const DESKTOP_UNIT: Option<&str> = None;
 const SESSION_SAVE: &str = "/usr/local/lib/cocoonbox/session-save";
+#[cfg(unix)]
 const DESK_GUIDE: &str = "/opt/desk/AGENTS.md";
+#[cfg(windows)]
+const DESK_GUIDE: &str = r"C:\ProgramData\cocoonbox\desk\AGENTS.md";
 const ANDROID_GUIDE: &str = "/opt/android/AGENTS.md";
+#[cfg(unix)]
 const TOOLS_DIR: &str = "/etc/cocoonbox/tools.d";
+#[cfg(windows)]
+const TOOLS_DIR: &str = r"C:\ProgramData\cocoonbox\tools.d";
+#[cfg(unix)]
 const ROUTING_DIR: &str = "/etc/cocoonbox/routing.d";
+#[cfg(windows)]
+const ROUTING_DIR: &str = r"C:\ProgramData\cocoonbox\routing.d";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
@@ -192,7 +221,9 @@ pub struct ToolhostConfig {
 impl ToolhostConfig {
     /// Reads toolhost settings; every key has a contract default.
     pub fn from_env() -> Result<Self, String> {
-        let home = env::var("HOME").map_err(|e| format!("read HOME: {e}"))?;
+        let home = env::var("HOME")
+            .or_else(|_| env::var("USERPROFILE"))
+            .map_err(|e| format!("read HOME: {e}"))?;
         let endpoint = PathBuf::from(optional("TOOLHOST_SOCKET", DEFAULT_TOOLHOST_SOCKET));
         let service = env::var_os("SHUTTLE_SERVICE_SOCKET")
             .filter(|v| !v.is_empty())
@@ -205,7 +236,7 @@ impl ToolhostConfig {
             shuttle_socket: shuttle_socket(),
             socket: service.unwrap_or(endpoint),
             workspace: optional("CB_WORKSPACE", DEFAULT_WORKSPACE).into(),
-            chrome_bin: optional("CHROME_BIN", "google-chrome"),
+            chrome_bin: optional("CHROME_BIN", DEFAULT_CHROME),
             chrome_profile: env::var("CHROME_PROFILE").map_or_else(
                 |_| format!("{home}/.config/cocoonbox-chrome").into(),
                 Into::into,

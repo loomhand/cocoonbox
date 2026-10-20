@@ -25,11 +25,12 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-    ConvertStringSidToSidW, SDDL_REVISION_1,
+    ConvertStringSidToSidW, GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
 };
 use windows::Win32::Security::{
-    GetTokenInformation, LookupAccountNameW, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
-    SID_NAME_USE, TOKEN_QUERY, TOKEN_USER, TokenUser,
+    ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, DACL_SECURITY_INFORMATION, GetAce, GetTokenInformation,
+    INHERIT_ONLY_ACE, LookupAccountNameW, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+    SECURITY_ATTRIBUTES, SID_NAME_USE, TOKEN_QUERY, TOKEN_USER, TokenUser,
 };
 use windows::Win32::Storage::FileSystem::{
     FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_BASIC_INFO,
@@ -39,7 +40,8 @@ use windows::Win32::Storage::FileSystem::{
     MOVE_FILE_FLAGS, MoveFileExW,
 };
 use windows::Win32::System::Console::{
-    COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
+    COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole, STD_ERROR_HANDLE,
+    SetStdHandle,
 };
 use windows::Win32::System::IO::{CancelIoEx, IO_STATUS_BLOCK};
 use windows::Win32::System::JobObjects::{
@@ -48,6 +50,7 @@ use windows::Win32::System::JobObjects::{
     SetInformationJobObject, TerminateJobObject,
 };
 use windows::Win32::System::Pipes::CreatePipe;
+use windows::Win32::System::Registry::{HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ, RegGetValueW};
 use windows::Win32::System::Threading::{
     CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
     EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess, INFINITE,
@@ -55,6 +58,7 @@ use windows::Win32::System::Threading::{
     PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES,
     STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute, WaitForSingleObject,
 };
+use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW};
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
@@ -63,10 +67,32 @@ const SIGKILL: i32 = 9;
 /// The longest path a wide Windows call returns, in UTF-16 units.
 const PATH_UNITS: usize = 32 << 10;
 const LIST_BUF: usize = 64 << 10;
+const TITLE_UNITS: usize = 1024;
+const CURRENT_VERSION: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+/// The first build of Windows 11, whose ProductName still says Windows 10.
+const WINDOWS_11_BUILD: u32 = 22_000;
 /// 1970-01-01 in FILETIME units, 100 ns since 1601.
 const UNIX_EPOCH_FILETIME: i64 = 116_444_736_000_000_000;
 /// FILE_GENERIC_READ and FILE_GENERIC_WRITE without FILE_CREATE_PIPE_INSTANCE, as shuttle grants its socket_group.
 const GROUP_RIGHTS: &str = "0x12019b";
+/// SYSTEM and Administrators, the accounts that may own and change a file serve trusts.
+const ADMIN_SIDS: [&str; 2] = ["S-1-5-18", "S-1-5-32-544"];
+/// Any right to change a file or directory: write and append data, write extended attributes and attributes,
+/// delete a child, delete, write the DACL or owner, generic all and generic write.
+const WRITE_RIGHTS: u32 = 0x0000_0002
+    | 0x0000_0004
+    | 0x0000_0010
+    | 0x0000_0040
+    | 0x0000_0100
+    | 0x0001_0000
+    | 0x0004_0000
+    | 0x0008_0000
+    | 0x1000_0000
+    | 0x4000_0000;
+const ACCESS_ALLOWED: u8 = 0;
+const ACCESS_ALLOWED_OBJECT: u8 = 5;
+const ACCESS_ALLOWED_CALLBACK: u8 = 9;
+const ACCESS_ALLOWED_CALLBACK_OBJECT: u8 = 11;
 
 /// The security descriptor of a named pipe: SYSTEM and this process's user, and a group when set.
 pub struct PipeSecurity {
@@ -338,6 +364,68 @@ pub fn open_nofollow(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
+/// Whether only SYSTEM and Administrators can change the open file or directory `file`: one of them owns
+/// it, and no allow entry of its DACL gives any other account a write right.
+pub fn admin_only(file: &File) -> Result<(), String> {
+    let (mut owner, mut dacl) = (PSID::default(), std::ptr::null_mut::<ACL>());
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    // SAFETY: the handle is live for the call; the owner and DACL point into descriptor, freed below.
+    let read = unsafe {
+        GetSecurityInfo(
+            HANDLE(file.as_raw_handle()),
+            SE_FILE_OBJECT,
+            OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+            Some(&raw mut owner),
+            None,
+            Some(&raw mut dacl),
+            None,
+            Some(&raw mut descriptor),
+        )
+    };
+    if read.is_err() {
+        return Err(format!(
+            "read its security: {}",
+            io::Error::from_raw_os_error(read.0.cast_signed())
+        ));
+    }
+    let checked = admin_acl(owner, dacl);
+    // SAFETY: descriptor came from GetSecurityInfo and is freed once, after the last use of owner and dacl.
+    unsafe { LocalFree(Some(HLOCAL(descriptor.0))) };
+    checked
+}
+
+/// Sends this process's stderr to the end of the file at `path` from now on.
+pub fn stderr_to(path: &Path) -> io::Result<()> {
+    let file = File::options().create(true).append(true).open(path)?;
+    // SAFETY: the handle is a live file handle, which the process keeps open as its stderr from here on.
+    unsafe { SetStdHandle(STD_ERROR_HANDLE, HANDLE(file.as_raw_handle())) }?;
+    std::mem::forget(file);
+    Ok(())
+}
+
+/// The title of the foreground window; none without one.
+pub fn foreground_title() -> Option<String> {
+    let mut buf = vec![0u16; TITLE_UNITS];
+    // SAFETY: GetForegroundWindow takes nothing, and GetWindowTextW writes at most buf's length.
+    let len = unsafe { GetWindowTextW(GetForegroundWindow(), &mut buf) };
+    let len = usize::try_from(len).ok().filter(|l| *l > 0)?;
+    Some(String::from_utf16_lossy(&buf[..len]))
+}
+
+/// The Windows release, such as `Windows 11 24H2`, from the registry.
+pub fn os_name() -> Option<String> {
+    let build: u32 = registry_string("CurrentBuild")?.parse().ok()?;
+    let product = if build >= WINDOWS_11_BUILD {
+        "Windows 11"
+    } else {
+        "Windows 10"
+    };
+    Some(match registry_string("DisplayVersion") {
+        Some(version) => format!("{product} {version}"),
+        None => product.to_owned(),
+    })
+}
+
 /// Opens the directory at `path` to read.
 pub fn open_dir(path: &Path) -> io::Result<File> {
     File::options()
@@ -533,6 +621,71 @@ pub fn list_dir(dir: &File) -> io::Result<Vec<super::Listed>> {
             at += next as usize;
         }
     }
+}
+
+/// Whether `owner` is SYSTEM or Administrators and no allow entry of `dacl` that applies gives another account a write right.
+fn admin_acl(owner: PSID, dacl: *const ACL) -> Result<(), String> {
+    let owner = sid_string(owner, false)?;
+    if !ADMIN_SIDS.contains(&owner.as_str()) {
+        return Err(format!("owned by {owner}, not SYSTEM or Administrators"));
+    }
+    if dacl.is_null() {
+        return Err("no DACL, so every account may write it".to_owned());
+    }
+    // SAFETY: dacl is a live ACL from the caller's security descriptor.
+    for i in 0..unsafe { (*dacl).AceCount } {
+        let mut ace = std::ptr::null_mut();
+        // SAFETY: i is below the ACL's AceCount, and ace receives a pointer into the ACL.
+        unsafe { GetAce(dacl, u32::from(i), &raw mut ace) }
+            .map_err(|e| format!("read entry {i}: {e}"))?;
+        // SAFETY: every ACE starts with an ACE_HEADER, and every allow type with its mask after it.
+        let (header, mask) = unsafe {
+            let allowed = ace.cast::<ACCESS_ALLOWED_ACE>();
+            (*ace.cast::<ACE_HEADER>(), (*allowed).Mask)
+        };
+        if header.AceFlags & INHERIT_ONLY_ACE.0 as u8 != 0 || mask & WRITE_RIGHTS == 0 {
+            continue;
+        }
+        let sid = match header.AceType {
+            ACCESS_ALLOWED | ACCESS_ALLOWED_CALLBACK => {
+                // SAFETY: these types hold the SID at SidStart, inside the ACE.
+                let start = unsafe { &raw const (*ace.cast::<ACCESS_ALLOWED_ACE>()).SidStart };
+                sid_string(PSID(start.cast_mut().cast()), false)?
+            }
+            ACCESS_ALLOWED_OBJECT | ACCESS_ALLOWED_CALLBACK_OBJECT => {
+                return Err(format!("object entry {i} may write it"));
+            }
+            _ => continue,
+        };
+        if !ADMIN_SIDS.contains(&sid.as_str()) {
+            return Err(format!("{sid} may write it"));
+        }
+    }
+    Ok(())
+}
+
+/// The string value `name` of the CurrentVersion key.
+fn registry_string(name: &str) -> Option<String> {
+    let mut buf = vec![0u16; TITLE_UNITS];
+    let mut size = u32::try_from(buf.len() * 2).ok()?;
+    // SAFETY: both strings outlive the call, and buf holds size bytes.
+    let read = unsafe {
+        RegGetValueW(
+            HKEY_LOCAL_MACHINE,
+            &HSTRING::from(CURRENT_VERSION),
+            &HSTRING::from(name),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr().cast()),
+            Some(&raw mut size),
+        )
+    };
+    if read.is_err() {
+        return None;
+    }
+    let units = (size as usize / 2).min(buf.len());
+    let value = String::from_utf16_lossy(&buf[..units]);
+    Some(value.trim_end_matches('\0').to_owned()).filter(|v| !v.is_empty())
 }
 
 /// The SDDL of a pipe that admits SYSTEM and `user`, and `group` with read and write.
@@ -895,6 +1048,60 @@ mod tests {
                 ("sub".to_owned(), Some((true, 0)))
             ]
         );
+    }
+
+    fn admin_check(sddl: &str) -> Result<(), String> {
+        use windows::Win32::Security::{GetSecurityDescriptorDacl, GetSecurityDescriptorOwner};
+
+        let security = PipeSecurity::from_sddl(sddl).unwrap();
+        let (mut owner, mut dacl) = (PSID::default(), std::ptr::null_mut());
+        let (mut present, mut defaulted) = (false.into(), false.into());
+        // SAFETY: the descriptor lives until the end, and each out pointer receives a pointer into it.
+        unsafe {
+            GetSecurityDescriptorOwner(security.descriptor, &raw mut owner, &raw mut defaulted)
+                .unwrap();
+            GetSecurityDescriptorDacl(
+                security.descriptor,
+                &raw mut present,
+                &raw mut dacl,
+                &raw mut defaulted,
+            )
+            .unwrap();
+        }
+        let dacl = if present.as_bool() {
+            dacl
+        } else {
+            std::ptr::null_mut()
+        };
+        admin_acl(owner, dacl)
+    }
+
+    #[test]
+    fn only_an_admin_owned_file_no_other_account_can_write_is_admin_only() {
+        for trusted in [
+            "O:SYD:P(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;BU)",
+            "O:BAD:P(A;;FA;;;SY)(A;OICIIO;FA;;;CO)(D;;FA;;;BU)",
+        ] {
+            assert_eq!(admin_check(trusted), Ok(()), "{trusted}");
+        }
+        for (refused, why) in [
+            ("O:BUD:P(A;;FA;;;SY)", "owned by S-1-5-32-545"),
+            (
+                "O:SYD:P(A;;FA;;;SY)(A;;0x2;;;BU)",
+                "S-1-5-32-545 may write it",
+            ),
+            ("O:SYD:P(A;;GW;;;WD)", "S-1-1-0 may write it"),
+            ("O:SYD:NO_ACCESS_CONTROL", "no DACL"),
+        ] {
+            let err = admin_check(refused).unwrap_err();
+            assert!(err.starts_with(why), "{refused}: {err}");
+        }
+    }
+
+    #[test]
+    fn the_os_is_windows_10_or_11_with_its_release() {
+        let os = os_name().unwrap();
+        assert!(os.starts_with("Windows 1"), "{os}");
     }
 
     #[test]

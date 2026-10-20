@@ -14,6 +14,8 @@ use windows_service::service_control_handler::{
 use windows_service::{define_windows_service, service_dispatcher};
 
 const NAME: &str = "cocoonbox-agent";
+/// A file the service appends its stderr to, as the service control manager keeps none.
+const LOG_VAR: &str = "CB_LOG";
 /// ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: the process runs from a console, not under the service control manager.
 const NOT_A_SERVICE: i32 = 1063;
 const FAILED: u32 = 1;
@@ -45,6 +47,11 @@ pub async fn stopped() {
 }
 
 fn service_main(_args: Vec<OsString>) {
+    if let Some(log) = std::env::var_os(LOG_VAR)
+        && let Err(e) = crate::sys::stderr_to(std::path::Path::new(&log))
+    {
+        eprintln!("cocoonbox-agent serve: log to {}: {e}", log.display());
+    }
     if let Err(e) = serve_service() {
         eprintln!("cocoonbox-agent serve: {e}");
     }

@@ -511,6 +511,7 @@ async fn desktop_info(shuttle: Option<&Client>) -> String {
                 .ok()
                 .and_then(|v| product_name(&v))
         })
+        .or_else(crate::sys::os_name)
     {
         info["os"] = os.into();
     }

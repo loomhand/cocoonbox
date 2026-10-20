@@ -146,6 +146,11 @@ pub fn is_dir_link(_file_type: &FileType) -> bool {
     false
 }
 
+/// The OS release on unix, where `/etc/os-release` or SystemVersion.plist names it instead.
+pub fn os_name() -> Option<String> {
+    None
+}
+
 /// Opens the directory at `path` to read.
 pub fn open_dir(path: &Path) -> io::Result<File> {
     File::open(path)

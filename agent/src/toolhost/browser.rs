@@ -63,7 +63,9 @@ const PAGE_TYPES: [&str; 7] = [
 const RUNNING_MARKER: &str = "cocoonbox-was-running";
 const AGENT_MARKER: &str = "cocoonbox-agent-windows";
 const AGENT_PAGE: &str = "about:blank#cocoonbox-agent";
+#[cfg(unix)]
 const XPROP: &str = "xprop";
+#[cfg(unix)]
 const XPROP_WAIT: Duration = Duration::from_secs(2);
 const CHROME_APPS: [&str; 2] = ["Google Chrome", "Chromium"];
 const MAX_WINDOWS: usize = 8;
@@ -1623,12 +1625,20 @@ fn window_tabs<'a>(id: &'a str, pages: &[(&'a Value, Option<i64>)]) -> Vec<&'a s
 }
 
 /// Page title of the X active window when it is a Chrome window.
+#[cfg(unix)]
 async fn active_title() -> Option<String> {
     let root = xprop(&["-root", "_NET_ACTIVE_WINDOW"]).await?;
     let name = xprop(&["-id", active_window(&root)?, "_NET_WM_NAME"]).await?;
     chrome_page_title(&name)
 }
 
+/// Page title of the foreground window when it is a Chrome window.
+#[cfg(windows)]
+async fn active_title() -> Option<String> {
+    page_title(&crate::sys::foreground_title()?)
+}
+
+#[cfg(unix)]
 async fn xprop(args: &[&str]) -> Option<String> {
     let run = Command::new(XPROP)
         .args(args)
@@ -1642,19 +1652,26 @@ async fn xprop(args: &[&str]) -> Option<String> {
 }
 
 /// The window id in `_NET_ACTIVE_WINDOW(WINDOW): window id # 0x600003, 0x0`; none for `0x0`.
+#[cfg(unix)]
 fn active_window(xprop: &str) -> Option<&str> {
     let id = xprop.split_once('#')?.1.split(',').next()?.trim();
     (id.starts_with("0x") && id != "0x0").then_some(id)
 }
 
 /// The page title in `_NET_WM_NAME(UTF8_STRING) = "<title> - Google Chrome"`.
+#[cfg(unix)]
 fn chrome_page_title(xprop: &str) -> Option<String> {
-    let name = xprop_string(xprop)?;
+    page_title(&xprop_string(xprop)?)
+}
+
+/// The page title in a Chrome window name, `<title> - Google Chrome`.
+fn page_title(name: &str) -> Option<String> {
     let (title, app) = name.rsplit_once(" - ")?;
     CHROME_APPS.contains(&app).then(|| title.to_owned())
 }
 
 /// The quoted value xprop prints, undoing its `\"`, `\\` and octal `\ooo` escapes.
+#[cfg(unix)]
 fn xprop_string(xprop: &str) -> Option<String> {
     let quoted = xprop.split_once(" = \"")?.1.trim_end().strip_suffix('"')?;
     let mut out = Vec::with_capacity(quoted.len());
@@ -2434,6 +2451,17 @@ pub(super) mod tests {
         );
     }
 
+    #[test]
+    fn a_window_name_gives_its_page_title_only_for_chrome() {
+        assert_eq!(
+            page_title("登录 - a - Google Chrome").as_deref(),
+            Some("登录 - a")
+        );
+        assert_eq!(page_title("x - Chromium").as_deref(), Some("x"));
+        assert_eq!(page_title("notes.txt - Notepad"), None);
+    }
+
+    #[cfg(unix)]
     #[test]
     fn the_active_window_title_names_a_chrome_page_in_either_locale() {
         assert_eq!(

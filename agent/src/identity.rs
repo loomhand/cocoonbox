@@ -1,6 +1,7 @@
 //! Box identity and the edge credential check that admits every call into the agent.
 
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::fs::Metadata;
 use std::io::{self, Read};
 #[cfg(unix)]
@@ -73,7 +74,7 @@ pub struct Gate {
 }
 
 impl Gate {
-    /// Reads the identity at `path`, which with its directory must belong to uid `owner`.
+    /// Reads the identity at `path`, which with its directory must belong to uid `owner`; on Windows, only SYSTEM and Administrators may write them.
     pub fn new(path: PathBuf, owner: u32) -> Self {
         Self {
             path,
@@ -256,6 +257,7 @@ impl<'a> Credential<'a> {
     }
 }
 
+#[cfg_attr(windows, allow(unused_variables))]
 fn load(path: &Path, owner: u32) -> Result<Option<Identity>, String> {
     let file = match crate::sys::open_nofollow(path) {
         Ok(f) => f,
@@ -269,14 +271,23 @@ fn load(path: &Path, owner: u32) -> Result<Option<Identity>, String> {
     if !dir_meta.is_dir() {
         return Err(format!("{} is not a directory", dir.display()));
     }
+    #[cfg(unix)]
     trusted(&dir_meta, owner).map_err(|e| format!("{}: {e}", dir.display()))?;
+    #[cfg(windows)]
+    crate::sys::open_dir(dir)
+        .map_err(|e| format!("open: {e}"))
+        .and_then(|d| crate::sys::admin_only(&d))
+        .map_err(|e| format!("{}: {e}", dir.display()))?;
     let meta = file
         .metadata()
         .map_err(|e| format!("stat {}: {e}", path.display()))?;
     if !meta.is_file() {
         return Err(format!("{} is not a regular file", path.display()));
     }
+    #[cfg(unix)]
     trusted(&meta, owner).map_err(|e| format!("{}: {e}", path.display()))?;
+    #[cfg(windows)]
+    crate::sys::admin_only(&file).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut text = String::new();
     file.take(MAX_IDENTITY_BYTES)
         .read_to_string(&mut text)
@@ -296,12 +307,6 @@ fn trusted(meta: &Metadata, owner: u32) -> Result<(), String> {
         ));
     }
     Ok(())
-}
-
-/// Trusts no identity file until the Windows owner check lands.
-#[cfg(windows)]
-fn trusted(_meta: &Metadata, _owner: u32) -> Result<(), String> {
-    Err("no owner check on Windows".to_owned())
 }
 
 fn key_id(public_key: &[u8; 32]) -> String {

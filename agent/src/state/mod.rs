@@ -1490,7 +1490,24 @@ fn scope_path<'a>(roots: &'a [Root], path: &str) -> Result<(&'a Root, String), S
             let rel = Path::new(trimmed).strip_prefix(&r.path).ok()?;
             Some((r, rel.to_str()?.to_owned()))
         })
+        .or_else(|| logical_path(roots, rest))
         .ok_or_else(invalid)
+}
+
+/// The root and relative path of a logical path on Windows: `/workspace/x` is `x` under the workspace root, whatever its drive path.
+#[cfg(windows)]
+fn logical_path<'a>(roots: &'a [Root], rest: &str) -> Option<(&'a Root, String)> {
+    let (name, rel) = rest.split_once('/').unwrap_or((rest, ""));
+    roots
+        .iter()
+        .find(|r| r.name == name)
+        .map(|r| (r, rel.to_owned()))
+}
+
+/// Unix roots are named by their own paths only.
+#[cfg(unix)]
+fn logical_path<'a>(_roots: &'a [Root], _rest: &str) -> Option<(&'a Root, String)> {
+    None
 }
 
 /// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.
@@ -1548,6 +1565,20 @@ fn retryable(status: reqwest::StatusCode) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_scope_path_names_its_root_by_name_or_by_path() {
+        let roots = default_roots(Path::new(r"C:\Users\u"), Path::new(r"C:\workspace"));
+        let (root, rel) = scope_path(&roots, "/workspace/gate/state.txt").unwrap();
+        assert_eq!(
+            (root.name.as_str(), rel.as_str()),
+            ("workspace", "gate/state.txt")
+        );
+        let (root, rel) = scope_path(&roots, "/home/Documents").unwrap();
+        assert_eq!((root.name.as_str(), rel.as_str()), ("home", "Documents"));
+        assert!(scope_path(&roots, "/elsewhere/x").is_err());
+    }
 
     #[test]
     fn a_restored_root_lands_under_its_path_without_prefix_or_root() {
