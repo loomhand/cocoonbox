@@ -1,7 +1,7 @@
 //! `serve` as a Windows service: the service control manager starts it, and its stop request ends `serve` as SIGTERM does on unix.
 
 use std::ffi::OsString;
-use std::sync::{LazyLock, OnceLock};
+use std::sync::{LazyLock, Mutex, OnceLock};
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
@@ -18,10 +18,12 @@ const NAME: &str = "cocoonbox-agent";
 const NOT_A_SERVICE: i32 = 1063;
 const FAILED: u32 = 1;
 const STOP_HINT: Duration = Duration::from_secs(10);
+const STOP_TICK: Duration = Duration::from_secs(3);
 
 static STOP: LazyLock<CancellationToken> = LazyLock::new(CancellationToken::new);
 static SERVE: OnceLock<fn() -> Result<(), String>> = OnceLock::new();
 static STATUS: OnceLock<ServiceStatusHandle> = OnceLock::new();
+static CHECKPOINT: Mutex<Option<u32>> = Mutex::new(Some(0));
 
 define_windows_service!(ffi_service_main, service_main);
 
@@ -51,15 +53,14 @@ fn service_main(_args: Vec<OsString>) {
 fn serve_service() -> Result<(), String> {
     let handler = |control| match control {
         ServiceControl::Stop | ServiceControl::Shutdown => {
-            if let Some(handle) = STATUS.get() {
-                let _ = handle.set_service_status(status(
-                    ServiceState::StopPending,
-                    ServiceControlAccept::empty(),
-                    ServiceExitCode::Win32(0),
-                    STOP_HINT,
-                ));
-            }
+            stop_pending();
             STOP.cancel();
+            std::thread::spawn(|| {
+                std::thread::sleep(STOP_TICK);
+                while stop_pending() {
+                    std::thread::sleep(STOP_TICK);
+                }
+            });
             ServiceControlHandlerResult::NoError
         }
         ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
@@ -70,7 +71,7 @@ fn serve_service() -> Result<(), String> {
     let _ = STATUS.set(handle);
     let report = |state, accepted, exit_code| {
         handle
-            .set_service_status(status(state, accepted, exit_code, Duration::ZERO))
+            .set_service_status(status(state, accepted, exit_code, Duration::ZERO, 0))
             .map_err(|e| format!("report the service state: {e}"))
     };
     report(
@@ -83,12 +84,33 @@ fn serve_service() -> Result<(), String> {
         Ok(()) => ServiceExitCode::Win32(0),
         Err(_) => ServiceExitCode::ServiceSpecific(FAILED),
     };
+    let mut checkpoint = crate::lock(&CHECKPOINT);
+    *checkpoint = None;
     report(
         ServiceState::Stopped,
         ServiceControlAccept::empty(),
         exit_code,
     )?;
+    drop(checkpoint);
     served
+}
+
+fn stop_pending() -> bool {
+    let mut checkpoint = crate::lock(&CHECKPOINT);
+    let Some(n) = checkpoint.as_mut() else {
+        return false;
+    };
+    *n += 1;
+    if let Some(handle) = STATUS.get() {
+        let _ = handle.set_service_status(status(
+            ServiceState::StopPending,
+            ServiceControlAccept::empty(),
+            ServiceExitCode::Win32(0),
+            STOP_HINT,
+            *n,
+        ));
+    }
+    true
 }
 
 fn status(
@@ -96,13 +118,14 @@ fn status(
     accepted: ServiceControlAccept,
     exit_code: ServiceExitCode,
     wait_hint: Duration,
+    checkpoint: u32,
 ) -> ServiceStatus {
     ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
         current_state: state,
         controls_accepted: accepted,
         exit_code,
-        checkpoint: 0,
+        checkpoint,
         wait_hint,
         process_id: None,
     }
