@@ -144,6 +144,10 @@ pub async fn run(cwd: &Path, home: &Path, args: &Value, rd: AgentRead, mut wr: A
             let _ = tree.kill();
         },
     }
+    #[cfg(windows)]
+    if let Some(console) = tty {
+        let _ = tokio::task::spawn_blocking(move || console.close()).await;
+    }
 }
 
 fn spawn(cwd: &Path, home: &Path, args: &Value, term: &str) -> Result<Started, String> {
@@ -604,6 +608,24 @@ mod tests {
         for code in [0, 3, 143, 0x1_0300, -1_073_741_510] {
             assert_eq!(msys_code(code), code);
         }
+    }
+
+    #[tokio::test]
+    async fn hanging_up_on_a_terminal_command_mid_output_leaves_the_toolhost_serving() {
+        let dir = tempfile::tempdir().unwrap();
+        let client = toolhost(dir.path()).await;
+        let mut conn = client
+            .exec("while :; do echo 0123456789abcdef; done", tty(24, 80))
+            .await
+            .unwrap();
+        let (tag, _) = rpc::read_tagged(&mut conn).await.unwrap();
+        assert_eq!(tag, rpc::STDOUT);
+        drop(conn);
+        let mut next = client.exec("echo ok", None).await.unwrap();
+        let (out, _, code) = tokio::time::timeout(DEADLINE, finish(&mut next))
+            .await
+            .unwrap();
+        assert_eq!((out.as_str(), code), ("ok\n", 0));
     }
 
     #[tokio::test]
