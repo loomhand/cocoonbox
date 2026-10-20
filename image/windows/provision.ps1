@@ -44,6 +44,16 @@ function Log($m) { Write-Output "[windows] $m" }
 
 function Sha($path) { (Get-FileHash -Algorithm SHA256 $path).Hash.ToLowerInvariant() }
 
+function UserValues($key, $values) {
+    $sid = (New-Object System.Security.Principal.NTAccount($BoxUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
+    $hive = "Registry::HKEY_USERS\$sid"
+    $loaded = Test-Path $hive
+    if (-not $loaded) { & reg.exe load "HKU\$sid" "C:\Users\$BoxUser\NTUSER.DAT" | Out-Null }
+    if (-not (Test-Path "$hive\$key")) { New-Item -Force -Path "$hive\$key" | Out-Null }
+    foreach ($kv in $values) { New-ItemProperty -Force -Path "$hive\$key" -Name $kv[0] -PropertyType DWord -Value $kv[1] | Out-Null }
+    if (-not $loaded) { [GC]::Collect(); & reg.exe unload "HKU\$sid" | Out-Null }
+}
+
 function Fetch {
     New-Item -ItemType Directory -Force $Vendor | Out-Null
     foreach ($p in $Pinned) {
@@ -65,7 +75,7 @@ function Fetch {
 }
 
 function System {
-    Log 'the clock in UTC, as the RTC is; no hibernation, boot repair, toasts or automatic updates; developer mode allows unprivileged symlinks'
+    Log 'the clock in UTC, as the RTC is; no hibernation, boot repair, toasts, OneDrive or automatic updates; developer mode allows unprivileged symlinks'
     Set-TimeZone -Id UTC
     if ($env:NOW_UTC) { Set-Date -Date ([DateTime]::Parse($env:NOW_UTC).ToUniversalTime()) | Out-Null }
     # fast startup turns a shutdown into a hibernation, which a cold start under a new Cloud Hypervisor cannot resume;
@@ -77,6 +87,10 @@ function System {
     $toasts = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\PushNotifications'
     New-Item -Force -Path $toasts | Out-Null
     New-ItemProperty -Force -Path $toasts -Name NoToastApplicationNotification -PropertyType DWord -Value 1 | Out-Null
+    UserValues 'Software\Microsoft\Windows\CurrentVersion\PushNotifications' @(, @('ToastEnabled', 0))
+    $onedrive = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\OneDrive'
+    New-Item -Force -Path $onedrive | Out-Null
+    New-ItemProperty -Force -Path $onedrive -Name DisableFileSyncNGSC -PropertyType DWord -Value 1 | Out-Null
     $security = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications'
     New-Item -Force -Path $security | Out-Null
     New-ItemProperty -Force -Path $security -Name DisableNotifications -PropertyType DWord -Value 1 | Out-Null
@@ -129,16 +143,7 @@ function Vnc {
         Stop-Service tvnserver
         Set-Service tvnserver -StartupType Disabled
     }
-    $sid = (New-Object System.Security.Principal.NTAccount($BoxUser)).Translate([System.Security.Principal.SecurityIdentifier]).Value
-    $hive = "Registry::HKEY_USERS\$sid"
-    $loaded = Test-Path $hive
-    if (-not $loaded) { & reg.exe load "HKU\$sid" "C:\Users\$BoxUser\NTUSER.DAT" | Out-Null }
-    $key = "$hive\Software\TightVNC\Server"
-    New-Item -Force -Path $key | Out-Null
-    foreach ($kv in @(@('UseVncAuthentication', 0), @('UseControlAuthentication', 0), @('LoopbackOnly', 1), @('AllowLoopback', 1), @('RfbPort', 5900), @('AcceptHttpConnections', 0), @('RemoveWallpaper', 0))) {
-        New-ItemProperty -Force -Path $key -Name $kv[0] -PropertyType DWord -Value $kv[1] | Out-Null
-    }
-    if (-not $loaded) { [GC]::Collect(); & reg.exe unload "HKU\$sid" | Out-Null }
+    UserValues 'Software\TightVNC\Server' @(@('UseVncAuthentication', 0), @('UseControlAuthentication', 0), @('LoopbackOnly', 1), @('AllowLoopback', 1), @('RfbPort', 5900), @('AcceptHttpConnections', 0), @('RemoveWallpaper', 0))
     $a = New-ScheduledTaskAction -Execute 'C:\Program Files\TightVNC\tvnserver.exe' -Argument '-run'
     $t = New-ScheduledTaskTrigger -AtLogOn -User $BoxUser
     $p = New-ScheduledTaskPrincipal -UserId $BoxUser -LogonType Interactive -RunLevel Highest
