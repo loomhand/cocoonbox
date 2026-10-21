@@ -18,6 +18,7 @@ grep -qx 'Environment=SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' /etc/systemd/syst
 grep -q '"args": \["toolhost-service"\]' /etc/cocoonbox/tools.d/cocoonbox.json
 grep -qx 'plugins = "/etc/cocoonbox/tools.d"' /etc/cocoonbox/shuttle.toml
 grep -qx 'socket_group = "cbagent"' /etc/cocoonbox/shuttle.toml
+grep -qx 'd /run/cocoonbox 2750 user cbagent -' /etc/tmpfiles.d/cocoonbox.conf
 shuttle=$(dirname "$(readlink -f /usr/local/bin/cocoon-shuttle)")
 test -x "$shuttle/node" && test -s "$shuttle/runtime/gui_plan.mts"
 case $(dpkg --print-architecture) in arm64) machine=00b7 ;; *) machine=003e ;; esac
