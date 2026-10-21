@@ -9,26 +9,25 @@ use super::rpc::{Call, Client};
 const DEFAULT_SOCKET: &str = "/run/cocoonbox/desk.sock";
 const CLI_USAGE: &str = "usage: desk VERB [key=value ...|JSON]; verbs: windows, snapshot, find, read, press, act, at, key, type, click, focus, close, launch, shot, screen";
 
-/// The desk shuttle serves, when the box runs it.
+/// The desk shuttle serves.
 pub struct Desk {
-    shuttle: Option<Client>,
+    shuttle: Client,
 }
 
 impl Desk {
     /// A desk whose point lookups go to `shuttle`.
-    pub fn new(shuttle: Option<Client>) -> Self {
+    pub fn new(shuttle: Client) -> Self {
         Self { shuttle }
     }
 
     /// The element of the focused window at the screen point `(x, y)`, as the `at` op answers.
     pub async fn at_point(&self, x: i32, y: i32) -> Result<Value, String> {
-        let shuttle = self.shuttle.as_ref().ok_or("no desk on this box")?;
         let call = Call {
             agent_id: String::new(),
             tool: "desk_at".to_owned(),
             args: json!({"x": x, "y": y}),
         };
-        let out = shuttle.desk(&call, super::rpc::DESK_DEADLINE).await?;
+        let out = self.shuttle.desk(&call, super::rpc::DESK_DEADLINE).await?;
         if out.is_error {
             return Err(out.text);
         }

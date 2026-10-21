@@ -31,11 +31,9 @@ probe=$(/usr/local/bin/cocoonbox-agent toolhost-service 2>&1 || true)
 grep -q SHUTTLE_SERVICE_SOCKET <<<"$probe" || { echo "$(/usr/local/bin/cocoonbox-agent --version) has no toolhost-service" >&2; exit 1; }
 log "toolhost as shuttle's service"
 install -D -m 0644 "$SRC/service/cocoonbox.json" "$SPEC"
-systemctl stop cocoonbox-toolhost.service
 systemctl --user -M user@ restart cocoon-shuttle.service
 systemctl restart cocoonbox-agent.service
 for _ in $(seq 60); do [ -S /run/cocoonbox/services/cocoonbox.sock ] && break; sleep 0.5; done
-[ "$(systemctl is-active cocoonbox-toolhost.service)" != active ]
 [ "$(ps -o ppid= -p "$(pgrep -f '^/usr/local/bin/cocoonbox-agent toolhost-service$')" | tr -d ' ')" = "$(pgrep -f '^/usr/local/bin/cocoon-shuttle serve ')" ]
 call desk_screen
 call desktop_info

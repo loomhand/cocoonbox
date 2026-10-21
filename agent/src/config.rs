@@ -12,11 +12,6 @@ use crate::toolhost::state::Root;
 const DEFAULT_STATE_DIR: &str = "/var/lib/cocoonbox";
 #[cfg(windows)]
 const DEFAULT_STATE_DIR: &str = r"C:\ProgramData\cocoonbox\state";
-#[cfg(unix)]
-const DEFAULT_TOOLHOST_SOCKET: &str = "/run/cocoonbox/toolhost.sock";
-/// shuttle's desk pipe, which routes the toolhost's tools to the toolhost service it runs.
-#[cfg(windows)]
-const DEFAULT_TOOLHOST_SOCKET: &str = r"\\.\pipe\cocoon-shuttle-desk";
 const DEFAULT_OFFLOAD_SOCKET: &str = "/run/cocoonbox/offload.sock";
 const DEFAULT_VNC_ADDR: &str = "127.0.0.1:5900";
 #[cfg(unix)]
@@ -124,8 +119,8 @@ pub struct ServeConfig {
     pub plugins: Vec<Plugin>,
     /// Paragraphs the image appends to the box agent's routing and, within their cap, to the MCP instructions.
     pub routing_extra: Vec<String>,
-    /// shuttle's desk endpoint, which takes the desk calls and runs straight from serve when set.
-    pub shuttle_socket: Option<PathBuf>,
+    /// shuttle's desk endpoint, which takes the desk calls and runs straight from serve.
+    pub shuttle_socket: PathBuf,
     /// The workspace that relative script paths of runs on shuttle start from.
     pub workspace: PathBuf,
 }
@@ -164,6 +159,7 @@ impl ServeConfig {
     /// Reads the contract keys; optional overrides exist for tests and debugging.
     pub fn from_env() -> Result<Self, String> {
         let listen = required("AGENT_LISTEN")?;
+        let shuttle_socket = required("SHUTTLE_SOCKET")?;
         Ok(Self {
             gw_base_url: required("GW_BASE_URL")?.trim_end_matches('/').to_owned(),
             gw_api_key: required("GW_API_KEY")?,
@@ -177,7 +173,7 @@ impl ServeConfig {
                 .parse()
                 .map_err(|e| format!("parse AGENT_LISTEN {listen}: {e}"))?,
             state_dir: optional("CB_STATE_DIR", DEFAULT_STATE_DIR).into(),
-            toolhost_socket: optional("TOOLHOST_SOCKET", DEFAULT_TOOLHOST_SOCKET).into(),
+            toolhost_socket: optional("TOOLHOST_SOCKET", &shuttle_socket).into(),
             offload_socket: optional("OFFLOAD_SOCKET", DEFAULT_OFFLOAD_SOCKET).into(),
             vnc_addr: optional("VNC_ADDR", DEFAULT_VNC_ADDR),
             anthropic_messages: optional("GW_ANTHROPIC_WIRE", "chat") == "messages",
@@ -193,17 +189,16 @@ impl ServeConfig {
             automation: Automation::detect(),
             plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),
             routing_extra: routing_extra(Path::new(&optional("ROUTING_DIR", ROUTING_DIR))),
-            shuttle_socket: shuttle_socket(),
+            shuttle_socket: shuttle_socket.into(),
             workspace: optional("CB_WORKSPACE", DEFAULT_WORKSPACE).into(),
         })
     }
 }
 
-/// Settings of `toolhost`.
+/// Settings of `toolhost-service`.
 #[derive(Clone, Debug)]
 pub struct ToolhostConfig {
     pub socket: PathBuf,
-    pub socket_group: String,
     pub workspace: PathBuf,
     pub chrome_bin: String,
     pub chrome_profile: PathBuf,
@@ -214,27 +209,19 @@ pub struct ToolhostConfig {
     pub automation: Automation,
     /// Script tools the image adds, each run by its own program.
     pub plugins: Vec<Plugin>,
-    /// shuttle's desk endpoint, which answers the desk verbs, model calls and runs when set.
-    pub shuttle_socket: Option<PathBuf>,
+    /// shuttle's desk endpoint, which answers the desk verbs, model calls and runs.
+    pub shuttle_socket: PathBuf,
 }
 
 impl ToolhostConfig {
-    /// Reads toolhost settings; every key has a contract default.
+    /// Reads toolhost settings: the two endpoints shuttle sets, and keys with a contract default.
     pub fn from_env() -> Result<Self, String> {
         let home = env::var("HOME")
             .or_else(|_| env::var("USERPROFILE"))
             .map_err(|e| format!("read HOME: {e}"))?;
-        let endpoint = PathBuf::from(optional("TOOLHOST_SOCKET", DEFAULT_TOOLHOST_SOCKET));
-        let service = env::var_os("SHUTTLE_SERVICE_SOCKET")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from);
         Ok(Self {
-            socket_group: match service {
-                Some(_) => String::new(),
-                None => optional("TOOLHOST_SOCKET_GROUP", "cbagent"),
-            },
-            shuttle_socket: shuttle_socket(),
-            socket: service.unwrap_or(endpoint),
+            socket: required("SHUTTLE_SERVICE_SOCKET")?.into(),
+            shuttle_socket: required("SHUTTLE_SOCKET")?.into(),
             workspace: optional("CB_WORKSPACE", DEFAULT_WORKSPACE).into(),
             chrome_bin: optional("CHROME_BIN", DEFAULT_CHROME),
             chrome_profile: env::var("CHROME_PROFILE").map_or_else(
@@ -287,13 +274,6 @@ fn optional(key: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_owned())
 }
 
-/// shuttle's desk endpoint from `SHUTTLE_SOCKET`; none when unset.
-fn shuttle_socket() -> Option<PathBuf> {
-    env::var_os("SHUTTLE_SOCKET")
-        .filter(|v| !v.is_empty())
-        .map(PathBuf::from)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,7 +302,7 @@ mod tests {
             automation: Automation::Minimal,
             plugins: Vec::new(),
             routing_extra: Vec::new(),
-            shuttle_socket: None,
+            shuttle_socket: "/d".into(),
             workspace: "/w".into(),
         };
         let shown = format!("{cfg:?}");

@@ -3,6 +3,7 @@
 # usage: sudo image/cut.sh [-n] [-p] [-a <agent binary>] [-f <family>] [-r <runtime dir>]... <base template> <vN>
 #   -n prints the steps and changes nothing; -p reruns provision.sh; each -r adds a runtime: the directory goes into the guest and its provision.sh runs, in order;
 #   the family is cbcore unless -f names another (cbdesk is refused); cbcore without -r adds image/desk and checks the guest with image/clean-gate.sh after the agent step;
+#   with -a, the guest must hold the toolhost's shuttle service spec /etc/cocoonbox/tools.d/cocoonbox.json after the agent step;
 #   every step goes to ~/ops-audit.md
 set -Eeuo pipefail
 export LC_ALL=C
@@ -80,6 +81,7 @@ if [ "$DRY" = 1 ]; then
 	if [ -n "$AGENT" ]; then
 		echo "agent $AGENT"
 		for R in "${RUNTIMES[@]}"; do [ ! -f "$R/after-agent.sh" ] || echo "runtime $R after agent"; done
+		echo "toolhost service spec"
 	fi
 	[ "$FAMILY" != cbcore ] || echo "clean gate"
 	printf '%s\n' seal stop "export $TARBALL" "import $TEMPLATE"
@@ -113,7 +115,7 @@ stop_proxy
 if [ -n "$AGENT" ]; then
 	step "agent $(sha256sum "$AGENT" | cut -c1-16)"
 	guest -i "$VM" -- sh -c 'cat > /tmp/cocoonbox-agent' < "$AGENT"
-	guest "$VM" -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/cocoonbox-agent && rm /tmp/cocoonbox-agent && systemctl enable --now cocoonbox-toolhost cocoonbox-agent'
+	guest "$VM" -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/cocoonbox-agent && rm /tmp/cocoonbox-agent && systemctl enable --now cocoonbox-agent'
 	for R in "${RUNTIMES[@]}"; do
 		[ -f "$R/after-agent.sh" ] || continue
 		N=$(basename "$R")
@@ -122,6 +124,8 @@ if [ -n "$AGENT" ]; then
 		guest "$VM" -- bash "/tmp/cb-image/$N/after-agent.sh"
 		guest "$VM" -- rm -rf /tmp/cb-image
 	done
+	step "toolhost service spec"
+	guest "$VM" -- test -f /etc/cocoonbox/tools.d/cocoonbox.json
 fi
 
 if [ "$FAMILY" = cbcore ]; then

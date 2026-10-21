@@ -12,10 +12,10 @@ use tokio::sync::mpsc;
 
 const SCRIPT: &str = r"
 const { createConnection } = require('node:net')
-const body = Buffer.from(JSON.stringify({ agent_id: 'shell', tool: 'desktop_info', args: {} }))
+const body = Buffer.from(JSON.stringify({ agent_id: 'shell', tool: 'desk_windows', args: {} }))
 const head = Buffer.alloc(4)
 head.writeUInt32BE(body.length)
-const s = createConnection(process.env.TOOLHOST_SOCKET)
+const s = createConnection(process.env.SHUTTLE_SOCKET)
 let got = Buffer.alloc(0)
 s.on('connect', () => s.write(Buffer.concat([head, body])))
 s.on('data', (d) => {
@@ -26,13 +26,24 @@ s.on('error', (e) => console.log('failed ' + e))
 ";
 
 #[tokio::test]
-async fn a_node_script_in_the_agent_shell_reaches_the_toolhost_it_runs_under() {
+async fn a_node_script_in_the_agent_shell_reaches_shuttle_at_shuttle_socket() {
     let Some(node) = std::env::var_os("NODE_BIN") else {
         eprintln!("SKIP: no Node; set NODE_BIN to run");
         return;
     };
     let dir = tempfile::tempdir().unwrap();
-    let (_toolhost, socket) = spawn_toolhost(dir.path(), None).await;
+    let desk = dir.path().join("desk.sock");
+    let listener = UnixListener::bind(&desk).unwrap();
+    let (seen, mut calls) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        loop {
+            let (mut conn, _) = listener.accept().await.unwrap();
+            let call: Call = read_frame(&mut conn).await.unwrap();
+            seen.send(call.tool).unwrap();
+            write_frame(&mut conn, &Output::text("[]")).await.unwrap();
+        }
+    });
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), &desk).await;
     std::fs::write(dir.path().join("probe.js"), SCRIPT).unwrap();
     let command = format!(
         "\"{}\" {}",
@@ -53,6 +64,7 @@ async fn a_node_script_in_the_agent_shell_reaches_the_toolhost_it_runs_under() {
         "{}",
         out.text
     );
+    assert_eq!(calls.recv().await.unwrap(), "desk_windows");
 }
 
 #[tokio::test]
@@ -92,7 +104,7 @@ async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_th
         }
     });
     std::fs::write(dir.path().join("s.mts"), "export function main() {}").unwrap();
-    let (_toolhost, socket) = spawn_toolhost(dir.path(), Some(&desk)).await;
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), &desk).await;
     let th = Client::new(socket.clone());
     let call = |tool: &str, args: Value| Call {
         agent_id: "ag".into(),
@@ -170,22 +182,17 @@ async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_th
     assert!(closed, "a dropped call closes its shuttle connection");
 }
 
-async fn spawn_toolhost(
-    dir: &Path,
-    shuttle: Option<&Path>,
-) -> (tokio::process::Child, std::path::PathBuf) {
+async fn spawn_toolhost(dir: &Path, shuttle: &Path) -> (tokio::process::Child, std::path::PathBuf) {
     let socket = dir.join("toolhost.sock");
-    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"));
-    cmd.arg("toolhost")
-        .env("TOOLHOST_SOCKET", &socket)
-        .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
+    let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
+        .arg("toolhost-service")
+        .env("SHUTTLE_SERVICE_SOCKET", &socket)
+        .env("SHUTTLE_SOCKET", shuttle)
         .env("CB_WORKSPACE", dir)
         .env("HOME", dir)
-        .kill_on_drop(true);
-    if let Some(shuttle) = shuttle {
-        cmd.env("SHUTTLE_SOCKET", shuttle);
-    }
-    let child = cmd.spawn().unwrap();
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
     for _ in 0..500 {
         if socket.exists() {
             break;
@@ -224,7 +231,7 @@ async fn a_failed_run_shuttle_answers_as_an_error_keeps_its_report_and_shape() {
             });
         }
     });
-    let (_toolhost, socket) = spawn_toolhost(dir.path(), Some(&desk)).await;
+    let (_toolhost, socket) = spawn_toolhost(dir.path(), &desk).await;
     let th = Client::new(socket);
     let call = |tool: &str, args: Value| Call {
         agent_id: "ag".into(),
@@ -286,46 +293,4 @@ async fn a_failed_run_shuttle_answers_as_an_error_keeps_its_report_and_shape() {
         .await
         .unwrap();
     assert!(!out.is_error, "{}", out.text);
-}
-
-#[tokio::test]
-async fn a_toolhost_service_reaches_shuttle_at_shuttle_socket_not_toolhost_socket() {
-    let dir = tempfile::tempdir().unwrap();
-    let desk = dir.path().join("desk.sock");
-    let listener = UnixListener::bind(&desk).unwrap();
-    let (seen, mut calls) = mpsc::unbounded_channel::<String>();
-    tokio::spawn(async move {
-        loop {
-            let (mut conn, _) = listener.accept().await.unwrap();
-            let call: Call = read_frame(&mut conn).await.unwrap();
-            seen.send(call.tool).unwrap();
-            write_frame(&mut conn, &Output::text("[]")).await.unwrap();
-        }
-    });
-    let service = dir.path().join("service.sock");
-    let mut cmd = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"));
-    cmd.arg("toolhost-service")
-        .env("SHUTTLE_SERVICE_SOCKET", &service)
-        .env("SHUTTLE_SOCKET", &desk)
-        .env("TOOLHOST_SOCKET", dir.path().join("toolhost.sock"))
-        .env("CB_WORKSPACE", dir.path())
-        .env("HOME", dir.path())
-        .kill_on_drop(true);
-    let _service = cmd.spawn().unwrap();
-    for _ in 0..500 {
-        if service.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    let out = Client::new(service)
-        .call(&Call {
-            agent_id: "ag".into(),
-            tool: "desk_windows".into(),
-            args: json!({}),
-        })
-        .await
-        .unwrap();
-    assert!(!out.is_error, "{}", out.text);
-    assert_eq!(calls.recv().await.unwrap(), "desk_windows");
 }

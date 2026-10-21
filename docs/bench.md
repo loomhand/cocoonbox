@@ -198,7 +198,7 @@ Daily counters: without Redis, gw's daily counters are in process, so they resta
 1. `sudo image/cut.sh [-p] [-a <agent binary>] [-f <family>] [-r <runtime dir>]... cbdesk:vN-1 vN`. `-p` reruns `provision.sh` (only when `image/` changed); `-a` installs an agent binary; each `-r` adds a runtime directory whose `provision.sh` runs in the guest, in order; `-f cbcore` cuts `cbcore:vN` instead, adding `image/desk` when no `-r` is given (its cua-driver tarball goes into `image/desk/vendor/` first) and running `image/clean-gate.sh` in the guest after the agent step. It uses only the cbsbx cocoon CLI and silkd's egress relay: no claim, no api. The script stops at the first failure, keeping the VM for inspection (it prints the `vm rm` line). The steps:
    - `cocoon-cbsbx vm run --name cbcut-vN --nics 0` from `cbdesk:vN-1` (a cold boot, as the sandboxd golden does), then wait for Xorg and the session;
    - with `-p`, serve `image/cut-proxy.py` (an HTTP forward proxy, stdlib only, no allowlist) on the VM's `<vsock_socket>_2049` unix socket only, where the guest's silkd relays `127.0.0.1:3128`; copy `provision.sh` and `rootfs/` in and run provision as root through `vm exec` with `http(s)_proxy` set (apt has its own proxy conf); the trap stops the proxy;
-   - with `-a`, install the agent and enable `cocoonbox-toolhost` and `cocoonbox-agent`;
+   - with `-a`, install the agent and enable `cocoonbox-agent`, run each runtime's `after-agent.sh`, and require the toolhost's shuttle service spec `/etc/cocoonbox/tools.d/cocoonbox.json`;
    - `seal.sh` through `vm exec`, then `vm stop`;
    - `image/export-rootfs.sh` on the stopped VM: it reads its layers and cow from `vm inspect` and overlays silkd, the proxy drop-ins, masked wait-online, an apt proxy conf, and a static `agent.env` (`GW_API_KEY=unprovisioned`, `AGENT_LISTEN=127.0.0.1:7443`, no `EDGE_TOKEN`; the export fails if the edge token would be in it); then `vm rm`;
    - `cocoon-cbsbx image import cbdesk:vN /srv/cb/sbx/build/cocoonbox-desktop-vN.tar.gz`.
@@ -225,7 +225,7 @@ Pipe the binary into the box's VM as root over vsock. The VM name is the claim's
 
 ```bash
 sudo /srv/cb/sbx/bin/cocoon-cbsbx vm exec -i <vm> -- sh -c 'cat > /tmp/cocoonbox-agent' < target/release/cocoonbox-agent
-sudo /srv/cb/sbx/bin/cocoon-cbsbx vm exec <vm> -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/ && systemctl restart cocoonbox-toolhost cocoonbox-agent'
+sudo /srv/cb/sbx/bin/cocoon-cbsbx vm exec <vm> -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/ && systemctl restart cocoonbox-agent && systemctl --user -M user@ restart cocoon-shuttle'
 ```
 
 A change made this way lasts until the box's next Rebase; ship it in the next template.

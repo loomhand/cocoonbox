@@ -27,6 +27,8 @@ install_runtime() {
 
 install_rootfs() {
 	log "rootfs files"
+	systemctl disable cocoonbox-toolhost.service >/dev/null 2>&1 || true
+	rm -rf /etc/systemd/system/cocoonbox-toolhost.service /etc/systemd/system/cocoonbox-toolhost.service.d
 	(cd "$SRC/rootfs" && find . -type f) | while read -r f; do
 		case "$f" in
 		./usr/local/bin/* | ./usr/local/lib/cocoonbox/*) install -D -m 0755 "$SRC/rootfs/$f" "/${f#./}" ;;
@@ -125,7 +127,7 @@ check() {
 	systemctl show -p Environment cocoonbox-agent | grep 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' | grep -q 'TOOLHOST_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl show -p Environment cocoonbox-session | grep -q 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl --user -M user@ show-environment | grep -qx 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
-	systemctl cat cocoonbox-toolhost | grep -qx 'ConditionPathExists=!/etc/cocoonbox/tools.d/cocoonbox.json'
+	! systemctl cat cocoonbox-toolhost >/dev/null 2>&1
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	grep -q '^GW_BASE_URL=http' "$ENV_FILE"

@@ -3,7 +3,7 @@
 The in-box agent of a cocoonbox. One binary, two subcommands:
 
 - `serve` runs as `cbagent`. It serves `cocoonbox.agent.v1.Agents` and `Session` over h2c gRPC on `AGENT_LISTEN` and runs the agent loop. The same listener also answers MCP Streamable HTTP at `/mcp` (mode B). It keeps state in `/var/lib/cocoonbox/agent.db`.
-- `toolhost` runs as the desktop user `user`. It executes every tool behind `/run/cocoonbox/toolhost.sock`.
+- `toolhost-service` runs as the desktop user `user`, as shuttle's service plugin. It executes every tool that reaches it through shuttle's endpoint.
 
 ## Layers
 
@@ -96,7 +96,7 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 
 ## Environment
 
-These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER` and `AGENT_LISTEN`.
+These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER` and `AGENT_LISTEN`. `SHUTTLE_SOCKET`, shuttle's desk endpoint, comes from serve's unit and, for the toolhost, from shuttle, which also sets `SHUTTLE_SERVICE_SOCKET`, the toolhost's own socket.
 
 Optional overrides with contract defaults, used by tests and non-standard layouts. Boxes set none of them; the identity pair moves the trust anchor, so only whoever writes the agent's environment, already root, can change it:
 
@@ -105,12 +105,11 @@ Optional overrides with contract defaults, used by tests and non-standard layout
 | `CB_STATE_DIR` | `/var/lib/cocoonbox` |
 | `CB_IDENTITY_PATH` | `/run/cocoonbox-identity/identity` |
 | `CB_IDENTITY_OWNER` | `0` (root): the uid that must own the identity file and its directory |
-| `TOOLHOST_SOCKET` | `/run/cocoonbox/toolhost.sock`: the toolhost's own endpoint, which serve calls |
+| `TOOLHOST_SOCKET` | `SHUTTLE_SOCKET`: where serve calls the toolhost, which shuttle routes to its service |
 | `VNC_ADDR` | `127.0.0.1:5900` |
 | `CB_WORKSPACE` | `/workspace` |
 | `CHROME_BIN` | `google-chrome` |
 | `CHROME_PROFILE` | `~/.config/cocoonbox-chrome` |
-| `SHUTTLE_SOCKET` | unset; shuttle's desk endpoint: the toolhost relays its desk verbs, model calls and runs there and answers none of them without it, and serve, when its own environment sets it, sends its desk calls and runs there itself |
 | `GW_ANTHROPIC_WIRE` | `chat` (`messages` switches `anthropic/` models to `/v1/messages`) |
 
 ## Build

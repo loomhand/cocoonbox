@@ -7,7 +7,7 @@ use cocoonbox_agent::offload;
 use cocoonbox_agent::{server, toolhost};
 
 const RUNTIME_SHUTDOWN: Duration = Duration::from_millis(200);
-const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost|toolhost-service|offload|desk|version>";
+const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost-service|offload|desk|version>";
 const NO_SERVICE: &str = "toolhost-service runs under shuttle, which sets SHUTTLE_SERVICE_SOCKET";
 
 fn main() -> ExitCode {
@@ -17,7 +17,6 @@ fn main() -> ExitCode {
         "serve" => serve(),
         #[cfg(windows)]
         "serve" => cocoonbox_agent::service::run(serve),
-        "toolhost" => run(async { toolhost::run(ToolhostConfig::from_env()?).await }),
         "toolhost-service" if std::env::var_os("SHUTTLE_SERVICE_SOCKET").is_none() => {
             Err(NO_SERVICE.to_owned())
         }

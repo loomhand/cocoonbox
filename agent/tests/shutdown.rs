@@ -80,6 +80,7 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
             std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()).to_string(),
         )
         .env("TOOLHOST_SOCKET", dir.path().join("none.sock"))
+        .env("SHUTTLE_SOCKET", dir.path().join("none.sock"))
         .env("VNC_ADDR", banner_vnc().await)
         .stderr(Stdio::piped())
         .kill_on_drop(true)

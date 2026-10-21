@@ -16,9 +16,9 @@ cocoonbox-api ── control plane: users, boxes, sharing, Connect, vault, state
         ▼
 sandboxd (cocoonstack/sandbox) ──► cocoon microVM: the box
                                      ├─ cocoonbox-agent serve: agent loop, gRPC Agents/Session, /mcp
-                                     ├─ cocoonbox-agent toolhost: shell, files, CDP browser
                                      ├─ cocoon-shuttle serve (loomhand/shuttle): the desk, computer verbs,
-                                     │    gui_plan, script_run, and cua-driver (loomhand/cua) as its child
+                                     │    gui_plan, script_run, and as its children cua-driver (loomhand/cua)
+                                     │    and cocoonbox-agent toolhost-service: shell, files, CDP browser
                                      └─ Xorg + XFCE desktop ── RFB ──► the app (loomhand/swift-rfb)
 model calls ──► gw (cocoonstack/gateway)
 ```

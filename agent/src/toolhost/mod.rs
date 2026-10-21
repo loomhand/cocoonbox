@@ -79,14 +79,14 @@ struct Host {
     /// The saved flows of a box that runs GUI plans, which a read-only share does not read.
     hidden: Option<PathBuf>,
     flow_writes: watch::Sender<u64>,
-    /// shuttle's daemon, which answers the desk verbs, model calls and runs of a box that runs it.
-    shuttle: Option<Client>,
+    /// shuttle's daemon, which answers the desk verbs, model calls and runs.
+    shuttle: Client,
 }
 
 impl Host {
     /// Creates a host from its configuration.
     fn new(cfg: &ToolhostConfig) -> Self {
-        let shuttle = cfg.shuttle_socket.clone().map(Client::new);
+        let shuttle = Client::new(cfg.shuttle_socket.clone());
         Self {
             workspace: cfg.workspace.clone(),
             scratch: scratch_dir(),
@@ -167,7 +167,7 @@ impl Host {
             "state_swap" => state::swap(call.args).await.map(Output::text),
             "state_place" => state::place(call.args).await.map(Output::text),
             "desktop_save" => self.desktop_save().await.map(Output::text),
-            "desktop_info" => Ok(Output::text(desktop_info(self.shuttle.as_ref()).await)),
+            "desktop_info" => Ok(Output::text(desktop_info(&self.shuttle).await)),
             "active_origin" => self.browser.origin().await.map(Output::text),
             "credential_fill" => {
                 let mut args = call.args;
@@ -205,12 +205,10 @@ impl Host {
         out
     }
 
-    /// Runs the screen, computer and script tools of a box that runs shuttle: runs with shuttle's screen, and a desk
-    /// box's `computer_act` through [`act`] or [`ground`]; every other call comes back, its screen tools under shuttle's names.
+    /// Runs the screen, computer and script tools: runs with shuttle's screen, and a desk box's `computer_act`
+    /// through [`act`] or [`ground`]; every other call comes back, its screen tools under shuttle's names.
     async fn shuttle_call(&self, mut call: Call) -> Result<Result<Output, String>, Call> {
-        let Some(shuttle) = &self.shuttle else {
-            return Err(call);
-        };
+        let shuttle = &self.shuttle;
         let screen = ShuttleScreen(shuttle);
         let target = call.args.get("target").is_some_and(|t| !t.is_null());
         Ok(match call.tool.as_str() {
@@ -258,17 +256,15 @@ impl Host {
         }))
     }
 
-    /// Sends a desk verb or model call as it came to shuttle, on a box that runs it; every other call comes back.
+    /// Sends a desk verb or model call as it came to shuttle; every other call comes back.
     async fn relay(&self, mut call: Call) -> Result<Output, Call> {
-        let Some(shuttle) = &self.shuttle else {
-            return Err(call);
-        };
         match crate::shuttle::desk_verb(&call.tool, &call.args) {
             Some(verb) => call.tool = verb,
             None if call.tool.starts_with("model_") => {}
             None => return Err(call),
         }
-        Ok(shuttle
+        Ok(self
+            .shuttle
             .desk(&call, rpc::DESK_DEADLINE)
             .await
             .unwrap_or_else(Output::error))
@@ -305,9 +301,10 @@ impl Host {
 
     /// With plans, a note on the files that a call `changes` and an app window has open (see [`files::held_note`]).
     async fn held(&self, changes: impl Fn(&str) -> bool) -> String {
-        let titles = match &self.shuttle {
-            Some(shuttle) if self.plans => window_titles(shuttle).await,
-            _ => Vec::new(),
+        let titles = if self.plans {
+            window_titles(&self.shuttle).await
+        } else {
+            Vec::new()
         };
         files::held_note(&titles, changes)
     }
@@ -368,7 +365,7 @@ pub(crate) struct Listener {
 
 /// Runs the toolhost until SIGTERM or SIGINT, which closes Chrome with its agent windows first.
 pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
-    let mut listener = bind(&cfg.socket, &cfg.socket_group)?;
+    let mut listener = bind(&cfg.socket, "")?;
     eprintln!("toolhost listening on {}", cfg.socket.display());
     let host = Arc::new(Host::new(&cfg));
     if cfg.automation.plans() {
@@ -501,7 +498,7 @@ pub(crate) fn bind(path: &Path, group: &str) -> Result<Listener, String> {
 }
 
 /// The box's OS release, desktop and the screen size shuttle reports as JSON, with the fields it could read.
-async fn desktop_info(shuttle: Option<&Client>) -> String {
+async fn desktop_info(shuttle: &Client) -> String {
     let mut info = json!({});
     if let Some(os) = std::fs::read_to_string(OS_RELEASE)
         .ok()
@@ -524,8 +521,7 @@ async fn desktop_info(shuttle: Option<&Client>) -> String {
         tool: "desk_screen".to_owned(),
         args: json!({}),
     };
-    if let Some(shuttle) = shuttle
-        && let Ok(out) = shuttle.desk(&call, SCREEN_WAIT).await
+    if let Ok(out) = shuttle.desk(&call, SCREEN_WAIT).await
         && let Ok(mut screen) = serde_json::from_str::<Value>(&out.text)
     {
         info["width"] = screen["width"].take();
@@ -661,7 +657,6 @@ mod tests {
         });
         let cfg = ToolhostConfig {
             socket: crate::testing::endpoint(dir.path(), "toolhost.sock"),
-            socket_group: String::new(),
             workspace: dir.path().into(),
             chrome_bin: "false".into(),
             chrome_profile: dir.path().join("chrome"),
@@ -670,7 +665,7 @@ mod tests {
             home: dir.path().into(),
             automation: Automation::Desk,
             plugins: Vec::new(),
-            shuttle_socket: Some(desk),
+            shuttle_socket: desk,
         };
         let host = Host::new(&cfg);
         host.flow_writes.send_modify(|w| *w += 1);
@@ -707,7 +702,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = ToolhostConfig {
             socket: crate::testing::endpoint(dir.path(), "toolhost.sock"),
-            socket_group: String::new(),
             workspace: dir.path().into(),
             chrome_bin: "false".into(),
             chrome_profile: dir.path().join("chrome"),
@@ -716,7 +710,7 @@ mod tests {
             home: dir.path().into(),
             automation: Automation::Minimal,
             plugins: Vec::new(),
-            shuttle_socket: None,
+            shuttle_socket: crate::testing::endpoint(dir.path(), "desk.sock"),
         };
         let host = Host::new(&cfg);
         let agent = format!("shell-test-{}", std::process::id());
@@ -801,7 +795,6 @@ mod tests {
         let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
         let cfg = ToolhostConfig {
             socket: socket.clone(),
-            socket_group: "no-such-group".into(),
             workspace: dir.path().into(),
             chrome_bin: "false".into(),
             chrome_profile: dir.path().join("chrome"),
@@ -810,7 +803,7 @@ mod tests {
             home: dir.path().into(),
             automation: Automation::Android,
             plugins: Vec::new(),
-            shuttle_socket: Some(desk),
+            shuttle_socket: desk,
         };
         tokio::spawn(run(cfg));
         crate::testing::served(&socket).await;
@@ -902,7 +895,6 @@ mod tests {
         let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
         let cfg = ToolhostConfig {
             socket: socket.clone(),
-            socket_group: "no-such-group".into(),
             workspace: dir.path().into(),
             chrome_bin: "false".into(),
             chrome_profile: dir.path().join("chrome"),
@@ -911,7 +903,7 @@ mod tests {
             home: dir.path().into(),
             automation: Automation::Desk,
             plugins: Vec::new(),
-            shuttle_socket: Some(desk),
+            shuttle_socket: desk,
         };
         tokio::spawn(run(cfg));
         crate::testing::served(&socket).await;

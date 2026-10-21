@@ -2,7 +2,7 @@
 # Resets per-use state in a provisioned guest before it is snapshotted as a golden; runs as root.
 set -euo pipefail
 
-systemctl stop cocoonbox-agent.service cocoonbox-toolhost.service
+systemctl stop cocoonbox-agent.service
 systemctl --user -M user@ stop cocoonbox-offload-inbox.service
 rm -rf /var/lib/cocoonbox/* /run/cocoonbox/*
 
@@ -41,6 +41,6 @@ desktop_session() {
 for _ in $(seq 20); do desktop_session && break; sleep 0.5; done
 desktop_session || { echo "seal: no active local logind session for user" >&2; exit 1; }
 if systemctl -q is-enabled cocoonbox-agent.service; then
-	systemctl start cocoonbox-toolhost.service cocoonbox-agent.service
+	systemctl start cocoonbox-agent.service
 fi
 sync

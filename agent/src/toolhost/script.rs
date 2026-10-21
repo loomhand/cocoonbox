@@ -17,15 +17,15 @@ const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
 const LOCATE_TIMEOUT: Duration = Duration::from_secs(20);
 const KEPT_SHOTS: usize = 20;
 
-/// Runs scripts and GUI plans on shuttle, when the box runs it, keeping their screenshots under `dir`.
+/// Runs scripts and GUI plans on shuttle, keeping their screenshots under `dir`.
 pub struct Scripts {
     dir: PathBuf,
-    shuttle: Option<Client>,
+    shuttle: Client,
 }
 
 impl Scripts {
     /// Creates the runner whose runs go to `shuttle` and whose kept screenshots go under `dir`.
-    pub fn new(dir: PathBuf, shuttle: Option<Client>) -> Self {
+    pub fn new(dir: PathBuf, shuttle: Client) -> Self {
         Self { dir, shuttle }
     }
 
@@ -47,7 +47,7 @@ impl Scripts {
         workspace: &Path,
         args: Value,
     ) -> Result<Output, String> {
-        runs::script(self.shuttle()?, &self.kept(screen), workspace, tool, args).await
+        runs::script(&self.shuttle, &self.kept(screen), workspace, tool, args).await
     }
 
     /// Runs the plan executor and reports its result as compact JSON, with a screenshot only after an escalation or on request.
@@ -111,13 +111,7 @@ impl Scripts {
 
     /// The report of one run of shuttle's plan executor with `params`: the plan's result only.
     async fn plan_report(&self, params: Value, timeout: Duration) -> Result<Value, String> {
-        runs::plan_report(self.shuttle()?, params, timeout).await
-    }
-
-    fn shuttle(&self) -> Result<&Client, String> {
-        self.shuttle.as_ref().ok_or_else(|| {
-            "scripts and GUI plans run on shuttle, which this box does not run".to_owned()
-        })
+        runs::plan_report(&self.shuttle, params, timeout).await
     }
 
     async fn screenshot(

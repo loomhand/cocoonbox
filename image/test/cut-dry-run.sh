@@ -48,11 +48,12 @@ stop
 export /srv/cb/sbx/build/cocoonbox-cbcore-v2.tar.gz
 import cbcore:v2" -f cbcore -r "$WORK/one" base:v1 v2
 
-expect "an agent step runs each runtime's after-agent step after it" "boot base:v1 as cbcut-fam-v2
+expect "an agent step runs each runtime's after-agent step after it, then requires the toolhost service spec" "boot base:v1 as cbcut-fam-v2
 runtime $WORK/one
 runtime $WORK/later
 agent $WORK/agent
 runtime $WORK/later after agent
+toolhost service spec
 seal
 stop
 export /srv/cb/sbx/build/cocoonbox-fam-v2.tar.gz
