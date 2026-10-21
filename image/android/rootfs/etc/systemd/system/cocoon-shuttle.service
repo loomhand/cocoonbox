@@ -10,6 +10,7 @@ Group=user
 WorkingDirectory=/workspace
 Environment=HOME=/home/user
 Environment=LANG=en_US.UTF-8
+Environment=ANDROID_SERIAL=127.0.0.1:5555
 ExecStartPre=/usr/local/lib/cocoonbox/shuttle-config
 ExecStart=/usr/local/bin/cocoon-shuttle serve /run/cocoonbox/desk.sock
 Restart=always

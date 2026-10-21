@@ -12,8 +12,12 @@ grep -q '^done &$' /usr/local/lib/cocoonbox/remoteview
 grep -qx 'wait -n "$server_pid" "$rfb_pid"' /usr/local/lib/cocoonbox/remoteview
 command -v adb dnscrypt-proxy redsocks mkfs.btrfs node git >/dev/null
 for f in desk gui_plan png; do test -s /opt/desk/lib/$f.mts; done
-grep -qx 'Environment=TOOLHOST_SOCKET=/run/cocoonbox/toolhost.sock' /etc/systemd/system/cocoonbox-toolhost.service
-grep -qx 'Environment=SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' /etc/systemd/system/cocoonbox-toolhost.service
+test ! -e /etc/systemd/system/cocoonbox-toolhost.service
+grep -qx 'Environment=TOOLHOST_SOCKET=/run/cocoonbox/desk.sock' /etc/systemd/system/cocoonbox-agent.service
+grep -qx 'Environment=SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' /etc/systemd/system/cocoonbox-agent.service
+grep -q '"args": \["toolhost-service"\]' /etc/cocoonbox/tools.d/cocoonbox.json
+grep -qx 'plugins = "/etc/cocoonbox/tools.d"' /etc/cocoonbox/shuttle.toml
+grep -qx 'socket_group = "cbagent"' /etc/cocoonbox/shuttle.toml
 shuttle=$(dirname "$(readlink -f /usr/local/bin/cocoon-shuttle)")
 test -x "$shuttle/node" && test -s "$shuttle/runtime/gui_plan.mts"
 case $(dpkg --print-architecture) in arm64) machine=00b7 ;; *) machine=003e ;; esac

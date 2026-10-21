@@ -1,6 +1,6 @@
 # Android box
 
-An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs Android (redroid) in docker, with the same silkd, `cocoonbox-agent serve` and `toolhost` as the desktop box.
+An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs Android (redroid) in docker, with the same silkd, `cocoonbox-agent serve` and toolhost as the desktop box: shuttle runs the toolhost as its service (`cocoonbox-agent toolhost-service`, spec `/etc/cocoonbox/tools.d/cocoonbox.json`), and serve reaches both at `/run/cocoonbox/desk.sock`.
 
 ## Recipe
 
@@ -9,7 +9,7 @@ An Android box is a template of family `cbdroid`: an Ubuntu 24.04 VM that runs A
 | guest provisioning (docker, adb, scrcpy-rfb, users, units) | `image/android/provision.sh`, `image/android/rootfs/` |
 | ashmem for the 24.04 kernel, which Android's gralloc needs | `image/android/ashmem/` (GPL-2.0, built in the base) |
 | Node and the desk runtime of cbcore, for GUI plans and scripts | `image/android/provision.sh` (`setup_desk`) |
-| shuttle, the box's desk: the pinned archive in `/opt/cocoon-shuttle`, its box config `/etc/cocoonbox/shuttle.toml` with an `[android]` section, and `cocoon-shuttle.service` as `user` on `/run/cocoonbox/desk.sock` | `image/desk/shuttle.sh`, `image/android/provision.sh` (`setup_desk`), `image/android/rootfs/` |
+| shuttle, the box's desk: the pinned archive in `/opt/cocoon-shuttle`, its box config `/etc/cocoonbox/shuttle.toml` with an `[android]` section, the `tools.d` plugins and the `cbagent` socket group, and `cocoon-shuttle.service` as `user` on `/run/cocoonbox/desk.sock` | `image/desk/shuttle.sh`, `image/android/provision.sh` (`setup_desk`), `image/android/rootfs/` |
 | cut, from the base and a release's agent | `image/android/cut.sh` |
 
 The base is `ghcr.io/loomhand/cocoonbox/android-base`, built by `.github/workflows/android-base.yml` from `image/android/base/`: `bake.sh` bakes a created container of AOSP redroid 16 (`redroid.Dockerfile`, no Google apps) into docker data, and `Dockerfile` provisions cocoon's Ubuntu 24.04 image with it. A template is the base plus a release's agent:
@@ -61,4 +61,4 @@ Box checks for a new template, from an RFB client in the box (Settings search fo
 
 ## Pool
 
-`cbsbx-conf` gives a `cbdroid` pool a warmup that waits for the agent only (`ANDROID_FAMILIES`).
+`cbsbx-conf` gives a `cbdroid` pool a warmup that waits for the agent and the toolhost only (`ANDROID_FAMILIES`): shuttle and its toolhost service socket on a template with the service spec, the `cocoonbox-toolhost` unit on an older one.

@@ -37,7 +37,9 @@ CHROME_WARMUP = ("(" + WARMUP + ") && { runuser -u user -- env HOME=/home/user t
                  "--no-first-run --user-data-dir=/tmp/cb-warmup-chrome --dump-dom about:blank > /dev/null 2>&1; "
                  "rm -rf /tmp/cb-warmup-chrome; true; }")
 # an Android golden holds the outer VM only: Android boots per box once the api writes the box identity
-ANDROID_WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-toolhost cocoonbox-agent "
+ANDROID_TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then systemctl -q is-active cocoon-shuttle "
+                       "&& [ -S /run/cocoonbox/services/cocoonbox.sock ]; else systemctl -q is-active cocoonbox-toolhost; fi")
+ANDROID_WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-agent && { " + ANDROID_TOOLHOST_UP + "; } "
                   "&& (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; sleep 0.2; done; exit 1")
 ANDROID_FAMILIES = ("cbdroid",)
 CHROME_WARMUP_FROM = 15
