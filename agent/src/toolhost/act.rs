@@ -1,4 +1,4 @@
-//! `computer_act` on a box that runs shuttle: the toolhost runs a card field typed from a file and Chrome brought up
+//! `computer_act` on a desk box: the toolhost runs a card field typed from a file and Chrome brought up
 //! as the agent's window itself, and sends every other action to shuttle's `desk_computer_act`.
 
 use std::path::PathBuf;

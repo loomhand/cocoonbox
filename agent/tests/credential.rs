@@ -250,10 +250,10 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     let code = format!("{}", 100_000 + uuid::Uuid::new_v4().as_u128() % 900_000);
 
     let mut toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("toolhost")
+        .arg("toolhost-service")
         .env("HOME", dir.path())
-        .env("TOOLHOST_SOCKET", &socket)
-        .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
+        .env("SHUTTLE_SERVICE_SOCKET", &socket)
+        .env("SHUTTLE_SOCKET", dir.path().join("desk.sock"))
         .env("CB_WORKSPACE", dir.path().join("workspace"))
         .env("CHROME_BIN", &wrapper)
         .env("CHROME_PROFILE", dir.path().join("profile"))
@@ -280,6 +280,7 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
             std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()).to_string(),
         )
         .env("TOOLHOST_SOCKET", &socket)
+        .env("SHUTTLE_SOCKET", dir.path().join("desk.sock"))
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
@@ -472,10 +473,10 @@ async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client)> {
     let guard = ChromeGuard(dir.join("profile"));
     let socket = dir.join("toolhost.sock");
     let toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("toolhost")
+        .arg("toolhost-service")
         .env("HOME", dir)
-        .env("TOOLHOST_SOCKET", &socket)
-        .env("TOOLHOST_SOCKET_GROUP", "no-such-group")
+        .env("SHUTTLE_SERVICE_SOCKET", &socket)
+        .env("SHUTTLE_SOCKET", dir.join("desk.sock"))
         .env("CB_WORKSPACE", dir.join("workspace"))
         .env("CHROME_BIN", &wrapper)
         .env("CHROME_PROFILE", dir.join("profile"))

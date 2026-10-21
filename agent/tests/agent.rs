@@ -215,15 +215,12 @@ impl Harness {
         }
         let plugins = cocoonbox_agent::plugins::load(&tools_dir);
         let toolhost_socket = dir.path().join("toolhost.sock");
-        let shuttle_socket = (automation != Automation::Minimal).then(|| {
-            let socket = dir.path().join("desk.sock");
-            fake_shuttle(
-                &socket,
-                dir.path().join("shuttle.log"),
-                Arc::clone(&desk_log),
-            );
-            socket
-        });
+        let shuttle_socket = dir.path().join("desk.sock");
+        fake_shuttle(
+            &shuttle_socket,
+            dir.path().join("shuttle.log"),
+            Arc::clone(&desk_log),
+        );
         let (chrome_bin, cdp_port) = match chrome {
             Some(bin) => {
                 let wrapper = dir.path().join("chrome-headless");
@@ -240,7 +237,6 @@ impl Harness {
         };
         let th_cfg = ToolhostConfig {
             socket: toolhost_socket.clone(),
-            socket_group: "no-such-group".into(),
             workspace: workspace.clone(),
             chrome_bin,
             chrome_profile: dir.path().join("chrome"),
@@ -249,7 +245,7 @@ impl Harness {
             home: home.clone(),
             automation,
             plugins: plugins.clone(),
-            shuttle_socket,
+            shuttle_socket: shuttle_socket.clone(),
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });
         let cfg = ServeConfig {
@@ -273,7 +269,7 @@ impl Harness {
             automation,
             plugins,
             routing_extra: cocoonbox_agent::config::routing_extra(&routing_dir),
-            shuttle_socket: None,
+            shuttle_socket,
             workspace: workspace.clone(),
             state_roots: cocoonbox_agent::state::default_roots(&home, &workspace),
         };

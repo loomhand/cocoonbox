@@ -437,15 +437,12 @@ pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
         cfg.anthropic_messages,
     )?);
     let toolhost = rpc::Client::new(cfg.toolhost_socket.clone());
-    let tools: Arc<dyn Tools> = match &cfg.shuttle_socket {
-        Some(shuttle) => Arc::new(Split::new(
-            rpc::Client::new(shuttle.clone()),
-            toolhost,
-            cfg.workspace.clone(),
-            cfg.plugins.iter().map(|p| p.name.clone()).collect(),
-        )),
-        None => Arc::new(toolhost),
-    };
+    let tools: Arc<dyn Tools> = Arc::new(Split::new(
+        rpc::Client::new(cfg.shuttle_socket.clone()),
+        toolhost,
+        cfg.workspace.clone(),
+        cfg.plugins.iter().map(|p| p.name.clone()).collect(),
+    ));
     let rt = Runtime::open(cfg, model, tools).await?;
     let stop = rt.stop.clone();
     // detached: turns the first SIGTERM or SIGINT into a shutdown

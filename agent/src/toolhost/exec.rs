@@ -467,7 +467,6 @@ mod tests {
         let socket = crate::testing::endpoint(dir, "toolhost.sock");
         let cfg = ToolhostConfig {
             socket: socket.clone(),
-            socket_group: String::new(),
             workspace: dir.into(),
             chrome_bin: "false".into(),
             chrome_profile: dir.join("chrome"),
@@ -476,7 +475,7 @@ mod tests {
             home: dir.into(),
             automation: Automation::Minimal,
             plugins: Vec::new(),
-            shuttle_socket: None,
+            shuttle_socket: crate::testing::endpoint(dir, "desk.sock"),
         };
         tokio::spawn(super::super::run(cfg));
         crate::testing::served(&socket).await;

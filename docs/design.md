@@ -134,7 +134,7 @@ Cocoon OCI VM image (`vmlinuz` + `initrd.img` + rootfs) built from cocoon's `os-
 - Xorg + `xserver-xorg-video-dummy` (1280×800 modeline), `uinput` module loaded at boot, XFCE, `at-spi2-core`, `toolkit-accessibility=true`, screensaver/power management off, x11vnc `-localhost -rfbport 5900`.
 - Google Chrome stable with CDP on loopback and a persistent profile.
 - cua-driver 0.30.4 as a systemd user unit (upstream has no Linux autostart, issue #3957) with `DISPLAY`, `XAUTHORITY`, `DBUS_SESSION_BUS_ADDRESS`.
-- `cocoonbox-agent` and `cocoonbox-toolhost` as system units; users `cbagent` (runs the agent) and `user` (the desktop, owns `/workspace`). No credential vault in the VM (§16).
+- `cocoonbox-agent` as a system unit and its toolhost as shuttle's service; users `cbagent` (runs the agent) and `user` (the desktop, owns `/workspace`). No credential vault in the VM (§16).
 - root locked, no sshd; debugging via `cocoon vm exec`.
 
 ## 6. Bench host layout (isolated env `cb`)
@@ -249,7 +249,7 @@ The adversary is the box's own user (`user`, unprivileged), or root inside one b
 - The edge strips any client-sent `x-cocoonbox-credential` on gRPC and MCP, as it does `x-cocoonbox-edge-token`. During the switch it sent both headers until no image set `EDGE_TOKEN`; the agent has since dropped the token.
 
 **Where the agent learns its identity and the edge key.** On every boot and wake, the api writes `/run/cocoonbox-identity/identity`, `{"box_id":…,"wake_id":<random>,"key_id":…,"public_key":<ed25519>}`, through sandboxd exec (silkd over vsock, running as root in the guest).
-- The directory is root 0755 and the file root 0644, both tmpfs. It is not `/run/cocoonbox`: that directory is `user:cbagent 2770` for the toolhost socket, so `user` could replace a file in it and point the agent at its own key.
+- The directory is root 0755 and the file root 0644, both tmpfs. It is not `/run/cocoonbox`: that directory is `user:cbagent 2750` for shuttle's desk socket, so `user` could replace a file in it and point the agent at its own key.
 - The file is not secret; integrity is what matters, and only guest root can write it.
 - The agent accepts a credential only for the `key_id` in that file. It re-reads the file when a credential carries a `key_id` or `wake_id` other than its cached copy, since a wake rewrites the file under a running agent.
 - The agent never derives its identity from the hostname, pod name or IP, which would mean knowing how it is scheduled.
