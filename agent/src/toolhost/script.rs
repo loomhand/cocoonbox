@@ -94,8 +94,13 @@ impl Scripts {
         Ok(Output::text(report["result"].to_string()))
     }
 
-    /// The saved flows' catalog, one `name(params)` line each, newest first; empty before the first save.
+    /// The saved flows' catalog, one `name(params)` line each, newest first; empty before the first save; off Linux, pruned first.
     pub async fn flows(workspace: &Path) -> String {
+        if !cfg!(target_os = "linux")
+            && let Err(e) = super::flows::prune(&super::flows::dir(workspace)).await
+        {
+            eprintln!("toolhost: prune the flow index: {e}");
+        }
         tokio::fs::read_to_string(super::flows::index(workspace))
             .await
             .unwrap_or_default()
