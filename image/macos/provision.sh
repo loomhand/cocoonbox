@@ -9,10 +9,11 @@
 #   SHUTTLE_DECIDE (default 1): 0 leaves shuttle without the gw, for a test box with no model access
 set -euo pipefail
 
-SHUTTLE_VERSION=v0.1.7
-SHUTTLE_TARBALL=cocoon-shuttle-${SHUTTLE_VERSION}-macos-x64.tar.gz
-SHUTTLE_SHA256=63dacff1484aae89807a39cc14a9bce7c15718ab85f08e626415ad7308b02456
-SHUTTLE_APP="/Applications/Cocoon Shuttle.app"
+SHUTTLE_VERSION=v0.1.13
+SHUTTLE_TARBALL=shuttle-${SHUTTLE_VERSION}-macos-x64.tar.gz
+SHUTTLE_SHA256=fd3a649fe1a048699deeb93e2f07539580198602f8278fb1582ffed4d139b55c
+SHUTTLE_APP=/Applications/Loomhand/Shuttle.app
+SHUTTLE_AGENT=io.github.loomhand.shuttle
 AGENT_ID=401
 AGENT_GROUP=cbagent
 WORKSPACE_DIR=/Users/Shared/workspace
@@ -101,8 +102,11 @@ shuttle() {
 	echo "$SHUTTLE_SHA256  $tarball" | shasum -a 256 -c --quiet -
 	tmp=$(mktemp -d)
 	tar -xzf "$tarball" -C "$tmp"
-	rm -rf "$SHUTTLE_APP"
-	mv "$tmp/Cocoon Shuttle.app" "$SHUTTLE_APP"
+	launchctl bootout "gui/$(id -u "$BOX_USER")/io.github.loomhand.cocoon-shuttle" 2>/dev/null || true
+	pkill -TERM -f "MacOS/cocoon-shuttle serve" || true
+	rm -rf "$SHUTTLE_APP" "/Applications/Cocoon Shuttle.app" /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist
+	install -d -m 0755 "$(dirname "$SHUTTLE_APP")"
+	mv "$tmp/Shuttle.app" "$SHUTTLE_APP"
 	chown -R root:wheel "$SHUTTLE_APP"
 	rm -rf "$tmp"
 	install -d -m 0755 "$ROOT/lib"
@@ -136,7 +140,7 @@ socket_group = "$AGENT_GROUP"
 EOF
 	chmod 0644 "$ETC/shuttle.toml.tmp"
 	mv -f "$ETC/shuttle.toml.tmp" "$ETC/shuttle.toml"
-	install -m 0644 "$SRC/rootfs/Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist" /Library/LaunchAgents/
+	install -m 0644 "$SRC/rootfs/Library/LaunchAgents/$SHUTTLE_AGENT.plist" /Library/LaunchAgents/
 }
 
 session() {
@@ -175,7 +179,9 @@ check() {
 	[ "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser)" = "$BOX_USER" ]
 	[ -z "$(defaults read /Library/Preferences/com.apple.loginwindow autoLoginUserScreenLocked 2>/dev/null)" ]
 	[ "$(sudo -u "$BOX_USER" defaults -currentHost read com.apple.screensaver idleTime)" = 0 ]
-	plutil -lint -s /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist "/Library/LaunchDaemons/$DAEMON.plist"
+	plutil -lint -s "/Library/LaunchAgents/$SHUTTLE_AGENT.plist" "/Library/LaunchDaemons/$DAEMON.plist"
+	[ ! -e "/Applications/Cocoon Shuttle.app" ]
+	[ ! -e /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist ]
 	echo check: ok
 }
 

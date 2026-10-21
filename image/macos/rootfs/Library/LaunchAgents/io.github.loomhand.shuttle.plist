@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>Label</key>
-	<string>io.github.loomhand.cocoon-shuttle</string>
+	<string>io.github.loomhand.shuttle</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/usr/local/lib/cocoonbox/shuttle-session</string>

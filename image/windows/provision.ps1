@@ -14,8 +14,8 @@ $ProgressPreference = 'SilentlyContinue'
 
 $Vendor = Join-Path $PSScriptRoot 'vendor'
 $Pinned = @(
-    @{ Name = 'cocoon-shuttle-v0.1.8-windows-x64.zip'; Sha = 'c47e591e433af4f356d254f53332fae13c78927e104210f972475fed17c08721'
-        Url = 'https://github.com/loomhand/shuttle/releases/download/v0.1.8/cocoon-shuttle-v0.1.8-windows-x64.zip' },
+    @{ Name = 'shuttle-v0.1.13-windows-x64.zip'; Sha = 'd1e15173761f74a8cb2a9914920316b65d04cf85ae79d25b1df5c6f9226329b8'
+        Url = 'https://github.com/loomhand/shuttle/releases/download/v0.1.13/shuttle-v0.1.13-windows-x64.zip' },
     @{ Name = 'VirtualDisplayDriver-x86.Driver.Only.zip'; Sha = 'e24210692b442b39af763536330ce78b423f19342b7a7792c26de3944e418b3a'
         Url = 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip' },
     @{ Name = 'nefcon_v1.21.0.zip'; Sha = '4c8e68f6b663598d77b7c3f76459b16fad00994e53ea8af0bd106a805dd5c18b'
@@ -34,10 +34,10 @@ $ServiceAccount = "NT SERVICE\$Service"
 $ServiceSid = 'S-1-5-80-946905139-3423092567-543426227-2568855936-1891501187'
 $Data = 'C:\ProgramData\cocoonbox'
 $AgentDir = 'C:\Program Files\cocoonbox'
-$ShuttleDir = 'C:\Program Files\cocoon-shuttle'
+$ShuttleDir = 'C:\Program Files\loomhand\shuttle'
 $Workspace = 'C:\workspace'
-$DeskPipe = '\\.\pipe\cocoon-shuttle-desk'
-$Task = 'cocoon-shuttle'
+$DeskPipe = '\\.\pipe\loomhand-shuttle-desk'
+$Task = 'loomhand-shuttle'
 $VncTask = 'tvnserver'
 $Display = 'C:\VirtualDisplayDriver'
 
@@ -174,13 +174,17 @@ function Acl($path, [string[]]$grants) {
 }
 
 function Shuttle {
-    Log 'shuttle v0.1.8, its desk runtime, the guide and the logon task'
+    Log 'shuttle v0.1.13, its desk runtime, the guide and the logon task'
     $tmp = Join-Path $env:TEMP "shuttle-$PID"
-    Expand-Archive -Force (Join-Path $Vendor 'cocoon-shuttle-v0.1.8-windows-x64.zip') $tmp
-    Get-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue | Stop-ScheduledTask
-    Get-Process | Where-Object { $_.Path -like "$ShuttleDir\*" } | Stop-Process -Force -PassThru | Wait-Process -Timeout 30
-    if (Test-Path $ShuttleDir) { Remove-Item -Recurse -Force $ShuttleDir }
-    Move-Item (Join-Path $tmp 'cocoon-shuttle') $ShuttleDir
+    Expand-Archive -Force (Join-Path $Vendor 'shuttle-v0.1.13-windows-x64.zip') $tmp
+    foreach ($t in $Task, 'cocoon-shuttle') { Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue | Stop-ScheduledTask }
+    Unregister-ScheduledTask -TaskName 'cocoon-shuttle' -Confirm:$false -ErrorAction SilentlyContinue
+    foreach ($d in $ShuttleDir, 'C:\Program Files\cocoon-shuttle') {
+        Get-Process | Where-Object { $_.Path -like "$d\*" } | Stop-Process -Force -PassThru | Wait-Process -Timeout 30
+        if (Test-Path $d) { Remove-Item -Recurse -Force $d }
+    }
+    New-Item -ItemType Directory -Force (Split-Path $ShuttleDir) | Out-Null
+    Move-Item (Join-Path $tmp 'shuttle') $ShuttleDir
     Remove-Item -Recurse -Force $tmp
     New-Item -ItemType Directory -Force "$Data\desk\lib", "$Data\tools.d", "$Data\routing.d" | Out-Null
     foreach ($f in 'desk', 'gui_plan', 'png') { Copy-Item -Force "$ShuttleDir\runtime\$f.mts" "$Data\desk\lib\$f.mts" }
@@ -254,6 +258,7 @@ function Check {
     foreach ($f in 'desk', 'gui_plan', 'png') { if (-not (Test-Path "$Data\desk\lib\$f.mts")) { throw "no $f.mts" } }
     if ((Get-Content -Raw "$Data\desk\AGENTS.md") -match '<!-- routing -->') { throw 'the guide lacks the routing' }
     if (-not (Get-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue)) { throw "no $Task task" }
+    if ((Get-ScheduledTask -TaskName 'cocoon-shuttle' -ErrorAction SilentlyContinue) -or (Test-Path 'C:\Program Files\cocoon-shuttle')) { throw 'the cocoon-shuttle task or install is left' }
     & "$AgentDir\cocoonbox-agent.exe" version
     Write-Output 'check: ok'
 }
