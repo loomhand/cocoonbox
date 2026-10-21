@@ -26,7 +26,10 @@ CONN_RATE = {"per_second": 30, "burst": 600}
 SSH_PORT = 22
 WEB_PORTS = [80, 443]
 FCM_PORTS = [5228, 5229, 5230]
-WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent "
+TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then systemctl --user -M user@ -q is-active cocoon-shuttle "
+               "&& [ -S /run/cocoonbox/services/cocoonbox.sock ]; else systemctl -q is-active cocoonbox-toolhost; fi")
+WARMUP = ("for i in $(seq 1 600); do systemctl -q is-active cocoonbox-xorg cocoonbox-session cocoonbox-agent "
+          "&& { " + TOOLHOST_UP + "; } "
           "&& (exec 3<>/dev/tcp/127.0.0.1/5900) 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/7443) 2>/dev/null && exit 0; "
           "sleep 0.2; done; exit 1")
 # a headless run in a throwaway profile puts Chrome's pages in the golden's page cache without opening a window

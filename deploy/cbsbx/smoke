@@ -21,6 +21,8 @@ GATEWAY = "10.203.0.1"
 PROXY = "http://127.0.0.1:3128"
 GRPCURL = os.environ.get("GRPCURL", "grpcurl")
 PROTO = os.environ.get("PROTO", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../proto"))
+TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then systemctl --user -M user@ -q is-active cocoon-shuttle "
+               "&& [ -S /run/cocoonbox/services/cocoonbox.sock ]; else systemctl -q is-active cocoonbox-toolhost; fi")
 
 failed = []
 CLAIM_TOKEN = {}
@@ -122,8 +124,10 @@ def main():
             return
         sid = out["id"]
         CLAIM_TOKEN[sid] = out["token"]
-        units = guest(sid, "systemctl is-active cocoonbox-xorg cocoonbox-session cocoonbox-toolhost cocoonbox-agent silkd | tr '\\n' ' '")
-        check("guest units active", units.split() == ["active"] * 5, units)
+        units = guest(sid, "systemctl is-active cocoonbox-xorg cocoonbox-session cocoonbox-agent silkd | tr '\\n' ' '")
+        check("guest units active", units.split() == ["active"] * 4, units)
+        toolhost = guest(sid, f"{TOOLHOST_UP} && echo up || echo down")
+        check("toolhost up", toolhost == "up", toolhost)
         size = guest(sid, "df -BG --output=size / | tail -1 | tr -dc 0-9")
         check("guest root disk from the pool storage", size.isdigit() and int(size) >= 38, f"{size} GiB")
         check("gw via proxy with claim secret", http_code(sid, f"http://{GATEWAY}:18090/v1/models", "Bearer unprovisioned") == "200")
