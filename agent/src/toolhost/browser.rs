@@ -227,8 +227,8 @@ const POINT_JS: &str = r#"((ref) => {
   let x = r.left + r.width / 2, y = r.top + r.height / 2;
   for (let f = el.ownerDocument.defaultView.frameElement; f; f = f.ownerDocument.defaultView.frameElement) {
     const b = f.getBoundingClientRect(), st = getComputedStyle(f);
-    x += b.left + f.clientLeft + parseFloat(st.paddingLeft);
-    y += b.top + f.clientTop + parseFloat(st.paddingTop);
+    x = b.left + (f.clientLeft + parseFloat(st.paddingLeft) + x) * (b.width / f.offsetWidth || 1);
+    y = b.top + (f.clientTop + parseFloat(st.paddingTop) + y) * (b.height / f.offsetHeight || 1);
   }
   return { x, y,
     label: (el.getAttribute('aria-label') || el.innerText
@@ -283,10 +283,11 @@ const CHOOSE_JS: &str = r#"((ref, text) => {
 
 const READ_JS: &str = r#"((ref) => {
   const el = ref ? window.__cbRefs && window.__cbRefs.get(ref) : document.body;
-  if (!el) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
+  if (!el || !el.ownerDocument.defaultView) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
   if (ref) return el.innerText || '';
   const frames = (doc) => [...doc.querySelectorAll('iframe,frame')]
-    .filter((f) => f.contentDocument && f.contentDocument.body && f.getClientRects().length)
+    .filter((f) => f.contentDocument && f.contentDocument.body && f.getClientRects().length
+      && getComputedStyle(f).visibility !== 'hidden')
     .flatMap((f) => [f.contentDocument.body.innerText, ...frames(f.contentDocument)]);
   return [el.innerText, ...frames(document)].filter(Boolean).join('\n\n');
 })"#;
@@ -3273,10 +3274,10 @@ pub(super) mod tests {
         let url = format!(
             "http://127.0.0.1:{}/",
             page_server(
-                "<!doctype html><title>Webmail</title><h1>Inbox</h1><iframe style=\"margin:40px 0 0 300px;border:7px solid;padding:5px\" \
+                "<!doctype html><title>Webmail</title><h1>Inbox</h1><iframe style=\"margin:40px 0 0 300px;border:7px solid;padding:5px;transform:scale(.5);transform-origin:0 0\" \
                  srcdoc=\"<p>Your national ID is 4417-2290</p><label>Reply <input></label><button>Send</button><script>\
                  document.querySelector('button').onclick = () => { parent.document.title = 'sent ' + document.querySelector('input').value; \
-                 frameElement.remove(); };</script>\"></iframe><iframe src=\"data:text/html,<p>sponsored</p>\"></iframe>",
+                 frameElement.remove(); };</script>\"></iframe><iframe style=\"visibility:hidden\" srcdoc=\"<p>old draft</p>\"></iframe><iframe src=\"data:text/html,<p>sponsored</p>\"></iframe>",
             )
             .await
         );
@@ -3306,13 +3307,19 @@ pub(super) mod tests {
                 snap.ends_with("\n[cross-origin frames not shown: 1]"),
                 "{snap}"
             );
-            assert!(!snap.contains("sponsored"), "{snap}");
+            assert!(
+                !snap.contains("sponsored") && !snap.contains("draft"),
+                "{snap}"
+            );
             let text = b.run("a", "browser_read", json!({})).await.unwrap();
             assert!(
                 text.starts_with("Inbox\n\nYour national ID is 4417-2290\n"),
                 "{text}"
             );
-            assert!(!text.contains("sponsored"), "{text}");
+            assert!(
+                !text.contains("sponsored") && !text.contains("draft"),
+                "{text}"
+            );
             b.run("a", "browser_type", json!({"ref": "e1", "text": "Ada"}))
                 .await
                 .unwrap();
@@ -3324,14 +3331,12 @@ pub(super) mod tests {
                 out.starts_with("clicked e2 \"Send\"; page is now sent Ada ("),
                 "{out}"
             );
-            let err = b
-                .run("a", "browser_click", json!({"ref": "e1"}))
-                .await
-                .unwrap_err();
-            assert_eq!(
-                err,
-                "Error: unknown or stale ref e1; take a new browser_snapshot"
-            );
+            for (tool, element) in [("browser_click", "e1"), ("browser_read", "e2")] {
+                assert_eq!(
+                    b.run("a", tool, json!({"ref": element})).await.unwrap_err(),
+                    format!("Error: unknown or stale ref {element}; take a new browser_snapshot")
+                );
+            }
             b.run("a", "browser_close", json!({})).await.unwrap();
         }
     }
