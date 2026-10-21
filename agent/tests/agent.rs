@@ -3897,6 +3897,14 @@ async fn mcp_gui_plan_keeps_a_static_description_and_lists_saved_flows_on_reques
     assert_eq!(none["content"][0]["text"], "no saved flows yet", "{none}");
 
     std::fs::create_dir_all(h.workspace.join("flows")).unwrap();
+    let flow = json!({"name": "mousepad-font-size", "params": {"size": "14"},
+        "steps": [{"app": "mousepad"}, {"menu": "Edit > Preferences"}, {"set": "font size", "value": "{{size}}"}],
+        "idempotent": true, "runs": 1, "saved_at": "2026-10-21T00:00:00.000Z", "rewrites": 0, "usage": {}});
+    std::fs::write(
+        h.workspace.join("flows/mousepad-font-size.json"),
+        flow.to_string(),
+    )
+    .unwrap();
     std::fs::write(
         h.workspace.join("flows/INDEX"),
         "mousepad-font-size(size): Edit > Preferences, set font size\n",
