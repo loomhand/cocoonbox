@@ -570,7 +570,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let client = toolhost(dir.path()).await;
         for (tty, signal, want) in [(tty(24, 80), libc::SIGINT, 130), (None, libc::SIGTERM, 143)] {
-            let mut conn = client.exec("echo started; sleep 30", tty).await.unwrap();
+            let mut conn = client.exec("echo started; exec sleep 30", tty).await.unwrap();
             tokio::time::timeout(DEADLINE, until(&mut conn, "started"))
                 .await
                 .unwrap();
