@@ -163,7 +163,7 @@ plugins = "/etc/cocoonbox/tools.d"
 
 [android]
 serial = "127.0.0.1:5555"
-ui_jar = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/android/shuttle-ui.jar"
+ui_jar = "/opt/loomhand/shuttle/$SHUTTLE_VERSION/android/shuttle-ui.jar"
 scrcpy_jar = "/usr/local/share/scrcpy/scrcpy-server.jar"
 su = "/usr/local/share/scrcpy/su1000"
 
@@ -191,7 +191,7 @@ enable_units() {
 	systemctl disable docker.service docker.socket containerd.service >/dev/null 2>&1
 	systemctl is-active -q docker.service && { echo "docker is running in the template" >&2; exit 1; }
 	systemctl mask dnscrypt-proxy.socket dnscrypt-proxy.service dnscrypt-proxy-resolvconf.service redsocks.service >/dev/null 2>&1
-	systemctl enable cocoonbox-android.path cocoonbox-android-proxy.socket cocoonbox-session.service cocoon-shuttle.service >/dev/null
+	systemctl enable cocoonbox-android.path cocoonbox-android-proxy.socket cocoonbox-session.service shuttle.service >/dev/null
 }
 
 setup_packages

@@ -1,8 +1,8 @@
 [Unit]
 Description=cocoonbox in-box agent loop
 ConditionPathExists=/usr/local/bin/cocoonbox-agent
-Wants=network-online.target cocoon-shuttle.service
-After=network-online.target cocoon-shuttle.service
+Wants=network-online.target shuttle.service
+After=network-online.target shuttle.service
 
 [Service]
 Type=simple

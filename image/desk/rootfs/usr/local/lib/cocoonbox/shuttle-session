@@ -7,4 +7,4 @@ iceauth list | while read -r proto _ net name cookie; do
 	case ",$SESSION_MANAGER," in *",$net,"*) iceauth add "$proto" "" "$(printf %s "$net" | sed 's#/[^/:]*:#/:#')" "$name" "$cookie" ;; esac
 done
 systemctl --user set-environment SESSION_MANAGER="$sm"
-exec systemctl --user restart cocoon-shuttle.service
+exec systemctl --user restart shuttle.service
