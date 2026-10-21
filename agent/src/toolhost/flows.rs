@@ -218,8 +218,7 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
 }
 
 /// Drops from `dir/INDEX` each flow whose `.json` file is gone, rewriting the file in place so that a folder being removed gains no entry.
-#[cfg(target_os = "linux")]
-async fn prune(dir: &Path) -> Result<(), String> {
+pub(super) async fn prune(dir: &Path) -> Result<(), String> {
     use tokio::io::AsyncWriteExt;
 
     let _index = INDEX_LOCK.lock().await;
@@ -260,7 +259,7 @@ async fn prune(dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
-/// Without inotify no flow write is seen.
+/// Without inotify no flow write is seen, so `flows_wait` never returns; the flow listing prunes `INDEX` itself.
 #[cfg(not(target_os = "linux"))]
 pub async fn watch(_workspace: PathBuf, _writes: watch::Sender<u64>) -> Result<(), String> {
     Err("no inotify on this system".to_owned())
@@ -334,6 +333,25 @@ mod tests {
         assert_eq!(mark(ws, json!({"id": "b"})).await.unwrap(), "a");
         assert!(mark(ws, json!({})).await.is_err());
         assert_eq!(scan(ws).await.unwrap(), "{}");
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[tokio::test]
+    async fn without_the_watcher_the_flow_listing_drops_a_deleted_flow() {
+        let dir = tempfile::tempdir().unwrap();
+        let flows = dir.path().join("flows");
+        std::fs::create_dir(&flows).unwrap();
+        std::fs::write(flows.join("a.json"), "{}").unwrap();
+        std::fs::write(flows.join("b.json"), "{}").unwrap();
+        std::fs::write(flows.join("INDEX"), "a(x): one\nb(): two\n").unwrap();
+        let listing = || super::super::script::Scripts::flows(dir.path());
+        assert_eq!(listing().await, "a(x): one\nb(): two\n");
+        std::fs::remove_file(flows.join("a.json")).unwrap();
+        assert_eq!(listing().await, "b(): two\n");
+        assert_eq!(
+            std::fs::read_to_string(flows.join("INDEX")).unwrap(),
+            "b(): two\n"
+        );
     }
 
     #[cfg(target_os = "linux")]
