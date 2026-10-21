@@ -495,15 +495,17 @@ async fn snapshots_mask_the_values_of_card_fields() {
     let Some((_chrome, mut toolhost, th)) = chrome_toolhost(dir.path()).await else {
         return;
     };
-    let site_port = site(Posts::default()).await;
+    let origin = format!("127.0.0.1:{}", site(Posts::default()).await);
 
     let snapshot = tool(
         &th,
         "browser_navigate",
-        json!({"url": format!("http://127.0.0.1:{site_port}/card")}),
+        json!({"url": format!("http://{origin}/card")}),
     )
     .await;
-    let read = tool(&th, "browser_read", json!({})).await;
+    let read = tool(&th, "browser_read", json!({}))
+        .await
+        .replace(&origin, "");
     eprintln!("{snapshot}\n{read}");
     assert_eq!(
         snapshot.matches("value=\"[masked]\"").count(),
@@ -532,8 +534,12 @@ async fn snapshots_mask_the_values_of_card_fields() {
         ("e5", "pin"),
         ("e6", "Pay now"),
     ] {
-        let read = tool(&th, "browser_read", json!({"ref": element})).await;
-        let clicked = tool(&th, "browser_click", json!({"ref": element})).await;
+        let read = tool(&th, "browser_read", json!({"ref": element}))
+            .await
+            .replace(&origin, "");
+        let clicked = tool(&th, "browser_click", json!({"ref": element}))
+            .await
+            .replace(&origin, "");
         eprintln!("{clicked}");
         assert!(
             clicked.starts_with(&format!("clicked {element} \"{label}\";")),
