@@ -1,6 +1,6 @@
 [Desktop Entry]
 Type=Application
-Name=cocoon-shuttle in the session
+Name=shuttle in the session
 Exec=/usr/local/lib/cocoonbox/shuttle-session
 OnlyShowIn=XFCE;
 NoDisplay=true

@@ -87,10 +87,14 @@ switch_driver() {
 	install -d -o user -g user "$WANTS"
 	sed -i 's#^d /run/cocoonbox 2770 user cbagent -$#d /run/cocoonbox 2750 user cbagent -#' /etc/tmpfiles.d/cocoonbox.conf
 	chmod 2750 /run/cocoonbox
-	ln -sfn /etc/systemd/user/cocoon-shuttle.service "$WANTS/cocoon-shuttle.service"
-	chown -h user:user "$WANTS/cocoon-shuttle.service"
+	if [ -f /etc/systemd/user/cocoon-shuttle.service ]; then
+		systemctl --user -M user@ stop cocoon-shuttle.service
+	fi
+	rm -rf /etc/systemd/user/cocoon-shuttle.service /etc/systemd/user/cocoon-shuttle.service.d "$WANTS/cocoon-shuttle.service" \
+		/home/user/.config/cocoon-shuttle
+	systemctl --global enable shuttle.service
 	systemctl --user -M user@ daemon-reload
-	systemctl --user -M user@ restart cocoon-shuttle.service
+	systemctl --user -M user@ restart shuttle.service
 }
 
 apt_sources() {
@@ -112,8 +116,9 @@ check() {
 	runuser -u user -- /usr/local/bin/node -e "import('$ROOT/lib/desk.mts').then((d) => { if (typeof d.snapshot !== 'function') process.exit(1) })"
 	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
-	[ "$(readlink -f /usr/local/bin/cocoon-shuttle)" = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/cocoon-shuttle" ]
-	systemctl --user -M user@ -q is-enabled cocoon-shuttle.service
+	[ "$(readlink -f /usr/local/bin/shuttle)" = "/opt/loomhand/shuttle/$SHUTTLE_VERSION/shuttle" ]
+	[ ! -e /opt/cocoon-shuttle ] && [ ! -e /usr/local/bin/cocoon-shuttle ] && [ ! -e /etc/systemd/user/cocoon-shuttle.service ]
+	systemctl --user -M user@ -q is-enabled shuttle.service
 	[ "$(systemctl --user -M user@ is-enabled cua-driver.service 2>/dev/null)" = masked ]
 	[ ! -e /etc/xdg/autostart/cocoonbox-cua-driver.desktop ]
 	for _ in $(seq 60); do [ -S /run/cocoonbox/desk.sock ] && [ -S /run/cocoonbox/driver.sock ] && break; sleep 0.5; done
@@ -121,9 +126,9 @@ check() {
 	[ "$(stat -c %a:%G /run/cocoonbox/desk.sock)" = 660:cbagent ]
 	[ "$(pgrep -u user -x cua-driver | wc -l)" = 1 ]
 	tr '\0' '\n' <"/proc/$(pgrep -u user -x cua-driver)/cmdline" | grep -qx -- --no-overlay
-	[ "$(readlink -f /home/user/.config/cocoon-shuttle/flows)" = /workspace/flows ]
-	[ "$(stat -c %a /home/user/.config/cocoon-shuttle/config.toml)" = 600 ]
-	grep -qx 'plugins = "/etc/cocoonbox/tools.d"' /home/user/.config/cocoon-shuttle/config.toml
+	[ "$(readlink -f /home/user/.config/loomhand/shuttle/flows)" = /workspace/flows ]
+	[ "$(stat -c %a /home/user/.config/loomhand/shuttle/config.toml)" = 600 ]
+	grep -qx 'plugins = "/etc/cocoonbox/tools.d"' /home/user/.config/loomhand/shuttle/config.toml
 	systemctl show -p Environment cocoonbox-agent | grep 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' | grep -q 'TOOLHOST_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl show -p Environment cocoonbox-session | grep -q 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl --user -M user@ show-environment | grep -qx 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'

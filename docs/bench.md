@@ -225,7 +225,7 @@ Pipe the binary into the box's VM as root over vsock. The VM name is the claim's
 
 ```bash
 sudo /srv/cb/sbx/bin/cocoon-cbsbx vm exec -i <vm> -- sh -c 'cat > /tmp/cocoonbox-agent' < target/release/cocoonbox-agent
-sudo /srv/cb/sbx/bin/cocoon-cbsbx vm exec <vm> -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/ && systemctl restart cocoonbox-agent && systemctl --user -M user@ restart cocoon-shuttle'
+sudo /srv/cb/sbx/bin/cocoon-cbsbx vm exec <vm> -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/ && systemctl restart cocoonbox-agent && systemctl --user -M user@ restart shuttle'
 ```
 
 A change made this way lasts until the box's next Rebase; ship it in the next template.

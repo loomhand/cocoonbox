@@ -1,5 +1,5 @@
 [Unit]
-Description=cocoon-shuttle desk daemon on display :0
+Description=shuttle desk daemon on display :0
 
 [Service]
 Type=simple
@@ -9,7 +9,7 @@ Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
 Environment=CUA_DRIVER_RS_UPDATE_CHECK=false
 ExecStartPre=/bin/sh -c 'until [ -S /tmp/.X11-unix/X0 ] && [ -S /run/user/1000/bus ]; do sleep 0.5; done'
 ExecStartPre=/usr/local/lib/cocoonbox/shuttle-config
-ExecStart=/usr/local/bin/cocoon-shuttle serve /run/cocoonbox/desk.sock
+ExecStart=/usr/local/bin/shuttle serve /run/cocoonbox/desk.sock
 TimeoutStartSec=300
 Restart=always
 OOMPolicy=continue

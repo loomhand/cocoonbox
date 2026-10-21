@@ -4,30 +4,32 @@
 # `shuttle.sh fetch DIR` it downloads the pinned archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the
 # runner's vendor tarballs there). The archive follows the machine's architecture; SHUTTLE_ARCH (x64 or arm64) names
 # another one, as a fetch for a different machine needs.
-SHUTTLE_VERSION=v0.1.12
+SHUTTLE_VERSION=v0.1.13
 case ${SHUTTLE_ARCH:-$(uname -m)} in
-aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=f2d4a511a95d894e1fed5d7eff3b5f6cb2defc5aabf8779885186b43694d024f ;;
-*) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=df2151af887e58782b25d292607c7ba9e3f342e5afdf61ce8515aba1c593e1e5 ;;
+aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=2b8fb25a112d96a4953d34442133bb089df517c0de80cfbc290ebcf86f9b54f6 ;;
+*) SHUTTLE_ARCH=x64 SHUTTLE_SHA256=eb2333ab33b5e090a50de6bd1ba10a633a75f519b214e07ea9b6ac796df9980c ;;
 esac
-SHUTTLE_TARBALL="cocoon-shuttle-${SHUTTLE_VERSION}-linux-${SHUTTLE_ARCH}.tar.gz"
+SHUTTLE_TARBALL="shuttle-${SHUTTLE_VERSION}-linux-${SHUTTLE_ARCH}.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
 
-# install_shuttle TARBALL: the daemon with its bundled Node, cua-driver and runtime in /opt/cocoon-shuttle/VERSION, on PATH
+# install_shuttle TARBALL: the daemon with its bundled Node, cua-driver and runtime in /opt/loomhand/shuttle/VERSION, on PATH;
+# the install under the pre-0.1.13 name goes
 install_shuttle() {
-	local tarball=$1 dir=/opt/cocoon-shuttle/$SHUTTLE_VERSION
+	local tarball=$1 dir=/opt/loomhand/shuttle/$SHUTTLE_VERSION
 	echo "$SHUTTLE_SHA256  $tarball" | sha256sum -c --quiet -
 	install -d "$dir"
 	tar -xzf "$tarball" -C "$dir" --strip-components=1 --no-same-owner
-	ln -sfn "$dir/cocoon-shuttle" /usr/local/bin/cocoon-shuttle
-	find /opt/cocoon-shuttle -mindepth 1 -maxdepth 1 ! -name "$SHUTTLE_VERSION" -exec rm -rf {} +
+	ln -sfn "$dir/shuttle" /usr/local/bin/shuttle
+	find /opt/loomhand/shuttle -mindepth 1 -maxdepth 1 ! -name "$SHUTTLE_VERSION" -exec rm -rf {} +
+	rm -rf /opt/cocoon-shuttle /usr/local/bin/cocoon-shuttle
 }
 
 install_shuttle_runtime() {
 	local tarball=$1 tmp
 	echo "$SHUTTLE_SHA256  $tarball" | sha256sum -c --quiet -
 	tmp=$(mktemp -d)
-	tar -xzf "$tarball" -C "$tmp" --no-same-owner cocoon-shuttle/runtime
-	for f in desk gui_plan png; do install -D -m 0644 "$tmp/cocoon-shuttle/runtime/$f.mts" "/opt/desk/lib/$f.mts"; done
+	tar -xzf "$tarball" -C "$tmp" --no-same-owner shuttle/runtime
+	for f in desk gui_plan png; do install -D -m 0644 "$tmp/shuttle/runtime/$f.mts" "/opt/desk/lib/$f.mts"; done
 	rm -rf "$tmp"
 }
 

@@ -19,10 +19,10 @@ grep -q '"args": \["toolhost-service"\]' /etc/cocoonbox/tools.d/cocoonbox.json
 grep -qx 'plugins = "/etc/cocoonbox/tools.d"' /etc/cocoonbox/shuttle.toml
 grep -qx 'socket_group = "cbagent"' /etc/cocoonbox/shuttle.toml
 grep -qx 'd /run/cocoonbox 2750 user cbagent -' /etc/tmpfiles.d/cocoonbox.conf
-shuttle=$(dirname "$(readlink -f /usr/local/bin/cocoon-shuttle)")
+shuttle=$(dirname "$(readlink -f /usr/local/bin/shuttle)")
 test -x "$shuttle/node" && test -s "$shuttle/runtime/gui_plan.mts"
 case $(dpkg --print-architecture) in arm64) machine=00b7 ;; *) machine=003e ;; esac
-[ "$(od -An -tx2 -j18 -N2 "$shuttle/cocoon-shuttle" | tr -d ' ')" = "$machine" ]
+[ "$(od -An -tx2 -j18 -N2 "$shuttle/shuttle" | tr -d ' ')" = "$machine" ]
 grep -Fqx "ui_jar = \"$shuttle/android/shuttle-ui.jar\"" /etc/cocoonbox/shuttle.toml
 test -s "$shuttle/android/shuttle-ui.jar"
 test -f /opt/android/AGENTS.md
@@ -33,6 +33,6 @@ grep -Fq '"Name":"/redroid"' "${cfgs[0]}"
 grep -Fq '"androidboot.use_memfd=0"' "${cfgs[0]}"
 grep -Fq '"5555/tcp":[{"HostIp":"127.0.0.1"' "$(dirname "${cfgs[0]}")/hostconfig.json"
 [ -z "$(find /var/lib/docker/vfs/dir -maxdepth 5 -path '*/priv-app/PrebuiltGmsCore' -print -quit)" ]
-for u in cocoonbox-android.path cocoonbox-android-proxy.socket cocoonbox-session.service cocoon-shuttle.service; do systemctl is-enabled -q "$u"; done
+for u in cocoonbox-android.path cocoonbox-android-proxy.socket cocoonbox-session.service shuttle.service; do systemctl is-enabled -q "$u"; done
 systemctl is-enabled -q docker.service && exit 1
 echo android-base-verify=ok

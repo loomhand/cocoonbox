@@ -21,8 +21,9 @@ GATEWAY = "10.203.0.1"
 PROXY = "http://127.0.0.1:3128"
 GRPCURL = os.environ.get("GRPCURL", "grpcurl")
 PROTO = os.environ.get("PROTO", os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../proto"))
-TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then systemctl --user -M user@ -q is-active cocoon-shuttle "
-               "&& [ -S /run/cocoonbox/services/cocoonbox.sock ]; else systemctl -q is-active cocoonbox-toolhost; fi")
+TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then u=shuttle; [ -e /etc/systemd/user/shuttle.service ] || u=cocoon-shuttle; "
+               "systemctl --user -M user@ -q is-active $u && [ -S /run/cocoonbox/services/cocoonbox.sock ]; "
+               "else systemctl -q is-active cocoonbox-toolhost; fi")
 
 failed = []
 CLAIM_TOKEN = {}
