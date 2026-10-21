@@ -75,7 +75,7 @@ jobs:
             proto
 
       - name: Install protoc
-        run: choco install protoc --no-progress -y
+        run: choco install protoc --no-progress -y && protoc --version
 
       - name: clippy + build + lib tests
         working-directory: agent
