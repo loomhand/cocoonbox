@@ -2,7 +2,7 @@
 # restarts shuttle in the Aqua session as its user; kickstart alone restarts only the open wrapper, so the app is ended first
 set -u
 u=gui/$(id -u)
-launchctl bootout "$u/io.github.loomhand.cocoon-shuttle" 2>/dev/null
-pkill -TERM -f "MacOS/cocoon-shuttle serve"
+launchctl bootout "$u/io.github.loomhand.shuttle" 2>/dev/null
+pkill -TERM -f "MacOS/shuttle serve"
 sleep 3
-launchctl bootstrap "$u" /Library/LaunchAgents/io.github.loomhand.cocoon-shuttle.plist
+launchctl bootstrap "$u" /Library/LaunchAgents/io.github.loomhand.shuttle.plist
