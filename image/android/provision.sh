@@ -137,6 +137,7 @@ setup_desk() {
 	rm -rf "$tmp"
 	install -D -m 0755 "$DESK/usr/local/bin/desk" /usr/local/bin/desk
 	install -D -m 0755 "$DESK/usr/local/lib/cocoonbox/shuttle-config" /usr/local/lib/cocoonbox/shuttle-config
+	install -D -m 0644 "$DESK/../service/cocoonbox.json" /etc/cocoonbox/tools.d/cocoonbox.json
 	install -d /etc/cocoonbox
 	printf 'GW_BASE_URL=%s\n' "$GW_BASE_URL" > /etc/cocoonbox/desk.env
 	chmod 0644 /etc/cocoonbox/desk.env
@@ -158,12 +159,16 @@ kill_hotkey = "off"
 
 [tools]
 script_run = true
+plugins = "/etc/cocoonbox/tools.d"
 
 [android]
 serial = "127.0.0.1:5555"
 ui_jar = "/opt/cocoon-shuttle/$SHUTTLE_VERSION/android/shuttle-ui.jar"
 scrcpy_jar = "/usr/local/share/scrcpy/scrcpy-server.jar"
 su = "/usr/local/share/scrcpy/su1000"
+
+[daemon]
+socket_group = "cbagent"
 EOF
 	chmod 0644 /etc/cocoonbox/shuttle.toml.tmp
 	mv -f /etc/cocoonbox/shuttle.toml.tmp /etc/cocoonbox/shuttle.toml

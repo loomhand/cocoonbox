@@ -49,7 +49,8 @@ for _ in $(seq 100); do guest "$VM" -- true 2>/dev/null && break; sleep 0.3; don
 guest "$VM" -- test -f /etc/cocoonbox/android-base || { echo "$BASE is no android base" >&2; exit 1; }
 step "agent $(sha256sum "$AGENT" | cut -c1-16)"
 guest -i "$VM" -- sh -c 'cat > /tmp/cocoonbox-agent' < "$AGENT"
-guest "$VM" -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/cocoonbox-agent && rm /tmp/cocoonbox-agent && systemctl enable cocoonbox-toolhost cocoonbox-agent'
+guest "$VM" -- sh -c 'install -m 0755 /tmp/cocoonbox-agent /usr/local/bin/cocoonbox-agent && rm /tmp/cocoonbox-agent && systemctl enable cocoonbox-agent'
+guest "$VM" -- sh -c '/usr/local/bin/cocoonbox-agent toolhost-service 2>&1 | grep -q SHUTTLE_SERVICE_SOCKET' || { echo "$AGENT has no toolhost-service" >&2; exit 1; }
 
 step "seal"
 guest "$VM" -- bash -c 'set -e; grep -q " localhost.localdomain" /etc/hosts || echo "127.0.0.1 localhost.localdomain" >> /etc/hosts; rm -rf /var/lib/apt/lists/* /root/.bash_history; apt-get clean; journalctl --rotate >/dev/null; journalctl --vacuum-time=1s >/dev/null; ! systemctl -q is-active docker.service; [ -z "$(ls -A /var/lib/redroid-data)" ]; sync'
