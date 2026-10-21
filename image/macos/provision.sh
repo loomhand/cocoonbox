@@ -9,9 +9,9 @@
 #   SHUTTLE_DECIDE (default 1): 0 leaves shuttle without the gw, for a test box with no model access
 set -euo pipefail
 
-SHUTTLE_VERSION=v0.1.13
+SHUTTLE_VERSION=v0.1.14
 SHUTTLE_TARBALL=shuttle-${SHUTTLE_VERSION}-macos-x64.tar.gz
-SHUTTLE_SHA256=fd3a649fe1a048699deeb93e2f07539580198602f8278fb1582ffed4d139b55c
+SHUTTLE_SHA256=ba9a99a6121f5b068835a05f3c7c6b368a144b9b72bbd5d9d21b346f4215ffe3
 SHUTTLE_APP=/Applications/Loomhand/Shuttle.app
 SHUTTLE_AGENT=io.github.loomhand.shuttle
 AGENT_ID=401
