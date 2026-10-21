@@ -571,10 +571,13 @@ mod tests {
         let client = toolhost(dir.path()).await;
         for (tty, signal, want) in [(tty(24, 80), libc::SIGINT, 130), (None, libc::SIGTERM, 143)] {
             let mut conn = client
-                .exec("echo started; exec sleep 30", tty)
+                .exec(
+                    "i=0; while :; do i=$((i + 1)); echo tick$i; sleep 0.2; done",
+                    tty,
+                )
                 .await
                 .unwrap();
-            tokio::time::timeout(DEADLINE, until(&mut conn, "started"))
+            tokio::time::timeout(DEADLINE, until(&mut conn, "tick2"))
                 .await
                 .unwrap();
             rpc::write_tagged(&mut conn, rpc::SIGNAL, &signal.to_be_bytes())
