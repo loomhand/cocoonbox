@@ -85,13 +85,14 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
   const out = [`Page: ${document.title} (${location.href})`];
   let truncated = false;
   let headings = 0;
+  let foreign = 0;
   const ACTIVE_TAGS = new Set(['A', 'BUTTON', 'INPUT', 'SELECT', 'TEXTAREA', 'SUMMARY']);
   const ACTIVE_ROLES = new Set(['button', 'link', 'checkbox', 'radio', 'tab', 'menuitem',
     'menuitemcheckbox', 'menuitemradio', 'combobox', 'option', 'switch', 'searchbox',
     'textbox', 'slider', 'spinbutton', 'treeitem']);
   const TEXT_TAGS = new Set(['P', 'LI', 'TD', 'TH', 'LABEL', 'DT', 'DD', 'CAPTION',
     'FIGCAPTION', 'BLOCKQUOTE', 'PRE']);
-  const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'svg', 'IFRAME']);
+  const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'svg']);
   const CARD = /\bcc-(number|csc|exp)|card.?(number|num|no\b)|cvc|cvv|csc|security.?code/i;
   const clip = (s, n) => {
     s = (s || '').replace(/\s+/g, ' ').trim();
@@ -148,6 +149,11 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
       if (out.length > MAX) { truncated = true; return; }
       const st = SKIP.has(el.tagName) ? null : shown(el);
       if (!st) continue;
+      if (el.tagName === 'IFRAME' || el.tagName === 'FRAME') {
+        if (!el.contentDocument) foreign++;
+        else walk(el.contentDocument, depth, inside, inside);
+        continue;
+      }
       const act = active(el);
       const clickable = plans && !act && !inside && !pointer && st.cursor === 'pointer';
       if (act || clickable) {
@@ -177,7 +183,7 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
       }
       const tag = /^H([1-6])$/.exec(el.tagName);
       const level = tag ? tag[1] : el.getAttribute('role') === 'heading' && (el.getAttribute('aria-level') || '2');
-      const nested = el.querySelector('a[href],button,input,select,textarea,[role],[contenteditable],[onclick]');
+      const nested = el.querySelector('a[href],button,input,select,textarea,[role],[contenteditable],[onclick],iframe,frame');
       if (level) {
         headings++;
         out.push(`${pad(depth)}- heading "${clip(el.innerText, 150)}" [level=${level}]`);
@@ -208,16 +214,23 @@ const SNAPSHOT_JS: &str = r#"((plans) => {
     }
   }
   if (!headings && !truncated) out.splice(1, 0, '(this page has no headings)');
+  if (foreign) out.push(`[cross-origin frames not shown: ${foreign}]`);
   if (truncated) out.push(`[snapshot truncated at ${MAX} lines; use browser_read for page text]`);
   return out.join('\n');
 })"#;
 
 const POINT_JS: &str = r#"((ref) => {
   const el = window.__cbRefs && window.__cbRefs.get(ref);
-  if (!el || !el.isConnected) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
+  if (!el || !el.isConnected || !el.ownerDocument.defaultView) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
-  return { x: r.left + r.width / 2, y: r.top + r.height / 2,
+  let x = r.left + r.width / 2, y = r.top + r.height / 2;
+  for (let f = el.ownerDocument.defaultView.frameElement; f; f = f.ownerDocument.defaultView.frameElement) {
+    const b = f.getBoundingClientRect(), st = getComputedStyle(f);
+    x += b.left + f.clientLeft + parseFloat(st.paddingLeft);
+    y += b.top + f.clientTop + parseFloat(st.paddingTop);
+  }
+  return { x, y,
     label: (el.getAttribute('aria-label') || el.innerText
       || (el.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(el.type) ? el.value : '')
       || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).replace(/\s+/g, ' ').trim().slice(0, 60) };
@@ -225,12 +238,12 @@ const POINT_JS: &str = r#"((ref) => {
 
 const FOCUS_JS: &str = r#"((ref, clear) => {
   const el = window.__cbRefs && window.__cbRefs.get(ref);
-  if (!el || !el.isConnected) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
+  if (!el || !el.isConnected || !el.ownerDocument.defaultView) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
   el.scrollIntoView({ block: 'center' });
   el.focus();
   if (clear) {
     if (typeof el.select === 'function') el.select();
-    else document.execCommand('selectAll');
+    else el.ownerDocument.execCommand('selectAll');
   }
   return true;
 })"#;
@@ -251,7 +264,7 @@ const FIELD_JS: &str = r#"(() => {
 
 const CHOOSE_JS: &str = r#"((ref, text) => {
   const el = window.__cbRefs && window.__cbRefs.get(ref);
-  if (!el || !el.isConnected) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
+  if (!el || !el.isConnected || !el.ownerDocument.defaultView) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
   if (el.tagName !== 'SELECT') return null;
   const norm = (s) => (s || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const want = norm(text);
@@ -271,7 +284,11 @@ const CHOOSE_JS: &str = r#"((ref, text) => {
 const READ_JS: &str = r#"((ref) => {
   const el = ref ? window.__cbRefs && window.__cbRefs.get(ref) : document.body;
   if (!el) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
-  return el.innerText || '';
+  if (ref) return el.innerText || '';
+  const frames = (doc) => [...doc.querySelectorAll('iframe,frame')]
+    .filter((f) => f.contentDocument && f.contentDocument.body && f.getClientRects().length)
+    .flatMap((f) => [f.contentDocument.body.innerText, ...frames(f.contentDocument)]);
+  return [el.innerText, ...frames(document)].filter(Boolean).join('\n\n');
 })"#;
 
 const FILL_JS: &str = r#"(async (origin, username, secret, kind, submit) => {
@@ -3245,6 +3262,78 @@ pub(super) mod tests {
         );
         assert!(out.contains("textbox \"Customer\""), "{out}");
         b.run("a", "browser_close", json!({})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn the_page_tools_reach_into_a_same_origin_frame_and_count_a_cross_origin_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(bin) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let url = format!(
+            "http://127.0.0.1:{}/",
+            page_server(
+                "<!doctype html><title>Webmail</title><h1>Inbox</h1><iframe style=\"margin:40px 0 0 300px;border:7px solid;padding:5px\" \
+                 srcdoc=\"<p>Your national ID is 4417-2290</p><label>Reply <input></label><button>Send</button><script>\
+                 document.querySelector('button').onclick = () => { parent.document.title = 'sent ' + document.querySelector('input').value; \
+                 frameElement.remove(); };</script>\"></iframe><iframe src=\"data:text/html,<p>sponsored</p>\"></iframe>",
+            )
+            .await
+        );
+        for plans in [true, false] {
+            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+                .unwrap()
+                .local_addr()
+                .unwrap()
+                .port();
+            let b = Browser::new(
+                bin.clone(),
+                dir.path().join(format!("f{plans}")),
+                cdp,
+                plans,
+            );
+            let snap = b
+                .run("a", "browser_navigate", json!({"url": url}))
+                .await
+                .unwrap();
+            assert!(
+                snap.contains("- text \"Your national ID is 4417-2290\""),
+                "{snap}"
+            );
+            assert!(snap.contains("textbox \"Reply\" [ref=e1]"), "{snap}");
+            assert!(snap.contains("button \"Send\" [ref=e2]"), "{snap}");
+            assert!(
+                snap.ends_with("\n[cross-origin frames not shown: 1]"),
+                "{snap}"
+            );
+            assert!(!snap.contains("sponsored"), "{snap}");
+            let text = b.run("a", "browser_read", json!({})).await.unwrap();
+            assert!(
+                text.starts_with("Inbox\n\nYour national ID is 4417-2290\n"),
+                "{text}"
+            );
+            assert!(!text.contains("sponsored"), "{text}");
+            b.run("a", "browser_type", json!({"ref": "e1", "text": "Ada"}))
+                .await
+                .unwrap();
+            let out = b
+                .run("a", "browser_click", json!({"ref": "e2"}))
+                .await
+                .unwrap();
+            assert!(
+                out.starts_with("clicked e2 \"Send\"; page is now sent Ada ("),
+                "{out}"
+            );
+            let err = b
+                .run("a", "browser_click", json!({"ref": "e1"}))
+                .await
+                .unwrap_err();
+            assert_eq!(
+                err,
+                "Error: unknown or stale ref e1; take a new browser_snapshot"
+            );
+            b.run("a", "browser_close", json!({})).await.unwrap();
+        }
     }
 
     #[tokio::test]
