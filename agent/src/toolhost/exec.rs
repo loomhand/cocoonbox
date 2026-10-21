@@ -487,6 +487,17 @@ mod tests {
         Some(json!({"term": DEFAULT_TERM, "rows": rows, "cols": cols}))
     }
 
+    /// Reads stdout frames until the output holds `text`; the output so far.
+    async fn until(conn: &mut rpc::Stream, text: &str) -> String {
+        let mut out = Vec::new();
+        while !String::from_utf8_lossy(&out).contains(text) {
+            let (tag, data) = rpc::read_tagged(conn).await.unwrap();
+            assert_eq!(tag, rpc::STDOUT, "{}", String::from_utf8_lossy(&data));
+            out.extend(data);
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
     /// Reads frames until the exit frame; stdout, stderr and the exit code.
     async fn finish(conn: &mut rpc::Stream) -> (String, String, i32) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -540,7 +551,9 @@ mod tests {
             .exec("stty size; sleep 2; stty size", tty(24, 80))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(700)).await;
+        let first = tokio::time::timeout(DEADLINE, until(&mut conn, "24 80"))
+            .await
+            .unwrap();
         let size = [40u16.to_be_bytes(), 120u16.to_be_bytes()].concat();
         rpc::write_tagged(&mut conn, rpc::RESIZE, &size)
             .await
@@ -548,7 +561,7 @@ mod tests {
         let (out, _, code) = tokio::time::timeout(DEADLINE, finish(&mut conn))
             .await
             .unwrap();
-        assert!(out.contains("24 80") && out.contains("40 120"), "{out:?}");
+        assert!(out.contains("40 120"), "{first:?} {out:?}");
         assert_eq!(code, 0, "{out:?}");
     }
 
@@ -557,8 +570,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let client = toolhost(dir.path()).await;
         for (tty, signal, want) in [(tty(24, 80), libc::SIGINT, 130), (None, libc::SIGTERM, 143)] {
-            let mut conn = client.exec("sleep 30", tty).await.unwrap();
-            tokio::time::sleep(Duration::from_millis(700)).await;
+            let mut conn = client.exec("echo started; sleep 30", tty).await.unwrap();
+            tokio::time::timeout(DEADLINE, until(&mut conn, "started"))
+                .await
+                .unwrap();
             rpc::write_tagged(&mut conn, rpc::SIGNAL, &signal.to_be_bytes())
                 .await
                 .unwrap();
