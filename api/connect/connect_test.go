@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -658,15 +659,19 @@ func TestCatalogClientsBuildTheirAuthorizeURLs(t *testing.T) {
 		q.Get("code_challenge_method") != "S256" || q.Get("state") == "" || q.Has("scope") {
 		t.Errorf("github = %s", gh)
 	}
-	googleStarted, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: "google-calendar"})
-	if err != nil {
-		t.Fatalf("google: %v", err)
-	}
-	google := googleStarted.URL
-	q = mustQuery(t, google)
-	if !strings.HasPrefix(google, "https://accounts.google.com/o/oauth2/v2/auth?") || q.Get("client_id") != "g.apps" || q.Get("access_type") != "offline" ||
-		q.Get("scope") != "openid https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/calendar.events" || q.Get("code_challenge") == "" {
-		t.Errorf("google = %s", google)
+	for connector, scope := range map[string]string{
+		"google-calendar": "https://www.googleapis.com/auth/calendar.events",
+		"google-tasks":    "https://www.googleapis.com/auth/tasks",
+	} {
+		started, err := env.svc.Start(t.Context(), StartRequest{User: alice, SessionSHA256: aliceSess, Connector: connector})
+		if err != nil {
+			t.Fatalf("%s: %v", connector, err)
+		}
+		q = mustQuery(t, started.URL)
+		if !strings.HasPrefix(started.URL, "https://accounts.google.com/o/oauth2/v2/auth?") || q.Get("client_id") != "g.apps" || q.Get("access_type") != "offline" ||
+			q.Get("scope") != "openid https://www.googleapis.com/auth/userinfo.email "+scope || q.Get("code_challenge") == "" {
+			t.Errorf("%s = %s", connector, started.URL)
+		}
 	}
 	catalog, _ := env.svc.Catalog(t.Context(), &controlv1.CatalogRequest{})
 	if catalog.GetEntries()[0].GetInstallUrl() != "https://github.com/apps/cocoonbox/installations/new" {
@@ -1154,6 +1159,86 @@ func TestAnApiTakesItsOwnSignalOnce(t *testing.T) {
 	}
 }
 
+func TestGoogleTasksServesItsToolsOverTheTasksAPIWithTheGrantToken(t *testing.T) {
+	env, api := newTasksEnv(t)
+	tools, err := env.svc.doorTools(t.Context(), modeB)
+	if err != nil || len(tools) != len(tasksTools) {
+		t.Fatalf("Tools = %d, %v", len(tools), err)
+	}
+	readOnly := map[string]bool{}
+	for _, raw := range tools {
+		var tl struct {
+			Name        string `json:"name"`
+			Annotations struct {
+				ReadOnlyHint bool `json:"readOnlyHint"`
+			} `json:"annotations"`
+		}
+		_ = json.Unmarshal(raw["name"], &tl.Name)
+		_ = json.Unmarshal(raw["annotations"], &tl.Annotations)
+		readOnly[tl.Name] = tl.Annotations.ReadOnlyHint
+	}
+	if !readOnly[mockName+"_list_tasklists"] || !readOnly[mockName+"_list_tasks"] || readOnly[mockName+"_delete_task"] {
+		t.Errorf("read-only tools = %v", readOnly)
+	}
+	for _, tt := range []struct {
+		tool, args, method, path, query, body string
+	}{
+		{"list_tasklists", `{"maxResults":10}`, http.MethodGet, "/users/@me/lists", "maxResults=10", ""},
+		{"insert_tasklist", `{"title":"Groceries"}`, http.MethodPost, "/users/@me/lists", "", `{"title":"Groceries"}`},
+		{"patch_tasklist", `{"tasklist":"L1","title":"Food"}`, http.MethodPatch, "/users/@me/lists/L1", "", `{"title":"Food"}`},
+		{"delete_tasklist", `{"tasklist":"L1"}`, http.MethodDelete, "/users/@me/lists/L1", "", ""},
+		{"list_tasks", `{"tasklist":"L/1","showCompleted":false}`, http.MethodGet, "/lists/L%2F1/tasks", "showCompleted=false", ""},
+		{"insert_task", `{"tasklist":"L1","title":"Milk","due":"2026-10-24T00:00:00Z","parent":"T0"}`, http.MethodPost, "/lists/L1/tasks", "parent=T0", `{"due":"2026-10-24T00:00:00Z","title":"Milk"}`},
+		{"patch_task", `{"tasklist":"L1","task":"T1","status":"completed"}`, http.MethodPatch, "/lists/L1/tasks/T1", "", `{"status":"completed"}`},
+		{"delete_task", `{"tasklist":"L1","task":"T1"}`, http.MethodDelete, "/lists/L1/tasks/T1", "", ""},
+	} {
+		out, err := call(t.Context(), env.svc, modeB, mockName+"_"+tt.tool, jsontext.Value(tt.args), "")
+		want := `{"kind":"tasks#answer"}`
+		if tt.method == http.MethodDelete {
+			want = tasksDone
+		}
+		if err != nil || out.IsError || out.Content[0].Text != want {
+			t.Errorf("%s = %+v, %v", tt.tool, out, err)
+			continue
+		}
+		got := api.last(t)
+		if got.method != tt.method || got.path != tt.path || got.query != tt.query || got.body != tt.body || !strings.HasPrefix(got.auth, "Bearer ") {
+			t.Errorf("%s sent %+v", tt.tool, got)
+		}
+	}
+}
+
+func TestGoogleTasksRefreshesOnA401AndReportsWhatGoogleRefused(t *testing.T) {
+	env, api := newTasksEnv(t)
+	api.mu.Lock()
+	api.refuse = true
+	api.mu.Unlock()
+	if out, err := call(t.Context(), env.svc, modeB, mockName+"_list_tasklists", nil, ""); err != nil || out.IsError {
+		t.Fatalf("Call after a 401 = %+v, %v", out, err)
+	}
+	if refreshes, _, _ := env.vendor.Snapshot(); refreshes != 1 {
+		t.Errorf("refreshes = %d, want 1", refreshes)
+	}
+	if reqs := api.all(); len(reqs) != 2 || reqs[0].auth == reqs[1].auth {
+		t.Errorf("requests = %+v, want a retry with the refreshed token", reqs)
+	}
+	out, err := call(t.Context(), env.svc, modeB, mockName+"_list_tasks", jsontext.Value(`{"tasklist":"missing"}`), "")
+	if err != nil || !out.IsError || out.Content[0].Text != `Google Tasks answered HTTP 404: {"error":{"code":404,"message":"Task list not found."}}` {
+		t.Errorf("Call of a missing list = %+v, %v", out, err)
+	}
+	out, err = call(t.Context(), env.svc, modeB, mockName+"_insert_task", jsontext.Value(`{"tasklist":"broken","title":"x"}`), "")
+	if err != nil || !out.IsError || !strings.HasPrefix(out.Content[0].Text, outcomeUnknown) {
+		t.Errorf("Call that Google failed = %+v, %v", out, err)
+	}
+	before := len(api.all())
+	if _, err := call(t.Context(), env.svc, modeB, mockName+"_delete_task", jsontext.Value(`{"tasklist":"L1"}`), ""); err == nil || !strings.Contains(err.Error(), "task is required") {
+		t.Errorf("Call without the task = %v", err)
+	}
+	if len(api.all()) != before {
+		t.Error("a call without its task reached Google")
+	}
+}
+
 type env struct {
 	svc      *Service
 	vendor   *connecttest.Vendor
@@ -1452,4 +1537,70 @@ func (m *mixUp) loot() (string, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.stolen, m.redeemed
+}
+
+type tasksRequest struct {
+	method string
+	path   string
+	query  string
+	body   string
+	auth   string
+}
+
+type tasksStandIn struct {
+	mu     sync.Mutex
+	reqs   []tasksRequest
+	refuse bool
+}
+
+func (a *tasksStandIn) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+	a.mu.Lock()
+	a.reqs = append(a.reqs, tasksRequest{method: r.Method, path: r.URL.EscapedPath(), query: r.URL.RawQuery, body: string(body), auth: r.Header.Get(headerAuthorization)})
+	refuse := a.refuse
+	a.refuse = false
+	a.mu.Unlock()
+	switch {
+	case refuse:
+		w.WriteHeader(http.StatusUnauthorized)
+	case strings.Contains(r.URL.Path, "/missing/"):
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"code":404,"message":"Task list not found."}}`)
+	case strings.Contains(r.URL.Path, "/broken/"):
+		w.WriteHeader(http.StatusServiceUnavailable)
+	case r.Method == http.MethodDelete:
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		_, _ = io.WriteString(w, `{"kind":"tasks#answer"}`)
+	}
+}
+
+func (a *tasksStandIn) all() []tasksRequest {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.reqs)
+}
+
+func (a *tasksStandIn) last(t *testing.T) tasksRequest {
+	t.Helper()
+	reqs := a.all()
+	if len(reqs) == 0 {
+		t.Fatal("no request reached Google Tasks")
+	}
+	return reqs[len(reqs)-1]
+}
+
+// newTasksEnv turns alice's connected mock grant into a Google Tasks grant whose client is the mock vendor's and whose API is a stand-in.
+func newTasksEnv(t *testing.T) (*env, *tasksStandIn) {
+	t.Helper()
+	env := newEnv(t)
+	env.connect(t)
+	api := &tasksStandIn{}
+	srv := httptest.NewServer(api)
+	t.Cleanup(srv.Close)
+	env.svc.tasksAPI = srv.URL
+	env.svc.entry("google-tasks").client = env.secrets(t).Client
+	env.exec(t, "UPDATE connect_grants SET kind = 'google-tasks', mcp_url = $1", builtinGoogleTasks)
+	env.svc.dropConn(env.grant(t).id)
+	return env, api
 }

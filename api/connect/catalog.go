@@ -107,28 +107,26 @@ func newCatalog(opts Options) []*entry {
 	if opts.Link.Key == "" {
 		opts.Link = Credentials{}
 	}
+	google := client{ //nolint:gosec // the secret comes from the environment
+		ID: opts.Google.ClientID, Secret: opts.Google.ClientSecret, TokenURL: "https://oauth2.googleapis.com/token",
+		RevokeURL: "https://oauth2.googleapis.com/revoke",
+	}
+	calendar := googleEntry(google, "google-calendar", "Google Calendar", "Your Google Calendar events, for programs in your box. It serves no tools to agents yet.",
+		"https://calendar.google.com/googlecalendar/images/favicons_2020q4/calendar_31.ico", "https://www.googleapis.com/auth/calendar.events")
+	calendar.inject = []injection{{
+		name: "GOOGLE_CALENDAR", hosts: []string{"www.googleapis.com"}, header: headerAuthorization,
+		placeholder: "Bearer @GOOGLE_CALENDAR@", value: prefixed("Bearer "),
+	}}
+	tasks := googleEntry(google, "google-tasks", "Google Tasks", "Your Google Tasks lists and tasks.",
+		"https://www.gstatic.com/images/branding/product/1x/tasks_48dp.png", "https://www.googleapis.com/auth/tasks")
+	tasks.mcpURL = builtinGoogleTasks
 	if opts.GitHub.Slug != "" {
 		gh.installURL = "https://github.com/apps/" + url.PathEscape(opts.GitHub.Slug) + "/installations/new"
 	}
 	return []*entry{
 		gh,
-		{
-			id: "google-calendar", name: "Google Calendar", description: "Your Google Calendar events, for programs in your box. It serves no tools to agents yet.",
-			auth: authOAuth, icon: "https://calendar.google.com/googlecalendar/images/favicons_2020q4/calendar_31.ico",
-			inject: []injection{{
-				name: "GOOGLE_CALENDAR", hosts: []string{"www.googleapis.com"}, header: headerAuthorization,
-				placeholder: "Bearer @GOOGLE_CALENDAR@", value: prefixed("Bearer "),
-			}},
-			client: client{ //nolint:gosec // the secret comes from the environment
-				ID: opts.Google.ClientID, Secret: opts.Google.ClientSecret, TokenURL: "https://oauth2.googleapis.com/token",
-				RevokeURL: "https://oauth2.googleapis.com/revoke",
-			},
-			authorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
-			scopes:       []string{"openid", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/calendar.events"},
-			params:       url.Values{"access_type": {"offline"}, "prompt": {"consent"}, "include_granted_scopes": {"true"}},
-			userInfoURL:  "https://openidconnect.googleapis.com/v1/userinfo", userInfoName: "email",
-			revoke: revokeRFC7009,
-		},
+		calendar,
+		tasks,
 		{id: "notion", name: "Notion", description: "Pages and databases in your Notion workspace.", mcpURL: "https://mcp.notion.com/mcp", auth: authMCP, icon: "https://www.notion.so/images/favicon.ico"},
 		{id: "linear", name: "Linear", description: "Issues and projects in your Linear workspace.", mcpURL: "https://mcp.linear.app/mcp", auth: authMCP, icon: "https://linear.app/favicon.ico"},
 		{id: "attio", name: "Attio", description: "Records, lists and notes in your Attio workspace.", mcpURL: "https://mcp.attio.com/mcp", auth: authMCP, icon: "https://attio.com/favicon.ico"},
@@ -178,6 +176,18 @@ func newCatalog(opts Options) []*entry {
 			auth: authOpen, icon: "https://context7.com/context7-icon-green.png",
 		},
 		{id: kindCustom, name: "Custom MCP server", description: "Any MCP server by URL, with its own sign-in, a key in a header, or no sign-in.", auth: authCustom},
+	}
+}
+
+func googleEntry(google client, id, name, description, icon, scope string) *entry {
+	return &entry{
+		id: id, name: name, description: description, auth: authOAuth, icon: icon,
+		client:       google,
+		authorizeURL: "https://accounts.google.com/o/oauth2/v2/auth",
+		scopes:       []string{"openid", "https://www.googleapis.com/auth/userinfo.email", scope},
+		params:       url.Values{"access_type": {"offline"}, "prompt": {"consent"}, "include_granted_scopes": {"true"}},
+		userInfoURL:  "https://openidconnect.googleapis.com/v1/userinfo", userInfoName: "email",
+		revoke: revokeRFC7009,
 	}
 }
 
