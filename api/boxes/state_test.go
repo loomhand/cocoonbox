@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -379,6 +382,30 @@ func TestAPageOfRealURLsFitsTheDefaultGRPCLimit(t *testing.T) {
 		if n := proto.Size(req); n > tonicDefault {
 			t.Errorf("restore page of %d gets is %d bytes, over %d", len(req.GetGets()), n, tonicDefault)
 		}
+	}
+}
+
+func TestARestoreThatOutlastsThePresignTTLStillFetchesItsFirstChunks(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = chunkIDs(pageSize + 1)
+	env.save(t)
+	var skew atomic.Int64
+	srv := httptest.NewServer(expiringGets(&skew))
+	t.Cleanup(srv.Close)
+	presigner, err := s3.New(s3.Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox-state", AccessKey: "ak", SecretKey: "sk", PresignTTL: time.Minute})
+	if err != nil {
+		t.Fatalf("s3: %v", err)
+	}
+	agent := &slowAgent{fakeAgent: env.agent, skew: &skew, perPage: 2 * time.Minute}
+	l := newStateLayer(agent, &presignedStore{fakeStore: env.store, presigner: presigner}, env.keys)
+	ctx, cancel := context.WithTimeout(t.Context(), stateTimeout)
+	defer cancel()
+
+	if _, err := l.restore(ctx, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, "", func(*agentv1.TransferProgress) {}); err != nil {
+		t.Fatalf("restore over %s with a %s presign TTL: %v", time.Duration(skew.Load()), time.Minute, err)
+	}
+	if want := pageSize + 2; agent.fetched != want {
+		t.Errorf("agent fetched %d URLs, want %d", agent.fetched, want)
 	}
 }
 
@@ -1600,4 +1627,72 @@ func (s *afterGetStore) Get(ctx context.Context, key string) ([]byte, error) {
 		s.after(key)
 	}
 	return data, err
+}
+
+type presignedStore struct {
+	*fakeStore
+	presigner store.Store
+}
+
+func (s *presignedStore) PresignGet(ctx context.Context, key string) (store.Presigned, error) {
+	return s.presigner.PresignGet(ctx, key)
+}
+
+type slowAgent struct {
+	*fakeAgent
+	skew    *atomic.Int64
+	perPage time.Duration
+	fetched int
+}
+
+func (a *slowAgent) Restore(ctx context.Context, _ string, _ machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {
+	var urls []string
+	for req, err := range reqs {
+		if err != nil {
+			return nil, err
+		}
+		if m := req.GetManifest(); m != nil {
+			urls = append(urls, m.GetUrl())
+		}
+		for _, get := range req.GetGets() {
+			urls = append(urls, get.GetUrl())
+		}
+		a.skew.Add(int64(a.perPage))
+	}
+	for _, u := range urls {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("get %s: %s", u, resp.Status)
+		}
+		a.fetched++
+	}
+	final := &agentv1.TransferProgress{Finished: true}
+	progress(final)
+	return final, nil
+}
+
+func expiringGets(skew *atomic.Int64) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		signed, err := time.Parse("20060102T150405Z", r.URL.Query().Get("X-Amz-Date"))
+		if err != nil {
+			http.Error(w, "AccessDenied", http.StatusForbidden)
+			return
+		}
+		secs, err := strconv.Atoi(r.URL.Query().Get("X-Amz-Expires"))
+		if err != nil {
+			http.Error(w, "AccessDenied", http.StatusForbidden)
+			return
+		}
+		if time.Now().Add(time.Duration(skew.Load())).After(signed.Add(time.Duration(secs) * time.Second)) {
+			http.Error(w, "ExpiredToken", http.StatusBadRequest)
+		}
+	}
 }
