@@ -3050,8 +3050,19 @@ pub(super) mod tests {
         assert_eq!(out, "Page: Doc (https://a.test/)\n\nLoading…");
     }
 
-    /// A wrapper in `dir` that runs `CHROME_BIN` headless; none when no Chrome is set and CB_NO_BROWSER allows the skip.
-    fn headless_chrome(dir: &std::path::Path) -> Option<String> {
+    struct ChromeGuard(PathBuf);
+
+    impl Drop for ChromeGuard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("pkill")
+                .arg("-f")
+                .arg(self.0.as_os_str())
+                .status();
+        }
+    }
+
+    /// A wrapper in `dir` that runs `CHROME_BIN` headless, and the guard that kills its Chrome; none when no Chrome is set and CB_NO_BROWSER allows the skip.
+    fn headless_chrome(dir: &std::path::Path) -> Option<(String, ChromeGuard)> {
         let Some(chrome) = std::env::var("CHROME_BIN").ok().filter(|b| !b.is_empty()) else {
             assert!(
                 cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
@@ -3072,7 +3083,47 @@ pub(super) mod tests {
             std::os::unix::fs::PermissionsExt::from_mode(0o755),
         )
         .unwrap();
-        Some(wrapper.display().to_string())
+        Some((wrapper.display().to_string(), ChromeGuard(dir.to_owned())))
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_test_chrome_ends_with_its_guard_even_when_the_browser_is_only_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((bin, chrome)) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let b = Browser::new(bin, dir.path().join("profile"), cdp, false);
+        assert_eq!(
+            b.run("t", "browser_start", json!({})).await.unwrap(),
+            "running"
+        );
+        let running = || {
+            !std::process::Command::new("pgrep")
+                .arg("-f")
+                .arg(dir.path())
+                .output()
+                .unwrap()
+                .stdout
+                .is_empty()
+        };
+        assert!(running(), "no Chrome under {}", dir.path().display());
+        drop(b);
+        drop(chrome);
+        let started = std::time::Instant::now();
+        while running() && started.elapsed() < Duration::from_secs(5) {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(
+            !running(),
+            "Chrome under {} outlived its guard",
+            dir.path().display()
+        );
     }
 
     /// Serves `page` for every request on the returned port.
@@ -3096,7 +3147,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn on_a_box_with_plans_listener_rows_icon_buttons_and_repeated_names_get_refs() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(bin) = headless_chrome(dir.path()) else {
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
             return;
         };
         let url = format!("http://127.0.0.1:{}/", page_server(MAILBOX).await);
@@ -3157,7 +3208,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn on_a_box_with_plans_browser_type_picks_a_select_option_that_snapshots_list() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(bin) = headless_chrome(dir.path()) else {
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
             return;
         };
         let url = format!(
@@ -3226,7 +3277,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn browser_fill_types_the_fields_picks_options_clicks_and_returns_the_page_it_opened() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(bin) = headless_chrome(dir.path()) else {
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
             return;
         };
         let url = format!(
@@ -3268,7 +3319,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn the_page_tools_reach_into_a_same_origin_frame_and_count_a_cross_origin_one() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(bin) = headless_chrome(dir.path()) else {
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
             return;
         };
         let url = format!(
@@ -3344,7 +3395,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn an_alert_is_accepted_and_reported_and_one_open_before_the_call_fails_it_soon() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(bin) = headless_chrome(dir.path()) else {
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
             return;
         };
         let url = format!(
@@ -3402,7 +3453,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn a_confirm_prompt_or_beforeunload_dialog_is_dismissed_and_fails_the_call_at_once() {
         let dir = tempfile::tempdir().unwrap();
-        let Some(bin) = headless_chrome(dir.path()) else {
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
             return;
         };
         for (kind, page, open, title) in [
