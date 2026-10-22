@@ -256,6 +256,9 @@ pub(super) async fn prune(dir: &Path) -> Result<(), String> {
     };
     file.write_all(kept.as_bytes())
         .await
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
+    file.flush()
+        .await
         .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
