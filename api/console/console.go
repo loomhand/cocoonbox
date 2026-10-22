@@ -40,10 +40,10 @@ const (
 	nameLimit   = 5
 	addrLimit   = 20
 	maxBodySize = 16 << 10
+	removeLimit = time.Hour
 
 	sharePrefix  = Prefix + "s/"
 	shareHello   = 10 * time.Second
-	removeLimit  = time.Hour
 	shareCSP     = "default-src 'self'; img-src 'self' data:; connect-src 'self' wss://%s; frame-ancestors 'none'"
 	maxSecretLen = 256
 )
