@@ -129,6 +129,7 @@ type Service struct {
 	origin       string
 	onInjection  InjectionFunc
 	linkAPI      string
+	tasksAPI     string
 
 	mu    sync.Mutex
 	conns map[string]*conn
@@ -155,6 +156,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 		watchers:     newWatchers(),
 		origin:       rand.Text(),
 		linkAPI:      linkAPI,
+		tasksAPI:     tasksAPI,
 		conns:        map[string]*conn{},
 		spends:       map[string]*spendPoll{},
 	}, nil

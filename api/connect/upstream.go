@@ -140,6 +140,10 @@ func (u *upstream) post(ctx context.Context, session, version string, msg rpcReq
 }
 
 func (u *upstream) send(ctx context.Context, session, version string, msg rpcRequest) (result jsontext.Value, newSession string, ex exchange, err error) {
+	if u.url == builtinGoogleTasks {
+		result, ex, err = u.s.googleTasks(ctx, u.cred.value, msg)
+		return result, "", ex, err
+	}
 	body, err := json.Marshal(msg)
 	if err != nil {
 		return nil, "", ex, err
