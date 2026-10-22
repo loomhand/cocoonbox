@@ -24,6 +24,7 @@ import (
 
 const (
 	defaultPresignTTL = 10 * time.Minute
+	maxGetTTL         = time.Hour
 	deleteConcurrency = 32
 )
 
@@ -88,7 +89,11 @@ func (s *S3) PresignGet(ctx context.Context, key string) (store.Presigned, error
 	if err != nil {
 		return store.Presigned{}, err
 	}
-	u, err := s.presigner.PresignedGetObject(ctx, s.opts.Bucket, object, s.opts.PresignTTL, nil)
+	ttl := s.opts.PresignTTL
+	if deadline, ok := ctx.Deadline(); ok {
+		ttl = max(ttl, min(time.Until(deadline), maxGetTTL))
+	}
+	u, err := s.presigner.PresignedGetObject(ctx, s.opts.Bucket, object, ttl, nil)
 	if err != nil {
 		return store.Presigned{}, fmt.Errorf("presign get %s: %w", key, err)
 	}

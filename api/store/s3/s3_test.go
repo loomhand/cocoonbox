@@ -52,6 +52,55 @@ func TestPresignUsesPublicEndpointAndPrefix(t *testing.T) {
 	}
 }
 
+func TestAPresignedGetLastsUntilTheDeadlineUpToAnHourAndAPutKeepsTheTTL(t *testing.T) {
+	s, err := New(Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox", AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	expires := func(raw string) int {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		n, _ := strconv.Atoi(u.Query().Get("X-Amz-Expires"))
+		return n
+	}
+	tests := []struct {
+		name     string
+		deadline time.Duration
+		get      [2]int
+	}{
+		{name: "no deadline", get: [2]int{600, 600}},
+		{name: "deadline sooner than the ttl", deadline: 5 * time.Minute, get: [2]int{600, 600}},
+		{name: "deadline later than the ttl", deadline: 50 * time.Minute, get: [2]int{2990, 3000}},
+		{name: "deadline past an hour", deadline: 3 * time.Hour, get: [2]int{3600, 3600}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := t.Context()
+			if tt.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.deadline)
+				defer cancel()
+			}
+			get, err := s.PresignGet(ctx, "cb-2bd806c97f0e/chunks/abc")
+			if err != nil {
+				t.Fatalf("PresignGet: %v", err)
+			}
+			if n := expires(get.URL); n < tt.get[0] || n > tt.get[1] {
+				t.Errorf("get expires = %d, want %d..%d", n, tt.get[0], tt.get[1])
+			}
+			put, err := s.PresignPut(ctx, "cb-2bd806c97f0e/chunks/abc")
+			if err != nil {
+				t.Fatalf("PresignPut: %v", err)
+			}
+			if n := expires(put.URL); n != 600 {
+				t.Errorf("put expires = %d, want 600", n)
+			}
+		})
+	}
+}
+
 func TestRefusesKeysOutsideTheirPath(t *testing.T) {
 	s, err := New(Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
 	if err != nil {
