@@ -43,6 +43,7 @@ const (
 
 	sharePrefix  = Prefix + "s/"
 	shareHello   = 10 * time.Second
+	removeLimit  = time.Hour
 	shareCSP     = "default-src 'self'; img-src 'self' data:; connect-src 'self' wss://%s; frame-ancestors 'none'"
 	maxSecretLen = 256
 )
@@ -508,6 +509,8 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 
 // removeUser disables user id at once, then releases its boxes, deletes its saved state, revokes its connections and deletes it.
 func (s *Server) removeUser(ctx context.Context, id string) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), removeLimit)
+	defer cancel()
 	if _, err := s.users.Update(ctx, id, users.Settings{Disabled: new(true)}); err != nil {
 		return err
 	}

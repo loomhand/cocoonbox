@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -314,6 +315,26 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	}
 }
 
+func TestADeleteWhoseClientLeavesStillRemovesEverything(t *testing.T) {
+	env := newEnv(t)
+	root := env.login(t, "root")
+	u, _ := env.users.Create(t.Context(), users.NewUser{Name: "qa1", Password: password})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	env.boxes.onRelease = cancel
+	rec := httptest.NewRecorder()
+	env.srv.ServeHTTP(rec, env.request(http.MethodDelete, "api/users/"+u.ID, root, "{}").WithContext(ctx))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete = %d %s", rec.Code, rec.Body)
+	}
+	if env.boxes.stateGone != u.ID || env.boxes.stateErr != nil {
+		t.Errorf("state deleted for %q with ctx error %v, want %q with a live ctx", env.boxes.stateGone, env.boxes.stateErr, u.ID)
+	}
+	if _, err := env.users.ByName("qa1"); !errors.Is(err, users.ErrNotFound) {
+		t.Errorf("user after its client left: %v, want %v", err, users.ErrNotFound)
+	}
+}
+
 func TestRequestsNeedASessionAndJSON(t *testing.T) {
 	env := newEnv(t)
 	if code := env.do(t, http.MethodGet, "api/me", "", "").Code; code != http.StatusUnauthorized {
@@ -383,6 +404,12 @@ func (e *env) login(t *testing.T, name string) string {
 
 func (e *env) do(t *testing.T, method, path, session, body string) *httptest.ResponseRecorder {
 	t.Helper()
+	rec := httptest.NewRecorder()
+	e.srv.ServeHTTP(rec, e.request(method, path, session, body))
+	return rec
+}
+
+func (e *env) request(method, path, session, body string) *http.Request {
 	req := httptest.NewRequest(method, Prefix+path, strings.NewReader(body))
 	if method != http.MethodGet {
 		req.Header.Set("Content-Type", "application/json")
@@ -391,9 +418,7 @@ func (e *env) do(t *testing.T, method, path, session, body string) *httptest.Res
 	if session != "" {
 		req.AddCookie(&http.Cookie{Name: cookieName, Value: session})
 	}
-	rec := httptest.NewRecorder()
-	e.srv.ServeHTTP(rec, req)
-	return rec
+	return req
 }
 
 type fakeBoxes struct {
@@ -401,6 +426,7 @@ type fakeBoxes struct {
 	listedFor string
 	released  string
 	stateGone string
+	stateErr  error
 	onRelease func()
 	calls     []string
 }
@@ -438,8 +464,8 @@ func (f *fakeBoxes) Release(_ context.Context, user string) error {
 
 func (*fakeBoxes) HibernateAll(context.Context, string) error { return nil }
 
-func (f *fakeBoxes) DeleteState(_ context.Context, user string) error {
-	f.stateGone = user
+func (f *fakeBoxes) DeleteState(ctx context.Context, user string) error {
+	f.stateGone, f.stateErr = user, ctx.Err()
 	return nil
 }
 
