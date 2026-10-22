@@ -217,10 +217,8 @@ pub async fn watch(workspace: PathBuf, writes: watch::Sender<u64>) -> Result<(),
     }
 }
 
-/// Drops from `dir/INDEX` each flow whose `.json` file is gone, rewriting the file in place so that a folder being removed gains no entry.
+/// Drops from `dir/INDEX` each flow whose `.json` file is gone, swapping in the rewritten file so that a reader never sees half of it and a folder being removed gains no entry.
 pub(super) async fn prune(dir: &Path) -> Result<(), String> {
-    use tokio::io::AsyncWriteExt;
-
     let _index = INDEX_LOCK.lock().await;
     let path = dir.join(INDEX);
     let index = match tokio::fs::read_to_string(&path).await {
@@ -244,22 +242,18 @@ pub(super) async fn prune(dir: &Path) -> Result<(), String> {
     if !dropped {
         return Ok(());
     }
-    let opened = tokio::fs::OpenOptions::new()
-        .write(true)
-        .truncate(true)
-        .open(&path)
-        .await;
-    let mut file = match opened {
-        Ok(file) => file,
+    let tmp = path.with_file_name(format!(".{INDEX}.prune"));
+    match tokio::fs::write(&tmp, kept).await {
+        Ok(()) => {}
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("open {}: {e}", path.display())),
-    };
-    file.write_all(kept.as_bytes())
-        .await
-        .map_err(|e| format!("write {}: {e}", path.display()))?;
-    file.flush()
-        .await
-        .map_err(|e| format!("write {}: {e}", path.display()))
+        Err(e) => return Err(format!("write {}: {e}", tmp.display())),
+    }
+    match tokio::fs::rename(&tmp, &path).await {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("rename {}: {e}", path.display()))
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Without inotify no flow write is seen, so `flows_wait` never returns; the flow listing prunes `INDEX` itself.
@@ -336,6 +330,29 @@ mod tests {
         assert_eq!(mark(ws, json!({"id": "b"})).await.unwrap(), "a");
         assert!(mark(ws, json!({})).await.is_err());
         assert_eq!(scan(ws).await.unwrap(), "{}");
+    }
+
+    #[tokio::test]
+    async fn prune_swaps_in_the_kept_lines_and_leaves_no_temporary_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let flows = dir.path().join("flows");
+        std::fs::create_dir(&flows).unwrap();
+        std::fs::write(flows.join("b.json"), "{}").unwrap();
+        std::fs::write(flows.join("INDEX"), "a(x): one\nb(): two\n").unwrap();
+        prune(&flows).await.unwrap();
+        assert_eq!(
+            std::fs::read_to_string(flows.join("INDEX")).unwrap(),
+            "b(): two\n"
+        );
+        let mut names: Vec<_> = std::fs::read_dir(&flows)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        names.sort();
+        assert_eq!(names, ["INDEX", "b.json"]);
+        std::fs::remove_dir_all(&flows).unwrap();
+        prune(&flows).await.unwrap();
+        assert!(!flows.exists(), "prune brought the removed folder back");
     }
 
     #[cfg(not(target_os = "linux"))]
