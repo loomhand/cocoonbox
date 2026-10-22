@@ -14,8 +14,8 @@ $ProgressPreference = 'SilentlyContinue'
 
 $Vendor = Join-Path $PSScriptRoot 'vendor'
 $Pinned = @(
-    @{ Name = 'shuttle-v0.1.14-windows-x64.zip'; Sha = 'b746824b3c5cd11067943787f5de54becfd6de4661e5def93cad347554ae1f92'
-        Url = 'https://github.com/loomhand/shuttle/releases/download/v0.1.14/shuttle-v0.1.14-windows-x64.zip' },
+    @{ Name = 'shuttle-v0.1.15-windows-x64.zip'; Sha = '4d2a6d5efd2aad9b6cb2d4b3fc9c9094d341ebbb62d7ff28e3294ec39b062bc0'
+        Url = 'https://github.com/loomhand/shuttle/releases/download/v0.1.15/shuttle-v0.1.15-windows-x64.zip' },
     @{ Name = 'VirtualDisplayDriver-x86.Driver.Only.zip'; Sha = 'e24210692b442b39af763536330ce78b423f19342b7a7792c26de3944e418b3a'
         Url = 'https://github.com/VirtualDrivers/Virtual-Display-Driver/releases/download/25.7.23/VirtualDisplayDriver-x86.Driver.Only.zip' },
     @{ Name = 'nefcon_v1.21.0.zip'; Sha = '4c8e68f6b663598d77b7c3f76459b16fad00994e53ea8af0bd106a805dd5c18b'
@@ -174,9 +174,9 @@ function Acl($path, [string[]]$grants) {
 }
 
 function Shuttle {
-    Log 'shuttle v0.1.14, its desk runtime, the guide and the logon task'
+    Log 'shuttle v0.1.15, its desk runtime, the guide and the logon task'
     $tmp = Join-Path $env:TEMP "shuttle-$PID"
-    Expand-Archive -Force (Join-Path $Vendor 'shuttle-v0.1.14-windows-x64.zip') $tmp
+    Expand-Archive -Force (Join-Path $Vendor 'shuttle-v0.1.15-windows-x64.zip') $tmp
     foreach ($t in $Task, 'cocoon-shuttle') { Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue | Stop-ScheduledTask }
     Unregister-ScheduledTask -TaskName 'cocoon-shuttle' -Confirm:$false -ErrorAction SilentlyContinue
     foreach ($d in $ShuttleDir, 'C:\Program Files\cocoon-shuttle') {
