@@ -121,6 +121,8 @@ pub struct ServeConfig {
     pub shuttle_socket: PathBuf,
     /// The workspace that relative script paths of runs on shuttle start from.
     pub workspace: PathBuf,
+    /// The turn time after which the main loop asks once for a saved first version; none never asks.
+    pub checkpoint_nudge: Option<Duration>,
 }
 
 impl std::fmt::Debug for ServeConfig {
@@ -148,6 +150,7 @@ impl std::fmt::Debug for ServeConfig {
             .field("routing_extra", &self.routing_extra)
             .field("shuttle_socket", &self.shuttle_socket)
             .field("workspace", &self.workspace)
+            .field("checkpoint_nudge", &self.checkpoint_nudge)
             .finish()
     }
 }
@@ -187,6 +190,10 @@ impl ServeConfig {
             routing_extra: routing_extra(Path::new(&optional("ROUTING_DIR", ROUTING_DIR))),
             shuttle_socket: shuttle_socket.into(),
             workspace: optional("CB_WORKSPACE", DEFAULT_WORKSPACE).into(),
+            checkpoint_nudge: minutes(
+                "CB_CHECKPOINT_NUDGE_MIN",
+                &optional("CB_CHECKPOINT_NUDGE_MIN", "0"),
+            )?,
         })
     }
 }
@@ -263,6 +270,12 @@ fn required(key: &str) -> Result<String, String> {
     }
 }
 
+/// Parses `raw`, the value of `key`, as whole minutes; 0 is none.
+fn minutes(key: &str, raw: &str) -> Result<Option<Duration>, String> {
+    let n: u64 = raw.parse().map_err(|e| format!("parse {key}: {e}"))?;
+    Ok((n > 0).then(|| Duration::from_secs(n * 60)))
+}
+
 fn optional(key: &str, default: &str) -> String {
     env::var(key)
         .ok()
@@ -273,6 +286,14 @@ fn optional(key: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_minutes_are_off_at_zero_and_refuse_junk() {
+        assert_eq!(minutes("K", "0"), Ok(None));
+        assert_eq!(minutes("K", "40"), Ok(Some(Duration::from_secs(2400))));
+        assert!(minutes("K", "forty").is_err());
+        assert!(minutes("K", "-1").is_err());
+    }
 
     #[test]
     fn debug_redacts_secrets() {
@@ -299,6 +320,7 @@ mod tests {
             routing_extra: Vec::new(),
             shuttle_socket: "/d".into(),
             workspace: "/w".into(),
+            checkpoint_nudge: None,
         };
         let shown = format!("{cfg:?}");
         assert!(!shown.contains("sk-secret-key"), "{shown}");

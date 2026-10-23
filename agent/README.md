@@ -109,6 +109,7 @@ Optional overrides with contract defaults, used by tests and non-standard layout
 | `CHROME_BIN` | `google-chrome` |
 | `CHROME_PROFILE` | `~/.config/cocoonbox-chrome` |
 | `GW_ANTHROPIC_WIRE` | `chat` (`messages` switches `anthropic/` models to `/v1/messages`) |
+| `CB_CHECKPOINT_NUDGE_MIN` | `0` (off): after this many minutes of a turn, the main loop asks once that a first version of the deliverable be saved |
 
 ## Build
 
