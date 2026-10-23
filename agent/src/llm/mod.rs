@@ -166,6 +166,8 @@ pub enum Delta {
         fragment: String,
     },
     Usage(Usage),
+    /// The reply stopped at its output token limit.
+    Cut,
     Done,
 }
 
