@@ -35,7 +35,10 @@ const RETRY_WAITS: [Duration; 5] = [
     Duration::from_secs(16),
     Duration::from_secs(32),
 ];
+const RETRY_WINDOW: Duration = Duration::from_secs(120);
 const TRANSIENT_STATUSES: [u16; 4] = [502, 503, 504, 529];
+const TRANSIENT_ERRORS: [&str; 2] = ["model_error", "overloaded_error"];
+const NO_OUTPUT: &str = "model stream ended before any output";
 const READ_FAILED: &str = "read model stream: ";
 const MODEL_ERROR: &str = "model error: ";
 
@@ -222,33 +225,21 @@ impl Client {
 
     /// Starts a streaming request and returns its delta stream; a failure before any delta is retried while it may pass.
     pub async fn start(&self, req: &Request<'_>) -> Result<Stream, String> {
-        let mut waits = RETRY_WAITS.iter();
-        loop {
-            let failure = match self.attempt(req).await {
-                Ok(stream) => return Ok(stream),
-                Err(f) => f,
-            };
-            let Some(wait) = waits.next().filter(|_| failure.transient) else {
-                return Err(failure.message);
-            };
-            eprintln!(
-                "model request failed before any output ({}); retrying in {}s",
-                failure.message,
-                wait.as_secs()
-            );
-            tokio::time::sleep(*wait).await;
-        }
+        retry(|| self.attempt(req)).await
     }
 
     /// Opens one request and reads its first delta, which stays queued in the stream.
     async fn attempt(&self, req: &Request<'_>) -> Result<Stream, Failure> {
         let mut stream = self.open(req).await?;
         match stream.next().await {
+            Ok(Some(Delta::Done) | None) => Err(Failure {
+                message: NO_OUTPUT.to_owned(),
+                transient: true,
+            }),
             Ok(Some(first)) => {
                 stream.pending.push_front(first);
                 Ok(stream)
             }
-            Ok(None) => Ok(stream),
             Err(message) => Err(Failure {
                 transient: early_transient(&message),
                 message,
@@ -399,13 +390,41 @@ pub fn b64(data: &[u8]) -> String {
     B64.encode(data)
 }
 
-/// Whether a stream that failed before its first delta may pass when tried again: a broken body, or the gw's model error for an upstream fault.
+/// Runs `attempt` until it passes or fails for good, waiting [`RETRY_WAITS`] between tries that start within [`RETRY_WINDOW`] of the first.
+async fn retry<T, F, Fut>(mut attempt: F) -> Result<T, String>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, Failure>>,
+{
+    let mut waits = RETRY_WAITS.iter();
+    let started = tokio::time::Instant::now();
+    loop {
+        let failure = match attempt().await {
+            Ok(done) => return Ok(done),
+            Err(f) => f,
+        };
+        let Some(wait) = waits
+            .next()
+            .filter(|_| failure.transient && started.elapsed() < RETRY_WINDOW)
+        else {
+            return Err(failure.message);
+        };
+        eprintln!(
+            "model request failed before any output ({}); retrying in {}s",
+            failure.message,
+            wait.as_secs()
+        );
+        tokio::time::sleep(*wait).await;
+    }
+}
+
+/// Whether a stream that failed before its first delta may pass when tried again: a broken body, the gw's model error for an upstream fault, or an overloaded model.
 fn early_transient(message: &str) -> bool {
     message.starts_with(READ_FAILED)
         || message
             .strip_prefix(MODEL_ERROR)
             .and_then(|e| serde_json::from_str::<Value>(e).ok())
-            .is_some_and(|e| e["type"] == "model_error")
+            .is_some_and(|e| TRANSIENT_ERRORS.iter().any(|t| e["type"] == *t))
 }
 
 #[cfg(test)]
@@ -413,7 +432,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_a_broken_body_or_the_gws_upstream_model_error_is_transient_before_the_first_delta() {
+    fn only_a_broken_body_an_upstream_model_error_or_an_overload_is_transient_before_the_first_delta()
+     {
         assert!(early_transient(&format!("{READ_FAILED}connection reset")));
         assert!(early_transient(
             r#"model error: {"code":"model_error_exception","message":"upstream request failed","param":null,"type":"model_error"}"#
@@ -422,97 +442,135 @@ mod tests {
             r#"model error: {"code":"validation_exception","type":"invalid_request_error"}"#
         ));
         assert!(!early_transient("model error: not json"));
+        assert!(early_transient(
+            r#"model error: {"type":"overloaded_error","message":"Overloaded"}"#
+        ));
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a_request_refused_before_any_output_is_tried_again_after_its_backoff() {
+    async fn transient_failures_are_tried_again_after_their_backoff() {
+        let mut script = VecDeque::from([
+            Err(Failure {
+                message: "502".into(),
+                transient: true,
+            }),
+            Err(Failure {
+                message: "502".into(),
+                transient: true,
+            }),
+            Ok("stream"),
+        ]);
+        let mut tries = 0;
+        let started = tokio::time::Instant::now();
+        let got = retry(|| {
+            tries += 1;
+            std::future::ready(script.pop_front().unwrap())
+        })
+        .await;
+        assert_eq!(got, Ok("stream"));
+        assert_eq!(tries, 3);
+        assert_eq!(started.elapsed(), Duration::from_secs(2 + 4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_failure_that_cannot_pass_is_returned_at_once() {
+        let mut tries = 0;
+        let started = tokio::time::Instant::now();
+        let got: Result<(), String> = retry(|| {
+            tries += 1;
+            std::future::ready(Err(Failure {
+                message: "400".into(),
+                transient: false,
+            }))
+        })
+        .await;
+        assert_eq!(got, Err("400".to_owned()));
+        assert_eq!(tries, 1);
+        assert_eq!(started.elapsed(), Duration::ZERO);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn no_try_starts_once_the_retry_window_has_passed() {
+        let mut tries = 0;
+        let started = tokio::time::Instant::now();
+        let got: Result<(), String> = retry(|| {
+            tries += 1;
+            async {
+                tokio::time::sleep(Duration::from_secs(50)).await;
+                Err(Failure {
+                    message: "timed out".into(),
+                    transient: true,
+                })
+            }
+        })
+        .await;
+        assert_eq!(got, Err("timed out".to_owned()));
+        assert_eq!(tries, 3);
+        assert_eq!(started.elapsed(), Duration::from_secs(50 + 2 + 50 + 4 + 50));
+    }
+
+    #[tokio::test]
+    async fn a_request_refused_before_any_output_is_tried_again() {
         let gw = mock_gw(vec![
             "HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned(),
-            "HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned(),
-            format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n{}",
-                "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
-            ),
+            sse("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"),
         ])
         .await;
         let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
-        let req = Request {
-            model: "deepseek/deepseek-v4.1-flash",
-            system: "s",
-            messages: &[Message::User(vec![Part::Text("hi".into())])],
-            tools: &[],
-            max_tokens: 16,
-            vision: false,
-            forbid_calls: false,
-        };
-        let started = tokio::time::Instant::now();
-        let mut stream = client.start(&req).await.unwrap();
-        assert_eq!(started.elapsed(), Duration::from_secs(6));
+        let started = std::time::Instant::now();
+        let mut stream = client.start(&probe_request()).await.unwrap();
+        assert!(started.elapsed() >= RETRY_WAITS[0]);
         assert_eq!(stream.next().await.unwrap(), Some(Delta::Text("Hi".into())));
         assert_eq!(stream.next().await.unwrap(), Some(Delta::Done));
     }
 
-    #[tokio::test(start_paused = true)]
-    async fn an_error_before_the_first_delta_is_tried_again_and_one_after_it_is_not() {
-        let sse = |body: &str| {
-            format!(
-                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n{body}"
-            )
-        };
+    #[tokio::test]
+    async fn an_attempt_sorts_what_happened_before_its_first_delta() {
         let gw = mock_gw(vec![
+            "HTTP/1.1 502 Bad Gateway\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned(),
+            sse(""),
             sse("data: {\"error\":{\"code\":\"model_error_exception\",\"message\":\"upstream request failed\",\"param\":null,\"type\":\"model_error\"}}\n\n"),
-            sse("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: {\"error\":{\"type\":\"model_error\"}}\n\n"),
-            sse("data: {\"choices\":[{\"delta\":{\"content\":\"never\"}}]}\n\ndata: [DONE]\n\n"),
-        ])
-        .await;
-        let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
-        let req = Request {
-            model: "deepseek/deepseek-v4.1-flash",
-            system: "s",
-            messages: &[Message::User(vec![Part::Text("hi".into())])],
-            tools: &[],
-            max_tokens: 16,
-            vision: false,
-            forbid_calls: false,
-        };
-        let started = tokio::time::Instant::now();
-        let mut stream = client.start(&req).await.unwrap();
-        assert_eq!(started.elapsed(), Duration::from_secs(2));
-        assert_eq!(stream.next().await.unwrap(), Some(Delta::Text("Hi".into())));
-        assert!(stream.next().await.unwrap_err().starts_with("model error:"));
-        assert_eq!(started.elapsed(), Duration::from_secs(2));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn a_refusal_that_cannot_pass_is_not_tried_again() {
-        let gw = mock_gw(vec![
             "HTTP/1.1 400 Bad Request\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno".to_owned(),
             "HTTP/1.1 424 Failed Dependency\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno".to_owned(),
-            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\ndata: {\"error\":{\"type\":\"invalid_request_error\"}}\n\n".to_owned(),
+            sse("data: {\"error\":{\"type\":\"invalid_request_error\"}}\n\n"),
         ])
         .await;
         let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
-        let req = Request {
-            model: "deepseek/deepseek-v4.1-flash",
-            system: "s",
-            messages: &[Message::User(vec![Part::Text("hi".into())])],
-            tools: &[],
-            max_tokens: 16,
-            vision: false,
-            forbid_calls: false,
-        };
-        let started = tokio::time::Instant::now();
-        for want in [
-            "gw chat/completions returned 400 Bad Request: no",
-            "gw chat/completions returned 424 Failed Dependency: no",
-            r#"model error: {"type":"invalid_request_error"}"#,
-        ] {
-            let Err(err) = client.start(&req).await else {
-                panic!("{want} passed");
+        let req = probe_request();
+        let mut got = Vec::new();
+        for _ in 0..6 {
+            let Err(f) = client.attempt(&req).await else {
+                panic!("an attempt passed");
             };
-            assert_eq!(err, want);
+            got.push((f.message, f.transient));
         }
-        assert_eq!(started.elapsed(), Duration::ZERO);
+        let want = [
+            ("gw chat/completions returned 502 Bad Gateway: ", true),
+            (NO_OUTPUT, true),
+            (
+                r#"model error: {"code":"model_error_exception","message":"upstream request failed","param":null,"type":"model_error"}"#,
+                true,
+            ),
+            ("gw chat/completions returned 400 Bad Request: no", false),
+            (
+                "gw chat/completions returned 424 Failed Dependency: no",
+                false,
+            ),
+            (r#"model error: {"type":"invalid_request_error"}"#, false),
+        ];
+        assert_eq!(got, want.map(|(m, t)| (m.to_owned(), t)),);
+    }
+
+    #[tokio::test]
+    async fn an_error_after_the_first_delta_ends_the_stream_without_a_retry() {
+        let gw = mock_gw(vec![sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: {\"error\":{\"type\":\"model_error\"}}\n\n",
+        )])
+        .await;
+        let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
+        let mut stream = client.start(&probe_request()).await.unwrap();
+        assert_eq!(stream.next().await.unwrap(), Some(Delta::Text("Hi".into())));
+        assert!(stream.next().await.unwrap_err().starts_with(MODEL_ERROR));
     }
 
     #[test]
@@ -560,6 +618,24 @@ mod tests {
                 cached: 80
             }
         );
+    }
+
+    fn probe_request() -> Request<'static> {
+        Request {
+            model: "deepseek/deepseek-v4.1-flash",
+            system: "s",
+            messages: &[],
+            tools: &[],
+            max_tokens: 16,
+            vision: false,
+            forbid_calls: false,
+        }
+    }
+
+    fn sse(events: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n{events}"
+        )
     }
 
     async fn mock_gw(responses: Vec<String>) -> String {
