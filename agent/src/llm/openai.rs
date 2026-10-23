@@ -4,7 +4,9 @@ use std::collections::{HashSet, VecDeque};
 
 use serde_json::{Value, json};
 
-use super::{Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, sse};
+use super::{
+    Delta, IMAGE_OMITTED, MODEL_ERROR, Message, Part, Request, Usage, b64, image_mime, sse,
+};
 
 /// Tracks which tool-call indexes already started.
 #[derive(Default)]
@@ -22,7 +24,7 @@ impl Parser {
         let v: Value = serde_json::from_str(&event.data)
             .map_err(|e| format!("decode chat chunk: {e}: {}", event.data))?;
         if let Some(err) = v.get("error") {
-            return Err(format!("model error: {err}"));
+            return Err(format!("{MODEL_ERROR}{err}"));
         }
         if let Some(choice) = v["choices"].get(0) {
             let delta = &choice["delta"];
