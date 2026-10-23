@@ -63,6 +63,7 @@ Environment=http_proxy=$PROXY https_proxy=$PROXY no_proxy=$NO_PROXY,169.254.169.
 Restart=always
 RestartSec=2s
 LimitNOFILE=65536
+OOMPolicy=continue
 
 [Install]
 WantedBy=sysinit.target
