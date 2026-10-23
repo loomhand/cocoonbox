@@ -28,7 +28,8 @@ const DOOR_ANSWERS: usize = 64;
 const TITLE_CHARS: usize = 24;
 const MAIN_MAX_STEPS: usize = 40;
 const PLAN_MAX_STEPS: usize = 150;
-const MAIN_MAX_TOKENS: u32 = 4096;
+const MAIN_MAX_TOKENS: u32 = 16384;
+const MAIN_CUT_TOKENS: u32 = 65536;
 const REPORT_MAX_TOKENS: u32 = 1024;
 const INTERRUPTED: &str = "(no result: the turn was interrupted)";
 const SHUTTING_DOWN: &str = "interrupted: the agent is shutting down";
@@ -398,6 +399,7 @@ impl Runtime {
         let mut reasoning = Block::default();
         let mut calls: Vec<(usize, ToolCall)> = Vec::new();
         let mut usage = Usage::default();
+        let mut cut = false;
         while let Some(d) = stream.next().await? {
             match d {
                 Delta::Reasoning(t) => {
@@ -431,6 +433,7 @@ impl Runtime {
                     }
                 }
                 Delta::Usage(u) => usage = u,
+                Delta::Cut => cut = true,
                 Delta::Done => break,
             }
         }
@@ -466,6 +469,7 @@ impl Runtime {
             text,
             calls: out,
             usage,
+            cut,
         })
     }
 
@@ -685,6 +689,7 @@ impl Runtime {
         };
         let mut steps = 0;
         let mut nudged = false;
+        let mut widened = false;
         loop {
             let connectors = match &self.connect {
                 Some(c) => c.tools().await,
@@ -710,7 +715,11 @@ impl Runtime {
                 system: &system,
                 messages: &messages,
                 tools: &offered,
-                max_tokens: MAIN_MAX_TOKENS,
+                max_tokens: if widened {
+                    MAIN_CUT_TOKENS
+                } else {
+                    MAIN_MAX_TOKENS
+                },
                 vision,
                 forbid_calls: false,
             };
@@ -725,6 +734,16 @@ impl Runtime {
             steps += 1;
             let step = self.step(ctx, &req, "").await?;
             usage.add(&ctx.model, 1, step.usage);
+            if step.calls.is_empty() && step.cut {
+                if widened {
+                    return Err(format!(
+                        "the model's reply was cut at the {MAIN_CUT_TOKENS}-token limit"
+                    ));
+                }
+                widened = true;
+                continue;
+            }
+            widened = false;
             if step.calls.is_empty() {
                 match ending(&step.text) {
                     Ending::Answer => return Ok(()),
@@ -1051,11 +1070,12 @@ impl TurnCtx {
     }
 }
 
-/// One model step: its text, requested tool calls and usage.
+/// One model step: its text, requested tool calls, usage, and whether it stopped at its token limit.
 pub struct StepOut {
     pub text: String,
     pub calls: Vec<ToolCall>,
     pub usage: Usage,
+    pub cut: bool,
 }
 
 /// A streamed text or reasoning block; `index` is assigned when its first non-blank delta goes out, and

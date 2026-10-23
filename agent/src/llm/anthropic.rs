@@ -67,6 +67,9 @@ impl Parser {
                 if let Some(n) = v["usage"]["output_tokens"].as_u64() {
                     self.usage.output = n;
                 }
+                if v["delta"]["stop_reason"] == "max_tokens" {
+                    out.push_back(Delta::Cut);
+                }
             }
             "message_stop" => {
                 out.push_back(Delta::Usage(self.usage));
@@ -250,6 +253,23 @@ mod tests {
                 Delta::Done,
             ]
         );
+    }
+
+    #[test]
+    fn a_reply_stopped_at_max_tokens_is_cut() {
+        let mut p = Parser::default();
+        let mut out = VecDeque::new();
+        for e in [
+            r#"{"type":"message_delta","delta":{"stop_reason":"max_tokens"},"usage":{"output_tokens":2048}}"#,
+            r#"{"type":"message_stop"}"#,
+        ] {
+            let event = sse::Event {
+                event: String::new(),
+                data: e.into(),
+            };
+            p.feed(&event, &mut out).unwrap();
+        }
+        assert_eq!(out.front(), Some(&Delta::Cut));
     }
 
     #[test]

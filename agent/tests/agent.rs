@@ -429,6 +429,14 @@ fn chat_reasoning(text: &str) -> String {
     ]) + "data: [DONE]\n\n"
 }
 
+fn chat_cut(reasoning: &str) -> String {
+    sse(&[
+        json!({"choices":[{"delta":{"reasoning_content":reasoning}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":"length"}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":16384}}),
+    ]) + "data: [DONE]\n\n"
+}
+
 fn messages_tool_use(id: &str, name: &str, input: &Value) -> String {
     sse(&[
         json!({"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":1}}}),
@@ -1623,6 +1631,53 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
     assert!(!end.ok);
     assert_eq!(end.error, "the model returned no answer");
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 6);
+}
+
+#[tokio::test]
+async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
+    let h = Harness::start(
+        vec![
+            ("chat/completions", chat_cut("plan: the long way")),
+            (
+                "chat/completions",
+                chat_tool_call("c1", "list_dir", &json!({})),
+            ),
+            ("chat/completions", chat_text("Listed.")),
+            ("chat/completions", chat_cut("one")),
+            ("chat/completions", chat_cut("two")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let listed = create_agent(&mut agents).await;
+    send(&mut agents, &listed, "list it", "").await;
+    let entries = wait_turn_end(&mut agents, &listed).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("no turn end");
+    };
+    assert!(end.ok, "{}", end.error);
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    assert_eq!(chats.len(), 3);
+    let caps: Vec<&Value> = chats.iter().map(|c| &c["max_tokens"]).collect();
+    assert_eq!(caps, [&json!(16384), &json!(65536), &json!(16384)]);
+    assert_eq!(
+        chats[1]["messages"], chats[0]["messages"],
+        "the cut reply is asked again as it was, with no continuation"
+    );
+
+    let cut = create_agent(&mut agents).await;
+    send(&mut agents, &cut, "think forever", "").await;
+    let entries = wait_turn_end(&mut agents, &cut).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("no turn end");
+    };
+    assert!(!end.ok);
+    assert_eq!(
+        end.error,
+        "the model's reply was cut at the 65536-token limit"
+    );
+    assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
 }
 
 #[tokio::test]

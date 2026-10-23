@@ -38,6 +38,9 @@ impl Parser {
             for call in delta["tool_calls"].as_array().into_iter().flatten() {
                 self.tool_call(call, out);
             }
+            if choice["finish_reason"] == "length" {
+                out.push_back(Delta::Cut);
+            }
         }
         if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
             out.push_back(Delta::Usage(Usage {
@@ -210,6 +213,19 @@ mod tests {
             p.feed(&event, &mut out).unwrap();
         }
         out.into_iter().collect()
+    }
+
+    #[test]
+    fn a_reply_stopped_at_its_limit_is_cut() {
+        let got = feed_all(&[
+            r#"{"choices":[{"delta":{"reasoning_content":"think"}}]}"#,
+            r#"{"choices":[{"delta":{},"finish_reason":"length"}]}"#,
+            "[DONE]",
+        ]);
+        assert_eq!(
+            got,
+            vec![Delta::Reasoning("think".into()), Delta::Cut, Delta::Done]
+        );
     }
 
     #[test]
