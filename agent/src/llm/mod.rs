@@ -36,7 +36,8 @@ const RETRY_WAITS: [Duration; 5] = [
     Duration::from_secs(32),
 ];
 const TRANSIENT_STATUSES: [u16; 4] = [502, 503, 504, 529];
-const FAILED_DEPENDENCY: u16 = 424;
+const READ_FAILED: &str = "read model stream: ";
+const MODEL_ERROR: &str = "model error: ";
 
 /// A tool the model may call; connector tools carry names and descriptions of their own.
 pub struct ToolSpec {
@@ -249,8 +250,8 @@ impl Client {
             }
             Ok(None) => Ok(stream),
             Err(message) => Err(Failure {
+                transient: early_transient(&message),
                 message,
-                transient: true,
             }),
         }
     }
@@ -286,7 +287,7 @@ impl Client {
             let text = resp.text().await.unwrap_or_default();
             let text: String = text.chars().take(ERROR_BODY_BYTES).collect();
             return Err(Failure {
-                transient: transient(status.as_u16(), &text),
+                transient: TRANSIENT_STATUSES.contains(&status.as_u16()),
                 message: format!("gw {path} returned {status}: {text}"),
             });
         }
@@ -344,7 +345,7 @@ impl Stream {
             }
             match self.body.next().await {
                 Some(chunk) => {
-                    let chunk = chunk.map_err(|e| format!("read model stream: {e}"))?;
+                    let chunk = chunk.map_err(|e| format!("{READ_FAILED}{e}"))?;
                     self.decoder.push(&chunk);
                 }
                 None => {
@@ -398,12 +399,13 @@ pub fn b64(data: &[u8]) -> String {
     B64.encode(data)
 }
 
-/// Whether a gw refusal with `status` and `body` may pass when tried again: a gateway or upstream outage, or the gw's model error for an upstream transport fault.
-fn transient(status: u16, body: &str) -> bool {
-    TRANSIENT_STATUSES.contains(&status)
-        || (status == FAILED_DEPENDENCY
-            && serde_json::from_str::<Value>(body)
-                .is_ok_and(|v| v["error"]["type"] == "model_error"))
+/// Whether a stream that failed before its first delta may pass when tried again: a broken body, or the gw's model error for an upstream fault.
+fn early_transient(message: &str) -> bool {
+    message.starts_with(READ_FAILED)
+        || message
+            .strip_prefix(MODEL_ERROR)
+            .and_then(|e| serde_json::from_str::<Value>(e).ok())
+            .is_some_and(|e| e["type"] == "model_error")
 }
 
 #[cfg(test)]
@@ -411,24 +413,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_outages_and_the_gws_upstream_model_error_are_transient() {
-        for status in [502, 503, 504, 529] {
-            assert!(transient(status, ""), "{status}");
-        }
-        assert!(transient(
-            424,
-            r#"{"error":{"type":"model_error","code":"model_error_exception","message":"upstream request failed"}}"#
+    fn only_a_broken_body_or_the_gws_upstream_model_error_is_transient_before_the_first_delta() {
+        assert!(early_transient(&format!("{READ_FAILED}connection reset")));
+        assert!(early_transient(
+            r#"model error: {"code":"model_error_exception","message":"upstream request failed","param":null,"type":"model_error"}"#
         ));
-        assert!(!transient(
-            424,
-            r#"{"error":{"type":"invalid_request_error"}}"#
+        assert!(!early_transient(
+            r#"model error: {"code":"validation_exception","type":"invalid_request_error"}"#
         ));
-        for status in [400, 401, 403, 404, 413, 429, 500] {
-            assert!(
-                !transient(status, r#"{"error":{"type":"model_error"}}"#),
-                "{status}"
-            );
-        }
+        assert!(!early_transient("model error: not json"));
     }
 
     #[tokio::test(start_paused = true)]
@@ -493,8 +486,9 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_refusal_that_cannot_pass_is_not_tried_again() {
         let gw = mock_gw(vec![
-            "HTTP/1.1 400 Bad Request\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno"
-                .to_owned(),
+            "HTTP/1.1 400 Bad Request\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno".to_owned(),
+            "HTTP/1.1 424 Failed Dependency\r\ncontent-length: 2\r\nconnection: close\r\n\r\nno".to_owned(),
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\ndata: {\"error\":{\"type\":\"invalid_request_error\"}}\n\n".to_owned(),
         ])
         .await;
         let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
@@ -508,10 +502,16 @@ mod tests {
             forbid_calls: false,
         };
         let started = tokio::time::Instant::now();
-        let Err(err) = client.start(&req).await else {
-            panic!("a 400 passed");
-        };
-        assert_eq!(err, "gw chat/completions returned 400 Bad Request: no");
+        for want in [
+            "gw chat/completions returned 400 Bad Request: no",
+            "gw chat/completions returned 424 Failed Dependency: no",
+            r#"model error: {"type":"invalid_request_error"}"#,
+        ] {
+            let Err(err) = client.start(&req).await else {
+                panic!("{want} passed");
+            };
+            assert_eq!(err, want);
+        }
         assert_eq!(started.elapsed(), Duration::ZERO);
     }
 

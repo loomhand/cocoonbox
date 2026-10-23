@@ -4,7 +4,9 @@ use std::collections::VecDeque;
 
 use serde_json::{Value, json};
 
-use super::{Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, sse};
+use super::{
+    Delta, IMAGE_OMITTED, MODEL_ERROR, Message, Part, Request, Usage, b64, image_mime, sse,
+};
 
 /// Accumulates usage across `message_start` and `message_delta`.
 #[derive(Default)]
@@ -75,7 +77,7 @@ impl Parser {
                 out.push_back(Delta::Usage(self.usage));
                 out.push_back(Delta::Done);
             }
-            "error" => return Err(format!("model error: {}", v["error"])),
+            "error" => return Err(format!("{MODEL_ERROR}{}", v["error"])),
             _ => {}
         }
         Ok(())
