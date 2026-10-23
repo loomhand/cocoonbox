@@ -137,6 +137,9 @@ async fn drive(
             calls: step.calls,
         });
         messages.extend(results);
+        if let Some(text) = rt.checkpoint(ctx, SUBAGENT).await? {
+            messages.push(Message::User(vec![Part::Text(text)]));
+        }
     };
     let shot = rt.dispatcher.capture(&ctx.agent_id, driver).await;
     let (text, is_error) = match report {

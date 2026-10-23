@@ -588,6 +588,13 @@ impl Runtime {
             model,
             slot,
             gate: Mutex::new(Some(gate)),
+            checkpoint: self.cfg.checkpoint_nudge.map(|after| {
+                Mutex::new(Checkpoint {
+                    start: Instant::now(),
+                    after,
+                    fired: false,
+                })
+            }),
         };
         self.journal
             .set_status(agent_id, AgentStatus::Running)
@@ -646,11 +653,6 @@ impl Runtime {
     }
 
     async fn main_loop(&self, ctx: &TurnCtx, usage: &mut Tally) -> Result<(), String> {
-        let mut checkpoint = Checkpoint {
-            start: Instant::now(),
-            after: self.cfg.checkpoint_nudge,
-            fired: false,
-        };
         let history = self
             .journal
             .store
@@ -776,15 +778,7 @@ impl Runtime {
                 calls: step.calls,
             });
             messages.extend(results);
-            if let Some(minutes) = checkpoint.due(Instant::now()) {
-                let text = prompts::checkpoint(minutes);
-                let block = ctx.blocks.fetch_add(1, Ordering::Relaxed);
-                let body = Body::Text(pb::TextBlock {
-                    text: text.clone(),
-                    block,
-                    ..Default::default()
-                });
-                self.record(ctx, Role::System, body, false).await?;
+            if let Some(text) = self.checkpoint(ctx, "").await? {
                 messages.push(Message::User(vec![Part::Text(text)]));
             }
         }
@@ -839,6 +833,31 @@ impl Runtime {
         });
         self.record(ctx, Role::System, body, false).await?;
         Ok(tier)
+    }
+
+    /// Returns the checkpoint line the first time a loop of the turn asks once it is due, recorded under `subagent`.
+    pub(crate) async fn checkpoint(
+        &self,
+        ctx: &TurnCtx,
+        subagent: &str,
+    ) -> Result<Option<String>, String> {
+        let Some(minutes) = ctx
+            .checkpoint
+            .as_ref()
+            .and_then(|c| lock(c).due(Instant::now()))
+        else {
+            return Ok(None);
+        };
+        let text = prompts::checkpoint(minutes);
+        let block = ctx.blocks.fetch_add(1, Ordering::Relaxed);
+        let body = Body::Text(pb::TextBlock {
+            text: text.clone(),
+            block,
+            subagent: subagent.to_owned(),
+        });
+        self.record(ctx, Role::System, body, !subagent.is_empty())
+            .await?;
+        Ok(Some(text))
     }
 
     /// Runs one call of the main model; box tools go through the dispatcher, loop tools run here.
@@ -1081,6 +1100,8 @@ pub struct TurnCtx {
     model: String,
     slot: Arc<Slot>,
     gate: Mutex<Option<OwnedRwLockReadGuard<()>>>,
+    /// The once-only checkpoint nudge that the main loop and the computer subagent share; none when off.
+    checkpoint: Option<Mutex<Checkpoint>>,
 }
 
 impl TurnCtx {
@@ -1137,19 +1158,18 @@ struct Reply {
     text: String,
 }
 
-/// Fires once, at the first step that ends `after` or later past `start`; never without `after`.
+/// Fires once, at the first step that ends `after` or later past `start`.
 struct Checkpoint {
     start: Instant,
-    after: Option<Duration>,
+    after: Duration,
     fired: bool,
 }
 
 impl Checkpoint {
     /// The whole minutes since `start` when the nudge is due at `now`.
     fn due(&mut self, now: Instant) -> Option<u64> {
-        let after = self.after.filter(|_| !self.fired)?;
         let elapsed = now.saturating_duration_since(self.start);
-        if elapsed < after {
+        if self.fired || elapsed < self.after {
             return None;
         }
         self.fired = true;
@@ -1410,12 +1430,12 @@ mod tests {
     }
 
     #[test]
-    fn the_checkpoint_fires_once_at_its_time_and_never_when_off() {
+    fn the_checkpoint_fires_once_at_its_time() {
         let start = Instant::now();
         let minute = Duration::from_secs(60);
         let mut on = Checkpoint {
             start,
-            after: Some(40 * minute),
+            after: 40 * minute,
             fired: false,
         };
         assert_eq!(on.due(start + 39 * minute), None);
@@ -1425,12 +1445,6 @@ mod tests {
         );
         assert_eq!(on.due(start + 42 * minute), None);
         assert_eq!(on.due(start + 90 * minute), None);
-        let mut off = Checkpoint {
-            start,
-            after: None,
-            fired: false,
-        };
-        assert_eq!(off.due(start + 600 * minute), None);
     }
 
     #[test]
