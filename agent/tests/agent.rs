@@ -437,6 +437,23 @@ fn chat_cut(reasoning: &str) -> String {
     ]) + "data: [DONE]\n\n"
 }
 
+fn chat_cut_text(text: &str) -> String {
+    sse(&[
+        json!({"choices":[{"delta":{"content":text}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":"length"}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":16384}}),
+    ]) + "data: [DONE]\n\n"
+}
+
+fn chat_cut_call(id: &str, name: &str, partial_args: &str) -> String {
+    sse(&[
+        json!({"choices":[{"delta":{"content":"Let me check."}}]}),
+        json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":id,"type":"function","function":{"name":name,"arguments":partial_args}}]}}]}),
+        json!({"choices":[{"delta":{},"finish_reason":"length"}]}),
+        json!({"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":16384}}),
+    ]) + "data: [DONE]\n\n"
+}
+
 fn messages_tool_use(id: &str, name: &str, input: &Value) -> String {
     sse(&[
         json!({"type":"message_start","message":{"usage":{"input_tokens":50,"output_tokens":1}}}),
@@ -1678,6 +1695,66 @@ async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
         "the model's reply was cut at the 65536-token limit"
     );
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
+}
+
+#[tokio::test]
+async fn a_cut_reply_runs_none_of_its_calls_and_leaves_its_text_out_of_the_history() {
+    let h = Harness::start(
+        vec![
+            (
+                "chat/completions",
+                chat_cut_call("c1", "list_dir", r#"{"path": "/wor"#),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("c2", "list_dir", &json!({})),
+            ),
+            ("chat/completions", chat_cut_text("The answer is 4")),
+            ("chat/completions", chat_text("The answer is 42.")),
+        ],
+        false,
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "answer", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("no turn end");
+    };
+    assert!(end.ok, "{}", end.error);
+    let calls: Vec<&str> = entries
+        .iter()
+        .filter_map(|e| match &e.body {
+            Some(Body::ToolCall(c)) => Some(c.call_id.as_str()),
+            Some(Body::ToolResult(r)) => Some(r.call_id.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        calls,
+        ["c2", "c2"],
+        "the cut call c1 ran or entered the transcript"
+    );
+    let said: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.role == i32::from(pb::Role::Assistant))
+        .filter_map(|e| match &e.body {
+            Some(Body::Text(t)) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, ["Let me check.", "The answer is 42."]);
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    assert_eq!(chats.len(), 4);
+    let caps: Vec<&Value> = chats.iter().map(|c| &c["max_tokens"]).collect();
+    assert_eq!(
+        caps,
+        [&json!(16384), &json!(65536), &json!(16384), &json!(65536)]
+    );
+    assert_eq!(chats[1]["messages"], chats[0]["messages"]);
+    assert_eq!(chats[3]["messages"], chats[2]["messages"]);
+    assert!(!chats[3].to_string().contains("The answer is 4\""));
 }
 
 #[tokio::test]
