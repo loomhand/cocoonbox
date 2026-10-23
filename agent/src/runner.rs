@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tokio::sync::{OwnedRwLockReadGuard, mpsc, oneshot};
@@ -638,6 +639,11 @@ impl Runtime {
     }
 
     async fn main_loop(&self, ctx: &TurnCtx, usage: &mut Tally) -> Result<(), String> {
+        let mut checkpoint = Checkpoint {
+            start: Instant::now(),
+            after: self.cfg.checkpoint_nudge,
+            fired: false,
+        };
         let history = self
             .journal
             .store
@@ -748,6 +754,17 @@ impl Runtime {
                 calls: step.calls,
             });
             messages.extend(results);
+            if let Some(minutes) = checkpoint.due(Instant::now()) {
+                let text = prompts::checkpoint(minutes);
+                let block = ctx.blocks.fetch_add(1, Ordering::Relaxed);
+                let body = Body::Text(pb::TextBlock {
+                    text: text.clone(),
+                    block,
+                    ..Default::default()
+                });
+                self.record(ctx, Role::System, body, false).await?;
+                messages.push(Message::User(vec![Part::Text(text)]));
+            }
         }
     }
 
@@ -1075,6 +1092,26 @@ struct Reply {
     text: String,
 }
 
+/// Fires once, at the first step that ends `after` or later past `start`; never without `after`.
+struct Checkpoint {
+    start: Instant,
+    after: Option<Duration>,
+    fired: bool,
+}
+
+impl Checkpoint {
+    /// The whole minutes since `start` when the nudge is due at `now`.
+    fn due(&mut self, now: Instant) -> Option<u64> {
+        let after = self.after.filter(|_| !self.fired)?;
+        let elapsed = now.saturating_duration_since(self.start);
+        if elapsed < after {
+            return None;
+        }
+        self.fired = true;
+        Some(elapsed.as_secs() / 60)
+    }
+}
+
 /// Rebuilds the main agent's model messages from its transcript.
 pub fn history_messages(entries: Vec<TranscriptEntry>) -> Vec<Message> {
     let mut out: Vec<Message> = Vec::new();
@@ -1325,6 +1362,30 @@ mod tests {
             Some("a sentence that is longe")
         );
         assert_eq!(title(" \n\t "), None);
+    }
+
+    #[test]
+    fn the_checkpoint_fires_once_at_its_time_and_never_when_off() {
+        let start = Instant::now();
+        let minute = Duration::from_secs(60);
+        let mut on = Checkpoint {
+            start,
+            after: Some(40 * minute),
+            fired: false,
+        };
+        assert_eq!(on.due(start + 39 * minute), None);
+        assert_eq!(
+            on.due(start + 41 * minute + Duration::from_secs(30)),
+            Some(41)
+        );
+        assert_eq!(on.due(start + 42 * minute), None);
+        assert_eq!(on.due(start + 90 * minute), None);
+        let mut off = Checkpoint {
+            start,
+            after: None,
+            fired: false,
+        };
+        assert_eq!(off.due(start + 600 * minute), None);
     }
 
     #[test]

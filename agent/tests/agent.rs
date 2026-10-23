@@ -271,6 +271,7 @@ impl Harness {
             shuttle_socket,
             workspace: workspace.clone(),
             state_roots: cocoonbox_agent::state::default_roots(&home, &workspace),
+            checkpoint_nudge: None,
         };
         let model = Arc::new(
             cocoonbox_agent::llm::Client::new(

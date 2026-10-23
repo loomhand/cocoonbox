@@ -108,6 +108,8 @@ const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that t
 
 const LINK_RULE: &str = " LINK_ACCESS_TOKEN is the user's Stripe Link wallet; link-cli (`npx -y @stripe/link-cli`) reads it by itself. Never enter the user's own card or other payment details. Pay only with Link and only for a purchase the user asked for: create a spend request with a truthful `--context`, wait until the user approves it in the Link app or on the web, and read the one-time card only with `--output-file <path>` under /tmp. Never cat, read or print that file: give delegate_computer its path and have it fill each card field (number, exp, cvc) with computer_act type_from_file, only on the checkout the user asked for. Never repeat a card number, CVC or other payment value seen on a screen, a page or a report: say only which fields are filled.";
 
+const CHECKPOINT: &str = "Elapsed {minutes} min. If the deliverable is not saved at its target path yet, save a complete first version now, then keep improving it and re-save after each improvement.";
+
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
 /// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a box that
@@ -209,6 +211,11 @@ pub fn keys(records: &str) -> Option<String> {
     })
 }
 
+/// Renders the one-time request to save a first version, `minutes` into the turn.
+pub fn checkpoint(minutes: u64) -> String {
+    CHECKPOINT.replace("{minutes}", &minutes.to_string())
+}
+
 /// Renders the request for a progress report once a loop has used all `cap` steps.
 pub fn cap_report(cap: usize) -> String {
     CAP_REPORT.replace("{cap}", &cap.to_string())
@@ -219,6 +226,14 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn the_checkpoint_line_names_its_minutes() {
+        assert_eq!(
+            checkpoint(41),
+            "Elapsed 41 min. If the deliverable is not saved at its target path yet, save a complete first version now, then keep improving it and re-save after each improvement."
+        );
+    }
 
     #[test]
     fn main_prompt_names_the_serving_model() {
