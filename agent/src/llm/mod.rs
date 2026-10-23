@@ -460,7 +460,7 @@ mod tests {
             )
         };
         let gw = mock_gw(vec![
-            sse("data: {\"error\":{\"type\":\"model_error\",\"message\":\"upstream stream broke\"}}\n\n"),
+            sse("data: {\"error\":{\"code\":\"model_error_exception\",\"message\":\"upstream request failed\",\"param\":null,\"type\":\"model_error\"}}\n\n"),
             sse("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: {\"error\":{\"type\":\"model_error\"}}\n\n"),
             sse("data: {\"choices\":[{\"delta\":{\"content\":\"never\"}}]}\n\ndata: [DONE]\n\n"),
         ])
