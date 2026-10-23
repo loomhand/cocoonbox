@@ -232,7 +232,7 @@ impl Client {
     async fn attempt(&self, req: &Request<'_>) -> Result<Stream, Failure> {
         let mut stream = self.open(req).await?;
         match stream.next().await {
-            Ok(Some(Delta::Done) | None) => Err(Failure {
+            Ok(Some(Delta::Done) | None) if stream.unterminated => Err(Failure {
                 message: NO_OUTPUT.to_owned(),
                 transient: true,
             }),
@@ -240,6 +240,7 @@ impl Client {
                 stream.pending.push_front(first);
                 Ok(stream)
             }
+            Ok(None) => Ok(stream),
             Err(message) => Err(Failure {
                 transient: early_transient(&message),
                 message,
@@ -291,6 +292,7 @@ impl Client {
             },
             pending: VecDeque::new(),
             finished: false,
+            unterminated: false,
         })
     }
 }
@@ -315,6 +317,7 @@ pub struct Stream {
     parser: Parser,
     pending: VecDeque<Delta>,
     finished: bool,
+    unterminated: bool,
 }
 
 impl Stream {
@@ -343,6 +346,7 @@ impl Stream {
                     if let Some(event) = self.decoder.finish() {
                         self.feed(&event)?;
                     }
+                    self.unterminated = !self.pending.contains(&Delta::Done);
                     self.pending.push_back(Delta::Done);
                 }
             }
@@ -559,6 +563,25 @@ mod tests {
             (r#"model error: {"type":"invalid_request_error"}"#, false),
         ];
         assert_eq!(got, want.map(|(m, t)| (m.to_owned(), t)),);
+    }
+
+    #[tokio::test]
+    async fn a_stream_closed_before_any_event_is_tried_again_and_one_that_says_done_is_a_reply() {
+        let gw = mock_gw(vec![
+            sse(""),
+            sse("data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\ndata: [DONE]\n\n"),
+            sse("data: [DONE]\n\n"),
+        ])
+        .await;
+        let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
+        let started = std::time::Instant::now();
+        let mut stream = client.start(&probe_request()).await.unwrap();
+        assert!(started.elapsed() >= RETRY_WAITS[0]);
+        assert_eq!(stream.next().await.unwrap(), Some(Delta::Text("Hi".into())));
+        let started = std::time::Instant::now();
+        let mut empty = client.start(&probe_request()).await.unwrap();
+        assert!(started.elapsed() < RETRY_WAITS[0]);
+        assert_eq!(empty.next().await.unwrap(), Some(Delta::Done));
     }
 
     #[tokio::test]
