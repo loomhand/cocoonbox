@@ -1549,6 +1549,81 @@ async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
 }
 
 #[tokio::test]
+async fn the_checkpoint_nudge_fires_once_in_the_subagent_and_never_when_off() {
+    let line =
+        "If the deliverable is not saved at its target path yet, save a complete first version now";
+    let day = Duration::from_secs(24 * 3600);
+    for nudge in [Some(Duration::from_millis(1)), None] {
+        let h = Harness::boot(
+            vec![
+                (
+                    "chat/completions",
+                    chat_tool_call(
+                        "call_d",
+                        "delegate_computer",
+                        &json!({"task": "look at the screen"}),
+                    ),
+                ),
+                (
+                    "chat/completions",
+                    chat_tool_call("toolu_1", "computer_state", &json!({})),
+                ),
+                ("chat/completions", chat_text("Looked.")),
+                ("chat/completions", chat_text("Done.")),
+            ],
+            false,
+            Duration::from_secs(600),
+            day,
+            None,
+            None,
+            Automation::Desk,
+            false,
+            nudge,
+        )
+        .await;
+        let mut agents = h.agents().await;
+        let agent_id = create_agent(&mut agents).await;
+        send(&mut agents, &agent_id, "look", "").await;
+        let entries = wait_turn_end(&mut agents, &agent_id).await;
+        assert!(
+            matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+        );
+        let fired: Vec<&pb::TextBlock> = entries
+            .iter()
+            .filter(|e| e.role == i32::from(pb::Role::System))
+            .filter_map(|e| match &e.body {
+                Some(Body::Text(t)) if t.text.contains(line) => Some(t),
+                _ => None,
+            })
+            .collect();
+        let chats = gw_bodies(&h.gw_log, "chat/completions");
+        assert_eq!(chats.len(), 4);
+        let carrying: Vec<usize> = chats
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.to_string().contains(line))
+            .map(|(i, _)| i)
+            .collect();
+        if nudge.is_none() {
+            assert!(fired.is_empty(), "{fired:?}");
+            assert!(carrying.is_empty(), "{carrying:?}");
+            continue;
+        }
+        assert_eq!(fired.len(), 1, "{fired:?}");
+        assert_eq!(fired[0].subagent, "computer");
+        assert_eq!(
+            carrying,
+            [2],
+            "only the subagent's next request carries the line"
+        );
+        let msgs = chats[2]["messages"].as_array().unwrap();
+        let last = msgs.last().unwrap();
+        assert_eq!(last["role"], "user");
+        assert_eq!(last["content"][0]["text"], fired[0].text);
+    }
+}
+
+#[tokio::test]
 async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
     let mut script = vec![(
         "chat/completions",
