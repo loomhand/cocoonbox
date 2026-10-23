@@ -1428,7 +1428,7 @@ async fn run_delegate(messages_wire: bool) {
 
 #[tokio::test]
 async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
-    for (plans, cap) in [(false, 40), (true, 150)] {
+    for (plans, cap) in [(false, 40), (true, 300)] {
         let mut script: Vec<(&'static str, String)> = (0..cap)
             .map(|n| {
                 (
