@@ -71,6 +71,7 @@ impl Harness {
             None,
             Automation::Minimal,
             false,
+            None,
         )
         .await
     }
@@ -87,6 +88,7 @@ impl Harness {
             None,
             Automation::Desk,
             false,
+            None,
         )
         .await
     }
@@ -103,6 +105,7 @@ impl Harness {
             None,
             Automation::Desk,
             false,
+            None,
         )
         .await
     }
@@ -119,6 +122,7 @@ impl Harness {
             Some(connect_url),
             Automation::Minimal,
             false,
+            None,
         )
         .await
     }
@@ -135,6 +139,7 @@ impl Harness {
             None,
             Automation::Desk,
             true,
+            None,
         )
         .await
     }
@@ -151,6 +156,7 @@ impl Harness {
             None,
             Automation::Android,
             false,
+            None,
         )
         .await
     }
@@ -172,6 +178,7 @@ impl Harness {
             None,
             Automation::Desk,
             false,
+            None,
         )
         .await
     }
@@ -186,6 +193,7 @@ impl Harness {
         connect_url: Option<String>,
         automation: Automation,
         plugin: bool,
+        checkpoint_nudge: Option<Duration>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -271,7 +279,7 @@ impl Harness {
             shuttle_socket,
             workspace: workspace.clone(),
             state_roots: cocoonbox_agent::state::default_roots(&home, &workspace),
-            checkpoint_nudge: None,
+            checkpoint_nudge,
         };
         let model = Arc::new(
             cocoonbox_agent::llm::Client::new(
@@ -1446,6 +1454,72 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
                 .contains(&format!("all {cap} steps, and tools are off")),
             "{ask}"
         );
+    }
+}
+
+#[tokio::test]
+async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
+    let day = Duration::from_secs(24 * 3600);
+    let h = Harness::boot(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call("c1", "list_dir", &json!({})),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("c2", "list_dir", &json!({})),
+            ),
+            ("chat/completions", chat_text("Listed twice.")),
+        ],
+        false,
+        Duration::from_secs(600),
+        day,
+        None,
+        None,
+        Automation::Minimal,
+        false,
+        Some(Duration::from_millis(1)),
+    )
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "list it twice", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let line =
+        "If the deliverable is not saved at its target path yet, save a complete first version now";
+    let system: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.role == i32::from(pb::Role::System))
+        .filter_map(|e| match &e.body {
+            Some(Body::Text(t)) => Some(t.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(system.len(), 1, "{system:?}");
+    assert!(
+        system[0].starts_with("Elapsed ") && system[0].contains(line),
+        "{}",
+        system[0]
+    );
+    let chats = gw_bodies(&h.gw_log, "chat/completions");
+    assert_eq!(chats.len(), 3);
+    let second = chats[1]["messages"].as_array().unwrap();
+    let (tool, nudge) = (&second[second.len() - 2], &second[second.len() - 1]);
+    assert_eq!(tool["role"], "tool", "{second:?}");
+    assert_eq!(nudge["role"], "user", "{second:?}");
+    assert_eq!(nudge["content"][0]["text"], system[0]);
+    for (i, chat) in chats.iter().enumerate() {
+        let nudges = chat["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| m.to_string().contains(line))
+            .count();
+        assert_eq!(nudges, usize::from(i > 0), "request {i}: {chat}");
     }
 }
 
@@ -3485,6 +3559,7 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
             None,
             automation,
             true,
+            None,
         )
         .await;
         let mut mcp = McpClient::connect(&h).await;
@@ -4828,6 +4903,7 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
         None,
         Automation::Desk,
         false,
+        None,
     )
     .await;
     let mut mcp = McpClient::connect(&h).await;
