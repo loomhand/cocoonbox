@@ -400,6 +400,7 @@ impl Runtime {
         let mut calls: Vec<(usize, ToolCall)> = Vec::new();
         let mut usage = Usage::default();
         let mut cut = false;
+        let mut said = Vec::new();
         while let Some(d) = stream.next().await? {
             match d {
                 Delta::Reasoning(t) => {
@@ -413,11 +414,7 @@ impl Runtime {
                 Delta::ToolStart { index, id, name } => {
                     self.flush_block(ctx, &mut reasoning, Kind::Reasoning, subagent)
                         .await?;
-                    text.push_str(
-                        &self
-                            .flush_block(ctx, &mut pending, Kind::Text, subagent)
-                            .await?,
-                    );
+                    said.push(self.end_block(ctx, &mut pending, Kind::Text, subagent));
                     calls.push((
                         index,
                         ToolCall {
@@ -439,11 +436,17 @@ impl Runtime {
         }
         self.flush_block(ctx, &mut reasoning, Kind::Reasoning, subagent)
             .await?;
-        text.push_str(
-            &self
-                .flush_block(ctx, &mut pending, Kind::Text, subagent)
-                .await?,
-        );
+        said.push(self.end_block(ctx, &mut pending, Kind::Text, subagent));
+        for (part, index) in said {
+            if let Some(index) = index.filter(|_| !cut) {
+                self.record_block(ctx, Kind::Text, &part, index, subagent)
+                    .await?;
+            }
+            text.push_str(&part);
+        }
+        if cut {
+            calls.clear();
+        }
         let mut out = Vec::with_capacity(calls.len());
         for (n, (_, mut call)) in calls.into_iter().enumerate() {
             if call.id.is_empty() {
@@ -1023,28 +1026,50 @@ impl Runtime {
         kind: Kind,
         subagent: &str,
     ) -> Result<String, String> {
+        let (text, index) = self.end_block(ctx, block, kind, subagent);
+        if let Some(index) = index {
+            self.record_block(ctx, kind, &text, index, subagent).await?;
+        }
+        Ok(text)
+    }
+
+    /// Ends the live stream of `block` and takes its text and index.
+    fn end_block(
+        &self,
+        ctx: &TurnCtx,
+        block: &mut Block,
+        kind: Kind,
+        subagent: &str,
+    ) -> (String, Option<u32>) {
         if block.index.is_some() {
             self.publish_delta(ctx, block, kind, subagent, true);
         }
         let Block { text, index, .. } = std::mem::take(block);
-        let Some(index) = index else {
-            return Ok(text);
-        };
+        (text, index)
+    }
+
+    async fn record_block(
+        &self,
+        ctx: &TurnCtx,
+        kind: Kind,
+        text: &str,
+        index: u32,
+        subagent: &str,
+    ) -> Result<(), String> {
         let body = match kind {
             Kind::Text => Body::Text(pb::TextBlock {
-                text: text.clone(),
+                text: text.to_owned(),
                 subagent: subagent.to_owned(),
                 block: index,
             }),
             Kind::Reasoning => Body::Reasoning(pb::ReasoningBlock {
-                text: text.clone(),
+                text: text.to_owned(),
                 block: index,
                 subagent: subagent.to_owned(),
             }),
         };
         self.record(ctx, Role::Assistant, body, !subagent.is_empty())
-            .await?;
-        Ok(text)
+            .await
     }
 }
 
