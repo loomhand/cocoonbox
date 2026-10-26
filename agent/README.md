@@ -110,7 +110,7 @@ Optional overrides with contract defaults, used by tests and non-standard layout
 | `CHROME_PROFILE` | `~/.config/cocoonbox-chrome` |
 | `GW_ANTHROPIC_WIRE` | `chat` (`messages` switches `anthropic/` models to `/v1/messages`) |
 | `CB_CHECKPOINT_NUDGE_MIN` | `0` (off; cbcore images set `40`): after this many minutes of a turn, the main loop asks once that a first version of the deliverable be saved |
-| `CB_REASONING_EFFORT` | unset (the model's default): `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, sent with every request of the main model and the computer subagent as `reasoning_effort` on chat completions and `output_config.effort` on Messages |
+| `CB_REASONING_EFFORT` | unset (the model's default): `none`, `minimal`, `low`, `medium`, `high`, `xhigh` or `max`, sent with every request of the main model and the computer subagent as `reasoning_effort` on chat completions and `output_config.effort` on Messages (`minimal` as `low`, `none` left out) |
 
 ## Build
 

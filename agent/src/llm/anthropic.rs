@@ -147,7 +147,8 @@ pub fn body(req: &Request<'_>) -> Value {
         "system": [{"type": "text", "text": req.system, "cache_control": {"type": "ephemeral"}}],
     });
     body["messages"] = Value::Array(messages);
-    if let Some(effort) = req.effort {
+    if let Some(effort) = req.effort.filter(|e| *e != "none") {
+        let effort = if effort == "minimal" { "low" } else { effort };
         body["output_config"] = json!({"effort": effort});
     }
     if !req.tools.is_empty() {
@@ -342,11 +343,17 @@ mod tests {
         assert_eq!(b["system"][0]["text"], "sys");
         assert!(b.get("tool_choice").is_none());
         assert!(b.get("output_config").is_none());
-        let effort = body(&Request {
-            effort: Some("high"),
-            ..req
-        });
-        assert_eq!(effort["output_config"], json!({"effort": "high"}));
+        for (effort, want) in [
+            ("high", json!({"effort": "high"})),
+            ("minimal", json!({"effort": "low"})),
+            ("none", Value::Null),
+        ] {
+            let b = body(&Request {
+                effort: Some(effort),
+                ..req
+            });
+            assert_eq!(b["output_config"], want, "{effort}");
+        }
         let shell = ToolSpec {
             name: "shell".into(),
             description: "run".into(),
