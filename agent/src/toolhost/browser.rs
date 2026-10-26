@@ -48,6 +48,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 const ENABLE_WAIT: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(250);
 const NAV_START: Duration = Duration::from_millis(200);
+const NAV_POLL: Duration = Duration::from_millis(100);
 const POKE: Duration = Duration::from_millis(100);
 const READ_CHARS: usize = 20_000;
 const SHELL_CHARS: usize = 300;
@@ -1139,6 +1140,7 @@ struct ReadArgs {
 struct Load {
     started: bool,
     stopped: bool,
+    requested: bool,
 }
 
 /// The XHR and fetch requests of a page, from the Network events of its connection.
@@ -1176,6 +1178,7 @@ struct Cdp {
     /// The page's frame loads since [`Cdp::watch_load`], from its Page events.
     load: Load,
     page_events: bool,
+    network_events: bool,
     /// The type and message of the dialog the page opened, from its Page events.
     dialog: Option<(String, String)>,
     /// What became of the dialogs the page opened during this connection.
@@ -1194,6 +1197,7 @@ impl Cdp {
             xhr: Xhr::default(),
             load: Load::default(),
             page_events: false,
+            network_events: false,
             dialog: None,
             dialogs: Vec::new(),
         })
@@ -1264,6 +1268,7 @@ impl Cdp {
         match v["method"].as_str() {
             Some("Page.frameStartedLoading") => self.load.started = true,
             Some("Page.frameStoppedLoading") => self.load.stopped = true,
+            Some("Network.requestWillBeSent") => self.load.requested = true,
             Some("Page.javascriptDialogOpening") => {
                 let p = &v["params"];
                 self.dialog = Some((
@@ -1275,9 +1280,14 @@ impl Cdp {
         }
     }
 
-    /// Turns on the Page events of the connection and forgets the loads seen so far, before an input that may open a page.
+    /// Turns on the Page and Network events of the connection and forgets the loads seen so far, before an input that
+    /// may open a page.
     async fn watch_load(&mut self) -> Result<(), String> {
         self.enable_page().await?;
+        if !self.network_events {
+            self.call("Network.enable", json!({})).await?;
+            self.network_events = true;
+        }
         self.load = Load::default();
         Ok(())
     }
@@ -1313,15 +1323,17 @@ impl Cdp {
         Err(err)
     }
 
-    /// Waits for the page an input opened: at most [`NAV_START`] for a frame to start loading, then up to [`LOAD_WAIT`]
-    /// for the loads to stop and the document to be complete.
+    /// Waits for the page an input opened: [`NAV_POLL`] for a frame to start loading, or [`NAV_START`] once the page
+    /// sent a request, then up to [`LOAD_WAIT`] for the loads to stop and the document to be complete.
     async fn opened_page(&mut self) {
         let start = tokio::time::Instant::now();
         while self.dialog.is_none() && (!self.load.started || !self.load.stopped) {
             let wait = if self.load.started {
                 LOAD_WAIT
-            } else {
+            } else if self.load.requested {
                 NAV_START
+            } else {
+                NAV_POLL
             };
             match tokio::time::timeout_at(start + wait, self.ws.next()).await {
                 Ok(Some(Ok(WsMessage::Text(text)))) => {
@@ -1368,7 +1380,7 @@ impl Cdp {
             {
                 return;
             }
-            tokio::time::sleep(POLL).await;
+            tokio::time::sleep(NAV_POLL).await;
         }
     }
 
@@ -3313,6 +3325,51 @@ pub(super) mod tests {
             "{out}"
         );
         assert!(out.contains("textbox \"Customer\""), "{out}");
+        b.run("a", "browser_close", json!({})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_click_waits_for_a_page_that_a_timer_or_a_request_opens_late() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let url = format!(
+            "http://127.0.0.1:{}/",
+            page_server(
+                "<!doctype html><title>start</title><script>if (location.search) document.title = 'at ' + location.search</script>\
+                 <button onclick=\"document.title = 'stayed'\">Stay</button>\
+                 <button onclick=\"setTimeout(() => location.search = 'timer', 50)\">Timer</button>\
+                 <button onclick=\"fetch('/x').then(() => location.search = 'fetched')\">Fetch</button>",
+            )
+            .await
+        );
+        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let b = Browser::new(bin, dir.path().join("p"), cdp, true);
+        for (element, label, page) in [
+            ("e1", "Stay", "stayed (URL)"),
+            ("e2", "Timer", "at ?timer (URL?timer)"),
+            ("e3", "Fetch", "at ?fetched (URL?fetched)"),
+        ] {
+            b.run("a", "browser_navigate", json!({"url": url}))
+                .await
+                .unwrap();
+            let out = b
+                .run("a", "browser_click", json!({"ref": element}))
+                .await
+                .unwrap();
+            assert_eq!(
+                out,
+                format!(
+                    "clicked {element} \"{label}\"; page is now {}",
+                    page.replace("URL", &url)
+                )
+            );
+        }
         b.run("a", "browser_close", json!({})).await.unwrap();
     }
 
