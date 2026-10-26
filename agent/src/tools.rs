@@ -229,7 +229,7 @@ fn base_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
         ToolSpec {
             name: Cow::Borrowed("browser_click"),
             description: Cow::Borrowed(
-                "Click the element with the given ref from the latest snapshot.",
+                "Click the element with the given ref from the latest snapshot. When the click opens a page or changes the address, returns the new page's snapshot.",
             ),
             parameters: json!({
                 "type": "object",
@@ -248,7 +248,7 @@ fn base_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
                     "ref": {"type": "string"},
                     "text": {"type": "string"},
                     "clear": {"type": "boolean", "description": "Replace the current value"},
-                    "submit": {"type": "boolean", "description": "Press Enter afterwards"}
+                    "submit": {"type": "boolean", "description": "Press Enter afterwards; when that opens a page, returns its snapshot"}
                 },
                 "required": ["ref", "text"]
             }),
