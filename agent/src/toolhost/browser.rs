@@ -1156,6 +1156,7 @@ struct ReadArgs {
 struct Load {
     started: bool,
     stopped: bool,
+    started_at: Option<Instant>,
 }
 
 /// The XHR and fetch requests of a page, from the Network events of its connection.
@@ -1279,7 +1280,10 @@ impl Cdp {
     fn note(&mut self, v: &Value) {
         self.xhr.note(v);
         match v["method"].as_str() {
-            Some("Page.frameStartedLoading") => self.load.started = true,
+            Some("Page.frameStartedLoading") => {
+                self.load.started = true;
+                self.load.started_at.get_or_insert_with(Instant::now);
+            }
             Some("Page.frameStoppedLoading") => self.load.stopped = true,
             Some("Page.javascriptDialogOpening") => {
                 let p = &v["params"];
@@ -1647,6 +1651,9 @@ impl Cdp {
     /// The snapshot of the page an input opened; with plans, once scripts filled it in, as after a navigate.
     async fn opened_snapshot(&mut self, plans: bool) -> Result<String, String> {
         if plans {
+            if let Some(at) = self.load.started_at {
+                self.xhr.flight.retain(|_, sent| *sent >= at);
+            }
             self.settle(tokio::time::Instant::now() + SPA_WAIT).await;
         }
         self.snapshot(plans).await
