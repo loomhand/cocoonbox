@@ -491,8 +491,11 @@ impl Browser {
             }
             "browser_click" => {
                 let a: RefArgs = rpc::parse(args)?;
+                if self.plans {
+                    cdp.call("Network.enable", json!({})).await?;
+                }
                 match cdp.click_ref(&a.element).await? {
-                    (out, true) => Ok(format!("{out}\n{}", cdp.snapshot(self.plans).await?)),
+                    (out, true) => Ok(format!("{out}\n{}", cdp.opened_snapshot(self.plans).await?)),
                     (out, false) => Ok(out),
                 }
             }
@@ -547,12 +550,15 @@ impl Browser {
                 if !a.submit {
                     return Ok(typed);
                 }
+                if self.plans {
+                    cdp.call("Network.enable", json!({})).await?;
+                }
                 let href = cdp.eval("location.href").await?;
                 cdp.press_enter().await?;
                 if cdp.load.started || cdp.eval("location.href").await? != href {
                     return Ok(format!(
                         "{typed} and pressed Enter\n{}",
-                        cdp.snapshot(self.plans).await?
+                        cdp.opened_snapshot(self.plans).await?
                     ));
                 }
                 Ok(format!("{typed} and pressed Enter"))
@@ -1636,6 +1642,14 @@ impl Cdp {
             }
             tokio::time::sleep(POLL).await;
         }
+    }
+
+    /// The snapshot of the page an input opened; with plans, once scripts filled it in, as after a navigate.
+    async fn opened_snapshot(&mut self, plans: bool) -> Result<String, String> {
+        if plans {
+            self.settle(tokio::time::Instant::now() + SPA_WAIT).await;
+        }
+        self.snapshot(plans).await
     }
 
     async fn snapshot(&mut self, plans: bool) -> Result<String, String> {
