@@ -36,6 +36,7 @@ impl Journal {
             Body::Approval(a) => SECRETS.scrub_prose(&mut a.summary),
             Body::ToolResult(r) => SECRETS.scrub(&mut r.text),
             Body::TurnEnd(e) => SECRETS.scrub(&mut e.error),
+            Body::Usage(_) => {}
         }
         let entry = TranscriptEntry {
             agent_id: agent_id.to_owned(),

@@ -52,6 +52,7 @@ const ROUTING_DIR: &str = r"C:\ProgramData\cocoonbox\routing.d";
 const MCP_IDLE: Duration = Duration::from_secs(600);
 const MCP_PRUNE_AFTER: Duration = Duration::from_secs(24 * 3600);
 const QUIESCE_WAIT: Duration = Duration::from_secs(30);
+const EFFORTS: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 /// The desktop automation of the box's image family, found by its guide at start.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -123,6 +124,8 @@ pub struct ServeConfig {
     pub workspace: PathBuf,
     /// The turn time after which the main loop asks once for a saved first version; none never asks.
     pub checkpoint_nudge: Option<Duration>,
+    /// The reasoning effort the main model and the computer subagent ask gw for; none leaves the model default.
+    pub reasoning_effort: Option<&'static str>,
 }
 
 impl std::fmt::Debug for ServeConfig {
@@ -151,6 +154,7 @@ impl std::fmt::Debug for ServeConfig {
             .field("shuttle_socket", &self.shuttle_socket)
             .field("workspace", &self.workspace)
             .field("checkpoint_nudge", &self.checkpoint_nudge)
+            .field("reasoning_effort", &self.reasoning_effort)
             .finish()
     }
 }
@@ -194,6 +198,7 @@ impl ServeConfig {
                 "CB_CHECKPOINT_NUDGE_MIN",
                 &optional("CB_CHECKPOINT_NUDGE_MIN", "0"),
             )?,
+            reasoning_effort: effort("CB_REASONING_EFFORT", &optional("CB_REASONING_EFFORT", ""))?,
         })
     }
 }
@@ -276,6 +281,20 @@ fn minutes(key: &str, raw: &str) -> Result<Option<Duration>, String> {
     Ok((n > 0).then(|| Duration::from_secs(n * 60)))
 }
 
+/// Parses `raw`, the value of `key`, as one of gw's reasoning efforts; empty is none.
+fn effort(key: &str, raw: &str) -> Result<Option<&'static str>, String> {
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    match EFFORTS.iter().find(|e| **e == raw) {
+        Some(e) => Ok(Some(e)),
+        None => Err(format!(
+            "parse {key}: {raw} is not one of {}",
+            EFFORTS.join(", ")
+        )),
+    }
+}
+
 fn optional(key: &str, default: &str) -> String {
     env::var(key)
         .ok()
@@ -293,6 +312,15 @@ mod tests {
         assert_eq!(minutes("K", "40"), Ok(Some(Duration::from_secs(2400))));
         assert!(minutes("K", "forty").is_err());
         assert!(minutes("K", "-1").is_err());
+    }
+
+    #[test]
+    fn reasoning_effort_is_off_when_empty_and_refuses_words_gw_does_not_take() {
+        assert_eq!(effort("K", ""), Ok(None));
+        assert_eq!(effort("K", "medium"), Ok(Some("medium")));
+        assert_eq!(effort("K", "max"), Ok(Some("max")));
+        assert!(effort("K", "Medium").is_err());
+        assert!(effort("K", "4096").is_err());
     }
 
     #[test]
@@ -321,6 +349,7 @@ mod tests {
             shuttle_socket: "/d".into(),
             workspace: "/w".into(),
             checkpoint_nudge: None,
+            reasoning_effort: None,
         };
         let shown = format!("{cfg:?}");
         assert!(!shown.contains("sk-secret-key"), "{shown}");

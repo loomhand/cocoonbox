@@ -147,6 +147,9 @@ pub fn body(req: &Request<'_>) -> Value {
         "system": [{"type": "text", "text": req.system, "cache_control": {"type": "ephemeral"}}],
     });
     body["messages"] = Value::Array(messages);
+    if let Some(effort) = req.effort {
+        body["output_config"] = json!({"effort": effort});
+    }
     if !req.tools.is_empty() {
         body["tools"] = req
             .tools
@@ -324,6 +327,7 @@ mod tests {
             max_tokens: 50,
             vision: true,
             forbid_calls: false,
+            effort: None,
         };
         let b = body(&req);
         let msgs = b["messages"].as_array().unwrap();
@@ -337,6 +341,12 @@ mod tests {
         assert_eq!(results[1]["cache_control"]["type"], "ephemeral");
         assert_eq!(b["system"][0]["text"], "sys");
         assert!(b.get("tool_choice").is_none());
+        assert!(b.get("output_config").is_none());
+        let effort = body(&Request {
+            effort: Some("high"),
+            ..req
+        });
+        assert_eq!(effort["output_config"], json!({"effort": "high"}));
         let shell = ToolSpec {
             name: "shell".into(),
             description: "run".into(),

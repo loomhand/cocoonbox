@@ -109,6 +109,8 @@ message TranscriptEntry {
     ToolResult tool_result = 13;
     ApprovalRequest approval = 14;
     TurnEnd turn_end = 15;
+    // The turn's usage so far, recorded after each model call; TurnEnd.usage has the final sum.
+    Usage usage = 16;
   }
 }
 

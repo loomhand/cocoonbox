@@ -386,19 +386,20 @@ impl Runtime {
         }
     }
 
-    /// Streams one model step, recording blocks and tool calls as they complete.
+    /// Streams one model step, recording blocks, tool calls and then the turn's `usage` with this step added.
     pub async fn step(
         &self,
         ctx: &TurnCtx,
         req: &Request<'_>,
         subagent: &str,
+        usage: &mut Tally,
     ) -> Result<StepOut, String> {
         let mut stream = self.model.stream(req).await?;
         let mut text = String::new();
         let mut pending = Block::default();
         let mut reasoning = Block::default();
         let mut calls: Vec<(usize, ToolCall)> = Vec::new();
-        let mut usage = Usage::default();
+        let mut used = Usage::default();
         let mut cut = false;
         let mut said = Vec::new();
         while let Some(d) = stream.next().await? {
@@ -429,7 +430,7 @@ impl Runtime {
                         c.arguments.push_str(&fragment);
                     }
                 }
-                Delta::Usage(u) => usage = u,
+                Delta::Usage(u) => used = u,
                 Delta::Cut => cut = true,
                 Delta::Done => break,
             }
@@ -468,10 +469,11 @@ impl Runtime {
                 .await?;
             out.push(call);
         }
+        usage.add(req.model, 1, used);
+        self.record_usage(ctx, usage).await;
         Ok(StepOut {
             text,
             calls: out,
-            usage,
             cut,
         })
     }
@@ -493,9 +495,8 @@ impl Runtime {
             forbid_calls: true,
             ..*req
         };
-        match self.step(ctx, &req, subagent).await {
+        match self.step(ctx, &req, subagent, usage).await {
             Ok(step) => {
-                usage.add(req.model, 1, step.usage);
                 let report = step.text.trim();
                 (!report.is_empty()).then(|| report.to_owned())
             }
@@ -614,26 +615,10 @@ impl Runtime {
             Ok(()) => (true, String::new()),
             Err(e) => (false, e),
         };
-        let total = usage.total();
-        let models = usage
-            .iter()
-            .map(|(model, calls, u)| pb::ModelUsage {
-                model: model.to_owned(),
-                calls,
-                input_tokens: u.input,
-                output_tokens: u.output,
-                cached_input_tokens: u.cached,
-            })
-            .collect();
         let end = pb::TurnEnd {
             ok,
             error,
-            usage: Some(pb::Usage {
-                input_tokens: total.input,
-                output_tokens: total.output,
-                cached_input_tokens: total.cached,
-                models,
-            }),
+            usage: Some(turn_usage(&usage)),
         };
         if let Err(e) = self
             .record(&ctx, Role::System, Body::TurnEnd(end), false)
@@ -727,6 +712,7 @@ impl Runtime {
                 },
                 vision,
                 forbid_calls: false,
+                effort: self.cfg.reasoning_effort,
             };
             if steps == cap {
                 return Err(match self.cap_report(ctx, &req, cap, "", usage).await {
@@ -737,8 +723,7 @@ impl Runtime {
                 });
             }
             steps += 1;
-            let step = self.step(ctx, &req, "").await?;
-            usage.add(&ctx.model, 1, step.usage);
+            let step = self.step(ctx, &req, "", usage).await?;
             if step.calls.is_empty() && step.cut {
                 if widened {
                     return Err(format!(
@@ -805,6 +790,7 @@ impl Runtime {
         let r = router.route(task).await;
         if let Some(u) = r.usage {
             usage.add(router.model(), 1, u);
+            self.record_usage(ctx, usage).await;
         }
         let tier = route::TIERS
             .iter()
@@ -860,6 +846,14 @@ impl Runtime {
         Ok(Some(text))
     }
 
+    /// Records the turn's usage so far, so a transcript reader sees each model call before the turn ends.
+    pub(crate) async fn record_usage(&self, ctx: &TurnCtx, usage: &Tally) {
+        let body = Body::Usage(turn_usage(usage));
+        if let Err(e) = self.record(ctx, Role::System, body, false).await {
+            eprintln!("record usage of turn {}: {e}", ctx.turn_id);
+        }
+    }
+
     /// Runs one call of the main model; box tools go through the dispatcher, loop tools run here.
     async fn main_tool(
         &self,
@@ -902,6 +896,7 @@ impl Runtime {
                         .await?;
                     if name == "gui_plan" {
                         usage.add_reported(&out.text);
+                        self.record_usage(ctx, usage).await;
                     }
                     return Ok(out);
                 }
@@ -1116,11 +1111,10 @@ impl TurnCtx {
     }
 }
 
-/// One model step: its text, requested tool calls, usage, and whether it stopped at its token limit.
+/// One model step: its text, requested tool calls, and whether it stopped at its token limit.
 pub struct StepOut {
     pub text: String,
     pub calls: Vec<ToolCall>,
-    pub usage: Usage,
     pub cut: bool,
 }
 
@@ -1240,6 +1234,25 @@ fn loop_tools(vision: bool, cfg: &ServeConfig) -> Vec<ToolSpec> {
     let mut tools = tools::main_tools(vision, cfg.automation);
     tools::with_plugins(&mut tools, &cfg.plugins);
     tools
+}
+
+fn turn_usage(usage: &Tally) -> pb::Usage {
+    let total = usage.total();
+    pb::Usage {
+        input_tokens: total.input,
+        output_tokens: total.output,
+        cached_input_tokens: total.cached,
+        models: usage
+            .iter()
+            .map(|(model, calls, u)| pb::ModelUsage {
+                model: model.to_owned(),
+                calls,
+                input_tokens: u.input,
+                output_tokens: u.output,
+                cached_input_tokens: u.cached,
+            })
+            .collect(),
+    }
 }
 
 fn close_open(out: &mut Vec<Message>, open: &mut Vec<String>) {
