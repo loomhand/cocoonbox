@@ -583,7 +583,7 @@ async fn a_click_waits_for_the_page_it_opens_and_not_for_a_click_that_opens_none
     assert!(page.contains("button \"Search\" [ref=e2]"), "{page}");
     let clicked = tool(&th, "browser_click", json!({"ref": "e2"})).await;
     assert!(
-        clicked.ends_with(&format!("page is now signed in ({origin}/search)")),
+        clicked.contains(&format!("page is now signed in ({origin}/search)")),
         "{clicked}"
     );
     assert_eq!(wait_post(&posts, "/search").await, "q=");
@@ -597,7 +597,7 @@ async fn a_click_waits_for_the_page_it_opens_and_not_for_a_click_that_opens_none
     let asked = std::time::Instant::now();
     let clicked = tool(&th, "browser_click", json!({"ref": "e6"})).await;
     assert!(
-        clicked.ends_with(&format!("page is now checkout ({origin}/card)")),
+        clicked.contains(&format!("page is now checkout ({origin}/card)")),
         "{clicked}"
     );
     assert!(

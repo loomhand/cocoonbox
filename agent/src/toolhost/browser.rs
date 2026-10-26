@@ -230,7 +230,7 @@ const POINT_JS: &str = r#"((ref) => {
     x = b.left + (f.clientLeft + parseFloat(st.paddingLeft) + x) * (b.width / f.offsetWidth || 1);
     y = b.top + (f.clientTop + parseFloat(st.paddingTop) + y) * (b.height / f.offsetHeight || 1);
   }
-  return { x, y,
+  return { x, y, href: location.href,
     label: (el.getAttribute('aria-label') || el.innerText
       || (el.tagName === 'INPUT' && ['submit', 'button', 'reset'].includes(el.type) ? el.value : '')
       || el.getAttribute('placeholder') || el.getAttribute('name') || el.tagName).replace(/\s+/g, ' ').trim().slice(0, 60) };
@@ -491,7 +491,10 @@ impl Browser {
             }
             "browser_click" => {
                 let a: RefArgs = rpc::parse(args)?;
-                cdp.click_ref(&a.element).await
+                match cdp.click_ref(&a.element).await? {
+                    (out, true) => Ok(format!("{out}\n{}", cdp.snapshot(self.plans).await?)),
+                    (out, false) => Ok(out),
+                }
             }
             "browser_fill" if self.plans => {
                 let a: FillArgs = rpc::parse(args)?;
@@ -514,7 +517,7 @@ impl Browser {
                 }
                 let mut out = format!("filled {}", filled.join(", "));
                 if let Some(element) = &a.click {
-                    out = format!("{out}; {}", cdp.click_ref(element).await?);
+                    out = format!("{out}; {}", cdp.click_ref(element).await?.0);
                 }
                 Ok(format!("{out}\n{}", cdp.snapshot(true).await?))
             }
@@ -536,15 +539,23 @@ impl Browser {
                     .await?;
                 cdp.call("Input.insertText", json!({"text": a.text}))
                     .await?;
-                if a.submit {
-                    cdp.press_enter().await?;
-                }
-                Ok(format!(
-                    "typed {} characters into {}{}",
+                let typed = format!(
+                    "typed {} characters into {}",
                     a.text.chars().count(),
-                    a.element,
-                    if a.submit { " and pressed Enter" } else { "" }
-                ))
+                    a.element
+                );
+                if !a.submit {
+                    return Ok(typed);
+                }
+                let href = cdp.eval("location.href").await?;
+                cdp.press_enter().await?;
+                if cdp.load.started || cdp.eval("location.href").await? != href {
+                    return Ok(format!(
+                        "{typed} and pressed Enter\n{}",
+                        cdp.snapshot(self.plans).await?
+                    ));
+                }
+                Ok(format!("{typed} and pressed Enter"))
             }
             "browser_read" => {
                 let a: ReadArgs = rpc::parse(args)?;
@@ -1338,8 +1349,9 @@ impl Cdp {
         }
     }
 
-    /// Clicks the element of `element` and waits for the page the click opens; reports the label and the page.
-    async fn click_ref(&mut self, element: &str) -> Result<String, String> {
+    /// Clicks the element of `element` and waits for the page the click opens; reports the label and the page, and
+    /// whether the click loaded a page or changed the address.
+    async fn click_ref(&mut self, element: &str) -> Result<(String, bool), String> {
         let p = self
             .eval(&format!("{POINT_JS}({})", js_str(element)))
             .await?;
@@ -1350,14 +1362,15 @@ impl Cdp {
         self.watch_load().await?;
         self.click(x, y).await?;
         self.opened_page().await;
-        let here = self
-            .eval("document.title + ' (' + location.href + ')'")
-            .await?;
-        Ok(format!(
-            "clicked {element} \"{}\"; page is now {}",
+        let here = self.eval("[document.title, location.href]").await?;
+        let changed = self.load.started || here[1] != p["href"];
+        let out = format!(
+            "clicked {element} \"{}\"; page is now {} ({})",
             p["label"].as_str().unwrap_or_default(),
-            here.as_str().unwrap_or_default()
-        ))
+            here[0].as_str().unwrap_or_default(),
+            here[1].as_str().unwrap_or_default()
+        );
+        Ok((out, changed))
     }
 
     async fn wait_loaded(&mut self) {
@@ -3313,6 +3326,66 @@ pub(super) mod tests {
             "{out}"
         );
         assert!(out.contains("textbox \"Customer\""), "{out}");
+        b.run("a", "browser_close", json!({})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_click_or_submit_that_opens_a_page_returns_its_snapshot_and_one_that_stays_does_not()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let Some((bin, _chrome)) = headless_chrome(dir.path()) else {
+            return;
+        };
+        let url = format!(
+            "http://127.0.0.1:{}/",
+            page_server(
+                "<!doctype html><title>start</title><script>if (location.search) document.title = 'at ' + location.search</script>\
+                 <button onclick=\"document.title = 'stayed'\">Stay</button><a href=\"?next\">Next</a>\
+                 <form><input name=q aria-label=Query></form>",
+            )
+            .await
+        );
+        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let b = Browser::new(bin, dir.path().join("p"), cdp, true);
+        b.run("a", "browser_navigate", json!({"url": url}))
+            .await
+            .unwrap();
+        let stay = b
+            .run("a", "browser_click", json!({"ref": "e1"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            stay,
+            format!("clicked e1 \"Stay\"; page is now stayed ({url})")
+        );
+        let next = b
+            .run("a", "browser_click", json!({"ref": "e2"}))
+            .await
+            .unwrap();
+        assert!(
+            next.starts_with(&format!(
+                "clicked e2 \"Next\"; page is now at ?next ({url}?next)\nPage: at ?next ({url}?next)\n"
+            )),
+            "{next}"
+        );
+        let typed = b
+            .run(
+                "a",
+                "browser_type",
+                json!({"ref": "e3", "text": "hi", "submit": true}),
+            )
+            .await
+            .unwrap();
+        assert!(
+            typed.starts_with(&format!(
+                "typed 2 characters into e3 and pressed Enter\nPage: at ?q=hi ({url}?q=hi)\n"
+            )),
+            "{typed}"
+        );
         b.run("a", "browser_close", json!({})).await.unwrap();
     }
 
