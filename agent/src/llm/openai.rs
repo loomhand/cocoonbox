@@ -136,15 +136,8 @@ pub fn body(req: &Request<'_>) -> Value {
         }
     }
     flush_shots(&mut messages, &mut shots);
-    if cache
-        && let Some(part) = messages
-            .iter_mut()
-            .rev()
-            .find(|m| m["role"] == "user")
-            .and_then(|m| m["content"].as_array_mut())
-            .and_then(|c| c.last_mut())
-    {
-        part["cache_control"] = json!({"type": "ephemeral"});
+    if cache && let Some(last) = messages.last_mut() {
+        cache_tail(&mut last["content"]);
     }
     let mut body = json!({
         "model": req.model,
@@ -172,6 +165,20 @@ pub fn body(req: &Request<'_>) -> Value {
         }
     }
     body
+}
+
+/// Marks the last part of `content` as a prompt-cache breakpoint; text content becomes one text part.
+fn cache_tail(content: &mut Value) {
+    if let Value::String(text) = content
+        && !text.is_empty()
+    {
+        let mut part = json!({"type": "text"});
+        part["text"] = std::mem::take(text).into();
+        *content = Value::Array(vec![part]);
+    }
+    if let Some(part) = content.as_array_mut().and_then(|c| c.last_mut()) {
+        part["cache_control"] = json!({"type": "ephemeral"});
+    }
 }
 
 fn flush_shots(messages: &mut Vec<Value>, shots: &mut Vec<Part>) {
@@ -372,5 +379,47 @@ mod tests {
                 .unwrap()
                 .starts_with("data:image/png;base64,")
         );
+    }
+
+    #[test]
+    fn a_claude_request_caches_its_last_message_even_when_it_is_a_text_tool_result() {
+        let messages = vec![
+            Message::User(vec![Part::Text("go".into())]),
+            Message::Assistant {
+                text: String::new(),
+                calls: vec![ToolCall {
+                    id: "c1".into(),
+                    name: "shell".into(),
+                    arguments: "{}".into(),
+                }],
+            },
+            Message::Tool {
+                call_id: "c1".into(),
+                text: "ok".into(),
+                image: None,
+                is_error: false,
+            },
+        ];
+        let req = Request {
+            model: "anthropic/claude-opus-5-5",
+            system: "sys",
+            messages: &messages,
+            tools: &[],
+            max_tokens: 100,
+            vision: false,
+            forbid_calls: false,
+            effort: None,
+        };
+        let b = body(&req);
+        let msgs = b["messages"].as_array().unwrap();
+        assert_eq!(
+            msgs[3],
+            json!({"role": "tool", "tool_call_id": "c1", "content": [{"type": "text", "text": "ok", "cache_control": {"type": "ephemeral"}}]})
+        );
+        assert_eq!(
+            msgs[1],
+            json!({"role": "user", "content": [{"type": "text", "text": "go"}]})
+        );
+        assert_eq!(b.to_string().matches("cache_control").count(), 2);
     }
 }
