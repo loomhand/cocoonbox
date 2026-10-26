@@ -145,7 +145,7 @@ async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_th
         .await
         .unwrap();
     assert!(out.is_error, "{}", out.text);
-    assert!(out.text.contains("\n  \"error\": {"), "{}", out.text);
+    assert!(out.text.contains(r#","error":{"#), "{}", out.text);
     let (got, _) = calls.recv().await.unwrap();
     assert_eq!(
         got.args["script"],
@@ -247,11 +247,11 @@ async fn a_failed_run_shuttle_answers_as_an_error_keeps_its_report_and_shape() {
         .await
         .unwrap();
     assert!(
-        out.is_error && out.text.contains("\n  \"error\": {"),
+        out.is_error && out.text.contains(r#","error":{"#),
         "{}",
         out.text
     );
-    assert!(out.text.contains("\"message\": \"boom\""), "{}", out.text);
+    assert!(out.text.contains(r#""message":"boom""#), "{}", out.text);
 
     let out = th
         .call(&call(

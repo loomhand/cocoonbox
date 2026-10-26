@@ -175,7 +175,7 @@ mod tests {
         let out = split.run("ag", "demo_run", json!({"code": "x"})).await;
         assert!(!out.is_error, "{}", out.text);
         assert!(
-            out.text.contains("\"screenshot_path\": \"/tmp/shot.webp\""),
+            out.text.contains(r#""screenshot_path":"/tmp/shot.webp""#),
             "{}",
             out.text
         );
