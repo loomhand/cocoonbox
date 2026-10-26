@@ -34,6 +34,7 @@ use common::{owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+const REPEAT: &str = "[screen unchanged since the screenshot 2 results back]";
 
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
@@ -1392,14 +1393,18 @@ async fn run_delegate(messages_wire: bool) {
         let vision = gw_bodies(&h.gw_log, "/v1/messages");
         assert_eq!(vision.len(), 4);
         assert_eq!(vision[0]["model"], "anthropic/claude-sonnet-5");
-        let last_user = vision[3]["messages"]
-            .as_array()
-            .unwrap()
-            .last()
-            .unwrap()
-            .clone();
-        assert_eq!(last_user["content"][0]["type"], "tool_result");
-        assert_eq!(last_user["content"][0]["content"][1]["type"], "image");
+        let last_user = |i: usize| {
+            vision[i]["messages"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(last_user(1)["content"][0]["type"], "tool_result");
+        assert_eq!(last_user(1)["content"][0]["content"][1]["type"], "image");
+        let repeat = last_user(3).to_string();
+        assert!(repeat.contains(REPEAT) && !repeat.contains(PNG), "{repeat}");
         assert_eq!(chats.len(), 2);
         &chats[1]
     } else {
@@ -1407,11 +1412,14 @@ async fn run_delegate(messages_wire: bool) {
         assert!(gw_bodies(&h.gw_log, "/v1/messages").is_empty());
         let models: Vec<&str> = chats.iter().map(|c| c["model"].as_str().unwrap()).collect();
         assert_eq!(models[1..5], ["anthropic/claude-sonnet-5"; 4]);
-        let msgs = chats[4]["messages"].as_array().unwrap();
+        let msgs = chats[2]["messages"].as_array().unwrap();
         let roles: Vec<&str> = msgs.iter().map(|m| m["role"].as_str().unwrap()).collect();
         assert_eq!(roles.last(), Some(&"user"), "{roles:?}");
         let shot = &msgs.last().unwrap()["content"][1]["image_url"]["url"];
         assert!(shot.as_str().unwrap().starts_with("data:image/png;base64,"));
+        let last = chats[4]["messages"].as_array().unwrap().last().unwrap();
+        assert_eq!(last["role"], "tool");
+        assert!(last.to_string().contains(REPEAT), "{last}");
         &chats[5]
     };
     let main_tool = main_after["messages"]

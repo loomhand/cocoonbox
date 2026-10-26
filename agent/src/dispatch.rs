@@ -1,5 +1,6 @@
 //! The tool dispatcher: the one path from every transport and the loop down to the tools.
 
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use base64::Engine;
@@ -49,6 +50,43 @@ impl ToolOutput {
             text: text.into(),
             image: None,
             is_error: true,
+        }
+    }
+}
+
+/// The last screenshot a model got, so that a byte-identical repeat goes to it as a text note.
+#[derive(Default)]
+pub struct LastShot {
+    image: Option<Bytes>,
+    since: usize,
+}
+
+impl LastShot {
+    /// Replaces the screenshot of `out`, the result of tool `name`, with a note when it repeats the last
+    /// one; a `screenshot` call always keeps its image.
+    pub fn note_repeat(&mut self, name: &str, out: &mut ToolOutput) {
+        self.since += 1;
+        let Some(image) = &out.image else {
+            return;
+        };
+        if name == "screenshot" || self.image.as_ref() != Some(image) {
+            self.image = Some(image.clone());
+            self.since = 0;
+            return;
+        }
+        out.image = None;
+        if !out.text.is_empty() {
+            out.text.push('\n');
+        }
+        if self.since == 1 {
+            out.text
+                .push_str("[screen unchanged since the previous result's screenshot]");
+        } else {
+            let _ = write!(
+                out.text,
+                "[screen unchanged since the screenshot {} results back]",
+                self.since
+            );
         }
     }
 }
@@ -416,5 +454,49 @@ mod tests {
             "{all}"
         );
         assert_eq!(all.matches("[card number]").count(), 2, "{all}");
+    }
+
+    #[test]
+    fn a_repeated_screenshot_becomes_a_note_unless_a_screenshot_call_asks() {
+        let out = |text: &str, image: Option<&'static [u8]>| ToolOutput {
+            text: text.to_owned(),
+            image: image.map(Bytes::from_static),
+            is_error: false,
+        };
+        let mut last = LastShot::default();
+        let mut steps = [
+            ("computer_act", out("clicked", Some(b"a"))),
+            ("computer_state", out("state", Some(b"a"))),
+            ("shell", out("ok", None)),
+            ("computer_act", out("", Some(b"a"))),
+            ("screenshot", out("", Some(b"a"))),
+            ("computer_act", out("typed", Some(b"b"))),
+            ("computer_act", out("typed", Some(b"a"))),
+        ];
+        for (name, o) in &mut steps {
+            last.note_repeat(name, o);
+        }
+        let got: Vec<(&str, bool)> = steps
+            .iter()
+            .map(|(_, o)| (o.text.as_str(), o.image.is_some()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("clicked", true),
+                (
+                    "state\n[screen unchanged since the previous result's screenshot]",
+                    false
+                ),
+                ("ok", false),
+                (
+                    "[screen unchanged since the screenshot 3 results back]",
+                    false
+                ),
+                ("", true),
+                ("typed", true),
+                ("typed", true),
+            ]
+        );
     }
 }

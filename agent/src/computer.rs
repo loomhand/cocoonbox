@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::task::TaskTracker;
 
-use crate::dispatch::{Dispatcher, ToolOutput};
+use crate::dispatch::{Dispatcher, LastShot, ToolOutput};
 use crate::llm::{Message, Part, Request, Tally, ToolSpec};
 use crate::runner::{Runtime, TurnCtx};
 use crate::{new_id, prompts};
@@ -85,6 +85,7 @@ async fn drive(
         None => Cow::Borrowed(rt.computer_prompt.as_str()),
     };
     let mut steps = 0;
+    let mut shots = LastShot::default();
     let report = loop {
         // prune in batches so the cached prompt prefix survives most steps
         if image_count(&messages) > PRUNE_AT {
@@ -110,7 +111,7 @@ async fn drive(
         }
         let mut results = Vec::with_capacity(step.calls.len());
         for call in &step.calls {
-            let out = match serde_json::from_str::<Value>(&call.arguments) {
+            let mut out = match serde_json::from_str::<Value>(&call.arguments) {
                 Ok(args @ Value::Object(_)) => {
                     rt.dispatcher
                         .execute(&caller, &call.id, &call.name, args)
@@ -125,6 +126,7 @@ async fn drive(
                     out
                 }
             };
+            shots.note_repeat(&call.name, &mut out);
             results.push(Message::Tool {
                 call_id: call.id.clone(),
                 text: out.text,

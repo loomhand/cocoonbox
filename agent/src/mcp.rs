@@ -20,7 +20,7 @@ use tokio::sync::Notify;
 use tonic::Status;
 
 use crate::config::Automation;
-use crate::dispatch::{Caller, ToolOutput, uses_driver};
+use crate::dispatch::{Caller, LastShot, ToolOutput, uses_driver};
 use crate::identity::{CREDENTIAL_HEADER, Denied, Gate, Principal};
 use crate::llm::{b64, image_mime};
 use crate::pb::{self, AgentStatus, Role, event, transcript_entry::Body as Entry};
@@ -354,6 +354,7 @@ impl Mcp {
             listed: Mutex::new(None),
             changed: Notify::new(),
             streak: AtomicU32::new(0),
+            shot: Mutex::default(),
         });
         if let Some(r) = &session.record {
             let note = format!("MCP session opened by {client} {version}");
@@ -572,6 +573,7 @@ impl Mcp {
             out = self.run(s, &label, name, args).await?;
         }
         lock(&s.driver).last_seen = Instant::now();
+        lock(&s.shot).note_repeat(name, &mut out);
         let mut text = out.text;
         if self.automation.plans() && s.gui_streak(name, launch) {
             text.push_str(NUDGE);
@@ -669,6 +671,7 @@ struct Session {
     changed: Notify,
     /// Consecutive `computer_act` calls other than `launch_app` since the last other tool call.
     streak: AtomicU32,
+    shot: Mutex<LastShot>,
 }
 
 impl Session {
