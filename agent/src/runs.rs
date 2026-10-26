@@ -128,7 +128,7 @@ pub async fn plan_report(
     Ok(report)
 }
 
-/// A run's report as JSON text, with a kept screenshot unless turned off; an error in the report is an error result.
+/// A run's report as compact JSON, with a kept screenshot unless turned off; an error in the report is an error result.
 pub async fn finish_run(
     mut report: Value,
     screenshot: bool,
@@ -149,7 +149,7 @@ pub async fn finish_run(
         }
     }
     out.is_error = !report["error"].is_null();
-    out.text = serde_json::to_string_pretty(&report).map_err(|e| format!("encode report: {e}"))?;
+    out.text = report.to_string();
     Ok(out)
 }
 
@@ -258,6 +258,14 @@ fn default_screenshot() -> bool {
 mod tests {
     use super::*;
 
+    struct NoShots;
+
+    impl Shots for NoShots {
+        async fn shot(&self, _: Option<u32>, _: bool) -> Result<Option<Shot>, String> {
+            Ok(None)
+        }
+    }
+
     #[test]
     fn a_relayed_result_past_the_cap_becomes_the_local_notice() {
         let mut small = json!({"n": 1});
@@ -269,6 +277,14 @@ mod tests {
             big,
             "more than 262144 bytes; write it to a file and return the path"
         );
+    }
+
+    #[tokio::test]
+    async fn a_run_report_is_compact_json() {
+        let report = json!({"result": {"rows": [1, 2]}, "logs": ["a"]});
+        let out = finish_run(report, false, None, &NoShots).await.unwrap();
+        assert_eq!(out.text, r#"{"result":{"rows":[1,2]},"logs":["a"]}"#);
+        assert!(!out.is_error);
     }
 
     #[test]
