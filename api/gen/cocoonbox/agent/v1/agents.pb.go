@@ -828,7 +828,7 @@ type TranscriptEntry_TurnEnd struct {
 }
 
 type TranscriptEntry_Usage struct {
-	// The turn's usage so far, recorded after each model call; TurnEnd.usage has the final sum.
+	// The turn's usage so far, recorded after each completed model call; TurnEnd.usage is the final sum.
 	Usage *Usage `protobuf:"bytes,16,opt,name=usage,proto3,oneof"`
 }
 
