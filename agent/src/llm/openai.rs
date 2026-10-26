@@ -153,6 +153,9 @@ pub fn body(req: &Request<'_>) -> Value {
         "max_tokens": req.max_tokens,
     });
     body["messages"] = Value::Array(messages);
+    if let Some(effort) = req.effort {
+        body["reasoning_effort"] = effort.into();
+    }
     if !req.tools.is_empty() {
         body["tools"] = req
             .tools
@@ -325,6 +328,7 @@ mod tests {
             max_tokens: 100,
             vision: false,
             forbid_calls: false,
+            effort: None,
         };
         let text_body = body(&req);
         let msgs = text_body["messages"].as_array().unwrap();
@@ -334,6 +338,12 @@ mod tests {
         assert_eq!(text_body["tools"][0]["function"]["name"], "shell");
         assert!(text_body.get("tool_choice").is_none());
         assert!(!text_body.to_string().contains("cache_control"));
+        assert!(text_body.get("reasoning_effort").is_none());
+        let effort = body(&Request {
+            effort: Some("medium"),
+            ..req
+        });
+        assert_eq!(effort["reasoning_effort"], "medium");
         req.forbid_calls = true;
         let report_body = body(&req);
         assert_eq!(report_body["tool_choice"], "none");

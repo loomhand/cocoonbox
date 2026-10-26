@@ -658,6 +658,7 @@ type TranscriptEntry struct {
 	//	*TranscriptEntry_ToolResult
 	//	*TranscriptEntry_Approval
 	//	*TranscriptEntry_TurnEnd
+	//	*TranscriptEntry_Usage
 	Body          isTranscriptEntry_Body `protobuf_oneof:"body"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -789,6 +790,15 @@ func (x *TranscriptEntry) GetTurnEnd() *TurnEnd {
 	return nil
 }
 
+func (x *TranscriptEntry) GetUsage() *Usage {
+	if x != nil {
+		if x, ok := x.Body.(*TranscriptEntry_Usage); ok {
+			return x.Usage
+		}
+	}
+	return nil
+}
+
 type isTranscriptEntry_Body interface {
 	isTranscriptEntry_Body()
 }
@@ -817,6 +827,11 @@ type TranscriptEntry_TurnEnd struct {
 	TurnEnd *TurnEnd `protobuf:"bytes,15,opt,name=turn_end,json=turnEnd,proto3,oneof"`
 }
 
+type TranscriptEntry_Usage struct {
+	// The turn's usage so far, recorded after each model call; TurnEnd.usage has the final sum.
+	Usage *Usage `protobuf:"bytes,16,opt,name=usage,proto3,oneof"`
+}
+
 func (*TranscriptEntry_Text) isTranscriptEntry_Body() {}
 
 func (*TranscriptEntry_Reasoning) isTranscriptEntry_Body() {}
@@ -828,6 +843,8 @@ func (*TranscriptEntry_ToolResult) isTranscriptEntry_Body() {}
 func (*TranscriptEntry_Approval) isTranscriptEntry_Body() {}
 
 func (*TranscriptEntry_TurnEnd) isTranscriptEntry_Body() {}
+
+func (*TranscriptEntry_Usage) isTranscriptEntry_Body() {}
 
 type TextBlock struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -1831,7 +1848,7 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\x05limit\x18\x03 \x01(\rR\x05limit\"j\n" +
 	"\x0eTranscriptPage\x12=\n" +
 	"\aentries\x18\x01 \x03(\v2#.cocoonbox.agent.v1.TranscriptEntryR\aentries\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\x98\x04\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xcb\x04\n" +
 	"\x0fTranscriptEntry\x12\x10\n" +
 	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12\x19\n" +
 	"\bagent_id\x18\x02 \x01(\tR\aagentId\x12\x17\n" +
@@ -1845,7 +1862,8 @@ const file_cocoonbox_agent_v1_agents_proto_rawDesc = "" +
 	"\vtool_result\x18\r \x01(\v2\x1e.cocoonbox.agent.v1.ToolResultH\x00R\n" +
 	"toolResult\x12A\n" +
 	"\bapproval\x18\x0e \x01(\v2#.cocoonbox.agent.v1.ApprovalRequestH\x00R\bapproval\x128\n" +
-	"\bturn_end\x18\x0f \x01(\v2\x1b.cocoonbox.agent.v1.TurnEndH\x00R\aturnEndB\x06\n" +
+	"\bturn_end\x18\x0f \x01(\v2\x1b.cocoonbox.agent.v1.TurnEndH\x00R\aturnEnd\x121\n" +
+	"\x05usage\x18\x10 \x01(\v2\x19.cocoonbox.agent.v1.UsageH\x00R\x05usageB\x06\n" +
 	"\x04body\"Q\n" +
 	"\tTextBlock\x12\x12\n" +
 	"\x04text\x18\x01 \x01(\tR\x04text\x12\x1a\n" +
@@ -1990,31 +2008,32 @@ var file_cocoonbox_agent_v1_agents_proto_depIdxs = []int32{
 	15, // 8: cocoonbox.agent.v1.TranscriptEntry.tool_result:type_name -> cocoonbox.agent.v1.ToolResult
 	16, // 9: cocoonbox.agent.v1.TranscriptEntry.approval:type_name -> cocoonbox.agent.v1.ApprovalRequest
 	17, // 10: cocoonbox.agent.v1.TranscriptEntry.turn_end:type_name -> cocoonbox.agent.v1.TurnEnd
-	18, // 11: cocoonbox.agent.v1.TurnEnd.usage:type_name -> cocoonbox.agent.v1.Usage
-	19, // 12: cocoonbox.agent.v1.Usage.models:type_name -> cocoonbox.agent.v1.ModelUsage
-	3,  // 13: cocoonbox.agent.v1.Agents.Create:input_type -> cocoonbox.agent.v1.CreateAgentRequest
-	4,  // 14: cocoonbox.agent.v1.Agents.List:input_type -> cocoonbox.agent.v1.ListAgentsRequest
-	7,  // 15: cocoonbox.agent.v1.Agents.Send:input_type -> cocoonbox.agent.v1.SendRequest
-	9,  // 16: cocoonbox.agent.v1.Agents.Transcript:input_type -> cocoonbox.agent.v1.TranscriptRequest
-	20, // 17: cocoonbox.agent.v1.Agents.Respond:input_type -> cocoonbox.agent.v1.RespondRequest
-	22, // 18: cocoonbox.agent.v1.Agents.Cancel:input_type -> cocoonbox.agent.v1.CancelRequest
-	24, // 19: cocoonbox.agent.v1.Agents.Rename:input_type -> cocoonbox.agent.v1.RenameAgentRequest
-	25, // 20: cocoonbox.agent.v1.Agents.Delete:input_type -> cocoonbox.agent.v1.DeleteAgentRequest
-	27, // 21: cocoonbox.agent.v1.Agents.End:input_type -> cocoonbox.agent.v1.EndRequest
-	2,  // 22: cocoonbox.agent.v1.Agents.Create:output_type -> cocoonbox.agent.v1.Agent
-	5,  // 23: cocoonbox.agent.v1.Agents.List:output_type -> cocoonbox.agent.v1.ListAgentsResponse
-	8,  // 24: cocoonbox.agent.v1.Agents.Send:output_type -> cocoonbox.agent.v1.SendResponse
-	10, // 25: cocoonbox.agent.v1.Agents.Transcript:output_type -> cocoonbox.agent.v1.TranscriptPage
-	21, // 26: cocoonbox.agent.v1.Agents.Respond:output_type -> cocoonbox.agent.v1.RespondResponse
-	23, // 27: cocoonbox.agent.v1.Agents.Cancel:output_type -> cocoonbox.agent.v1.CancelResponse
-	2,  // 28: cocoonbox.agent.v1.Agents.Rename:output_type -> cocoonbox.agent.v1.Agent
-	26, // 29: cocoonbox.agent.v1.Agents.Delete:output_type -> cocoonbox.agent.v1.DeleteAgentResponse
-	28, // 30: cocoonbox.agent.v1.Agents.End:output_type -> cocoonbox.agent.v1.EndResponse
-	22, // [22:31] is the sub-list for method output_type
-	13, // [13:22] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	18, // 11: cocoonbox.agent.v1.TranscriptEntry.usage:type_name -> cocoonbox.agent.v1.Usage
+	18, // 12: cocoonbox.agent.v1.TurnEnd.usage:type_name -> cocoonbox.agent.v1.Usage
+	19, // 13: cocoonbox.agent.v1.Usage.models:type_name -> cocoonbox.agent.v1.ModelUsage
+	3,  // 14: cocoonbox.agent.v1.Agents.Create:input_type -> cocoonbox.agent.v1.CreateAgentRequest
+	4,  // 15: cocoonbox.agent.v1.Agents.List:input_type -> cocoonbox.agent.v1.ListAgentsRequest
+	7,  // 16: cocoonbox.agent.v1.Agents.Send:input_type -> cocoonbox.agent.v1.SendRequest
+	9,  // 17: cocoonbox.agent.v1.Agents.Transcript:input_type -> cocoonbox.agent.v1.TranscriptRequest
+	20, // 18: cocoonbox.agent.v1.Agents.Respond:input_type -> cocoonbox.agent.v1.RespondRequest
+	22, // 19: cocoonbox.agent.v1.Agents.Cancel:input_type -> cocoonbox.agent.v1.CancelRequest
+	24, // 20: cocoonbox.agent.v1.Agents.Rename:input_type -> cocoonbox.agent.v1.RenameAgentRequest
+	25, // 21: cocoonbox.agent.v1.Agents.Delete:input_type -> cocoonbox.agent.v1.DeleteAgentRequest
+	27, // 22: cocoonbox.agent.v1.Agents.End:input_type -> cocoonbox.agent.v1.EndRequest
+	2,  // 23: cocoonbox.agent.v1.Agents.Create:output_type -> cocoonbox.agent.v1.Agent
+	5,  // 24: cocoonbox.agent.v1.Agents.List:output_type -> cocoonbox.agent.v1.ListAgentsResponse
+	8,  // 25: cocoonbox.agent.v1.Agents.Send:output_type -> cocoonbox.agent.v1.SendResponse
+	10, // 26: cocoonbox.agent.v1.Agents.Transcript:output_type -> cocoonbox.agent.v1.TranscriptPage
+	21, // 27: cocoonbox.agent.v1.Agents.Respond:output_type -> cocoonbox.agent.v1.RespondResponse
+	23, // 28: cocoonbox.agent.v1.Agents.Cancel:output_type -> cocoonbox.agent.v1.CancelResponse
+	2,  // 29: cocoonbox.agent.v1.Agents.Rename:output_type -> cocoonbox.agent.v1.Agent
+	26, // 30: cocoonbox.agent.v1.Agents.Delete:output_type -> cocoonbox.agent.v1.DeleteAgentResponse
+	28, // 31: cocoonbox.agent.v1.Agents.End:output_type -> cocoonbox.agent.v1.EndResponse
+	23, // [23:32] is the sub-list for method output_type
+	14, // [14:23] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_cocoonbox_agent_v1_agents_proto_init() }
@@ -2029,6 +2048,7 @@ func file_cocoonbox_agent_v1_agents_proto_init() {
 		(*TranscriptEntry_ToolResult)(nil),
 		(*TranscriptEntry_Approval)(nil),
 		(*TranscriptEntry_TurnEnd)(nil),
+		(*TranscriptEntry_Usage)(nil),
 	}
 	file_cocoonbox_agent_v1_agents_proto_msgTypes[25].OneofWrappers = []any{
 		(*EndRequest_AgentId)(nil),

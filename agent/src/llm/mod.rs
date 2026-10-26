@@ -108,6 +108,8 @@ pub struct Request<'a> {
     pub vision: bool,
     /// Offers `tools` but forbids calling them, so the cached prompt prefix still matches.
     pub forbid_calls: bool,
+    /// The reasoning effort gw maps to the model's own setting; `None` leaves the model default.
+    pub effort: Option<&'a str>,
 }
 
 /// Token usage of one or more requests.
@@ -652,6 +654,7 @@ mod tests {
             max_tokens: 16,
             vision: false,
             forbid_calls: false,
+            effort: None,
         }
     }
 

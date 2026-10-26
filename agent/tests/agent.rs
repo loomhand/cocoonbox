@@ -72,6 +72,7 @@ impl Harness {
             Automation::Minimal,
             false,
             None,
+            None,
         )
         .await
     }
@@ -88,6 +89,7 @@ impl Harness {
             None,
             Automation::Desk,
             false,
+            None,
             None,
         )
         .await
@@ -106,6 +108,7 @@ impl Harness {
             Automation::Desk,
             false,
             None,
+            None,
         )
         .await
     }
@@ -122,6 +125,7 @@ impl Harness {
             Some(connect_url),
             Automation::Minimal,
             false,
+            None,
             None,
         )
         .await
@@ -140,6 +144,7 @@ impl Harness {
             Automation::Desk,
             true,
             None,
+            None,
         )
         .await
     }
@@ -156,6 +161,7 @@ impl Harness {
             None,
             Automation::Android,
             false,
+            None,
             None,
         )
         .await
@@ -179,6 +185,7 @@ impl Harness {
             Automation::Desk,
             false,
             None,
+            None,
         )
         .await
     }
@@ -194,6 +201,7 @@ impl Harness {
         automation: Automation,
         plugin: bool,
         checkpoint_nudge: Option<Duration>,
+        reasoning_effort: Option<&'static str>,
     ) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
@@ -280,6 +288,7 @@ impl Harness {
             workspace: workspace.clone(),
             state_roots: cocoonbox_agent::state::default_roots(&home, &workspace),
             checkpoint_nudge,
+            reasoning_effort,
         };
         let model = Arc::new(
             cocoonbox_agent::llm::Client::new(
@@ -377,22 +386,26 @@ async fn wait_turn_end(
     agents: &mut AgentsClient<Channel>,
     agent_id: &str,
 ) -> Vec<pb::TranscriptEntry> {
+    let mut entries: Vec<pb::TranscriptEntry> = Vec::new();
     for _ in 0..500 {
         let page = agents
             .transcript(authed(pb::TranscriptRequest {
                 agent_id: agent_id.into(),
-                after_seq: 0,
+                after_seq: entries.last().map_or(0, |e| e.seq),
                 limit: 1000,
             }))
             .await
             .unwrap()
             .into_inner();
-        if page
-            .entries
+        entries.extend(page.entries);
+        if page.has_more {
+            continue;
+        }
+        if entries
             .iter()
             .any(|e| matches!(e.body, Some(Body::TurnEnd(_))))
         {
-            return page.entries;
+            return entries;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
@@ -1103,7 +1116,11 @@ async fn shell_tool_loop_streams_into_transcript_and_events() {
     assert_eq!(turn, again);
     let entries = wait_turn_end(&mut agents, &agent_id).await;
 
-    let bodies: Vec<&Body> = entries.iter().filter_map(|e| e.body.as_ref()).collect();
+    let bodies: Vec<&Body> = entries
+        .iter()
+        .filter_map(|e| e.body.as_ref())
+        .filter(|b| !matches!(b, Body::Usage(_)))
+        .collect();
     assert!(matches!(bodies[0], Body::Text(t) if t.text == "run uname"));
     assert!(matches!(bodies[1], Body::Text(t) if t.text == "Let me check."));
     let Body::ToolCall(call) = bodies[2] else {
@@ -1505,6 +1522,7 @@ async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
         Automation::Minimal,
         false,
         Some(Duration::from_millis(1)),
+        None,
     )
     .await;
     let mut agents = h.agents().await;
@@ -1552,35 +1570,8 @@ async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
 async fn the_checkpoint_nudge_fires_once_in_the_subagent_and_never_when_off() {
     let line =
         "If the deliverable is not saved at its target path yet, save a complete first version now";
-    let day = Duration::from_secs(24 * 3600);
     for nudge in [Some(Duration::from_millis(1)), None] {
-        let h = Harness::boot(
-            vec![
-                (
-                    "chat/completions",
-                    chat_tool_call(
-                        "call_d",
-                        "delegate_computer",
-                        &json!({"task": "look at the screen"}),
-                    ),
-                ),
-                (
-                    "chat/completions",
-                    chat_tool_call("toolu_1", "computer_state", &json!({})),
-                ),
-                ("chat/completions", chat_text("Looked.")),
-                ("chat/completions", chat_text("Done.")),
-            ],
-            false,
-            Duration::from_secs(600),
-            day,
-            None,
-            None,
-            Automation::Desk,
-            false,
-            nudge,
-        )
-        .await;
+        let h = delegate_once(nudge, None).await;
         let mut agents = h.agents().await;
         let agent_id = create_agent(&mut agents).await;
         send(&mut agents, &agent_id, "look", "").await;
@@ -1621,6 +1612,120 @@ async fn the_checkpoint_nudge_fires_once_in_the_subagent_and_never_when_off() {
         assert_eq!(last["role"], "user");
         assert_eq!(last["content"][0]["text"], fired[0].text);
     }
+}
+
+#[tokio::test]
+async fn each_model_call_records_the_turns_usage_so_far_before_the_turn_ends() {
+    let h = delegate_once(None, None).await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "look", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("want turn end, got {:?}", entries.last());
+    };
+    assert!(end.ok, "{}", end.error);
+    let spent: Vec<(u64, &pb::Usage)> = entries
+        .iter()
+        .filter_map(|e| match &e.body {
+            Some(Body::Usage(u)) if e.role == i32::from(pb::Role::System) => Some((e.seq, u)),
+            _ => None,
+        })
+        .collect();
+    let totals: Vec<(u64, u64, u64)> = spent
+        .iter()
+        .map(|(_, u)| (u.input_tokens, u.output_tokens, u.cached_input_tokens))
+        .collect();
+    assert_eq!(
+        totals,
+        [(100, 10, 0), (200, 20, 0), (350, 25, 100), (500, 30, 200)]
+    );
+    let calls: Vec<Vec<(&str, u64)>> = spent
+        .iter()
+        .map(|(_, u)| {
+            u.models
+                .iter()
+                .map(|m| (m.model.as_str(), m.calls))
+                .collect()
+        })
+        .collect();
+    let (main, computer) = ("deepseek/deepseek-v4.1-flash", "anthropic/claude-sonnet-5");
+    assert_eq!(
+        calls,
+        [
+            vec![(main, 1)],
+            vec![(computer, 1), (main, 1)],
+            vec![(computer, 2), (main, 1)],
+            vec![(computer, 2), (main, 2)],
+        ]
+    );
+    let delegated = entries
+        .iter()
+        .find(|e| matches!(&e.body, Some(Body::ToolResult(r)) if r.call_id == "call_d"))
+        .unwrap();
+    assert!(
+        spent[0].0 < delegated.seq,
+        "the first call's usage waits for the subagent"
+    );
+    assert_eq!(spent.last().map(|(_, u)| *u), end.usage.as_ref());
+}
+
+#[tokio::test]
+async fn the_reasoning_effort_rides_on_every_model_request_and_is_off_by_default() {
+    for effort in [Some("medium"), None] {
+        let h = delegate_once(None, effort).await;
+        let mut agents = h.agents().await;
+        let agent_id = create_agent(&mut agents).await;
+        send(&mut agents, &agent_id, "look", "").await;
+        let entries = wait_turn_end(&mut agents, &agent_id).await;
+        assert!(
+            matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+        );
+        let chats = gw_bodies(&h.gw_log, "chat/completions");
+        assert_eq!(chats.len(), 4);
+        for (i, chat) in chats.iter().enumerate() {
+            assert_eq!(
+                chat.get("reasoning_effort").and_then(Value::as_str),
+                effort,
+                "request {i}"
+            );
+        }
+    }
+}
+
+/// A desk box whose main model delegates one look to the computer subagent, which takes one step.
+async fn delegate_once(
+    checkpoint_nudge: Option<Duration>,
+    reasoning_effort: Option<&'static str>,
+) -> Harness {
+    Harness::boot(
+        vec![
+            (
+                "chat/completions",
+                chat_tool_call(
+                    "call_d",
+                    "delegate_computer",
+                    &json!({"task": "look at the screen"}),
+                ),
+            ),
+            (
+                "chat/completions",
+                chat_tool_call("toolu_1", "computer_state", &json!({})),
+            ),
+            ("chat/completions", chat_text("Looked.")),
+            ("chat/completions", chat_text("Done.")),
+        ],
+        false,
+        Duration::from_secs(600),
+        Duration::from_secs(24 * 3600),
+        None,
+        None,
+        Automation::Desk,
+        false,
+        checkpoint_nudge,
+        reasoning_effort,
+    )
+    .await
 }
 
 #[tokio::test]
@@ -3767,6 +3872,7 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
             automation,
             true,
             None,
+            None,
         )
         .await;
         let mut mcp = McpClient::connect(&h).await;
@@ -5110,6 +5216,7 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
         None,
         Automation::Desk,
         false,
+        None,
         None,
     )
     .await;

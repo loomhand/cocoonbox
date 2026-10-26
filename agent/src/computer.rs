@@ -98,13 +98,13 @@ async fn drive(
             max_tokens: MAX_TOKENS,
             vision: true,
             forbid_calls: false,
+            effort: rt.cfg.reasoning_effort,
         };
         if steps == MAX_STEPS {
             break Err(rt.cap_report(ctx, &req, MAX_STEPS, SUBAGENT, usage).await);
         }
         steps += 1;
-        let step = rt.step(ctx, &req, SUBAGENT).await?;
-        usage.add(&rt.cfg.model_computer, 1, step.usage);
+        let step = rt.step(ctx, &req, SUBAGENT, usage).await?;
         if step.calls.is_empty() {
             break Ok(step.text);
         }
