@@ -47,7 +47,8 @@ setup_packages() {
 	dpkg -i "$deb" >/dev/null || apt-get install -y -qq -f >/dev/null
 	rm -f "$deb"
 	rm -f /etc/xdg/autostart/google-chrome.desktop /etc/xdg/autostart/xscreensaver.desktop /etc/xdg/autostart/tracker-miner-fs-3.desktop
-	systemctl --global mask tracker-miner-fs-3.service
+	systemctl --global mask tracker-miner-fs-3.service xdg-desktop-portal.service xdg-desktop-portal-gtk.service xdg-desktop-portal-gnome.service
+	systemctl mask udisks2.service
 	apt-get clean
 }
 
