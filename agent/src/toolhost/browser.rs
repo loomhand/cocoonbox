@@ -1002,6 +1002,7 @@ impl Browser {
             .arg(format!("--user-data-dir={}", self.profile.display()))
             .args([
                 "--force-renderer-accessibility",
+                "--gtk-version=4",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--disable-session-crashed-bubble",
