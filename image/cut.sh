@@ -63,6 +63,7 @@ stop_proxy() {
 }
 guest() { "$COCOON" vm exec "$@"; }
 active() { guest "$VM" -- systemctl -q is-active cocoonbox-xorg cocoonbox-session 2>/dev/null; }
+proxy_resolves() { guest "$VM" -- getent ahostsv4 127.0.0.1 >/dev/null 2>&1; }
 
 trap fail ERR
 trap 'stop_proxy' EXIT
@@ -94,6 +95,8 @@ for _ in $(seq 180); do active && break; sleep 1; done
 active
 
 if [ "$PROVISION" = 1 ] || [ ${#RUNTIMES[@]} -gt 0 ]; then
+	for _ in $(seq 60); do proxy_resolves && break; sleep 1; done
+	proxy_resolves
 	VSOCK=$("$COCOON" vm inspect "$VM" | python3 -c 'import json,sys; d=json.load(sys.stdin); print((d[0] if isinstance(d,list) else d)["vsock_socket"])')
 	python3 "$SRC/cut-proxy.py" "${VSOCK}_$EGRESS_PORT" &
 	PROXY_PID=$!
