@@ -46,7 +46,8 @@ setup_packages() {
 	# dpkg -i always unpacks, restoring the stock launcher the base image patched
 	dpkg -i "$deb" >/dev/null || apt-get install -y -qq -f >/dev/null
 	rm -f "$deb"
-	rm -f /etc/xdg/autostart/google-chrome.desktop /etc/xdg/autostart/xscreensaver.desktop
+	rm -f /etc/xdg/autostart/google-chrome.desktop /etc/xdg/autostart/xscreensaver.desktop /etc/xdg/autostart/tracker-miner-fs-3.desktop
+	systemctl --global mask tracker-miner-fs-3.service
 	apt-get clean
 }
 
