@@ -53,6 +53,8 @@ install -m 0644 deploy/cocoonbox-api.service /etc/systemd/system/
 systemctl enable --now cocoonbox-api
 ```
 
+A pair of api processes on one host runs from `deploy/cocoonbox-api@.service` as `cocoonbox-api@a` and `cocoonbox-api@b`, each from its own `/etc/cocoonbox/api-a.yaml` or `api-b.yaml` with `cluster.shared` on. The two differ in `listen` (`127.0.0.1:18210` and `:18220`), `mcp_listen` (`:18211` and `:18221`), `connect.box_listen` (`127.0.0.1:18212` and `:18222`) and `operator_socket` (under `/var/lib/cocoonbox-api-a` and `-b`), and set `cluster.drain: 3s`. `CB_API_PAIR=1 deploy/host/install-caddy` balances every route over both, keeps a box's calls on one process by `x-cocoonbox-box`, retries a call for 10 s while a process restarts, stops sending new HTTP calls to a process whose `/healthz` answers 503 (it drains), and serves the box door on `10.203.0.1:18091` for both. The single unit and `Caddyfile.cocoonbox` stay as they are.
+
 Before rolling back to a binary older than the `cluster:` config block, remove that block from `api.yaml`: older binaries refuse unknown keys.
 
 `/etc/cocoonbox/edge-signing.key` (`openssl genpkey -algorithm ed25519`) signs every credential agents admit; the api refuses to start without `provision.signing_key_file`.

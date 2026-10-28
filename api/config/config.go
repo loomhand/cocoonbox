@@ -112,6 +112,22 @@ type Cluster struct {
 	Ledger bool `json:"ledger"`
 	// Shared makes the database the truth for machines, box heads and operations, so api processes may serve together.
 	Shared bool `json:"shared"`
+	// Drain fails /healthz for this long after a stop signal before the api stops, so a balancer moves new calls to another api.
+	Drain Duration `json:"drain"`
+}
+
+func (c Cluster) validate(conditionalWrites bool) error {
+	var errs []error
+	if c.Shared && !c.Ledger {
+		errs = append(errs, errors.New("cluster.shared needs cluster.ledger"))
+	}
+	if c.Shared && !conditionalWrites {
+		errs = append(errs, errors.New("cluster.shared needs state.conditional_writes"))
+	}
+	if c.Drain < 0 {
+		errs = append(errs, fmt.Errorf("cluster.drain must not be negative, got %s", time.Duration(c.Drain)))
+	}
+	return errors.Join(errs...)
 }
 
 // Provision names the edge signing key, gw's admin API for per-user gw keys and the residential exit.
@@ -338,12 +354,7 @@ func (c *Config) validate() error {
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
-	if c.Cluster.Shared && !c.Cluster.Ledger {
-		errs = append(errs, errors.New("cluster.shared needs cluster.ledger"))
-	}
-	if c.Cluster.Shared && !c.State.ConditionalWrites {
-		errs = append(errs, errors.New("cluster.shared needs state.conditional_writes"))
-	}
+	errs = append(errs, c.Cluster.validate(c.State.ConditionalWrites))
 	return errors.Join(errs...)
 }
 
