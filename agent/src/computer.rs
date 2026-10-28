@@ -80,7 +80,7 @@ async fn drive(
         Some(machine) => Cow::Owned(prompts::computer(
             &rt.cfg.model_computer,
             rt.cfg.automation,
-            Some(&machine),
+            Some(machine),
         )),
         None => Cow::Borrowed(rt.computer_prompt.as_str()),
     };

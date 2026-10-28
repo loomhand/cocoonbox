@@ -356,20 +356,20 @@ impl Runtime {
     }
 
     /// The OS and desktop of a desk box that is not Linux, as its toolhost reads them once; none on Linux.
-    pub async fn machine(&self) -> Option<String> {
+    pub async fn machine(&self) -> Option<&str> {
         if cfg!(target_os = "linux") || self.cfg.automation != Automation::Desk {
             return None;
         }
         if let Some(machine) = self.machine.get() {
-            return Some(machine.clone());
+            return Some(machine);
         }
         let out = self
             .dispatcher
             .run("", None, "desktop_info", serde_json::json!({}))
             .await;
         let machine = prompts::machine(&serde_json::from_str(&out.text).unwrap_or_default())?;
-        let _ = self.machine.set(machine.clone());
-        Some(machine)
+        let _ = self.machine.set(machine);
+        self.machine.get().map(String::as_str)
     }
 
     /// Waits up to `limit` for interrupted turns and cleanups, then checkpoints the store.
@@ -657,7 +657,7 @@ impl Runtime {
             vision,
             self.cfg.automation,
             &self.cfg.routing_extra,
-            machine.as_deref(),
+            machine,
         );
         if let Some(keys) = tokio::fs::read_to_string(prompts::KEYS_FILE)
             .await

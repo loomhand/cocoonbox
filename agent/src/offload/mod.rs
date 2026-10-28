@@ -468,12 +468,12 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
                 env::load(layout, &repo).await?
             } else {
                 let wait_ms = u64::try_from(env::WAIT_LIMIT.as_millis()).unwrap_or(u64::MAX);
-                let resp = call(
+                let mut resp = call(
                     layout,
                     &json!({"op": "env", "repo": repo, "wait_ms": wait_ms}),
                 )
                 .await?;
-                serde_json::from_value(resp["report"].clone())
+                serde_json::from_value(resp["report"].take())
                     .map_err(|e| format!("decode env report: {e}"))?
             };
             if a.flag("json") {
