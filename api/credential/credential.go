@@ -10,6 +10,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -100,11 +101,7 @@ func (s *Signer) sign(v, box, wake, principal string) string {
 	if c, ok := s.cache[cacheKey]; ok && c.exp.Sub(now) > refreshBefore {
 		return c.value
 	}
-	for k, c := range s.cache {
-		if !c.exp.After(now) {
-			delete(s.cache, k)
-		}
-	}
+	maps.DeleteFunc(s.cache, func(_ string, c issued) bool { return !c.exp.After(now) })
 	exp := now.Add(lifetime).Truncate(time.Second)
 	fields := []string{s.keyID, box, wake, strconv.FormatInt(exp.Unix(), 10)}
 	if principal != "" {
