@@ -367,8 +367,8 @@ func TestResolve(t *testing.T) {
 		message string
 	}{
 		{name: "running", want: codes.OK},
-		{name: "machine vanished", addrErr: machines.ErrNotFound, want: codes.NotFound, message: "no such box for this user (it may have been deleted)"},
-		{name: "hibernated", addrErr: &machines.NotRunningError{State: machines.StateHibernated}, want: codes.Unavailable, message: "box is BOX_STATE_HIBERNATED"},
+		{name: "never started or parked", addrErr: machines.ErrNotFound, want: codes.Unavailable, message: "box is not running; call box_ensure to bring it up"},
+		{name: "hibernated", addrErr: &machines.NotRunningError{State: machines.StateHibernated}, want: codes.Unavailable, message: "box is hibernated; call box_ensure to bring it up"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

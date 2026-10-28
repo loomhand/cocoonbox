@@ -154,7 +154,7 @@ func TestMCPRejects(t *testing.T) {
 		{name: "no box id", authorization: "Bearer " + aliceToken, want: http.StatusBadRequest, message: "box id is required: /cocoonbox.mcp/<box id>"},
 		{
 			name: "box not running", authorization: "Bearer " + aliceToken, box: boxes.BoxID("alice"),
-			resolveErr: status.Error(codes.Unavailable, "box is BOX_STATE_HIBERNATED"), want: http.StatusServiceUnavailable, message: "box is BOX_STATE_HIBERNATED",
+			resolveErr: status.Error(codes.Unavailable, "box is hibernated; call box_ensure to bring it up"), want: http.StatusServiceUnavailable, message: "box is hibernated; call box_ensure to bring it up",
 		},
 	}
 	for _, tt := range tests {
