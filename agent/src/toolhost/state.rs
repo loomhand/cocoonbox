@@ -247,7 +247,11 @@ async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = rusqlite::Connection::open_with_flags(&src, flags)?;
         conn.busy_timeout(Duration::from_millis(500))?;
-        conn.backup(rusqlite::MAIN_DB, &copy, None)
+        conn.backup(
+            rusqlite::MAIN_DB,
+            &copy,
+            None::<fn(rusqlite::backup::Progress)>,
+        )
     })
     .await
     .ok()?;
