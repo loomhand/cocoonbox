@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,7 @@ const (
 	wakeBound     = 25 * time.Second
 	readyInterval = 500 * time.Millisecond
 	sessionIdle   = 24 * time.Hour
+	maxSessions   = 16
 	// maxInstructions is the Mac bridge's cap on a server's instructions, within every agent CLI's limit.
 	maxInstructions = 2048
 	acceptBoth      = "application/json, " + mcpwire.EventStream
@@ -54,34 +56,47 @@ type session struct {
 	upstream string
 }
 
-// reset drops the default box and its agent session, so the next call finds both again.
-func (s *session) reset() {
+// reset drops the default box and its agent session while it still holds upstream, so the next call finds both again.
+func (s *session) reset(upstream string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.box, s.image, s.upstream = "", "", ""
+	if s.upstream == upstream {
+		s.box, s.image, s.upstream = "", "", ""
+	}
 }
 
-// openSession records a new client session of caller and drops those idle for sessionIdle.
+// openSession records a new client session of caller, dropping sessions idle for sessionIdle and caller's least recently used past maxSessions.
 func (s *Server) openSession(caller, id string, params json.RawMessage) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	now := time.Now()
-	maps.DeleteFunc(s.sessions, func(_ string, sess *session) bool { return now.Sub(sess.used) > sessionIdle })
-	sess := &session{params: params, used: now}
-	s.sessions[caller+"\n"+id] = sess
-	return sess
+	return s.keepSession(caller, id, &session{params: params})
 }
 
 // session returns caller's client session id, made anew when this api does not know it, as after a restart.
 func (s *Server) session(caller, id string) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	sess := s.sessions[caller+"\n"+id]
-	if sess == nil {
-		sess = &session{}
-		s.sessions[caller+"\n"+id] = sess
+	if sess := s.sessions[caller+"\n"+id]; sess != nil {
+		sess.used = time.Now()
+		return sess
 	}
-	sess.used = time.Now()
+	return s.keepSession(caller, id, &session{})
+}
+
+func (s *Server) keepSession(caller, id string, sess *session) *session {
+	now := time.Now()
+	maps.DeleteFunc(s.sessions, func(_ string, old *session) bool { return now.Sub(old.used) > sessionIdle })
+	var held []string
+	for key := range s.sessions {
+		if strings.HasPrefix(key, caller+"\n") {
+			held = append(held, key)
+		}
+	}
+	if len(held) >= maxSessions {
+		delete(s.sessions, slices.MinFunc(held, func(a, b string) int { return s.sessions[a].used.Compare(s.sessions[b].used) }))
+	}
+	sess.used = now
+	s.sessions[caller+"\n"+id] = sess
 	return sess
 }
 
@@ -196,8 +211,8 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 func (s *Server) wake(ctx context.Context, sess *session, progress progressFunc) error {
 	sess.mu.Lock()
 	box := sess.box
+	sess.box, sess.image, sess.upstream = "", "", ""
 	sess.mu.Unlock()
-	sess.reset()
 	_, err := s.ensure(ctx, box, true, progress)
 	return err
 }
@@ -221,20 +236,19 @@ func (s *Server) ready(ctx context.Context, user string, sess *session) error {
 func (s *Server) forward(ctx context.Context, user string, sess *session, body []byte, accept string, use func(*http.Response) error) error {
 	for retried := false; ; retried = true {
 		box, upstream, err := s.connect(ctx, user, sess)
-		if err != nil {
-			return err
-		}
 		forgot := false
-		err = s.agents.Exchange(agentRequest(ctx, http.MethodPost, body, upstream, accept), user, box, func(resp *http.Response) error {
-			if forgot = resp.StatusCode == http.StatusNotFound && !retried; forgot {
-				return nil
-			}
-			return use(resp)
-		})
+		if err == nil {
+			err = s.agents.Exchange(agentRequest(ctx, http.MethodPost, body, upstream, accept), user, box, func(resp *http.Response) error {
+				if forgot = resp.StatusCode == http.StatusNotFound && !retried; forgot {
+					return nil
+				}
+				return use(resp)
+			})
+		}
 		if !forgot && (retried || status.Code(err) != codes.NotFound) {
 			return err
 		}
-		sess.reset()
+		sess.reset(upstream)
 	}
 }
 

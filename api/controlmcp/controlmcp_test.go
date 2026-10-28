@@ -398,6 +398,7 @@ type fakeBoxes struct {
 	saved     map[string]int64
 	ops       map[string]string
 	extra     map[string][]*controlv1.Box
+	gone      map[string]bool
 	failNext  bool
 	ensureErr error
 }
@@ -425,7 +426,11 @@ func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*c
 	if _, ok := f.states[user]; !ok {
 		return &controlv1.ListBoxesResponse{OfferedImages: []string{latestImage}}, nil
 	}
-	return &controlv1.ListBoxesResponse{Boxes: append([]*controlv1.Box{f.boxLocked(user)}, f.extra[user]...), OfferedImages: []string{latestImage}}, nil
+	list := f.extra[user]
+	if !f.gone[user] {
+		list = append([]*controlv1.Box{f.boxLocked(user)}, list...)
+	}
+	return &controlv1.ListBoxesResponse{Boxes: list, OfferedImages: []string{latestImage}}, nil
 }
 
 func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {
@@ -564,6 +569,7 @@ func newTestServer(t *testing.T) (*Server, *fakeBoxes) {
 		saved:  map[string]int64{},
 		ops:    map[string]string{},
 		extra:  map[string][]*controlv1.Box{},
+		gone:   map[string]bool{},
 	}
 	return New(fake, auth.New(users, nil)), fake
 }

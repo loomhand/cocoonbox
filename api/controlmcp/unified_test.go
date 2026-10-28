@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -183,6 +184,82 @@ func TestRootRecordsToolListsOnlyFromAnAdminsBox(t *testing.T) {
 	}
 }
 
+func TestRootParallelCallsOnAnExpiredSessionOpenOneNew(t *testing.T) {
+	srv, _, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	agents.forget()
+	agents.mu.Lock()
+	agents.hold = &sync.WaitGroup{}
+	agents.hold.Add(2)
+	agents.mu.Unlock()
+	var wg sync.WaitGroup
+	texts := make([]string, 2)
+	for i := range texts {
+		wg.Go(func() {
+			rec := serveRoot(srv, http.MethodPost, aliceToken, session, callShell)
+			var reply rpcReply
+			if json.Unmarshal(rec.Body.Bytes(), &reply) == nil {
+				if content, _ := reply.Result["content"].([]any); len(content) == 1 {
+					texts[i], _ = content[0].(map[string]any)["text"].(string)
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if want := shellAnswer + boxes.BoxID("alice"); texts[0] != want || texts[1] != want {
+		t.Fatalf("parallel calls = %q", texts)
+	}
+	if n := len(slices.DeleteFunc(agents.recorded(), func(m string) bool { return m != "initialize" })); n != 2 {
+		t.Fatalf("agent saw %v, want one new initialize", agents.recorded())
+	}
+}
+
+func TestRootCallAfterTheDefaultBoxWentReachesTheNextOne(t *testing.T) {
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	agents.mu.Lock()
+	agents.lost = true
+	agents.mu.Unlock()
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+	agents.mu.Lock()
+	agents.lost = false
+	agents.mu.Unlock()
+	fake.mu.Lock()
+	fake.gone["alice"] = true
+	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-next", Name: "next", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
+	fake.mu.Unlock()
+	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell)).Result}); text != shellAnswer+"cb-next" {
+		t.Fatalf("call after the default box went = %q", text)
+	}
+}
+
+func TestRootKeepsAtMostMaxSessionsPerCaller(t *testing.T) {
+	srv, _, _, _ := newUnifiedServer(t)
+	first := srv.openSession("alice", "s0", nil)
+	srv.mu.Lock()
+	first.used = first.used.Add(-time.Hour)
+	srv.mu.Unlock()
+	for i := range maxSessions {
+		srv.openSession("alice", "s"+string(rune('a'+i)), nil)
+	}
+	srv.session("bob", "b0")
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	alice := 0
+	for key, sess := range srv.sessions {
+		if strings.HasPrefix(key, "alice\n") {
+			alice++
+		}
+		if sess == first {
+			t.Errorf("the least recently used session %s stayed", key)
+		}
+	}
+	if alice != maxSessions || len(srv.sessions) != maxSessions+1 {
+		t.Fatalf("alice keeps %d sessions of %d in all, want %d and %d", alice, len(srv.sessions), maxSessions, maxSessions+1)
+	}
+}
+
 func TestRootTransport(t *testing.T) {
 	srv, _, _, _ := newUnifiedServer(t)
 	for _, tc := range []struct {
@@ -214,7 +291,7 @@ func (fakeGrants) AddBox(context.Context, string, string) error { return nil }
 
 func (fakeGrants) Challenge(bool) string { return "Bearer" }
 
-// fakeAgents answers MCP like the agent of a running box of fakeBoxes; a deaf one never answers, and one that lost the connection drops every request it got.
+// fakeAgents answers MCP like the agent of a running box of fakeBoxes; a deaf one never answers, one that lost the connection drops every request it got, and hold keeps each answer to an expired session until all it counts were made.
 type fakeAgents struct {
 	boxes *fakeBoxes
 
@@ -223,15 +300,22 @@ type fakeAgents struct {
 	sessions map[string]bool
 	deaf     bool
 	lost     bool
+	hold     *sync.WaitGroup
 }
 
 func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*http.Response) error) error {
 	a.boxes.mu.Lock()
-	running := box == boxes.BoxID(user) && a.boxes.states[user] == controlv1.BoxState_BOX_STATE_RUNNING
+	state, owned := a.boxes.states[user], box == boxes.BoxID(user) && !a.boxes.gone[user]
+	if i := slices.IndexFunc(a.boxes.extra[user], func(b *controlv1.Box) bool { return b.GetId() == box }); i >= 0 {
+		state, owned = a.boxes.extra[user][i].GetState(), true
+	}
 	a.boxes.mu.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !running || a.deaf {
+	switch {
+	case !owned:
+		return boxes.ErrNoBox
+	case state != controlv1.BoxState_BOX_STATE_RUNNING || a.deaf:
 		return status.Error(codes.Unavailable, "box is hibernated; call box_ensure to bring it up")
 	}
 	var msg struct {
@@ -256,6 +340,12 @@ func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*htt
 		a.sessions[session] = true
 		return use(answer(http.StatusOK, session, `{"jsonrpc":"2.0","id":0,"result":{"instructions":"`+agentGuide+`"}}`))
 	case !a.sessions[session]:
+		if a.hold != nil {
+			a.mu.Unlock()
+			a.hold.Done()
+			a.hold.Wait()
+			a.mu.Lock()
+		}
 		return use(answer(http.StatusNotFound, "", `{"jsonrpc":"2.0","id":null,"error":{"code":-32001,"message":"unknown or expired session"}}`))
 	case msg.Method == "tools/list":
 		return use(answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{"tools":`+boxTools+`}}`))
