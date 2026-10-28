@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cocoonbox connect your agent</title>
+<link rel="stylesheet" href="/cb/style.css">
+<script src="/cb/setup.js" defer></script>
+</head>
+<body>
+<header>
+  <h1>cocoonbox · Connect your agent</h1>
+  <a href="/cb/">Console</a>
+</header>
+<main>
+  <section>
+    <p>Add cocoonbox to Claude Code, Codex or Cursor as one MCP server. The first time the agent connects, it opens your browser: sign in here and allow it. No token goes into its config.</p>
+    <pre class="mcp-url"></pre>
+    <p>The agent gets the box tools (shell, files, the desktop and the browser) and the box_* tools that create, wake and save boxes. A sleeping box wakes on the first tool call. Signed in this way, the agent works only in boxes it creates; until it has one, its box tools tell it to create one with box_create. You see and revoke it on the <a href="/cb/agents">Agents</a> page.</p>
+  </section>
+
+  <section>
+    <h2>Claude Code</h2>
+    <pre>claude mcp add --transport http --scope user cocoonbox <span class="mcp-url"></span></pre>
+    <p>Then start <code>claude</code>, run <code>/mcp</code>, pick cocoonbox and sign in in the browser. Or sign in from your shell: <code>claude mcp login cocoonbox</code>.</p>
+  </section>
+
+  <section>
+    <h2>Codex</h2>
+    <pre>codex mcp add cocoonbox --url <span class="mcp-url"></span>
+codex mcp login cocoonbox</pre>
+    <p>Or add it to <code>~/.codex/config.toml</code> and then run <code>codex mcp login cocoonbox</code>. A longer <code>tool_timeout_sec</code> than the default 60 s lets desktop plans and scripts finish:</p>
+    <pre>[mcp_servers.cocoonbox]
+url = "<span class="mcp-url"></span>"
+tool_timeout_sec = 180</pre>
+  </section>
+
+  <section>
+    <h2>Cursor</h2>
+    <p><a id="cursor-install" href="#">Add to Cursor</a>, or put it in <code>~/.cursor/mcp.json</code>:</p>
+    <pre>{
+  "mcpServers": {
+    "cocoonbox": {
+      "url": "<span class="mcp-url"></span>"
+    }
+  }
+}</pre>
+    <p>Then sign in to cocoonbox from Cursor's MCP settings when it asks. The Cursor CLI signs in with <code>agent mcp login cocoonbox</code>.</p>
+  </section>
+</main>
+</body>
+</html>
