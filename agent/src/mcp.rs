@@ -1001,8 +1001,6 @@ async fn delete_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response
     }
 }
 
-/// `These tools act on a cloud computer: Ubuntu 24.04 with the XFCE desktop at 1280x800.`, without
-/// the parts `info` lacks.
 fn with_routing(mut text: String, extra: &[String]) -> (String, Vec<usize>) {
     let mut skipped = Vec::new();
     let mut len = text.chars().count();
@@ -1019,6 +1017,8 @@ fn with_routing(mut text: String, extra: &[String]) -> (String, Vec<usize>) {
     (text, skipped)
 }
 
+/// `These tools act on a cloud computer: Ubuntu 24.04 with the XFCE desktop at 1280x800.`, without
+/// the parts `info` lacks.
 fn machine_line(info: &Value) -> String {
     let machine = prompts::machine(info).unwrap_or_else(|| "Linux".to_owned());
     let mut line = format!("These tools act on a cloud computer: {machine}");
