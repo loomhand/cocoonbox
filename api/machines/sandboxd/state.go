@@ -52,6 +52,8 @@ type entry struct {
 	row     *row
 	// rowAt is when this process first saw the row's sandbox, so a claim list taken before it cannot drop the machine.
 	rowAt time.Time
+	// ownerAddr names the node that holds the claim as the mesh names it, "" for the entry node.
+	ownerAddr string
 
 	op    string
 	opErr string
@@ -159,7 +161,7 @@ func (e *entry) machine(disk uint32) machines.Machine {
 
 func (e *entry) record() cluster.Machine {
 	m := cluster.Machine{
-		ID: e.id, Owner: e.owner, Image: e.image, CreatedAt: e.created, Op: e.op, OpErr: e.opErr, OpUntil: e.opUntil,
+		ID: e.id, Owner: e.owner, Image: e.image, CreatedAt: e.created, OwnerAddr: e.ownerAddr, Op: e.op, OpErr: e.opErr, OpUntil: e.opUntil,
 		Revision: e.revision, Meta: maps.Clone(e.meta), Wakes: e.wakes, Routed: e.routed, Ready: e.ready, ReadyRestarts: e.readyRestarts,
 		Env: maps.Clone(e.env),
 	}
@@ -171,7 +173,7 @@ func (e *entry) record() cluster.Machine {
 
 // load takes rec's fields; the watchers and the ledger copy of e stay.
 func (e *entry) load(rec cluster.Machine) {
-	e.owner, e.image, e.created = rec.Owner, rec.Image, rec.CreatedAt
+	e.owner, e.image, e.created, e.ownerAddr = rec.Owner, rec.Image, rec.CreatedAt, rec.OwnerAddr
 	e.op, e.opErr, e.opUntil, e.revision = rec.Op, rec.OpErr, rec.OpUntil, rec.Revision
 	e.meta, e.wakes, e.routed, e.ready, e.readyRestarts = maps.Clone(rec.Meta), rec.Wakes, rec.Routed, rec.Ready, rec.ReadyRestarts
 	e.env = maps.Clone(rec.Env)
