@@ -196,6 +196,49 @@ func TestMCPAgentUnreachable(t *testing.T) {
 	}
 }
 
+func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
+	env := newMCPEnv(t)
+	env.resolver.wake = "w1"
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://unset/", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	req.Header.Set(credential.Header, "forged")
+	var got map[string]string
+	err = env.mcp.Exchange(req, "alice", boxes.BoxID("alice"), func(resp *http.Response) error {
+		return json.NewDecoder(resp.Body).Decode(&got)
+	})
+	if err != nil || got["path"] != "/mcp" || got["credential"] != "cred:"+boxes.BoxID("alice")+":w1" || got["body"] != `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` {
+		t.Fatalf("exchange = %v, upstream saw %v", err, got)
+	}
+	if reached := env.resolver.reaches(); !slices.Equal(reached, []string{boxes.BoxID("alice")}) {
+		t.Errorf("reached %v, want alice's box", reached)
+	}
+
+	env.resolver.err = status.Error(codes.Unavailable, "box is hibernated; call box_ensure to bring it up")
+	used := false
+	err = env.mcp.Exchange(req.Clone(t.Context()), "alice", boxes.BoxID("alice"), func(*http.Response) error { used = true; return nil })
+	if status.Code(err) != codes.Unavailable || used {
+		t.Fatalf("exchange with a sleeping box = %v, used %t", err, used)
+	}
+	if err = env.mcp.Exchange(req.Clone(t.Context()), "alice", boxes.BoxID("bob"), func(*http.Response) error { return nil }); status.Code(err) != codes.NotFound {
+		t.Fatalf("exchange with someone else's box = %v", err)
+	}
+
+	env.resolver.err = nil
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	env.resolver.addr = lis.Addr().String()
+	if err = lis.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if err = env.mcp.Exchange(req.Clone(t.Context()), "alice", boxes.BoxID("alice"), func(*http.Response) error { used = true; return nil }); status.Code(err) != codes.Unknown || used {
+		t.Fatalf("exchange with an agent that does not answer = %v, used %t", err, used)
+	}
+}
+
 func TestMCPIgnoresOtherPaths(t *testing.T) {
 	env := newMCPEnv(t)
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+env.addr+"/cocoonbox.agent.v1.Session/Hello", strings.NewReader("{}"))
@@ -210,6 +253,7 @@ func TestMCPIgnoresOtherPaths(t *testing.T) {
 }
 
 type mcpEnv struct {
+	mcp      *MCP
 	served   chan string
 	addr     string
 	resolver *fakeResolver
@@ -240,7 +284,7 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 		defer func() { served <- r.Method }()
 		mcp.ServeHTTP(w, r)
 	}))
-	return &mcpEnv{served: served, addr: addr, resolver: resolver, upstream: upstream, shares: shares, users: users, disable: disable, revoke: revoke, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
+	return &mcpEnv{mcp: mcp, served: served, addr: addr, resolver: resolver, upstream: upstream, shares: shares, users: users, disable: disable, revoke: revoke, client: &http.Client{Transport: newH2CTransport((&net.Dialer{Timeout: 5 * time.Second}).DialContext)}}
 }
 
 func (e *mcpEnv) request(t *testing.T, method, path, body string) *http.Request {

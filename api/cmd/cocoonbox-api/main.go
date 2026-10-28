@@ -184,6 +184,8 @@ func main() {
 	httpMux.Handle(controlmcp.Path, control)
 	boxMCP := edge.NewMCP(svc, authn, signer)
 	httpMux.Handle(edge.MCPPrefix, boxMCP)
+	control.EnableBoxTools(boxMCP, accounts)
+	httpMux.Handle(controlmcp.RootPath, control)
 	web := console.New(accounts, svc, cfg.Accounts.DefaultDailyCapMicros, cfg.MaxRunningBoxes)
 	web.EnableSharing(shareSvc, authn, proxy)
 	web.EnableKeys(keys)

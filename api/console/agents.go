@@ -10,7 +10,10 @@ import (
 	"github.com/loomhand/cocoonbox/api/oauth"
 )
 
-const agentsPage = "/cb/agents"
+const (
+	agentsPage = "/cb/agents"
+	setupPage  = "/cb/setup"
+)
 
 // Agents checks and answers an agent's authorization request, and lists, revokes and acknowledges a user's grants.
 type Agents interface {
@@ -22,7 +25,7 @@ type Agents interface {
 	MarkSeen(ctx context.Context, user string) error
 }
 
-// EnableAgents serves the consent page of oauth.AuthorizePath, the Agents page and their calls over agents.
+// EnableAgents serves the consent page of oauth.AuthorizePath, the Agents page, the Connect your agent page and their calls over agents.
 func (s *Server) EnableAgents(agents Agents) {
 	s.agents = agents
 	s.mux.HandleFunc("GET "+oauth.AuthorizePath, func(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +33,9 @@ func (s *Server) EnableAgents(agents Agents) {
 	})
 	s.mux.HandleFunc("GET "+agentsPage, func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, static, "static/agents.html")
+	})
+	s.mux.HandleFunc("GET "+setupPage, func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "static/setup.html")
 	})
 	s.mux.HandleFunc("POST "+Prefix+"api/oauth/check", s.signedIn(s.checkAuthorization))
 	s.mux.HandleFunc("POST "+Prefix+"api/oauth/approve", s.signedIn(s.approveAuthorization))

@@ -36,8 +36,8 @@ func (s *Service) Rebase(ctx context.Context, req *controlv1.RebaseRequest) (*co
 	if image != s.defaults.Image && !slices.Contains(s.defaults.RebaseImages, image) {
 		return nil, status.Errorf(codes.InvalidArgument, "image %q is not a rebase target; choose %s", image, s.defaults.choices())
 	}
-	if familyOf(image) != familyOf(m.Image) && !auth.Operator(ctx) {
-		return nil, status.Errorf(codes.FailedPrecondition, "image %q is not of the box's family %s; only an operator moves a box to another family", image, familyOf(m.Image))
+	if Family(image) != Family(m.Image) && !auth.Operator(ctx) {
+		return nil, status.Errorf(codes.FailedPrecondition, "image %q is not of the box's family %s; only an operator moves a box to another family", image, Family(m.Image))
 	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_SAVING, m.Revision, stateTimeout)
 	if started {

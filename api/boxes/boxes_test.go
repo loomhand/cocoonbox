@@ -73,8 +73,8 @@ func TestAFamilyIsTheNameBeforeTheTagAfterTheLastSlash(t *testing.T) {
 		"host:5000/cbcore":    "host:5000/cbcore",
 		"":                    "",
 	} {
-		if got := familyOf(image); got != want {
-			t.Errorf("familyOf(%q) = %q, want %q", image, got, want)
+		if got := Family(image); got != want {
+			t.Errorf("Family(%q) = %q, want %q", image, got, want)
 		}
 	}
 	d := Defaults{Image: "cbcore:v2", RebaseImages: []string{"host:5000/cbcore:v3"}}
