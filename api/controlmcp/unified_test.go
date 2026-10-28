@@ -171,6 +171,18 @@ func TestRootCallLostInFlightIsNotSentAgain(t *testing.T) {
 	}
 }
 
+func TestRootRecordsToolListsOnlyFromAnAdminsBox(t *testing.T) {
+	srv, _, agents, lists := newUnifiedServer(t)
+	serveRoot(srv, http.MethodPost, bobToken, "", initialize)
+	if want := []string{"initialize"}; !slices.Equal(agents.recorded(), want) || lists.get("img:1").Image != "" {
+		t.Fatalf("a user's box: agent saw %v, recorded %+v", agents.recorded(), lists.get("img:1"))
+	}
+	serveRoot(srv, http.MethodPost, aliceToken, "", initialize)
+	if want := []string{"initialize", "initialize", "tools/list"}; !slices.Equal(agents.recorded(), want) || string(lists.get("img:1").Tools) != boxTools {
+		t.Fatalf("an admin's box: agent saw %v, recorded %+v", agents.recorded(), lists.get("img:1"))
+	}
+}
+
 func TestRootTransport(t *testing.T) {
 	srv, _, _, _ := newUnifiedServer(t)
 	for _, tc := range []struct {
@@ -286,6 +298,10 @@ func (f *fakeLists) ToolList(_ context.Context, image, family string) (users.Too
 func (f *fakeLists) PutToolList(_ context.Context, _ string, l users.ToolList) error {
 	f.put(l.Image, l)
 	return nil
+}
+
+func (f *fakeLists) Get(id string) (users.User, error) {
+	return users.User{ID: id, Admin: id == "alice"}, nil
 }
 
 func (f *fakeLists) put(image string, l users.ToolList) {

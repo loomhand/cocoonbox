@@ -264,7 +264,7 @@ func (s *Server) connect(ctx context.Context, user string, sess *session) (strin
 	return sess.box, sess.upstream, nil
 }
 
-// open opens an agent session on box with the client's initialize, and records what the agent of image serves the first time one is reached.
+// open opens an agent session on box with the client's initialize, and records what the agent of image serves the first time an admin's box of it is reached.
 func (s *Server) open(ctx context.Context, user, box, image string, params json.RawMessage) (string, error) {
 	var (
 		upstream string
@@ -289,6 +289,9 @@ func (s *Server) open(ctx context.Context, user, box, image string, params json.
 	})
 	if err != nil {
 		return "", err
+	}
+	if owner, gerr := s.lists.Get(user); gerr != nil || !owner.Admin {
+		return upstream, nil
 	}
 	logger := log.WithFunc("controlmcp.Server.open")
 	family := boxes.Family(image)

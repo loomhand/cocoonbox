@@ -50,10 +50,11 @@ type Agents interface {
 	Exchange(req *http.Request, user, box string, use func(*http.Response) error) error
 }
 
-// ToolLists keeps what the agent of each image serves over MCP.
+// ToolLists keeps what the agent of each image serves over MCP, as an admin's box shows it.
 type ToolLists interface {
 	ToolList(ctx context.Context, image, family string) (users.ToolList, error)
 	PutToolList(ctx context.Context, family string, l users.ToolList) error
+	Get(id string) (users.User, error)
 }
 
 // Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user, or of its grant, and on RootPath with box tools too.
