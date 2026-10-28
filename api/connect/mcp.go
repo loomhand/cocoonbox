@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"sync"
@@ -180,11 +181,7 @@ func (d *Door) initialize(w http.ResponseWriter, params jsontext.Value) map[stri
 	id := rand.Text()
 	now := time.Now()
 	d.mu.Lock()
-	for k, v := range d.clients {
-		if now.Sub(v.at) > sessionTTL {
-			delete(d.clients, k)
-		}
-	}
+	maps.DeleteFunc(d.clients, func(_ string, v session) bool { return now.Sub(v.at) > sessionTTL })
 	d.clients[id] = session{client: shorten(cmp.Or(req.ClientInfo.Name, "unknown"), maxClientName), at: now}
 	d.mu.Unlock()
 	w.Header().Set(mcpwire.SessionHeader, id)

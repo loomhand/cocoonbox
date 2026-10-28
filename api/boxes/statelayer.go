@@ -114,7 +114,7 @@ type head struct {
 	Latest    string `json:"latest"`
 	SavedAtMs int64  `json:"saved_at_ms"`
 	Image     string `json:"image,omitempty"`
-	Parked    bool   `json:"parked,omitempty"`
+	Parked    bool   `json:"parked,omitzero"`
 	// version is the shared row's version, 0 without a shared table.
 	version int64
 }

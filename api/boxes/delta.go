@@ -65,8 +65,8 @@ func (d manifestDelta) apply(base manifestParts) (manifestParts, error) {
 
 // fileOp copies Count files of the base from index From, or, with Count 0, puts one file record verbatim.
 type fileOp struct {
-	From  int    `json:"from,omitempty"`
-	Count int    `json:"count,omitempty"`
+	From  int    `json:"from,omitzero"`
+	Count int    `json:"count,omitzero"`
 	Put   string `json:"put,omitempty"`
 }
 

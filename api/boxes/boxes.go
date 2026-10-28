@@ -386,17 +386,12 @@ func (s *Service) SyncMachines(fn MachineSync) {
 
 // current returns the serving machine of user's box: the oldest, which a rebase replaces only when it deletes it.
 func (s *Service) current(ctx context.Context, user, box string) (machines.Machine, error) {
-	ms, err := s.machines.List(ctx, user)
+	current, err := s.currentMachines(ctx, user)
 	if err != nil {
 		return machines.Machine{}, err
 	}
-	var cur machines.Machine
-	for _, m := range ms {
-		if boxOfMachine(m.ID) == box && (cur.ID == "" || older(m, cur)) {
-			cur = m
-		}
-	}
-	if cur.ID == "" {
+	cur, ok := current[box]
+	if !ok {
 		return machines.Machine{}, machines.ErrNotFound
 	}
 	return cur, nil

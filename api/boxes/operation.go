@@ -159,10 +159,7 @@ func (o *operation) appendLocked(phase controlv1.Phase, detail string, state con
 }
 
 func (o *operation) appendBytesLocked(phase controlv1.Phase, detail string, state controlv1.BoxState, done, total uint64) {
-	next := 1
-	if n := len(o.events); n > 0 {
-		next = offsetOf(o.events[n-1].GetOffsetKey()) + 1
-	}
+	next := lastOffset(o.events) + 1
 	o.events = append(o.events, &controlv1.OperationEvent{
 		OperationId: o.id,
 		Phase:       phase,
