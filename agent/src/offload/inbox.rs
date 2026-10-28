@@ -137,12 +137,12 @@ pub struct Change {
 
 impl Change {
     /// The `Session.Events` form.
-    pub fn update(&self) -> pb::OffloadUpdate {
+    pub fn update(self) -> pb::OffloadUpdate {
         pb::OffloadUpdate {
-            repo: self.repo.clone(),
-            name: self.name.clone(),
-            cli: self.cli.clone(),
-            offload_id: self.offload_id.clone(),
+            repo: self.repo,
+            name: self.name,
+            cli: self.cli,
+            offload_id: self.offload_id,
             entry: self
                 .entry
                 .map_or(pb::OffloadEntry::Unspecified, EntryKind::pb) as i32,

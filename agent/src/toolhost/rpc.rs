@@ -101,8 +101,8 @@ impl Client {
         };
         let mut stream = self.open(&call).await?;
         let stamp: Stamp = read_frame(&mut stream).await?;
-        if let Some(e) = &stamp.error {
-            return Err(e.clone());
+        if let Some(e) = stamp.error {
+            return Err(e);
         }
         Ok((stamp, FileReader { stream }))
     }

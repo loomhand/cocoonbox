@@ -240,9 +240,8 @@ impl StateEngine {
         meter.add(self.put(put, path).await?).await;
         self.save_known(&snap.known).await?;
         let _ = tokio::fs::remove_dir_all(&snap.spool).await;
-        let id = snap.snapshot_id.clone();
         *pinned = None;
-        meter.finish(&id).await;
+        meter.finish(&req.snapshot_id).await;
         Ok(())
     }
 
@@ -311,7 +310,7 @@ impl StateEngine {
                 }
                 Kind::Symlink => links.push(json!({
                     "path": path,
-                    "target": r.entry.target.clone().unwrap_or_default(),
+                    "target": r.entry.target.as_deref().unwrap_or_default(),
                 })),
                 Kind::File => targets.push(Target {
                     dest: Dest::Staged(path, &r.entry),
@@ -424,7 +423,7 @@ impl StateEngine {
                     }
                     Kind::Symlink => root_links.push(json!({
                         "path": path,
-                        "target": r.entry.target.clone().unwrap_or_default(),
+                        "target": r.entry.target.as_deref().unwrap_or_default(),
                     })),
                     Kind::File => targets.push(Target {
                         dest: Dest::Staged(path, &r.entry),
