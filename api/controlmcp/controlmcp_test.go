@@ -423,9 +423,9 @@ func (f *fakeBoxes) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*c
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.states[user]; !ok {
-		return &controlv1.ListBoxesResponse{}, nil
+		return &controlv1.ListBoxesResponse{OfferedImages: []string{latestImage}}, nil
 	}
-	return &controlv1.ListBoxesResponse{Boxes: append([]*controlv1.Box{f.boxLocked(user)}, f.extra[user]...)}, nil
+	return &controlv1.ListBoxesResponse{Boxes: append([]*controlv1.Box{f.boxLocked(user)}, f.extra[user]...), OfferedImages: []string{latestImage}}, nil
 }
 
 func (f *fakeBoxes) Create(ctx context.Context, req *controlv1.CreateBoxRequest) (*controlv1.EnsureResponse, error) {

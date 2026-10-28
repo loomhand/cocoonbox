@@ -43,7 +43,7 @@ func (d Defaults) offered(ref string) (string, bool) {
 	if ref == "" || ref == d.Image || slices.Contains(d.RebaseImages, ref) {
 		return cmp.Or(ref, d.Image), true
 	}
-	if familyOf(ref) != ref {
+	if Family(ref) != ref {
 		return "", false
 	}
 	return d.newest(ref)
@@ -59,7 +59,7 @@ func (d Defaults) kept(own, image string) string {
 
 // upgrade is the image a box on image upgrades to: own when it is of image's family, else the newest image of that family.
 func (d Defaults) upgrade(own, image string) string {
-	if own != "" && familyOf(own) == familyOf(image) {
+	if own != "" && Family(own) == Family(image) {
 		return own
 	}
 	return d.latest(image)
@@ -70,7 +70,7 @@ func (d Defaults) latest(image string) string {
 	if image == "" {
 		return d.Image
 	}
-	if newest, ok := d.newest(familyOf(image)); ok {
+	if newest, ok := d.newest(Family(image)); ok {
 		return newest
 	}
 	return image
@@ -78,10 +78,10 @@ func (d Defaults) latest(image string) string {
 
 // newest is the newest offered image of family: the default image for its family, else the first rebase image of it.
 func (d Defaults) newest(family string) (string, bool) {
-	if familyOf(d.Image) == family {
+	if Family(d.Image) == family {
 		return d.Image, true
 	}
-	i := slices.IndexFunc(d.RebaseImages, func(r string) bool { return familyOf(r) == family })
+	i := slices.IndexFunc(d.RebaseImages, func(r string) bool { return Family(r) == family })
 	if i < 0 {
 		return "", false
 	}
@@ -485,7 +485,7 @@ func (s *Service) ownImage(user string) string {
 	if image == "" || image == s.defaults.Image || slices.Contains(s.defaults.RebaseImages, image) {
 		return image
 	}
-	newest, _ := s.defaults.newest(familyOf(image))
+	newest, _ := s.defaults.newest(Family(image))
 	return newest
 }
 
@@ -619,6 +619,15 @@ func (s *Service) ownerOf(ctx context.Context, boxID string) (string, error) {
 	return user, nil
 }
 
+// Family is the family of image: its name before the tag, the ':' after the last '/'.
+func Family(image string) string {
+	name := strings.LastIndexByte(image, '/') + 1
+	if tag := strings.IndexByte(image[name:], ':'); tag >= 0 {
+		return image[:name+tag]
+	}
+	return image
+}
+
 func serviceError(ctx context.Context, logger *log.Fields, err error, action string) error {
 	switch {
 	case errors.Is(err, machines.ErrNotFound):
@@ -630,12 +639,4 @@ func serviceError(ctx context.Context, logger *log.Fields, err error, action str
 		logger.Error(ctx, err, action)
 		return status.Errorf(codes.Unavailable, "%s failed", action)
 	}
-}
-
-func familyOf(image string) string {
-	name := strings.LastIndexByte(image, '/') + 1
-	if tag := strings.IndexByte(image[name:], ':'); tag >= 0 {
-		return image[:name+tag]
-	}
-	return image
 }

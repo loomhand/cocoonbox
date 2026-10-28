@@ -3,6 +3,7 @@ package users
 import (
 	"context"
 	"embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -516,6 +517,27 @@ func (s *store) setWakeAlarm(ctx context.Context, w WakeSchedule) error {
 		return ErrNotFound
 	}
 	return nil
+}
+
+func (s *store) toolList(ctx context.Context, image, family string) (ToolList, error) {
+	var l ToolList
+	var tools string
+	err := s.pool.QueryRow(ctx, `SELECT image, tools, instructions FROM tool_lists WHERE image = $1 OR family = $2
+		ORDER BY image = $1 DESC, updated_at DESC LIMIT 1`, image, family).Scan(&l.Image, &tools, &l.Instructions)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return ToolList{}, nil
+	case err != nil:
+		return ToolList{}, fmt.Errorf("read tool list: %w", err)
+	}
+	l.Tools = json.RawMessage(tools)
+	return l, nil
+}
+
+func (s *store) putToolList(ctx context.Context, family string, l ToolList) error {
+	return s.exec(ctx, `INSERT INTO tool_lists (image, family, tools, instructions) VALUES ($1, $2, $3, $4)
+		ON CONFLICT (image) DO UPDATE SET family = excluded.family, tools = excluded.tools, instructions = excluded.instructions, updated_at = now()`,
+		l.Image, family, string(l.Tools), l.Instructions)
 }
 
 // execShare runs an update of one live share; a share that is gone is ErrNotFound.

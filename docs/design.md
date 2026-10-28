@@ -326,6 +326,8 @@ The cost is one local stdio hop per message, next to a 230 ms WAN round trip; th
 
 **Direct fallback.** The Connect sheet recipes stay for users who don't install the CLI. The `claude` recipe may use `"headersHelper": "cocoonbox mcp-headers"`, which prints `{"Authorization":"Bearer …"}` to the CLI's pipe, instead of `${COCOONBOX_TOKEN}`. There is no `cocoonbox env` command: an exported token lives in every child of that shell.
 
+**One URL without the CLI (2026-10-28).** The api serves what the bridge does for the hibernated box at `https://<endpoint>/cocoonbox.mcp` (contracts "Unified MCP"), so a client on any computer adds one URL and signs in through the browser (OAuth for agents), with no token in its config. It answers `initialize` and `tools/list` without the box, from the tool list it recorded for the box's image, and a box-tool call wakes the default box with `box_ensure` and waits for it, at most 25 s, as the bridge does. The console's Connect your agent page (`/cb/setup`) gives each client's commands. The bridge keeps what this URL leaves out: the `box` argument on box tools, the box's resources and Connect's connector tools.
+
 ### 13.3 Control MCP (api)
 
 The api serves it itself; the edge does not proxy it to a box. Auth is the user token, which the api checks the way it checks `Boxes`, and every tool acts only on the caller's own box. Tools (names are the contract; add them to contracts.md):

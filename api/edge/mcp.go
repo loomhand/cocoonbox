@@ -116,6 +116,29 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
+// Exchange sends req to the MCP endpoint of the agent of user's box with the owner's credential and hands use the response; the call is a reach until use returns.
+// A box that is not running is Unavailable before anything is sent; a request that may have reached the agent without an answer is Unknown.
+func (m *MCP) Exchange(req *http.Request, user, box string, use func(*http.Response) error) error {
+	ep, wake, err := m.resolver.Resolve(req.Context(), user, box)
+	if err != nil {
+		return err
+	}
+	defer m.resolver.Reached(box)()
+	req.URL.Scheme, req.URL.Host, req.URL.Path, req.Host = "http", ep.Key, agentMCPPath, ep.Key
+	if wake != "" {
+		req.Header.Set(credential.Header, m.creds.Credential(box, wake))
+	}
+	resp, err := m.transportFor(box, ep).RoundTrip(req)
+	if err != nil {
+		if req.Context().Err() == nil {
+			log.WithFunc("edge.MCP.Exchange").Warnf(req.Context(), "send %s to the agent of box %s: %v", req.Method, box, err)
+		}
+		return status.Error(codes.Unknown, "box agent unreachable")
+	}
+	defer func() { _ = resp.Body.Close() }()
+	return use(resp)
+}
+
 // route authorizes one exchange for the bearer's user, or, when no user holds it and it is a share secret, for that share.
 func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	rt.ctx, rt.stop = r.Context(), func() {}

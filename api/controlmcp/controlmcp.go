@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"time"
 
@@ -20,13 +21,20 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
+	"github.com/loomhand/cocoonbox/api/users"
 )
 
 const (
 	// Path is the control MCP endpoint, next to the per-box MCP paths that the edge proxies.
 	Path = "/cocoonbox.mcp/control"
+	// RootPath is the unified MCP endpoint, the protected resource itself: the control tools and the tools of the caller's default box.
+	RootPath = "/cocoonbox.mcp"
 
-	revisionLen = 12
+	revisionLen      = 12
+	controlName      = "cocoonbox-control"
+	unifiedName      = "cocoonbox"
+	methodInitialize = "initialize"
+	toolsField       = "tools"
 )
 
 // Grants checks the OAuth access tokens of agents and keeps the boxes each grant created.
@@ -37,24 +45,43 @@ type Grants interface {
 	Challenge(invalid bool) string
 }
 
-// Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user, or of its grant.
+// Agents carries MCP requests to the agent of a box its owner reaches, and hands use the response.
+type Agents interface {
+	Exchange(req *http.Request, user, box string, use func(*http.Response) error) error
+}
+
+// ToolLists keeps what the agent of each image serves over MCP.
+type ToolLists interface {
+	ToolList(ctx context.Context, image, family string) (users.ToolList, error)
+	PutToolList(ctx context.Context, family string, l users.ToolList) error
+}
+
+// Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user, or of its grant, and on RootPath with box tools too.
 type Server struct {
 	boxes  controlv1.BoxesServer
 	authn  *auth.Authenticator
 	grants Grants
+	agents Agents
+	lists  ToolLists
 
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
+	mu       sync.Mutex
+	locks    map[string]*sync.Mutex
+	sessions map[string]*session
 }
 
 // New serves the control tools over boxes, authenticating with authn.
 func New(boxes controlv1.BoxesServer, authn *auth.Authenticator) *Server {
-	return &Server{boxes: boxes, authn: authn, locks: map[string]*sync.Mutex{}}
+	return &Server{boxes: boxes, authn: authn, locks: map[string]*sync.Mutex{}, sessions: map[string]*session{}}
 }
 
 // EnableGrants admits OAuth access tokens next to user tokens; a token acts only on the boxes its grant created, within its caps.
 func (s *Server) EnableGrants(grants Grants) {
 	s.grants = grants
+}
+
+// EnableBoxTools serves RootPath: the control tools and the tools of the default box, which agents reach and lists keep while the box sleeps.
+func (s *Server) EnableBoxTools(agents Agents, lists ToolLists) {
+	s.agents, s.lists = agents, lists
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -66,8 +93,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, stop := s.authn.Bind(auth.WithUser(r.Context(), user), user, credential)
 	defer stop()
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
+	caller := user
+	if grant != nil {
+		ctx = context.WithValue(ctx, grantKey{}, grant)
+		caller += " grant=" + grant.ID
+	}
+	unified, allow := s.agents != nil && r.URL.Path == RootPath, http.MethodPost
+	if unified {
+		allow += ", " + http.MethodDelete
+	}
+	switch {
+	case unified && r.Method == http.MethodDelete:
+		s.endSession(ctx, user, caller, r.Header.Get(mcpwire.SessionHeader))
+		w.WriteHeader(http.StatusNoContent)
+		return
+	case r.Method != http.MethodPost:
+		w.Header().Set("Allow", allow)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -89,11 +130,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
-	caller := user
-	if grant != nil {
-		ctx = context.WithValue(ctx, grantKey{}, grant)
-		caller += " grant=" + grant.ID
-	}
 	var (
 		call   callParams
 		result any
@@ -104,23 +140,41 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			req.Method, cmp.Or(call.Name, "-"), caller, mcpwire.CodeOf(rpcErr), time.Since(start).Round(time.Millisecond))
 	}()
 	switch {
-	case req.Method == "initialize":
+	case req.Method == methodInitialize && unified:
+		id := rand.Text()
+		w.Header().Set(mcpwire.SessionHeader, id)
+		result = s.initializeUnified(ctx, user, s.openSession(caller, id, req.Params))
+	case req.Method == methodInitialize:
 		w.Header().Set(mcpwire.SessionHeader, rand.Text())
-		result = initializeResult(req.Params)
+		result = initializeResult(req.Params, controlName)
+	case req.Method == "tools/list" && unified:
+		result, rpcErr = s.listTools(ctx)
 	case req.Method != "tools/call":
 		result, rpcErr = handle(req.Method)
 	case json.Unmarshal(req.Params, &call) != nil:
 		rpcErr = &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid tools/call params"}
-	case call.Meta.ProgressToken != nil:
-		stream := newEventStream(w, call.Meta.ProgressToken)
-		defer stream.close()
-		result, rpcErr = s.call(ctx, &call, stream.progress)
-		stream.send(newResponse(req.ID, result, rpcErr))
+	case unified && !slices.ContainsFunc(toolSpecs, func(t toolSpec) bool { return t.Name == call.Name }):
+		s.callBox(ctx, w, user, s.session(caller, r.Header.Get(mcpwire.SessionHeader)), req.ID, body, r.Header.Get("Accept"), &call)
 		return
 	default:
-		result, rpcErr = s.call(ctx, &call, func(string) {})
+		rpcErr = s.answer(ctx, w, req.ID, &call)
+		return
 	}
 	writeJSON(w, http.StatusOK, newResponse(req.ID, result, rpcErr))
+}
+
+// answer runs a control tool and writes its response, as events when the call carries a progress token.
+func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id json.RawMessage, call *callParams) *mcpwire.Error {
+	if call.Meta.ProgressToken == nil {
+		result, rpcErr := s.call(ctx, call, func(string) {})
+		writeJSON(w, http.StatusOK, newResponse(id, result, rpcErr))
+		return rpcErr
+	}
+	stream := newEventStream(w, call.Meta.ProgressToken)
+	defer stream.close()
+	result, rpcErr := s.call(ctx, call, stream.progress)
+	stream.send(newResponse(id, result, rpcErr))
+	return rpcErr
 }
 
 // authenticate maps the bearer to its user and credential, and an access token also to its grant, whose id is its credential.
@@ -268,12 +322,12 @@ func (e *eventStream) keepalive() {
 func (e *eventStream) write(b []byte) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if _, err := e.w.Write(b); err == nil {
+	if _, err := e.w.Write(b); err == nil { //nolint:gosec // an event stream of JSON-RPC, never HTML
 		_ = e.rc.Flush()
 	}
 }
 
-func initializeResult(params json.RawMessage) map[string]any {
+func initializeResult(params json.RawMessage, name string) map[string]any {
 	var req struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
@@ -285,8 +339,8 @@ func initializeResult(params json.RawMessage) map[string]any {
 	}
 	return map[string]any{
 		"protocolVersion": version,
-		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": "cocoonbox-control", "version": buildVersion(settings)},
+		"capabilities":    map[string]any{toolsField: map[string]any{}},
+		"serverInfo":      map[string]any{"name": name, "version": buildVersion(settings)},
 	}
 }
 
@@ -317,7 +371,7 @@ func handle(method string) (any, *mcpwire.Error) {
 	case "ping":
 		return struct{}{}, nil
 	case "tools/list":
-		return map[string]any{"tools": toolSpecs}, nil
+		return map[string]any{toolsField: toolSpecs}, nil
 	default:
 		return nil, &mcpwire.Error{Code: mcpwire.CodeMethodNotFound, Message: "method not found: " + method}
 	}
@@ -344,7 +398,7 @@ func writeJSON(w http.ResponseWriter, httpStatus int, body any) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) //nolint:gosec // application/json, never HTML
 }
 
 func marshal(v any) ([]byte, error) {
