@@ -26,7 +26,7 @@ func TestToolListFallsBackToTheNewestOfItsFamily(t *testing.T) {
 	for _, tt := range []struct{ image, family, want, tools string }{
 		{"cbcore:v1", "cbcore", "cbcore:v1", `[{"name":"shell"}]`},
 		{"cbcore:v3", "cbcore", "cbcore:v2", `[{"name":"shell"},{"name":"gui_plan"}]`},
-		{"cbsim:v1", "cbsim", "", ""},
+		{"other:v1", "other", "", ""},
 	} {
 		l, err := reopened.ToolList(t.Context(), tt.image, tt.family)
 		if err != nil || l.Image != tt.want || string(l.Tools) != tt.tools {
