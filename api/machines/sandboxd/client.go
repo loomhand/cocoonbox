@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -82,9 +83,19 @@ type inject struct {
 
 type claimRequest struct {
 	poolKey
-	TTLSeconds int               `json:"ttl_seconds"`
-	OnExpire   string            `json:"on_expire"`
-	Metadata   map[string]string `json:"metadata"`
+	TTLSeconds      int               `json:"ttl_seconds"`
+	OnExpire        string            `json:"on_expire"`
+	Metadata        map[string]string `json:"metadata"`
+	NoRedirect      bool              `json:"no_redirect,omitzero"`
+	RequirePromoted bool              `json:"require_promoted,omitzero"`
+}
+
+// claimResponse is the claim a node made, or the peers to claim on instead.
+type claimResponse struct {
+	ID              string   `json:"id"`
+	OwnerAddr       string   `json:"owner_addr"`
+	Redirect        []string `json:"redirect"`
+	RequirePromoted bool     `json:"require_promoted"`
 }
 
 type renewRequest struct {
@@ -126,12 +137,19 @@ func newClient(rawURL, token string) (*client, error) {
 }
 
 // claim claims with token, a tenant's or the root one.
-func (c *client) claim(ctx context.Context, token string, req claimRequest) (string, error) {
-	var resp struct {
-		ID string `json:"id"`
-	}
+func (c *client) claim(ctx context.Context, token string, req claimRequest) (claimResponse, error) {
+	var resp claimResponse
 	err := c.request(ctx, cmp.Or(token, c.token), http.MethodPost, "/v1/claim", nil, req, &resp)
-	return resp.ID, err
+	return resp, err
+}
+
+// peers returns the other nodes of the node's mesh, none for a node without one.
+func (c *client) peers(ctx context.Context) ([]string, error) {
+	var resp struct {
+		Peers []string `json:"peers"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/peers", nil, nil, &resp)
+	return resp.Peers, err
 }
 
 func (c *client) list(ctx context.Context) ([]row, error) {
@@ -269,6 +287,14 @@ func (c *bufferedConn) CloseWrite() error {
 	return c.Close()
 }
 
+// nodeURL gives the http scheme to a node address the mesh names without one.
+func nodeURL(addr string) string {
+	if strings.Contains(addr, "://") {
+		return addr
+	}
+	return "http://" + addr
+}
+
 func responseError(resp *http.Response) error {
 	var body struct {
 		Error string `json:"error"`
@@ -281,6 +307,21 @@ func responseError(resp *http.Response) error {
 }
 
 func isStatus(err error, status int) bool {
-	var apiErr *apiError
-	return errors.As(err, &apiErr) && apiErr.status == status
+	apiErr, ok := errors.AsType[*apiError](err)
+	return ok && apiErr.status == status
+}
+
+// transient reports whether a claim that failed with err may succeed on another node, as the sandboxd SDK decides.
+func transient(err error) bool {
+	apiErr, ok := errors.AsType[*apiError](err)
+	if !ok {
+		return true
+	}
+	switch apiErr.status {
+	case http.StatusUnauthorized, http.StatusNotFound, http.StatusTooManyRequests, http.StatusInternalServerError,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }

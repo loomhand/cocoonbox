@@ -41,6 +41,7 @@ const (
 	probeTimeout    = 2 * time.Second
 	probeFanout     = 8
 	sharedTimeout   = 10 * time.Second
+	nodeLostAfter   = 5 * time.Minute
 )
 
 var (
@@ -88,7 +89,7 @@ var (
 	_ machines.Tenants  = (*Backend)(nil)
 )
 
-// Backend implements machines.Machines and machines.Tenants on one sandboxd instance that holds only cocoonbox claims.
+// Backend implements machines.Machines and machines.Tenants on a sandboxd instance, or the mesh it enters, that holds only cocoonbox claims.
 type Backend struct {
 	*Tenants
 
@@ -98,10 +99,16 @@ type Backend struct {
 	mirror               *cluster.Mirror
 	leaseFor, renewEvery time.Duration
 
+	nodeMu sync.Mutex
+	nodes  map[string]*client
+	peers  []string
+
 	mu      sync.Mutex
 	entries map[string]*entry
 	owners  map[string]chan struct{}
 	views   map[string]view
+	// away maps a node that machines name to when the refresh first saw it out of the mesh.
+	away map[string]time.Time
 }
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
@@ -115,9 +122,11 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		opts:    opts,
 		api:     api,
 		ctx:     ctx,
+		nodes:   map[string]*client{},
 		entries: map[string]*entry{},
 		owners:  map[string]chan struct{}{},
 		views:   map[string]view{},
+		away:    map[string]time.Time{},
 
 		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
@@ -161,7 +170,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		return machines.Machine{}, machines.ActionNone, err
 	}
 	template := cmp.Or(spec.Image, b.opts.Image)
-	action, sandbox := machines.ActionNone, ""
+	action, sandbox, addr := machines.ActionNone, "", ""
 	m, err := b.mutate(ctx, spec.ID, func(e *entry) (*entry, bool) {
 		now := time.Now()
 		action = machines.ActionNone
@@ -175,7 +184,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 			return e, false
 		}
 		if state, _ := e.state(); state == machines.StateHibernated || state == machines.StateFailed {
-			sandbox = e.row.ID
+			sandbox, addr = e.row.ID, e.ownerAddr
 			e.begin(opWake, now, b.lease())
 			action = machines.ActionWoken
 			return e, true
@@ -189,7 +198,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 	case machines.ActionCreated:
 		b.run(spec.ID, opClaim, m.Revision, func(ctx context.Context) error { return b.claim(ctx, spec.ID, spec.Owner, spec.Tenant, template, size) })
 	case machines.ActionWoken:
-		b.run(spec.ID, opWake, m.Revision, func(ctx context.Context) error { return b.wake(ctx, spec.ID, sandbox) })
+		b.run(spec.ID, opWake, m.Revision, func(ctx context.Context) error { return b.wake(ctx, spec.ID, addr, sandbox) })
 	}
 	return m, action, nil
 }
@@ -215,7 +224,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 	if _, err := b.lookup(ctx, id); err != nil {
 		return machines.Machine{}, err
 	}
-	started, missing, sandbox := false, false, ""
+	started, missing, sandbox, addr := false, false, "", ""
 	m, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
 		started, missing = false, e == nil || e.row == nil
 		if missing {
@@ -223,7 +232,7 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 		}
 		now := time.Now()
 		if state, _ := e.state(); state == machines.StateRunning || state == machines.StateStarting && !e.busy(now) {
-			sandbox, started = e.row.ID, true
+			sandbox, addr, started = e.row.ID, e.ownerAddr, true
 			e.begin(opHibernate, now, b.lease())
 			return e, true
 		}
@@ -237,10 +246,14 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 	}
 	if started {
 		b.run(id, opHibernate, m.Revision, func(ctx context.Context) error {
-			if err := b.api.verb(ctx, sandbox, "hibernate", nil); err != nil {
+			node, err := b.node(addr)
+			if err != nil {
 				return err
 			}
-			return b.reread(ctx, id, sandbox)
+			if err := node.verb(ctx, sandbox, "hibernate", nil); err != nil {
+				return err
+			}
+			return b.reread(ctx, id, addr, sandbox)
 		})
 	}
 	return m, nil
@@ -304,15 +317,19 @@ func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, erro
 	if state, _ := e.state(); state != machines.StateRunning {
 		return machines.Endpoint{}, &machines.NotRunningError{State: state}
 	}
+	node, err := b.node(e.ownerAddr)
+	if err != nil {
+		return machines.Endpoint{}, err
+	}
 	sandbox := e.row.ID
 	key := net.JoinHostPort(sandbox+".sandboxd", strconv.Itoa(b.opts.AgentPort))
 	return machines.Endpoint{
 		Key: key,
 		Dial: func(ctx context.Context) (net.Conn, error) {
-			return b.api.dialPort(ctx, sandbox, b.opts.AgentPort)
+			return node.dialPort(ctx, sandbox, b.opts.AgentPort)
 		},
 		Screen: func(ctx context.Context) (net.Conn, error) {
-			return b.api.dialPort(ctx, sandbox, screenPort)
+			return node.dialPort(ctx, sandbox, screenPort)
 		},
 	}, nil
 }
@@ -323,14 +340,14 @@ func (b *Backend) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	sandbox, err := b.sandboxOf(ctx, id)
+	sandbox, node, err := b.sandboxOf(ctx, id)
 	if unclaimed && errors.Is(err, machines.ErrNotFound) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if err = b.api.verb(ctx, sandbox, "release", nil); err != nil {
+	if err = node.verb(ctx, sandbox, "release", nil); err != nil {
 		return err
 	}
 	_, err = b.drop(ctx, id, func(*entry) bool { return true })
@@ -341,11 +358,11 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 	if !metaKey.MatchString(key) {
 		return fmt.Errorf("meta key %q must match %s", key, metaKey)
 	}
-	sandbox, err := b.sandboxOf(ctx, id)
+	sandbox, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
 	}
-	if err = b.api.patchEnv(ctx, sandbox, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
+	if err = node.patchEnv(ctx, sandbox, map[string]*envVar{envMetaPrefix + key: {Value: value}}); err != nil {
 		return fmt.Errorf("set meta %s: %w", key, err)
 	}
 	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
@@ -362,7 +379,7 @@ func (b *Backend) SetMeta(ctx context.Context, id, key, value string) error {
 }
 
 func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Identity, keys map[string]*machines.Secret) error {
-	sandbox, err := b.sandboxOf(ctx, id)
+	sandbox, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -378,7 +395,7 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 		for name, sec := range keys {
 			vars[name] = secretVar(sec)
 		}
-		if err = b.api.patchEnv(ctx, sandbox, vars); err != nil {
+		if err = node.patchEnv(ctx, sandbox, vars); err != nil {
 			return fmt.Errorf("install host keys: %w", err)
 		}
 	}
@@ -386,11 +403,11 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 	if err != nil {
 		return fmt.Errorf("encode identity: %w", err)
 	}
-	r, err := b.api.get(ctx, sandbox)
+	r, err := node.get(ctx, sandbox)
 	if err != nil {
 		return fmt.Errorf("read sandbox token: %w", err)
 	}
-	resp, err := b.api.exec(ctx, sandbox, r.Token, execRequest{Argv: writeIdentity, Env: map[string]string{"CB_STDIN": string(file)}, TimeoutSeconds: identityTimeoutSeconds})
+	resp, err := node.exec(ctx, sandbox, r.Token, execRequest{Argv: writeIdentity, Env: map[string]string{"CB_STDIN": string(file)}, TimeoutSeconds: identityTimeoutSeconds})
 	switch {
 	case err != nil:
 		return fmt.Errorf("write identity: %w", err)
@@ -401,7 +418,7 @@ func (b *Backend) Deliver(ctx context.Context, id string, identity machines.Iden
 }
 
 func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
-	sandbox, err := b.sandboxOf(ctx, id)
+	sandbox, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -409,7 +426,7 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 	if upstream != "" {
 		v = &envVar{Value: upstream, Guest: new(false)}
 	}
-	if err = b.api.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
+	if err = node.patchEnv(ctx, sandbox, map[string]*envVar{envUpstream: v}); err != nil {
 		return fmt.Errorf("set egress upstream: %w", err)
 	}
 	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
@@ -423,7 +440,7 @@ func (b *Backend) SetEgress(ctx context.Context, id, upstream string) error {
 }
 
 func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Credentials) error {
-	sandbox, err := b.sandboxOf(ctx, id)
+	sandbox, node, err := b.sandboxOf(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -465,7 +482,7 @@ func (b *Backend) SetCredentials(ctx context.Context, id string, c machines.Cred
 	if len(changes) == 0 {
 		return nil
 	}
-	err = b.api.patchEnv(ctx, sandbox, changes)
+	err = node.patchEnv(ctx, sandbox, changes)
 	if err != nil && !errors.Is(err, machines.ErrRefused) {
 		return fmt.Errorf("set credentials: %w", err)
 	}
@@ -691,7 +708,7 @@ func (b *Backend) lease() time.Duration {
 }
 
 func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size string) error {
-	sandbox, err := b.api.claim(ctx, tenant, claimRequest{
+	sandbox, node, err := b.claimFollow(ctx, tenant, claimRequest{
 		Template:   template,
 		Net:        netNone,
 		Size:       size,
@@ -702,11 +719,52 @@ func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size s
 	if err != nil {
 		return err
 	}
-	return b.reread(ctx, id, sandbox)
+	return b.reread(ctx, id, node, sandbox)
 }
 
-func (b *Backend) wake(ctx context.Context, id, sandbox string) error {
-	if err := b.api.verb(ctx, sandbox, "wake", nil); err != nil {
+// claimFollow claims on the entry node and follows its redirect as the sandboxd SDK does, and returns the claim and its node.
+func (b *Backend) claimFollow(ctx context.Context, tenant string, req claimRequest) (string, string, error) {
+	resp, err := b.api.claim(ctx, tenant, req)
+	if err != nil || len(resp.Redirect) == 0 {
+		return resp.ID, "", err
+	}
+	req.NoRedirect, req.RequirePromoted = true, resp.RequirePromoted
+	var lastErr error
+	for _, peer := range resp.Redirect {
+		r, peerErr := b.claimAt(ctx, peer, tenant, req)
+		if peerErr == nil {
+			return r.ID, cmp.Or(r.OwnerAddr, peer), nil
+		}
+		lastErr = peerErr
+	}
+	if !transient(lastErr) {
+		return "", "", fmt.Errorf("all redirect targets failed: %w", lastErr)
+	}
+	if resp, err = b.claimAt(ctx, "", tenant, req); err != nil {
+		return "", "", fmt.Errorf("all redirect targets failed, the entry node too: %w", errors.Join(lastErr, err))
+	}
+	return resp.ID, "", nil
+}
+
+// claimAt claims on node addr with req, which must not be redirected.
+func (b *Backend) claimAt(ctx context.Context, addr, tenant string, req claimRequest) (claimResponse, error) {
+	node, err := b.node(addr)
+	if err != nil {
+		return claimResponse{}, err
+	}
+	resp, err := node.claim(ctx, tenant, req)
+	if err == nil && len(resp.Redirect) > 0 {
+		err = fmt.Errorf("%s redirected again despite no_redirect", node.base)
+	}
+	return resp, err
+}
+
+func (b *Backend) wake(ctx context.Context, id, addr, sandbox string) error {
+	node, err := b.node(addr)
+	if err != nil {
+		return err
+	}
+	if err := node.verb(ctx, sandbox, "wake", nil); err != nil {
 		return err
 	}
 	b.mu.Lock()
@@ -715,7 +773,7 @@ func (b *Backend) wake(ctx context.Context, id, sandbox string) error {
 		wakes = e.wakes + 1
 	}
 	b.mu.Unlock()
-	if err := b.api.patchEnv(ctx, sandbox, map[string]*envVar{envWakes: {Value: strconv.Itoa(wakes)}}); err != nil {
+	if err := node.patchEnv(ctx, sandbox, map[string]*envVar{envWakes: {Value: strconv.Itoa(wakes)}}); err != nil {
 		return fmt.Errorf("record wake: %w", err)
 	}
 	if _, err := b.mutate(ctx, id, func(e *entry) (*entry, bool) {
@@ -727,12 +785,16 @@ func (b *Backend) wake(ctx context.Context, id, sandbox string) error {
 	}); err != nil {
 		return err
 	}
-	return b.reread(ctx, id, sandbox)
+	return b.reread(ctx, id, addr, sandbox)
 }
 
-// reread replaces machine id's row with sandbox's current one.
-func (b *Backend) reread(ctx context.Context, id, sandbox string) error {
-	r, err := b.api.get(ctx, sandbox)
+// reread replaces machine id's row with the current one of sandbox on node addr.
+func (b *Backend) reread(ctx context.Context, id, addr, sandbox string) error {
+	node, err := b.node(addr)
+	if err != nil {
+		return err
+	}
+	r, err := node.get(ctx, sandbox)
 	if err != nil {
 		return err
 	}
@@ -741,7 +803,7 @@ func (b *Backend) reread(ctx context.Context, id, sandbox string) error {
 		if e == nil {
 			return e, false
 		}
-		e.row = &r
+		e.row, e.ownerAddr = &r, addr
 		return e, true
 	})
 	return err
@@ -751,9 +813,9 @@ func (b *Backend) reread(ctx context.Context, id, sandbox string) error {
 func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, error) {
 	b.mu.Lock()
 	e := b.entries[id]
-	var sandbox string
+	var sandbox, addr string
 	if e != nil && e.row != nil {
-		sandbox = e.row.ID
+		sandbox, addr = e.row.ID, e.ownerAddr
 	}
 	b.mu.Unlock()
 	if e != nil && sandbox == "" {
@@ -762,14 +824,12 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 	var r row
 	var err error
 	if sandbox != "" {
-		r, err = b.api.get(ctx, sandbox)
-	} else {
-		var rows []row
-		if rows, err = b.api.find(ctx, metaMachine, id); err == nil && len(rows) == 0 {
-			err = machines.ErrNotFound
-		} else if err == nil {
-			r = rows[0]
+		var node *client
+		if node, err = b.node(addr); err == nil {
+			r, err = node.get(ctx, sandbox)
 		}
+	} else {
+		r, addr, err = b.find(ctx, id)
 	}
 	if errors.Is(err, machines.ErrNotFound) {
 		if err = b.forget(ctx, id, sandbox); err != nil {
@@ -781,10 +841,41 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 		return machines.Machine{}, err
 	}
 	r.Token = ""
-	if err := b.index(ctx, []row{r}, time.Time{}); err != nil {
+	if err := b.index(ctx, addr, []row{r}); err != nil {
 		return machines.Machine{}, err
 	}
 	return b.cached(id)
+}
+
+// find looks machine id up on the entry node, then on the peers of the last refresh; it is ErrNotFound only when every node answered.
+func (b *Backend) find(ctx context.Context, id string) (row, string, error) {
+	rows, err := b.api.find(ctx, metaMachine, id)
+	if err != nil {
+		return row{}, "", err
+	}
+	if len(rows) > 0 {
+		return rows[0], "", nil
+	}
+	b.nodeMu.Lock()
+	peers := b.peers
+	b.nodeMu.Unlock()
+	var errs []error
+	for _, peer := range peers {
+		node, err := b.node(peer)
+		if err == nil {
+			rows, err = node.find(ctx, metaMachine, id)
+		}
+		switch {
+		case err != nil:
+			errs = append(errs, err)
+		case len(rows) > 0:
+			return rows[0], peer, nil
+		}
+	}
+	if len(errs) > 0 {
+		return row{}, "", errors.Join(errs...)
+	}
+	return row{}, "", machines.ErrNotFound
 }
 
 func (b *Backend) cached(id string) (machines.Machine, error) {
@@ -818,16 +909,17 @@ func (b *Backend) changes(id string) <-chan struct{} {
 	return e.changed
 }
 
-func (b *Backend) sandboxOf(ctx context.Context, id string) (string, error) {
+func (b *Backend) sandboxOf(ctx context.Context, id string) (string, *client, error) {
 	if _, err := b.lookup(ctx, id); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if e := b.entries[id]; e != nil && e.row != nil {
-		return e.row.ID, nil
+		node, err := b.node(e.ownerAddr)
+		return e.row.ID, node, err
 	}
-	return "", machines.ErrNotFound
+	return "", nil, machines.ErrNotFound
 }
 
 // forget drops id unless an operation still owns it.
@@ -837,14 +929,19 @@ func (b *Backend) forget(ctx context.Context, id, sandbox string) error {
 	return err
 }
 
-// refresh re-reads every claim, drops machines whose claim is gone and probes agents not yet seen.
+// refresh re-reads every claim of the mesh, drops machines whose claim is gone and probes agents not yet seen.
 func (b *Backend) refresh(ctx context.Context) error {
 	listed := time.Now()
-	rows, err := b.api.list(ctx)
+	lists, err := b.listMesh(ctx)
 	if err != nil {
 		return err
 	}
-	if err := b.index(ctx, rows, listed); err != nil {
+	for addr, rows := range lists {
+		if err := b.index(ctx, addr, rows); err != nil {
+			return err
+		}
+	}
+	if err := b.dropUnlisted(ctx, lists, listed); err != nil {
 		return err
 	}
 	now := time.Now()
@@ -871,27 +968,29 @@ func (b *Backend) refresh(ctx context.Context) error {
 	return nil
 }
 
-// index merges rows, reading the env of unseen claims; a full list taken at listed, not zero, also drops what it lacks.
-func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error {
-	present := map[string]bool{}
+// index merges the rows of node addr, reading the env of unseen claims.
+func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
+	node, err := b.node(addr)
+	if err != nil {
+		return err
+	}
 	for _, r := range rows {
 		id := r.Metadata[metaMachine]
 		if id == "" {
 			continue
 		}
-		present[id] = true
 		b.mu.Lock()
 		e := b.entries[id]
 		known := e != nil && e.row != nil && e.row.ID == r.ID
-		unchanged := known && reflect.DeepEqual(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template
+		unchanged := known && reflect.DeepEqual(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template &&
+			e.ownerAddr == addr
 		b.mu.Unlock()
 		if unchanged {
 			continue
 		}
 		var env map[string]envVar
 		if !known {
-			var err error
-			if env, err = b.api.env(ctx, r.ID); err != nil {
+			if env, err = node.env(ctx, r.ID); err != nil {
 				return fmt.Errorf("read env of %s: %w", r.ID, err)
 			}
 		}
@@ -903,20 +1002,31 @@ func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error
 				e.loadEnv(env)
 			}
 			cur := r
-			e.row, e.image = &cur, r.Key.Template
+			e.row, e.image, e.ownerAddr = &cur, r.Key.Template, addr
 			return e, true
 		}); err != nil {
 			return err
 		}
 	}
-	if listed.IsZero() {
-		return nil
+	return nil
+}
+
+// dropUnlisted drops the machines that lists, taken at listed, lack while their node answered or has stayed out of the mesh for nodeLostAfter.
+func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, listed time.Time) error {
+	present := map[string]bool{}
+	for _, rows := range lists {
+		for _, r := range rows {
+			present[r.Metadata[metaMachine]] = true
+		}
 	}
 	now := time.Now()
 	b.mu.Lock()
 	gone := map[string]string{}
 	for id, e := range b.entries {
-		if !present[id] && !e.busy(now) && e.row != nil && e.rowAt.Before(listed) {
+		if present[id] || e.busy(now) || e.row == nil || !e.rowAt.Before(listed) {
+			continue
+		}
+		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
 			gone[id] = e.row.ID
 		}
 	}
@@ -927,6 +1037,86 @@ func (b *Backend) index(ctx context.Context, rows []row, listed time.Time) error
 		}
 	}
 	return nil
+}
+
+// listMesh lists the claims of the entry node, "", and of each peer, keyed by node; a peer that fails is left out.
+func (b *Backend) listMesh(ctx context.Context) (map[string][]row, error) {
+	logger := log.WithFunc("sandboxd.Backend.listMesh")
+	peers, err := b.api.peers(ctx)
+	b.nodeMu.Lock()
+	if err != nil {
+		logger.Warnf(ctx, "list the peers: %v", err)
+		peers = b.peers
+	}
+	b.peers = peers
+	b.nodeMu.Unlock()
+	addrs := slices.Concat([]string{""}, peers)
+	lists := make([][]row, len(addrs))
+	errs := make([]error, len(addrs))
+	var wg sync.WaitGroup
+	for i, addr := range addrs {
+		wg.Go(func() {
+			node, err := b.node(addr)
+			if err == nil {
+				lists[i], err = node.list(ctx)
+			}
+			errs[i] = err
+		})
+	}
+	wg.Wait()
+	if errs[0] != nil {
+		return nil, errs[0]
+	}
+	out := make(map[string][]row, len(addrs))
+	for i, addr := range addrs {
+		if errs[i] != nil {
+			logger.Warnf(ctx, "list the claims of %s: %v", addr, errs[i])
+			continue
+		}
+		out[addr] = lists[i]
+	}
+	b.trackAway(peers, out)
+	return out, nil
+}
+
+// trackAway notes when a node that machines name stopped being a peer and answering the list.
+func (b *Backend) trackAway(peers []string, lists map[string][]row) {
+	present := func(addr string) bool {
+		_, answered := lists[addr]
+		return answered || addr == "" || slices.Contains(peers, addr)
+	}
+	now := time.Now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, e := range b.entries {
+		if _, ok := b.away[e.ownerAddr]; !ok && !present(e.ownerAddr) {
+			b.away[e.ownerAddr] = now
+		}
+	}
+	maps.DeleteFunc(b.away, func(addr string, _ time.Time) bool { return present(addr) })
+}
+
+func (b *Backend) lostLocked(addr string, now time.Time) bool {
+	since, ok := b.away[addr]
+	return ok && now.Sub(since) >= nodeLostAfter
+}
+
+// node returns the client of the node at addr, the entry node's for "".
+func (b *Backend) node(addr string) (*client, error) {
+	if addr == "" {
+		return b.api, nil
+	}
+	b.nodeMu.Lock()
+	defer b.nodeMu.Unlock()
+	if c := b.nodes[addr]; c != nil {
+		return c, nil
+	}
+	c, err := newClient(nodeURL(addr), b.opts.Token)
+	if err != nil {
+		return nil, err
+	}
+	b.nodes[addr] = c
+	return c, nil
 }
 
 // publishLocked wakes the owners of the machines whose state, image, flavor, incarnation or meta changed since the last call, or that went away.
@@ -963,11 +1153,15 @@ func (b *Backend) probe(ctx context.Context, id string) {
 		b.mu.Unlock()
 		return
 	}
-	sandbox, restarts := e.row.ID, e.row.Restarts
+	sandbox, restarts, addr := e.row.ID, e.row.Restarts, e.ownerAddr
 	b.mu.Unlock()
+	node, err := b.node(addr)
+	if err != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	conn, err := b.api.dialPort(ctx, sandbox, b.opts.AgentPort)
+	conn, err := node.dialPort(ctx, sandbox, b.opts.AgentPort)
 	if err != nil {
 		return
 	}
@@ -983,19 +1177,23 @@ func (b *Backend) probe(ctx context.Context, id string) {
 	}
 }
 
-// renew extends the lease of every claim that is not archived.
+// renew extends the lease of every claim that is not archived, on its node.
 func (b *Backend) renew(ctx context.Context) error {
 	b.mu.Lock()
-	var sandboxes []string
+	leases := map[string]string{}
 	for _, e := range b.entries {
 		if e.row != nil && !e.row.Archived {
-			sandboxes = append(sandboxes, e.row.ID)
+			leases[e.row.ID] = e.ownerAddr
 		}
 	}
 	b.mu.Unlock()
 	var errs []error
-	for _, sandbox := range sandboxes {
-		if err := b.api.verb(ctx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire}); err != nil && !isStatus(err, http.StatusConflict) {
+	for sandbox, addr := range leases {
+		node, err := b.node(addr)
+		if err == nil {
+			err = node.verb(ctx, sandbox, "renew", renewRequest{TTLSeconds: leaseSeconds, OnExpire: onExpire})
+		}
+		if err != nil && !isStatus(err, http.StatusConflict) {
 			errs = append(errs, err)
 		}
 	}

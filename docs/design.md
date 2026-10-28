@@ -465,6 +465,7 @@ Design, 2026-10-01. It builds on the M4.5 measurements (`m45-sandbox-eval.md`) a
 
 - `Get` / `List` = `GET /v1/sandboxes?metadata=cb_machine=…` / `?metadata=cb_owner=…`.
 - The backend keeps an in-memory index of every claim. One `GET /v1/sandboxes` every 2 s refreshes it (the instance holds only cocoonbox claims), and each of the backend's own lifecycle calls updates it. So `Resolve` on the edge path stays a map lookup, as the CocoonSet informer cache is today.
+- On a sandboxd mesh the refresh also reads `GET /v1/peers` and lists every peer. A machine goes when its node answered the list without it, or when its node has been out of the mesh for 5 min; a peer that does not answer only leaves its rows out. A lookup of an unknown machine asks the entry node, then the peers of the last refresh. Without a mesh the cost is that one `GET /v1/peers` per refresh; claim, wake, hibernate, exec, env writes, the relay and renewals make the same calls as on one node (contracts, Boxes ↔ sandboxd).
 - The row is node-local: a lost node takes its rows with it. The durable per-user record is the state layer (§11), not the claim (14.6).
 
 ### 14.2 Image → template and pool

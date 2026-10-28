@@ -303,6 +303,7 @@ History travels as a bundle in the stream, never by rsync: `git bundle create <s
 - A box machine is a claim on the cbsbx sandboxd instance (`net: none`, size `xlarge`) from the template the api names (`image`), with metadata `cb_machine` = machine id and `cb_owner` = user. The api ignores claims without `cb_machine`.
 - Box id: a user's first box keeps `cb-<first 12 hex of sha256(user)>` (every user created before several boxes per user, and every new user at creation); any other box is `cb-` and 12 random hex. A Rebase or restored machine is `<box id>-r<unix time in base 36>`, so the api finds a machine's box by cutting its id at `-r`.
 - `Hibernate` = sandboxd `hibernate`; `Ensure` on a hibernated box = `wake`.
+- On a sandboxd mesh the api enters at its configured node and follows a claim redirect as the sandboxd SDK does: each named peer in turn with `no_redirect` and the answer's `require_promoted`, then the entry node with `no_redirect` when the last peer failed with a transient error. The machine record keeps `owner_addr`, the node that holds the claim as the mesh names it (`""` for the entry node, so every api process on one table enters at the same node), and every verb, env write, exec, relay and renewal of the machine goes to that node with the root token, which every node shares.
 
 ## Scheduled wake (design §15.13)
 
