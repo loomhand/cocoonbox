@@ -138,6 +138,34 @@ type Options struct {
 	FirstBoxID func(user string) string
 }
 
+// record is a user row with the values the console never sees.
+type record struct {
+	User
+	tokenSHA256 string
+	devices     []deviceToken
+	gwAKID      string
+	gwKey       []byte
+	tenantToken []byte
+	stateKeyID  string
+	stateKey    []byte
+}
+
+type life struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+type credLife struct {
+	life
+	refs int
+}
+
+// tokenOwner is the user a token serves and, for a device token, its device id.
+type tokenOwner struct {
+	user   string
+	device string
+}
+
 // Service owns the users, boxes and shares tables and an in-memory index that serves every token, box and share check.
 type Service struct {
 	store        *store
@@ -1001,34 +1029,6 @@ func (s *Service) put(r record) {
 	}
 	s.byID[r.ID] = r
 	addTokens(s.byToken, r)
-}
-
-// record is a user row with the values the console never sees.
-type record struct {
-	User
-	tokenSHA256 string
-	devices     []deviceToken
-	gwAKID      string
-	gwKey       []byte
-	tenantToken []byte
-	stateKeyID  string
-	stateKey    []byte
-}
-
-type life struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-}
-
-type credLife struct {
-	life
-	refs int
-}
-
-// tokenOwner is the user a token serves and, for a device token, its device id.
-type tokenOwner struct {
-	user   string
-	device string
 }
 
 func addTokens(byToken map[string]tokenOwner, r record) {
