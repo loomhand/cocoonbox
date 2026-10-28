@@ -10,6 +10,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 func (s *Service) Add(ctx context.Context, req *controlv1.AddKeyRequest) (*controlv1.Key, error) {
@@ -29,7 +30,7 @@ func (s *Service) Add(ctx context.Context, req *controlv1.AddKeyRequest) (*contr
 		return nil, keyStatus(ctx, err, "add key")
 	}
 	sec := &secret{
-		id: idPrefix + randomHex(idBytes), owner: owner, name: req.GetName(), hosts: sp.hosts, header: sp.header, template: sp.template,
+		id: idPrefix + utils.RandomHex(idBytes), owner: owner, name: req.GetName(), hosts: sp.hosts, header: sp.header, template: sp.template,
 		query: sp.query, placeholder: newPlaceholder(value), hint: valueHint(value), fingerprint: fingerprint(value), valueLen: len(value), version: 1,
 	}
 	if sec.sealed, err = s.seal.Seal(ctx, owner, []byte(value), valueData(sec.id, owner)); err != nil {

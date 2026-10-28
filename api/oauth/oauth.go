@@ -18,6 +18,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/publicnet"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -232,7 +233,7 @@ func (s *Service) Authenticate(ctx context.Context, header string) (Grant, error
 	if !ok || !strings.HasPrefix(token, AccessPrefix) {
 		return Grant{}, ErrInvalidToken
 	}
-	g, err := s.store.byAccess(ctx, hashHex(token))
+	g, err := s.store.byAccess(ctx, utils.HashHex(token))
 	if err != nil {
 		return Grant{}, err
 	}

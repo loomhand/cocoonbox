@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/loomhand/cocoonbox/api/migrate"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -121,7 +122,7 @@ func (s *store) putGrant(ctx context.Context, g *grant, seal func(id string) ([]
 			return fmt.Errorf("read grant: %w", err)
 		}
 		if g.id == "" {
-			g.id = "cg_" + randomHex(idBytes)
+			g.id = "cg_" + utils.RandomHex(idBytes)
 		}
 		if g.sealed, err = seal(g.id); err != nil {
 			return err

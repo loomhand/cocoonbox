@@ -3,7 +3,6 @@ package console
 import (
 	"cmp"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -30,6 +29,7 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const password = "correct horse battery"
@@ -369,7 +369,7 @@ func newEnv(t *testing.T) *env {
 	if base == "" {
 		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
 	}
-	name := "t_" + randomHex(6)
+	name := "t_" + utils.RandomHex(6)
 	if err := exec(base, "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)
 	}
@@ -479,7 +479,7 @@ type fakeGW struct {
 func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.keys[owner] = "gw-" + randomHex(8)
+	g.keys[owner] = "gw-" + utils.RandomHex(8)
 	return g.keys[owner], "sha256:" + owner, nil
 }
 
@@ -566,10 +566,4 @@ func exec(dsn, sql string) error {
 	defer func() { _ = conn.Close(context.Background()) }()
 	_, err = conn.Exec(context.Background(), sql)
 	return err
-}
-
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
 }

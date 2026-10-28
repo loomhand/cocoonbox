@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -34,9 +35,9 @@ func (s *Service) MintInviteToken(ctx context.Context, admin, label string) (str
 	if label == "" || len(label) > maxTokenLabel || !utf8.ValidString(label) {
 		return "", InviteToken{}, fmt.Errorf("%w: a label is 1 to %d bytes", ErrInvalid, maxTokenLabel)
 	}
-	token := auth.InviteTokenPrefix + randomHex(secretBytes)
-	t := InviteToken{ID: "itk_" + randomHex(idBytes), Label: label, CreatedBy: admin}
-	minted, err := s.store.addInviteToken(ctx, t, hashHex(token))
+	token := auth.InviteTokenPrefix + utils.RandomHex(secretBytes)
+	t := InviteToken{ID: "itk_" + utils.RandomHex(idBytes), Label: label, CreatedBy: admin}
+	minted, err := s.store.addInviteToken(ctx, t, utils.HashHex(token))
 	return token, minted, err
 }
 
@@ -55,7 +56,7 @@ func (s *Service) Inviter(ctx context.Context, token string) (string, error) {
 	if !strings.HasPrefix(token, auth.InviteTokenPrefix) {
 		return "", ErrNotFound
 	}
-	id, admin, used, err := s.store.inviteTokenBySHA256(ctx, hashHex(token))
+	id, admin, used, err := s.store.inviteTokenBySHA256(ctx, utils.HashHex(token))
 	if err != nil {
 		return "", err
 	}

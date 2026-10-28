@@ -3,7 +3,6 @@ package boxes
 import (
 	"cmp"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -46,8 +46,7 @@ var (
 
 // BoxID returns the id of the first box user had before several boxes per user; its first machine carries the same id.
 func BoxID(user string) string {
-	sum := sha256.Sum256([]byte(user))
-	return idPrefix + hex.EncodeToString(sum[:])[:idHexLen]
+	return idPrefix + utils.HashHex(user)[:idHexLen]
 }
 
 // newBoxID draws the id of a new box; it never carries machineSuffix.

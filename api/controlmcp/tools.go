@@ -465,7 +465,7 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 		return s.boxes.Ensure(ctx, &controlv1.EnsureRequest{})
 	}
 	if g != nil {
-		defer s.lock(g.ID)()
+		defer s.locks.Lock(g.ID)()
 	}
 	box, err := s.box(ctx, ref)
 	switch {
@@ -488,7 +488,7 @@ func (s *Server) startCreate(ctx context.Context, req *controlv1.CreateBoxReques
 	if g == nil {
 		return s.boxes.Create(ctx, req)
 	}
-	defer s.lock(g.ID)()
+	defer s.locks.Lock(g.ID)()
 	list, err := s.created(ctx, g)
 	if err != nil {
 		return nil, err

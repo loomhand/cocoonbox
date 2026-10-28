@@ -22,6 +22,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/mcpwire"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -65,15 +66,16 @@ type Server struct {
 	agents Agents
 	lists  ToolLists
 
+	locks utils.Locks
+
 	mu       sync.Mutex
-	locks    map[string]*sync.Mutex
 	sessions map[string]*session
 	shared   map[string]*agentSessions
 }
 
 // New serves the control tools over boxes, authenticating with authn.
 func New(boxes controlv1.BoxesServer, authn *auth.Authenticator) *Server {
-	return &Server{boxes: boxes, authn: authn, locks: map[string]*sync.Mutex{}, sessions: map[string]*session{}, shared: map[string]*agentSessions{}}
+	return &Server{boxes: boxes, authn: authn, sessions: map[string]*session{}, shared: map[string]*agentSessions{}}
 }
 
 // EnableGrants admits OAuth access tokens next to user tokens; a token acts only on the boxes its grant created, within its caps, and those the user chose for it.
@@ -207,19 +209,6 @@ func (s *Server) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	w.Header().Set("WWW-Authenticate", s.grants.Challenge(r.Header.Get("Authorization") != ""))
 	w.WriteHeader(http.StatusUnauthorized)
-}
-
-// lock serializes the calls of one grant that may start a box, so two cannot both pass its caps.
-func (s *Server) lock(grant string) func() {
-	s.mu.Lock()
-	l := s.locks[grant]
-	if l == nil {
-		l = &sync.Mutex{}
-		s.locks[grant] = l
-	}
-	s.mu.Unlock()
-	l.Lock()
-	return l.Unlock
 }
 
 type grantKey struct{}

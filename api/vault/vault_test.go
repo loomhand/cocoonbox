@@ -18,6 +18,7 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -212,7 +213,7 @@ func freshDatabase(t *testing.T) string {
 		t.Fatalf("connect: %v", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	name := "t_" + randomHex(6)
+	name := "t_" + utils.RandomHex(6)
 	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)
 	}

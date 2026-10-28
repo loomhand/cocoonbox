@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/loomhand/cocoonbox/api/migrate"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -149,7 +150,7 @@ func (s *store) requeue(ctx context.Context, idp, subject, secretSHA256 string) 
 
 // enqueue adds e at the back, or with a usable invite at the front, spending one of the invite's uses.
 func (s *store) enqueue(ctx context.Context, e entry, inviteSHA256 string, inviteOnly bool) (string, error) {
-	id := "sq_" + randomHex(idBytes)
+	id := "sq_" + utils.RandomHex(idBytes)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var invite *string
 		if inviteSHA256 != "" {

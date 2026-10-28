@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -15,6 +14,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/credential"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -37,7 +37,7 @@ type Signer interface {
 
 // EnableProvisioning gives every machine an identity file for signer and, with accounts, its user's gw key.
 func (s *Service) EnableProvisioning(signer Signer) {
-	s.provision = &provisioner{signer: signer, backoff: provisionBackoff, locks: map[string]*sync.Mutex{}}
+	s.provision = &provisioner{signer: signer, backoff: provisionBackoff}
 }
 
 // RunProvisioner provisions running machines that came up without an operation, until ctx ends.
@@ -76,7 +76,7 @@ func (s *Service) provisionStale(ctx context.Context) {
 // provisionMachine provisions m unless its current incarnation already has a wake id.
 func (s *Service) provisionMachine(ctx context.Context, m machines.Machine) error {
 	p := s.provision
-	unlock := p.lock(m.ID)
+	unlock := p.locks.Lock(m.ID)
 	defer unlock()
 	if s.userLocks != nil {
 		unlockShared, err := s.userLocks.Lock(ctx, "provision:"+m.ID)
@@ -189,20 +189,7 @@ type provisioner struct {
 	signer  Signer
 	backoff time.Duration
 
-	mu    sync.Mutex
-	locks map[string]*sync.Mutex
-}
-
-func (p *provisioner) lock(machine string) func() {
-	p.mu.Lock()
-	l := p.locks[machine]
-	if l == nil {
-		l = &sync.Mutex{}
-		p.locks[machine] = l
-	}
-	p.mu.Unlock()
-	l.Lock()
-	return l.Unlock
+	locks utils.Locks
 }
 
 // wakeOf returns the wake id recorded for m's current incarnation, "" when none.

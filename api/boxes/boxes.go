@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/projecteru2/core/log"
@@ -22,6 +21,7 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const startHint = "call box_ensure to bring it up"
@@ -143,13 +143,12 @@ type Service struct {
 	userLocks    *cluster.Store
 	syncMachines MachineSync
 
-	mu     sync.Mutex
-	starts map[string]*sync.Mutex
+	starts utils.Locks
 }
 
 // New serves the boxes registry keeps on backend with defaults.
 func New(backend machines.Machines, defaults Defaults, registry Registry) *Service {
-	return &Service{machines: backend, defaults: defaults, registry: registry, ops: newOperations(), starts: map[string]*sync.Mutex{}}
+	return &Service{machines: backend, defaults: defaults, registry: registry, ops: newOperations()}
 }
 
 func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {
@@ -486,16 +485,9 @@ func (s *Service) ownImage(user string) string {
 
 // lockStarts serializes the requests that may start or delete a machine of user, in every api with a shared table.
 func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
-	s.mu.Lock()
-	l := s.starts[user]
-	if l == nil {
-		l = &sync.Mutex{}
-		s.starts[user] = l
-	}
-	s.mu.Unlock()
-	l.Lock()
+	release := s.starts.Lock(user)
 	if s.userLocks == nil {
-		return l.Unlock, nil
+		return release, nil
 	}
 	logger := log.WithFunc("boxes.Service.lockStarts").WithField("user", user)
 	unlock, err := s.userLocks.Lock(ctx, "starts:"+user)
@@ -507,7 +499,7 @@ func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 		}
 	}
 	if err != nil {
-		l.Unlock()
+		release()
 		if ctx.Err() != nil {
 			return nil, status.FromContextError(ctx.Err()).Err()
 		}
@@ -525,7 +517,7 @@ func (s *Service) lockStarts(ctx context.Context, user string) (func(), error) {
 			cancel()
 		}
 		unlock()
-		l.Unlock()
+		release()
 	}, nil
 }
 

@@ -4,10 +4,8 @@ package signup
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -204,17 +202,6 @@ func lowered(list []string) []string {
 		}
 	}
 	return out
-}
-
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
-}
-
-func hashHex(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
 }
 
 func challenge(verifier string) string {

@@ -13,6 +13,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -37,12 +38,12 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 	}
 	clientID := cmp.Or(f.Get("client_id"), basicUser(r))
 	access, refresh := randomToken(AccessPrefix), randomToken(refreshPrefix)
-	tokens := issued{access: hashHex(access), refresh: hashHex(refresh)}
+	tokens := issued{access: utils.HashHex(access), refresh: utils.HashHex(refresh)}
 	var err error
 	switch f.Get("grant_type") {
 	case authorizationCode:
 		var redeemed code
-		redeemed, err = s.store.redeem(r.Context(), hashHex(f.Get(codeParam)), grantPrefix+randomHex(grantIDBytes), tokens, func(c code) error {
+		redeemed, err = s.store.redeem(r.Context(), utils.HashHex(f.Get(codeParam)), grantPrefix+utils.RandomHex(grantIDBytes), tokens, func(c code) error {
 			if time.Now().After(c.expiresAt) || c.client.id != clientID || c.redirectURI != f.Get("redirect_uri") || !verifies(f.Get("code_verifier"), c.challenge) {
 				return errInvalidGrant
 			}
@@ -54,7 +55,7 @@ func (s *Service) ServeToken(w http.ResponseWriter, r *http.Request) {
 		}
 	case refreshToken:
 		var replayed string
-		replayed, err = s.store.refresh(r.Context(), hashHex(f.Get(refreshToken)), clientID, tokens)
+		replayed, err = s.store.refresh(r.Context(), utils.HashHex(f.Get(refreshToken)), clientID, tokens)
 		if replayed != "" {
 			s.accounts.EndCredential(r.Context(), replayed)
 		}
@@ -124,11 +125,11 @@ func (s *Service) ServeRevoke(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case strings.HasPrefix(token, AccessPrefix), strings.HasPrefix(token, refreshPrefix):
 		var revoked string
-		if revoked, err = s.store.revokeByToken(r.Context(), hashHex(token), cmp.Or(r.PostForm.Get("client_id"), basicUser(r))); revoked != "" {
+		if revoked, err = s.store.revokeByToken(r.Context(), utils.HashHex(token), cmp.Or(r.PostForm.Get("client_id"), basicUser(r))); revoked != "" {
 			s.accounts.EndCredential(r.Context(), revoked)
 		}
 	case strings.HasPrefix(token, users.TokenPrefix):
-		err = s.accounts.RevokeDeviceSHA256(r.Context(), hashHex(token))
+		err = s.accounts.RevokeDeviceSHA256(r.Context(), utils.HashHex(token))
 	}
 	if err != nil {
 		log.WithFunc("oauth.Service.ServeRevoke").Error(r.Context(), err, "revoke token")

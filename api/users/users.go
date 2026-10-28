@@ -5,9 +5,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -24,6 +21,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -208,7 +206,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	if err != nil {
 		return nil, err
 	}
-	dummy, err := bcrypt.GenerateFromPassword([]byte(randomHex(secretBytes)), bcrypt.DefaultCost)
+	dummy, err := bcrypt.GenerateFromPassword([]byte(utils.RandomHex(secretBytes)), bcrypt.DefaultCost)
 	if err != nil {
 		st.close()
 		return nil, err
@@ -379,7 +377,7 @@ func (s *Service) List() []User {
 
 // Create adds a user with its first box, gw key and tenant and lifts an admin's gw cap; a failure leaves none of them behind.
 func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
-	id := cmp.Or(nu.ID, idPrefix+randomHex(idBytes))
+	id := cmp.Or(nu.ID, idPrefix+utils.RandomHex(idBytes))
 	switch {
 	case !namePattern.MatchString(nu.Name):
 		return User{}, fmt.Errorf("%w: a username is 2 to 32 lowercase letters, digits, - or _, starting with a letter", ErrInvalid)
@@ -401,7 +399,7 @@ func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
 	if _, err := s.record(id); err == nil {
 		return User{}, ErrExists
 	}
-	tenantToken := randomHex(secretBytes)
+	tenantToken := utils.RandomHex(secretBytes)
 	stateKey := keyring.Generate(id)
 	key, akID, err := s.gw.Add(ctx, id)
 	if err != nil {
@@ -597,8 +595,8 @@ func (s *Service) SetTokenSHA256(ctx context.Context, id, sum string) error {
 
 // RegenerateToken gives user id a new API token, returned once; the old one stops working at once.
 func (s *Service) RegenerateToken(ctx context.Context, id string) (string, error) {
-	token := TokenPrefix + randomHex(secretBytes)
-	if err := s.SetTokenSHA256(ctx, id, hashHex(token)); err != nil {
+	token := TokenPrefix + utils.RandomHex(secretBytes)
+	if err := s.SetTokenSHA256(ctx, id, utils.HashHex(token)); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -670,8 +668,8 @@ func (s *Service) Login(ctx context.Context, name, password string) (User, error
 
 // NewSession starts a console session for user id and returns its secret.
 func (s *Service) NewSession(ctx context.Context, id string) (string, error) {
-	secret := randomHex(secretBytes)
-	if err := s.store.addSession(ctx, hashHex(secret), id, time.Now().Add(sessionTTL)); err != nil {
+	secret := utils.RandomHex(secretBytes)
+	if err := s.store.addSession(ctx, utils.HashHex(secret), id, time.Now().Add(sessionTTL)); err != nil {
 		return "", err
 	}
 	return secret, nil
@@ -679,7 +677,7 @@ func (s *Service) NewSession(ctx context.Context, id string) (string, error) {
 
 // Session returns the enabled user of the session with secret.
 func (s *Service) Session(ctx context.Context, secret string) (User, error) {
-	id, err := s.SessionUser(ctx, hashHex(secret))
+	id, err := s.SessionUser(ctx, utils.HashHex(secret))
 	if err != nil {
 		return User{}, err
 	}
@@ -701,7 +699,7 @@ func (s *Service) SessionUser(ctx context.Context, sum string) (string, error) {
 
 // EndSession ends the session with secret.
 func (s *Service) EndSession(ctx context.Context, secret string) error {
-	return s.store.removeSession(ctx, hashHex(secret))
+	return s.store.removeSession(ctx, utils.HashHex(secret))
 }
 
 // Usage returns user id's gw usage by model since since.
@@ -1065,17 +1063,6 @@ func hashPassword(password string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: a password is %d to %d bytes", ErrInvalid, minPassword, maxPassword)
 	}
 	return bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-}
-
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
-}
-
-func hashHex(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
 }
 
 func deref[T any](p *T, def T) T {
