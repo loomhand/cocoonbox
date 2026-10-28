@@ -172,12 +172,12 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	}, nil
 }
 
-// Close releases the database pool.
 // LiveGrants reports which of ids are grants that still exist.
 func (s *Service) LiveGrants(ctx context.Context, ids []string) (map[string]bool, error) {
 	return s.store.liveGrants(ctx, ids)
 }
 
+// Close releases the database pool.
 func (s *Service) Close() { s.store.close() }
 
 // ResourceMetadataPath is where the protected resource's RFC 9728 metadata lives: the well-known prefix and the resource's path;
