@@ -157,15 +157,10 @@ impl Mcp {
             let mut tick = tokio::time::interval(period);
             loop {
                 tick.tick().await;
-                let idle: Vec<Arc<Session>> = {
-                    let mut sessions = lock(&mcp.sessions);
-                    let ids: Vec<String> = sessions
-                        .iter()
-                        .filter(|(_, s)| lock(&s.driver).last_seen.elapsed() >= mcp.idle)
-                        .map(|(id, _)| id.clone())
-                        .collect();
-                    ids.iter().filter_map(|id| sessions.remove(id)).collect()
-                };
+                let idle: Vec<Arc<Session>> = lock(&mcp.sessions)
+                    .extract_if(|_, s| lock(&s.driver).last_seen.elapsed() >= mcp.idle)
+                    .map(|(_, s)| s)
+                    .collect();
                 for s in idle {
                     mcp.close(&s, "idle").await;
                 }
@@ -233,15 +228,10 @@ impl Mcp {
 
     /// Closes every session opened through share `share_id`.
     pub async fn end_share(&self, share_id: &str) {
-        let ended: Vec<Arc<Session>> = {
-            let mut sessions = lock(&self.sessions);
-            let ids: Vec<String> = sessions
-                .iter()
-                .filter(|(_, s)| s.guest.as_ref().is_some_and(|g| g.share == share_id))
-                .map(|(id, _)| id.clone())
-                .collect();
-            ids.iter().filter_map(|id| sessions.remove(id)).collect()
-        };
+        let ended: Vec<Arc<Session>> = lock(&self.sessions)
+            .extract_if(|_, s| s.guest.as_ref().is_some_and(|g| g.share == share_id))
+            .map(|(_, s)| s)
+            .collect();
         for s in ended {
             self.close(&s, "the share ended").await;
         }
@@ -465,20 +455,21 @@ impl Mcp {
         &self,
         s: Option<&Session>,
         principal: &Principal,
-        msg: &Value,
+        mut msg: Value,
     ) -> Option<Value> {
-        let id = msg.get("id")?.clone();
+        let id = msg.get_mut("id")?.take();
+        let params = msg["params"].take();
         let method = msg["method"].as_str()?;
         let result = match (method, s) {
             ("ping", _) => Ok(json!({})),
             ("tools/list", Some(s)) => Ok(self.list_tools(s, principal)),
-            ("tools/call", Some(s)) => self.call_tool(s, principal, &msg["params"]).await,
+            ("tools/call", Some(s)) => self.call_tool(s, principal, params).await,
             ("resources/list", _) if self.automation.plans() => Ok(list_resources(&self.resources)),
             ("resources/read", _) if self.automation.plans() => {
                 let mut flows = String::new();
                 let reads_flows = !matches!(principal, Principal::Share { write: false, .. });
                 let guide = self.resources.first().map(|r| r.uri.as_ref());
-                if reads_flows && msg["params"]["uri"].as_str() == guide {
+                if reads_flows && params["uri"].as_str() == guide {
                     let index = self
                         .rt
                         .dispatcher
@@ -488,17 +479,18 @@ impl Mcp {
                         flows = index.text;
                     }
                 }
-                read_resource(&self.resources, &msg["params"], &flows).await
+                read_resource(&self.resources, &params, &flows).await
             }
             ("initialize", _) => Err((-32600, "initialize must be the only message".to_owned())),
             _ => Err((-32601, format!("method not found: {method}"))),
         };
-        Some(match result {
-            Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
-            Err((code, message)) => {
-                json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
-            }
-        })
+        let mut reply = json!({"jsonrpc": "2.0"});
+        reply["id"] = id;
+        match result {
+            Ok(result) => reply["result"] = result,
+            Err((code, message)) => reply["error"] = json!({"code": code, "message": message}),
+        }
+        Some(reply)
     }
 
     /// Replaces and releases `stale` after the driver ended it; a concurrent call may have replaced it already.
@@ -541,7 +533,7 @@ impl Mcp {
         &self,
         s: &Session,
         principal: &Principal,
-        params: &Value,
+        mut params: Value,
     ) -> Result<Value, (i64, String)> {
         let name = params["name"].as_str().unwrap_or_default();
         let Some((name, _)) = self.tools.iter().find(|(n, _)| *n == name) else {
@@ -553,9 +545,9 @@ impl Mcp {
                 format!("{name} is not allowed: the owner shares this box read-only"),
             ));
         }
-        let mut requested = match &params["arguments"] {
+        let mut requested = match params["arguments"].take() {
             Value::Null => json!({}),
-            v @ Value::Object(_) => v.clone(),
+            v @ Value::Object(_) => v,
             _ => return Err((-32602, "arguments must be an object".to_owned())),
         };
         if let Principal::Share { write: false, .. } = principal {
@@ -824,7 +816,8 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
         let id = msg.get("id").cloned().unwrap_or(Value::Null);
         return match mcp.open(&msg["params"], &principal).await {
             Ok((session, result)) => {
-                let reply = json!({"jsonrpc": "2.0", "id": id, "result": result});
+                let mut reply = json!({"jsonrpc": "2.0", "id": id});
+                reply["result"] = result;
                 let mut resp = json_response(StatusCode::OK, &reply);
                 if let Ok(v) = session.id.parse() {
                     resp.headers_mut().insert(SESSION_HEADER, v);
@@ -857,12 +850,12 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
         let token = Some(msg["params"]["_meta"]["progressToken"].clone()).filter(|t| !t.is_null());
         let call = {
             let session = session.clone();
-            async move { mcp.dispatch(session.as_deref(), &principal, &msg).await }
+            async move { mcp.dispatch(session.as_deref(), &principal, msg).await }
         };
         return answer(call, token, KEEPALIVE, session).await;
     }
     let mut replies = Vec::new();
-    for m in &messages {
+    for m in messages {
         if let Some(reply) = mcp.dispatch(session.as_deref(), &principal, m).await {
             replies.push(reply);
         }

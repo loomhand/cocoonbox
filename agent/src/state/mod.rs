@@ -319,19 +319,19 @@ impl StateEngine {
                 }),
             }
         }
-        self.tool("state_apply", json!({"dirs": dirs, "symlinks": []}))
-            .await?;
+        let mut apply = json!({"dirs": null, "symlinks": []});
+        apply["dirs"] = dirs.into();
+        self.tool("state_apply", apply).await?;
         let cache = self.cache().await?;
         let filled = self
             .fill(&opened.keys, targets, opened.gets, reqs, &cache, progress)
             .await;
         let _ = tokio::fs::remove_dir_all(&cache).await;
         let mut meter = filled?.meter;
-        self.tool(
-            "state_apply",
-            json!({"dirs": [], "symlinks": links, "modes": modes}),
-        )
-        .await?;
+        let mut apply = json!({"dirs": [], "symlinks": null, "modes": null});
+        apply["symlinks"] = links.into();
+        apply["modes"] = modes.into();
+        self.tool("state_apply", apply).await?;
         meter.msg.target = self
             .tool(
                 "state_place",
@@ -432,9 +432,13 @@ impl StateEngine {
                     }),
                 }
             }
-            self.tool("state_apply", json!({"dirs": dirs, "symlinks": []}))
-                .await?;
-            finals.push(json!({"dirs": [], "symlinks": root_links, "modes": modes}));
+            let mut apply = json!({"dirs": null, "symlinks": []});
+            apply["dirs"] = dirs.into();
+            self.tool("state_apply", apply).await?;
+            let mut last = json!({"dirs": [], "symlinks": null, "modes": null});
+            last["symlinks"] = root_links.into();
+            last["modes"] = modes.into();
+            finals.push(last);
             let names: BTreeSet<&str> = records
                 .iter()
                 .filter_map(|r| r.entry.path.split('/').next())
