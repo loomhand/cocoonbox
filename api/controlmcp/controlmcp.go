@@ -68,11 +68,12 @@ type Server struct {
 	mu       sync.Mutex
 	locks    map[string]*sync.Mutex
 	sessions map[string]*session
+	shared   map[string]*agentSessions
 }
 
 // New serves the control tools over boxes, authenticating with authn.
 func New(boxes controlv1.BoxesServer, authn *auth.Authenticator) *Server {
-	return &Server{boxes: boxes, authn: authn, locks: map[string]*sync.Mutex{}, sessions: map[string]*session{}}
+	return &Server{boxes: boxes, authn: authn, locks: map[string]*sync.Mutex{}, sessions: map[string]*session{}, shared: map[string]*agentSessions{}}
 }
 
 // EnableGrants admits OAuth access tokens next to user tokens; a token acts only on the boxes its grant created, within its caps, and those the user chose for it.
@@ -144,7 +145,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case req.Method == methodInitialize && unified:
 		id := rand.Text()
 		w.Header().Set(mcpwire.SessionHeader, id)
-		result = s.initializeUnified(ctx, user, s.openSession(caller, id, req.Params))
+		result = s.initializeUnified(ctx, user, s.openSession(ctx, caller, id, req.Params))
 	case req.Method == methodInitialize:
 		w.Header().Set(mcpwire.SessionHeader, rand.Text())
 		result = initializeResult(req.Params, controlName)
@@ -155,7 +156,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case json.Unmarshal(req.Params, &call) != nil:
 		rpcErr = &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid tools/call params"}
 	case unified && !slices.ContainsFunc(toolSpecs, func(t toolSpec) bool { return t.Name == call.Name }):
-		s.callBox(ctx, w, user, s.session(caller, r.Header.Get(mcpwire.SessionHeader)), req.ID, body, r.Header.Get("Accept"), &call)
+		s.callBox(ctx, w, user, s.session(ctx, caller, r.Header.Get(mcpwire.SessionHeader)), req.ID, body, r.Header.Get("Accept"), &call)
 		return
 	default:
 		rpcErr = s.answer(ctx, w, req.ID, &call)

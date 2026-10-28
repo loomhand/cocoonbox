@@ -292,16 +292,45 @@ func TestRootDefaultOfAGrantIsItsFirstChosenBox(t *testing.T) {
 	}
 }
 
+func TestRootGrantSharesOneAgentSessionPerBoxAcrossClientSessions(t *testing.T) {
+	srv, _, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}})
+	for i := range 3 {
+		session := serveRoot(srv, http.MethodPost, grantToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+		if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, session, callShell)).Result}); text != shellAnswer+boxes.BoxID("alice") {
+			t.Fatalf("call %d = %q", i, text)
+		}
+		if rec := serveRoot(srv, http.MethodDelete, grantToken, session, ""); rec.Code != http.StatusNoContent {
+			t.Fatalf("DELETE = %d", rec.Code)
+		}
+	}
+	if want := []string{"initialize", "tools/call", "tools/call", "tools/call"}; !slices.Equal(agents.recorded(), want) {
+		t.Fatalf("a grant re-initializing before each call: agent saw %v, want %v", agents.recorded(), want)
+	}
+	if calls := agents.calledOn(); len(slices.Compact(calls)) != 1 {
+		t.Fatalf("the grant's calls went to agent sessions %v, want one", calls)
+	}
+
+	for range 2 {
+		session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+		decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))
+	}
+	if n := len(slices.DeleteFunc(agents.recorded(), func(m string) bool { return m != "initialize" })); n != 3 {
+		t.Fatalf("two client sessions of a user token opened %d agent sessions in all, want 1 + 2", n)
+	}
+}
+
 func TestRootKeepsAtMostMaxSessionsPerCaller(t *testing.T) {
 	srv, _, _, _ := newUnifiedServer(t)
-	first := srv.openSession("alice", "s0", nil)
+	first := srv.openSession(t.Context(), "alice", "s0", nil)
 	srv.mu.Lock()
 	first.used = first.used.Add(-time.Hour)
 	srv.mu.Unlock()
 	for i := range maxSessions {
-		srv.openSession("alice", "s"+string(rune('a'+i)), nil)
+		srv.openSession(t.Context(), "alice", "s"+string(rune('a'+i)), nil)
 	}
-	srv.session("bob", "b0")
+	srv.session(t.Context(), "bob", "b0")
 	srv.mu.Lock()
 	defer srv.mu.Unlock()
 	alice := 0
@@ -359,6 +388,7 @@ type fakeAgents struct {
 	mu       sync.Mutex
 	sent     []string
 	posted   []string
+	called   []string
 	sessions map[string]bool
 	deaf     bool
 	lost     bool
@@ -413,6 +443,7 @@ func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*htt
 	case msg.Method == "tools/list":
 		return use(answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":1,"result":{"tools":`+boxTools+`}}`))
 	default:
+		a.called = append(a.called, session)
 		return use(answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":`+string(msg.ID)+`,"result":{"content":[{"type":"text","text":"`+shellAnswer+box+`"}]}}`))
 	}
 }
@@ -421,6 +452,12 @@ func (a *fakeAgents) forget() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	clear(a.sessions)
+}
+
+func (a *fakeAgents) calledOn() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.called)
 }
 
 func (a *fakeAgents) bodies() []string {

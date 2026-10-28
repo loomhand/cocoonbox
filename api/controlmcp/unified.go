@@ -31,6 +31,7 @@ const (
 	readyInterval = 500 * time.Millisecond
 	sessionIdle   = 24 * time.Hour
 	maxSessions   = 16
+	closeBound    = 10 * time.Second
 	// maxInstructions is the Mac bridge's cap on a server's instructions, within every agent CLI's limit.
 	maxInstructions = 2048
 	acceptBoth      = "application/json, " + mcpwire.EventStream
@@ -48,48 +49,60 @@ var (
 	defaultInitialize = json.RawMessage(`{"protocolVersion":"` + mcpwire.Latest + `","capabilities":{},"clientInfo":{"name":"` + unifiedName + `"}}`)
 )
 
-// session is what the api keeps of one client session on RootPath: the client's initialize, its default box and the agent session it opened on each box.
-type session struct {
-	params json.RawMessage
-	used   time.Time
-
+// agentSessions are the agent sessions held open, one per box: a user's client session's own, or the ones every client session of a grant shares.
+type agentSessions struct {
 	mu       sync.Mutex
-	box      string
-	image    string
 	upstream map[string]string
 }
 
-// reset drops box's agent session while it is still upstream, and the default box when it is box, so the next call finds both again.
+// session is what the api keeps of one client session on RootPath: the client's initialize, its agent sessions and its default box.
+type session struct {
+	params json.RawMessage
+	used   time.Time
+	agents *agentSessions
+
+	mu    sync.Mutex
+	box   string
+	image string
+}
+
+// reset drops box's agent session while it is still upstream, and then the default box when it is box, so the next call finds both again.
 func (s *session) reset(box, upstream string) {
+	s.agents.mu.Lock()
+	stale := s.agents.upstream[box] == upstream
+	if stale {
+		delete(s.agents.upstream, box)
+	}
+	s.agents.mu.Unlock()
+	if !stale {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.upstream[box] == upstream {
-		delete(s.upstream, box)
-		if s.box == box {
-			s.box, s.image = "", ""
-		}
+	if s.box == box {
+		s.box, s.image = "", ""
 	}
 }
 
 // openSession records a new client session of caller, dropping sessions idle for sessionIdle and caller's least recently used past maxSessions.
-func (s *Server) openSession(caller, id string, params json.RawMessage) *session {
+func (s *Server) openSession(ctx context.Context, caller, id string, params json.RawMessage) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.keepSession(caller, id, &session{params: params})
+	return s.keepSession(ctx, caller, id, &session{params: params})
 }
 
 // session returns caller's client session id, made anew when this api does not know it, as after a restart.
-func (s *Server) session(caller, id string) *session {
+func (s *Server) session(ctx context.Context, caller, id string) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if sess := s.sessions[caller+"\n"+id]; sess != nil {
 		sess.used = time.Now()
 		return sess
 	}
-	return s.keepSession(caller, id, &session{})
+	return s.keepSession(ctx, caller, id, &session{})
 }
 
-func (s *Server) keepSession(caller, id string, sess *session) *session {
+func (s *Server) keepSession(ctx context.Context, caller, id string, sess *session) *session {
 	now := time.Now()
 	maps.DeleteFunc(s.sessions, func(_ string, old *session) bool { return now.Sub(old.used) > sessionIdle })
 	var held []string
@@ -101,26 +114,66 @@ func (s *Server) keepSession(caller, id string, sess *session) *session {
 	if len(held) >= maxSessions {
 		delete(s.sessions, slices.MinFunc(held, func(a, b string) int { return s.sessions[a].used.Compare(s.sessions[b].used) }))
 	}
-	sess.used, sess.upstream = now, map[string]string{}
+	sess.used, sess.agents = now, s.agentsOf(ctx)
 	s.sessions[caller+"\n"+id] = sess
 	return sess
 }
 
-// endSession forgets caller's client session id and closes its agent sessions.
+// agentsOf returns the agent sessions of a new client session: its own for a user token, and for a grant the grant's, closed when the grant ends; s.mu is held.
+func (s *Server) agentsOf(ctx context.Context) *agentSessions {
+	g := grantOf(ctx)
+	if g == nil {
+		return &agentSessions{upstream: map[string]string{}}
+	}
+	if a := s.shared[g.ID]; a != nil {
+		return a
+	}
+	a := &agentSessions{upstream: map[string]string{}}
+	s.shared[g.ID] = a
+	life, stop := s.authn.Bind(context.Background(), g.User, g.ID)
+	context.AfterFunc(life, func() {
+		stop()
+		s.closeShared(g.ID, g.User, a)
+	})
+	return a
+}
+
+// closeShared forgets grant id's agent sessions a and closes them in their boxes.
+func (s *Server) closeShared(id, user string, a *agentSessions) {
+	s.mu.Lock()
+	if s.shared[id] == a {
+		delete(s.shared, id)
+	}
+	s.mu.Unlock()
+	a.mu.Lock()
+	upstreams := maps.Clone(a.upstream)
+	clear(a.upstream)
+	a.mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), closeBound)
+	defer cancel()
+	s.closeAgents(ctx, user, upstreams)
+}
+
+// closeAgents ends user's agent sessions upstreams, keyed by box.
+func (s *Server) closeAgents(ctx context.Context, user string, upstreams map[string]string) {
+	for box, upstream := range upstreams {
+		_ = s.agents.Exchange(agentRequest(ctx, http.MethodDelete, nil, upstream, acceptBoth), user, box, func(*http.Response) error { return nil })
+	}
+}
+
+// endSession forgets caller's client session id and closes its agent sessions, unless its grant shares them.
 func (s *Server) endSession(ctx context.Context, user, caller, id string) {
 	s.mu.Lock()
 	sess := s.sessions[caller+"\n"+id]
 	delete(s.sessions, caller+"\n"+id)
 	s.mu.Unlock()
-	if sess == nil {
+	if sess == nil || grantOf(ctx) != nil {
 		return
 	}
-	sess.mu.Lock()
-	upstreams := maps.Clone(sess.upstream)
-	sess.mu.Unlock()
-	for box, upstream := range upstreams {
-		_ = s.agents.Exchange(agentRequest(ctx, http.MethodDelete, nil, upstream, acceptBoth), user, box, func(*http.Response) error { return nil })
-	}
+	sess.agents.mu.Lock()
+	upstreams := maps.Clone(sess.agents.upstream)
+	sess.agents.mu.Unlock()
+	s.closeAgents(ctx, user, upstreams)
 }
 
 // initializeUnified answers an initialize on RootPath, opening the agent session of the default box when it runs; the instructions add the box's own when they fit.
@@ -228,9 +281,9 @@ func (s *Server) wake(ctx context.Context, sess *session, ref string, progress p
 	}
 	res, err := s.ensure(ctx, ref, true, progress)
 	if err == nil {
-		sess.mu.Lock()
-		delete(sess.upstream, res.BoxID)
-		sess.mu.Unlock()
+		sess.agents.mu.Lock()
+		delete(sess.agents.upstream, res.BoxID)
+		sess.agents.mu.Unlock()
 	}
 	return err
 }
@@ -273,19 +326,22 @@ func (s *Server) forward(ctx context.Context, user string, sess *session, ref st
 // connect returns the box ref names, else the session's default box, also when it fails, and the session's agent session on it, opening one when it has none.
 func (s *Server) connect(ctx context.Context, user string, sess *session, ref string) (string, string, error) {
 	sess.mu.Lock()
-	defer sess.mu.Unlock()
 	box, image, err := s.target(ctx, sess, ref)
+	sess.mu.Unlock()
 	if err != nil {
 		return "", "", err
 	}
-	if sess.upstream[box] == "" {
+	a := sess.agents
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.upstream[box] == "" {
 		upstream, err := s.open(ctx, user, box, image, sess.params)
 		if err != nil {
 			return box, "", err
 		}
-		sess.upstream[box] = upstream
+		a.upstream[box] = upstream
 	}
-	return box, sess.upstream[box], nil
+	return box, a.upstream[box], nil
 }
 
 // target returns the box ref names among the caller's, else the session's default box, found again once a grant no longer reaches it, and the image its agent runs; sess.mu is held.

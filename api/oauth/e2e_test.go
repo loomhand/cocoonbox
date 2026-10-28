@@ -447,7 +447,7 @@ func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
 		{"the user's named box", e.userToken, map[string]any{"command": "id", "box": "work"}, false, "cred:" + work.ID},
 		{"the user's default box", e.userToken, map[string]any{"command": "id"}, false, "cred:" + main},
 	} {
-		fails, text := e.rootCall(t, tt.token, tt.args)
+		fails, text := e.rootCall(t, tt.token, "s1", tt.args)
 		if fails != tt.fails || !strings.HasPrefix(text, tt.want) {
 			t.Errorf("unified, %s: %v %q, want %v %q", tt.name, fails, text, tt.fails, tt.want)
 		}
@@ -463,11 +463,39 @@ func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
 	if resp := e.boxMCP(t, access, main); resp.StatusCode != http.StatusNotFound {
 		t.Errorf("box MCP of a box no longer chosen: %d", resp.StatusCode)
 	}
-	if fails, text := e.rootCall(t, access, map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+work.ID) {
+	if fails, text := e.rootCall(t, access, "s1", map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+work.ID) {
 		t.Errorf("unified default after the change: %v %q", fails, text)
 	}
 	if code, _ := e.consoleStatus(t, http.MethodPut, "agents/oag_missing/boxes", map[string]any{"boxes": []string{}}); code != http.StatusNotFound {
 		t.Errorf("choosing for an unknown grant: %d", code)
+	}
+}
+
+func TestAGrantKeepsOneAgentSessionAcrossClientSessionsUntilItEnds(t *testing.T) {
+	e := newEnv(t)
+	main := e.users.Boxes(e.alice)[0].ID
+	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}, main)
+	for i := range 3 {
+		if fails, text := e.rootCall(t, access, fmt.Sprint("grant-", i), map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+main) {
+			t.Fatalf("call %d in a new client session: %v %q", i, fails, text)
+		}
+	}
+	if seen := e.seen.list(); !slices.Equal(seen, []string{"initialize"}) {
+		t.Fatalf("three client sessions of a grant: the agent saw %v, want one initialize", seen)
+	}
+	e.console(t, http.MethodDelete, "agents/"+e.grants(t)[0].ID, map[string]any{}, nil)
+	deadline := time.Now().Add(5 * time.Second)
+	for !slices.Contains(e.seen.list(), "DELETE agent-session") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if seen := e.seen.list(); !slices.Equal(seen, []string{"initialize", "DELETE agent-session"}) {
+		t.Fatalf("after the revoke the agent saw %v, want the shared session closed", seen)
+	}
+	for i := range 2 {
+		e.rootCall(t, e.userToken, fmt.Sprint("user-", i), map[string]any{"command": "id"})
+	}
+	if n := len(slices.DeleteFunc(e.seen.list(), func(m string) bool { return m != "initialize" })); n != 3 {
+		t.Fatalf("two client sessions of the user token opened %d agent sessions in all, want 1 + 2", n)
 	}
 }
 
@@ -542,6 +570,7 @@ func TestDisabledUserLosesItsGrants(t *testing.T) {
 type env struct {
 	dsn       string
 	waking    *wakeGate
+	seen      *agentLog
 	srv       *httptest.Server
 	client    *http.Client
 	users     *users.Service
@@ -588,7 +617,8 @@ func newEnv(t *testing.T) *env {
 	signIns := account.New(us)
 	signIns.EnableGrants(grants)
 	web.EnableAccount(signIns)
-	agent := newFakeAgent(t)
+	seen := &agentLog{}
+	agent := newFakeAgent(t, seen)
 	waking := &wakeGate{entered: make(chan struct{}, 1)}
 	boxMCP := edge.NewMCP(fakeResolver{users: us, addr: agent.Listener.Addr().String(), waking: waking}, authn, fakeCredentials{})
 	boxMCP.EnableGrants(grants)
@@ -607,7 +637,7 @@ func newEnv(t *testing.T) *env {
 	client := srv.Client()
 	client.Jar, _ = cookiejar.New(nil)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	e := &env{dsn: dsn, waking: waking, srv: srv, client: client, users: us, authn: authn, resource: resource, alice: alice.ID, userToken: userToken}
+	e := &env{dsn: dsn, waking: waking, seen: seen, srv: srv, client: client, users: us, authn: authn, resource: resource, alice: alice.ID, userToken: userToken}
 	e.console(t, http.MethodPost, "login", map[string]any{"name": "alice", "password": alicePassword}, nil)
 	return e
 }
@@ -761,14 +791,15 @@ func (e *env) grants(t *testing.T) []oauth.Grant {
 	return agents.Grants
 }
 
-// rootCall calls a box tool on the unified MCP as token and returns whether it failed and its text.
-func (e *env) rootCall(t *testing.T, token string, args map[string]any) (bool, string) {
+// rootCall calls a box tool on the unified MCP as token in client session session and returns whether it failed and its text.
+func (e *env) rootCall(t *testing.T, token, session string, args map[string]any) (bool, string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "shell", "arguments": args}})
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.RootPath, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Mcp-Session-Id", session)
 	resp, err := e.client.Do(req)
 	if err != nil {
 		t.Fatalf("unified call: %v", err)
@@ -963,6 +994,23 @@ func (r fakeResolver) Resolve(ctx context.Context, user, box string) (machines.E
 
 func (fakeResolver) Reached(string) func() { return func() {} }
 
+type agentLog struct {
+	mu      sync.Mutex
+	entries []string
+}
+
+func (l *agentLog) add(entry string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.entries = append(l.entries, entry)
+}
+
+func (l *agentLog) list() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return slices.Clone(l.entries)
+}
+
 type wakeGate struct {
 	slow    atomic.Bool
 	entered chan struct{}
@@ -993,11 +1041,17 @@ type fakeTenants struct{}
 func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
 func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
 
-// newFakeAgent answers every MCP request over h2c, opens a session on initialize, and echoes the credential and authorization it saw, and in its text the credential and the body.
-func newFakeAgent(t *testing.T) *httptest.Server {
+// newFakeAgent answers every MCP request over h2c, opens a session on initialize, logs initializes and deletes to seen, and echoes the credential and authorization it saw, and in its text the credential and the body.
+func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 	t.Helper()
 	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		switch {
+		case r.Method == http.MethodDelete:
+			seen.add("DELETE " + r.Header.Get("Mcp-Session-Id"))
+		case strings.Contains(string(body), `"initialize"`):
+			seen.add("initialize")
+		}
 		w.Header().Set("X-Seen-Credential", r.Header.Get("X-Cocoonbox-Credential"))
 		w.Header().Set("X-Seen-Authorization", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
