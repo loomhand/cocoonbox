@@ -1,6 +1,7 @@
 package console
 
 import (
+	"maps"
 	"sync"
 	"time"
 )
@@ -28,11 +29,7 @@ func (l *limiter) take(name, addr string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	for key, f := range l.failures {
-		if now.Sub(f.since) >= l.window {
-			delete(l.failures, key)
-		}
-	}
+	maps.DeleteFunc(l.failures, func(_ string, f *failures) bool { return now.Sub(f.since) >= l.window })
 	if l.failures[name] != nil && l.failures[name].count >= nameLimit || l.failures[addr] != nil && l.failures[addr].count >= addrLimit {
 		return false
 	}
