@@ -108,8 +108,7 @@ type Server struct {
 	defaultMaxRunning int
 }
 
-// New serves the console for users and their boxes; defaultDailyCap is gw's per-user default daily cap in micros,
-// defaultMaxRunning the api's running limit for users without their own.
+// New serves the console; defaultDailyCap is gw's per-user daily cap in micros, defaultMaxRunning the api's running limit.
 func New(us *users.Service, boxes Boxes, defaultDailyCap int64, defaultMaxRunning int) *Server {
 	s := &Server{
 		users: us, boxes: boxes, limiter: newLimiter(failWindow), mux: http.NewServeMux(),
@@ -591,8 +590,7 @@ func (s *Server) revokeShare(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// viewShare admits the secret in the first message, then bridges the screen of the share's box as binary messages.
-// A named share takes the viewer from the console session cookie, so no token travels in the page.
+// viewShare admits the secret in the first message, then bridges the share's screen; a named share takes the viewer from the session cookie.
 func (s *Server) viewShare(ws *websocket.Conn) {
 	r := ws.Request()
 	ws.MaxPayloadBytes = maxSecretLen

@@ -36,8 +36,7 @@ var errTooManyLogins = errors.New("too many sign-ins from this address; try agai
 // tokenHandler serves a call of the invite-scoped token whose id it gets.
 type tokenHandler func(w http.ResponseWriter, r *http.Request, token string)
 
-// EnableSignup serves sign-in with GitHub, linking, self-delete, the queue page and the admin's signup calls over sig, and the
-// callback through LoginCallback.
+// EnableSignup serves the GitHub sign-in, linking, self-delete, the queue page and the admin's signup calls over sig.
 func (s *Server) EnableSignup(sig *signup.Service) {
 	s.signup = sig
 	s.mux.HandleFunc("GET "+queuePage, func(w http.ResponseWriter, r *http.Request) {
@@ -407,8 +406,7 @@ func (s *Server) admit(ctx context.Context) {
 	}
 }
 
-// InviteTokenGate refuses, with 403, every request that carries an invite-scoped token except the two invite calls, whatever
-// handler next routes it to: the console, the MCP endpoints, the callbacks and the OAuth endpoints.
+// InviteTokenGate refuses with 403 every request that carries an invite-scoped token, on any route, except the two invite calls.
 func InviteTokenGate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, scoped := inviteBearer(r); scoped && (r.URL.Path != invitesPath || r.Method != http.MethodGet && r.Method != http.MethodPost) {

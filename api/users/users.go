@@ -87,8 +87,7 @@ type Policy struct {
 	NoGC   bool   `json:"no_gc,omitzero"`
 }
 
-// NewUser describes a user to create; an empty ID draws a fresh one, an empty Password leaves password sign-in off, an empty IDP
-// records password, and a nil DailyCapMicros keeps the gw tenant default.
+// NewUser describes a user to create; an empty ID draws one, an empty Password leaves password sign-in off, and a nil DailyCapMicros keeps the gw default.
 type NewUser struct {
 	ID             string
 	Name           string
@@ -310,8 +309,7 @@ func (s *Service) Reconcile(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// ByTokenSHA256 returns the enabled user whose API token or device token hashes to sum; an index miss checks the tables
-// at most once per tokenMissInterval.
+// ByTokenSHA256 returns the enabled user whose API or device token hashes to sum; a miss rechecks the tables at most once per tokenMissInterval.
 func (s *Service) ByTokenSHA256(ctx context.Context, sum string) (string, bool) {
 	owner, ok := s.indexedToken(sum)
 	if !ok && s.allowMiss() {

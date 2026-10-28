@@ -26,8 +26,7 @@ type offloadReply struct {
 	Sessions []offloadSession `json:"sessions"`
 }
 
-// Busy reports whether work runs in the box at ep: an agent turn, or an offloaded CLI session at work. ctx carries the
-// owner's credential; a box whose image has no offload command has no offloaded session.
+// Busy reports whether an agent turn or an offloaded CLI session works in the box at ep; ctx carries the owner's credential.
 func (d *Dialer) Busy(ctx context.Context, box string, ep machines.Endpoint) (bool, error) {
 	conn, err := d.pool.Conn(box, ep)
 	if err != nil {

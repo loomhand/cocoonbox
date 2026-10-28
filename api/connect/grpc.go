@@ -228,8 +228,7 @@ func (s *Service) Pending(ctx context.Context, user string) ([]PendingApproval, 
 	return out, nil
 }
 
-// Check reads user's account of connector from the vendor's user endpoint, refreshing the grant when it is near expiry,
-// and once more after a 401.
+// Check reads user's account of connector from the vendor's user endpoint, refreshing the grant near expiry and once more after a 401.
 func (s *Service) Check(ctx context.Context, user, connector string) (string, error) {
 	g, err := s.store.grant(ctx, user, connector)
 	if err != nil {

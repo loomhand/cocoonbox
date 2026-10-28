@@ -23,8 +23,7 @@ type Activity interface {
 	Busy(ctx context.Context, box string, ep machines.Endpoint) (bool, error)
 }
 
-// EnableIdle hibernates a running box once no client call to it is open and none began or ended for agent, for a box an
-// agent created, or user, for a user's own box; zero leaves that kind of box up.
+// EnableIdle hibernates a running box with no open client call and none begun or ended for agent (an agent's box) or user (the user's own); zero leaves it up.
 func (s *Service) EnableIdle(agent, user time.Duration) {
 	s.idle = &idling{agent: agent, user: user, probe: probeTimeout, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
 }

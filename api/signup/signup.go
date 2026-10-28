@@ -123,8 +123,7 @@ type Seats struct {
 	Waiting int `json:"waiting"`
 }
 
-// Outcome is how a sign-in through GitHub ended: who signed in or linked, where the browser goes back to, the secret of a
-// queued person's place, or the code of why it was refused.
+// Outcome is how a GitHub sign-in ended: the user who signed in or linked, the return path, a queued person's secret, or the refusal code.
 type Outcome struct {
 	Kind        Kind
 	User        string

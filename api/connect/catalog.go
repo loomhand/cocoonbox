@@ -48,8 +48,7 @@ type revokeKind string
 // render turns an access token into the value a header carries.
 type render func(token string) string
 
-// injection is a claim credential a grant puts on its owner's boxes (M5.2): sandboxd writes value(access token) into
-// header on requests to hosts that carry placeholder.
+// injection is a claim credential a grant puts on its owner's boxes: sandboxd writes value into header on requests to hosts that carry placeholder.
 type injection struct {
 	name        string
 	hosts       []string

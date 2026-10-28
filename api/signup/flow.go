@@ -24,8 +24,7 @@ const (
 	maxNameTries     = 50
 )
 
-// BeginRequest starts a sign-in: Link names the signed-in user who connects GitHub, empty for a sign-in; ReturnTo is a
-// console path to go back to, and Invite the code of an invite link.
+// BeginRequest starts a sign-in: Link names the user who connects GitHub, ReturnTo a console path, and Invite an invite code.
 type BeginRequest struct {
 	Link     string
 	ReturnTo string
@@ -121,8 +120,7 @@ func (s *Service) link(ctx context.Context, user string, id identity) (Outcome, 
 	return Outcome{Kind: Linked, User: user}, nil
 }
 
-// signup queues a new identity, at the front with an invite, and admits; the person is signed in when a seat took them. A person
-// already waiting gets a new secret for their place.
+// signup queues a new identity, at the front with an invite, and admits; a seat signs the person in, and a waiting person gets a new secret.
 func (s *Service) signup(ctx context.Context, f flow, id identity) (Outcome, error) {
 	secret := queuePrefix + randomHex(secretBytes)
 	status, err := s.store.requeue(ctx, GitHub, id.subject, hashHex(secret))

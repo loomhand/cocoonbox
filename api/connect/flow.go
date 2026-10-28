@@ -112,8 +112,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 	return &Started{URL: target.String(), Connector: connector, Nonce: nonce}, nil
 }
 
-// Complete exchanges code for the flow of state whose browser holds nonce, while the console session that began it
-// is live and iss, the answer's RFC 9207 issuer, names the flow's authorization server, and returns the connector id.
+// Complete exchanges code for the flow of state and nonce while its console session is live and iss names its authorization server, and returns the connector id.
 func (s *Service) Complete(ctx context.Context, nonce, state, code, iss string) (string, error) {
 	f, err := s.store.takeFlow(ctx, hashHex(state), hashHex(nonce))
 	if errors.Is(err, errNoFlow) {

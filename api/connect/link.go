@@ -40,8 +40,7 @@ type linkSpendRequest struct {
 	ExpiresAt    int64  `json:"expires_at"`
 }
 
-// spendRequests returns user's last read of its waiting spend requests, read from Link first when that read is older
-// than spendInterval and no failure backoff holds; concurrent callers share one read.
+// spendRequests returns user's last read of its spend requests, reading Link first once that read is past spendInterval and no backoff holds; callers share one read.
 func (s *Service) spendRequests(ctx context.Context, user string) spendPoll {
 	v, _, _ := s.spendReads.Do(user, func() (any, error) {
 		s.spendMu.Lock()

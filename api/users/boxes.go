@@ -46,8 +46,7 @@ func (s *Service) HasBox(owner, id string) bool {
 	return slices.ContainsFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
 }
 
-// AddBox gives b.Owner the box b, refused with ErrQuota once the owner has max boxes of its own; an agent's box raises
-// the owner's tenant cap by one.
+// AddBox gives b.Owner the box b, ErrQuota past the owner's max boxes; an agent's box raises the owner's tenant cap by one.
 func (s *Service) AddBox(ctx context.Context, b Box) (Box, error) {
 	if err := checkBoxName(b.Name); err != nil {
 		return Box{}, err
@@ -138,8 +137,7 @@ func (s *Service) putClaimCap(ctx context.Context, owner string) error {
 	return s.tenants.PutTenant(ctx, owner, "", s.claimCap(r))
 }
 
-// claimCap is the tenant's max_claims: the owner's box quota, its agents' boxes up to max_agent_boxes, and the old machine a Rebase keeps
-// until the new one serves.
+// claimCap is the tenant's max_claims: the owner's box quota, its agents' boxes up to max_agent_boxes, and one for the old machine a Rebase keeps.
 func (s *Service) claimCap(r record) int {
 	agent := s.agentBoxes(r.ID)
 	if r.MaxAgentBoxes != nil {

@@ -159,8 +159,7 @@ func (s *Service) createInvite(ctx context.Context, inv Invite, days int) (strin
 	return code, created, err
 }
 
-// admit makes e's account with the signup defaults under the first free username, links its identity and marks e admitted.
-// The account's id comes from e's, so a retry after a failed link reuses the account; an identity linked meanwhile takes no new one.
+// admit makes e's account under the first free username, links its identity and marks e admitted; the id comes from e's, so a retry reuses the account.
 func (s *Service) admit(ctx context.Context, tx pgx.Tx, st Settings, e entry) error {
 	linked, err := s.store.identityUser(ctx, tx, e.idp, e.subject)
 	if err == nil {
