@@ -1028,11 +1028,7 @@ impl StateEngine {
     }
 
     async fn get(&self, url: &str) -> Result<Bytes, String> {
-        send_retrying("get", || self.http.get(url))
-            .await?
-            .bytes()
-            .await
-            .map_err(|e| format!("get body: {e}"))
+        get_retrying(&self.http, url).await
     }
 
     async fn fetch_chunk(
@@ -1382,6 +1378,11 @@ impl Meter {
     }
 }
 
+enum Failure {
+    Transient(String),
+    Final(String),
+}
+
 /// The contract layout: the desktop user's home and the workspace.
 pub fn default_roots(home: &Path, workspace: &Path) -> Vec<Root> {
     vec![
@@ -1540,19 +1541,48 @@ async fn send_retrying(
     label: &str,
     build: impl Fn() -> reqwest::RequestBuilder,
 ) -> Result<reqwest::Response, String> {
-    let mut attempt = 0;
+    retrying(|| send_once(label, build())).await
+}
+
+async fn get_retrying(http: &reqwest::Client, url: &str) -> Result<Bytes, String> {
+    retrying(|| async {
+        send_once("get", http.get(url))
+            .await?
+            .bytes()
+            .await
+            .map_err(|e| Failure::Transient(format!("get body: {}", causes(&e))))
+    })
+    .await
+}
+
+async fn retrying<T, F>(attempt: impl Fn() -> F) -> Result<T, String>
+where
+    F: Future<Output = Result<T, Failure>>,
+{
+    let mut tries = 0;
     loop {
-        let failure = match build().send().await {
-            Ok(r) if r.status().is_success() => return Ok(r),
-            Ok(r) if !retryable(r.status()) => return Err(format!("{label}: {}", r.status())),
-            Ok(r) => format!("{label}: {}", r.status()),
-            Err(e) => format!("{label}: {e}"),
+        let failure = match attempt().await {
+            Ok(v) => return Ok(v),
+            Err(Failure::Final(e)) => return Err(e),
+            Err(Failure::Transient(e)) => e,
         };
-        attempt += 1;
-        if attempt >= ATTEMPTS {
+        tries += 1;
+        if tries >= ATTEMPTS {
             return Err(failure);
         }
-        tokio::time::sleep(RETRY_BASE * 2u32.pow(attempt - 1)).await;
+        tokio::time::sleep(RETRY_BASE * 2u32.pow(tries - 1)).await;
+    }
+}
+
+async fn send_once(
+    label: &str,
+    req: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, Failure> {
+    match req.send().await {
+        Ok(r) if r.status().is_success() => Ok(r),
+        Ok(r) if !retryable(r.status()) => Err(Failure::Final(format!("{label}: {}", r.status()))),
+        Ok(r) => Err(Failure::Transient(format!("{label}: {}", r.status()))),
+        Err(e) => Err(Failure::Transient(format!("{label}: {}", causes(&e)))),
     }
 }
 
@@ -1560,6 +1590,17 @@ fn retryable(status: reqwest::StatusCode) -> bool {
     status.is_server_error()
         || status == reqwest::StatusCode::REQUEST_TIMEOUT
         || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+}
+
+fn causes(e: &dyn std::error::Error) -> String {
+    let mut out = e.to_string();
+    let mut next = e.source();
+    while let Some(c) = next {
+        out.push_str(": ");
+        out.push_str(&c.to_string());
+        next = c.source();
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1661,6 +1702,25 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn a_body_cut_short_is_fetched_again() {
+        let url = cutting_store(1).await;
+        let http = store_client(Duration::from_secs(1), Duration::from_secs(1)).unwrap();
+        let got = get_retrying(&http, &url).await.unwrap();
+        assert_eq!(&got[..], b"sealed");
+    }
+
+    #[tokio::test]
+    async fn a_body_cut_short_every_time_reports_why() {
+        let url = cutting_store(ATTEMPTS).await;
+        let http = store_client(Duration::from_secs(1), Duration::from_secs(1)).unwrap();
+        let err = get_retrying(&http, &url).await.unwrap_err();
+        assert!(
+            err.starts_with("get body: error decoding response body: "),
+            "{err}"
+        );
+    }
+
     #[test]
     fn a_chunk_keeps_its_transfer_slot_until_it_is_decrypted() {
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -1744,5 +1804,23 @@ mod tests {
         );
         assert_eq!(chrome_start(true, false), Some(json!({})));
         assert_eq!(chrome_start(false, false), None);
+    }
+
+    async fn cutting_store(cuts: u32) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/chunk", listener.local_addr().unwrap());
+        tokio::spawn(async move {
+            let mut served = 0;
+            while let Ok((mut conn, _)) = listener.accept().await {
+                let mut req = [0u8; 1024];
+                let _ = conn.read(&mut req).await;
+                let body: &[u8] = if served < cuts { b"sea" } else { b"sealed" };
+                let head = "HTTP/1.1 200 OK\r\ncontent-length: 6\r\nconnection: close\r\n\r\n";
+                conn.write_all(head.as_bytes()).await.unwrap();
+                conn.write_all(body).await.unwrap();
+                served += 1;
+            }
+        });
+        url
     }
 }
