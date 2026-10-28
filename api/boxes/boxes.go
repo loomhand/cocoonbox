@@ -24,6 +24,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
+const startHint = "call box_ensure to bring it up"
+
 // ErrNoBox answers every box id the caller does not own alike: another user's, a deleted one, an unknown one.
 var ErrNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
 
@@ -368,9 +370,9 @@ func (s *Service) Resolve(ctx context.Context, user, boxID string) (machines.End
 	case err == nil:
 		return ep, wakeOf(cur), nil
 	case errors.Is(err, machines.ErrNotFound):
-		return none, "", ErrNoBox
+		return none, "", status.Error(codes.Unavailable, "box is not running; "+startHint)
 	case isNotRunning:
-		return none, "", status.Errorf(codes.Unavailable, "box is %s", boxStates[notRunning.State])
+		return none, "", status.Errorf(codes.Unavailable, "box is %s; %s", stateWords[notRunning.State], startHint)
 	default:
 		log.WithFunc("boxes.Service.Resolve").WithField("box", boxID).Error(ctx, err, "resolve box")
 		return none, "", status.Error(codes.Unavailable, "resolve box failed")

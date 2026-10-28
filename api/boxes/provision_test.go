@@ -78,8 +78,8 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 		t.Fatalf("Rename: %v", err)
 	}
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm2", Meta: map[string]string{metaGW: "1", metaWake: "pod1/vm1|w-old"}})
-	if _, _, err := svc.Resolve(ctx, alice, aliceBox); status.Code(err) != codes.Unavailable || status.Convert(err).Message() != "box is BOX_STATE_STARTING" {
-		t.Errorf("Resolve of an unprovisioned incarnation: %v, want Unavailable box is BOX_STATE_STARTING", err)
+	if _, _, err := svc.Resolve(ctx, alice, aliceBox); status.Code(err) != codes.Unavailable || status.Convert(err).Message() != "box is starting; call box_ensure to bring it up" {
+		t.Errorf("Resolve of an unprovisioned incarnation: %v, want Unavailable box is starting; call box_ensure to bring it up", err)
 	}
 	if box, err := svc.Get(ctx, &controlv1.GetBoxRequest{BoxId: aliceBox}); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_STARTING {
 		t.Errorf("Get = %v, %v, want STARTING", box, err)
