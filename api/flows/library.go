@@ -5,7 +5,6 @@ package flows
 import (
 	"cmp"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -14,7 +13,6 @@ import (
 	"regexp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +20,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -69,18 +68,17 @@ type Library struct {
 	store store.Store
 	seal  keyring.Sealer
 
-	mu    sync.Mutex
-	users map[string]*sync.Mutex
+	users utils.Locks
 }
 
 // NewLibrary keeps flows in st under each user's prefix.
 func NewLibrary(st store.Store, keys keyring.Keyring) *Library {
-	return &Library{store: st, seal: keyring.Sealer{Keys: keys, Info: sealInfo}, users: map[string]*sync.Mutex{}}
+	return &Library{store: st, seal: keyring.Sealer{Keys: keys, Info: sealInfo}}
 }
 
 // List returns user's library rev and flows, newest first.
 func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error) {
-	unlock := l.lock(user)
+	unlock := l.users.Lock(user)
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -96,7 +94,7 @@ func (l *Library) List(ctx context.Context, user string) (uint64, []Entry, error
 
 // Get returns one flow and its content.
 func (l *Library) Get(ctx context.Context, user, name string) (Entry, []byte, error) {
-	unlock := l.lock(user)
+	unlock := l.users.Lock(user)
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -123,7 +121,7 @@ func (l *Library) Put(ctx context.Context, user, name string, content []byte, o 
 	if err := Check(name, content); err != nil {
 		return Entry{}, err
 	}
-	unlock := l.lock(user)
+	unlock := l.users.Lock(user)
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -146,7 +144,7 @@ func (l *Library) Put(ctx context.Context, user, name string, content []byte, o 
 	if count >= MaxFlows || total > MaxBytes {
 		return Entry{}, fmt.Errorf("%w: at most %d flows and %d bytes", ErrFull, MaxFlows, MaxBytes)
 	}
-	object := randomHex(objectLen)
+	object := utils.RandomHex(objectLen)
 	sealed, err := l.seal.Seal(ctx, user, content, objectData(user, object))
 	if err != nil {
 		return Entry{}, err
@@ -176,7 +174,7 @@ func (l *Library) Put(ctx context.Context, user, name string, content []byte, o 
 
 // Delete removes the named flows and returns the names the library held.
 func (l *Library) Delete(ctx context.Context, user string, names []string) ([]string, error) {
-	unlock := l.lock(user)
+	unlock := l.users.Lock(user)
 	defer unlock()
 	idx, err := l.index(ctx, user)
 	if err != nil {
@@ -199,18 +197,6 @@ func (l *Library) Delete(ctx context.Context, user string, names []string) ([]st
 	}
 	l.dropObjects(ctx, user, objects)
 	return deleted, nil
-}
-
-func (l *Library) lock(user string) func() {
-	l.mu.Lock()
-	m := l.users[user]
-	if m == nil {
-		m = &sync.Mutex{}
-		l.users[user] = m
-	}
-	l.mu.Unlock()
-	m.Lock()
-	return m.Unlock
 }
 
 func (l *Library) index(ctx context.Context, user string) (*index, error) {
@@ -296,9 +282,3 @@ func indexKey(user string) string           { return user + "/flows/index" }
 func objectKey(user, object string) string  { return user + "/flows/" + object }
 func indexData(user string) string          { return "flows|" + user + "|index" }
 func objectData(user, object string) string { return "flows|" + user + "|" + object }
-
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
-}

@@ -23,6 +23,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/store"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -153,8 +154,9 @@ type stateLayer struct {
 	// deltaFor reports whether a user's saves write delta records against the day's newest full snapshot.
 	deltaFor func(user string) bool
 
+	locks utils.Locks
+
 	mu    sync.Mutex
-	locks map[string]*sync.Mutex
 	users map[string]*sync.RWMutex
 	heads map[statePath]head
 	// dropped counts the invalidations, so a head read before one is not cached after it.
@@ -167,14 +169,14 @@ type stateLayer struct {
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay,
-		locks: map[string]*sync.Mutex{}, users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
+		users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
 		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{},
 	}
 }
 
 // save snapshots the state of the agent at ep, a machine of image, and uploads the chunks the user's store lacks.
 func (l *stateLayer) save(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, image string, parked bool, consistency agentv1.Consistency, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	unlock := l.lock(p.box)
+	unlock := l.locks.Lock(p.box)
 	defer unlock()
 	// The GC sweep takes this lock exclusively, so no save is between its index read and its commit.
 	user := l.userLock(p.user)
@@ -289,7 +291,7 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 
 // restore writes snapshot id of p's box (the latest when empty) into the agent at ep.
 func (l *stateLayer) restore(ctx context.Context, p statePath, ep machines.Endpoint, id string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	unlock := l.lock(p.box)
+	unlock := l.locks.Lock(p.box)
 	defer unlock()
 	if id == "" {
 		h, err := l.head(ctx, p)
@@ -415,7 +417,7 @@ func (l *stateLayer) swapHead(ctx context.Context, p statePath, h head) (int64, 
 
 // addToIndex merges chunks into the user's index, failing the save when a gc rewrote the index after its read at generation.
 func (l *stateLayer) addToIndex(ctx context.Context, p statePath, keyID string, chunks []chunk, generation int64) error {
-	unlock := l.lock(p.index())
+	unlock := l.locks.Lock(p.index())
 	defer unlock()
 	return l.updateJSON(ctx, p.index(), func(idx *chunkIndex, _ bool) (bool, error) {
 		if idx.Generation != generation {
@@ -648,18 +650,6 @@ func (l *stateLayer) index(ctx context.Context, p statePath, keyID string) (map[
 
 func (l *stateLayer) record(ctx context.Context, p statePath, id string) (*snapshotRecord, error) {
 	return l.readRecord(ctx, p, id, nil)
-}
-
-func (l *stateLayer) lock(name string) func() {
-	l.mu.Lock()
-	m := l.locks[name]
-	if m == nil {
-		m = &sync.Mutex{}
-		l.locks[name] = m
-	}
-	l.mu.Unlock()
-	m.Lock()
-	return m.Unlock
 }
 
 func (l *stateLayer) userLock(user string) *sync.RWMutex {

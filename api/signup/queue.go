@@ -11,6 +11,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -123,12 +124,12 @@ func (s *Service) Act(ctx context.Context, id, action string) error {
 
 // Place returns the entry of the queue secret.
 func (s *Service) Place(ctx context.Context, secret string) (Place, error) {
-	return s.store.place(ctx, hashHex(secret))
+	return s.store.place(ctx, utils.HashHex(secret))
 }
 
 // Leave deletes the waiting entry of the queue secret, keeping nothing of it, and admits the next person in its stead.
 func (s *Service) Leave(ctx context.Context, secret string) error {
-	if err := s.store.leave(ctx, hashHex(secret)); err != nil {
+	if err := s.store.leave(ctx, utils.HashHex(secret)); err != nil {
 		return err
 	}
 	return s.Admit(ctx)
@@ -153,9 +154,9 @@ func (s *Service) RevokeInvite(ctx context.Context, id string) error {
 }
 
 func (s *Service) createInvite(ctx context.Context, inv Invite, days int) (string, Invite, error) {
-	code := invitePrefix + randomHex(secretBytes)
-	inv.ID, inv.ExpiresAt = "inv_"+randomHex(idBytes), time.Now().AddDate(0, 0, days).Truncate(time.Microsecond)
-	created, err := s.store.addInvite(ctx, inv, hashHex(code))
+	code := invitePrefix + utils.RandomHex(secretBytes)
+	inv.ID, inv.ExpiresAt = "inv_"+utils.RandomHex(idBytes), time.Now().AddDate(0, 0, days).Truncate(time.Microsecond)
+	created, err := s.store.addInvite(ctx, inv, utils.HashHex(code))
 	return code, created, err
 }
 

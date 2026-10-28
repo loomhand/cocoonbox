@@ -2,9 +2,7 @@ package vault
 
 import (
 	"cmp"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"net/textproto"
@@ -13,6 +11,8 @@ import (
 
 	"golang.org/x/net/http/httpguts"
 	"golang.org/x/net/publicsuffix"
+
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 // spec is a key's validated send-as: where the value goes and how.
@@ -131,7 +131,7 @@ func newPlaceholder(value string) string {
 	if len(prefix) > maxPrefix {
 		prefix = ""
 	}
-	return prefix + placeholderMark + randomHex(placeholderBytes)
+	return prefix + placeholderMark + utils.RandomHex(placeholderBytes)
 }
 
 func valueHint(value string) string {
@@ -142,6 +142,5 @@ func valueHint(value string) string {
 }
 
 func fingerprint(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])[:fingerprintLen]
+	return utils.HashHex(value)[:fingerprintLen]
 }

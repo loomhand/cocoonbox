@@ -1,9 +1,6 @@
 package connect
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"net"
 	"net/http"
 	"time"
@@ -29,15 +26,4 @@ func newHTTPClient(allowPrivate bool) *http.Client {
 		TLSHandshakeTimeout: handshakeTimeout,
 		IdleConnTimeout:     idleTimeout,
 	}}
-}
-
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
-}
-
-func hashHex(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
 }

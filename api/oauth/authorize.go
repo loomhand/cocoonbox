@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const challengeLen = 43
@@ -103,11 +105,11 @@ func (s *Service) Approve(ctx context.Context, user string, req Request, caps Ca
 	} else if err := caps.check(); err != nil {
 		return "", err
 	}
-	value := randomHex(secretBytes)
+	value := utils.RandomHex(secretBytes)
 	now := time.Now()
 	if err := s.store.addCode(ctx, code{
 		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, label: req.DeviceName,
-		grantExpires: now.AddDate(0, 0, caps.Days), expiresAt: now.Add(codeTTL), codeSHA256: hashHex(value),
+		grantExpires: now.AddDate(0, 0, caps.Days), expiresAt: now.Add(codeTTL), codeSHA256: utils.HashHex(value),
 	}); err != nil {
 		return "", err
 	}

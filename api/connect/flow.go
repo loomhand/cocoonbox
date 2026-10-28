@@ -14,6 +14,8 @@ import (
 	"golang.org/x/net/http/httpguts"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 // Started is a sign-in in progress: the vendor's authorization URL and the nonce its browser must return with.
@@ -99,8 +101,8 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 	maps.Copy(merged, q)
 	target.RawQuery = merged.Encode()
 	f := &flow{
-		id: "cf_" + randomHex(idBytes), user: req.User, connector: connector, kind: e.id, mcpURL: mcpURL,
-		stateSHA256: hashHex(state), nonceSHA256: hashHex(nonce), sessionSHA256: req.SessionSHA256, expiresAt: time.Now().Add(flowTTL),
+		id: "cf_" + utils.RandomHex(idBytes), user: req.User, connector: connector, kind: e.id, mcpURL: mcpURL,
+		stateSHA256: utils.HashHex(state), nonceSHA256: utils.HashHex(nonce), sessionSHA256: req.SessionSHA256, expiresAt: time.Now().Add(flowTTL),
 	}
 	if f.sealed, err = s.seal.seal(ctx, f.user, fs, flowData(f.id, f.user, f.connector)); err != nil {
 		return nil, err
@@ -114,7 +116,7 @@ func (s *Service) Start(ctx context.Context, req StartRequest) (*Started, error)
 
 // Complete exchanges code for the flow of state and nonce while its console session is live and iss names its authorization server, and returns the connector id.
 func (s *Service) Complete(ctx context.Context, nonce, state, code, iss string) (string, error) {
-	f, err := s.store.takeFlow(ctx, hashHex(state), hashHex(nonce))
+	f, err := s.store.takeFlow(ctx, utils.HashHex(state), utils.HashHex(nonce))
 	if errors.Is(err, errNoFlow) {
 		return "", status.Error(codes.PermissionDenied, err.Error())
 	}

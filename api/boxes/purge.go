@@ -72,7 +72,7 @@ func (l *stateLayer) expire(ctx context.Context, p statePath, opts GCOptions, no
 
 // purge deletes every object of p's box under its lock, the deletion record last.
 func (l *stateLayer) purge(ctx context.Context, p statePath, opts GCOptions, r *gcReport) error {
-	unlock := l.lock(p.box)
+	unlock := l.locks.Lock(p.box)
 	defer unlock()
 	listing, err := l.store.List(ctx, p.boxDir())
 	if err != nil {

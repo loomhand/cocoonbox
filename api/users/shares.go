@@ -10,6 +10,7 @@ import (
 	"github.com/projecteru2/core/log"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -69,11 +70,11 @@ func (s *Service) CreateShare(ctx context.Context, ns NewShare) (Share, error) {
 		}
 	}
 	now := time.Now()
-	secret := auth.SecretPrefix + randomHex(shareSecretBytes)
-	id := shareIDPrefix + randomHex(idBytes)
+	secret := auth.SecretPrefix + utils.RandomHex(shareSecretBytes)
+	id := shareIDPrefix + utils.RandomHex(idBytes)
 	rec := &shareRecord{
 		id: id, owner: ns.Owner, box: ns.Box, userIDs: ids, write: ns.Write,
-		expiresAt: now.Add(ttl).Truncate(time.Millisecond), createdAt: now.Truncate(time.Millisecond), secret: secret, secretSHA256: hashHex(secret),
+		expiresAt: now.Add(ttl).Truncate(time.Millisecond), createdAt: now.Truncate(time.Millisecond), secret: secret, secretSHA256: utils.HashHex(secret),
 	}
 	if err := s.store.insertShare(ctx, rec, s.seal.seal(secret, shareData(id, ns.Box))); err != nil {
 		return Share{}, err
@@ -124,8 +125,8 @@ func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share,
 	if err != nil {
 		return Share{}, err
 	}
-	secret := auth.SecretPrefix + randomHex(shareSecretBytes)
-	if err := s.store.setShareSecret(ctx, id, hashHex(secret), s.seal.seal(secret, shareData(id, box))); err != nil {
+	secret := auth.SecretPrefix + utils.RandomHex(shareSecretBytes)
+	if err := s.store.setShareSecret(ctx, id, utils.HashHex(secret), s.seal.seal(secret, shareData(id, box))); err != nil {
 		return Share{}, err
 	}
 	s.published(ctx, "regenerated share "+id)
@@ -135,7 +136,7 @@ func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share,
 		s.mu.Unlock()
 		return Share{}, ErrNotFound
 	}
-	s.swapSecret(rec, secret, hashHex(secret))
+	s.swapSecret(rec, secret, utils.HashHex(secret))
 	view := s.view(rec)
 	s.mu.Unlock()
 	s.ended(ctx, view)

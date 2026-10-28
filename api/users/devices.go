@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -38,8 +40,8 @@ func (s *Service) IssueDevice(ctx context.Context, id, client, label string) (st
 	if r.Disabled {
 		return "", ErrNotFound
 	}
-	token := TokenPrefix + randomHex(secretBytes)
-	d := deviceToken{id: devicePrefix + randomHex(deviceIDBytes), sha256: hashHex(token)}
+	token := TokenPrefix + utils.RandomHex(secretBytes)
+	d := deviceToken{id: devicePrefix + utils.RandomHex(deviceIDBytes), sha256: utils.HashHex(token)}
 	if err := s.store.insertDevice(ctx, id, d, client, label); err != nil {
 		return "", err
 	}

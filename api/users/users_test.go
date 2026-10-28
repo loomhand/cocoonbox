@@ -23,6 +23,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/keyring"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const password = "correct horse battery"
@@ -202,7 +203,7 @@ func TestATokenAnotherProcessSetWorksAtOnce(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	token := TokenPrefix + randomHex(secretBytes)
+	token := TokenPrefix + utils.RandomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(token)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
@@ -314,7 +315,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	old := TokenPrefix + randomHex(secretBytes)
+	old := TokenPrefix + utils.RandomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(old)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
@@ -325,7 +326,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 		t.Fatalf("old token resolves to %q, %t", id, ok)
 	}
 
-	replaced := TokenPrefix + randomHex(secretBytes)
+	replaced := TokenPrefix + utils.RandomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(replaced)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
@@ -338,7 +339,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
 		t.Fatalf("end the listening connection: %v", err)
 	}
-	missed := TokenPrefix + randomHex(secretBytes)
+	missed := TokenPrefix + utils.RandomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(missed)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
@@ -357,7 +358,7 @@ func TestUnknownTokensCheckTheTableAtMostOncePerInterval(t *testing.T) {
 		wg.Go(func() {
 			for time.Since(start) < 3*tokenMissInterval+tokenMissInterval/2 {
 				calls.Add(1)
-				if _, ok := svc.ByTokenSHA256(t.Context(), sum(randomHex(secretBytes))); ok {
+				if _, ok := svc.ByTokenSHA256(t.Context(), sum(utils.RandomHex(secretBytes))); ok {
 					t.Error("a garbage token resolved")
 				}
 			}
@@ -606,7 +607,7 @@ type fakeGW struct {
 func (g *fakeGW) Add(_ context.Context, owner string) (string, string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.keys[owner] = "gw-" + randomHex(8)
+	g.keys[owner] = "gw-" + utils.RandomHex(8)
 	return g.keys[owner], "sha256:" + owner, nil
 }
 
@@ -744,7 +745,7 @@ func freshDatabase(t *testing.T) string {
 	if base == "" {
 		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
 	}
-	name := "t_" + randomHex(6)
+	name := "t_" + utils.RandomHex(6)
 	if err := exec(t, base, "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)
 	}

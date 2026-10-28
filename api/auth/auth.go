@@ -3,8 +3,6 @@ package auth
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +11,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -94,8 +94,7 @@ func New(users Users, shares Shares) *Authenticator {
 
 // Admit admits a share secret for box, or for the share's own box when box is empty; guest is the caller's user id or empty.
 func (a *Authenticator) Admit(secret, box, guest string) (Grant, error) {
-	sum := sha256.Sum256([]byte(secret))
-	sh, ok := a.shares.ShareBySecretSHA256(hex.EncodeToString(sum[:]))
+	sh, ok := a.shares.ShareBySecretSHA256(utils.HashHex(secret))
 	switch {
 	case !ok || !time.Now().Before(sh.ExpiresAt):
 		return Grant{}, status.Error(codes.PermissionDenied, "the share link is revoked, regenerated or expired")
@@ -225,8 +224,7 @@ func Bearer(header string) (string, bool) {
 
 // TokenCredential names a user or device token's credential for Bind: its sha256 in lowercase hex.
 func TokenCredential(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
+	return utils.HashHex(token)
 }
 
 // Credential returns the credential the interceptors admitted, "" when ctx did not pass them.

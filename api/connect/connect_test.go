@@ -28,6 +28,7 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -94,7 +95,7 @@ func TestSignInCompletesOnlyWithItsNonceWhileItsSessionIsLive(t *testing.T) {
 		t.Errorf("List carries a token: %v", c)
 	}
 	var stored int
-	if err := env.row(t, "SELECT count(*) FROM connect_flows WHERE nonce_sha256 = '"+hashHex(bobs.Nonce)+"'").Scan(&stored); err != nil || stored != 1 {
+	if err := env.row(t, "SELECT count(*) FROM connect_flows WHERE nonce_sha256 = '"+utils.HashHex(bobs.Nonce)+"'").Scan(&stored); err != nil || stored != 1 {
 		t.Errorf("bob's flow = %d, %v; refusals must not take it", stored, err)
 	}
 }
@@ -1375,7 +1376,7 @@ func freshDatabase(t *testing.T) string {
 		t.Fatalf("connect: %v", err)
 	}
 	defer func() { _ = conn.Close(t.Context()) }()
-	name := "t_" + randomHex(6)
+	name := "t_" + utils.RandomHex(6)
 	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
 		t.Fatalf("create database: %v", err)
 	}

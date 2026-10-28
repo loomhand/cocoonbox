@@ -130,7 +130,7 @@ func (l *stateLayer) prune(ctx context.Context, p statePath, opts GCOptions, now
 			return nil, nil, err
 		}
 	}
-	unlock := l.lock(p.box)
+	unlock := l.locks.Lock(p.box)
 	defer unlock()
 	var version string
 	if found {
@@ -271,7 +271,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 	exclusive := l.userLock(user)
 	exclusive.Lock()
 	defer exclusive.Unlock()
-	unlock := l.lock(p.index())
+	unlock := l.locks.Lock(p.index())
 	defer unlock()
 	var idx chunkIndex
 	version, _, err := l.readVersion(ctx, p.index(), &idx)

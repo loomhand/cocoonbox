@@ -11,6 +11,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 // DoorKey issues machine's box door key for its incarnation; the keys of its earlier incarnations stop working.
 func (s *Service) DoorKey(ctx context.Context, machine, owner, incarnation string) (string, error) {
 	key := randomToken()
-	if err := s.store.putDoorKey(ctx, hashHex(key), machine, owner, incarnation); err != nil {
+	if err := s.store.putDoorKey(ctx, utils.HashHex(key), machine, owner, incarnation); err != nil {
 		return "", err
 	}
 	return key, nil
@@ -86,7 +87,7 @@ func (s *Service) BoxCaller(ctx context.Context, header string) (string, string,
 	if !ok || key == "" {
 		return "", "", errNoDoorKey
 	}
-	return s.store.doorKey(ctx, hashHex(key))
+	return s.store.doorKey(ctx, utils.HashHex(key))
 }
 
 // injectToken returns the access token of e's active grant, "" when there is none or the vendor no longer accepts it.

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/loomhand/cocoonbox/api/mcpwire"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -376,7 +377,7 @@ func (s *Service) client(g *grant, sec secrets) (client, error) {
 
 func (s *Service) requestApproval(ctx context.Context, g *grant, t tool, args jsontext.Value, argsSHA256 string) (*callResult, error) {
 	a := &approval{
-		id: "apr_" + randomHex(idBytes), user: g.user, grantID: g.id, tool: t.Name, argsSHA256: argsSHA256,
+		id: "apr_" + utils.RandomHex(idBytes), user: g.user, grantID: g.id, tool: t.Name, argsSHA256: argsSHA256,
 		summary: s.summary(g, t, args), expiresAt: time.Now().Add(approvalTTL),
 	}
 	if err := s.store.insertApproval(ctx, a); err != nil {

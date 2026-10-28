@@ -4,10 +4,7 @@ package vault
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -18,6 +15,7 @@ import (
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -258,18 +256,11 @@ func digest(versions []string) string {
 		return ""
 	}
 	slices.Sort(versions)
-	sum := sha256.Sum256([]byte(recordFormat + "|" + strings.Join(versions, ",")))
-	return hex.EncodeToString(sum[:])[:digestLen]
+	return utils.HashHex(recordFormat + "|" + strings.Join(versions, ","))[:digestLen]
 }
 
 func envName(id string) string {
 	return envPrefix + strings.TrimPrefix(id, idPrefix)
-}
-
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
 }
 
 func valueData(id, owner string) string {

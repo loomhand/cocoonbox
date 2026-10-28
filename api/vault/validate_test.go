@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 func TestCheckNameRefusesWhatTheBoxUses(t *testing.T) {
@@ -163,7 +165,7 @@ func TestEntryGatesEveryKeyOnItsPlaceholder(t *testing.T) {
 func TestFitsBoundsCountAndClaimEnvSize(t *testing.T) {
 	small := func(i int) *secret {
 		return &secret{
-			id: idPrefix + randomHex(idBytes), name: "K" + strings.Repeat("A", i%10), placeholder: placeholderMark + randomHex(placeholderBytes),
+			id: idPrefix + utils.RandomHex(idBytes), name: "K" + strings.Repeat("A", i%10), placeholder: placeholderMark + utils.RandomHex(placeholderBytes),
 			hosts: []string{"api.example.com"}, header: "Authorization", template: "Bearer {}", valueLen: 64,
 		}
 	}

@@ -232,7 +232,7 @@ func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.
 	if err != nil {
 		return done, fmt.Errorf("state key: %w", err)
 	}
-	unlock := l.lock(p.box)
+	unlock := l.locks.Lock(p.box)
 	_, err = l.keptEntry(ctx, p, e.ID)
 	if err == nil {
 		err = l.materialize(ctx, p, key, e.ID)

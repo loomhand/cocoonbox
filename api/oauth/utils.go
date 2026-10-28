@@ -1,14 +1,12 @@
 package oauth
 
 import (
-	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"net/http"
 	"strings"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 // IsAccessToken reports whether an Authorization header carries one of this server's access tokens.
@@ -18,18 +16,7 @@ func IsAccessToken(header string) bool {
 }
 
 func randomToken(prefix string) string {
-	return prefix + randomHex(secretBytes)
-}
-
-func randomHex(n int) string {
-	raw := make([]byte, n)
-	_, _ = rand.Read(raw)
-	return hex.EncodeToString(raw)
-}
-
-func hashHex(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
+	return prefix + utils.RandomHex(secretBytes)
 }
 
 func basicUser(r *http.Request) string {

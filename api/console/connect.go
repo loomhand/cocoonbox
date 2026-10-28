@@ -1,8 +1,6 @@
 package console
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/connect"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -149,7 +148,7 @@ func (s *Server) beginConnect(w http.ResponseWriter, r *http.Request) {
 	}
 	session, _ := r.Cookie(cookieName)
 	started, err := s.connect.Start(r.Context(), connect.StartRequest{
-		User: caller(r).ID, SessionSHA256: sessionSHA256(session.Value), Connector: r.PathValue("connector"),
+		User: caller(r).ID, SessionSHA256: utils.HashHex(session.Value), Connector: r.PathValue("connector"),
 		Name: req.Name, URL: req.URL, Header: req.Header, Key: req.Key,
 	})
 	if err != nil {
@@ -278,9 +277,4 @@ func policyName(p controlv1.Policy) string {
 
 func redirect(w http.ResponseWriter, r *http.Request, key, value string) {
 	http.Redirect(w, r, connect.ConsolePath+"?"+url.Values{key: {value}}.Encode(), http.StatusSeeOther)
-}
-
-func sessionSHA256(secret string) string {
-	sum := sha256.Sum256([]byte(secret))
-	return hex.EncodeToString(sum[:])
 }
