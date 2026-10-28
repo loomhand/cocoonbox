@@ -65,6 +65,7 @@ const ALWAYS_LOAD: &[&str] = &[
 const NUDGE_STREAK: u32 = 2;
 const MAX_INSTRUCTIONS: usize = 1600;
 const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan call (the whole plan, each step checked), or a script_run script for loops.";
+const BUSY_WINDOW: Duration = Duration::from_secs(10);
 const MAX_FLOWS: usize = 30;
 const MAX_SHARE_SESSIONS: usize = 4;
 const SHARE_SESSIONS_FULL: &str = "a share holds at most 4 open MCP sessions: close one first";
@@ -348,12 +349,14 @@ impl Mcp {
         };
         let session = Arc::new(Session {
             id: new_id("mcp"),
+            client: client.to_owned(),
             guest,
             record,
             driver: Mutex::new(Driver::default()),
             listed: Mutex::new(None),
             changed: Notify::new(),
             streak: AtomicU32::new(0),
+            desk: Mutex::new(DeskUse::default()),
         });
         if let Some(r) = &session.record {
             let note = format!("MCP session opened by {client} {version}");
@@ -565,6 +568,8 @@ impl Mcp {
         };
         let launch = requested["action"] == "launch_app";
         let retry = uses_driver(name).then(|| requested.clone());
+        let desk =
+            drives_desktop(name, &requested).then(|| (DeskCall::begin(s), self.other_driver(s)));
         let _in_flight = self.rt.turns.read().await;
         let mut out = self.run(s, &label, name, requested).await?;
         if let Some(args) = retry.filter(|_| out.is_error && out.text.contains(DRIVER_ENDED)) {
@@ -575,6 +580,14 @@ impl Mcp {
         let mut text = out.text;
         if self.automation.plans() && s.gui_streak(name, launch) {
             text.push_str(NUDGE);
+        }
+        if let Some(client) =
+            desk.and_then(|(_call, before)| before.or_else(|| self.other_driver(s)))
+        {
+            let _ = write!(
+                text,
+                "\n\nAnother agent ({client}) also drives this box's desktop: the keyboard focus and the front window may change between your calls."
+            );
         }
         let mut content = vec![json!({"type": "text"})];
         content[0]["text"] = text.into();
@@ -629,6 +642,10 @@ impl Mcp {
         }
     }
 
+    fn other_driver(&self, s: &Session) -> Option<String> {
+        other_driver(&lock(&self.sessions), s, Instant::now())
+    }
+
     async fn note(&self, s: &Session, text: &str) {
         let Some(r) = &s.record else {
             return;
@@ -658,6 +675,8 @@ impl Mcp {
 
 struct Session {
     id: String,
+    /// The `clientInfo.name` of the session's `initialize`.
+    client: String,
     /// The share the session came through; `None` for the owner.
     guest: Option<Guest>,
     /// The agent that records a share session; the owner's sessions have none.
@@ -669,6 +688,7 @@ struct Session {
     changed: Notify,
     /// Consecutive `computer_act` calls other than `launch_app` since the last other tool call.
     streak: AtomicU32,
+    desk: Mutex<DeskUse>,
 }
 
 impl Session {
@@ -698,6 +718,14 @@ impl Session {
         !launch && self.streak.fetch_add(1, Ordering::Relaxed) + 1 == NUDGE_STREAK
     }
 
+    /// Whether the session drives the desktop at `now` or stopped less than [`BUSY_WINDOW`] before.
+    fn driving(&self, now: Instant) -> bool {
+        let d = lock(&self.desk);
+        d.in_flight > 0
+            || d.ended
+                .is_some_and(|t| now.saturating_duration_since(t) < BUSY_WINDOW)
+    }
+
     /// Announces a tool list change when a share's write mode differs from the one the client listed in.
     fn observe(&self, principal: &Principal) {
         if let Principal::Share { write, .. } = principal
@@ -705,6 +733,31 @@ impl Session {
         {
             self.changed.notify_one();
         }
+    }
+}
+
+/// A session's desktop calls in flight and when its last one ended.
+#[derive(Default)]
+struct DeskUse {
+    in_flight: u32,
+    ended: Option<Instant>,
+}
+
+/// Counts one desktop call of a session in flight until dropped, a cancelled call included.
+struct DeskCall<'a>(&'a Session);
+
+impl<'a> DeskCall<'a> {
+    fn begin(s: &'a Session) -> Self {
+        lock(&s.desk).in_flight += 1;
+        Self(s)
+    }
+}
+
+impl Drop for DeskCall<'_> {
+    fn drop(&mut self) {
+        let mut d = lock(&self.0.desk);
+        d.in_flight -= 1;
+        d.ended = Some(Instant::now());
     }
 }
 
@@ -1018,6 +1071,28 @@ async fn read_resource(
     Ok(json!({"contents": [content]}))
 }
 
+/// Whether a call drives the visible desktop: GUI input, a plan, a script, desk, or a browser call on the user's tabs or to the front.
+fn drives_desktop(name: &str, args: &Value) -> bool {
+    match name {
+        "computer_act" | "gui_plan" | "desk" => true,
+        _ if name.ends_with("_run") => true,
+        _ if name.starts_with("browser_") => !args["tab"].is_null() || args["front"] == true,
+        _ => false,
+    }
+}
+
+/// The client of a session other than `s` that drives the desktop at `now`.
+fn other_driver(
+    sessions: &HashMap<String, Arc<Session>>,
+    s: &Session,
+    now: Instant,
+) -> Option<String> {
+    sessions
+        .values()
+        .find(|o| o.id != s.id && o.driving(now))
+        .map(|o| o.client.clone())
+}
+
 /// Whether `principal` may call tool `name`: a read-only share gets only the tools that read.
 fn allows(principal: &Principal, name: &str) -> bool {
     match principal {
@@ -1064,6 +1139,82 @@ mod tests {
         let (text, skipped) = with_routing("h".repeat(MAX_INSTRUCTIONS), &extra);
         assert_eq!(text.len(), MAX_INSTRUCTIONS);
         assert_eq!(skipped, [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn only_calls_that_drive_the_desktop_count() {
+        for name in [
+            "computer_act",
+            "gui_plan",
+            "script_run",
+            "desk",
+            "notes_run",
+        ] {
+            assert!(drives_desktop(name, &json!({})), "{name}");
+        }
+        for name in [
+            "shell",
+            "read_file",
+            "write_file",
+            "edit_file",
+            "list_dir",
+            "screenshot",
+            "computer_state",
+            "browser_fetch",
+            "browser_navigate",
+        ] {
+            assert!(
+                !drives_desktop(name, &json!({"url": "https://example.com"})),
+                "{name}"
+            );
+        }
+        assert!(drives_desktop("browser_click", &json!({"tab": "active"})));
+        assert!(drives_desktop(
+            "browser_navigate",
+            &json!({"url": "https://example.com", "front": true})
+        ));
+    }
+
+    #[test]
+    fn a_desktop_call_names_another_session_that_drives_the_desktop() {
+        let a = test_session("a", "claude-code");
+        let b = test_session("b", "codex");
+        let sessions: HashMap<String, Arc<Session>> = [
+            (a.id.clone(), Arc::clone(&a)),
+            (b.id.clone(), Arc::clone(&b)),
+        ]
+        .into();
+        assert_eq!(other_driver(&sessions, &b, Instant::now()), None);
+        let call = DeskCall::begin(&a);
+        assert_eq!(
+            other_driver(&sessions, &b, Instant::now()).as_deref(),
+            Some("claude-code")
+        );
+        assert_eq!(other_driver(&sessions, &a, Instant::now()), None);
+        drop(call);
+        let ended = Instant::now();
+        assert_eq!(
+            other_driver(&sessions, &b, ended + BUSY_WINDOW - Duration::from_secs(1)).as_deref(),
+            Some("claude-code")
+        );
+        assert_eq!(
+            other_driver(&sessions, &b, ended + BUSY_WINDOW + Duration::from_secs(1)),
+            None
+        );
+    }
+
+    fn test_session(id: &str, client: &str) -> Arc<Session> {
+        Arc::new(Session {
+            id: id.to_owned(),
+            client: client.to_owned(),
+            guest: None,
+            record: None,
+            driver: Mutex::new(Driver::default()),
+            listed: Mutex::new(None),
+            changed: Notify::new(),
+            streak: AtomicU32::new(0),
+            desk: Mutex::new(DeskUse::default()),
+        })
     }
 
     async fn body(resp: Response) -> String {
