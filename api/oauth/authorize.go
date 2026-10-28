@@ -42,18 +42,19 @@ func ParseRequest(q url.Values) Request {
 }
 
 // Consent is what the consent page shows of a request it may approve; Existing marks a client that already holds a live grant of the user,
-// which an approval renews, and Account a first-party client that signs in to the whole account.
+// which an approval renews, Chosen that grant's chosen boxes, and Account a first-party client that signs in to the whole account.
 type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
 	// ClientHost is the verified host of the client's metadata document, empty for a self-registered client.
-	ClientHost   string `json:"client_host"`
-	RedirectHost string `json:"redirect_host"`
-	Loopback     bool   `json:"loopback"`
-	Existing     bool   `json:"existing"`
-	Account      bool   `json:"account"`
-	DeviceName   string `json:"device_name"`
-	Defaults     Caps   `json:"defaults"`
+	ClientHost   string   `json:"client_host"`
+	RedirectHost string   `json:"redirect_host"`
+	Loopback     bool     `json:"loopback"`
+	Existing     bool     `json:"existing"`
+	Chosen       []string `json:"chosen"`
+	Account      bool     `json:"account"`
+	DeviceName   string   `json:"device_name"`
+	Defaults     Caps     `json:"defaults"`
 }
 
 // AuthorizeError refuses an authorization request; Redirect takes the error back to the client, and is empty when the
@@ -72,34 +73,40 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 	if err != nil {
 		return Consent{}, err
 	}
-	existing := ""
+	existing, chosen := "", []string{}
 	if !c.firstParty {
 		if existing, err = s.store.liveGrant(ctx, user, c.id); err != nil {
 			return Consent{}, err
 		}
 	}
+	if existing != "" {
+		if chosen, err = s.store.chosen(ctx, existing); err != nil {
+			return Consent{}, err
+		}
+	}
 	host, loopback := redirectHost(req.RedirectURI)
 	return Consent{
-		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "",
+		ClientName: c.name, ClientID: c.id, ClientHost: c.host, RedirectHost: host, Loopback: loopback, Existing: existing != "", Chosen: chosen,
 		Account: c.firstParty, DeviceName: req.DeviceName, Defaults: Caps{MaxBoxes: defaultMaxBoxes, MaxRunning: defaultMaxRunning, Days: defaultDays},
 	}, nil
 }
 
-// Approve records user's consent to req within caps, which a first-party client goes without, and returns where the browser takes the code.
-func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps) (string, error) {
+// Approve records user's consent to req within caps and with the user's own boxes of chosen, which a first-party client goes without,
+// and returns where the browser takes the code.
+func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen []string) (string, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {
 		return "", err
 	}
 	if c.firstParty {
-		caps = Caps{}
+		caps, chosen = Caps{}, nil
 	} else if err := caps.check(); err != nil {
 		return "", err
 	}
 	value := randomHex(secretBytes)
 	now := time.Now()
 	if err := s.store.addCode(ctx, code{
-		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, label: req.DeviceName,
+		user: user, client: c, redirectURI: req.RedirectURI, challenge: req.CodeChallenge, caps: caps, chosen: chosen, label: req.DeviceName,
 		grantExpires: now.AddDate(0, 0, caps.Days), expiresAt: now.Add(codeTTL), codeSHA256: hashHex(value),
 	}); err != nil {
 		return "", err

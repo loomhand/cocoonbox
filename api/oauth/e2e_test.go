@@ -106,8 +106,7 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	if list := e.boxNames(t, newAccess); !slices.Equal(list, []string{"agent-one"}) {
 		t.Errorf("after refresh the grant sees %v", list)
 	}
-	var grants []oauth.Grant
-	e.console(t, http.MethodGet, "agents", nil, &grants)
+	grants := e.grants(t)
 	life := lifetime(e.users, e.alice, grants[0].ID)
 	if code, body := e.tokenError(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); code != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") || life.Err() == nil {
 		t.Fatalf("replayed refresh token: %d %s; the grant's calls' lifetime %v", code, body, life.Err())
@@ -126,8 +125,7 @@ func TestConsoleListsAcknowledgesAndRevokesGrants(t *testing.T) {
 	access, _ := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 2, MaxRunning: 1, Days: 30})
 	e.call(t, access, "box_create", map[string]any{"name": "made"})
 
-	var grants []oauth.Grant
-	e.console(t, http.MethodGet, "agents", nil, &grants)
+	grants := e.grants(t)
 	if len(grants) != 1 || grants[0].ClientName != "Listed Agent" || grants[0].Seen || len(grants[0].Boxes) != 1 || grants[0].ClientHost != "" {
 		t.Fatalf("grants = %+v", grants)
 	}
@@ -135,7 +133,7 @@ func TestConsoleListsAcknowledgesAndRevokesGrants(t *testing.T) {
 		t.Errorf("grant lasts %s, want 30 days", grants[0].ExpiresAt.Sub(grants[0].CreatedAt))
 	}
 	e.console(t, http.MethodPost, "agents/seen", map[string]any{}, nil)
-	e.console(t, http.MethodGet, "agents", nil, &grants)
+	grants = e.grants(t)
 	if !grants[0].Seen {
 		t.Error("seen did not stick")
 	}
@@ -234,8 +232,7 @@ func TestDenyAndRevocationEndTheFlow(t *testing.T) {
 		t.Errorf("deny redirect = %q", denied.Redirect)
 	}
 	access, refresh := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
-	var grants []oauth.Grant
-	e.console(t, http.MethodGet, "agents", nil, &grants)
+	grants := e.grants(t)
 	life := lifetime(e.users, e.alice, grants[0].ID)
 	if resp := e.post(t, oauth.RevokePath, "application/x-www-form-urlencoded", url.Values{"token": {refresh}, "client_id": {clientID}}.Encode()); resp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke: %d", resp.StatusCode)
@@ -297,8 +294,7 @@ func TestAGrantRevokedWhileItsBoxWakesEndsTheExchange(t *testing.T) {
 	if err := json.Unmarshal(e.call(t, access, "box_create", map[string]any{"name": "agent-one"}), &made); err != nil {
 		t.Fatalf("box_create: %v", err)
 	}
-	var grants []oauth.Grant
-	e.console(t, http.MethodGet, "agents", nil, &grants)
+	grants := e.grants(t)
 	e.waking.slow.Store(true)
 	answered := make(chan int, 1)
 	go func() {
@@ -371,6 +367,139 @@ func TestAGrantDrivesOnlyItsOwnBoxesThroughTheBoxMCP(t *testing.T) {
 	}
 }
 
+func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
+	e := newEnv(t)
+	two := 2
+	if _, err := e.users.Update(t.Context(), e.alice, users.Settings{MaxBoxesCap: &two, MaxBoxes: &two}); err != nil {
+		t.Fatalf("raise max boxes: %v", err)
+	}
+	work, err := e.users.AddBox(t.Context(), users.Box{ID: "cb-work00000000", Owner: e.alice, Name: "work"})
+	if err != nil {
+		t.Fatalf("add box: %v", err)
+	}
+	bob, err := e.users.Create(t.Context(), users.NewUser{Name: "bob", Password: alicePassword})
+	if err != nil {
+		t.Fatalf("create bob: %v", err)
+	}
+	main, bobs := e.users.Boxes(e.alice)[0].ID, e.users.Boxes(bob.ID)[0].ID
+	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}, main, bobs)
+	grant := e.grants(t)[0]
+	if !slices.Equal(grant.Chosen, []string{main}) {
+		t.Fatalf("chosen = %v, want only the user's own box %s", grant.Chosen, main)
+	}
+
+	if list := e.boxNames(t, access); !slices.Equal(list, []string{"main"}) {
+		t.Errorf("the grant sees %v, want its chosen box", list)
+	}
+	if text := e.toolError(t, access, "box_status", map[string]any{"box": "work"}); !strings.Contains(text, `no box "work"`) {
+		t.Errorf("status of an unchosen box: %q", text)
+	}
+	if text := e.toolError(t, access, "box_delete", map[string]any{"box": "main", "confirm": true}); text != "This client may delete only the boxes it created." {
+		t.Errorf("delete of a chosen box: %q", text)
+	}
+	var ensured struct {
+		BoxID string `json:"box_id"`
+	}
+	if err := json.Unmarshal(e.call(t, access, "box_ensure", map[string]any{}), &ensured); err != nil || ensured.BoxID != main {
+		t.Errorf("ensure without a box woke %q, want the chosen box: %v", ensured.BoxID, err)
+	}
+	var made struct {
+		BoxID string `json:"box_id"`
+	}
+	if err := json.Unmarshal(e.call(t, access, "box_create", map[string]any{"name": "agent-one"}), &made); err != nil {
+		t.Fatalf("box_create past a chosen box on max boxes 1: %v", err)
+	}
+	if list := e.boxNames(t, access); !slices.Equal(list, []string{"main", "agent-one"}) {
+		t.Errorf("the grant sees %v, want its chosen and its created box", list)
+	}
+	if i := slices.IndexFunc(e.users.Boxes(e.alice), func(b users.Box) bool { return b.ID == main }); e.users.Boxes(e.alice)[i].Agent {
+		t.Error("a chosen box became an agent box, so it would lose its owner credentials and hibernate as one")
+	}
+
+	for _, tt := range []struct {
+		name  string
+		token string
+		box   string
+		want  int
+	}{
+		{"the grant on its chosen box", access, main, http.StatusOK},
+		{"the grant on its created box", access, made.BoxID, http.StatusOK},
+		{"the grant on an unchosen box", access, work.ID, http.StatusNotFound},
+		{"the grant on another user's box", access, bobs, http.StatusNotFound},
+		{"the user on an unchosen box", e.userToken, work.ID, http.StatusOK},
+	} {
+		if resp := e.boxMCP(t, tt.token, tt.box); resp.StatusCode != tt.want {
+			t.Errorf("box MCP, %s: %d, want %d", tt.name, resp.StatusCode, tt.want)
+		}
+	}
+
+	for _, tt := range []struct {
+		name  string
+		token string
+		args  map[string]any
+		fails bool
+		want  string
+	}{
+		{"the grant's default box", access, map[string]any{"command": "id"}, false, "cred:" + main},
+		{"the grant's created box", access, map[string]any{"command": "id", "box": "agent-one"}, false, "cred:" + made.BoxID},
+		{"an unchosen box", access, map[string]any{"command": "id", "box": "work"}, true, `You have no box "work"; box_list lists your boxes.`},
+		{"another user's box", access, map[string]any{"command": "id", "box": bobs}, true, `You have no box "` + bobs + `"; box_list lists your boxes.`},
+		{"the user's named box", e.userToken, map[string]any{"command": "id", "box": "work"}, false, "cred:" + work.ID},
+		{"the user's default box", e.userToken, map[string]any{"command": "id"}, false, "cred:" + main},
+	} {
+		fails, text := e.rootCall(t, tt.token, tt.args)
+		if fails != tt.fails || !strings.HasPrefix(text, tt.want) {
+			t.Errorf("unified, %s: %v %q, want %v %q", tt.name, fails, text, tt.fails, tt.want)
+		}
+		if !fails && strings.Contains(text, `"box"`) {
+			t.Errorf("unified, %s: the agent got the box argument: %s", tt.name, text)
+		}
+	}
+
+	e.console(t, http.MethodPut, "agents/"+grant.ID+"/boxes", map[string]any{"boxes": []string{work.ID}}, nil)
+	if list := e.boxNames(t, access); !slices.Equal(list, []string{"work", "agent-one"}) {
+		t.Errorf("after the change the grant sees %v", list)
+	}
+	if resp := e.boxMCP(t, access, main); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("box MCP of a box no longer chosen: %d", resp.StatusCode)
+	}
+	if fails, text := e.rootCall(t, access, map[string]any{"command": "id"}); fails || !strings.HasPrefix(text, "cred:"+work.ID) {
+		t.Errorf("unified default after the change: %v %q", fails, text)
+	}
+	if code, _ := e.consoleStatus(t, http.MethodPut, "agents/oag_missing/boxes", map[string]any{"boxes": []string{}}); code != http.StatusNotFound {
+		t.Errorf("choosing for an unknown grant: %d", code)
+	}
+}
+
+func TestSigningInAgainShowsAndReplacesTheChosenBoxes(t *testing.T) {
+	e := newEnv(t)
+	clientID := e.register(t, "Agent")
+	main := e.users.Boxes(e.alice)[0].ID
+	e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1}, main)
+	q := url.Values{
+		"response_type": {"code"}, "client_id": {clientID}, "redirect_uri": {callback}, "code_challenge": {challenge(strings.Repeat("v", 43))},
+		"code_challenge_method": {"S256"},
+	}
+	var consent struct {
+		oauth.Consent
+		Boxes []struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"boxes"`
+	}
+	e.console(t, http.MethodPost, "oauth/check", map[string]any{"query": q.Encode()}, &consent)
+	if !consent.Existing || !slices.Equal(consent.Chosen, []string{main}) || len(consent.Boxes) != 1 || consent.Boxes[0].ID != main {
+		t.Fatalf("consent = %+v, want the renewal to show the chosen box among the user's boxes", consent)
+	}
+	access, _ := e.authorize(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
+	if grants := e.grants(t); len(grants) != 1 || len(grants[0].Chosen) != 0 {
+		t.Fatalf("grants = %+v, want the renewal to drop the chosen box", grants)
+	}
+	if resp := e.boxMCP(t, access, main); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("box MCP of the dropped box: %d", resp.StatusCode)
+	}
+}
+
 func TestSigningInAgainRenewsTheClientsGrant(t *testing.T) {
 	e := newEnv(t)
 	clientID := e.register(t, "Agent")
@@ -392,8 +521,7 @@ func TestSigningInAgainRenewsTheClientsGrant(t *testing.T) {
 	if list := e.boxNames(t, first); !slices.Equal(list, []string{"agent-one"}) {
 		t.Errorf("the first sign-in's token sees %v after the renewal", list)
 	}
-	var grants []oauth.Grant
-	e.console(t, http.MethodGet, "agents", nil, &grants)
+	grants := e.grants(t)
 	if len(grants) != 1 || grants[0].MaxBoxes != 2 {
 		t.Errorf("grants = %+v, want one renewed to 2 boxes", grants)
 	}
@@ -464,8 +592,10 @@ func newEnv(t *testing.T) *env {
 	waking := &wakeGate{entered: make(chan struct{}, 1)}
 	boxMCP := edge.NewMCP(fakeResolver{users: us, addr: agent.Listener.Addr().String(), waking: waking}, authn, fakeCredentials{})
 	boxMCP.EnableGrants(grants)
+	control.EnableBoxTools(boxMCP, us)
 	mux.Handle(edge.MCPPrefix, boxMCP)
 	mux.Handle(controlmcp.Path, control)
+	mux.Handle(controlmcp.RootPath, control)
 	mux.Handle(console.Prefix, web)
 	mux.HandleFunc("GET "+grants.ResourceMetadataPath(), grants.ServeResourceMetadata)
 	mux.HandleFunc("GET "+grants.ResourceMetadataPath()+"/", grants.ServeResourceMetadata)
@@ -494,8 +624,8 @@ func (e *env) register(t *testing.T, name string) string {
 	return reg.ClientID
 }
 
-// code runs the consent page's calls and returns the code, its verifier and the redirect URI on a port of the client's choice.
-func (e *env) code(t *testing.T, clientID string, caps oauth.Caps) (string, string, string) {
+// code runs the consent page's calls, choosing boxes, and returns the code, its verifier and the redirect URI on a port of the client's choice.
+func (e *env) code(t *testing.T, clientID string, caps oauth.Caps, boxes ...string) (string, string, string) {
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
 	redirect := "http://127.0.0.1:43123/callback"
@@ -511,7 +641,7 @@ func (e *env) code(t *testing.T, clientID string, caps oauth.Caps) (string, stri
 	var approved struct {
 		Redirect string `json:"redirect"`
 	}
-	e.console(t, http.MethodPost, "oauth/approve", map[string]any{"query": q.Encode(), "max_boxes": caps.MaxBoxes, "max_running": caps.MaxRunning, "days": caps.Days}, &approved)
+	e.console(t, http.MethodPost, "oauth/approve", map[string]any{"query": q.Encode(), "max_boxes": caps.MaxBoxes, "max_running": caps.MaxRunning, "days": caps.Days, "boxes": boxes}, &approved)
 	u, err := url.Parse(approved.Redirect)
 	if err != nil || u.Query().Get("state") != "st" || u.Query().Get("iss") != e.srv.URL || u.Query().Get("code") == "" {
 		t.Fatalf("redirect = %q", approved.Redirect)
@@ -519,9 +649,9 @@ func (e *env) code(t *testing.T, clientID string, caps oauth.Caps) (string, stri
 	return u.Query().Get("code"), verifier, redirect
 }
 
-func (e *env) authorize(t *testing.T, clientID string, caps oauth.Caps) (string, string) {
+func (e *env) authorize(t *testing.T, clientID string, caps oauth.Caps, boxes ...string) (string, string) {
 	t.Helper()
-	code, verifier, redirect := e.code(t, clientID, caps)
+	code, verifier, redirect := e.code(t, clientID, caps, boxes...)
 	return e.token(t, url.Values{
 		"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {redirect},
 		"code_verifier": {verifier}, "resource": {e.resource},
@@ -620,6 +750,42 @@ func (e *env) boxNames(t *testing.T, token string) []string {
 		names = append(names, b.Name)
 	}
 	return names
+}
+
+func (e *env) grants(t *testing.T) []oauth.Grant {
+	t.Helper()
+	var agents struct {
+		Grants []oauth.Grant `json:"grants"`
+	}
+	e.console(t, http.MethodGet, "agents", nil, &agents)
+	return agents.Grants
+}
+
+// rootCall calls a box tool on the unified MCP as token and returns whether it failed and its text.
+func (e *env) rootCall(t *testing.T, token string, args map[string]any) (bool, string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "shell", "arguments": args}})
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.RootPath, strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := e.client.Do(req)
+	if err != nil {
+		t.Fatalf("unified call: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var out struct {
+		Result struct {
+			IsError bool `json:"isError"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"result"`
+	}
+	if err := json.UnmarshalRead(resp.Body, &out); err != nil || len(out.Result.Content) == 0 {
+		t.Fatalf("unified call: %d %v", resp.StatusCode, err)
+	}
+	return out.Result.IsError, out.Result.Content[0].Text
 }
 
 func (e *env) boxMCP(t *testing.T, token, box string) *http.Response {
@@ -827,14 +993,19 @@ type fakeTenants struct{}
 func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
 func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
 
-// newFakeAgent answers every MCP request over h2c and echoes the credential and authorization it saw.
+// newFakeAgent answers every MCP request over h2c, opens a session on initialize, and echoes the credential and authorization it saw, and in its text the credential and the body.
 func newFakeAgent(t *testing.T) *httptest.Server {
 	t.Helper()
 	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("X-Seen-Credential", r.Header.Get("X-Cocoonbox-Credential"))
 		w.Header().Set("X-Seen-Authorization", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		if strings.Contains(string(body), `"initialize"`) {
+			w.Header().Set("Mcp-Session-Id", "agent-session")
+		}
+		text, _ := json.Marshal(r.Header.Get("X-Cocoonbox-Credential") + " " + string(body))
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":` + string(text) + `}]}}`))
 	}))
 	agent.Config.Protocols = new(http.Protocols)
 	agent.Config.Protocols.SetUnencryptedHTTP2(true)

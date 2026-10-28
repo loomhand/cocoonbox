@@ -1,5 +1,5 @@
 // Package oauth makes the control MCP an OAuth 2.1 protected resource (MCP authorization 2025-11-25): it registers
-// clients, issues a code once the user consents in the console, and issues tokens that reach only the boxes their grant creates.
+// clients, issues a code once the user consents in the console, and issues tokens that reach only the boxes their grant creates or the user chooses for it.
 package oauth
 
 import (
@@ -116,7 +116,7 @@ func (c Caps) check() error {
 	return nil
 }
 
-// Grant is one client's access for one user; Boxes are the boxes it created that still exist.
+// Grant is one client's access for one user; Boxes are the boxes it created that still exist, and Chosen the user's own boxes the user chose for it.
 type Grant struct {
 	ID         string `json:"id"`
 	User       string `json:"-"`
@@ -127,10 +127,16 @@ type Grant struct {
 	MaxBoxes   int        `json:"max_boxes"`
 	MaxRunning int        `json:"max_running"`
 	Boxes      []string   `json:"boxes"`
+	Chosen     []string   `json:"chosen"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  time.Time  `json:"expires_at"`
 	UsedAt     *time.Time `json:"used_at"`
 	Seen       bool       `json:"seen"`
+}
+
+// Reaches reports whether the grant may use box: one it created or one the user chose for it.
+func (g *Grant) Reaches(box string) bool {
+	return slices.Contains(g.Boxes, box) || slices.Contains(g.Chosen, box)
 }
 
 // Service is the authorization server and the token check of the control MCP.
@@ -249,6 +255,11 @@ func (s *Service) Boxes(ctx context.Context, id string) ([]string, error) {
 // AddBox records that grant id created box.
 func (s *Service) AddBox(ctx context.Context, id, box string) error {
 	return s.store.addBox(ctx, id, box)
+}
+
+// Choose makes boxes, those of them that are user's own boxes, the boxes user's grant id may use besides the ones it creates.
+func (s *Service) Choose(ctx context.Context, user, id string, boxes []string) error {
+	return s.store.setChosen(ctx, user, id, boxes)
 }
 
 // Grants returns user's grants, newest first.

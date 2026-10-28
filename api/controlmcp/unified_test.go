@@ -234,6 +234,64 @@ func TestRootCallAfterTheDefaultBoxWentReachesTheNextOne(t *testing.T) {
 	}
 }
 
+func TestRootBoxArgumentPicksTheBoxAndListsInTheSchema(t *testing.T) {
+	srv, fake, agents, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	fake.mu.Lock()
+	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-next", Name: "next", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
+	fake.mu.Unlock()
+	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
+
+	tools, _ := decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, listRequest)).Result["tools"].([]any)
+	for _, tool := range tools[controlTools:] {
+		schema, _ := tool.(map[string]any)["inputSchema"].(map[string]any)
+		if prop, _ := schema["properties"].(map[string]any)["box"].(map[string]any); prop["type"] != "string" {
+			t.Errorf("box tool without the box argument: %v", tool)
+		}
+	}
+	call := func(box string) string {
+		body := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"shell","arguments":{"command":"id","box":"` + box + `"}}}`
+		return callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, body)).Result})
+	}
+	if text := call("next"); text != shellAnswer+"cb-next" {
+		t.Fatalf("call on box next = %q", text)
+	}
+	if text := call(""); text != shellAnswer+boxes.BoxID("alice") {
+		t.Fatalf("call with an empty box = %q", text)
+	}
+	if text := call("nope"); text != `You have no box "nope"; box_list lists your boxes.` {
+		t.Fatalf("call on a box the caller lacks = %q", text)
+	}
+	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, bobToken, "", strings.Replace(callShell, `"id"}`, `"id","box":"cb-next"}`, 1))).Result}); !strings.Contains(text, `no box "cb-next"`) {
+		t.Fatalf("bob's call on alice's box = %q", text)
+	}
+	if want := []string{"initialize", "initialize", "tools/call", "tools/call"}; !slices.Equal(agents.recorded(), want) {
+		t.Fatalf("agent saw %v, want one agent session per box", agents.recorded())
+	}
+	if slices.ContainsFunc(agents.bodies(), func(b string) bool { return strings.Contains(b, `"box"`) }) {
+		t.Errorf("the box argument reached the agent: %v", agents.bodies())
+	}
+}
+
+func TestRootDefaultOfAGrantIsItsFirstChosenBox(t *testing.T) {
+	srv, fake, _, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	fake.mu.Lock()
+	fake.extra["alice"] = []*controlv1.Box{
+		{Id: "cb-made", Name: "made", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"},
+		{Id: "cb-picked", Name: "picked", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"},
+	}
+	fake.mu.Unlock()
+	srv.EnableGrants(fakeGrants{boxes: []string{"cb-made"}, chosen: []string{"cb-picked"}})
+	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+"cb-picked" {
+		t.Fatalf("a grant's default call = %q, want its chosen box", text)
+	}
+	srv.EnableGrants(fakeGrants{boxes: []string{"cb-made"}})
+	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+"cb-made" {
+		t.Fatalf("the default call once the box is no longer chosen = %q, want the created box", text)
+	}
+}
+
 func TestRootKeepsAtMostMaxSessionsPerCaller(t *testing.T) {
 	srv, _, _, _ := newUnifiedServer(t)
 	first := srv.openSession("alice", "s0", nil)
@@ -279,13 +337,16 @@ func TestRootTransport(t *testing.T) {
 	}
 }
 
-type fakeGrants struct{}
-
-func (fakeGrants) Authenticate(context.Context, string) (oauth.Grant, error) {
-	return oauth.Grant{ID: "g1", User: "alice", MaxBoxes: 2, MaxRunning: 1}, nil
+type fakeGrants struct {
+	boxes  []string
+	chosen []string
 }
 
-func (fakeGrants) Boxes(context.Context, string) ([]string, error) { return nil, nil }
+func (g fakeGrants) Authenticate(context.Context, string) (oauth.Grant, error) {
+	return oauth.Grant{ID: "g1", User: "alice", MaxBoxes: 2, MaxRunning: 1, Boxes: g.boxes, Chosen: g.chosen}, nil
+}
+
+func (g fakeGrants) Boxes(context.Context, string) ([]string, error) { return g.boxes, nil }
 
 func (fakeGrants) AddBox(context.Context, string, string) error { return nil }
 
@@ -297,6 +358,7 @@ type fakeAgents struct {
 
 	mu       sync.Mutex
 	sent     []string
+	posted   []string
 	sessions map[string]bool
 	deaf     bool
 	lost     bool
@@ -324,6 +386,7 @@ func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*htt
 	}
 	body, _ := io.ReadAll(req.Body)
 	_ = json.Unmarshal(body, &msg)
+	a.posted = append(a.posted, string(body))
 	session := req.Header.Get(mcpwire.SessionHeader)
 	if req.Method == http.MethodDelete {
 		a.sent = append(a.sent, req.Method)
@@ -358,6 +421,12 @@ func (a *fakeAgents) forget() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	clear(a.sessions)
+}
+
+func (a *fakeAgents) bodies() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return slices.Clone(a.posted)
 }
 
 func (a *fakeAgents) recorded() []string {

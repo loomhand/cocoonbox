@@ -34,7 +34,8 @@ const (
 	// maxInstructions is the Mac bridge's cap on a server's instructions, within every agent CLI's limit.
 	maxInstructions = 2048
 	acceptBoth      = "application/json, " + mcpwire.EventStream
-	unifiedHead     = "These tools run on the user's cocoonbox, a cloud computer, not on this machine. box_* tools manage the user's boxes; the other tools act on the default box, the user's first, and wake it when it sleeps."
+	unifiedHead     = "These tools run on the user's cocoonbox, a cloud computer, not on this machine. box_* tools manage the user's boxes; the other tools act on the box their box argument names, else the default box, and wake it when it sleeps."
+	boxArgument     = `{"type":"string","description":"The box's name or id, as box_list lists them; without it, the default box."}`
 
 	errStillStarting toolError = "The box is still starting; call the tool again in a few seconds."
 )
@@ -42,10 +43,12 @@ const (
 var (
 	errNoBoxYet = status.Error(codes.Unavailable, "the user has no box yet")
 
+	boxField = []byte(`"box"`)
+
 	defaultInitialize = json.RawMessage(`{"protocolVersion":"` + mcpwire.Latest + `","capabilities":{},"clientInfo":{"name":"` + unifiedName + `"}}`)
 )
 
-// session is what the api keeps of one client session on RootPath: the client's initialize and the agent session it opened on the default box.
+// session is what the api keeps of one client session on RootPath: the client's initialize, its default box and the agent session it opened on each box.
 type session struct {
 	params json.RawMessage
 	used   time.Time
@@ -53,15 +56,18 @@ type session struct {
 	mu       sync.Mutex
 	box      string
 	image    string
-	upstream string
+	upstream map[string]string
 }
 
-// reset drops the default box and its agent session while it still holds upstream, so the next call finds both again.
-func (s *session) reset(upstream string) {
+// reset drops box's agent session while it is still upstream, and the default box when it is box, so the next call finds both again.
+func (s *session) reset(box, upstream string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.upstream == upstream {
-		s.box, s.image, s.upstream = "", "", ""
+	if s.upstream[box] == upstream {
+		delete(s.upstream, box)
+		if s.box == box {
+			s.box, s.image = "", ""
+		}
 	}
 }
 
@@ -95,12 +101,12 @@ func (s *Server) keepSession(caller, id string, sess *session) *session {
 	if len(held) >= maxSessions {
 		delete(s.sessions, slices.MinFunc(held, func(a, b string) int { return s.sessions[a].used.Compare(s.sessions[b].used) }))
 	}
-	sess.used = now
+	sess.used, sess.upstream = now, map[string]string{}
 	s.sessions[caller+"\n"+id] = sess
 	return sess
 }
 
-// endSession forgets caller's client session id and closes its agent session.
+// endSession forgets caller's client session id and closes its agent sessions.
 func (s *Server) endSession(ctx context.Context, user, caller, id string) {
 	s.mu.Lock()
 	sess := s.sessions[caller+"\n"+id]
@@ -110,9 +116,9 @@ func (s *Server) endSession(ctx context.Context, user, caller, id string) {
 		return
 	}
 	sess.mu.Lock()
-	box, upstream := sess.box, sess.upstream
+	upstreams := maps.Clone(sess.upstream)
 	sess.mu.Unlock()
-	if upstream != "" {
+	for box, upstream := range upstreams {
 		_ = s.agents.Exchange(agentRequest(ctx, http.MethodDelete, nil, upstream, acceptBoth), user, box, func(*http.Response) error { return nil })
 	}
 }
@@ -130,7 +136,7 @@ func (s *Server) initializeUnified(ctx context.Context, user string, sess *sessi
 		sess.mu.Lock()
 		sess.box, sess.image = box.GetId(), image
 		sess.mu.Unlock()
-		if _, _, err = s.connect(ctx, user, sess); err != nil {
+		if _, _, err = s.connect(ctx, user, sess, ""); err != nil {
 			logger.Warnf(ctx, "open the agent session of box %s: %v", box.GetId(), err)
 		}
 	}
@@ -162,14 +168,19 @@ func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
 		tools = append(tools, t)
 	}
 	for _, t := range boxTools {
-		tools = append(tools, t)
+		tools = append(tools, withBoxArgument(t))
 	}
 	return map[string]any{toolsField: tools}, nil
 }
 
-// callBox runs a box tool on the session's default box; a box that is not running is woken first, within wakeBound.
+// callBox runs a box tool on the box its box argument names, else the session's default box; a box that is not running is woken first, within wakeBound.
 func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string, sess *session, id json.RawMessage, body []byte, accept string, call *callParams) {
-	err := s.forward(ctx, user, sess, body, accept, func(resp *http.Response) error { relay(w, resp, nil); return nil })
+	ref, body, err := takeBox(body, call)
+	if err != nil {
+		writeJSON(w, http.StatusOK, newResponse(id, nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}))
+		return
+	}
+	err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, nil); return nil })
 	if status.Code(err) != codes.Unavailable {
 		if err != nil {
 			writeJSON(w, http.StatusOK, newResponse(id, failure(err), nil))
@@ -184,15 +195,15 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, wakeBound)
 	defer cancel()
-	if err = s.wake(wakeCtx, sess, progress); err == nil {
-		err = s.ready(wakeCtx, user, sess)
+	if err = s.wake(wakeCtx, sess, ref, progress); err == nil {
+		err = s.ready(wakeCtx, user, sess, ref)
 	}
 	if stream != nil {
 		stream.close()
 	}
 	switch {
 	case err == nil:
-		err = s.forward(ctx, user, sess, body, accept, func(resp *http.Response) error { relay(w, resp, stream); return nil })
+		err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, stream); return nil })
 	case wakeCtx.Err() != nil && ctx.Err() == nil:
 		err = errStillStarting
 	}
@@ -207,20 +218,27 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	writeJSON(w, http.StatusOK, reply)
 }
 
-// wake starts or wakes the session's default box, the user's first box made anew when there is none, and waits for it within ctx.
-func (s *Server) wake(ctx context.Context, sess *session, progress progressFunc) error {
-	sess.mu.Lock()
-	box := sess.box
-	sess.box, sess.image, sess.upstream = "", "", ""
-	sess.mu.Unlock()
-	_, err := s.ensure(ctx, box, true, progress)
+// wake starts or wakes the box ref names, else the session's default box, the user's first box made anew when there is none, and waits for it within ctx.
+func (s *Server) wake(ctx context.Context, sess *session, ref string, progress progressFunc) error {
+	if ref == "" {
+		sess.mu.Lock()
+		ref = sess.box
+		sess.box, sess.image = "", ""
+		sess.mu.Unlock()
+	}
+	res, err := s.ensure(ctx, ref, true, progress)
+	if err == nil {
+		sess.mu.Lock()
+		delete(sess.upstream, res.BoxID)
+		sess.mu.Unlock()
+	}
 	return err
 }
 
-// ready waits until the agent of the session's default box answers an initialize, or ctx ends.
-func (s *Server) ready(ctx context.Context, user string, sess *session) error {
+// ready waits until the agent of the box ref names, else of the session's default box, answers an initialize, or ctx ends.
+func (s *Server) ready(ctx context.Context, user string, sess *session, ref string) error {
 	for {
-		_, _, err := s.connect(ctx, user, sess)
+		_, _, err := s.connect(ctx, user, sess, ref)
 		if st, ok := status.FromError(err); !ok || (st.Code() != codes.Unavailable && st.Code() != codes.Unknown) {
 			return err
 		}
@@ -232,10 +250,10 @@ func (s *Server) ready(ctx context.Context, user string, sess *session) error {
 	}
 }
 
-// forward sends body to the agent session of the default box, again on a new one once when the agent forgot the session or the box went.
-func (s *Server) forward(ctx context.Context, user string, sess *session, body []byte, accept string, use func(*http.Response) error) error {
+// forward sends body to the agent session of the box ref names, else of the default box, again on a new one once when the agent forgot the session or the box went.
+func (s *Server) forward(ctx context.Context, user string, sess *session, ref string, body []byte, accept string, use func(*http.Response) error) error {
 	for retried := false; ; retried = true {
-		box, upstream, err := s.connect(ctx, user, sess)
+		box, upstream, err := s.connect(ctx, user, sess, ref)
 		forgot := false
 		if err == nil {
 			err = s.agents.Exchange(agentRequest(ctx, http.MethodPost, body, upstream, accept), user, box, func(resp *http.Response) error {
@@ -248,14 +266,40 @@ func (s *Server) forward(ctx context.Context, user string, sess *session, body [
 		if !forgot && (retried || status.Code(err) != codes.NotFound) {
 			return err
 		}
-		sess.reset(upstream)
+		sess.reset(box, upstream)
 	}
 }
 
-// connect returns the session's default box and its agent session, finding the box and opening the session when it has none.
-func (s *Server) connect(ctx context.Context, user string, sess *session) (string, string, error) {
+// connect returns the box ref names, else the session's default box, also when it fails, and the session's agent session on it, opening one when it has none.
+func (s *Server) connect(ctx context.Context, user string, sess *session, ref string) (string, string, error) {
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	box, image, err := s.target(ctx, sess, ref)
+	if err != nil {
+		return "", "", err
+	}
+	if sess.upstream[box] == "" {
+		upstream, err := s.open(ctx, user, box, image, sess.params)
+		if err != nil {
+			return box, "", err
+		}
+		sess.upstream[box] = upstream
+	}
+	return box, sess.upstream[box], nil
+}
+
+// target returns the box ref names among the caller's, else the session's default box, found again once a grant no longer reaches it, and the image its agent runs; sess.mu is held.
+func (s *Server) target(ctx context.Context, sess *session, ref string) (string, string, error) {
+	if ref != "" {
+		box, err := s.box(ctx, ref)
+		if err != nil {
+			return "", "", err
+		}
+		return box.GetId(), cmp.Or(box.GetImage(), box.GetLatestImage()), nil
+	}
+	if g := grantOf(ctx); g != nil && sess.box != "" && !g.Reaches(sess.box) {
+		sess.box, sess.image = "", ""
+	}
 	if sess.box == "" {
 		box, image, err := s.defaultBox(ctx)
 		switch {
@@ -268,14 +312,7 @@ func (s *Server) connect(ctx context.Context, user string, sess *session) (strin
 		}
 		sess.box, sess.image = box.GetId(), image
 	}
-	if sess.upstream == "" {
-		upstream, err := s.open(ctx, user, sess.box, sess.image, sess.params)
-		if err != nil {
-			return "", "", err
-		}
-		sess.upstream = upstream
-	}
-	return sess.box, sess.upstream, nil
+	return sess.box, sess.image, nil
 }
 
 // open opens an agent session on box with the client's initialize, and records what the agent of image serves the first time an admin's box of it is reached.
@@ -378,6 +415,65 @@ func relay(w http.ResponseWriter, resp *http.Response, stream *eventStream) {
 			return
 		}
 	}
+}
+
+// takeBox takes the box argument out of a box tool call, returning the box it names, empty without one, and the body to send on.
+func takeBox(body []byte, call *callParams) (string, []byte, error) {
+	if !bytes.Contains(call.Arguments, boxField) {
+		return "", body, nil
+	}
+	var args map[string]json.RawMessage
+	if err := json.Unmarshal(call.Arguments, &args); err != nil || args["box"] == nil {
+		return "", body, nil
+	}
+	var ref string
+	if err := json.Unmarshal(args["box"], &ref); err != nil {
+		return "", nil, errors.New("box must be a string")
+	}
+	delete(args, "box")
+	var msg, params map[string]json.RawMessage
+	if err := json.Unmarshal(body, &msg); err != nil {
+		return "", nil, err
+	}
+	if err := json.Unmarshal(msg["params"], &params); err != nil {
+		return "", nil, err
+	}
+	var err error
+	if params["arguments"], err = json.Marshal(args); err != nil {
+		return "", nil, err
+	}
+	if msg["params"], err = json.Marshal(params); err != nil {
+		return "", nil, err
+	}
+	body, err = json.Marshal(msg)
+	return ref, body, err
+}
+
+// withBoxArgument adds the box argument to a box tool's input schema; a tool it cannot read goes as it is.
+func withBoxArgument(tool json.RawMessage) json.RawMessage {
+	var t, schema, properties map[string]json.RawMessage
+	if json.Unmarshal(tool, &t) != nil || json.Unmarshal(t["inputSchema"], &schema) != nil {
+		return tool
+	}
+	if raw := schema["properties"]; raw != nil && json.Unmarshal(raw, &properties) != nil {
+		return tool
+	}
+	if properties == nil {
+		properties = map[string]json.RawMessage{}
+	}
+	properties["box"] = json.RawMessage(boxArgument)
+	var err error
+	if schema["properties"], err = json.Marshal(properties); err != nil {
+		return tool
+	}
+	if t["inputSchema"], err = json.Marshal(schema); err != nil {
+		return tool
+	}
+	out, err := json.Marshal(t)
+	if err != nil {
+		return tool
+	}
+	return out
 }
 
 // failure is the tool result a box call that could not run answers.

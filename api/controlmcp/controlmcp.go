@@ -75,7 +75,7 @@ func New(boxes controlv1.BoxesServer, authn *auth.Authenticator) *Server {
 	return &Server{boxes: boxes, authn: authn, locks: map[string]*sync.Mutex{}, sessions: map[string]*session{}}
 }
 
-// EnableGrants admits OAuth access tokens next to user tokens; a token acts only on the boxes its grant created, within its caps.
+// EnableGrants admits OAuth access tokens next to user tokens; a token acts only on the boxes its grant created, within its caps, and those the user chose for it.
 func (s *Server) EnableGrants(grants Grants) {
 	s.grants = grants
 }

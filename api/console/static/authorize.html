@@ -41,9 +41,14 @@
     <p id="client-id" class="muted"></p>
     <p id="client-trust"></p>
     <p id="redirect"></p>
-    <p>If you allow it, it may create boxes, run programs in them, and list, wake, save, upgrade, hibernate and delete only the boxes it creates. Their programs use your model budget. It cannot see or touch your other boxes or your shares, and this agent cannot use your saved keys or connected accounts: the boxes it creates get neither. Its boxes do not count against your own box limit: the limits below bound them, and they hibernate when no one uses them. You can revoke it on the <a href="/cb/agents">Agents</a> page at any time; its boxes then stay yours.</p>
-    <p id="existing" hidden>This agent already has access. Allowing it again keeps its boxes and replaces its limits and expiry.</p>
+    <p>If you allow it, it may create boxes, run programs in them, and list, wake, save, upgrade, hibernate and delete the boxes it creates. Their programs use your model budget. The boxes it creates get none of your saved keys or connected accounts. They do not count against your own box limit: the limits below bound them, and they hibernate when no one uses them. It cannot see or touch your shares or any of your boxes you do not choose below. You can revoke it, or change the boxes it may use, on the <a href="/cb/agents">Agents</a> page at any time; its boxes then stay yours.</p>
+    <p id="existing" hidden>This agent already has access. Allowing it again keeps its boxes and replaces its limits, its chosen boxes and its expiry.</p>
     <form id="consent-form">
+      <fieldset id="choices" hidden>
+        <legend>Your boxes it may also use</legend>
+        <p>On a box you choose, the agent acts as you: the box's saved keys are injected into its outbound requests, and it can use the box's connected accounts, browser logins and files. It may list, wake, save, upgrade and hibernate that box, never delete it. The box stays under your own limits. Choose none to keep the agent on the boxes it creates.</p>
+        <div id="choice-list"></div>
+      </fieldset>
       <label>Boxes it may create <input type="number" name="max_boxes" min="1" max="16" required></label>
       <label>Running at once <input type="number" name="max_running" min="1" max="16" required></label>
       <label>For <select name="days"><option value="1">1 day</option><option value="7">7 days</option><option value="30">30 days</option><option value="90">90 days</option></select></label>

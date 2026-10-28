@@ -32,7 +32,7 @@ const (
 	jsonRPCServer    = -32000
 )
 
-// errNoBox answers a box its grant did not create as the resolver answers another user's box.
+// errNoBox answers a box its grant does not reach as the resolver answers another user's box.
 var errNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
 
 // Grants checks the OAuth access tokens of agents and lists the boxes each grant created.
@@ -74,7 +74,7 @@ func NewMCP(resolver Resolver, authn *auth.Authenticator, creds Credentials) *MC
 	return &MCP{resolver: resolver, authn: authn, creds: creds, transports: map[string]*boxTransport{}}
 }
 
-// EnableGrants admits an agent's OAuth access token on the boxes its grant created, and on nothing else.
+// EnableGrants admits an agent's OAuth access token on the boxes its grant created or the user chose for it, and on nothing else.
 func (m *MCP) EnableGrants(grants Grants) {
 	m.grants = grants
 }
@@ -186,7 +186,7 @@ func (m *MCP) reached(r *http.Request, box string) func() {
 	return m.resolver.Reached(box)
 }
 
-// grantRoute authorizes one exchange for an access token on a box its grant created, as the box owner.
+// grantRoute authorizes one exchange for an access token on a box its grant created or the user chose for it, as the box owner.
 func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route, err error) {
 	rt.ctx, rt.stop = r.Context(), func() {}
 	g, err := m.grants.Authenticate(r.Context(), authorization)
@@ -206,7 +206,7 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 		return rt, status.Error(codes.Unavailable, "reading the client's boxes failed")
 	case boxID == "":
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
-	case !slices.Contains(ids, boxID):
+	case !slices.Contains(ids, boxID) && !slices.Contains(g.Chosen, boxID):
 		return rt, errNoBox
 	}
 	if rt.ep, rt.wake, err = m.resolver.Resolve(rt.ctx, g.User, boxID); err == nil {
