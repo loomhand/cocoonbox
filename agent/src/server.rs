@@ -440,7 +440,6 @@ pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
     serve_on(listener, rt).await
 }
 
-/// Serves both services on `listener` until `shutdown` resolves.
 /// Serves both services and `/mcp` on `listener` until `rt.stop` is cancelled, then winds down within a bounded time.
 pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), String> {
     let gate = Arc::new(Gate::new(
