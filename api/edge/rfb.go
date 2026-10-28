@@ -94,7 +94,7 @@ func (f *viewOnly) feed(in []byte) ([]byte, error) {
 	if len(f.buf) > maxRFBBuffer {
 		return nil, errors.New("rfb: viewer message too large")
 	}
-	f.buf = append([]byte(nil), f.buf...)
+	f.buf = slices.Clone(f.buf)
 	return out, nil
 }
 
