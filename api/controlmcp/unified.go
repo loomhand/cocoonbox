@@ -55,6 +55,16 @@ type agentSessions struct {
 	upstream map[string]string
 }
 
+func (a *agentSessions) drop(box, upstream string) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.upstream[box] != upstream {
+		return false
+	}
+	delete(a.upstream, box)
+	return true
+}
+
 // session is what the api keeps of one client session on RootPath: the client's initialize, its agent sessions and its default box.
 type session struct {
 	params json.RawMessage
@@ -68,13 +78,7 @@ type session struct {
 
 // reset drops box's agent session while it is still upstream, and then the default box when it is box, so the next call finds both again.
 func (s *session) reset(box, upstream string) {
-	s.agents.mu.Lock()
-	stale := s.agents.upstream[box] == upstream
-	if stale {
-		delete(s.agents.upstream, box)
-	}
-	s.agents.mu.Unlock()
-	if !stale {
+	if !s.agents.drop(box, upstream) {
 		return
 	}
 	s.mu.Lock()
@@ -233,7 +237,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 		writeJSON(w, http.StatusOK, newResponse(id, nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}))
 		return
 	}
-	err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, nil); return nil })
+	box, stale, err := s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, nil); return nil })
 	if status.Code(err) != codes.Unavailable {
 		if err != nil {
 			writeJSON(w, http.StatusOK, newResponse(id, failure(err), nil))
@@ -248,7 +252,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	wakeCtx, cancel := context.WithTimeout(ctx, wakeBound)
 	defer cancel()
-	if err = s.wake(wakeCtx, sess, ref, progress); err == nil {
+	if err = s.wake(wakeCtx, sess, cmp.Or(box, ref), stale, progress); err == nil {
 		err = s.ready(wakeCtx, user, sess, ref)
 	}
 	if stream != nil {
@@ -256,7 +260,7 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	}
 	switch {
 	case err == nil:
-		err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, stream); return nil })
+		_, _, err = s.forward(ctx, user, sess, ref, body, accept, func(resp *http.Response) error { relay(w, resp, stream); return nil })
 	case wakeCtx.Err() != nil && ctx.Err() == nil:
 		err = errStillStarting
 	}
@@ -271,19 +275,11 @@ func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string
 	writeJSON(w, http.StatusOK, reply)
 }
 
-// wake starts or wakes the box ref names, else the session's default box, the user's first box made anew when there is none, and waits for it within ctx.
-func (s *Server) wake(ctx context.Context, sess *session, ref string, progress progressFunc) error {
-	if ref == "" {
-		sess.mu.Lock()
-		ref = sess.box
-		sess.box, sess.image = "", ""
-		sess.mu.Unlock()
-	}
-	res, err := s.ensure(ctx, ref, true, progress)
+// wake starts or wakes box, the user's first box made anew when it is empty, waits for it within ctx, and drops its agent session while it is still stale.
+func (s *Server) wake(ctx context.Context, sess *session, box, stale string, progress progressFunc) error {
+	res, err := s.ensure(ctx, box, true, progress)
 	if err == nil {
-		sess.agents.mu.Lock()
-		delete(sess.agents.upstream, res.BoxID)
-		sess.agents.mu.Unlock()
+		sess.agents.drop(res.BoxID, stale)
 	}
 	return err
 }
@@ -303,8 +299,8 @@ func (s *Server) ready(ctx context.Context, user string, sess *session, ref stri
 	}
 }
 
-// forward sends body to the agent session of the box ref names, else of the default box, again on a new one once when the agent forgot the session or the box went.
-func (s *Server) forward(ctx context.Context, user string, sess *session, ref string, body []byte, accept string, use func(*http.Response) error) error {
+// forward sends body to the agent session of the box ref names, else of the default box, again on a new one once when the agent forgot the session or the box went, and returns the box and the agent session it last tried.
+func (s *Server) forward(ctx context.Context, user string, sess *session, ref string, body []byte, accept string, use func(*http.Response) error) (string, string, error) {
 	for retried := false; ; retried = true {
 		box, upstream, err := s.connect(ctx, user, sess, ref)
 		forgot := false
@@ -317,7 +313,7 @@ func (s *Server) forward(ctx context.Context, user string, sess *session, ref st
 			})
 		}
 		if !forgot && (retried || status.Code(err) != codes.NotFound) {
-			return err
+			return box, upstream, err
 		}
 		sess.reset(box, upstream)
 	}

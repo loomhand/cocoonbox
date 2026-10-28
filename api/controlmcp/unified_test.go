@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
@@ -318,6 +319,39 @@ func TestRootGrantSharesOneAgentSessionPerBoxAcrossClientSessions(t *testing.T) 
 	}
 	if n := len(slices.DeleteFunc(agents.recorded(), func(m string) bool { return m != "initialize" })); n != 3 {
 		t.Fatalf("two client sessions of a user token opened %d agent sessions in all, want 1 + 2", n)
+	}
+}
+
+func TestRootWakeKeepsTheSessionsDefaultBox(t *testing.T) {
+	srv, fake, _, lists := newUnifiedServer(t)
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	made := boxes.BoxID("alice")
+	srv.EnableGrants(fakeGrants{boxes: []string{made}})
+	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+made {
+		t.Fatalf("first call = %q", text)
+	}
+	fake.mu.Lock()
+	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-picked", Name: "picked", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
+	fake.mu.Unlock()
+	srv.EnableGrants(fakeGrants{boxes: []string{made}, chosen: []string{"cb-picked"}})
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+made {
+		t.Fatalf("the call that woke the session's default box ran as %q, want on %s", text, made)
+	}
+}
+
+func TestRootWakeDropsOnlyTheStaleAgentSession(t *testing.T) {
+	srv, fake, _, _ := newUnifiedServer(t)
+	box := boxes.BoxID("alice")
+	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
+	sess := srv.openSession(t.Context(), "alice", "s1", nil)
+	sess.agents.upstream[box] = "newer"
+	ctx := auth.WithUser(t.Context(), "alice")
+	if err := srv.wake(ctx, sess, box, "older", func(string) {}); err != nil || sess.agents.upstream[box] != "newer" {
+		t.Fatalf("a wake that saw an older agent session: %v, left %q, want the newer one kept", err, sess.agents.upstream[box])
+	}
+	if err := srv.wake(ctx, sess, box, "newer", func(string) {}); err != nil || sess.agents.upstream[box] != "" {
+		t.Fatalf("a wake that saw the held agent session: %v, left %q, want it dropped", err, sess.agents.upstream[box])
 	}
 }
 
