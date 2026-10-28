@@ -662,7 +662,6 @@ func (l *stateLayer) lock(name string) func() {
 	return m.Unlock
 }
 
-// userLock returns the lock that saves of user's boxes hold shared and the GC sweep holds exclusively.
 func (l *stateLayer) userLock(user string) *sync.RWMutex {
 	l.mu.Lock()
 	defer l.mu.Unlock()

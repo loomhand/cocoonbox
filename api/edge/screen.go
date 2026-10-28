@@ -24,8 +24,7 @@ const (
 	screenReadChunk = 64 << 10
 )
 
-// Screen bridges a share's viewer to the box's RFB server until either side closes or the share ends;
-// the viewer's input never reaches the box, and the box's clipboard never reaches the viewer.
+// Screen bridges a share's viewer to the box's RFB server until either side closes or the share ends, with no input to the box and no clipboard to the viewer.
 func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()

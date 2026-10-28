@@ -54,8 +54,7 @@ func (s *Service) MachineOrigin(ctx context.Context, machine string) (string, st
 	return boxOfMachine(machine), m.Image
 }
 
-// RunCredentials pushes the credentials of running machines every interval until ctx ends, so a token is refreshed
-// and replaced before it expires.
+// RunCredentials pushes the credentials of running machines every interval until ctx ends, so a token is refreshed before it expires.
 func (s *Service) RunCredentials(ctx context.Context, interval time.Duration) {
 	tick := time.Tick(interval)
 	for {

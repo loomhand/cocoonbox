@@ -323,8 +323,7 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 	return signer, nil
 }
 
-// enableBoxConnect gives every box its door key and its owner's credentials, and serves the box door on connect.box_listen,
-// with the flow library when there is one.
+// enableBoxConnect gives boxes their door keys and credentials and serves the box door on connect.box_listen.
 func enableBoxConnect(ctx context.Context, cfg *config.Config, svc *boxes.Service, broker *connect.Service, authn *auth.Authenticator, library *flows.Library, loops *leaderLoops) {
 	logger := log.WithFunc("main.enableBoxConnect")
 	svc.EnableConnect(broker)

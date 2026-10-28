@@ -13,9 +13,7 @@ type RecordFunc func(ctx context.Context, box string) error
 
 type agentKey struct{}
 
-// WithAgent marks the Creates of ctx as an agent's: the box counts against the agent's caps instead of the owner's max
-// boxes and running limit, gets none of the owner's credentials, and record runs on it before its machine starts; a
-// record error removes the box and fails the Create.
+// WithAgent marks ctx's Creates as an agent's: the box counts against the agent's caps, gets none of the owner's credentials, and record runs on it before its machine starts.
 func WithAgent(ctx context.Context, record RecordFunc) context.Context {
 	return context.WithValue(ctx, agentKey{}, record)
 }

@@ -229,8 +229,7 @@ func (s *Service) wakeFor(ctx context.Context, w users.WakeSchedule, sched cron.
 	return w
 }
 
-// sleepAfter hands the box the alarm woke to the user once a client reached it, else hibernates it at w.SleepAt
-// when it runs with no operation.
+// sleepAfter hands the box the alarm woke to the user once a client reached it, else hibernates it at w.SleepAt when it runs with no operation.
 func (s *Service) sleepAfter(ctx context.Context, w users.WakeSchedule, now time.Time) users.WakeSchedule {
 	logger := log.WithFunc("boxes.Service.sleepAfter").WithField("box", w.Box)
 	cur, err := s.current(ctx, w.Owner, w.Box)

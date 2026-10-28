@@ -125,8 +125,7 @@ func (s *store) allBoxes(ctx context.Context) ([]Box, error) {
 	})
 }
 
-// insertBox adds b while the owner has fewer boxes of b's kind than max_boxes (its own) or max_agent_boxes (its agents'); the owner's
-// row lock orders concurrent adds.
+// insertBox adds b while the owner has fewer boxes of b's kind than max_boxes or max_agent_boxes; the owner's row lock orders concurrent adds.
 func (s *store) insertBox(ctx context.Context, b Box) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var maxBoxes, boxes int
