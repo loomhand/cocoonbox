@@ -44,3 +44,4 @@ wake:                          # scheduled box wakes (design §15.13)
 cluster:                       # state api processes share in the users database; remove the block before rolling back to an older binary
   ledger: false                # copy machines, box heads and operations there and verify the copy every minute
   shared: false                # make that copy the truth, so api processes may serve together; needs ledger and state.conditional_writes
+  drain: 0s                    # fail /healthz this long after a stop signal before stopping, so a balancer moves new calls to the other api of a pair

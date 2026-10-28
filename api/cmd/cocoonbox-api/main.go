@@ -6,11 +6,13 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -76,7 +78,10 @@ func main() {
 		}
 		return
 	}
-	ctx, cancel := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	signals, stopSignals := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stopSignals()
+	var draining atomic.Bool
+	ctx, cancel := drainAfter(signals, time.Duration(cfg.Cluster.Drain), &draining)
 	defer cancel()
 
 	flavors := configFlavors(cfg)
@@ -174,6 +179,7 @@ func main() {
 	}
 
 	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("GET /healthz", healthz(&draining))
 	control := controlmcp.New(svc, authn)
 	httpMux.Handle(controlmcp.Path, control)
 	boxMCP := edge.NewMCP(svc, authn, signer)
@@ -257,6 +263,27 @@ func main() {
 	logger.Infof(ctx, "serving gRPC on %s and MCP and the console on %s for %d users", cfg.Listen, cfg.MCPListen, len(accounts.List()))
 	if err := server.Serve(lis); err != nil {
 		logger.Fatalf(ctx, err, "serve grpc")
+	}
+}
+
+// drainAfter returns a context that ends drain after signals does, with draining set from the signal on.
+func drainAfter(signals context.Context, drain time.Duration, draining *atomic.Bool) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(context.WithoutCancel(signals))
+	context.AfterFunc(signals, func() {
+		draining.Store(true)
+		time.AfterFunc(drain, cancel)
+	})
+	return ctx, cancel
+}
+
+// healthz answers 503 while the api drains, so a balancer sends it no new calls.
+func healthz(draining *atomic.Bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		if draining.Load() {
+			http.Error(w, "draining", http.StatusServiceUnavailable)
+			return
+		}
+		_, _ = io.WriteString(w, "ok\n")
 	}
 }
 
