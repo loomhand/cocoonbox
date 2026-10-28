@@ -16,7 +16,7 @@ func (s *Service) EnableShared(ctx context.Context, shared *cluster.Store) {
 	s.ops.shared = shared
 	if s.mirror != nil {
 		s.ops.mirror = func(rec cluster.Operation) {
-			s.mirror.Put("op:"+rec.ID, func(ctx context.Context) error { return shared.PutRunningOperation(ctx, rec) })
+			s.mirror.Put(opKey+rec.ID, func(ctx context.Context) error { return shared.PutRunningOperation(ctx, rec) })
 		}
 	}
 	s.ops.mu.Unlock()

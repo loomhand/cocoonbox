@@ -581,9 +581,8 @@ func withArguments(raw json.RawMessage, dst any, fn toolFunc) (*toolResult, *mcp
 		}
 	}
 	out, err := fn()
-	var refusal toolError
-	switch {
-	case errors.As(err, &refusal):
+	switch refusal, refused := errors.AsType[toolError](err); {
+	case refused:
 		return errorText(refusal.Error()), nil
 	case internal(err):
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: status.Convert(err).Message()}

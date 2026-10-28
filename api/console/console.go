@@ -214,7 +214,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		Usage           []gwkeys.Usage `json:"usage"`
 		UsageError      string         `json:"usage_error,omitempty"`
 		DailyCap        *int64         `json:"daily_cap_micros"`
-		DefaultDailyCap int64          `json:"default_daily_cap_micros,omitempty"`
+		DefaultDailyCap int64          `json:"default_daily_cap_micros,omitzero"`
 		DefaultRunning  int            `json:"default_max_running"`
 		SpentToday      int64          `json:"spent_today_micros"`
 		OwnBoxes        int            `json:"own_boxes"`

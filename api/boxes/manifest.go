@@ -222,9 +222,7 @@ func sealObject(secret []byte, aad string, plain []byte) ([]byte, error) {
 		return nil, err
 	}
 	nonce := make([]byte, nonceSize)
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
+	_, _ = rand.Read(nonce)
 	return gcm.Seal(nonce, nonce, packed, []byte(aad)), nil
 }
 

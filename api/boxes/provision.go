@@ -133,9 +133,7 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 		}
 	}
 	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("wake id: %w", err)
-	}
+	_, _ = rand.Read(raw)
 	box := boxOfMachine(m.ID)
 	identity := machines.Identity{BoxID: box, WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
 	owned := !s.agentBox(m.Owner, box)
