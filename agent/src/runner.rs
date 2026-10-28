@@ -894,7 +894,10 @@ impl Runtime {
                         .dispatcher
                         .execute(&caller, &call.id, name, args)
                         .await?;
-                    if name == "gui_plan" {
+                    if name == "gui_plan"
+                        || name == "script_run"
+                        || self.cfg.plugins.iter().any(|p| p.name == name)
+                    {
                         usage.add_reported(&out.text);
                         self.record_usage(ctx, usage).await;
                     }

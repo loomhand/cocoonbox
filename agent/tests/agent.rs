@@ -745,6 +745,8 @@ fn fake_shuttle(path: &Path, log: PathBuf, calls: Log) {
                     };
                     if source.contains("boom") {
                         Output::error(json!({"duration_ms": 1, "exit_code": 1, "result": null, "logs": "", "stderr": "Error: boom", "error": {"kind": "exception", "message": "Error: boom"}}).to_string())
+                    } else if source.contains("desk.ask") {
+                        Output::text(json!({"duration_ms": 1, "exit_code": 0, "result": "5888", "logs": "", "stderr": "", "usage": {"vision-1": {"calls": 2, "input_tokens": 700, "output_tokens": 5, "cached_tokens": 0}}}).to_string())
                     } else {
                         Output::text(json!({"duration_ms": 1, "exit_code": 0, "result": {"params": call.args["params"]}, "logs": format!("ran {tool}"), "stderr": "", "snapshot": "outline"}).to_string())
                     }
@@ -4276,6 +4278,44 @@ async fn mcp_gui_plan_keeps_a_static_description_and_lists_saved_flows_on_reques
         .await;
     assert_eq!(out["isError"], false, "{out}");
     assert_eq!(out["content"][0]["text"], r#"{"ok":true}"#, "{out}");
+}
+
+#[tokio::test]
+async fn a_turn_sums_the_model_calls_its_script_and_plugin_runs_made() {
+    let run = json!({"code": "export async function main() { return desk.ask('the result?', await desk.shot()) }", "screenshot": false});
+    let h = Harness::with_plugin(vec![
+        ("decisions", decision("plan", 0.93)),
+        (
+            "chat/completions",
+            chat_tool_call("call_r", "script_run", &run),
+        ),
+        (
+            "chat/completions",
+            chat_tool_call("call_d", "demo_run", &run),
+        ),
+        ("chat/completions", chat_text("5888")),
+    ])
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "read the calculator", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
+        panic!("want turn end, got {:?}", entries.last());
+    };
+    let usage = end.usage.as_ref().unwrap();
+    let vision: Vec<(u64, u64, u64)> = usage
+        .models
+        .iter()
+        .filter(|m| m.model == "vision-1")
+        .map(|m| (m.calls, m.input_tokens, m.output_tokens))
+        .collect();
+    assert_eq!(vision, [(4, 1400, 10)], "{usage:?}");
+    assert_eq!(
+        usage.input_tokens,
+        usage.models.iter().map(|m| m.input_tokens).sum::<u64>(),
+        "{usage:?}"
+    );
 }
 
 #[tokio::test]
