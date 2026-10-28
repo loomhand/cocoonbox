@@ -113,6 +113,7 @@ func TestLoadRejects(t *testing.T) {
 		{name: "negative park after", body: required + "state:\n  park_after: -1h\n", want: "state.park_after must not be negative"},
 		{name: "negative user idle hibernate", body: required + "user_idle_hibernate: -1h\n", want: "user_idle_hibernate must not be negative"},
 		{name: "relative operator socket", body: required + "operator_socket: operator.sock\n", want: "operator_socket must be an absolute path"},
+		{name: "negative drain", body: required + "cluster:\n  drain: -1s\n", want: "cluster.drain must not be negative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -181,6 +182,16 @@ func TestLoadTakesClusterSharedOnlyWithTheLedgerAndConditionalWrites(t *testing.
 	}
 	if _, err := Load(writeConfig(t, required+"cluster:\n  shared: true\n")); err == nil || !strings.Contains(err.Error(), "cluster.shared needs cluster.ledger") {
 		t.Errorf("Load with cluster.shared without the ledger = %v, want the refusal", err)
+	}
+}
+
+func TestLoadClusterDrain(t *testing.T) {
+	cfg, err := Load(writeConfig(t, required+"cluster:\n  drain: 3s\n"))
+	if err != nil || cfg.Cluster.Drain != Duration(3*time.Second) {
+		t.Errorf("Load with cluster.drain = %+v, %v", cfg.Cluster, err)
+	}
+	if cfg, err = Load(writeConfig(t, required)); err != nil || cfg.Cluster.Drain != 0 {
+		t.Errorf("Load without cluster.drain = %+v, %v, want no drain", cfg.Cluster, err)
 	}
 }
 

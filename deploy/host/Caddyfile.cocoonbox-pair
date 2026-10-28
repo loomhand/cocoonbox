@@ -1,0 +1,46 @@
+	header Strict-Transport-Security "max-age=31536000"
+	@cocoonboxboxmcp path_regexp boxmcp ^/cocoonbox\.mcp/(cb-[0-9a-z-]+)
+	request_header @cocoonboxboxmcp x-cocoonbox-box {re.boxmcp.1}
+	@cocoonboxconsole path /cb /cb/*
+	handle @cocoonboxconsole {
+		reverse_proxy 127.0.0.1:18211 127.0.0.1:18221 {
+			import cocoonbox_pair
+			import cocoonbox_health
+		}
+	}
+	@cocoonboxmcp path /cocoonbox.mcp/*
+	handle @cocoonboxmcp {
+		reverse_proxy h2c://127.0.0.1:18211 h2c://127.0.0.1:18221 {
+			import cocoonbox_pair
+			import cocoonbox_health
+			flush_interval -1
+		}
+	}
+	@cocoonboxconnect path /cocoonbox.connect/*
+	handle @cocoonboxconnect {
+		reverse_proxy 127.0.0.1:18211 127.0.0.1:18221 {
+			import cocoonbox_pair
+			import cocoonbox_health
+		}
+	}
+	@cocoonboxauth path /cocoonbox.auth/*
+	handle @cocoonboxauth {
+		reverse_proxy 127.0.0.1:18211 127.0.0.1:18221 {
+			import cocoonbox_pair
+			import cocoonbox_health
+		}
+	}
+	@cocoonboxoauth path /cocoonbox.oauth/* /.well-known/oauth-authorization-server /.well-known/oauth-protected-resource/cocoonbox.mcp /.well-known/oauth-protected-resource/cocoonbox.mcp/*
+	handle @cocoonboxoauth {
+		reverse_proxy 127.0.0.1:18211 127.0.0.1:18221 {
+			import cocoonbox_pair
+			import cocoonbox_health
+		}
+	}
+	@cocoonbox path /cocoonbox.*
+	handle @cocoonbox {
+		reverse_proxy h2c://127.0.0.1:18210 h2c://127.0.0.1:18220 {
+			import cocoonbox_pair
+			flush_interval -1
+		}
+	}
