@@ -4522,6 +4522,27 @@ async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
 }
 
 #[tokio::test]
+async fn mcp_a_desktop_call_hears_of_another_session_driving_the_desktop() {
+    let h = Harness::with_desk(Vec::new()).await;
+    let mut first = McpClient::connect(&h).await;
+    let mut second = McpClient::connect(&h).await;
+    let press = json!({"action": "key", "key": "a"});
+    let busy = |out: Value| {
+        out["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Another agent (test-client) also drives this box's desktop")
+    };
+    assert!(!busy(first.call("computer_act", press.clone()).await));
+    assert!(!busy(first.call("computer_act", press.clone()).await));
+    assert!(!busy(
+        second.call("shell", json!({"command": "true"})).await
+    ));
+    assert!(busy(second.call("computer_act", press.clone()).await));
+    assert!(busy(first.call("computer_act", press.clone()).await));
+}
+
+#[tokio::test]
 async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
     let h = Harness::with_desk(Vec::new()).await;
     let edge = Edge::provision(&h);

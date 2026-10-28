@@ -45,10 +45,34 @@ function when(iso) {
   return iso ? new Date(iso).toLocaleString() : "never";
 }
 
+function chooser(g, boxes) {
+  const td = document.createElement("td");
+  if (!boxes.length) {
+    td.textContent = "none";
+    return td;
+  }
+  const inputs = boxes.map((b) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = b.id;
+    input.checked = g.chosen.includes(b.id);
+    label.append(input, " " + b.name);
+    td.appendChild(label);
+    return input;
+  });
+  td.appendChild(button("Save", async () => {
+    await api("PUT", "agents/" + encodeURIComponent(g.id) + "/boxes", { boxes: inputs.filter((i) => i.checked).map((i) => i.value) });
+    notice("Saved the boxes " + g.client_name + " may use.");
+    await load();
+  }));
+  return td;
+}
+
 async function load() {
-  let grants;
+  let grants, boxes;
   try {
-    grants = await api("GET", "agents");
+    ({ grants, boxes } = await api("GET", "agents"));
   } catch (e) {
     if (e.status !== 401) notice(e.message, true);
     $("signed-out").hidden = false;
@@ -75,6 +99,7 @@ async function load() {
     cell(row, when(g.used_at));
     cell(row, g.max_boxes + (g.max_boxes === 1 ? " box, " : " boxes, ") + g.max_running + " running");
     cell(row, g.boxes.map((id) => names.get(id) || id).join(", ") || "none");
+    row.appendChild(chooser(g, boxes));
     const actions = cell(row, "");
     actions.className = "actions";
     actions.appendChild(button("Revoke", async () => {

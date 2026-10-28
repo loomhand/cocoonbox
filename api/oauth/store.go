@@ -19,7 +19,8 @@ const (
 	migrationLock = 0x63626f61 // "cboa"
 
 	grantColumns = `g.id, g.user_id, g.client_id, g.client_name, g.client_host, g.max_boxes, g.max_running, g.created_at, g.expires_at,
-		g.used_at, g.seen, ARRAY(SELECT b.box_id FROM oauth_boxes b WHERE b.grant_id = g.id ORDER BY b.box_id)`
+		g.used_at, g.seen, ARRAY(SELECT b.box_id FROM oauth_boxes b WHERE b.grant_id = g.id ORDER BY b.box_id),
+		ARRAY(SELECT c.box_id FROM oauth_chosen c WHERE c.grant_id = g.id ORDER BY c.box_id)`
 )
 
 //go:embed migrations/*.sql
@@ -32,6 +33,7 @@ type code struct {
 	redirectURI  string
 	challenge    string
 	caps         Caps
+	chosen       []string
 	label        string
 	grantExpires time.Time
 	expiresAt    time.Time
@@ -82,10 +84,10 @@ func (s *store) addCode(ctx context.Context, c code) error {
 			return fmt.Errorf("prune codes: %w", err)
 		}
 		_, err := tx.Exec(ctx, `INSERT INTO oauth_codes (code_sha256, user_id, client_id, client_name, client_host, redirect_uri,
-			code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label, chosen)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 			c.codeSHA256, c.user, c.client.id, c.client.name, c.client.host, c.redirectURI, c.challenge, c.caps.MaxBoxes, c.caps.MaxRunning,
-			c.grantExpires, c.expiresAt, c.client.firstParty, c.label)
+			c.grantExpires, c.expiresAt, c.client.firstParty, c.label, c.chosen)
 		if err != nil {
 			return fmt.Errorf("add code: %w", err)
 		}
@@ -94,16 +96,17 @@ func (s *store) addCode(ctx context.Context, c code) error {
 }
 
 // redeem takes the code once, even when check refuses it, and, when check accepts it, issues tokens on a new grant, or on the
-// client's live grant of the user, which takes the new consent's caps and expiry, so a client that signs in again keeps its
-// boxes. A first-party client's code gets no grant: the caller issues its device token.
+// client's live grant of the user, which takes the new consent's caps, chosen boxes and expiry, so a client that signs in again
+// keeps its boxes. A first-party client's code gets no grant: the caller issues its device token.
 func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens issued, check func(code) error) (code, error) {
 	stored := code{codeSHA256: codeSHA256}
 	var refused error
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `DELETE FROM oauth_codes WHERE code_sha256 = $1 RETURNING user_id, client_id, client_name, client_host,
-			redirect_uri, code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label`, codeSHA256).Scan(
+			redirect_uri, code_challenge, max_boxes, max_running, grant_expires_at, expires_at, account, label, chosen`, codeSHA256).Scan(
 			&stored.user, &stored.client.id, &stored.client.name, &stored.client.host, &stored.redirectURI, &stored.challenge,
-			&stored.caps.MaxBoxes, &stored.caps.MaxRunning, &stored.grantExpires, &stored.expiresAt, &stored.client.firstParty, &stored.label)
+			&stored.caps.MaxBoxes, &stored.caps.MaxRunning, &stored.grantExpires, &stored.expiresAt, &stored.client.firstParty, &stored.label,
+			&stored.chosen)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errInvalidGrant
 		}
@@ -131,6 +134,9 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 		}
 		if err != nil {
 			return fmt.Errorf("add grant: %w", err)
+		}
+		if err = choose(ctx, tx, stored.user, grantID, stored.chosen); err != nil {
+			return err
 		}
 		return insertTokens(ctx, tx, grantID, tokens, stored.grantExpires)
 	})
@@ -259,6 +265,28 @@ func (s *store) markSeen(ctx context.Context, user string) error {
 	return err
 }
 
+// setChosen replaces the boxes user chose for grant id.
+func (s *store) setChosen(ctx context.Context, user, id string, boxes []string) error {
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, "SELECT id FROM oauth_grants WHERE id = $1 AND user_id = $2 FOR UPDATE", id, user)
+		switch {
+		case err != nil:
+			return fmt.Errorf("lock grant: %w", err)
+		case tag.RowsAffected() == 0:
+			return ErrNotFound
+		}
+		return choose(ctx, tx, user, id, boxes)
+	})
+}
+
+func (s *store) chosen(ctx context.Context, id string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, "SELECT box_id FROM oauth_chosen WHERE grant_id = $1 ORDER BY box_id", id)
+	if err != nil {
+		return nil, fmt.Errorf("list chosen boxes: %w", err)
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
 func (s *store) grantBoxes(ctx context.Context, id string) ([]string, error) {
 	rows, err := s.pool.Query(ctx, "SELECT box_id FROM oauth_boxes WHERE grant_id = $1 ORDER BY box_id", id)
 	if err != nil {
@@ -285,6 +313,19 @@ func liveGrant(ctx context.Context, q querier, user, client string) (string, err
 	return id, nil
 }
 
+// choose makes boxes the chosen set of grant id, keeping only user's own boxes, never an agent's.
+func choose(ctx context.Context, tx pgx.Tx, user, id string, boxes []string) error {
+	if _, err := tx.Exec(ctx, "DELETE FROM oauth_chosen WHERE grant_id = $1", id); err != nil {
+		return fmt.Errorf("clear chosen boxes: %w", err)
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO oauth_chosen (grant_id, box_id) SELECT $1, b.id FROM boxes b
+		WHERE b.id = ANY($2) AND b.owner = $3 AND NOT b.agent`, id, boxes, user)
+	if err != nil {
+		return fmt.Errorf("choose boxes: %w", err)
+	}
+	return nil
+}
+
 func insertTokens(ctx context.Context, tx pgx.Tx, grantID string, tokens issued, grantExpires time.Time) error {
 	accessExpires := time.Now().Add(accessTTL)
 	if grantExpires.Before(accessExpires) {
@@ -301,6 +342,6 @@ func insertTokens(ctx context.Context, tx pgx.Tx, grantID string, tokens issued,
 func scanGrant(row pgx.CollectableRow) (Grant, error) {
 	var g Grant
 	err := row.Scan(&g.ID, &g.User, &g.ClientID, &g.ClientName, &g.ClientHost, &g.MaxBoxes, &g.MaxRunning, &g.CreatedAt, &g.ExpiresAt,
-		&g.UsedAt, &g.Seen, &g.Boxes)
+		&g.UsedAt, &g.Seen, &g.Boxes, &g.Chosen)
 	return g, err
 }

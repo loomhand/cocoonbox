@@ -78,11 +78,24 @@ async function load() {
     ? "The answer goes to " + c.redirect_host + " on this computer. Allow it only if you started this from an agent on this computer just now."
     : "The answer goes to " + c.redirect_host + ".";
   $("existing").hidden = !c.existing;
+  $("choice-list").replaceChildren(...c.boxes.map((b) => checkbox(b, c.chosen.includes(b.id))));
+  $("choices").hidden = !c.boxes.length;
   const f = $("consent-form");
   f.max_boxes.value = c.defaults.max_boxes;
   f.max_running.value = c.defaults.max_running;
   f.days.value = String(c.defaults.days);
   show("consent");
+}
+
+function checkbox(box, checked) {
+  const label = document.createElement("label");
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.name = "box";
+  input.value = box.id;
+  input.checked = checked;
+  label.append(input, " " + box.name);
+  return label;
 }
 
 $("github-button").addEventListener("click", () => {
@@ -106,7 +119,8 @@ $("login-form").addEventListener("submit", (ev) => {
 $("consent-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
-  api("POST", "oauth/approve", { query, max_boxes: Number(f.max_boxes.value), max_running: Number(f.max_running.value), days: Number(f.days.value) })
+  const boxes = [...f.querySelectorAll("input[name=box]:checked")].map((i) => i.value);
+  api("POST", "oauth/approve", { query, max_boxes: Number(f.max_boxes.value), max_running: Number(f.max_running.value), days: Number(f.days.value), boxes })
     .then(({ redirect }) => {
       show("");
       notice("Allowed. Returning to the agent; you can close this tab.");

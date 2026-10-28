@@ -30,6 +30,7 @@ const (
 	errDeleteUnconfirmed  toolError = "Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true."
 	errDeleteUnnamed      toolError = "Name the box to delete in box."
 	errNoGrantBox         toolError = "This client has created no box yet; box_create creates one."
+	errDeleteChosen       toolError = "This client may delete only the boxes it created."
 )
 
 var toolSpecs = []toolSpec{
@@ -383,6 +384,9 @@ func (s *Server) delete(ctx context.Context, ref string, progress progressFunc) 
 	if err != nil {
 		return nil, err
 	}
+	if g := grantOf(ctx); g != nil && slices.Contains(g.Chosen, box.GetId()) {
+		return nil, errDeleteChosen
+	}
 	op, err := s.boxes.Delete(ctx, &controlv1.BoxRef{BoxId: box.GetId()})
 	if err != nil {
 		return nil, err
@@ -429,13 +433,18 @@ func (s *Server) runningBox(ctx context.Context, ref string) (*controlv1.Box, er
 	return box, nil
 }
 
-// box returns the caller's box named or numbered ref, or the first one when ref is empty, nil when the caller has none.
+// box returns the caller's box named or numbered ref, or without ref the first one, a grant's first chosen one before those it created; nil when the caller has none.
 func (s *Server) box(ctx context.Context, ref string) (*controlv1.Box, error) {
 	list, err := s.visible(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if ref == "" {
+		if g := grantOf(ctx); g != nil {
+			if i := slices.IndexFunc(list, func(b *controlv1.Box) bool { return slices.Contains(g.Chosen, b.GetId()) }); i >= 0 {
+				return list[i], nil
+			}
+		}
 		if len(list) == 0 {
 			return nil, nil
 		}
@@ -449,7 +458,7 @@ func (s *Server) box(ctx context.Context, ref string) (*controlv1.Box, error) {
 	return nil, toolError(fmt.Sprintf("You have no box %q; box_list lists your boxes.", ref))
 }
 
-// startEnsure starts or wakes the box ref names; a grant's call names one of its boxes and stays within its running cap.
+// startEnsure starts or wakes the box ref names; a grant's call names one of its boxes, and a box it created stays within its running cap.
 func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.EnsureResponse, error) {
 	g := grantOf(ctx)
 	if g == nil && ref == "" {
@@ -465,7 +474,7 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 	case box == nil:
 		return nil, errNoGrantBox
 	}
-	if g != nil && !holdsMemory(box) {
+	if g != nil && !holdsMemory(box) && !slices.Contains(g.Chosen, box.GetId()) {
 		if err = s.checkRunning(ctx, g); err != nil {
 			return nil, err
 		}
@@ -480,7 +489,7 @@ func (s *Server) startCreate(ctx context.Context, req *controlv1.CreateBoxReques
 		return s.boxes.Create(ctx, req)
 	}
 	defer s.lock(g.ID)()
-	list, err := s.visible(ctx)
+	list, err := s.created(ctx, g)
 	if err != nil {
 		return nil, err
 	}
@@ -494,9 +503,9 @@ func (s *Server) startCreate(ctx context.Context, req *controlv1.CreateBoxReques
 	return s.boxes.Create(boxes.WithAgent(ctx, record), req)
 }
 
-// checkRunning refuses to start another box of grant g while its running cap is held.
+// checkRunning refuses to start another box of grant g while the boxes it created hold its running cap.
 func (s *Server) checkRunning(ctx context.Context, g *oauth.Grant) error {
-	list, err := s.visible(ctx)
+	list, err := s.created(ctx, g)
 	if err != nil {
 		return err
 	}
@@ -506,22 +515,35 @@ func (s *Server) checkRunning(ctx context.Context, g *oauth.Grant) error {
 	return nil
 }
 
-// visible returns the caller's boxes, oldest first: for a grant, only those it created.
+// visible returns the caller's boxes, oldest first: for a grant, those it created and those the user chose for it.
 func (s *Server) visible(ctx context.Context) ([]*controlv1.Box, error) {
+	g := grantOf(ctx)
+	if g == nil {
+		resp, err := s.boxes.List(ctx, &controlv1.ListBoxesRequest{})
+		return resp.GetBoxes(), err
+	}
+	return s.grantBoxes(ctx, g, g.Chosen)
+}
+
+// created returns the boxes grant g created, oldest first, which alone count toward its caps.
+func (s *Server) created(ctx context.Context, g *oauth.Grant) ([]*controlv1.Box, error) {
+	return s.grantBoxes(ctx, g, nil)
+}
+
+// grantBoxes returns the boxes grant g created and those of chosen, oldest first.
+func (s *Server) grantBoxes(ctx context.Context, g *oauth.Grant, chosen []string) ([]*controlv1.Box, error) {
 	resp, err := s.boxes.List(ctx, &controlv1.ListBoxesRequest{})
 	if err != nil {
 		return nil, err
 	}
-	g := grantOf(ctx)
-	if g == nil {
-		return resp.GetBoxes(), nil
-	}
 	ids, err := s.grants.Boxes(ctx, g.ID)
 	if err != nil {
-		log.WithFunc("controlmcp.Server.visible").Errorf(ctx, err, "list the boxes of grant %s", g.ID)
+		log.WithFunc("controlmcp.Server.grantBoxes").Errorf(ctx, err, "list the boxes of grant %s", g.ID)
 		return nil, status.Error(codes.Unavailable, "reading the client's boxes failed")
 	}
-	return slices.DeleteFunc(resp.GetBoxes(), func(b *controlv1.Box) bool { return !slices.Contains(ids, b.GetId()) }), nil
+	return slices.DeleteFunc(resp.GetBoxes(), func(b *controlv1.Box) bool {
+		return !slices.Contains(ids, b.GetId()) && !slices.Contains(chosen, b.GetId())
+	}), nil
 }
 
 // watchStream receives WatchOperation events in-process as the caller in ctx.

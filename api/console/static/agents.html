@@ -22,8 +22,8 @@
   </section>
 
   <section id="agents-section" hidden>
-    <p>Agents you allowed through their MCP sign-in. Each one manages and uses only the boxes it created, within the limits you set; it never sees your other boxes or shares, and it cannot use your saved keys or connected accounts. Revoking one ends its access at once; the boxes it created stay yours.</p>
-    <table><thead><tr><th>Agent</th><th>Verified host</th><th>Allowed</th><th>Expires</th><th>Last used</th><th>Limits</th><th>Its boxes</th><th></th></tr></thead><tbody id="agents"></tbody></table>
+    <p>Agents you allowed through their MCP sign-in. Each one manages and uses the boxes it created, within the limits you set, and the boxes of yours you chose for it; it never sees your other boxes or shares. The boxes it creates get none of your saved keys or connected accounts. On a box you choose, it acts as you: the box's saved keys are injected into its outbound requests, and it can use the box's connected accounts, browser logins and files; it never deletes that box. A change of chosen boxes applies to its next call. Revoking one ends its access at once; the boxes it created stay yours.</p>
+    <table><thead><tr><th>Agent</th><th>Verified host</th><th>Allowed</th><th>Expires</th><th>Last used</th><th>Limits</th><th>Its boxes</th><th>Your boxes it may use</th><th></th></tr></thead><tbody id="agents"></tbody></table>
   </section>
 </main>
 </body>

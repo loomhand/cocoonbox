@@ -255,10 +255,10 @@ async function loadDevices() {
 }
 
 async function loadAgents() {
-  const grants = await api("GET", "agents").catch(() => null);
-  $("agents-link").hidden = !grants;
-  $("setup-link").hidden = !grants;
-  const fresh = (grants || []).filter((g) => !g.seen);
+  const agents = await api("GET", "agents").catch(() => null);
+  $("agents-link").hidden = !agents;
+  $("setup-link").hidden = !agents;
+  const fresh = (agents ? agents.grants : []).filter((g) => !g.seen);
   if (fresh.length) notice(fresh.map((g) => g.client_name).join(", ") + " got access to manage boxes for you. Review it on the Agents page.");
 }
 
