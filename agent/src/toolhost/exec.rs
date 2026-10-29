@@ -36,10 +36,6 @@ const DEFAULT_TERM: &str = "xterm-256color";
 #[cfg(unix)]
 const TERMINFO_TIMEOUT: Duration = Duration::from_secs(5);
 
-type Reader = Box<dyn AsyncRead + Send + Unpin>;
-type Writer = Box<dyn AsyncWrite + Send + Unpin>;
-type Exit = Pin<Box<dyn Future<Output = io::Result<i32>> + Send>>;
-
 /// The agent's read end of an exec connection.
 #[cfg(unix)]
 pub type AgentRead = OwnedReadHalf;
@@ -49,6 +45,11 @@ pub type AgentWrite = OwnedWriteHalf;
 /// The agent's write end of an exec connection.
 #[cfg(windows)]
 pub type AgentWrite = WriteHalf<NamedPipeServer>;
+
+type Reader = Box<dyn AsyncRead + Send + Unpin>;
+type Writer = Box<dyn AsyncWrite + Send + Unpin>;
+type Exit = Pin<Box<dyn Future<Output = io::Result<i32>> + Send>>;
+
 /// The terminal a command runs on, which takes its resizes.
 #[cfg(unix)]
 type Terminal = OwnedFd;

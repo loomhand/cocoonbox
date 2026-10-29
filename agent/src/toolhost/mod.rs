@@ -47,18 +47,19 @@ const SOCKET_MODE: u32 = 0o660;
 #[cfg(windows)]
 const ERROR_ACCESS_DENIED: i32 = 5;
 
-/// One accepted toolhost connection.
-#[cfg(unix)]
-type Conn = UnixStream;
-/// One accepted toolhost connection.
-#[cfg(windows)]
-type Conn = NamedPipeServer;
 const SCRATCH_DIR: &str = "cocoonbox-shell";
 const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
 const OS_RELEASE: &str = "/etc/os-release";
 const SYSTEM_VERSION: &str = "/System/Library/CoreServices/SystemVersion.plist";
 const DESKTOP_VAR: &str = "XDG_CURRENT_DESKTOP";
 const SCREEN_WAIT: Duration = Duration::from_secs(2);
+
+/// One accepted toolhost connection.
+#[cfg(unix)]
+type Conn = UnixStream;
+/// One accepted toolhost connection.
+#[cfg(windows)]
+type Conn = NamedPipeServer;
 
 /// Shared tool state for all connections.
 struct Host {
