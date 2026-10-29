@@ -125,6 +125,20 @@ func TestRefusedBodiesCarryTheirJSONRPCCode(t *testing.T) {
 	}
 }
 
+func TestInitializeAnswersTheSameBytes(t *testing.T) {
+	srv, _ := newTestServer(t)
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`
+	first := serve(srv, http.MethodPost, aliceToken, body).Body.String()
+	if !strings.Contains(first, `"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-06-18","serverInfo":{"name":`) {
+		t.Fatalf("initialize = %s", first)
+	}
+	for range 20 {
+		if got := serve(srv, http.MethodPost, aliceToken, body).Body.String(); got != first {
+			t.Fatalf("initialize = %s, then %s", first, got)
+		}
+	}
+}
+
 func TestUnknownMethodAndTool(t *testing.T) {
 	srv, fake := newTestServer(t)
 

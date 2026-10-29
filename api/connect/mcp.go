@@ -364,7 +364,7 @@ func internalError(r *http.Request, err error) *mcpwire.Error {
 
 func writeJSON(w http.ResponseWriter, httpStatus int, body any) {
 	var buf bytes.Buffer
-	if err := json.MarshalWrite(&buf, body); err != nil {
+	if err := json.MarshalWrite(&buf, body, json.Deterministic(true)); err != nil {
 		httpStatus = http.StatusInternalServerError
 		buf.Reset()
 		buf.WriteString(`{"jsonrpc":"2.0","error":{"code":-32603,"message":"encode response"}}`)

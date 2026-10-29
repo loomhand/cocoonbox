@@ -144,7 +144,7 @@ func (u *upstream) send(ctx context.Context, session, version string, msg rpcReq
 		result, ex, err = u.s.googleTasks(ctx, u.cred.value, msg)
 		return result, "", ex, err
 	}
-	body, err := json.Marshal(msg)
+	body, err := json.Marshal(msg, json.Deterministic(true))
 	if err != nil {
 		return nil, "", ex, err
 	}

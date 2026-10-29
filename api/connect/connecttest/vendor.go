@@ -336,7 +336,7 @@ func (v *Vendor) serveMCP(w http.ResponseWriter, r *http.Request, auth string) {
 		writeJSON(w, http.StatusOK, map[string]any{"jsonrpc": "2.0", "id": req.ID, "error": map[string]any{"code": -32601, "message": "no such method"}})
 		return
 	}
-	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result})
+	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": req.ID, "result": result}, json.Deterministic(true))
 	if v.SSE && req.Method == "tools/call" {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\nevent: message\ndata: " + string(body) + "\n\n"))
@@ -349,7 +349,7 @@ func (v *Vendor) serveMCP(w http.ResponseWriter, r *http.Request, auth string) {
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.MarshalWrite(w, v)
+	_ = json.MarshalWrite(w, v, json.Deterministic(true))
 }
 
 func token() string { return strings.ToLower(rand.Text()) }

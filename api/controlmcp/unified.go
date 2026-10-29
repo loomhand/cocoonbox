@@ -492,13 +492,13 @@ func takeBox(body []byte, call *callParams) (string, []byte, error) {
 		return "", nil, err
 	}
 	var err error
-	if params["arguments"], err = json.Marshal(args); err != nil {
+	if params["arguments"], err = json.Marshal(args, json.Deterministic(true)); err != nil {
 		return "", nil, err
 	}
-	if msg["params"], err = json.Marshal(params); err != nil {
+	if msg["params"], err = json.Marshal(params, json.Deterministic(true)); err != nil {
 		return "", nil, err
 	}
-	body, err = json.Marshal(msg)
+	body, err = json.Marshal(msg, json.Deterministic(true))
 	return ref, body, err
 }
 

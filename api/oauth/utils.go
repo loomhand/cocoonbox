@@ -31,5 +31,5 @@ func writeOAuthError(w http.ResponseWriter, status int, code, description string
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.MarshalWrite(w, v)
+	_ = json.MarshalWrite(w, v, json.Deterministic(true))
 }

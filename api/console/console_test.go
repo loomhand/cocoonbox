@@ -354,6 +354,17 @@ func TestRequestsNeedASessionAndJSON(t *testing.T) {
 	}
 }
 
+func TestWriteJSONSortsMapKeys(t *testing.T) {
+	want := `{"github":true,"invite_only":true,"seats":{"cap":2,"queued":0,"used":1},"signup":false}`
+	for range 20 {
+		rec := httptest.NewRecorder()
+		writeJSON(rec, map[string]any{"signup": false, "github": true, "invite_only": true, "seats": map[string]int{"used": 1, "cap": 2, "queued": 0}})
+		if got := rec.Body.String(); got != want {
+			t.Fatalf("writeJSON = %s, want %s", got, want)
+		}
+	}
+}
+
 type env struct {
 	srv     *Server
 	dsn     string
