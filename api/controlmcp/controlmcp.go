@@ -6,7 +6,8 @@ import (
 	"cmp"
 	"context"
 	"crypto/rand"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -123,7 +124,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var req request
 	if err := json.Unmarshal(body, &req); err != nil {
-		if _, ok := errors.AsType[*json.UnmarshalTypeError](err); ok {
+		if _, ok := errors.AsType[*json.SemanticError](err); ok {
 			writeFailure(w, http.StatusBadRequest, mcpwire.CodeInvalidRequest, "expected one JSON-RPC message")
 			return
 		}
@@ -168,7 +169,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // answer runs a control tool and writes its response, as events when the call carries a progress token.
-func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id json.RawMessage, call *callParams) *mcpwire.Error {
+func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id jsontext.Value, call *callParams) *mcpwire.Error {
 	if call.Meta.ProgressToken == nil {
 		result, rpcErr := s.call(ctx, call, func(string) {})
 		writeJSON(w, http.StatusOK, newResponse(id, result, rpcErr))
@@ -214,28 +215,28 @@ func (s *Server) refuse(w http.ResponseWriter, r *http.Request, err error) {
 type grantKey struct{}
 
 type request struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id"`
+	Method  string         `json:"method"`
+	Params  jsontext.Value `json:"params"`
 }
 
 type callParams struct {
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	Name      string         `json:"name"`
+	Arguments jsontext.Value `json:"arguments"`
 	Meta      struct {
-		ProgressToken json.RawMessage `json:"progressToken"`
+		ProgressToken jsontext.Value `json:"progressToken"`
 	} `json:"_meta"`
 }
 
 type response struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id"`
-	Result  any             `json:"result,omitempty"`
-	Error   *mcpwire.Error  `json:"error,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id"`
+	Result  any            `json:"result,omitzero"`
+	Error   *mcpwire.Error `json:"error,omitzero"`
 }
 
-func newResponse(id json.RawMessage, result any, rpcErr *mcpwire.Error) response {
+func newResponse(id jsontext.Value, result any, rpcErr *mcpwire.Error) response {
 	if rpcErr != nil {
 		return response{JSONRPC: mcpwire.Version, ID: id, Error: rpcErr}
 	}
@@ -249,9 +250,9 @@ type notification struct {
 }
 
 type progressParams struct {
-	ProgressToken json.RawMessage `json:"progressToken"`
-	Progress      int             `json:"progress"`
-	Message       string          `json:"message"`
+	ProgressToken jsontext.Value `json:"progressToken"`
+	Progress      int            `json:"progress"`
+	Message       string         `json:"message"`
 }
 
 // eventStream answers one tools/call as server-sent events: progress notifications, then the response.
@@ -259,13 +260,13 @@ type eventStream struct {
 	mu    sync.Mutex
 	w     http.ResponseWriter
 	rc    *http.ResponseController
-	token json.RawMessage
+	token jsontext.Value
 	sent  int
 	stop  chan struct{}
 	done  sync.WaitGroup
 }
 
-func newEventStream(w http.ResponseWriter, token json.RawMessage) *eventStream {
+func newEventStream(w http.ResponseWriter, token jsontext.Value) *eventStream {
 	w.Header().Set("Content-Type", mcpwire.EventStream)
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -284,11 +285,11 @@ func (e *eventStream) progress(message string) {
 }
 
 func (e *eventStream) send(msg any) {
-	data, err := marshal(msg)
+	data, err := json.Marshal(msg)
 	if err != nil {
 		return
 	}
-	e.write(mcpwire.Event(bytes.TrimSpace(data)))
+	e.write(mcpwire.Event(data))
 }
 
 func (e *eventStream) close() {
@@ -318,7 +319,7 @@ func (e *eventStream) write(b []byte) {
 	}
 }
 
-func initializeResult(params json.RawMessage, name string) map[string]any {
+func initializeResult(params jsontext.Value, name string) map[string]any {
 	var req struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
@@ -382,7 +383,7 @@ func writeFailure(w http.ResponseWriter, httpStatus, code int, message string) {
 }
 
 func writeJSON(w http.ResponseWriter, httpStatus int, body any) {
-	data, err := marshal(body)
+	data, err := json.Marshal(body)
 	if err != nil {
 		httpStatus = http.StatusInternalServerError
 		data = []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"encode response"}}`)
@@ -390,12 +391,4 @@ func writeJSON(w http.ResponseWriter, httpStatus int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus)
 	_, _ = w.Write(data) //nolint:gosec // application/json, never HTML
-}
-
-func marshal(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	err := enc.Encode(v)
-	return buf.Bytes(), err
 }

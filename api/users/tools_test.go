@@ -1,7 +1,7 @@
 package users
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"testing"
 )
 
@@ -14,9 +14,9 @@ func TestToolListFallsBackToTheNewestOfItsFamily(t *testing.T) {
 		family string
 		list   ToolList
 	}{
-		{"cbcore", ToolList{Image: "cbcore:v1", Tools: json.RawMessage(`[{"name":"shell"}]`), Instructions: "v1"}},
-		{"cbcore", ToolList{Image: "cbcore:v2", Tools: json.RawMessage(`[{"name":"shell"},{"name":"gui_plan"}]`), Instructions: "v2"}},
-		{"cbdroid", ToolList{Image: "cbdroid:v1", Tools: json.RawMessage(`[]`)}},
+		{"cbcore", ToolList{Image: "cbcore:v1", Tools: jsontext.Value(`[{"name":"shell"}]`), Instructions: "v1"}},
+		{"cbcore", ToolList{Image: "cbcore:v2", Tools: jsontext.Value(`[{"name":"shell"},{"name":"gui_plan"}]`), Instructions: "v2"}},
+		{"cbdroid", ToolList{Image: "cbdroid:v1", Tools: jsontext.Value(`[]`)}},
 	} {
 		if err := svc.PutToolList(t.Context(), put.family, put.list); err != nil {
 			t.Fatalf("PutToolList %s: %v", put.list.Image, err)

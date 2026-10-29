@@ -3,7 +3,7 @@ package flows
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"maps"
 	"net/http"

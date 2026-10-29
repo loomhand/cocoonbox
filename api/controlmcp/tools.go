@@ -1,9 +1,9 @@
 package controlmcp
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -37,56 +37,56 @@ var toolSpecs = []toolSpec{
 	{
 		Name:         "box_list",
 		Description:  "List your cocoonbox boxes with their names, states and images.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"boxes":{"type":"array","items":{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","last_saved_at_ms"]}}},"required":["boxes"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{},"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"boxes":{"type":"array","items":{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","last_saved_at_ms"]}}},"required":["boxes"]}`),
 	},
 	{
 		Name:         "box_status",
 		Description:  "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"latest_image":{"type":"string"},"upgrade_available":{"type":"boolean"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","latest_image","upgrade_available","last_saved_at_ms"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"latest_image":{"type":"string"},"upgrade_available":{"type":"boolean"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","latest_image","upgrade_available","last_saved_at_ms"]}`),
 	},
 	{
 		Name:         "box_ensure",
 		Description:  "Start or wake your cocoonbox box and wait until it is running. Waking takes a few seconds; creating a new box takes longer.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"wait":{"type":"boolean","default":true}},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `,"wait":{"type":"boolean","default":true}},"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
 	},
 	{
 		Name:         "box_create",
 		Description:  "Create another cocoonbox box with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"name":{"type":"string"},"image":{"type":"string","description":"An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop."},"wait":{"type":"boolean","default":true}},"required":["name"],"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","name","state","operation_id"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{"name":{"type":"string"},"image":{"type":"string","description":"An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop."},"wait":{"type":"boolean","default":true}},"required":["name"],"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","name","state","operation_id"]}`),
 	},
 	{
 		Name:         "box_hibernate",
 		Description:  "Hibernate your cocoonbox box. Running programs and memory are kept and come back on the next wake.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
 	},
 	{
 		Name:         "box_save",
 		Description:  "Save your files, logins and agent history from the box to storage now. On a desktop box the browser closes during the save.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"last_saved_at_ms":{"type":"integer"},"operation_id":{"type":"string"},"bytes":{"type":"integer"}},"required":["box_id","last_saved_at_ms","operation_id","bytes"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"last_saved_at_ms":{"type":"integer"},"operation_id":{"type":"string"},"bytes":{"type":"integer"}},"required":["box_id","last_saved_at_ms","operation_id","bytes"]}`),
 	},
 	{
 		Name:         "box_upgrade",
 		Description:  "Move your box to the latest image of its kind. Running programs restart; files, logins and agent history are kept. Requires confirm: true.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["confirm"],"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","image","operation_id"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["confirm"],"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","image","operation_id"]}`),
 	},
 	{
 		Name:         "box_delete",
 		Description:  "Delete one of your cocoonbox boxes. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["box","confirm"],"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"box_id":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","operation_id"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["box","confirm"],"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","operation_id"]}`),
 	},
 	{
 		Name:         "usage",
 		Description:  "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it.",
-		InputSchema:  json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`),
-		OutputSchema: json.RawMessage(`{"type":"object","properties":{"today":` + usagePeriodSchema + `,"month":` + usagePeriodSchema + `,"daily_cap_micros":{"type":"integer"},"default_cap":{"type":"boolean"},"remaining_today_micros":{"type":"integer"}},"required":["today","month","daily_cap_micros","default_cap","remaining_today_micros"]}`),
+		InputSchema:  jsontext.Value(`{"type":"object","properties":{},"additionalProperties":false}`),
+		OutputSchema: jsontext.Value(`{"type":"object","properties":{"today":` + usagePeriodSchema + `,"month":` + usagePeriodSchema + `,"daily_cap_micros":{"type":"integer"},"default_cap":{"type":"boolean"},"remaining_today_micros":{"type":"integer"}},"required":["today","month","daily_cap_micros","default_cap","remaining_today_micros"]}`),
 	},
 }
 
@@ -101,15 +101,15 @@ type toolError string
 func (e toolError) Error() string { return string(e) }
 
 type toolSpec struct {
-	Name         string          `json:"name"`
-	Description  string          `json:"description"`
-	InputSchema  json.RawMessage `json:"inputSchema"`
-	OutputSchema json.RawMessage `json:"outputSchema"`
+	Name         string         `json:"name"`
+	Description  string         `json:"description"`
+	InputSchema  jsontext.Value `json:"inputSchema"`
+	OutputSchema jsontext.Value `json:"outputSchema"`
 }
 
 type toolResult struct {
 	Content           []textContent `json:"content"`
-	StructuredContent any           `json:"structuredContent,omitempty"`
+	StructuredContent any           `json:"structuredContent,omitzero"`
 	IsError           bool          `json:"isError"`
 }
 
@@ -572,11 +572,9 @@ func (w *watchStream) Send(ev *controlv1.OperationEvent) error {
 }
 
 // withArguments decodes raw into dst, refusing names outside the input schema, and runs fn.
-func withArguments(raw json.RawMessage, dst any, fn toolFunc) (*toolResult, *mcpwire.Error) {
+func withArguments(raw jsontext.Value, dst any, fn toolFunc) (*toolResult, *mcpwire.Error) {
 	if len(raw) != 0 && string(raw) != "null" {
-		dec := json.NewDecoder(bytes.NewReader(raw))
-		dec.DisallowUnknownFields()
-		if err := dec.Decode(dst); err != nil {
+		if err := json.Unmarshal(raw, dst, json.RejectUnknownMembers(true)); err != nil {
 			return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}
 		}
 	}
@@ -589,11 +587,11 @@ func withArguments(raw json.RawMessage, dst any, fn toolFunc) (*toolResult, *mcp
 	case err != nil:
 		return errorText(status.Convert(err).Message()), nil
 	}
-	data, err := marshal(out)
+	data, err := json.Marshal(out)
 	if err != nil {
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: "encode result"}
 	}
-	return &toolResult{Content: []textContent{{Type: "text", Text: string(bytes.TrimSpace(data))}}, StructuredContent: out}, nil
+	return &toolResult{Content: []textContent{{Type: "text", Text: string(data)}}, StructuredContent: out}, nil
 }
 
 func errorText(text string) *toolResult {

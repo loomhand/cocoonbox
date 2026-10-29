@@ -6,7 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"slices"
 	"strings"
 	"testing"

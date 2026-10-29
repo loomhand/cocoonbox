@@ -3,7 +3,7 @@ package users
 import (
 	"context"
 	"embed"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"strings"
@@ -529,7 +529,7 @@ func (s *store) toolList(ctx context.Context, image, family string) (ToolList, e
 	case err != nil:
 		return ToolList{}, fmt.Errorf("read tool list: %w", err)
 	}
-	l.Tools = json.RawMessage(tools)
+	l.Tools = jsontext.Value(tools)
 	return l, nil
 }
 

@@ -1,7 +1,7 @@
 package boxes
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -110,7 +110,7 @@ func newFakeNode(t *testing.T) *fakeNode {
 			Size     string            `json:"size"`
 			Metadata map[string]string `json:"metadata"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.UnmarshalRead(r.Body, &req)
 		n.mu.Lock()
 		defer n.mu.Unlock()
 		if n.refusals > 0 {
@@ -200,5 +200,5 @@ func (n *fakeNode) sandbox(next func(http.ResponseWriter, *http.Request, *nodeRo
 func nodeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.MarshalWrite(w, v)
 }

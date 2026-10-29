@@ -2,7 +2,8 @@ package controlmcp
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,8 +39,8 @@ const (
 func TestRootListsControlAndBoxToolsWhileTheBoxSleeps(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
 	fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
-	lists.put("img:0", users.ToolList{Image: "img:0", Tools: json.RawMessage(`[{"name":"shell"}]`)})
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools), Instructions: agentGuide})
+	lists.put("img:0", users.ToolList{Image: "img:0", Tools: jsontext.Value(`[{"name":"shell"}]`)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools), Instructions: agentGuide})
 
 	rec := serveRoot(srv, http.MethodPost, aliceToken, "", initialize)
 	init := decode(t, rec)
@@ -112,7 +113,7 @@ func TestRootWakePastTheBoundAsksForARetry(t *testing.T) {
 func TestRootCallOfAGrantWithoutABox(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
 	srv.EnableGrants(fakeGrants{})
-	lists.put(latestImage, users.ToolList{Image: latestImage, Tools: json.RawMessage(boxTools)})
+	lists.put(latestImage, users.ToolList{Image: latestImage, Tools: jsontext.Value(boxTools)})
 
 	tools, _ := decode(t, serveRoot(srv, http.MethodPost, grantToken, "", listRequest)).Result["tools"].([]any)
 	if len(tools) != controlTools+2 {
@@ -128,7 +129,7 @@ func TestRootCallOfAGrantWithoutABox(t *testing.T) {
 
 func TestRootCallOnARunningBoxIsOneAgentRoundTrip(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools), Instructions: agentGuide})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools), Instructions: agentGuide})
 	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
 	if want := []string{"initialize"}; !slices.Equal(agents.recorded(), want) {
 		t.Fatalf("initialize on a running box sent %v, want %v", agents.recorded(), want)
@@ -160,7 +161,7 @@ func TestRootCallOnARunningBoxIsOneAgentRoundTrip(t *testing.T) {
 
 func TestRootCallLostInFlightIsNotSentAgain(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
 	agents.mu.Lock()
 	agents.lost = true
@@ -187,7 +188,7 @@ func TestRootRecordsToolListsOnlyFromAnAdminsBox(t *testing.T) {
 
 func TestRootParallelCallsOnAnExpiredSessionOpenOneNew(t *testing.T) {
 	srv, _, agents, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
 	agents.forget()
 	agents.mu.Lock()
@@ -218,7 +219,7 @@ func TestRootParallelCallsOnAnExpiredSessionOpenOneNew(t *testing.T) {
 
 func TestRootCallAfterTheDefaultBoxWentReachesTheNextOne(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	agents.mu.Lock()
 	agents.lost = true
 	agents.mu.Unlock()
@@ -237,7 +238,7 @@ func TestRootCallAfterTheDefaultBoxWentReachesTheNextOne(t *testing.T) {
 
 func TestRootBoxArgumentPicksTheBoxAndListsInTheSchema(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	fake.mu.Lock()
 	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-next", Name: "next", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
 	fake.mu.Unlock()
@@ -276,7 +277,7 @@ func TestRootBoxArgumentPicksTheBoxAndListsInTheSchema(t *testing.T) {
 
 func TestRootDefaultOfAGrantIsItsFirstChosenBox(t *testing.T) {
 	srv, fake, _, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	fake.mu.Lock()
 	fake.extra["alice"] = []*controlv1.Box{
 		{Id: "cb-made", Name: "made", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"},
@@ -295,7 +296,7 @@ func TestRootDefaultOfAGrantIsItsFirstChosenBox(t *testing.T) {
 
 func TestRootGrantSharesOneAgentSessionPerBoxAcrossClientSessions(t *testing.T) {
 	srv, _, agents, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	srv.EnableGrants(fakeGrants{boxes: []string{boxes.BoxID("alice")}})
 	for i := range 3 {
 		session := serveRoot(srv, http.MethodPost, grantToken, "", initialize).Header().Get(mcpwire.SessionHeader)
@@ -324,7 +325,7 @@ func TestRootGrantSharesOneAgentSessionPerBoxAcrossClientSessions(t *testing.T) 
 
 func TestRootWakeKeepsTheSessionsDefaultBox(t *testing.T) {
 	srv, fake, _, lists := newUnifiedServer(t)
-	lists.put("img:1", users.ToolList{Image: "img:1", Tools: json.RawMessage(boxTools)})
+	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	made := boxes.BoxID("alice")
 	srv.EnableGrants(fakeGrants{boxes: []string{made}})
 	if text := callText(t, map[string]any{"result": decode(t, serveRoot(srv, http.MethodPost, grantToken, "s1", callShell)).Result}); text != shellAnswer+made {
@@ -445,8 +446,8 @@ func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*htt
 		return status.Error(codes.Unavailable, "box is hibernated; call box_ensure to bring it up")
 	}
 	var msg struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
+		ID     jsontext.Value `json:"id"`
+		Method string         `json:"method"`
 	}
 	body, _ := io.ReadAll(req.Body)
 	_ = json.Unmarshal(body, &msg)

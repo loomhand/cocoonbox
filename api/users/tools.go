@@ -2,13 +2,13 @@ package users
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 )
 
 // ToolList is what the agent of an image serves over MCP: its tools/list tools and its initialize instructions.
 type ToolList struct {
 	Image        string
-	Tools        json.RawMessage
+	Tools        jsontext.Value
 	Instructions string
 }
 

@@ -2,7 +2,7 @@ package edge
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net"
 	"net/http"
@@ -301,9 +301,7 @@ func writeJSONRPCError(w http.ResponseWriter, err error) {
 	body := jsonRPCError{JSONRPC: mcpwire.Version, Error: mcpwire.Error{Code: jsonRPCServer, Message: status.Convert(err).Message()}}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(httpStatus(status.Code(err)))
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(body)
+	_ = json.MarshalWrite(w, body)
 }
 
 func httpStatus(code codes.Code) int {

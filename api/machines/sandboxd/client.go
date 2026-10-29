@@ -5,7 +5,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -265,7 +265,7 @@ func (c *client) request(ctx context.Context, token, method, path string, query 
 	if out == nil || resp.StatusCode == http.StatusNoContent {
 		return nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
 		return fmt.Errorf("decode %s %s: %w", method, path, err)
 	}
 	return nil

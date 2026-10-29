@@ -3,7 +3,8 @@ package boxes
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -28,8 +29,8 @@ var errNotSplittable = errors.New("manifest is not compact JSON with one files a
 // recordFile is a snapshot record as stored: Chunks is an array in a full record and a chunkDelta against Base in a delta record, which an api without delta records fails to decode.
 type recordFile struct {
 	timelineEntry
-	Parent string          `json:"parent,omitempty"`
-	Chunks json.RawMessage `json:"chunks"`
+	Parent string         `json:"parent,omitempty"`
+	Chunks jsontext.Value `json:"chunks"`
 }
 
 // chunkDelta lists what a delta record holds beyond its base and what of its base it no longer holds.
@@ -53,7 +54,7 @@ func (d manifestDelta) apply(base manifestParts) (manifestParts, error) {
 	for _, op := range d.Ops {
 		switch {
 		case op.Count == 0:
-			out.files = append(out.files, json.RawMessage(op.Put))
+			out.files = append(out.files, jsontext.Value(op.Put))
 		case op.From < 0 || op.Count < 0 || op.From+op.Count > len(base.files):
 			return out, fmt.Errorf("delta copies files %d+%d of a base with %d", op.From, op.Count, len(base.files))
 		default:
@@ -73,7 +74,7 @@ type fileOp struct {
 // manifestParts is a compact manifest split around its files array, each file record verbatim.
 type manifestParts struct {
 	prefix []byte
-	files  []json.RawMessage
+	files  []jsontext.Value
 	suffix []byte
 }
 
@@ -402,9 +403,9 @@ func splitManifest(plain []byte) (manifestParts, error) {
 		return manifestParts{}, errNotSplittable
 	}
 	start := i + len(`"files":`)
-	dec := json.NewDecoder(bytes.NewReader(plain[start:]))
-	var files []json.RawMessage
-	if err := dec.Decode(&files); err != nil {
+	dec := jsontext.NewDecoder(bytes.NewReader(plain[start:]))
+	var files []jsontext.Value
+	if err := json.UnmarshalDecode(dec, &files); err != nil {
 		return manifestParts{}, fmt.Errorf("%w: %w", errNotSplittable, err)
 	}
 	parts := manifestParts{prefix: plain[:start], files: files, suffix: plain[start+int(dec.InputOffset()):]}

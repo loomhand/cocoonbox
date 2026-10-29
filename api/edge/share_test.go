@@ -6,7 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net"
 	"net/http"
@@ -76,7 +76,7 @@ func TestMCPAuthorizesOwnerOrShare(t *testing.T) {
 				return
 			}
 			var got map[string]string
-			if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &got); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
 			if got["credential"] != tt.credential || got["authorization"] != "" || got["guest"] != "" {
@@ -97,7 +97,7 @@ func TestUserTokenWinsOverTheSharePrefix(t *testing.T) {
 	resp := env.do(t, req)
 	defer resp.Body.Close()
 	var got map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil || resp.StatusCode != http.StatusOK {
+	if err := json.UnmarshalRead(resp.Body, &got); err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d, %v", resp.StatusCode, err)
 	}
 	if want := "cred:" + boxes.BoxID("dave") + ":w1"; got["credential"] != want {

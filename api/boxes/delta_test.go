@@ -2,7 +2,7 @@ package boxes
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"os"
