@@ -1,6 +1,6 @@
 # cocoonbox — design and execution plan
 
-Status: draft v1, 2026-09-30.
+Status: a decision log, started 2026-09-30. Each section records a decision as it was made, and a later section supersedes an earlier one; the current interfaces and behaviour are in [contracts.md](contracts.md).
 
 cocoonbox gives each user a persistent cloud computer with an agent living in it, driven by any model through our gateway, with a native macOS app to watch, talk to, take over, and connect accounts and the local Mac. Meta's Muse is a design reference only: no code is copied.
 

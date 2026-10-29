@@ -1,9 +1,12 @@
 # cocoonbox-agent
 
-The in-box agent of a cocoonbox. One binary, two subcommands:
+The in-box agent of a cocoonbox. One binary, five subcommands:
 
 - `serve` runs as `cbagent`. It serves `cocoonbox.agent.v1.Agents` and `Session` over h2c gRPC on `AGENT_LISTEN` and runs the agent loop. The same listener also answers MCP Streamable HTTP at `/mcp` (mode B). It keeps state in `/var/lib/cocoonbox/agent.db`.
 - `toolhost-service` runs as the desktop user `user`, as shuttle's service plugin. It executes every tool that reaches it through shuttle's endpoint.
+- `offload <verb>` is the box side of offload, run as `user` (`docs/contracts.md`, "Offload").
+- `desk VERB [key=value ...|JSON]` calls shuttle's `desk_VERB` on `SHUTTLE_SOCKET` and prints the result.
+- `version` prints the agent version.
 
 ## Layers
 
@@ -56,7 +59,7 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 
 - `initialize` returns an `Mcp-Session-Id`. The session appears as an agent `mcp:<clientInfo.name>` whose status is RUNNING while the session lives.
 - Each tool call and its result go into that agent's transcript and onto `Session.Events`. `computer_act` also publishes a `ComputerAction` event.
-- Tools: `shell`, `read_file`, `write_file`, `edit_file`, `list_dir`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_read`, `computer_state`, `computer_act`, `screenshot`. They run in the toolhost exactly as the loop's calls do.
+- Tools: `shell`, `read_file`, `write_file`, `edit_file`, `list_dir`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_read`, `computer_state`, `computer_act`, `screenshot`. A desk box adds `script_run`, its plugins, `gui_plan`, `browser_fetch`, `browser_fill`, `browser_tabs` and `desk`. They run in the toolhost exactly as the loop's calls do.
 - Screenshots come back as MCP `image` content (PNG). `max_edge` scales a screenshot, and pixel coordinates then refer to the scaled image: shuttle maps them back to the screen.
 - Each MCP session owns one driver session label on shuttle. It is ended by `DELETE`, by closing the GET stream (a later call starts a new label), or after 10 min without activity, which also closes the MCP session.
 - The toolhost holds one input lock per display, so a `computer_act` from mode A and one over MCP never interleave.

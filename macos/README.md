@@ -50,7 +50,6 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 
 ### Copy-paste setup
 
-
 **Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for the three agent CLIs: `claude mcp add --scope user --transport http … --header 'Authorization: Bearer ${COCOONBOX_TOKEN}'`, `~/.codex/config.toml` with `bearer_token_env_var = "COCOONBOX_TOKEN"`, and `~/.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}`. No snippet contains the token, so none of it lands in a config file or shell history: every client expands `COCOONBOX_TOKEN` at runtime, and one more snippet sets it from the Keychain (`export COCOONBOX_TOKEN="$(security find-generic-password -s io.github.loomhand.cocoonbox -a <endpoint> -w)"`; macOS asks once whether `security` may read the CocoonBox item).
 
 ## Sharing
@@ -83,8 +82,6 @@ The endpoint comes from `login` (`~/Library/Application Support/CocoonBox/cli.js
 
 `scripts/test-cli.sh` runs the CLI and the bridge against MockBox, which also serves the control MCP and the browser sign-in (it allows at once; `BROWSER` names a stub that follows the consent URL).
 
-
-
 The box header shows when the box's user data (home, `/workspace`, agent history) was last saved to storage, with **Save now** (`Boxes.SaveState`; the browser in the box closes during the save). **Upgrade desktop…** is enabled only when `Box.latest_image` differs from `Box.image`; it runs `Boxes.Rebase` after a confirmation that running programs restart while files, logins and agent history are kept. Both show their operation's steps, with a byte progress bar while saving or restoring. MockBox starts on `cocoonbox-desktop-v1` with `v2` available and plays both operations.
 
 ## Offload
@@ -105,8 +102,6 @@ The File menu's plugin install item runs `cocoonbox setup claude` and shows its 
 The app opens `Session.Screen` and runs a [swift-rfb](https://github.com/loomhand/swift-rfb) client directly on it: server bytes feed an `RFBPipe`, and the client's bytes go back as `ScreenClientFrame`s. There is no loopback socket. The client decodes into page-aligned memory that `RFBView` shows as a Metal texture without a copy. It draws on the display link only after a change, and asks for the next update once the GPU has read the frame, so an idle screen costs no CPU and no wakeups. It uses ContinuousUpdates when the server offers them. Otherwise it paces incremental requests every 33 ms while updates arrive, so a high-latency path is not held to one update per round trip.
 
 While you have taken over, the Edit menu's Paste, Copy and Cut (⌘V, ⌘C, ⌘X) act on the box when the screen has focus. ⌘V hands the Mac's plain text to the box's clipboard (ExtendedClipboard, UTF-8) and presses Shift+Insert there. ⌘C and ⌘X press Ctrl+Insert or Shift+Delete, and the box's next clipboard within 2 s goes to the Mac's. These are the keys that terminals honour as well as GTK apps and Chrome: in xfce4-terminal Ctrl+V types a literal next character and Ctrl+C interrupts. Nothing crosses otherwise: the box's own clipboard changes are ignored, so an agent in the box cannot rewrite the Mac's clipboard. Text over 1 MiB is dropped either way. The log records lengths only, never the text.
-
-swift-rfb is a local path package (`../../swift-rfb`), so it must be checked out next to this repository.
 
 ## Automation and measurements
 
