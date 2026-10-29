@@ -13,12 +13,6 @@ const RING_EVENTS: usize = 4096;
 const RING_BYTES: usize = 32 << 20;
 const LIVE_CAPACITY: usize = 1024;
 
-/// Fan-out of agent events; offsets start at boot time in microseconds so stale offsets fall out of range.
-pub struct Bus {
-    ring: Mutex<Ring>,
-    live: broadcast::Sender<Arc<Event>>,
-}
-
 /// Replayed events plus the live receiver that continues after them.
 pub struct Subscription {
     pub replay: Vec<Arc<Event>>,
@@ -29,6 +23,12 @@ struct Ring {
     next: u64,
     events: VecDeque<Arc<Event>>,
     bytes: usize,
+}
+
+/// Fan-out of agent events; offsets start at boot time in microseconds so stale offsets fall out of range.
+pub struct Bus {
+    ring: Mutex<Ring>,
+    live: broadcast::Sender<Arc<Event>>,
 }
 
 impl Bus {

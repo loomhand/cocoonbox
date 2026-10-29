@@ -199,6 +199,92 @@ pub async fn read<W: AsyncWrite + Unpin>(args: Value, w: &mut W) -> Result<(), S
     w.flush().await.map_err(|e| format!("flush: {e}"))
 }
 
+/// `state_write`: data frames into a new file at `path`, then mode and mtime.
+pub async fn write<R: AsyncRead + Unpin>(args: Value, r: &mut R) -> Output {
+    let a: WriteArgs = match rpc::parse(args) {
+        Ok(a) => a,
+        Err(e) => return Output::error(e),
+    };
+    match write_file(&a, r).await {
+        Ok(n) => Output::text(format!("wrote {n} bytes")),
+        Err(e) => Output::error(e),
+    }
+}
+
+/// `state_apply`: creates directories and symlinks, then sets directory modes.
+pub async fn apply(args: Value) -> Result<String, String> {
+    let mut a: ApplyArgs = rpc::parse(args)?;
+    tokio::task::spawn_blocking(move || {
+        for d in &a.dirs {
+            fs::create_dir_all(&d.path).map_err(|e| format!("mkdir {}: {e}", d.path.display()))?;
+            sys::set_mode(&d.path, d.mode)
+                .map_err(|e| format!("chmod {}: {e}", d.path.display()))?;
+        }
+        for l in &a.symlinks {
+            if let Some(parent) = l.path.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
+            }
+            let _ = fs::remove_file(&l.path);
+            sys::symlink(Path::new(&l.target), &l.path)
+                .map_err(|e| format!("symlink {}: {e}", l.path.display()))?;
+        }
+        a.modes
+            .sort_by_key(|m| std::cmp::Reverse(m.path.components().count()));
+        for m in &a.modes {
+            sys::set_mode(&m.path, m.mode)
+                .map_err(|e| format!("chmod {}: {e}", m.path.display()))?;
+        }
+        Ok(format!(
+            "{} dirs, {} symlinks, {} modes",
+            a.dirs.len(),
+            a.symlinks.len(),
+            a.modes.len()
+        ))
+    })
+    .await
+    .map_err(|e| format!("apply task: {e}"))?
+}
+
+/// `state_swap`: replaces each top-level entry of `root` by its staged copy with one rename,
+/// removes entries absent from the snapshot except `keep`, then deletes the staging dir.
+pub async fn swap(args: Value) -> Result<String, String> {
+    let a: SwapArgs = rpc::parse(args)?;
+    tokio::task::spawn_blocking(move || swap_blocking(&a))
+        .await
+        .map_err(|e| format!("swap task: {e}"))?
+}
+
+/// `state_place`: renames `staging` to `dir/name`, or `name-2`, `name-3`, ... when that exists,
+/// and returns the name it took; it never replaces an existing entry.
+pub async fn place(args: Value) -> Result<String, String> {
+    let a: PlaceArgs = rpc::parse(args)?;
+    tokio::task::spawn_blocking(move || {
+        for n in 1..=PLACE_TRIES {
+            let name = if n == 1 {
+                a.name.clone()
+            } else {
+                format!("{}-{n}", a.name)
+            };
+            let target = a.dir.join(&name);
+            match sys::rename_new(&a.staging, &target) {
+                Ok(()) => return Ok(name),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(e) => {
+                    return Err(format!(
+                        "rename {} to {}: {e}",
+                        a.staging.display(),
+                        target.display()
+                    ));
+                }
+            }
+        }
+        Err(format!("{} and {PLACE_TRIES} variants exist", a.name))
+    })
+    .await
+    .map_err(|e| format!("place task: {e}"))?
+}
+
 async fn stream_backup<W: AsyncWrite + Unpin>(copy: &Path, w: &mut W) -> Result<(), String> {
     let mut stamp = stamp_of(copy);
     stamp.backup = true;
@@ -262,62 +348,6 @@ async fn sqlite_backup(path: &Path) -> Option<PathBuf> {
             None
         }
     }
-}
-
-/// `state_write`: data frames into a new file at `path`, then mode and mtime.
-pub async fn write<R: AsyncRead + Unpin>(args: Value, r: &mut R) -> Output {
-    let a: WriteArgs = match rpc::parse(args) {
-        Ok(a) => a,
-        Err(e) => return Output::error(e),
-    };
-    match write_file(&a, r).await {
-        Ok(n) => Output::text(format!("wrote {n} bytes")),
-        Err(e) => Output::error(e),
-    }
-}
-
-/// `state_apply`: creates directories and symlinks, then sets directory modes.
-pub async fn apply(args: Value) -> Result<String, String> {
-    let mut a: ApplyArgs = rpc::parse(args)?;
-    tokio::task::spawn_blocking(move || {
-        for d in &a.dirs {
-            fs::create_dir_all(&d.path).map_err(|e| format!("mkdir {}: {e}", d.path.display()))?;
-            sys::set_mode(&d.path, d.mode)
-                .map_err(|e| format!("chmod {}: {e}", d.path.display()))?;
-        }
-        for l in &a.symlinks {
-            if let Some(parent) = l.path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| format!("mkdir {}: {e}", parent.display()))?;
-            }
-            let _ = fs::remove_file(&l.path);
-            sys::symlink(Path::new(&l.target), &l.path)
-                .map_err(|e| format!("symlink {}: {e}", l.path.display()))?;
-        }
-        a.modes
-            .sort_by_key(|m| std::cmp::Reverse(m.path.components().count()));
-        for m in &a.modes {
-            sys::set_mode(&m.path, m.mode)
-                .map_err(|e| format!("chmod {}: {e}", m.path.display()))?;
-        }
-        Ok(format!(
-            "{} dirs, {} symlinks, {} modes",
-            a.dirs.len(),
-            a.symlinks.len(),
-            a.modes.len()
-        ))
-    })
-    .await
-    .map_err(|e| format!("apply task: {e}"))?
-}
-
-/// `state_swap`: replaces each top-level entry of `root` by its staged copy with one rename,
-/// removes entries absent from the snapshot except `keep`, then deletes the staging dir.
-pub async fn swap(args: Value) -> Result<String, String> {
-    let a: SwapArgs = rpc::parse(args)?;
-    tokio::task::spawn_blocking(move || swap_blocking(&a))
-        .await
-        .map_err(|e| format!("swap task: {e}"))?
 }
 
 fn swap_blocking(a: &SwapArgs) -> Result<String, String> {
@@ -457,36 +487,6 @@ fn open_up(dir: &Path) {
             open_up(&entry.path());
         }
     }
-}
-
-/// `state_place`: renames `staging` to `dir/name`, or `name-2`, `name-3`, ... when that exists,
-/// and returns the name it took; it never replaces an existing entry.
-pub async fn place(args: Value) -> Result<String, String> {
-    let a: PlaceArgs = rpc::parse(args)?;
-    tokio::task::spawn_blocking(move || {
-        for n in 1..=PLACE_TRIES {
-            let name = if n == 1 {
-                a.name.clone()
-            } else {
-                format!("{}-{n}", a.name)
-            };
-            let target = a.dir.join(&name);
-            match sys::rename_new(&a.staging, &target) {
-                Ok(()) => return Ok(name),
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(e) => {
-                    return Err(format!(
-                        "rename {} to {}: {e}",
-                        a.staging.display(),
-                        target.display()
-                    ));
-                }
-            }
-        }
-        Err(format!("{} and {PLACE_TRIES} variants exist", a.name))
-    })
-    .await
-    .map_err(|e| format!("place task: {e}"))?
 }
 
 async fn write_file<R: AsyncRead + Unpin>(a: &WriteArgs, r: &mut R) -> Result<u64, String> {

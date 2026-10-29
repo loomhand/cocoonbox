@@ -10,6 +10,15 @@ use crate::tools;
 
 const MAX_DESCRIPTION: usize = 2048;
 
+/// A file the plugin serves over MCP.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+pub struct Resource {
+    pub uri: String,
+    pub path: PathBuf,
+    pub mime: String,
+    pub description: String,
+}
+
 /// One plugin tool.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 pub struct Plugin {
@@ -19,15 +28,6 @@ pub struct Plugin {
     pub bin: PathBuf,
     #[serde(default)]
     pub resources: Vec<Resource>,
-}
-
-/// A file the plugin serves over MCP.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-pub struct Resource {
-    pub uri: String,
-    pub path: PathBuf,
-    pub mime: String,
-    pub description: String,
 }
 
 impl Plugin {

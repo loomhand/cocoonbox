@@ -19,12 +19,6 @@ pub struct Secrets {
     values: RwLock<Registry>,
 }
 
-struct Registry {
-    numbers: Vec<String>,
-    stretches: Vec<u32>,
-    cvcs: Vec<String>,
-}
-
 impl Secrets {
     /// An empty registry.
     pub const fn new() -> Self {
@@ -94,6 +88,18 @@ impl Secrets {
     }
 }
 
+impl Default for Secrets {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct Registry {
+    numbers: Vec<String>,
+    stretches: Vec<u32>,
+    cvcs: Vec<String>,
+}
+
 impl Registry {
     fn replace(&self, text: &mut String, prose: bool) {
         if !self.numbers.is_empty()
@@ -106,12 +112,6 @@ impl Registry {
                 *text = replace_whole(text, cvc, CVC, prose);
             }
         }
-    }
-}
-
-impl Default for Secrets {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

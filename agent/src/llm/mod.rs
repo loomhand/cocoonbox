@@ -200,6 +200,12 @@ pub trait Deltas: Send {
     async fn next(&mut self) -> Result<Option<Delta>, String>;
 }
 
+/// A request that failed before its first delta, and whether trying it again may pass.
+struct Failure {
+    message: String,
+    transient: bool,
+}
+
 /// HTTP client bound to one gw endpoint; the production [`Model`].
 #[derive(Clone)]
 pub struct Client {
@@ -297,12 +303,6 @@ impl Client {
             unterminated: false,
         })
     }
-}
-
-/// A request that failed before its first delta, and whether trying it again may pass.
-struct Failure {
-    message: String,
-    transient: bool,
 }
 
 #[tonic::async_trait]

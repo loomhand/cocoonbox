@@ -394,54 +394,6 @@ pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
     }
 }
 
-/// Serves one request; the client closing its end cancels the tool.
-async fn serve_conn(host: Arc<Host>, stream: Conn) {
-    #[cfg(unix)]
-    let (mut rd, mut wr) = stream.into_split();
-    #[cfg(windows)]
-    let (mut rd, mut wr) = {
-        let pipe = crate::sys::PipeEnd::of(&stream);
-        let (half, wr) = tokio::io::split(stream);
-        (exec::AgentRead { half, pipe }, wr)
-    };
-    let call: Call = match rpc::read_frame(&mut rd).await {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("toolhost: bad request: {e}");
-            return;
-        }
-    };
-    match call.tool.as_str() {
-        "state_read" => {
-            if let Err(e) = state::read(call.args, &mut wr).await {
-                eprintln!("toolhost: state_read: {e}");
-            }
-            return;
-        }
-        "exec" => {
-            exec::run(&host.workspace, &host.home, &call.args, rd, wr).await;
-            return;
-        }
-        "state_write" => {
-            let out = state::write(call.args, &mut rd).await;
-            if let Err(e) = rpc::write_frame(&mut wr, &out).await {
-                eprintln!("toolhost: reply: {e}");
-            }
-            return;
-        }
-        _ => {}
-    }
-    let mut probe = [0u8; 1];
-    let tool = call.tool.clone();
-    let out = tokio::select! {
-        out = timing::scope(&tool, host.dispatch(call)) => out,
-        _ = rd.read(&mut probe) => return,
-    };
-    if let Err(e) = rpc::write_frame(&mut wr, &out).await {
-        eprintln!("toolhost: reply: {e}");
-    }
-}
-
 /// Waits for the next connection to `listener`.
 #[cfg(unix)]
 pub(crate) async fn accept(listener: &mut UnixListener) -> io::Result<Conn> {
@@ -495,6 +447,54 @@ pub(crate) fn bind(path: &Path, group: &str) -> Result<Listener, String> {
         security,
         next,
     })
+}
+
+/// Serves one request; the client closing its end cancels the tool.
+async fn serve_conn(host: Arc<Host>, stream: Conn) {
+    #[cfg(unix)]
+    let (mut rd, mut wr) = stream.into_split();
+    #[cfg(windows)]
+    let (mut rd, mut wr) = {
+        let pipe = crate::sys::PipeEnd::of(&stream);
+        let (half, wr) = tokio::io::split(stream);
+        (exec::AgentRead { half, pipe }, wr)
+    };
+    let call: Call = match rpc::read_frame(&mut rd).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("toolhost: bad request: {e}");
+            return;
+        }
+    };
+    match call.tool.as_str() {
+        "state_read" => {
+            if let Err(e) = state::read(call.args, &mut wr).await {
+                eprintln!("toolhost: state_read: {e}");
+            }
+            return;
+        }
+        "exec" => {
+            exec::run(&host.workspace, &host.home, &call.args, rd, wr).await;
+            return;
+        }
+        "state_write" => {
+            let out = state::write(call.args, &mut rd).await;
+            if let Err(e) = rpc::write_frame(&mut wr, &out).await {
+                eprintln!("toolhost: reply: {e}");
+            }
+            return;
+        }
+        _ => {}
+    }
+    let mut probe = [0u8; 1];
+    let tool = call.tool.clone();
+    let out = tokio::select! {
+        out = timing::scope(&tool, host.dispatch(call)) => out,
+        _ = rd.read(&mut probe) => return,
+    };
+    if let Err(e) = rpc::write_frame(&mut wr, &out).await {
+        eprintln!("toolhost: reply: {e}");
+    }
 }
 
 /// The box's OS release, desktop and the screen size shuttle reports as JSON, with the fields it could read.

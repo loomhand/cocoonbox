@@ -92,20 +92,6 @@ const EXCLUDED_NAME_PREFIXES: [&str; 6] = [
 ];
 const EXCLUDED_NAME_SUFFIXES: [&str; 1] = ["-shm"];
 
-/// Snapshots, uploads and restores user state; one operation runs at a time.
-pub struct StateEngine {
-    toolhost: rpc::Client,
-    store: Store,
-    roots: Vec<Root>,
-    excludes: Excludes,
-    work: PathBuf,
-    pause: Pause,
-    desktop_unit: Option<String>,
-    save_required: bool,
-    http: reqwest::Client,
-    pinned: Mutex<Option<Pinned>>,
-}
-
 /// What a quiesce pauses: the gate that every turn and MCP tool call holds shared, and the share calls it may interrupt.
 pub struct Pause {
     pub turns: Arc<RwLock<()>>,
@@ -126,6 +112,20 @@ impl From<String> for StateError {
     fn from(e: String) -> Self {
         Self::Failed(e)
     }
+}
+
+/// Snapshots, uploads and restores user state; one operation runs at a time.
+pub struct StateEngine {
+    toolhost: rpc::Client,
+    store: Store,
+    roots: Vec<Root>,
+    excludes: Excludes,
+    work: PathBuf,
+    pause: Pause,
+    desktop_unit: Option<String>,
+    save_required: bool,
+    http: reqwest::Client,
+    pinned: Mutex<Option<Pinned>>,
 }
 
 impl StateEngine {
