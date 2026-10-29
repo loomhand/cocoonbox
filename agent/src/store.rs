@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use prost::Message;
+use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::pb::{self, AgentStatus, TranscriptEntry, transcript_entry};
@@ -412,7 +413,7 @@ impl Store {
                     page.has_more = true;
                     break;
                 }
-                let entry = decode_entry(row.get(0)?, &row.get::<_, Vec<u8>>(1)?)?;
+                let entry = decode_entry(row)?;
                 bytes += entry.encoded_len();
                 page.entries.push(entry);
             }
@@ -434,9 +435,7 @@ impl Store {
                    AND t.rowid <= (SELECT rowid FROM turns WHERE id = ?2)
                  ORDER BY t.rowid, e.seq",
             )?;
-            let rows = stmt.query_map([agent_id, turn_id], |r| {
-                decode_entry(r.get(0)?, &r.get::<_, Vec<u8>>(1)?)
-            })?;
+            let rows = stmt.query_map([agent_id, turn_id], decode_entry)?;
             rows.collect()
         })
         .await
@@ -493,10 +492,14 @@ fn delete_rows(c: &Connection, id: &str) -> rusqlite::Result<bool> {
     Ok(c.execute("DELETE FROM agents WHERE id = ?1", [id])? > 0)
 }
 
-fn decode_entry(seq: i64, body: &[u8]) -> rusqlite::Result<TranscriptEntry> {
+fn decode_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptEntry> {
+    let body = r
+        .get_ref(1)?
+        .as_blob()
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, Type::Blob, Box::new(e)))?;
     let mut entry = TranscriptEntry::decode(body)
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
-    entry.seq = u64::try_from(seq).unwrap_or_default();
+    entry.seq = u64::try_from(r.get::<_, i64>(0)?).unwrap_or_default();
     Ok(entry)
 }
 

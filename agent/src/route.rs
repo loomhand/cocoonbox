@@ -45,7 +45,6 @@ pub struct Router {
     http: reqwest::Client,
     url: String,
     api_key: String,
-    route: &'static str,
     model: String,
 }
 
@@ -62,7 +61,6 @@ impl Router {
             http,
             url: format!("{}/decisions", base_url.trim_end_matches('/')),
             api_key: api_key.to_owned(),
-            route: DESK_ROUTE,
             model: route["model"].as_str().unwrap_or_default().to_owned(),
         })
     }
@@ -91,7 +89,7 @@ impl Router {
             .post(&self.url)
             .bearer_auth(&self.api_key)
             .header("content-type", "application/json")
-            .body(self.route.replacen(TASK, &task, 1))
+            .body(DESK_ROUTE.replacen(TASK, &task, 1))
             .send()
             .await
             .map_err(|e| format!("post {}: {e}", self.url))?;

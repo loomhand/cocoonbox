@@ -49,8 +49,11 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
     if !no_repo {
         valid_name(&wanted)?;
     }
-    let status = call(layout, &json!({"op": "status"})).await?;
-    let sessions = status["sessions"].as_array().cloned().unwrap_or_default();
+    let mut status = call(layout, &json!({"op": "status"})).await?;
+    let sessions = match status["sessions"].take() {
+        Value::Array(s) => s,
+        _ => Vec::new(),
+    };
     let mine_running = sessions
         .iter()
         .any(|s| s["repo"] == repo.as_str() && s["status"] != "stopped");
@@ -181,11 +184,10 @@ pub async fn send<R: Read + Send + 'static>(
     let id = offload_id(a)?;
     let prepare = a.flag("prepare");
     let no_repo = a.flag("no-repo");
-    let index = read_index(layout).await?;
-    let copy = index
-        .get(&repo)
+    let copy = read_index(layout)
+        .await?
+        .remove(&repo)
         .filter(|c| c.offload_id == id)
-        .cloned()
         .ok_or_else(|| Fail::refused(format!("the copy is not held by offload {id}; run begin")))?;
     if copy.unreturned {
         return Err(Fail::refused(

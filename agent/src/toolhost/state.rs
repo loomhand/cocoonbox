@@ -544,9 +544,7 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
         let Ok(read) = fs::read_dir(&dir) else {
             continue;
         };
-        let mut children: Vec<_> = read.flatten().collect();
-        children.sort_by_key(fs::DirEntry::file_name);
-        for child in children.into_iter().rev() {
+        for child in read.flatten() {
             let name = child.file_name().to_string_lossy().into_owned();
             let path = if rel.is_empty() {
                 name

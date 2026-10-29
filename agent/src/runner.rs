@@ -66,7 +66,6 @@ pub struct Runtime {
     pub(crate) model: Arc<dyn Model>,
     pub(crate) computer_tools: Vec<ToolSpec>,
     pub(crate) computer_prompt: String,
-    /// The OS and desktop of a box that is not Linux, once its toolhost has read them.
     machine: tokio::sync::OnceCell<String>,
     pub(crate) screen: tokio::sync::Mutex<()>,
     /// Cancelled when the process starts shutting down.

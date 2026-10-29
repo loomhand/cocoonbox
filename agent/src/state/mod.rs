@@ -13,7 +13,7 @@ use fastcdc::v2020::FastCDC;
 use futures_util::stream::{self, FuturesUnordered};
 use futures_util::{Stream, StreamExt};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, OnceCell, OwnedRwLockWriteGuard, RwLock, Semaphore, mpsc};
 
@@ -297,40 +297,22 @@ impl StateEngine {
             .ok_or_else(|| StateError::Invalid("no home root".to_owned()))?;
         let restored = home.path.join(RESTORED_DIR);
         let staging = restored.join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4().simple()));
-        let mut dirs = vec![json!({"path": staging, "mode": 0o700})];
-        let mut links = Vec::new();
-        let mut modes = Vec::new();
         let mut targets = Vec::new();
-        for (root, r) in records {
-            let path = staging.join(relative(&root.path)).join(&r.entry.path);
-            match r.entry.kind {
-                Kind::Dir => {
-                    dirs.push(json!({"path": path, "mode": r.entry.mode | 0o700}));
-                    modes.push(json!({"path": path, "mode": r.entry.mode}));
-                }
-                Kind::Symlink => links.push(json!({
-                    "path": path,
-                    "target": r.entry.target.as_deref().unwrap_or_default(),
-                })),
-                Kind::File => targets.push(Target {
-                    dest: Dest::Staged(path, &r.entry),
-                    chunks: &r.chunks,
-                }),
-            }
-        }
-        let mut apply = json!({"dirs": null, "symlinks": []});
-        apply["dirs"] = dirs.into();
-        self.tool("state_apply", apply).await?;
+        let (first, last) = stage(
+            records
+                .into_iter()
+                .map(|(root, r)| (staging.join(relative(&root.path)).join(&r.entry.path), r)),
+            &staging,
+            &mut targets,
+        );
+        self.tool("state_apply", first).await?;
         let cache = self.cache().await?;
         let filled = self
             .fill(&opened.keys, targets, opened.gets, reqs, &cache, progress)
             .await;
         let _ = tokio::fs::remove_dir_all(&cache).await;
         let mut meter = filled?.meter;
-        let mut apply = json!({"dirs": [], "symlinks": null, "modes": null});
-        apply["symlinks"] = links.into();
-        apply["modes"] = modes.into();
-        self.tool("state_apply", apply).await?;
+        self.tool("state_apply", last).await?;
         meter.msg.target = self
             .tool(
                 "state_place",
@@ -411,32 +393,12 @@ impl StateEngine {
             let staging = root
                 .path
                 .join(format!("{STAGING_PREFIX}{}", uuid::Uuid::new_v4().simple()));
-            let mut dirs = vec![json!({"path": staging, "mode": 0o700})];
-            let mut root_links = Vec::new();
-            let mut modes = Vec::new();
-            for r in &records {
-                let path = staging.join(&r.entry.path);
-                match r.entry.kind {
-                    Kind::Dir => {
-                        dirs.push(json!({"path": path, "mode": r.entry.mode | 0o700}));
-                        modes.push(json!({"path": path, "mode": r.entry.mode}));
-                    }
-                    Kind::Symlink => root_links.push(json!({
-                        "path": path,
-                        "target": r.entry.target.as_deref().unwrap_or_default(),
-                    })),
-                    Kind::File => targets.push(Target {
-                        dest: Dest::Staged(path, &r.entry),
-                        chunks: &r.chunks,
-                    }),
-                }
-            }
-            let mut apply = json!({"dirs": null, "symlinks": []});
-            apply["dirs"] = dirs.into();
-            self.tool("state_apply", apply).await?;
-            let mut last = json!({"dirs": [], "symlinks": null, "modes": null});
-            last["symlinks"] = root_links.into();
-            last["modes"] = modes.into();
+            let (first, last) = stage(
+                records.iter().map(|r| (staging.join(&r.entry.path), *r)),
+                &staging,
+                &mut targets,
+            );
+            self.tool("state_apply", first).await?;
             finals.push(last);
             let names: BTreeSet<&str> = records
                 .iter()
@@ -649,7 +611,7 @@ impl StateEngine {
         &self,
         manifest: &Manifest,
         cache: &Path,
-        swaps: Vec<serde_json::Value>,
+        swaps: Vec<Value>,
     ) -> Result<(), StateError> {
         self.desktop("stop").await?;
         let swapped = self.swap_staged(manifest, cache, swaps).await;
@@ -662,7 +624,7 @@ impl StateEngine {
         &self,
         manifest: &Manifest,
         cache: &Path,
-        swaps: Vec<serde_json::Value>,
+        swaps: Vec<Value>,
     ) -> Result<(), StateError> {
         for swap in swaps {
             self.tool("state_swap", swap).await?;
@@ -998,7 +960,7 @@ impl StateEngine {
         });
     }
 
-    async fn tool(&self, name: &str, args: serde_json::Value) -> Result<String, String> {
+    async fn tool(&self, name: &str, args: Value) -> Result<String, String> {
         let call = Call {
             agent_id: "state".to_owned(),
             tool: name.to_owned(),
@@ -1413,6 +1375,38 @@ pub fn excludes() -> Excludes {
     }
 }
 
+fn stage<'a>(
+    records: impl IntoIterator<Item = (PathBuf, &'a FileRecord)>,
+    staging: &Path,
+    targets: &mut Vec<Target<'a>>,
+) -> (Value, Value) {
+    let mut dirs = vec![json!({"path": staging, "mode": 0o700})];
+    let mut links = Vec::new();
+    let mut modes = Vec::new();
+    for (path, r) in records {
+        match r.entry.kind {
+            Kind::Dir => {
+                dirs.push(json!({"path": path, "mode": r.entry.mode | 0o700}));
+                modes.push(json!({"path": path, "mode": r.entry.mode}));
+            }
+            Kind::Symlink => links.push(json!({
+                "path": path,
+                "target": r.entry.target.as_deref().unwrap_or_default(),
+            })),
+            Kind::File => targets.push(Target {
+                dest: Dest::Staged(path, &r.entry),
+                chunks: &r.chunks,
+            }),
+        }
+    }
+    let mut first = json!({"dirs": null, "symlinks": []});
+    first["dirs"] = dirs.into();
+    let mut last = json!({"dirs": [], "symlinks": null, "modes": null});
+    last["symlinks"] = links.into();
+    last["modes"] = modes.into();
+    (first, last)
+}
+
 /// `path` without its prefix and root: `/home/user` is `home/user`, and `C:\\Users\\user` is `Users\\user`.
 fn relative(path: &Path) -> PathBuf {
     path.components()
@@ -1421,7 +1415,7 @@ fn relative(path: &Path) -> PathBuf {
 }
 
 /// After a restore Chrome follows the restored profile's record of the save, otherwise the close.
-fn chrome_start(closed: bool, restored: bool) -> Option<serde_json::Value> {
+fn chrome_start(closed: bool, restored: bool) -> Option<Value> {
     if restored {
         Some(json!({"if_was_running": true}))
     } else {

@@ -922,17 +922,7 @@ impl Browser {
     }
 
     async fn browser(&self) -> Result<Cdp, String> {
-        let url = format!("http://127.0.0.1:{}/json/version", self.port);
-        let version: Value = self
-            .http
-            .get(&url)
-            .timeout(Duration::from_secs(2))
-            .send()
-            .await
-            .map_err(|e| format!("get {url}: {e}"))?
-            .json()
-            .await
-            .map_err(|e| format!("decode {url}: {e}"))?;
+        let version: Value = self.devtools("version").await?;
         Cdp::open(version["webSocketDebuggerUrl"].as_str().unwrap_or_default()).await
     }
 
@@ -982,7 +972,11 @@ impl Browser {
     }
 
     async fn targets(&self) -> Result<Vec<Target>, String> {
-        let url = format!("http://127.0.0.1:{}/json/list", self.port);
+        self.devtools("list").await
+    }
+
+    async fn devtools<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, String> {
+        let url = format!("http://127.0.0.1:{}/json/{path}", self.port);
         self.http
             .get(&url)
             .timeout(Duration::from_secs(2))
@@ -1831,7 +1825,7 @@ fn capped(text: &str) -> String {
 }
 
 fn js_str(s: &str) -> String {
-    Value::String(s.to_owned()).to_string()
+    serde_json::to_string(s).unwrap_or_default()
 }
 
 /// `s` as a JS string literal in a buffer sized for the worst-case escape, so it never reallocates.
