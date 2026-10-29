@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 use serde_json::{Value, json};
 
 use super::{
-    Delta, IMAGE_OMITTED, MODEL_ERROR, Message, Part, Request, Usage, b64, image_mime, sse,
+    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, sse, stream_error,
 };
 
 /// Accumulates usage across `message_start` and `message_delta`.
@@ -77,7 +77,7 @@ impl Parser {
                 out.push_back(Delta::Usage(self.usage));
                 out.push_back(Delta::Done);
             }
-            "error" => return Err(format!("{MODEL_ERROR}{}", v["error"])),
+            "error" => return Err(stream_error(&v["error"])),
             _ => {}
         }
         Ok(())
@@ -279,13 +279,25 @@ mod tests {
     }
 
     #[test]
-    fn error_event_fails() {
+    fn an_error_event_fails_and_gw_quota_says_the_model_credits_are_used_up() {
         let mut p = Parser::default();
-        let event = sse::Event {
-            event: "error".into(),
-            data: r#"{"type":"error","error":{"type":"overloaded_error"}}"#.into(),
+        let mut feed = |data: &str| {
+            let event = sse::Event {
+                event: "error".into(),
+                data: data.into(),
+            };
+            p.feed(&event, &mut VecDeque::new()).unwrap_err()
         };
-        assert!(p.feed(&event, &mut VecDeque::new()).is_err());
+        assert_eq!(
+            feed(r#"{"type":"error","error":{"type":"overloaded_error"}}"#),
+            r#"model error: {"type":"overloaded_error"}"#
+        );
+        assert_eq!(
+            feed(
+                r#"{"type":"error","error":{"type":"invalid_request_error","code":"service_quota_exceeded_exception","message":"daily cost budget exhausted for user u-1"}}"#
+            ),
+            "model credits are used up: the gw stream returned service_quota_exceeded_exception: daily cost budget exhausted for user u-1; add credit or upgrade the plan, then try again"
+        );
     }
 
     #[test]
