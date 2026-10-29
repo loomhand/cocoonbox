@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net"
 	"net/http"
@@ -37,7 +37,7 @@ func TestMCPPostRoundTrip(t *testing.T) {
 		t.Fatalf("status %d, Mcp-Session-Id %q", resp.StatusCode, resp.Header.Get("Mcp-Session-Id"))
 	}
 	var got map[string]string
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
 	want := map[string]string{
@@ -165,7 +165,7 @@ func TestMCPRejects(t *testing.T) {
 			resp := env.do(t, req)
 			defer resp.Body.Close()
 			var body jsonRPCError
-			if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			if err := json.UnmarshalRead(resp.Body, &body); err != nil {
 				t.Fatalf("decode: %v", err)
 			}
 			if resp.StatusCode != tt.want || body.JSONRPC != "2.0" || body.Error.Code != -32000 || body.Error.Message != tt.message {
@@ -206,7 +206,7 @@ func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
 	req.Header.Set(credential.Header, "forged")
 	var got map[string]string
 	err = env.mcp.Exchange(req, "alice", boxes.BoxID("alice"), func(resp *http.Response) error {
-		return json.NewDecoder(resp.Body).Decode(&got)
+		return json.UnmarshalRead(resp.Body, &got)
 	})
 	if err != nil || got["path"] != "/mcp" || got["credential"] != "cred:"+boxes.BoxID("alice")+":w1" || got["body"] != `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` {
 		t.Fatalf("exchange = %v, upstream saw %v", err, got)
@@ -351,7 +351,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	w.Header().Set("Mcp-Session-Id", "sess-1")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]string{
+	_ = json.MarshalWrite(w, map[string]string{
 		"path": r.URL.Path, "query": r.URL.RawQuery, "session": r.Header.Get("Mcp-Session-Id"),
 		"edge_token": r.Header.Get(HeaderEdgeToken), "authorization": r.Header.Get("Authorization"), "body": string(body),
 		"credential": r.Header.Get(credential.Header), "guest": r.Header.Get(auth.HeaderGuestToken),

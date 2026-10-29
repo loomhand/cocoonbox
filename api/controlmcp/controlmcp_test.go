@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"runtime/debug"
@@ -108,6 +109,22 @@ func TestTransportRejects(t *testing.T) {
 	}
 }
 
+func TestRefusedBodiesCarryTheirJSONRPCCode(t *testing.T) {
+	srv, _ := newTestServer(t)
+	for body, want := range map[string]int{
+		`{"jsonrpc":`: mcpwire.CodeParse,
+		`[{"jsonrpc":"2.0","id":1,"method":"ping"}]`: mcpwire.CodeInvalidRequest,
+		`{"jsonrpc":"2.0","id":1,"method":5}`:        mcpwire.CodeInvalidRequest,
+	} {
+		var reply struct {
+			Error mcpwire.Error `json:"error"`
+		}
+		if rec := serve(srv, http.MethodPost, aliceToken, body); json.Unmarshal(rec.Body.Bytes(), &reply) != nil || reply.Error.Code != want {
+			t.Errorf("%s: %s, want code %d", body, rec.Body, want)
+		}
+	}
+}
+
 func TestUnknownMethodAndTool(t *testing.T) {
 	srv, fake := newTestServer(t)
 
@@ -118,7 +135,7 @@ func TestUnknownMethodAndTool(t *testing.T) {
 		`{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"box_status","arguments":[]}}`:             mcpwire.CodeInvalidParams,
 	} {
 		rec := serve(srv, http.MethodPost, aliceToken, body)
-		var raw map[string]json.RawMessage
+		var raw map[string]jsontext.Value
 		if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
 			t.Fatalf("decode %s: %v", rec.Body, err)
 		}
@@ -629,8 +646,8 @@ func structured(t *testing.T, reply rpcReply) map[string]any {
 }
 
 func mapsEqual(a, b map[string]any) bool {
-	x, _ := json.Marshal(a)
-	y, _ := json.Marshal(b)
+	x, _ := json.Marshal(a, json.Deterministic(true))
+	y, _ := json.Marshal(b, json.Deterministic(true))
 	return string(x) == string(y)
 }
 

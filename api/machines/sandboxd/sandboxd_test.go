@@ -2,7 +2,7 @@ package sandboxd
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -1034,6 +1034,13 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 	}
 }
 
+func TestFingerprintOfAStoredEntryStaysTheSame(t *testing.T) {
+	v := &envVar{Value: "p&ss<word>", Guest: new(false), Inject: &inject{Hosts: []string{"api.example.com"}, Header: "Authorization", Placeholder: "Bearer <key>"}}
+	if got, want := fingerprint(v), "0ab05bc9d861004d0c83514c9e357831ce427514362edb059a76ac2c209fa60d"; got != want {
+		t.Errorf("fingerprint = %s, want %s", got, want)
+	}
+}
+
 type fakeSandbox struct {
 	row   row
 	token string
@@ -1072,7 +1079,7 @@ func (f *fakeSandboxd) handler() http.Handler {
 	}))
 	mux.HandleFunc("POST /v1/claim", func(w http.ResponseWriter, r *http.Request) {
 		var req claimRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.UnmarshalRead(r.Body, &req)
 		f.mu.Lock()
 		if len(f.redirect) > 0 && !req.NoRedirect {
 			to := addrs(f.redirect)
@@ -1102,7 +1109,7 @@ func (f *fakeSandboxd) handler() http.Handler {
 	})
 	mux.HandleFunc("PUT /v1/tenants/{name}", f.root(func(w http.ResponseWriter, r *http.Request) {
 		var req tenantRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.UnmarshalRead(r.Body, &req)
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if req.Token == "" {
@@ -1154,7 +1161,7 @@ func (f *fakeSandboxd) handler() http.Handler {
 			delete(f.sandboxes, sb.row.ID)
 		case "renew":
 			var req renewRequest
-			_ = json.NewDecoder(r.Body).Decode(&req)
+			_ = json.UnmarshalRead(r.Body, &req)
 			if sb.row.Archived {
 				writeError(w, http.StatusConflict, "archived")
 				return
@@ -1180,7 +1187,7 @@ func (f *fakeSandboxd) handler() http.Handler {
 		var req struct {
 			Env map[string]*envVar `json:"env"`
 		}
-		_ = json.NewDecoder(r.Body).Decode(&req)
+		_ = json.UnmarshalRead(r.Body, &req)
 		f.calls["patch"]++
 		if f.patchStatus != 0 {
 			writeError(w, f.patchStatus, "refused")
@@ -1239,7 +1246,7 @@ func (f *fakeSandboxd) exec(w http.ResponseWriter, r *http.Request, sb *fakeSand
 		return
 	}
 	var req execRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	_ = json.UnmarshalRead(r.Body, &req)
 	f.execs = append(f.execs, req)
 	if f.execStatus != 0 {
 		writeError(w, f.execStatus, "guest unreachable")
@@ -1466,11 +1473,11 @@ func isNotRunning(err error, state machines.State) bool {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.MarshalWrite(w, v)
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+	_ = json.MarshalWrite(w, map[string]string{"error": message})
 }

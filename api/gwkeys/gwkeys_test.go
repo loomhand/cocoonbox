@@ -4,7 +4,8 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"maps"
 	"net/http"
@@ -153,7 +154,7 @@ func TestDailyCapRoundTripsEachForm(t *testing.T) {
 			}
 		})
 	}
-	gw.budgets[other] = json.RawMessage(`"lots"`)
+	gw.budgets[other] = jsontext.Value(`"lots"`)
 	if _, err := c.DailyCap(t.Context(), other); err == nil {
 		t.Error("DailyCap of an unknown word succeeded")
 	}
@@ -223,13 +224,13 @@ type fakeGW struct {
 	usageUser  string
 	usageSince string
 
-	budgets    map[string]json.RawMessage
+	budgets    map[string]jsontext.Value
 	budgetPage int
 }
 
 func newFakeGW(t *testing.T) (*fakeGW, *Client) {
 	t.Helper()
-	gw := &fakeGW{keys: map[string]map[string]any{}, budgets: map[string]json.RawMessage{}, budgetPage: 200}
+	gw := &fakeGW{keys: map[string]map[string]any{}, budgets: map[string]jsontext.Value{}, budgetPage: 200}
 	gw.srv = httptest.NewServer(http.HandlerFunc(gw.serve))
 	t.Cleanup(gw.srv.Close)
 	c, err := New(gw.srv.URL, adminToken)
@@ -295,18 +296,18 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 			rows = append(rows, map[string]any{"user": u, "daily_cost_quota_micros": g.budgets[u], "monthly_cost_quota_micros": nil})
 		}
 		page["users"] = rows
-		_ = json.NewEncoder(w).Encode(page)
+		_ = json.MarshalWrite(w, page)
 	case r.Method == http.MethodGet && hasBudget:
-		_ = json.NewEncoder(w).Encode(map[string]any{"user": budgetUser, "daily_cost_quota_micros": orNull(g.budgets[budgetUser])})
+		_ = json.MarshalWrite(w, map[string]any{"user": budgetUser, "daily_cost_quota_micros": orNull(g.budgets[budgetUser])})
 	case r.Method == http.MethodPut && hasBudget:
-		var body map[string]json.RawMessage
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		var body map[string]jsontext.Value
+		_ = json.UnmarshalRead(r.Body, &body)
 		if daily := body["daily_cost_quota_micros"]; string(daily) == "null" {
 			delete(g.budgets, budgetUser)
 		} else {
 			g.budgets[budgetUser] = daily
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"user": budgetUser, "daily_cost_quota_micros": body["daily_cost_quota_micros"]})
+		_ = json.MarshalWrite(w, map[string]any{"user": budgetUser, "daily_cost_quota_micros": body["daily_cost_quota_micros"]})
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/keys":
 		g.lists++
 		q := r.URL.Query()
@@ -322,13 +323,13 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		page = page[:min(limit, len(page))]
-		_ = json.NewEncoder(w).Encode(map[string]any{"count": len(page), "offset": 0, "keys": page})
+		_ = json.MarshalWrite(w, map[string]any{"count": len(page), "offset": 0, "keys": page})
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/usage/users":
 		g.usageUser, g.usageSince = r.URL.Query().Get("user"), r.URL.Query().Get("since")
 		_, _ = w.Write([]byte(g.usage))
 	case r.Method == http.MethodPost && r.URL.Path == "/admin/keys":
 		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.UnmarshalRead(r.Body, &body)
 		if _, ok := body["ak"]; ok {
 			writeError(w, http.StatusBadRequest, "the client chose the key")
 			return
@@ -354,9 +355,9 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body map[string]any
-		_ = json.NewDecoder(r.Body).Decode(&body)
+		_ = json.UnmarshalRead(r.Body, &body)
 		maps.Copy(g.keys[id], body)
-		_ = json.NewEncoder(w).Encode(g.keys[id])
+		_ = json.MarshalWrite(w, g.keys[id])
 	case r.Method == http.MethodDelete && hasID:
 		if !idFormat.MatchString(id) {
 			writeError(w, http.StatusBadRequest, "the client deleted by raw key")
@@ -379,14 +380,14 @@ func akID(ak string) string {
 	return "sha256:" + hex.EncodeToString(sum[:16])
 }
 
-func orNull(raw json.RawMessage) json.RawMessage {
+func orNull(raw jsontext.Value) jsontext.Value {
 	if len(raw) == 0 {
-		return json.RawMessage("null")
+		return jsontext.Value("null")
 	}
 	return raw
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": message}})
+	_ = json.MarshalWrite(w, map[string]any{"error": map[string]any{"message": message}})
 }

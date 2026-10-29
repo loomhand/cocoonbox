@@ -4,7 +4,8 @@ package gwkeys
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -251,15 +252,15 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 	if out == nil {
 		return resp.StatusCode, nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.UnmarshalRead(resp.Body, out); err != nil {
 		return resp.StatusCode, fmt.Errorf("decode %s: %w", op, err)
 	}
 	return resp.StatusCode, nil
 }
 
 type budget struct {
-	User  string          `json:"user"`
-	Daily json.RawMessage `json:"daily_cost_quota_micros"`
+	User  string         `json:"user"`
+	Daily jsontext.Value `json:"daily_cost_quota_micros"`
 }
 
 func (b budget) dailyCap() (*int64, error) {

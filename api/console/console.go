@@ -5,7 +5,7 @@ package console
 import (
 	"context"
 	"embed"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -772,7 +772,7 @@ func capText(micros *int64) string {
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+	if err := json.UnmarshalRead(r.Body, v); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return false
 	}
@@ -781,11 +781,11 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(v)
+	_ = json.MarshalWrite(w, v)
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": message})
+	_ = json.MarshalWrite(w, map[string]string{"error": message})
 }

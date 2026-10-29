@@ -4,7 +4,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"maps"
@@ -46,7 +47,7 @@ var (
 
 	boxField = []byte(`"box"`)
 
-	defaultInitialize = json.RawMessage(`{"protocolVersion":"` + mcpwire.Latest + `","capabilities":{},"clientInfo":{"name":"` + unifiedName + `"}}`)
+	defaultInitialize = jsontext.Value(`{"protocolVersion":"` + mcpwire.Latest + `","capabilities":{},"clientInfo":{"name":"` + unifiedName + `"}}`)
 )
 
 // agentSessions are the agent sessions held open, one per box: a user's client session's own, or the ones every client session of a grant shares.
@@ -67,7 +68,7 @@ func (a *agentSessions) drop(box, upstream string) bool {
 
 // session is what the api keeps of one client session on RootPath: the client's initialize, its agent sessions and its default box.
 type session struct {
-	params json.RawMessage
+	params jsontext.Value
 	used   time.Time
 	agents *agentSessions
 
@@ -89,7 +90,7 @@ func (s *session) reset(box, upstream string) {
 }
 
 // openSession records a new client session of caller, dropping sessions idle for sessionIdle and caller's least recently used past maxSessions.
-func (s *Server) openSession(ctx context.Context, caller, id string, params json.RawMessage) *session {
+func (s *Server) openSession(ctx context.Context, caller, id string, params jsontext.Value) *session {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.keepSession(ctx, caller, id, &session{params: params})
@@ -211,7 +212,7 @@ func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
 	if err != nil {
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInternal, Message: status.Convert(err).Message()}
 	}
-	var boxTools []json.RawMessage
+	var boxTools []jsontext.Value
 	l, err := s.lists.ToolList(ctx, image, boxes.Family(image))
 	if err == nil && len(l.Tools) != 0 {
 		err = json.Unmarshal(l.Tools, &boxTools)
@@ -231,7 +232,7 @@ func (s *Server) listTools(ctx context.Context) (any, *mcpwire.Error) {
 }
 
 // callBox runs a box tool on the box its box argument names, else the session's default box; a box that is not running is woken first, within wakeBound.
-func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string, sess *session, id json.RawMessage, body []byte, accept string, call *callParams) {
+func (s *Server) callBox(ctx context.Context, w http.ResponseWriter, user string, sess *session, id jsontext.Value, body []byte, accept string, call *callParams) {
 	ref, body, err := takeBox(body, call)
 	if err != nil {
 		writeJSON(w, http.StatusOK, newResponse(id, nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "invalid arguments: " + err.Error()}))
@@ -368,7 +369,7 @@ func (s *Server) target(ctx context.Context, sess *session, ref string) (string,
 }
 
 // open opens an agent session on box with the client's initialize, and records what the agent of image serves the first time an admin's box of it is reached.
-func (s *Server) open(ctx context.Context, user, box, image string, params json.RawMessage) (string, error) {
+func (s *Server) open(ctx context.Context, user, box, image string, params jsontext.Value) (string, error) {
 	var (
 		upstream string
 		answer   struct {
@@ -380,7 +381,7 @@ func (s *Server) open(ctx context.Context, user, box, image string, params json.
 	if len(params) == 0 {
 		params = defaultInitialize
 	}
-	hello, err := marshal(request{JSONRPC: mcpwire.Version, ID: json.RawMessage(`0`), Method: methodInitialize, Params: params})
+	hello, err := json.Marshal(request{JSONRPC: mcpwire.Version, ID: jsontext.Value(`0`), Method: methodInitialize, Params: params})
 	if err != nil {
 		return "", err
 	}
@@ -388,7 +389,7 @@ func (s *Server) open(ctx context.Context, user, box, image string, params json.
 		if upstream = resp.Header.Get(mcpwire.SessionHeader); resp.StatusCode != http.StatusOK || upstream == "" {
 			return status.Errorf(codes.Unavailable, "the box agent answered initialize with %s", resp.Status)
 		}
-		return json.NewDecoder(resp.Body).Decode(&answer)
+		return json.UnmarshalRead(resp.Body, &answer)
 	})
 	if err != nil {
 		return "", err
@@ -405,11 +406,11 @@ func (s *Server) open(ctx context.Context, user, box, image string, params json.
 	}
 	var list struct {
 		Result struct {
-			Tools json.RawMessage `json:"tools"`
+			Tools jsontext.Value `json:"tools"`
 		} `json:"result"`
 	}
 	err = s.agents.Exchange(agentRequest(ctx, http.MethodPost, []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`), upstream, acceptBoth), user, box, func(resp *http.Response) error {
-		return json.NewDecoder(resp.Body).Decode(&list)
+		return json.UnmarshalRead(resp.Body, &list)
 	})
 	if err != nil || len(list.Result.Tools) == 0 {
 		logger.Warnf(ctx, "list the tools of image %s on box %s: %v", image, box, err)
@@ -474,7 +475,7 @@ func takeBox(body []byte, call *callParams) (string, []byte, error) {
 	if !bytes.Contains(call.Arguments, boxField) {
 		return "", body, nil
 	}
-	var args map[string]json.RawMessage
+	var args map[string]jsontext.Value
 	if err := json.Unmarshal(call.Arguments, &args); err != nil || args["box"] == nil {
 		return "", body, nil
 	}
@@ -483,7 +484,7 @@ func takeBox(body []byte, call *callParams) (string, []byte, error) {
 		return "", nil, errors.New("box must be a string")
 	}
 	delete(args, "box")
-	var msg, params map[string]json.RawMessage
+	var msg, params map[string]jsontext.Value
 	if err := json.Unmarshal(body, &msg); err != nil {
 		return "", nil, err
 	}
@@ -502,8 +503,8 @@ func takeBox(body []byte, call *callParams) (string, []byte, error) {
 }
 
 // withBoxArgument adds the box argument to a box tool's input schema; a tool it cannot read goes as it is.
-func withBoxArgument(tool json.RawMessage) json.RawMessage {
-	var t, schema, properties map[string]json.RawMessage
+func withBoxArgument(tool jsontext.Value) jsontext.Value {
+	var t, schema, properties map[string]jsontext.Value
 	if json.Unmarshal(tool, &t) != nil || json.Unmarshal(t["inputSchema"], &schema) != nil {
 		return tool
 	}
@@ -511,17 +512,17 @@ func withBoxArgument(tool json.RawMessage) json.RawMessage {
 		return tool
 	}
 	if properties == nil {
-		properties = map[string]json.RawMessage{}
+		properties = map[string]jsontext.Value{}
 	}
-	properties["box"] = json.RawMessage(boxArgument)
+	properties["box"] = jsontext.Value(boxArgument)
 	var err error
-	if schema["properties"], err = json.Marshal(properties); err != nil {
+	if schema["properties"], err = json.Marshal(properties, json.Deterministic(true)); err != nil {
 		return tool
 	}
-	if t["inputSchema"], err = json.Marshal(schema); err != nil {
+	if t["inputSchema"], err = json.Marshal(schema, json.Deterministic(true)); err != nil {
 		return tool
 	}
-	out, err := json.Marshal(t)
+	out, err := json.Marshal(t, json.Deterministic(true))
 	if err != nil {
 		return tool
 	}

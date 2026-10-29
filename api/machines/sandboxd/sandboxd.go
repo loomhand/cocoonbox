@@ -6,7 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"maps"
@@ -1386,7 +1387,7 @@ func fingerprint(v *envVar) string {
 	if v == nil {
 		return ""
 	}
-	raw, _ := json.Marshal(v)
+	raw, _ := json.Marshal(v, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

@@ -3,7 +3,7 @@ package config
 
 import (
 	"cmp"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/netip"
