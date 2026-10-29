@@ -338,13 +338,13 @@ impl Session for SessionSvc {
     }
 }
 
+type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
+
 /// `cocoonbox.agent.v1.State`, called by the api to move user state to and from object storage.
 pub struct StateSvc {
     rt: Arc<Runtime>,
     engine: Arc<StateEngine>,
 }
-
-type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
 
 #[tonic::async_trait]
 impl State for StateSvc {
@@ -514,10 +514,6 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
     Ok(())
 }
 
-fn incoming(listener: TcpListener) -> TcpIncoming {
-    TcpIncoming::from(listener).with_nodelay(Some(true))
-}
-
 /// Resolves on the first SIGTERM or SIGINT; on Windows, on Ctrl-C or the service stop.
 pub(crate) async fn shutdown_signal() {
     #[cfg(unix)]
@@ -535,6 +531,10 @@ pub(crate) async fn shutdown_signal() {
         _ = tokio::signal::ctrl_c() => {}
         () = term => {}
     }
+}
+
+fn incoming(listener: TcpListener) -> TcpIncoming {
+    TcpIncoming::from(listener).with_nodelay(Some(true))
 }
 
 /// Runs a transfer and streams its progress; a failure ends the stream with a status.

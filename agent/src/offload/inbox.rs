@@ -1066,6 +1066,17 @@ pub async fn relay(socket: PathBuf, journal: Arc<Journal>, stop: CancellationTok
     }
 }
 
+/// Tells the inbox that a restore replaced its state directory; the restart check it runs is not awaited.
+pub async fn rescan(socket: &Path) -> Result<(), String> {
+    let mut stream = UnixStream::connect(socket)
+        .await
+        .map_err(|e| format!("connect {}: {e}", socket.display()))?;
+    stream
+        .write_all(b"{\"op\":\"rescan\"}\n")
+        .await
+        .map_err(|e| format!("rescan: {e}"))
+}
+
 async fn follow(socket: &Path, journal: &Journal) -> Result<(), String> {
     let stream = UnixStream::connect(socket)
         .await
@@ -1084,17 +1095,6 @@ async fn follow(socket: &Path, journal: &Journal) -> Result<(), String> {
         }
     }
     Err("the inbox closed the feed".to_owned())
-}
-
-/// Tells the inbox that a restore replaced its state directory; the restart check it runs is not awaited.
-pub async fn rescan(socket: &Path) -> Result<(), String> {
-    let mut stream = UnixStream::connect(socket)
-        .await
-        .map_err(|e| format!("connect {}: {e}", socket.display()))?;
-    stream
-        .write_all(b"{\"op\":\"rescan\"}\n")
-        .await
-        .map_err(|e| format!("rescan: {e}"))
 }
 
 /// The first prompt's file and hooks file go on the command line; the CLI replaces the login shell.

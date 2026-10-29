@@ -374,24 +374,6 @@ pub async fn home_shell(home: &Path, cmd: &str) -> Result<String, String> {
     .await
 }
 
-async fn shell(bash: &mut tokio::process::Command, cmd: &str) -> Result<String, String> {
-    let out = bash
-        .args(["-lc", cmd])
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .map_err(|e| format!("spawn bash: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-    } else {
-        Err(one_line(&format!(
-            "{cmd}: {}: {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr).trim()
-        )))
-    }
-}
-
 /// Runs git in `dir`; its trimmed stdout on success.
 pub async fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     git_env(dir, args, &[]).await
@@ -413,6 +395,24 @@ pub async fn git_env(dir: &Path, args: &[&str], envs: &[(&str, &Path)]) -> Resul
         Err(one_line(&format!(
             "git {}: {}",
             args.join(" "),
+            String::from_utf8_lossy(&out.stderr).trim()
+        )))
+    }
+}
+
+async fn shell(bash: &mut tokio::process::Command, cmd: &str) -> Result<String, String> {
+    let out = bash
+        .args(["-lc", cmd])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|e| format!("spawn bash: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(one_line(&format!(
+            "{cmd}: {}: {}",
+            out.status,
             String::from_utf8_lossy(&out.stderr).trim()
         )))
     }
