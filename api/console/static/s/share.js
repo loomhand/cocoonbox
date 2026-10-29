@@ -10,7 +10,7 @@ function notice(text) {
   $("state").textContent = "";
 }
 
-const secret = location.hash.slice(1);
+const secret = location.hash.match(/cbs_[0-9a-f]+/)?.[0] ?? "";
 let current = null;
 let paused = false;
 
