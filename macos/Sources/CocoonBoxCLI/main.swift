@@ -2,6 +2,7 @@ import CocoonBoxBridge
 import CocoonBoxKit
 import Darwin
 import Foundation
+import GRPCCore
 import Synchronization
 
 // cocoonbox drives the user's cocoonbox from a terminal and serves it to local
@@ -39,6 +40,10 @@ usage: cocoonbox <command> [options]
                                         unless a client reached it. Timers in the box run the routine.
   box schedule list [--json]            list the wake schedules of your boxes
   box schedule clear BOX                remove the wake schedule of BOX
+  share create BOX [--ttl 24h] [--json] make a read-only share link of BOX that lasts --ttl, such as 30m, 24h or
+                                        7d (default 24h, 1m to 30d); a box has one live share at a time
+  share ls [--json]                     list your live shares with their links
+  share revoke ID [--json]              end a share and every session of it
   usage [--json]                        show the model usage gw metered for you today and this month (UTC),
                                         by model, with your daily cost cap and what is left of it
   flows [list] [--json]                 list your saved flows: your boxes sync them
@@ -107,7 +112,7 @@ and take the default box the app sets.
 let arguments = Array(CommandLine.arguments.dropFirst())
 let command = arguments.first ?? "help"
 let flags = Set(arguments.dropFirst().filter { $0.hasPrefix("--") })
-let valuedFlags: Set = ["--awake-for", "--box", "--cron", "--days", "--dir", "--endpoint", "--handover", "--image", "--invite", "--kind", "--token", "--token-file", "--tz", "--wait"]
+let valuedFlags: Set = ["--awake-for", "--box", "--cron", "--days", "--dir", "--endpoint", "--handover", "--image", "--invite", "--kind", "--token", "--token-file", "--ttl", "--tz", "--wait"]
 let words = positional(arguments.dropFirst())
 
 // rsh exits 255 on its own failures, so they differ from the command's exit codes.
@@ -319,10 +324,11 @@ func boxCommand() async {
 
 let scheduleUsage = "usage: cocoonbox box schedule [set BOX --cron \"M H DOM MON DOW\" --tz ZONE [--awake-for 15m] | list | clear BOX] [--json]"
 
-// seconds reads a duration such as 90s, 15m or 1h.
+// seconds reads a duration such as 90s, 15m, 1h or 7d.
 func seconds(_ text: String) -> UInt32? {
-    guard let unit = text.last, let factor = ["s": 1, "m": 60, "h": 3600][String(unit)], let count = UInt32(text.dropLast()) else { return nil }
-    return count * UInt32(factor)
+    guard let unit = text.last, let factor = ["s": 1, "m": 60, "h": 3600, "d": 86400][String(unit)], let count = UInt32(text.dropLast()) else { return nil }
+    let (total, overflow) = count.multipliedReportingOverflow(by: UInt32(factor))
+    return overflow ? nil : total
 }
 
 func scheduleObject(_ schedule: Cocoonbox_Control_V1_WakeSchedule, name: String) -> [String: Any] {
@@ -683,6 +689,70 @@ func devicesCommand() async {
             print("revoked \(words[1])")
         default:
             fail(devicesUsage)
+        }
+    } catch {
+        fail(BoxConnection.describe(error))
+    }
+}
+
+// MARK: shares
+
+let shareUsage = "usage: cocoonbox share [create BOX [--ttl 24h] | ls | revoke ID] [--json]"
+
+// shareLink is empty for a share created before the api kept secrets.
+func shareLink(_ share: Cocoonbox_Control_V1_Share, _ endpoint: Endpoint) -> String {
+    share.secret.isEmpty ? "" : ShareSetup(endpoint: endpoint, boxID: share.boxID, secret: share.secret, named: !share.users.isEmpty).link
+}
+
+func shareObject(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: Endpoint) -> [String: Any] {
+    ["id": share.id, "box_id": share.boxID, "name": name, "link": shareLink(share, endpoint), "write": share.write,
+     "users": share.users.map(\.name), "created_at_ms": share.createdAtMs, "expires_at_ms": share.expiresAtMs]
+}
+
+func shareLine(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: Endpoint) -> String {
+    let who = share.users.isEmpty ? "anyone with the link" : share.users.map(\.name).joined(separator: ",")
+    let expires = Date(timeIntervalSince1970: Double(share.expiresAtMs) / 1000).formatted(.iso8601)
+    let link = shareLink(share, endpoint)
+    return "\(share.id)  \(name)  \(share.write ? "write" : "read")  \(who)  expires \(expires)  \(link.isEmpty ? "-" : link)"
+}
+
+func shareCommand() async {
+    let json = flags.contains("--json")
+    let connection = connection()
+    defer { connection.close() }
+    do {
+        let boxes = try await connection.listBoxes()
+        let names = Dictionary(boxes.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        switch words.first ?? "ls" {
+        case "create":
+            guard words.count == 2 else { fail(shareUsage) }
+            let target = box(words[1], in: boxes)
+            var ttl: Int64 = 0
+            if flags.contains("--ttl") {
+                guard let text = value(of: "--ttl"), let parsed = seconds(text) else { fail("--ttl is a duration such as 30m, 24h or 7d") }
+                ttl = Int64(parsed)
+            }
+            let created: Cocoonbox_Control_V1_ShareSecret
+            do {
+                created = try await connection.createShare(boxID: target.id, ttlSeconds: ttl, userNames: [], write: false)
+            } catch let error as RPCError where error.code == .alreadyExists {
+                fail("\(target.name) already has a live share; `cocoonbox share ls` shows it, and `cocoonbox share revoke ID` ends it")
+            }
+            let share = created.share
+            if json { return printJSON(shareObject(share, name: target.name, endpoint: connection.endpoint)) }
+            print(shareLink(share, connection.endpoint))
+            print("read-only share \(share.id) of \(target.name), expires \(Date(timeIntervalSince1970: Double(share.expiresAtMs) / 1000).formatted(.iso8601))")
+        case "ls", "list":
+            let shares = try await connection.listShares()
+            if json { return printJSON(["shares": shares.map { shareObject($0, name: names[$0.boxID] ?? "", endpoint: connection.endpoint) }]) }
+            if shares.isEmpty { return print("no live shares") }
+            shares.forEach { print(shareLine($0, name: names[$0.boxID] ?? "", endpoint: connection.endpoint)) }
+        case "revoke":
+            guard words.count == 2 else { fail(shareUsage) }
+            try await connection.revokeShare(shareID: words[1])
+            json ? printJSON(["id": words[1], "revoked": true]) : print("revoked \(words[1])")
+        default:
+            fail(shareUsage)
         }
     } catch {
         fail(BoxConnection.describe(error))
@@ -1402,6 +1472,8 @@ case "keys":
     await keysCommand()
 case "devices":
     await devicesCommand()
+case "share":
+    await shareCommand()
 case "invite":
     await inviteCommand()
 case "mcp":

@@ -6,7 +6,7 @@
 # routing by `box`, the default box, the running limit, --box and box_delete,
 # the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
 # and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, devices and devices revoke, logout --everywhere, a release-built
+# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, devices and devices revoke, share create, ls and revoke, logout --everywhere, a release-built
 # bridge naming the keys at initialize, and login through the browser and logout. Nothing touches
 # the login keychain or the real HOME: `login` stores the mock token in a
 # throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
@@ -336,6 +336,36 @@ r = run("devices", "revoke", "dev_gone")
 check("devices revoke of an unknown device fails", r.returncode == 1 and "device not found" in r.stderr, r.stderr)
 r = run("devices", "revoke")
 check("devices revoke without an id prints the usage", r.returncode == 1 and "usage: cocoonbox devices" in r.stderr, r.stderr)
+
+import re
+r = run("share", "ls")
+check("share ls without shares", r.returncode == 0 and r.stdout.strip() == "no live shares", r.stdout + r.stderr)
+r = run("share", "create", "main", "--ttl", "7d", "--json")
+made = json.loads(r.stdout) if r.returncode == 0 else {}
+link = re.escape(os.environ["COCOONBOX_ENDPOINT"]) + "/cb/s/#cbs_[0-9a-f]{32}"
+check("share create --json: a read-only link of the box with its expiry", (made.get("box_id"), made.get("name"), made.get("write"), made.get("users")) == ("cb-mock00000000", "main", False, [])
+      and re.fullmatch(link, made.get("link", "")) is not None and made["expires_at_ms"] - made["created_at_ms"] == 7 * 86400 * 1000, r.stdout + r.stderr)
+r = run("share", "create", "cb-mock00000000")
+check("share create while the box has a live share points to share ls and share revoke", r.returncode == 1 and "main already has a live share" in r.stderr and "cocoonbox share ls" in r.stderr and "cocoonbox share revoke ID" in r.stderr, r.stderr)
+r = run("share", "ls", "--json")
+listed = json.loads(r.stdout)["shares"] if r.returncode == 0 else []
+check("share ls --json lists the live share with its link", [(x["id"], x["box_id"], x["link"], x["expires_at_ms"]) for x in listed] == [(made.get("id"), "cb-mock00000000", made.get("link"), made.get("expires_at_ms"))], r.stdout + r.stderr)
+r = run("share", "ls")
+check("share ls prints id, box, mode, who, expiry and link", r.returncode == 0 and r.stdout.startswith(f"{made.get('id')}  main  read  anyone with the link  expires ") and r.stdout.strip().endswith(made.get("link", "?")), r.stdout + r.stderr)
+r = run("share", "create", "main", "--ttl", "soon")
+check("share create refuses a bad --ttl", r.returncode == 1 and "--ttl is a duration" in r.stderr, r.stderr)
+r = run("share", "create", "nope")
+check("share create names a missing box", r.returncode == 1 and "you have no box nope" in r.stderr, r.stderr)
+r = run("share", "revoke", made.get("id", "?"))
+check("share revoke", r.returncode == 0 and r.stdout.strip() == f"revoked {made.get('id')}" and run("share", "ls").stdout.strip() == "no live shares", r.stdout + r.stderr)
+r = run("share", "revoke", made.get("id", "?"))
+check("share revoke of a revoked share fails", r.returncode == 1 and "share not found" in r.stderr, r.stderr)
+r = run("share", "create", "main", "--json")
+made = json.loads(r.stdout) if r.returncode == 0 else {}
+check("share create without --ttl lasts the api's default 24 h", made.get("expires_at_ms", 0) - made.get("created_at_ms", 0) == 86400 * 1000, r.stdout + r.stderr)
+check("share revoke --json", json.loads(run("share", "revoke", made.get("id", "?"), "--json").stdout or "{}") == {"id": made.get("id"), "revoked": True})
+r = run("share", "revoke")
+check("share revoke without an id prints the usage", r.returncode == 1 and "usage: cocoonbox share" in r.stderr, r.stderr)
 
 headers = run("mcp-headers")
 check("mcp-headers prints the Authorization header", json.loads(headers.stdout) == {"Authorization": "Bearer mock-token"}, headers.stdout)
