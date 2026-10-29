@@ -41,6 +41,8 @@ const TRANSIENT_ERRORS: [&str; 2] = ["model_error", "overloaded_error"];
 const NO_OUTPUT: &str = "model stream ended before any output";
 const READ_FAILED: &str = "read model stream: ";
 const MODEL_ERROR: &str = "model error: ";
+const CREDITS_USED_UP: &str = "model credits are used up";
+const QUOTA_EXCEEDED: &str = "service_quota_exceeded_exception";
 
 /// A tool the model may call; connector tools carry names and descriptions of their own.
 pub struct ToolSpec {
@@ -288,7 +290,7 @@ impl Client {
             let text: String = text.chars().take(ERROR_BODY_BYTES).collect();
             return Err(Failure {
                 transient: TRANSIENT_STATUSES.contains(&status.as_u16()),
-                message: format!("gw {path} returned {status}: {text}"),
+                message: refused(&format!("gw {path}"), status, &text),
             });
         }
         Ok(Stream {
@@ -433,6 +435,24 @@ fn early_transient(message: &str) -> bool {
             .is_some_and(|e| TRANSIENT_ERRORS.iter().any(|t| e["type"] == *t))
 }
 
+/// The error of a gw answer that is not a success; a 402 or gw's quota class says the model credits are used up.
+fn refused(what: &str, status: reqwest::StatusCode, body: &str) -> String {
+    let error = serde_json::from_str::<Value>(body).unwrap_or_default()["error"].take();
+    let quota = status == reqwest::StatusCode::BAD_REQUEST && error["code"] == QUOTA_EXCEEDED;
+    if status != reqwest::StatusCode::PAYMENT_REQUIRED && !quota {
+        return format!("{what} returned {status}: {body}");
+    }
+    let reason = error["message"].as_str().unwrap_or(body).trim();
+    let reason = if reason.is_empty() {
+        String::new()
+    } else {
+        format!(": {reason}")
+    };
+    format!(
+        "{CREDITS_USED_UP}: {what} returned {status}{reason}; add credit or upgrade the plan, then try again"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -565,6 +585,48 @@ mod tests {
             (r#"model error: {"type":"invalid_request_error"}"#, false),
         ];
         assert_eq!(got, want.map(|(m, t)| (m.to_owned(), t)),);
+    }
+
+    #[tokio::test]
+    async fn a_402_or_the_gw_quota_answer_says_the_model_credits_are_used_up_without_a_retry() {
+        let quota = r#"{"error":{"message":"daily token quota exhausted for key ak-1","type":"invalid_request_error","param":null,"code":"service_quota_exceeded_exception"}}"#;
+        let other = r#"{"error":{"message":"bad","type":"invalid_request_error","param":null,"code":"validation_exception"}}"#;
+        let http = |status: &str, body: &str| {
+            format!(
+                "HTTP/1.1 {status}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+        };
+        let gw = mock_gw(vec![
+            http("402 Payment Required", "daily credit exhausted"),
+            http("402 Payment Required", ""),
+            http("400 Bad Request", quota),
+            http("400 Bad Request", other),
+        ])
+        .await;
+        let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
+        let spent = |status: &str, reason: &str| {
+            format!(
+                "model credits are used up: gw chat/completions returned {status}{reason}; add credit or upgrade the plan, then try again"
+            )
+        };
+        let want = [
+            spent("402 Payment Required", ": daily credit exhausted"),
+            spent("402 Payment Required", ""),
+            spent(
+                "400 Bad Request",
+                ": daily token quota exhausted for key ak-1",
+            ),
+            format!("gw chat/completions returned 400 Bad Request: {other}"),
+        ];
+        for want in want {
+            let started = std::time::Instant::now();
+            let Err(got) = client.start(&probe_request()).await else {
+                panic!("a refused request passed");
+            };
+            assert!(started.elapsed() < RETRY_WAITS[0]);
+            assert_eq!(got, want);
+        }
     }
 
     #[tokio::test]
