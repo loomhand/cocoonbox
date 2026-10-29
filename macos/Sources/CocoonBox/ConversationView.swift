@@ -228,7 +228,7 @@ struct RowView: View {
         case .turnEnd(_, let end):
             HStack(spacing: 6) {
                 Image(systemName: end.ok ? "checkmark.circle" : "exclamationmark.triangle")
-                Text(end.ok ? "Turn finished" : "Turn failed: \(end.error)")
+                Text(TurnWording.line(end))
                 if end.hasUsage {
                     Text("· \(end.usage.inputTokens) in / \(end.usage.outputTokens) out")
                 }
