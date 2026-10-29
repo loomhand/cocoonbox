@@ -107,7 +107,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, struct {
 		Grants []oauth.Grant `json:"grants"`
 		Boxes  []choice      `json:"boxes"`
-	}{append([]oauth.Grant{}, grants...), s.choices(u.ID)})
+	}{grants, s.choices(u.ID)})
 }
 
 func (s *Server) chooseAgentBoxes(w http.ResponseWriter, r *http.Request) {
@@ -168,7 +168,7 @@ func (s *Server) failAuthorization(w http.ResponseWriter, r *http.Request, err e
 
 // choices lists user's own boxes, the ones an agent may be let use, oldest first.
 func (s *Server) choices(user string) []choice {
-	out := []choice{}
+	var out []choice
 	for _, b := range s.users.Boxes(user) {
 		if !b.Agent {
 			out = append(out, choice{ID: b.ID, Name: b.Name})

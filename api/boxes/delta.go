@@ -381,7 +381,7 @@ func chunkDiff(base, next []chunk) (chunkDelta, bool) {
 	for _, c := range base {
 		inBase[c.ID] = true
 	}
-	d := chunkDelta{Added: []chunk{}, Removed: []string{}}
+	var d chunkDelta
 	for _, c := range next {
 		if !inBase[c.ID] && !inNext[c.ID] {
 			d.Added = append(d.Added, c)

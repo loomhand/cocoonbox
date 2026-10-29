@@ -218,7 +218,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		SpentToday      int64          `json:"spent_today_micros"`
 		OwnBoxes        int            `json:"own_boxes"`
 		Connect         bool           `json:"connect"`
-	}{User: u, Boxes: []box{}, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning, Connect: s.connect != nil}
+	}{User: u, DefaultDailyCap: s.defaultDailyCap, DefaultRunning: s.defaultMaxRunning, Connect: s.connect != nil}
 	for _, b := range s.users.Boxes(u.ID) {
 		if !b.Agent {
 			resp.OwnBoxes++
@@ -344,7 +344,7 @@ func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, append([]users.Device{}, devices...))
+	writeJSON(w, devices)
 }
 
 func (s *Server) revokeDevice(w http.ResponseWriter, r *http.Request) {
@@ -753,7 +753,7 @@ func toBox(b *controlv1.Box) box {
 }
 
 func toShare(sh *controlv1.Share) share {
-	out := share{ID: sh.GetId(), Box: sh.GetBoxId(), Users: []string{}, Write: sh.GetWrite(), Secret: sh.GetSecret(), ExpiresAt: sh.GetExpiresAtMs()}
+	out := share{ID: sh.GetId(), Box: sh.GetBoxId(), Write: sh.GetWrite(), Secret: sh.GetSecret(), ExpiresAt: sh.GetExpiresAtMs()}
 	for _, u := range sh.GetUsers() {
 		out.Users = append(out.Users, u.GetName())
 	}

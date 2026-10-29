@@ -155,7 +155,7 @@ func (s *Server) listIdentities(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, append([]signup.Identity{}, ids...))
+	writeJSON(w, ids)
 }
 
 func (s *Server) unlink(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +264,7 @@ func (s *Server) listQueue(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, append([]signup.Entry{}, queue...))
+	writeJSON(w, queue)
 }
 
 func (s *Server) actOnQueue(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +283,7 @@ func (s *Server) listInvites(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, append([]signup.Invite{}, invites...))
+	writeJSON(w, invites)
 }
 
 func (s *Server) createInvite(w http.ResponseWriter, r *http.Request) {
@@ -308,7 +308,7 @@ func (s *Server) listTokenInvites(w http.ResponseWriter, r *http.Request, token 
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, append([]signup.Invite{}, invites...))
+	writeJSON(w, invites)
 }
 
 // createTokenInvite makes a one-use invite for an invite-scoped token; uses, when sent, must be 1.
@@ -339,7 +339,7 @@ func (s *Server) listInviteTokens(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	writeJSON(w, append([]signup.InviteToken{}, tokens...))
+	writeJSON(w, tokens)
 }
 
 func (s *Server) mintInviteToken(w http.ResponseWriter, r *http.Request) {
