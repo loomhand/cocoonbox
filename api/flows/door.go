@@ -113,5 +113,5 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.MarshalWrite(w, v)
+	_ = json.MarshalWrite(w, v, json.Deterministic(true))
 }

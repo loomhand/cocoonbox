@@ -155,7 +155,7 @@ func (s *Service) discover(ctx context.Context, mcpURL string, preset client) (*
 
 // challenge sends the MCP server an unauthenticated initialize and reads its WWW-Authenticate answer.
 func (s *Service) challenge(ctx context.Context, mcpURL string) (string, string, error) {
-	body, _ := json.Marshal(rpcRequest{JSONRPC: mcpwire.Version, ID: 1, Method: methodInitialize, Params: initializeParams()})
+	body, _ := json.Marshal(rpcRequest{JSONRPC: mcpwire.Version, ID: 1, Method: methodInitialize, Params: initializeParams()}, json.Deterministic(true))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mcpURL, bytes.NewReader(body))
 	if err != nil {
 		return "", "", err
@@ -205,7 +205,7 @@ func (s *Service) register(ctx context.Context, endpoint string) (client, error)
 		"grant_types":                []string{grantAuthorizationCode, grantRefreshToken},
 		"response_types":             []string{responseCode},
 		"token_endpoint_auth_method": authNone,
-	})
+	}, json.Deterministic(true))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return client{}, err

@@ -238,7 +238,7 @@ func (c *client) do(ctx context.Context, method, path string, query url.Values, 
 func (c *client) request(ctx context.Context, token, method, path string, query url.Values, body, out any) error {
 	var payload io.Reader
 	if body != nil {
-		raw, err := json.Marshal(body)
+		raw, err := json.Marshal(body, json.Deterministic(true))
 		if err != nil {
 			return fmt.Errorf("encode %s %s: %w", method, path, err)
 		}

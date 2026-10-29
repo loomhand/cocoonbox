@@ -781,7 +781,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.MarshalWrite(w, v)
+	_ = json.MarshalWrite(w, v, json.Deterministic(true))
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

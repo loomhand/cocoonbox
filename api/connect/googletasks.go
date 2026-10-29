@@ -197,7 +197,7 @@ func (s *Service) googleTasks(ctx context.Context, authorization string, msg rpc
 		}
 		result, err := json.Marshal(struct {
 			Tools []map[string]any `json:"tools"`
-		}{defs})
+		}{defs}, json.Deterministic(true))
 		return result, ex, err
 	case "tools/call":
 		call, _ := msg.Params.(toolCall)

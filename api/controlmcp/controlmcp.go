@@ -285,7 +285,7 @@ func (e *eventStream) progress(message string) {
 }
 
 func (e *eventStream) send(msg any) {
-	data, err := json.Marshal(msg)
+	data, err := json.Marshal(msg, json.Deterministic(true))
 	if err != nil {
 		return
 	}
@@ -383,7 +383,7 @@ func writeFailure(w http.ResponseWriter, httpStatus, code int, message string) {
 }
 
 func writeJSON(w http.ResponseWriter, httpStatus int, body any) {
-	data, err := json.Marshal(body)
+	data, err := json.Marshal(body, json.Deterministic(true))
 	if err != nil {
 		httpStatus = http.StatusInternalServerError
 		data = []byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"encode response"}}`)

@@ -213,7 +213,7 @@ func (c *Client) request(ctx context.Context, method, path string, query url.Val
 	op := method + " " + path
 	var payload io.Reader
 	if body != nil {
-		raw, err := json.Marshal(body)
+		raw, err := json.Marshal(body, json.Deterministic(true))
 		if err != nil {
 			return 0, fmt.Errorf("encode %s: %w", op, err)
 		}

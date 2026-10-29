@@ -434,7 +434,7 @@ func expose(g *grant, t tool, door string) (map[string]jsontext.Value, bool) {
 		annotations := map[string]jsontext.Value{}
 		_ = json.Unmarshal(t.raw["annotations"], &annotations)
 		annotations["readOnlyHint"], annotations["destructiveHint"] = jsontext.Value("false"), jsontext.Value("true")
-		out["annotations"], _ = json.Marshal(annotations)
+		out["annotations"], _ = json.Marshal(annotations, json.Deterministic(true))
 	}
 	return out, true
 }
