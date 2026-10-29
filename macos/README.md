@@ -74,6 +74,7 @@ cocoonbox setup claude            # local marketplace + plugin: claude plugin ma
 cocoonbox setup codex             # codex plugin marketplace add / codex plugin add
 cocoonbox setup cursor            # merges {"command": "<cli>", "args": ["mcp"]} into ~/.cursor/mcp.json
 cocoonbox status | ensure | save | hibernate | upgrade --yes
+cocoonbox share create main --ttl 7d  # a read-only share link of a box (default 24h, 1m to 30d); share ls lists the live shares with their links, share revoke ID ends one
 ```
 
 Every client runs `cocoonbox mcp`, a stdio MCP server. It reads the token from the Keychain and keeps it only in memory. Lifecycle tools go to the control MCP (`/cocoonbox.mcp/control`) and box tools to `/cocoonbox.mcp/<box id>`. The client's own `initialize` is passed through, so the app lists the session under the client's name. With the box hibernated, `tools/list` answers from the box's last list (`~/Library/Caches/cocoonbox`), and the first box-tool call wakes the box, reporting progress on the caller's token; `--no-wake` refuses instead. No client config holds a token or a URL.
