@@ -442,15 +442,31 @@ fn refused(what: &str, status: reqwest::StatusCode, body: &str) -> String {
     if status != reqwest::StatusCode::PAYMENT_REQUIRED && !quota {
         return format!("{what} returned {status}: {body}");
     }
-    let reason = error["message"].as_str().unwrap_or(body).trim();
+    used_up(
+        &format!("{what} returned {status}"),
+        error["message"].as_str().unwrap_or(body),
+    )
+}
+
+/// The error of a reply whose stream carried `error`; gw's quota class says the model credits are used up.
+fn stream_error(error: &Value) -> String {
+    if error["code"] != QUOTA_EXCEEDED {
+        return format!("{MODEL_ERROR}{error}");
+    }
+    used_up(
+        &format!("the gw stream returned {QUOTA_EXCEEDED}"),
+        error["message"].as_str().unwrap_or_default(),
+    )
+}
+
+fn used_up(what: &str, reason: &str) -> String {
+    let reason = reason.trim();
     let reason = if reason.is_empty() {
         String::new()
     } else {
         format!(": {reason}")
     };
-    format!(
-        "{CREDITS_USED_UP}: {what} returned {status}{reason}; add credit or upgrade the plan, then try again"
-    )
+    format!("{CREDITS_USED_UP}: {what}{reason}; add credit or upgrade the plan, then try again")
 }
 
 #[cfg(test)]

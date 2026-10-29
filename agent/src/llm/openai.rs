@@ -5,7 +5,7 @@ use std::collections::{HashSet, VecDeque};
 use serde_json::{Value, json};
 
 use super::{
-    Delta, IMAGE_OMITTED, MODEL_ERROR, Message, Part, Request, Usage, b64, image_mime, sse,
+    Delta, IMAGE_OMITTED, Message, Part, Request, Usage, b64, image_mime, sse, stream_error,
 };
 
 /// Tracks which tool-call indexes already started.
@@ -24,7 +24,7 @@ impl Parser {
         let v: Value = serde_json::from_str(&event.data)
             .map_err(|e| format!("decode chat chunk: {e}: {}", event.data))?;
         if let Some(err) = v.get("error") {
-            return Err(format!("{MODEL_ERROR}{err}"));
+            return Err(stream_error(err));
         }
         if let Some(choice) = v["choices"].get(0) {
             let delta = &choice["delta"];
@@ -280,13 +280,25 @@ mod tests {
     }
 
     #[test]
-    fn error_chunk_fails() {
+    fn an_error_chunk_fails_and_gw_quota_says_the_model_credits_are_used_up() {
         let mut p = Parser::default();
-        let event = sse::Event {
-            event: String::new(),
-            data: r#"{"error":{"message":"quota"}}"#.into(),
+        let mut feed = |data: &str| {
+            let event = sse::Event {
+                event: String::new(),
+                data: data.into(),
+            };
+            p.feed(&event, &mut VecDeque::new()).unwrap_err()
         };
-        assert!(p.feed(&event, &mut VecDeque::new()).is_err());
+        assert_eq!(
+            feed(r#"{"error":{"message":"quota"}}"#),
+            r#"model error: {"message":"quota"}"#
+        );
+        assert_eq!(
+            feed(
+                r#"{"error":{"message":"daily cost budget exhausted for user u-1","type":"invalid_request_error","param":null,"code":"service_quota_exceeded_exception"}}"#
+            ),
+            "model credits are used up: the gw stream returned service_quota_exceeded_exception: daily cost budget exhausted for user u-1; add credit or upgrade the plan, then try again"
+        );
     }
 
     #[test]
