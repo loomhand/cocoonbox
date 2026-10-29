@@ -169,7 +169,7 @@ func (l *Link) spendRequests(w http.ResponseWriter, r *http.Request) {
 	case l.failSpend:
 		w.WriteHeader(http.StatusInternalServerError)
 	default:
-		writeJSON(w, http.StatusOK, map[string]any{"data": append([]map[string]any{}, l.spends...)})
+		writeJSON(w, http.StatusOK, map[string]any{"data": l.spends})
 	}
 }
 

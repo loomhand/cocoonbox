@@ -123,7 +123,7 @@ func (s *Server) connectState(w http.ResponseWriter, r *http.Request) {
 		Catalog    []catalogEntry            `json:"catalog"`
 		Connectors []connector               `json:"connectors"`
 		Pending    []connect.PendingApproval `json:"pending"`
-	}{Catalog: []catalogEntry{}, Connectors: []connector{}, Pending: pending}
+	}{Pending: pending}
 	for _, e := range catalog.GetEntries() {
 		resp.Catalog = append(resp.Catalog, catalogEntry{
 			ID: e.GetId(), Name: e.GetName(), Description: e.GetDescription(), Available: e.GetAvailable(), InstallURL: e.GetInstallUrl(),
@@ -257,7 +257,7 @@ func (s *Server) approve(w http.ResponseWriter, r *http.Request) {
 func toConnector(c *controlv1.Connector) connector {
 	out := connector{
 		ID: c.GetId(), Kind: c.GetKind(), Name: c.GetName(), Account: c.GetAccount(), Status: c.GetStatus(), Scopes: c.GetScopes(),
-		MCPURL: c.GetMcpUrl(), ConnectedAt: c.GetConnectedAtMs(), Tools: []connectTool{}, ToolsError: c.GetToolsError(),
+		MCPURL: c.GetMcpUrl(), ConnectedAt: c.GetConnectedAtMs(), ToolsError: c.GetToolsError(),
 	}
 	for _, t := range c.GetTools() {
 		out.Tools = append(out.Tools, connectTool{

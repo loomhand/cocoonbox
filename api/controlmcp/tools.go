@@ -267,7 +267,7 @@ func (s *Server) list(ctx context.Context) (*listResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &listResult{Boxes: []listEntry{}}
+	out := &listResult{}
 	for _, b := range list {
 		out.Boxes = append(out.Boxes, listEntry{BoxID: b.GetId(), Name: b.GetName(), State: stateName(b.GetState()), Image: b.GetImage(), LastSavedAtMs: b.GetLastSavedAtMs()})
 	}
@@ -611,7 +611,7 @@ func internal(err error) bool {
 func toUsagePeriod(p *controlv1.UsagePeriod) usagePeriod {
 	out := usagePeriod{
 		SinceMs: p.GetSinceMs(), Requests: p.GetRequests(), PromptTokens: p.GetPromptTokens(), CompletionTokens: p.GetCompletionTokens(),
-		TotalTokens: p.GetTotalTokens(), CostMicros: p.GetCostMicros(), Models: []modelUsage{},
+		TotalTokens: p.GetTotalTokens(), CostMicros: p.GetCostMicros(),
 	}
 	for _, m := range p.GetModels() {
 		out.Models = append(out.Models, modelUsage{

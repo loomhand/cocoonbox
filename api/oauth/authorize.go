@@ -75,7 +75,8 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 	if err != nil {
 		return Consent{}, err
 	}
-	existing, chosen := "", []string{}
+	var existing string
+	var chosen []string
 	if !c.firstParty {
 		if existing, err = s.store.liveGrant(ctx, user, c.id); err != nil {
 			return Consent{}, err
