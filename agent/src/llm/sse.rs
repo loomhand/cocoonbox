@@ -24,8 +24,8 @@ impl Decoder {
     pub fn next_event(&mut self) -> Option<Event> {
         loop {
             let end = self.buf.windows(2).position(|w| w == b"\n\n")?;
-            let raw: Vec<u8> = self.buf.drain(..end + 2).collect();
-            let event = parse(&String::from_utf8_lossy(&raw[..end]));
+            let event = parse(&String::from_utf8_lossy(&self.buf[..end]));
+            self.buf.drain(..end + 2);
             if !event.data.is_empty() || !event.event.is_empty() {
                 return Some(event);
             }

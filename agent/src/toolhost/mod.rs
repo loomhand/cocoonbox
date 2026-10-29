@@ -615,8 +615,11 @@ async fn window_titles(shuttle: &Client) -> Vec<String> {
     };
     let windows: Vec<Value> = serde_json::from_str(&out.text).unwrap_or_default();
     windows
-        .iter()
-        .filter_map(|w| w["title"].as_str().map(str::to_owned))
+        .into_iter()
+        .filter_map(|mut w| match w["title"].take() {
+            Value::String(t) => Some(t),
+            _ => None,
+        })
         .collect()
 }
 

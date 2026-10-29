@@ -1,5 +1,6 @@
 //! Session.Exec: relays a command's stdin, stdout and stderr between the stream and the toolhost.
 
+use bytes::Bytes;
 use serde_json::json;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -72,7 +73,7 @@ pub async fn relay(
                 Ok(Some(_)) => continue,
                 Ok(None) => {
                     open = false;
-                    (rpc::EOF, Vec::new())
+                    (rpc::EOF, Bytes::new())
                 }
                 Err(_) => {
                     feeding.cancel();
@@ -127,23 +128,23 @@ pub async fn relay(
 }
 
 /// The toolhost frame for one client frame; `None` for a frame it does not take.
-fn to_toolhost(body: In) -> Option<(u8, Vec<u8>)> {
+fn to_toolhost(body: In) -> Option<(u8, Bytes)> {
     match body {
-        In::Stdin(data) if !data.is_empty() => Some((rpc::STDIN, data.to_vec())),
-        In::Eof(_) => Some((rpc::EOF, Vec::new())),
+        In::Stdin(data) if !data.is_empty() => Some((rpc::STDIN, data)),
+        In::Eof(_) => Some((rpc::EOF, Bytes::new())),
         In::Signal(signal) => {
             let signal = match ExecSignal::try_from(signal).ok()? {
                 ExecSignal::Int => libc::SIGINT,
                 ExecSignal::Term => libc::SIGTERM,
                 ExecSignal::Unspecified => return None,
             };
-            Some((rpc::SIGNAL, signal.to_be_bytes().to_vec()))
+            Some((rpc::SIGNAL, Bytes::copy_from_slice(&signal.to_be_bytes())))
         }
         In::Resize(window) => {
             let clamp = |n: u32| u16::try_from(n).unwrap_or(u16::MAX).to_be_bytes();
             Some((
                 rpc::RESIZE,
-                [clamp(window.rows), clamp(window.cols)].concat(),
+                [clamp(window.rows), clamp(window.cols)].concat().into(),
             ))
         }
         In::Start(_) | In::Stdin(_) => None,

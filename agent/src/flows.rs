@@ -154,11 +154,9 @@ impl Syncer {
                     if remote.name.ends_with(".json") {
                         self.stale_index.store(true, Ordering::SeqCst);
                     }
-                    self.run(
-                        "flows_write",
-                        json!({"name": remote.name, "content": content}),
-                    )
-                    .await?;
+                    let mut args = json!({"name": remote.name});
+                    args["content"] = content.into();
+                    self.run("flows_write", args).await?;
                 }
             }
             self.store
