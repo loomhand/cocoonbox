@@ -126,6 +126,145 @@ func TestCreateLeavesNothingBehindOnFailure(t *testing.T) {
 	}
 }
 
+func TestEnsureCreatesAnOutsideUserUnderItsOwnIDOnce(t *testing.T) {
+	svc, gw, tenants, _ := newTestService(t)
+	const id = "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"
+	u, err := svc.Ensure(t.Context(), "firebase", id)
+	if err != nil || u.ID != id || u.Name != id || u.IDP != "firebase" || u.Admin {
+		t.Fatalf("Ensure = %+v, %v", u, err)
+	}
+	key := gw.keys[u.ID]
+	if again, err := svc.Ensure(t.Context(), "firebase", id); err != nil || again.ID != u.ID || gw.keys[u.ID] != key {
+		t.Errorf("a second Ensure = %+v, %v; gw key %q, want %q kept", again, err, gw.keys[u.ID], key)
+	}
+	if boxes := svc.Boxes(u.ID); len(boxes) != 1 || len(tenants.tenants) != 1 {
+		t.Errorf("boxes %+v, tenants %v, want one of each", boxes, tenants.tenants)
+	}
+	if _, err := svc.Ensure(t.Context(), "firebase", ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("Ensure without an id = %v, want ErrInvalid", err)
+	}
+}
+
+func TestEnsureNeverHandsOutAUserAnotherSourceHolds(t *testing.T) {
+	svc, _, _, dsn := newTestService(t)
+	local, err := svc.Create(t.Context(), NewUser{ID: "alice", Name: "alice", Admin: true})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := svc.Ensure(t.Context(), "other", "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	for _, id := range []string{local.ID, "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"} {
+		if u, err := svc.Ensure(t.Context(), "firebase", id); !errors.Is(err, ErrExists) || u.ID != "" {
+			t.Errorf("Ensure of %s, held by another source = %+v, %v, want ErrExists", id, u, err)
+		}
+		if u, err := openTestService(t, dsn, &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}, &fakeTenants{tenants: map[string]tenant{}}).Ensure(t.Context(), "firebase", id); !errors.Is(err, ErrExists) || u.ID != "" {
+			t.Errorf("Ensure of %s, held by another source and not yet loaded = %+v, %v, want ErrExists", id, u, err)
+		}
+	}
+}
+
+func TestEnsureTakesOnlyAnOutsideSource(t *testing.T) {
+	svc, _, _, _ := newTestService(t)
+	for _, idp := range []string{"", "password", "github"} {
+		if u, err := svc.Ensure(t.Context(), idp, "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"); !errors.Is(err, ErrInvalid) || u.ID != "" {
+			t.Errorf("Ensure from source %q = %+v, %v, want ErrInvalid", idp, u, err)
+		}
+	}
+}
+
+func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
+	dsn := freshDatabase(t)
+	gw := &gatedGW{fakeGW: fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}, open: make(chan struct{})}
+	svc := openTestService(t, dsn, gw, &fakeTenants{tenants: map[string]tenant{}})
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := range 16 {
+		wg.Go(func() {
+			_, err := svc.Ensure(t.Context(), "firebase", fmt.Sprintf("uid%02d", i))
+			errs <- err
+		})
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for gw.active.Load() < ensureLimit && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if most := gw.most.Load(); most != ensureLimit {
+		t.Errorf("%d creates ran at once, want %d", most, ensureLimit)
+	}
+	close(gw.open)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("Ensure: %v", err)
+		}
+	}
+}
+
+func TestEnsuresRacingInTwoProcessesLeaveOneWorkingUser(t *testing.T) {
+	svc, gw, tenants, dsn := newTestService(t)
+	other := openTestService(t, dsn, gw, tenants)
+	const id = "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"
+	var wg sync.WaitGroup
+	errs := make(chan error, 16)
+	for i := range 16 {
+		wg.Go(func() {
+			_, err := []*Service{svc, other}[i%2].Ensure(t.Context(), "firebase", id)
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("Ensure: %v", err)
+		}
+	}
+	if err := svc.Load(t.Context()); err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	token, err := svc.Tenant(id)
+	if err != nil || tenants.tenants[id].token != token {
+		t.Errorf("sandboxd holds tenant %+v, the row %q, %v", tenants.tenants[id], token, err)
+	}
+	if key, err := svc.GWKey(id); err != nil || gw.keys[id] != key {
+		t.Errorf("gw holds key %q, the row %q, %v", gw.keys[id], key, err)
+	}
+}
+
+func TestEnsuresOnASaturatedPoolDoNotWaitOnEachOther(t *testing.T) {
+	dsn := freshDatabase(t)
+	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}
+	tenants := &fakeTenants{tenants: map[string]tenant{}}
+	u, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatalf("parse dsn: %v", err)
+	}
+	q := u.Query()
+	q.Set("pool_max_conns", "2")
+	u.RawQuery = q.Encode()
+	svc := openTestService(t, u.String(), gw, tenants)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	errs := make(chan error, 8)
+	for range 8 {
+		wg.Go(func() {
+			_, err := svc.Ensure(ctx, "firebase", "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq")
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Errorf("Ensure: %v", err)
+		}
+	}
+}
+
 func TestTokensPasswordsAndDisabling(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})
@@ -597,6 +736,22 @@ func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
 	}
 }
 
+// gatedGW holds every Add until open closes and counts the Adds running at once.
+type gatedGW struct {
+	fakeGW
+	open         chan struct{}
+	active, most atomic.Int32
+}
+
+func (g *gatedGW) Add(ctx context.Context, owner string) (string, string, error) {
+	n := g.active.Add(1)
+	defer g.active.Add(-1)
+	for m := g.most.Load(); n > m && !g.most.CompareAndSwap(m, n); m = g.most.Load() {
+	}
+	<-g.open
+	return g.fakeGW.Add(ctx, owner)
+}
+
 type fakeGW struct {
 	mu       sync.Mutex
 	keys     map[string]string
@@ -703,7 +858,7 @@ func newTestService(t *testing.T) (*Service, *fakeGW, *fakeTenants, string) {
 	return openTestService(t, dsn, gw, tenants), gw, tenants, dsn
 }
 
-func openTestService(t *testing.T, dsn string, gw *fakeGW, tenants *fakeTenants) *Service {
+func openTestService(t *testing.T, dsn string, gw GWKeys, tenants *fakeTenants) *Service {
 	t.Helper()
 	svc, err := Open(t.Context(), Options{DSN: dsn, MasterKeyFile: masterKeyFile(t), GW: gw, Tenants: tenants, TenantClaims: true, FirstBoxID: firstBoxID})
 	if err != nil {

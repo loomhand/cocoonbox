@@ -254,11 +254,34 @@ func (s *store) clearToken(ctx context.Context, id string) error {
 	return s.exec(ctx, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
 }
 
+// lockUser holds an advisory lock on user id in every api until the returned func runs, on a connection of its own:
+// the holder still needs the pool, which waiters on a pooled connection could exhaust.
+func (s *store) lockUser(ctx context.Context, id string) (func(), error) {
+	conn, err := pgx.ConnectConfig(ctx, s.pool.Config().ConnConfig.Copy())
+	if err != nil {
+		return nil, fmt.Errorf("lock user %s: %w", id, err)
+	}
+	release := func() { _ = conn.Close(context.WithoutCancel(ctx)) }
+	if _, err = conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended('users.ensure:' || $1, 0))", id); err != nil {
+		release()
+		return nil, fmt.Errorf("lock user %s: %w", id, err)
+	}
+	return release, nil
+}
+
+func (s *store) exists(ctx context.Context, id string) (bool, error) {
+	return s.holds(ctx, "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", id)
+}
+
 func (s *store) tokenServes(ctx context.Context, sha string) (bool, error) {
-	var serves bool
-	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE token_sha256 = $1 AND NOT disabled)
-		OR EXISTS (SELECT 1 FROM user_tokens t JOIN users u ON u.id = t.user_id WHERE t.sha256 = $1 AND NOT u.disabled)`, sha).Scan(&serves)
-	return serves, err
+	return s.holds(ctx, `SELECT EXISTS (SELECT 1 FROM users WHERE token_sha256 = $1 AND NOT disabled)
+		OR EXISTS (SELECT 1 FROM user_tokens t JOIN users u ON u.id = t.user_id WHERE t.sha256 = $1 AND NOT u.disabled)`, sha)
+}
+
+func (s *store) holds(ctx context.Context, query string, arg any) (bool, error) {
+	var holds bool
+	err := s.pool.QueryRow(ctx, query, arg).Scan(&holds)
+	return holds, err
 }
 
 // allDevices returns every device token by user id.
