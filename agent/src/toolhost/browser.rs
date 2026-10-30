@@ -75,6 +75,7 @@ const MAX_WINDOWS: usize = 8;
 const NO_PAGE_FOCUS: &str = "focus a card field on the checkout page first: the keyboard focus is in no web page of the agent's Chrome, so it may be in the address bar, a find bar, DevTools, another app or a Chrome the browser tools do not drive; use browser_navigate to open the checkout in the agent's Chrome, then focus the card field; nothing was typed";
 const SHARE_TAB: &str = "a read-only share reads only its own window, so it takes no tab";
 const SHARE_WINDOW: &str = "a read-only share opens no Chrome window: it reads only the window its session opened with write";
+const NO_WINDOW: &str = "you have no Chrome window open: open one with browser_navigate; each session has its own window, which closes when the session ends";
 const TEXT_LEN_JS: &str = "document.body ? document.body.textContent.length : 0";
 const TAB_JS: &str = "[document.visibilityState, document.title, location.href]";
 const NO_ANSWER: &str = "the page does not answer, so it may show a dialog that opened before this call: close the dialog on the screen and retry";
@@ -436,12 +437,16 @@ impl Browser {
             let mut cdp = Cdp::open(&window.as_ref().ok_or(SHARE_WINDOW)?.ws_url).await?;
             return self.act(&mut cdp, tool, args).await;
         }
+        let opens = matches!(tool, "browser_navigate" | "browser_show");
+        if !opens && !self.windows.lock().await.contains_key(agent_id) {
+            return Err(NO_WINDOW.to_owned());
+        }
         let (slot, evicted) = self.slot(agent_id).await;
         if let Some(evicted) = evicted {
             self.shut(evicted).await;
         }
         let mut window = slot.lock().await;
-        let mut cdp = self.connect(&mut window).await?;
+        let mut cdp = self.connect(&mut window, opens).await?;
         timing::mark("connect");
         if let Some(t) = window.as_ref() {
             t.ws_url.clone_into(&mut *self.last.lock().await);
@@ -817,12 +822,15 @@ impl Browser {
         found
     }
 
-    /// Attaches to the window in `window`, opening a new one when it is missing or was closed.
-    async fn connect(&self, window: &mut Option<Target>) -> Result<Cdp, String> {
+    /// Attaches to the window in `window`; with `open`, opens a new one when it is missing or was closed.
+    async fn connect(&self, window: &mut Option<Target>, open: bool) -> Result<Cdp, String> {
         if let Some(t) = window.as_ref()
             && let Ok(cdp) = Cdp::open(&t.ws_url).await
         {
             return Ok(cdp);
+        }
+        if !open {
+            return Err(NO_WINDOW.to_owned());
         }
         self.running().await?;
         let mut browser = self.browser().await?;
@@ -2425,8 +2433,8 @@ pub(super) mod tests {
                     "/nonexistent/chrome".to_owned()
                 };
                 let b = Browser::new(bin, dir.path().into(), port, false);
-                b.run("a", "browser_snapshot", json!({})).await.unwrap();
-                b.run("b", "browser_snapshot", json!({})).await.unwrap();
+                b.run("a", "browser_show", json!({})).await.unwrap();
+                b.run("b", "browser_show", json!({})).await.unwrap();
                 let closes: Vec<Value> = log
                     .lock()
                     .unwrap()
@@ -2485,7 +2493,7 @@ pub(super) mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
         let asked = tokio::time::Instant::now();
         assert_eq!(
-            b.run("a", "browser_snapshot", json!({})).await.unwrap(),
+            b.run("a", "browser_show", json!({})).await.unwrap(),
             "Page: slow"
         );
         assert!(
@@ -2837,11 +2845,38 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
+    async fn only_navigate_or_show_opens_a_window_for_the_tools_that_read_or_act_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = page_chrome().await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        for tool in [
+            "browser_snapshot",
+            "browser_read",
+            "browser_click",
+            "browser_type",
+        ] {
+            assert_eq!(b.run("a", tool, json!({})).await.unwrap_err(), NO_WINDOW);
+        }
+        assert!(log.lock().unwrap().is_empty(), "{:?}", log.lock().unwrap());
+        assert!(b.windows.lock().await.is_empty());
+        b.run("a", "browser_show", json!({})).await.unwrap();
+        assert_eq!(
+            b.run("a", "browser_read", json!({})).await.unwrap(),
+            "complete"
+        );
+        *b.windows.lock().await["a"].window.lock().await = None;
+        assert_eq!(
+            b.run("a", "browser_snapshot", json!({})).await.unwrap_err(),
+            NO_WINDOW
+        );
+    }
+
+    #[tokio::test]
     async fn a_read_share_reads_the_window_its_session_opened_with_write() {
         let dir = tempfile::tempdir().unwrap();
         let (port, log) = page_chrome().await;
         let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
-        b.run("guest", "browser_snapshot", json!({})).await.unwrap();
+        b.run("guest", "browser_show", json!({})).await.unwrap();
         let opened = log.lock().unwrap().len();
         b.run("guest", "browser_snapshot", json!({"workspace_only": true}))
             .await
@@ -3042,6 +3077,7 @@ pub(super) mod tests {
         let port = slow_chrome(Duration::ZERO).await;
         tokio::time::sleep(Duration::from_millis(100)).await;
         let plain = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        plain.run("a", "browser_show", json!({})).await.unwrap();
         assert_eq!(
             plain
                 .run("a", "browser_snapshot", json!({"tab": "active"}))
