@@ -488,7 +488,7 @@ func openOAuth(ctx context.Context, cfg *config.Config, accounts *users.Service)
 	if err != nil {
 		return nil, err
 	}
-	accounts.KeepGrants(grants.LiveGrants)
+	accounts.KeepGrants(oauth.IsGrant, grants.LiveGrants)
 	log.WithFunc("main.openOAuth").Infof(ctx, "oauth for the control MCP, issuer %s, agent boxes hibernate after %s idle", cfg.OAuth.PublicURL, time.Duration(*cfg.OAuth.IdleHibernate))
 	return grants, nil
 }

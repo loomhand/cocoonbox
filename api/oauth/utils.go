@@ -15,6 +15,11 @@ func IsAccessToken(header string) bool {
 	return ok && strings.HasPrefix(token, AccessPrefix)
 }
 
+// IsGrant reports whether credential is one of this server's grant ids, the credential its access tokens bind calls to.
+func IsGrant(credential string) bool {
+	return strings.HasPrefix(credential, grantPrefix)
+}
+
 func randomToken(prefix string) string {
 	return prefix + utils.RandomHex(secretBytes)
 }
