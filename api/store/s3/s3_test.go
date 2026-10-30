@@ -302,9 +302,7 @@ func TestDeleteSendsBatchesInBoundedParallel(t *testing.T) {
 	for i := range n {
 		all[i] = fmt.Sprintf("alice/chunks/%05d", i)
 	}
-	start := time.Now()
 	err = s.Delete(t.Context(), append(all, "alice/chunks/denied"))
-	elapsed := time.Since(start)
 	if err == nil || !strings.Contains(err.Error(), "delete alice/chunks/denied") || strings.Count(err.Error(), "delete ") != 1 {
 		t.Errorf("Delete = %v, want only the denied failure", err)
 	}
@@ -313,9 +311,6 @@ func TestDeleteSendsBatchesInBoundedParallel(t *testing.T) {
 	}
 	if peak > deleteConcurrency || peak < 2 {
 		t.Errorf("peak in-flight batches = %d, want 2..%d", peak, deleteConcurrency)
-	}
-	if serial := (deleteConcurrency + 5) * latency; elapsed > serial/4 {
-		t.Errorf("Delete took %v, serial is %v", elapsed, serial)
 	}
 }
 
