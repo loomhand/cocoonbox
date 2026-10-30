@@ -44,6 +44,12 @@ const (
 	columnGWKey    = "gw_key"
 	columnTenant   = "tenant_token"
 	columnStateKey = "state_key"
+
+	passwordIDP = "password"
+	// githubIDP is signup's provider; an outside provider of that name would reach the users signup made.
+	githubIDP = "github"
+	// ensureLimit bounds the creates Ensure runs at once, since each holds a connection outside the pool.
+	ensureLimit = 4
 )
 
 var (
@@ -194,6 +200,8 @@ type Service struct {
 	creds      map[string]*credLife
 	tombs      map[string]time.Time
 	grantsLive func(ctx context.Context, ids []string) (map[string]bool, error)
+
+	ensuring chan struct{}
 }
 
 // Open connects to the database, applies migrations and loads every user.
@@ -214,7 +222,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 	s := &Service{
 		store: st, seal: seal, gw: opts.GW, tenants: opts.Tenants, tenantClaims: opts.TenantClaims, firstBoxID: opts.FirstBoxID, dummyHash: dummy,
 		boxes: map[string][]Box{}, shares: map[string]*shareRecord{}, shareSecrets: map[string]string{}, lives: map[string]life{},
-		creds: map[string]*credLife{}, tombs: map[string]time.Time{},
+		creds: map[string]*credLife{}, tombs: map[string]time.Time{}, ensuring: make(chan struct{}, ensureLimit),
 	}
 	if err := s.Load(ctx); err != nil {
 		st.close()
@@ -377,72 +385,28 @@ func (s *Service) List() []User {
 
 // Create adds a user with its first box, gw key and tenant and lifts an admin's gw cap; a failure leaves none of them behind.
 func (s *Service) Create(ctx context.Context, nu NewUser) (User, error) {
-	id := cmp.Or(nu.ID, idPrefix+utils.RandomHex(idBytes))
-	switch {
-	case !namePattern.MatchString(nu.Name):
+	nu.ID = cmp.Or(nu.ID, idPrefix+utils.RandomHex(idBytes))
+	if !namePattern.MatchString(nu.Name) {
 		return User{}, fmt.Errorf("%w: a username is 2 to 32 lowercase letters, digits, - or _, starting with a letter", ErrInvalid)
-	case !idPattern.MatchString(id):
-		return User{}, fmt.Errorf("%w: id %q is not a sandboxd tenant name", ErrInvalid, id)
-	case nu.MaxAgentBoxes != nil && (*nu.MaxAgentBoxes < 1 || *nu.MaxAgentBoxes > maxBoxesCap):
-		return User{}, fmt.Errorf("%w: max agent boxes must be in 1..%d", ErrInvalid, maxBoxesCap)
 	}
-	var hash []byte
-	if nu.Password != "" {
-		var err error
-		if hash, err = hashPassword(nu.Password); err != nil {
-			return User{}, err
-		}
+	return s.create(ctx, nu)
+}
+
+// Ensure returns the user outside identity provider idp names id, creating it as Create does, never an admin, the first time; an id another source holds is ErrExists.
+func (s *Service) Ensure(ctx context.Context, idp, id string) (User, error) {
+	if err := outsideUser(idp, id); err != nil {
+		return User{}, err
 	}
-	if _, err := s.ByName(nu.Name); err == nil {
-		return User{}, ErrExists
+	if u, err := s.Get(id); err == nil {
+		return u.from(idp)
 	}
-	if _, err := s.record(id); err == nil {
-		return User{}, ErrExists
+	select {
+	case s.ensuring <- struct{}{}:
+	case <-ctx.Done():
+		return User{}, ctx.Err()
 	}
-	tenantToken := utils.RandomHex(secretBytes)
-	stateKey := keyring.Generate(id)
-	key, akID, err := s.gw.Add(ctx, id)
-	if err != nil {
-		return User{}, fmt.Errorf("issue gw key: %w", err)
-	}
-	r := record{
-		ID:            id,
-		Name:          nu.Name,
-		IDP:           cmp.Or(nu.IDP, "password"),
-		Admin:         nu.Admin,
-		MaxBoxes:      defaultBoxes,
-		MaxBoxesCap:   defaultBoxes,
-		MaxAgentBoxes: nu.MaxAgentBoxes,
-		CreatedAt:     time.Now(),
-		gwAKID:        akID,
-		gwKey:         s.seal.seal(key, userData(id, columnGWKey)),
-		tenantToken:   s.seal.seal(tenantToken, userData(id, columnTenant)),
-		stateKeyID:    stateKey.ID,
-		stateKey:      s.seal.seal(string(stateKey.Secret), userData(id, columnStateKey)),
-	}
-	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond)}
-	switch {
-	case nu.Admin:
-		err = s.gw.SetDailyCap(ctx, id, new(int64(gwkeys.Unlimited)))
-	case nu.DailyCapMicros != nil:
-		err = s.gw.SetDailyCap(ctx, id, nu.DailyCapMicros)
-	}
-	if err == nil {
-		if err = s.tenants.PutTenant(ctx, id, tenantToken, s.claimCap(r)); err == nil {
-			if err = s.store.insert(ctx, r, string(hash), first); err != nil {
-				err = errors.Join(err, s.tenants.DeleteTenant(context.WithoutCancel(ctx), id))
-			}
-		}
-	}
-	if err != nil {
-		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil), s.gw.Revoke(context.WithoutCancel(ctx), id))
-	}
-	s.published(ctx, "created user "+r.Name)
-	s.put(r)
-	s.mu.Lock()
-	s.putBox(first)
-	s.mu.Unlock()
-	return r.User, nil
+	defer func() { <-s.ensuring }()
+	return s.createOnce(ctx, idp, id)
 }
 
 // Delete removes user id's tenant, gw key and cap, sessions, boxes and row; the caller releases the boxes' machines first.
@@ -868,6 +832,134 @@ func (s *Service) OnResidential(fn func(ctx context.Context, id string, on bool)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onResidential = append(s.onResidential, fn)
+}
+
+// createOnce creates outside user id under its lock unless another api created it meanwhile.
+func (s *Service) createOnce(ctx context.Context, idp, id string) (User, error) {
+	// a create that loses a race rolls back the tenant and gw key the winner holds, so creates of one id take turns
+	unlock, err := s.store.lockUser(ctx, id)
+	if err != nil {
+		return User{}, err
+	}
+	defer unlock()
+	exists, err := s.store.exists(ctx, id)
+	switch {
+	case err != nil:
+		return User{}, fmt.Errorf("look up user %s: %w", id, err)
+	case !exists:
+		return s.create(ctx, NewUser{ID: id, Name: id, IDP: idp})
+	}
+	if err = s.Load(ctx); err != nil {
+		return User{}, err
+	}
+	u, err := s.Get(id)
+	if err != nil {
+		return User{}, err
+	}
+	return u.from(idp)
+}
+
+func (s *Service) create(ctx context.Context, nu NewUser) (User, error) {
+	id := nu.ID
+	hash, err := s.admissible(nu)
+	if err != nil {
+		return User{}, err
+	}
+	tenantToken := utils.RandomHex(secretBytes)
+	stateKey := keyring.Generate(id)
+	key, akID, err := s.gw.Add(ctx, id)
+	if err != nil {
+		return User{}, fmt.Errorf("issue gw key: %w", err)
+	}
+	r := record{
+		ID:            id,
+		Name:          nu.Name,
+		IDP:           cmp.Or(nu.IDP, passwordIDP),
+		Admin:         nu.Admin,
+		MaxBoxes:      defaultBoxes,
+		MaxBoxesCap:   defaultBoxes,
+		MaxAgentBoxes: nu.MaxAgentBoxes,
+		CreatedAt:     time.Now(),
+		gwAKID:        akID,
+		gwKey:         s.seal.seal(key, userData(id, columnGWKey)),
+		tenantToken:   s.seal.seal(tenantToken, userData(id, columnTenant)),
+		stateKeyID:    stateKey.ID,
+		stateKey:      s.seal.seal(string(stateKey.Secret), userData(id, columnStateKey)),
+	}
+	first := Box{ID: s.firstBoxID(id), Owner: id, Name: FirstBoxName, CreatedAt: r.CreatedAt.Truncate(time.Microsecond)}
+	if err = s.persist(ctx, nu, r, tenantToken, hash, first); err != nil {
+		return User{}, errors.Join(err, s.gw.SetDailyCap(context.WithoutCancel(ctx), id, nil), s.gw.Revoke(context.WithoutCancel(ctx), id))
+	}
+	s.published(ctx, "created user "+r.Name)
+	s.put(r)
+	s.mu.Lock()
+	s.putBox(first)
+	s.mu.Unlock()
+	return r.User, nil
+}
+
+// admissible checks nu's id and caps, that neither its name nor its id is taken, and hashes its password.
+func (s *Service) admissible(nu NewUser) ([]byte, error) {
+	switch {
+	case !idPattern.MatchString(nu.ID):
+		return nil, fmt.Errorf("%w: id %q is not a sandboxd tenant name", ErrInvalid, nu.ID)
+	case nu.MaxAgentBoxes != nil && (*nu.MaxAgentBoxes < 1 || *nu.MaxAgentBoxes > maxBoxesCap):
+		return nil, fmt.Errorf("%w: max agent boxes must be in 1..%d", ErrInvalid, maxBoxesCap)
+	}
+	var hash []byte
+	if nu.Password != "" {
+		var err error
+		if hash, err = hashPassword(nu.Password); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := s.ByName(nu.Name); err == nil {
+		return nil, ErrExists
+	}
+	if _, err := s.record(nu.ID); err == nil {
+		return nil, ErrExists
+	}
+	return hash, nil
+}
+
+// persist sets the new user's gw cap, puts its tenant and inserts its row and first box; the tenant goes again when the insert fails.
+func (s *Service) persist(ctx context.Context, nu NewUser, r record, tenantToken string, hash []byte, first Box) error {
+	var err error
+	switch {
+	case nu.Admin:
+		err = s.gw.SetDailyCap(ctx, r.ID, new(int64(gwkeys.Unlimited)))
+	case nu.DailyCapMicros != nil:
+		err = s.gw.SetDailyCap(ctx, r.ID, nu.DailyCapMicros)
+	}
+	if err != nil {
+		return err
+	}
+	if err = s.tenants.PutTenant(ctx, r.ID, tenantToken, s.claimCap(r)); err != nil {
+		return err
+	}
+	if err = s.store.insert(ctx, r, string(hash), first); err != nil {
+		return errors.Join(err, s.tenants.DeleteTenant(context.WithoutCancel(ctx), r.ID))
+	}
+	return nil
+}
+
+// from returns u when outside identity provider idp holds it.
+func (u User) from(idp string) (User, error) {
+	if u.IDP != idp {
+		return User{}, fmt.Errorf("%w: user %s comes from %s", ErrExists, u.ID, u.IDP)
+	}
+	return u, nil
+}
+
+// outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.
+func outsideUser(idp, id string) error {
+	switch {
+	case id == "":
+		return fmt.Errorf("%w: an outside user needs its id", ErrInvalid)
+	case idp == "" || idp == passwordIDP || idp == githubIDP:
+		return fmt.Errorf("%w: %q is not an outside identity provider", ErrInvalid, idp)
+	}
+	return nil
 }
 
 // endLocally ends the calls bound to credential in this api, for an ended credential of any api.
