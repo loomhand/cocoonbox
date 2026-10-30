@@ -164,7 +164,7 @@ fn base_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
         ToolSpec {
             name: Cow::Borrowed("read_file"),
             description: Cow::Borrowed(
-                "Read a text file with line numbers. Relative paths resolve under /workspace.",
+                "Read a text file with line numbers. Relative paths resolve under /workspace. A line over 2000 characters is cut, with a marker that gives its length.",
             ),
             parameters: json!({
                 "type": "object",
