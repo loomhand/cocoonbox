@@ -50,6 +50,9 @@ const POLL: Duration = Duration::from_millis(250);
 const NAV_START: Duration = Duration::from_millis(200);
 const POKE: Duration = Duration::from_millis(100);
 const READ_CHARS: usize = 20_000;
+const TUNNEL_FAILED: &str = "net::ERR_TUNNEL_CONNECTION_FAILED";
+// Chrome reaches the web through the egress proxy, so a name that does not resolve fails the CONNECT, not a DNS lookup
+const UNREACHABLE: &str = "the host could not be reached: the box's egress proxy could not connect to it, so its name may not resolve, it may be down, or the proxy may not allow it (net::ERR_TUNNEL_CONNECTION_FAILED)";
 const SHELL_CHARS: usize = 300;
 const PAGE_TYPES: [&str; 7] = [
     "",
@@ -462,14 +465,14 @@ impl Browser {
             "browser_navigate" => {
                 let a: NavigateArgs = rpc::parse(args)?;
                 let front = self.plans && a.front;
-                let url = web_url(a.url);
+                let url = web_url(a.url)?;
                 if self.plans {
                     cdp.call("Network.enable", json!({})).await?;
                 }
                 let nav = cdp.call("Page.navigate", json!({"url": url})).await?;
                 timing::mark("navigate");
                 if let Some(err) = nav["errorText"].as_str().filter(|e| !e.is_empty()) {
-                    return Err(format!("navigate {url}: {err}"));
+                    return Err(navigate_error(&url, err));
                 }
                 cdp.wait_loaded().await;
                 timing::mark("load");
@@ -658,7 +661,7 @@ impl Browser {
     /// Reads `url` in a hidden tab, out of every window, and closes the tab.
     async fn fetch(&self, args: Value) -> Result<String, String> {
         let a: NavigateArgs = rpc::parse(args)?;
-        let url = web_url(a.url);
+        let url = web_url(a.url)?;
         self.running().await?;
         let mut cdp = self.browser().await?;
         let created = cdp
@@ -1479,7 +1482,7 @@ impl Cdp {
                     ));
                 }
                 if let Some(err) = v["result"]["errorText"].as_str().filter(|e| !e.is_empty()) {
-                    return Err(format!("navigate {url}: {err}"));
+                    return Err(navigate_error(url, err));
                 }
                 continue;
             }
@@ -1768,12 +1771,28 @@ fn xprop_string(xprop: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// `url` with `https://` added when it names no scheme.
-fn web_url(url: String) -> String {
-    if url.contains("://") || url.starts_with("about:") {
-        url
+/// `url` with `https://` added when it names no scheme; an error when that does not parse as a URL with a host.
+fn web_url(url: String) -> Result<String, String> {
+    let given = url.trim();
+    let url = if given.contains("://") || given.starts_with("about:") {
+        given.to_owned()
     } else {
-        format!("https://{url}")
+        format!("https://{given}")
+    };
+    let invalid = |why: &dyn std::fmt::Display| format!("{given:?} is not a valid URL: {why}");
+    let parsed = reqwest::Url::parse(&url).map_err(|e| invalid(&e))?;
+    if matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_none_or(str::is_empty) {
+        return Err(invalid(&"it names no host"));
+    }
+    Ok(url)
+}
+
+/// Why navigating to `url` failed, with Chrome's `err`; a tunnel failure of the egress proxy says the host could not be reached.
+fn navigate_error(url: &str, err: &str) -> String {
+    if err == TUNNEL_FAILED {
+        format!("navigate {url}: {UNREACHABLE}")
+    } else {
+        format!("navigate {url}: {err}")
     }
 }
 
@@ -2191,6 +2210,12 @@ pub(super) mod tests {
                         let mut result = result;
                         if zip {
                             result["errorText"] = "net::ERR_BLOCKED_BY_CLIENT".into();
+                        }
+                        if v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.contains("unreachable"))
+                        {
+                            result["errorText"] = "net::ERR_TUNNEL_CONNECTION_FAILED".into();
                         }
                         let reply =
                             json!({"id": v["id"], "sessionId": v["sessionId"], "result": result});
@@ -2631,6 +2656,56 @@ pub(super) mod tests {
             json!({"requestId": "r1", "errorReason": "BlockedByClient"})
         );
         assert_eq!(log.last().unwrap()["method"], "Target.closeTarget");
+    }
+
+    #[tokio::test]
+    async fn fetch_refuses_a_url_that_does_not_parse_and_names_a_host_the_proxy_could_not_reach() {
+        let dir = tempfile::tempdir().unwrap();
+        let (port, log) = fetch_chrome(String::new(), true).await;
+        let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
+        let err = b
+            .run("a", "browser_fetch", json!({"url": "not a url"}))
+            .await
+            .unwrap_err();
+        assert!(err.starts_with("\"not a url\" is not a valid URL"), "{err}");
+        assert!(log.lock().unwrap().is_empty(), "{:?}", log.lock().unwrap());
+        let err = b
+            .run(
+                "a",
+                "browser_fetch",
+                json!({"url": "https://unreachable.test/x"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            format!("navigate https://unreachable.test/x: {UNREACHABLE}")
+        );
+    }
+
+    #[test]
+    fn a_url_without_a_scheme_gets_https_and_one_that_does_not_parse_is_refused() {
+        assert_eq!(
+            web_url("example.com/a".into()).unwrap(),
+            "https://example.com/a"
+        );
+        assert_eq!(web_url(" about:blank ".into()).unwrap(), "about:blank");
+        assert_eq!(web_url("http://a.test".into()).unwrap(), "http://a.test");
+        for bad in ["not a url", "", "https://", "http://exa mple.com/"] {
+            assert!(web_url(bad.into()).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn only_a_proxy_tunnel_failure_reads_as_an_unreachable_host() {
+        assert_eq!(
+            navigate_error("https://nope.test/", "net::ERR_TUNNEL_CONNECTION_FAILED"),
+            format!("navigate https://nope.test/: {UNREACHABLE}")
+        );
+        assert_eq!(
+            navigate_error("https://a.test/", "net::ERR_ABORTED"),
+            "navigate https://a.test/: net::ERR_ABORTED"
+        );
     }
 
     #[test]
