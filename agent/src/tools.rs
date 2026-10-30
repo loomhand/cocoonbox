@@ -150,7 +150,7 @@ fn base_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
         ToolSpec {
             name: Cow::Borrowed("shell"),
             description: Cow::Borrowed(
-                "Run a bash command in the agent's persistent shell session (cwd /workspace). Returns merged stdout/stderr and the exit status. Output over ~30 KB keeps only its head and tail.",
+                "Run a bash command in the agent's persistent shell session (cwd /workspace). Returns merged stdout/stderr and the exit status; a non-zero status or a timeout is an error result. Output over ~30 KB keeps only its head and tail.",
             ),
             parameters: json!({
                 "type": "object",
