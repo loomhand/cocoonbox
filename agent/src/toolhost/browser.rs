@@ -51,7 +51,6 @@ const NAV_START: Duration = Duration::from_millis(200);
 const POKE: Duration = Duration::from_millis(100);
 const READ_CHARS: usize = 20_000;
 const TUNNEL_FAILED: &str = "net::ERR_TUNNEL_CONNECTION_FAILED";
-// Chrome reaches the web through the egress proxy, so a name that does not resolve fails the CONNECT, not a DNS lookup
 const UNREACHABLE: &str = "the host could not be reached: the box's egress proxy could not connect to it, so its name may not resolve, it may be down, or the proxy may not allow it (net::ERR_TUNNEL_CONNECTION_FAILED)";
 const SHELL_CHARS: usize = 300;
 const PAGE_TYPES: [&str; 7] = [
