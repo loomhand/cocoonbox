@@ -135,9 +135,10 @@ impl Host {
         };
         let result = match call.tool.as_str() {
             "shell" => {
-                let command = call.args["command"].as_str().unwrap_or_default();
-                let note = self.held(|name| files::writes(command, name)).await;
-                self.shell(&call.agent_id, call.args).await.map(|mut out| {
+                let command = call.args["command"].as_str().unwrap_or_default().to_owned();
+                let out = self.shell(&call.agent_id, call.args).await;
+                let note = self.held(|name| files::writes(&command, name)).await;
+                out.map(|mut out| {
                     out.text.push_str(&note);
                     out
                 })
@@ -974,5 +975,55 @@ mod tests {
         );
         assert_eq!(got[3].1["max_edge"], 512);
         assert_eq!(got[5].1["max_edge"], 640);
+    }
+
+    #[tokio::test]
+    async fn the_shell_note_on_a_file_an_app_has_open_reads_the_windows_after_the_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let desk = crate::testing::endpoint(dir.path(), "desk.sock");
+        let closed = dir.path().join("closed");
+        let mut listener = bind(&desk, "").unwrap();
+        tokio::spawn(async move {
+            loop {
+                let mut conn = accept(&mut listener).await.unwrap();
+                let call: Call = rpc::read_frame(&mut conn).await.unwrap();
+                let out = match call.tool.as_str() {
+                    "desk_windows" if closed.exists() => Output::text("[]"),
+                    "desk_windows" => Output::text(r#"[{"title": "notes.txt - Mousepad"}]"#),
+                    tool => Output::error(format!("unknown desk tool {tool}")),
+                };
+                rpc::write_frame(&mut conn, &out).await.unwrap();
+            }
+        });
+        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
+        let cfg = ToolhostConfig {
+            socket: socket.clone(),
+            workspace: dir.path().into(),
+            chrome_bin: "false".into(),
+            chrome_profile: dir.path().join("chrome"),
+            cdp_port: 1,
+            session_save: dir.path().join("session-save"),
+            home: dir.path().into(),
+            automation: Automation::Desk,
+            plugins: Vec::new(),
+            shuttle_socket: desk,
+        };
+        tokio::spawn(run(cfg));
+        crate::testing::served(&socket).await;
+        let toolhost = Client::new(socket);
+        let shell = |tool: &str, command: &str| {
+            let call = Call {
+                agent_id: format!("held-test-{}", std::process::id()),
+                tool: tool.into(),
+                args: json!({"command": command}),
+            };
+            let toolhost = toolhost.clone();
+            async move { toolhost.call(&call).await.unwrap().text }
+        };
+        let open = shell("shell", "echo x > notes.txt").await;
+        assert!(open.contains("has notes.txt open"), "{open}");
+        let closed = shell("shell", "touch closed; echo y > notes.txt").await;
+        assert!(!closed.contains("note:"), "{closed}");
+        shell("shell_close", "").await;
     }
 }
