@@ -39,6 +39,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -107,6 +108,9 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 		t.Errorf("after refresh the grant sees %v", list)
 	}
 	grants := e.grants(t)
+	if !oauth.IsGrant(grants[0].ID) || oauth.IsGrant(utils.HashHex(access)) || oauth.IsGrant("mcp:"+grants[0].ID) {
+		t.Errorf("IsGrant names %s a grant id, and not an access token's sha256 or another source's credential", grants[0].ID)
+	}
 	life := lifetime(e.users, e.alice, grants[0].ID)
 	if code, body := e.tokenError(t, url.Values{"grant_type": {"refresh_token"}, "refresh_token": {refresh}, "client_id": {clientID}}); code != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") || life.Err() == nil {
 		t.Fatalf("replayed refresh token: %d %s; the grant's calls' lifetime %v", code, body, life.Err())

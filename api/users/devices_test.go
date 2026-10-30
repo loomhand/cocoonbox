@@ -235,7 +235,7 @@ func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect
 	a, gw, tenants, dsn := newTestService(t)
 	b := openTestService(t, dsn, gw, tenants)
 	var gone atomic.Bool
-	b.KeepGrants(func(_ context.Context, ids []string) (map[string]bool, error) {
+	b.KeepGrants(ownsGrant, func(_ context.Context, ids []string) (map[string]bool, error) {
 		live := map[string]bool{}
 		for _, id := range ids {
 			live[id] = !gone.Load()
@@ -263,13 +263,39 @@ func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect
 	}
 }
 
+func TestAGrantCheckLeavesTheCredentialsOfOtherSourcesAlone(t *testing.T) {
+	svc, _, _, _ := newTestService(t)
+	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	var asked []string
+	svc.KeepGrants(ownsGrant, func(_ context.Context, ids []string) (map[string]bool, error) {
+		asked = append(asked, ids...)
+		return map[string]bool{}, nil
+	})
+	outside := lifetime(svc, u.ID, "mcp:cred-1")
+	gone := lifetime(svc, u.ID, "oag_gone")
+	if err := svc.endGoneGrants(t.Context()); err != nil {
+		t.Fatalf("endGoneGrants: %v", err)
+	}
+	if gone.Err() == nil || outside.Err() != nil {
+		t.Errorf("after the grant check the gone grant's call ended %t and the outside credential's call ended %t", gone.Err() != nil, outside.Err() != nil)
+	}
+	if len(asked) != 1 || asked[0] != "oag_gone" {
+		t.Errorf("the grant check asked about %v, want only the grant", asked)
+	}
+}
+
+func ownsGrant(credential string) bool { return strings.HasPrefix(credential, "oag_") }
+
 func TestCheckingGrantsWhileCallsStartAndEndIsSafe(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	svc.KeepGrants(func(_ context.Context, ids []string) (map[string]bool, error) {
+	svc.KeepGrants(ownsGrant, func(_ context.Context, ids []string) (map[string]bool, error) {
 		live := map[string]bool{}
 		for _, id := range ids {
 			live[id] = true

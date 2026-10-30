@@ -199,6 +199,7 @@ type Service struct {
 	lives      map[string]life
 	creds      map[string]*credLife
 	tombs      map[string]time.Time
+	grantsOwn  func(credential string) bool
 	grantsLive func(ctx context.Context, ids []string) (map[string]bool, error)
 
 	ensuring chan struct{}
@@ -820,11 +821,12 @@ func (s *Service) EndCredential(ctx context.Context, credential string) {
 	}
 }
 
-// KeepGrants registers live, which reports which grant ids still exist, so a listener that reconnects ends the calls of the rest.
-func (s *Service) KeepGrants(live func(ctx context.Context, ids []string) (map[string]bool, error)) {
+// KeepGrants registers live, which reports which of the grant ids owns names still exist, so a listener that reconnects
+// ends the calls of the rest; credentials of other sources are not its business.
+func (s *Service) KeepGrants(owns func(credential string) bool, live func(ctx context.Context, ids []string) (map[string]bool, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.grantsLive = live
+	s.grantsOwn, s.grantsLive = owns, live
 }
 
 // OnResidential registers fn to run after a user's residential setting changes.
@@ -1008,10 +1010,10 @@ func (s *Service) listen(ctx context.Context) error {
 func (s *Service) endGoneGrants(ctx context.Context) error {
 	s.mu.RLock()
 	s.lifeMu.Lock()
-	live := s.grantsLive
+	owns, live := s.grantsOwn, s.grantsLive
 	var ids []string
 	for credential := range s.creds {
-		if credential != "" && !hexSHA256.MatchString(credential) {
+		if owns != nil && owns(credential) {
 			ids = append(ids, credential)
 		}
 	}
