@@ -33,14 +33,6 @@ use tonic::{Code, Request};
 use common::{owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
-
-/// The routing as the box's agent reads it: the one-look tier names the subagent it delegates to.
-fn in_box(routing: &str) -> String {
-    routing.replace(
-        "`computer_state`, `computer_act`.",
-        "`computer_state`, `computer_act` (yours: `delegate_computer`).",
-    )
-}
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
 
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
@@ -348,6 +340,14 @@ impl Harness {
     async fn session(&self) -> SessionClient<Channel> {
         SessionClient::new(self.channel().await)
     }
+}
+
+/// The routing as the box's agent reads it: the one-look tier names the subagent it delegates to.
+fn in_box(routing: &str) -> String {
+    routing.replace(
+        "`computer_state`, `computer_act`.",
+        "`computer_state`, `computer_act` (yours: `delegate_computer`).",
+    )
 }
 
 fn authed<T>(msg: T) -> Request<T> {
