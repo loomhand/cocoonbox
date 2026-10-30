@@ -260,7 +260,7 @@ func TestDeleteOnGCSRunsBoundedParallelDeletes(t *testing.T) {
 
 func TestDeleteSendsBatchesInBoundedParallel(t *testing.T) {
 	const (
-		n       = 6 * deleteBatchSize
+		n       = (deleteConcurrency + 4) * deleteBatchSize
 		latency = 50 * time.Millisecond
 	)
 	var (
@@ -311,10 +311,10 @@ func TestDeleteSendsBatchesInBoundedParallel(t *testing.T) {
 	if keys != n+1 || largest != deleteBatchSize {
 		t.Errorf("sent %d keys, at most %d per request; want %d, at most %d", keys, largest, n+1, deleteBatchSize)
 	}
-	if peak > deleteBatchConcurrency || peak < 2 {
-		t.Errorf("peak in-flight batches = %d, want 2..%d", peak, deleteBatchConcurrency)
+	if peak > deleteConcurrency || peak < 2 {
+		t.Errorf("peak in-flight batches = %d, want 2..%d", peak, deleteConcurrency)
 	}
-	if serial := 7 * latency; elapsed > serial*3/4 {
+	if serial := (deleteConcurrency + 5) * latency; elapsed > serial/4 {
 		t.Errorf("Delete took %v, serial is %v", elapsed, serial)
 	}
 }
