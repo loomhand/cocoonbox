@@ -127,8 +127,13 @@ pub async fn read(
         if total < start || shown >= limit || out.len() >= READ_BYTES {
             continue;
         }
-        let line: String = line.chars().take(LINE_CHARS).collect();
-        let _ = writeln!(out, "{total:>6}\t{line}");
+        let chars = line.chars().count();
+        let shown_line: String = line.chars().take(LINE_CHARS).collect();
+        let _ = write!(out, "{total:>6}\t{shown_line}");
+        if chars > LINE_CHARS {
+            let _ = write!(out, " [line cut: {LINE_CHARS} of {chars} characters shown]");
+        }
+        out.push('\n');
         shown += 1;
     }
     if shown == 0 {
@@ -466,6 +471,30 @@ mod tests {
             "my notes.txt"
         ));
         assert!(!writes("cat \"my notes.txt\"", "my notes.txt"));
+    }
+
+    #[tokio::test]
+    async fn read_marks_a_line_it_cuts() {
+        let dir = tempfile::tempdir().unwrap();
+        let long = "x".repeat(LINE_CHARS + 500);
+        let content = format!("short\n{long}\n");
+        write(dir.path(), json!({"path": "long.txt", "content": content}))
+            .await
+            .unwrap();
+        let out = read(dir.path(), None, json!({"path": "long.txt"}))
+            .await
+            .unwrap();
+        let mut lines = out.lines();
+        assert_eq!(lines.next(), Some("     1\tshort"));
+        let cut = lines.next().unwrap();
+        let kept = "x".repeat(LINE_CHARS);
+        assert_eq!(
+            cut,
+            format!(
+                "     2\t{kept} [line cut: {LINE_CHARS} of {} characters shown]",
+                LINE_CHARS + 500
+            )
+        );
     }
 
     #[tokio::test]
