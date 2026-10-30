@@ -835,6 +835,26 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 	}
 }
 
+func TestDoorBindsACallToTheCredentialItsAuthenticatorNamed(t *testing.T) {
+	authn := &bindingAuthn{}
+	srv := httptest.NewServer((&Service{}).NewDoor(authn, DoorMCP))
+	t.Cleanup(srv.Close)
+	post(t, srv.URL, "Bearer alice", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"claude-code"}}}`)
+	if want := []string{alice + " idp:alice"}; !slices.Equal(authn.bound, want) {
+		t.Errorf("bound %v, want %v", authn.bound, want)
+	}
+}
+
+func TestDoorAnswersAnIdentityProviderOutageWith503(t *testing.T) {
+	srv := httptest.NewServer((&Service{}).NewDoor(fakeAuthn{}, DoorMCP))
+	t.Cleanup(srv.Close)
+	for header, want := range map[string]int{"Bearer down": http.StatusServiceUnavailable, "Bearer nobody": http.StatusUnauthorized, "Bearer grpc-only": http.StatusForbidden} {
+		if resp := post(t, srv.URL, header, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); resp.StatusCode != want {
+			t.Errorf("%s = %d, want %d", header, resp.StatusCode, want)
+		}
+	}
+}
+
 func TestDoorKeepsAShortClientName(t *testing.T) {
 	door := (&Service{}).NewDoor(fakeAuthn{}, DoorMCP)
 	srv := httptest.NewServer(door)
@@ -1358,11 +1378,32 @@ func (fakeAuthn) Bind(ctx context.Context, _, _ string) (context.Context, contex
 	return context.WithCancel(ctx)
 }
 
-func (fakeAuthn) Authenticate(_ context.Context, header string) (string, error) {
-	if header == "Bearer alice" {
-		return alice, nil
+func (fakeAuthn) Authenticate(_ context.Context, entry auth.Entry, header string) (auth.Identity, error) {
+	switch {
+	case header == "Bearer grpc-only" && entry != auth.EntryGRPC:
+		return auth.Identity{}, status.Error(codes.PermissionDenied, "this token may not use mcp")
 	}
-	return "", status.Error(codes.Unauthenticated, "invalid bearer token")
+	switch header {
+	case "Bearer alice":
+		return auth.Identity{User: alice, Credential: "idp:alice"}, nil
+	case "Bearer down":
+		return auth.Identity{}, status.Error(codes.Unavailable, "checking the bearer token failed")
+	}
+	return auth.Identity{}, status.Error(codes.Unauthenticated, "invalid bearer token")
+}
+
+// bindingAuthn is fakeAuthn recording every user and credential a call is bound to.
+type bindingAuthn struct {
+	fakeAuthn
+	mu    sync.Mutex
+	bound []string
+}
+
+func (b *bindingAuthn) Bind(ctx context.Context, user, credential string) (context.Context, context.CancelFunc) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.bound = append(b.bound, user+" "+credential)
+	return context.WithCancel(ctx)
 }
 
 func freshDatabase(t *testing.T) string {

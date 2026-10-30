@@ -3,10 +3,13 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -27,8 +30,25 @@ const (
 	// InviteTokenPrefix starts every invite-scoped token, which is never a user token.
 	InviteTokenPrefix = "cbit_"
 
+	// EntryGRPC and EntryMCP name the door a bearer came through, for a provider that admits a token at some doors only.
+	EntryGRPC Entry = "grpc"
+	EntryMCP  Entry = "mcp"
+
 	bearerPrefix = "bearer "
 )
+
+var (
+	// ErrUnknownToken is the Identities answer for a token that names no enabled user; any other error is the provider failing.
+	ErrUnknownToken = errors.New("unknown token")
+	// ErrNotAllowed is the Identities answer for a valid token its owner does not let through this entry.
+	ErrNotAllowed = errors.New("token not allowed at this entry")
+
+	// ownToken matches every secret cocoonbox issues: cb_, cba_, cbs_, cbit_ and the rest.
+	ownToken = regexp.MustCompile(`^cb[a-z]*_`)
+)
+
+// Entry is the door of the api a bearer came through.
+type Entry string
 
 type (
 	userKey       struct{}
@@ -36,10 +56,72 @@ type (
 	operatorKey   struct{}
 )
 
+// Identities resolves a bearer token to the enabled user it names, and gives the context that ends when that user is disabled or deleted or the credential ends.
+type Identities interface {
+	Resolve(ctx context.Context, token string, entry Entry) (Identity, error)
+	Lifetime(user, credential string) (context.Context, func())
+}
+
+// Identity is the user a bearer token names and the credential the calls it admits are bound to.
+type Identity struct {
+	User       string
+	Credential string
+}
+
 // Users resolves the sha256 of an API token, in lowercase hex, to an enabled user id, and gives the context that ends when the user is disabled or deleted or the credential ends.
 type Users interface {
 	ByTokenSHA256(ctx context.Context, sum string) (string, bool)
 	Lifetime(user, credential string) (context.Context, func())
+}
+
+// Tokens is the Identities of cocoonbox's own API and device tokens, each bound to its sha256.
+func Tokens(users Users) Identities {
+	return tokens{users}
+}
+
+type tokens struct {
+	Users
+}
+
+func (t tokens) Resolve(ctx context.Context, token string, _ Entry) (Identity, error) {
+	credential := TokenCredential(token)
+	user, ok := t.ByTokenSHA256(ctx, credential)
+	if !ok {
+		return Identity{}, ErrUnknownToken
+	}
+	return Identity{User: user, Credential: credential}, nil
+}
+
+// Resolver resolves a bearer token as Identities does, for the users of another system, and keeps checking a credential it named while calls hold it.
+type Resolver interface {
+	Resolve(ctx context.Context, token string, entry Entry) (Identity, error)
+	Watch(credential string) (release func())
+}
+
+// Outside resolves the tokens cocoonbox does not issue through outside; its own stay with local, which also gives every call's lifetime.
+func Outside(local Identities, outside Resolver) Identities {
+	return split{Identities: local, outside: outside}
+}
+
+type split struct {
+	Identities
+	outside Resolver
+}
+
+func (s split) Resolve(ctx context.Context, token string, entry Entry) (Identity, error) {
+	if ownToken.MatchString(token) {
+		return s.Identities.Resolve(ctx, token, entry)
+	}
+	return s.outside.Resolve(ctx, token, entry)
+}
+
+func (s split) Lifetime(user, credential string) (context.Context, func()) {
+	life, release := s.Identities.Lifetime(user, credential)
+	unwatch := s.outside.Watch(credential)
+	return life, func() {
+		unwatch()
+		release()
+	}
 }
 
 // Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.
@@ -83,13 +165,18 @@ func (g Grant) Principal() string {
 
 // Authenticator maps bearer tokens to user ids and share secrets to shares.
 type Authenticator struct {
-	users  Users
-	shares Shares
+	identities Identities
+	shares     Shares
 }
 
-// New authenticates against users and shares.
+// New authenticates cocoonbox's own tokens against users, and share secrets against shares.
 func New(users Users, shares Shares) *Authenticator {
-	return &Authenticator{users: users, shares: shares}
+	return WithIdentities(Tokens(users), shares)
+}
+
+// WithIdentities authenticates bearer tokens against identities, and share secrets against shares.
+func WithIdentities(identities Identities, shares Shares) *Authenticator {
+	return &Authenticator{identities: identities, shares: shares}
 }
 
 // Admit admits a share secret for box, or for the share's own box when box is empty; guest is the caller's user id or empty.
@@ -110,16 +197,12 @@ func (a *Authenticator) Admit(secret, box, guest string) (Grant, error) {
 	return Grant{Share: sh, Guest: guest}, nil
 }
 
-// Guest maps a guest token header value to its user; the error is a gRPC status.
-func (a *Authenticator) Guest(ctx context.Context, token string) (string, error) {
+// Guest maps a guest token header value to its identity, the zero Identity for no token; the error is a gRPC status.
+func (a *Authenticator) Guest(ctx context.Context, entry Entry, token string) (Identity, error) {
 	if token == "" {
-		return "", nil
+		return Identity{}, nil
 	}
-	user, _, ok := a.byToken(ctx, token)
-	if !ok {
-		return "", status.Error(codes.Unauthenticated, "invalid guest token")
-	}
-	return user, nil
+	return a.resolve(ctx, entry, token, "invalid guest token")
 }
 
 func (a *Authenticator) Unary(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
@@ -141,14 +224,17 @@ func (a *Authenticator) Stream(srv any, ss grpc.ServerStream, _ *grpc.StreamServ
 	return handler(srv, &authedStream{ServerStream: ss, ctx: ctx})
 }
 
-// Authenticate maps an Authorization header value to its user; the error is a gRPC status.
-func (a *Authenticator) Authenticate(ctx context.Context, header string) (string, error) {
-	user, _, err := a.admit(ctx, header)
-	return user, err
+// Authenticate maps an Authorization header value that came through entry to its identity; the error is a gRPC status.
+func (a *Authenticator) Authenticate(ctx context.Context, entry Entry, header string) (Identity, error) {
+	token, ok := Bearer(header)
+	if !ok {
+		return Identity{}, status.Error(codes.Unauthenticated, "missing bearer token")
+	}
+	return a.resolve(ctx, entry, token, "invalid bearer token")
 }
 
 func (a *Authenticator) Bind(ctx context.Context, user, credential string) (context.Context, context.CancelFunc) {
-	life, release := a.users.Lifetime(user, credential)
+	life, release := a.identities.Lifetime(user, credential)
 	ctx, cancel := context.WithCancel(ctx)
 	stop := context.AfterFunc(life, cancel)
 	return ctx, func() {
@@ -164,29 +250,25 @@ func (a *Authenticator) Identify(ctx context.Context) string {
 	if len(values) != 1 {
 		return ""
 	}
-	user, _ := a.Authenticate(ctx, values[0])
-	return user
+	id, _ := a.Authenticate(ctx, EntryGRPC, values[0])
+	return id.User
 }
 
-func (a *Authenticator) admit(ctx context.Context, header string) (string, string, error) {
-	token, ok := Bearer(header)
-	if !ok {
-		return "", "", status.Error(codes.Unauthenticated, "missing bearer token")
-	}
-	user, credential, ok := a.byToken(ctx, token)
-	if !ok {
-		return "", "", status.Error(codes.Unauthenticated, "invalid bearer token")
-	}
-	return user, credential, nil
-}
-
-func (a *Authenticator) byToken(ctx context.Context, token string) (string, string, bool) {
+func (a *Authenticator) resolve(ctx context.Context, entry Entry, token, refusal string) (Identity, error) {
 	if strings.HasPrefix(token, InviteTokenPrefix) {
-		return "", "", false
+		return Identity{}, status.Error(codes.Unauthenticated, refusal)
 	}
-	credential := TokenCredential(token)
-	user, ok := a.users.ByTokenSHA256(ctx, credential)
-	return user, credential, ok
+	id, err := a.identities.Resolve(ctx, token, entry)
+	switch {
+	case errors.Is(err, ErrUnknownToken):
+		return Identity{}, status.Error(codes.Unauthenticated, refusal)
+	case errors.Is(err, ErrNotAllowed):
+		return Identity{}, status.Errorf(codes.PermissionDenied, "this token may not use %s", entry)
+	case err != nil:
+		log.WithFunc("auth.Authenticator.resolve").Error(ctx, err, "resolve a bearer token")
+		return Identity{}, status.Error(codes.Unavailable, "checking the bearer token failed")
+	}
+	return id, nil
 }
 
 func (a *Authenticator) authenticate(ctx context.Context) (context.Context, error) {
@@ -195,11 +277,11 @@ func (a *Authenticator) authenticate(ctx context.Context) (context.Context, erro
 	if len(values) != 1 {
 		return nil, status.Error(codes.Unauthenticated, "missing bearer token")
 	}
-	user, credential, err := a.admit(ctx, values[0])
+	id, err := a.Authenticate(ctx, EntryGRPC, values[0])
 	if err != nil {
 		return nil, err
 	}
-	return context.WithValue(WithUser(ctx, user), credentialKey{}, credential), nil
+	return context.WithValue(WithUser(ctx, id.User), credentialKey{}, id.Credential), nil
 }
 
 type authedStream struct {

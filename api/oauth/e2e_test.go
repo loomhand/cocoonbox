@@ -95,7 +95,7 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	if list := e.boxNames(t, e.userToken); !slices.Equal(list, []string{"main", "agent-one"}) {
 		t.Errorf("the user token sees %v, want every box", list)
 	}
-	if _, err := e.authn.Authenticate(t.Context(), "Bearer "+access); err == nil {
+	if _, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+access); err == nil {
 		t.Error("the user authenticator admits an access token, so gRPC, the box MCP and Connect would take it")
 	}
 
@@ -261,7 +261,7 @@ func TestSigningOutEverywhereEndsEverySignInAndKeepsTheBoxes(t *testing.T) {
 		}
 	}
 	for name, token := range map[string]string{"the personal token": e.userToken, "the device token": device} {
-		if _, err := e.authn.Authenticate(t.Context(), "Bearer "+token); err == nil {
+		if _, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+token); err == nil {
 			t.Errorf("%s still authenticates", name)
 		}
 	}

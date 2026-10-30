@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -140,6 +141,52 @@ func TestMCPStreamEndsWhenItsTokenIsRevoked(t *testing.T) {
 	}
 }
 
+func TestMCPStreamEndsWhenItsProvidersCredentialEnds(t *testing.T) {
+	env := newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
+		return externalIdentities{token: "ext-alice", id: auth.Identity{User: "alice", Credential: "idp:session-1"}, life: life, credLife: aliceLife}
+	})
+	req := env.request(t, http.MethodGet, boxes.BoxID("alice"), "")
+	req.Header.Set("Authorization", "Bearer ext-alice")
+	req.Header.Set("Accept", "text/event-stream")
+	resp := env.do(t, req)
+	defer resp.Body.Close()
+	if line, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil || line != "data: 0\n" {
+		t.Fatalf("first event = %q, %v", line, err)
+	}
+	env.revoke()
+	select {
+	case <-env.upstream.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream outlived its provider's credential")
+	}
+}
+
+func TestMCPAnIdentityProviderOutageIsNotTriedAsAShare(t *testing.T) {
+	env := newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
+		return externalIdentities{down: true, life: life, credLife: aliceLife}
+	})
+	req := env.request(t, http.MethodPost, boxes.BoxID("alice"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	req.Header.Set("Authorization", "Bearer "+auth.SecretPrefix+"unknown")
+	resp := env.do(t, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("a share secret while the provider is down = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestMCPForbidsATokenItsProviderKeepsOffMCP(t *testing.T) {
+	env := newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
+		return externalIdentities{life: life, credLife: aliceLife}
+	})
+	req := env.request(t, http.MethodPost, boxes.BoxID("alice"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	req.Header.Set("Authorization", "Bearer ext-grpc")
+	resp := env.do(t, req)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("a gRPC-only token on MCP = %d, want 403", resp.StatusCode)
+	}
+}
+
 func TestMCPRejects(t *testing.T) {
 	env := newMCPEnv(t)
 	tests := []struct {
@@ -268,16 +315,23 @@ type mcpEnv struct {
 // newMCPEnv serves a fake agent /mcp over HTTP/1.1 and h2c behind the MCP proxy.
 func newMCPEnv(t *testing.T) *mcpEnv {
 	t.Helper()
-	upstream := &fakeMCP{next: make(chan struct{}), closed: make(chan struct{})}
-	resolver := &fakeResolver{addr: serveHTTP(t, upstream)}
-
 	sum := sha256.Sum256([]byte(aliceToken))
 	bobSum, carolSum := sha256.Sum256([]byte(bobToken)), sha256.Sum256([]byte(carolToken))
-	shares := &fakeShares{bySum: map[string]auth.Share{}}
 	users := staticUsers{hex.EncodeToString(sum[:]): "alice", hex.EncodeToString(bobSum[:]): "bob", hex.EncodeToString(carolSum[:]): "carol"}
+	return newMCPEnvWith(t, users, func(life, aliceLife context.Context) auth.Identities {
+		return auth.Tokens(livingUsers{staticUsers: users, life: life, credentials: map[string]context.Context{hex.EncodeToString(sum[:]): aliceLife}})
+	})
+}
+
+// newMCPEnvWith serves the MCP proxy over the identities identify builds: life ends with every user, aliceLife with alice's credential.
+func newMCPEnvWith(t *testing.T, users staticUsers, identify func(life, aliceLife context.Context) auth.Identities) *mcpEnv {
+	t.Helper()
+	upstream := &fakeMCP{next: make(chan struct{}), closed: make(chan struct{})}
+	resolver := &fakeResolver{addr: serveHTTP(t, upstream)}
+	shares := &fakeShares{bySum: map[string]auth.Share{}}
 	life, disable := context.WithCancel(t.Context())
 	aliceLife, revoke := context.WithCancel(life)
-	authn := auth.New(livingUsers{staticUsers: users, life: life, credentials: map[string]context.Context{hex.EncodeToString(sum[:]): aliceLife}}, shares)
+	authn := auth.WithIdentities(identify(life, aliceLife), shares)
 	served := make(chan string, 16)
 	mcp := NewMCP(resolver, authn, fakeCreds{})
 	addr := serveHTTP(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -334,6 +388,35 @@ func (u livingUsers) Lifetime(_, credential string) (context.Context, func()) {
 		return life, func() {}
 	}
 	return u.life, func() {}
+}
+
+// externalIdentities is an identity provider whose one token names id, bound to credLife, or that is down.
+type externalIdentities struct {
+	down     bool
+	token    string
+	id       auth.Identity
+	life     context.Context
+	credLife context.Context
+}
+
+func (e externalIdentities) Resolve(_ context.Context, token string, entry auth.Entry) (auth.Identity, error) {
+	if token == "ext-grpc" && entry != auth.EntryGRPC {
+		return auth.Identity{}, auth.ErrNotAllowed
+	}
+	if e.down {
+		return auth.Identity{}, errors.New("identity provider unreachable")
+	}
+	if token != e.token {
+		return auth.Identity{}, auth.ErrUnknownToken
+	}
+	return e.id, nil
+}
+
+func (e externalIdentities) Lifetime(_, credential string) (context.Context, func()) {
+	if credential == e.id.Credential {
+		return e.credLife, func() {}
+	}
+	return e.life, func() {}
 }
 
 type fakeMCP struct {
