@@ -27,8 +27,7 @@ const (
 	maxGetTTL         = time.Hour
 	deleteConcurrency = 32
 	// deleteBatchSize is the most keys one DeleteObjects request takes.
-	deleteBatchSize        = 1000
-	deleteBatchConcurrency = 8
+	deleteBatchSize = 1000
 )
 
 // Options configures the bucket and credentials.
@@ -214,7 +213,7 @@ func (s *S3) deleteBatches(ctx context.Context, objects []minio.ObjectInfo) erro
 	batches := slices.Collect(slices.Chunk(objects, deleteBatchSize))
 	errs := make([]error, len(batches))
 	var g errgroup.Group
-	g.SetLimit(deleteBatchConcurrency)
+	g.SetLimit(deleteConcurrency)
 	for i, batch := range batches {
 		if ctx.Err() != nil {
 			break
