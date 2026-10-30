@@ -570,7 +570,7 @@ impl Browser {
                     .as_deref()
                     .map_or_else(|| "null".to_owned(), js_str);
                 let text = cdp.eval(&format!("{READ_JS}({arg})")).await?;
-                Ok(capped(text.as_str().unwrap_or_default()))
+                Ok(paged(text.as_str().unwrap_or_default(), a.offset))
             }
             _ => Err(format!("unknown browser tool {tool}")),
         }
@@ -1145,6 +1145,8 @@ struct FillField {
 struct ReadArgs {
     #[serde(rename = "ref", default)]
     element: Option<String>,
+    #[serde(default)]
+    offset: usize,
 }
 
 #[derive(Default)]
@@ -1820,6 +1822,23 @@ fn capped(text: &str) -> String {
     let mut out: String = text.chars().take(READ_CHARS).collect();
     if total > READ_CHARS {
         let _ = write!(out, "\n[truncated: {total} characters total]");
+    }
+    out
+}
+
+/// [`READ_CHARS`] characters of `text` from character `offset`, saying where the rest starts when there is more.
+fn paged(text: &str, offset: usize) -> String {
+    let total = text.chars().count();
+    if offset > 0 && offset >= total {
+        return format!("[the text has {total} characters; nothing at offset {offset}]");
+    }
+    let mut out: String = text.chars().skip(offset).take(READ_CHARS).collect();
+    let end = offset + out.chars().count();
+    if end < total {
+        let _ = write!(
+            out,
+            "\n[characters {offset}-{end} of {total}; pass offset {end} to read more]"
+        );
     }
     out
 }
@@ -3619,6 +3638,36 @@ pub(super) mod tests {
             assert!(!snap.contains("dialog"), "{snap}");
             b.run("a", "browser_close", json!({})).await.unwrap();
         }
+    }
+
+    #[test]
+    fn browser_read_pages_long_text_by_offset() {
+        let text: String = ('a'..='z').cycle().take(READ_CHARS * 2 + 10).collect();
+        let first = paged(&text, 0);
+        assert!(first.starts_with("abc"), "{}", &first[..10]);
+        assert!(
+            first.ends_with(&format!(
+                "\n[characters 0-{READ_CHARS} of {}; pass offset {READ_CHARS} to read more]",
+                READ_CHARS * 2 + 10
+            )),
+            "{}",
+            &first[first.len() - 80..]
+        );
+        let second = paged(&text, READ_CHARS);
+        assert_eq!(
+            second.chars().next(),
+            text.chars().nth(READ_CHARS),
+            "{}",
+            &second[..10]
+        );
+        let last = paged(&text, READ_CHARS * 2);
+        assert_eq!(last, text.chars().skip(READ_CHARS * 2).collect::<String>());
+        assert_eq!(paged("short", 0), "short");
+        assert_eq!(paged("", 0), "");
+        assert_eq!(
+            paged("short", 9),
+            "[the text has 5 characters; nothing at offset 9]"
+        );
     }
 
     #[test]

@@ -256,9 +256,15 @@ fn base_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
         ToolSpec {
             name: Cow::Borrowed("browser_read"),
             description: Cow::Borrowed(
-                "Return the visible text of the page, or of one element by ref.",
+                "Return the visible text of the page, or of one element by ref, up to 20000 characters from offset; a longer text ends with the offset to pass for the rest.",
             ),
-            parameters: json!({"type": "object", "properties": {"ref": {"type": "string"}}}),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "ref": {"type": "string"},
+                    "offset": {"type": "integer", "description": "First character, 0-based; default 0"}
+                }
+            }),
         },
         ToolSpec {
             name: Cow::Borrowed("delegate_computer"),
