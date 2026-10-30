@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -114,6 +115,11 @@ func TestLoadRejects(t *testing.T) {
 		{name: "negative user idle hibernate", body: required + "user_idle_hibernate: -1h\n", want: "user_idle_hibernate must not be negative"},
 		{name: "relative operator socket", body: required + "operator_socket: operator.sock\n", want: "operator_socket must be an absolute path"},
 		{name: "negative drain", body: required + "cluster:\n  drain: -1s\n", want: "cluster.drain must not be negative"},
+		{name: "identity over http", body: required + "identity:\n  url: http://id.example/review\n", want: "identity.url must be an https url"},
+		{name: "identity without a url", body: required + "identity:\n  token_file: identity-token\n", want: "identity.url must be an https url"},
+		{name: "identity with two bearers", body: required + "identity:\n  url: https://id.example\n  token_file: t\n  exec:\n    command: /usr/local/bin/tok\n", want: "token_file or exec, not both"},
+		{name: "identity plugin off the path", body: required + "identity:\n  url: https://id.example\n  exec:\n    command: tok\n", want: "identity.exec.command must be an absolute path"},
+		{name: "identity with no timeout", body: required + "identity:\n  url: https://id.example\n  timeout: -1s\n", want: "identity.timeout must be positive"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -159,6 +165,26 @@ func TestLoadOAuth(t *testing.T) {
 				t.Errorf("Load = %+v, %v", cfg.OAuth, err)
 			}
 		})
+	}
+}
+
+func TestLoadIdentity(t *testing.T) {
+	path := writeConfig(t, required+"identity:\n  url: https://id.example/v1/identity/token-review\n  token_file: identity-token\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := Identity{URL: "https://id.example/v1/identity/token-review", TokenFile: filepath.Join(filepath.Dir(path), "identity-token"), Timeout: Duration(5 * time.Second)}
+	if !reflect.DeepEqual(cfg.Identity, want) {
+		t.Errorf("identity = %+v, want %+v", cfg.Identity, want)
+	}
+	cfg, err = Load(writeConfig(t, required+"identity:\n  url: https://id.example\n  exec:\n    command: /usr/local/bin/tok\n    args: [--audience, cloud]\n"))
+	wantExec := &Exec{Command: "/usr/local/bin/tok", Args: []string{"--audience", "cloud"}}
+	if err != nil || !reflect.DeepEqual(cfg.Identity.Exec, wantExec) {
+		t.Errorf("exec = %+v, %v", cfg.Identity.Exec, err)
+	}
+	if cfg, err := Load(writeConfig(t, required)); err != nil || cfg.Identity.URL != "" {
+		t.Errorf("Load without identity = %+v, %v, want it off", cfg.Identity, err)
 	}
 }
 
