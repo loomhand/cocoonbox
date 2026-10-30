@@ -137,9 +137,10 @@ impl Host {
             "shell" => {
                 let command = call.args["command"].as_str().unwrap_or_default();
                 let note = self.held(|name| files::writes(command, name)).await;
-                self.shell(&call.agent_id, call.args)
-                    .await
-                    .map(|out| Output::text(out + &note))
+                self.shell(&call.agent_id, call.args).await.map(|mut out| {
+                    out.text.push_str(&note);
+                    out
+                })
             }
             "shell_close" => self.close_shell(&call.agent_id).await.map(Output::text),
             "read_file" => files::read(&self.workspace, self.hidden.as_deref(), call.args)
@@ -271,7 +272,7 @@ impl Host {
             .unwrap_or_else(Output::error))
     }
 
-    async fn shell(&self, agent_id: &str, args: Value) -> Result<String, String> {
+    async fn shell(&self, agent_id: &str, args: Value) -> Result<Output, String> {
         let command = args["command"]
             .as_str()
             .ok_or("shell needs a command string")?;
@@ -292,12 +293,11 @@ impl Host {
             *slot = Some(Shell::spawn(&self.workspace, self.script(agent_id)).await?);
         }
         let shell = slot.as_mut().ok_or("shell missing")?;
-        let out = shell.run(command, timeout).await?;
-        Ok(if self.plans {
-            out + &shell::capped_note(timeout)
-        } else {
-            out
-        })
+        let mut out = shell.run(command, timeout).await?;
+        if self.plans {
+            out.text.push_str(&shell::capped_note(timeout));
+        }
+        Ok(out)
     }
 
     /// With plans, a note on the files that a call `changes` and an app window has open (see [`files::held_note`]).

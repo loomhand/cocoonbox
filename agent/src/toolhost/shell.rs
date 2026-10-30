@@ -7,6 +7,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
+use super::rpc::Output;
 use crate::sys;
 
 const MARK: &str = "__CB_DONE_";
@@ -17,6 +18,7 @@ const TAIL_BYTES: usize = 20_000;
 const SLACK_BYTES: usize = 64 << 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_TIMEOUT: Duration = Duration::from_secs(600);
+const EXIT_WAIT: Duration = Duration::from_secs(2);
 #[cfg(unix)]
 const BASH: &str = "bash";
 /// Git for Windows' bash, which puts its tools on PATH; a bare `bash` can be WSL's launcher.
@@ -25,7 +27,7 @@ const BASH: &str = r"C:\Program Files\Git\bin\bash.exe";
 
 /// A live bash process; commands run by sourcing a script file so syntax errors stay contained.
 pub struct Shell {
-    _child: Child,
+    child: Child,
     stdin: ChildStdin,
     stdout: ChildStdout,
     script: PathBuf,
@@ -51,7 +53,7 @@ impl Shell {
             .await
             .map_err(|e| format!("init bash: {e}"))?;
         Ok(Self {
-            _child: child,
+            child,
             stdin,
             stdout,
             script,
@@ -65,12 +67,12 @@ impl Shell {
         self.dead
     }
 
-    /// Runs `command` and returns its merged output with the exit status.
+    /// Runs `command` and returns its merged output with the exit status; a non-zero status or a timeout is an error.
     pub async fn run(
         &mut self,
         command: &str,
         timeout: Option<Duration>,
-    ) -> Result<String, String> {
+    ) -> Result<Output, String> {
         let timeout = timeout.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT);
         tokio::fs::write(&self.script, command)
             .await
@@ -100,18 +102,31 @@ impl Shell {
         let result = match outcome {
             Ok(Ok(Some(code))) => {
                 guard.armed = false;
-                Ok(format!("{}\n[exit status {code}]", capture.render()))
+                Ok(Output {
+                    text: format!("{}\n[exit status {code}]", capture.render()),
+                    is_error: code != 0,
+                    ..Output::default()
+                })
             }
-            Ok(Ok(None)) => Ok(format!(
-                "{}\n[the shell exited; the next call starts a fresh session]",
-                capture.render()
-            )),
+            Ok(Ok(None)) => {
+                // the command ran `exit` in the sourced script, which ends bash itself
+                let status = tokio::time::timeout(EXIT_WAIT, shell.child.wait()).await;
+                let status = match status.ok().and_then(Result::ok).map(|s| s.code()) {
+                    Some(Some(code)) => format!("exit status {code}"),
+                    Some(None) => "killed by a signal".to_owned(),
+                    None => "exit status unknown".to_owned(),
+                };
+                Ok(Output::error(format!(
+                    "{}\n[{status}; the shell exited, the next call starts a fresh session]",
+                    capture.render()
+                )))
+            }
             Ok(Err(e)) => Err(e),
-            Err(_) => Ok(format!(
+            Err(_) => Ok(Output::error(format!(
                 "{}\n[timed out after {:.1}s; the shell session was reset, cwd and env are lost]",
                 capture.render(),
                 timeout.as_secs_f64()
-            )),
+            ))),
         };
         drop(guard);
         result
@@ -279,23 +294,25 @@ mod tests {
             .run("mkdir sub && cd sub && export X=42", None)
             .await
             .unwrap();
-        assert!(out.ends_with("[exit status 0]"), "{out}");
+        assert!(out.text.ends_with("[exit status 0]"), "{}", out.text);
+        assert!(!out.is_error);
         let out = sh
             .run("echo $X; pwd; echo err >&2; false", None)
             .await
             .unwrap();
-        assert!(out.starts_with("42\n"), "{out}");
-        assert!(out.contains("/sub\nerr"), "{out}");
-        assert!(out.ends_with("[exit status 1]"), "{out}");
+        assert!(out.text.starts_with("42\n"), "{}", out.text);
+        assert!(out.text.contains("/sub\nerr"), "{}", out.text);
+        assert!(out.text.ends_with("[exit status 1]"), "{}", out.text);
+        assert!(out.is_error);
     }
 
     #[tokio::test]
     async fn syntax_errors_and_stdin_readers_do_not_wedge_the_session() {
         let dir = tempfile::tempdir().unwrap();
         let mut sh = shell(dir.path()).await;
-        let out = sh.run("echo 'unterminated", None).await.unwrap();
+        let out = sh.run("echo 'unterminated", None).await.unwrap().text;
         assert!(!out.ends_with("[exit status 0]"), "{out}");
-        let out = sh.run("cat; echo after", None).await.unwrap();
+        let out = sh.run("cat; echo after", None).await.unwrap().text;
         assert!(out.starts_with("after"), "{out}");
     }
 
@@ -318,7 +335,12 @@ mod tests {
             .run("echo start; sleep 30", Some(Duration::from_millis(300)))
             .await
             .unwrap();
-        assert!(out.contains("start") && out.contains("timed out"), "{out}");
+        assert!(
+            out.text.contains("start") && out.text.contains("timed out"),
+            "{}",
+            out.text
+        );
+        assert!(out.is_error);
         assert!(sh.is_dead());
     }
 
@@ -332,7 +354,7 @@ mod tests {
         let mut sh = shell(dir.path()).await;
         let out = sh.run("cat /proc/self/oom_score_adj", None).await;
         std::fs::write(adj, own.trim()).unwrap();
-        let out = out.unwrap();
+        let out = out.unwrap().text;
         assert!(out.starts_with("0\n"), "{out}");
     }
 
@@ -340,8 +362,11 @@ mod tests {
     async fn exit_marks_the_session_dead() {
         let dir = tempfile::tempdir().unwrap();
         let mut sh = shell(dir.path()).await;
-        let out = sh.run("exit 3", None).await.unwrap();
-        assert!(out.contains("shell exited"), "{out}");
+        let out = sh.run("echo bye; exit 3", None).await.unwrap();
+        assert!(out.text.starts_with("bye\n"), "{}", out.text);
+        assert!(out.text.contains("[exit status 3;"), "{}", out.text);
+        assert!(out.text.contains("shell exited"), "{}", out.text);
+        assert!(out.is_error);
         assert!(sh.is_dead());
     }
 
@@ -349,7 +374,11 @@ mod tests {
     async fn large_output_keeps_head_and_tail() {
         let dir = tempfile::tempdir().unwrap();
         let mut sh = shell(dir.path()).await;
-        let out = sh.run("seq 1 200000; echo last-line", None).await.unwrap();
+        let out = sh
+            .run("seq 1 200000; echo last-line", None)
+            .await
+            .unwrap()
+            .text;
         assert!(out.starts_with("1\n2\n"), "{}", &out[..50]);
         assert!(out.contains("bytes omitted"));
         assert!(out.contains("last-line\n[exit status 0]"));
