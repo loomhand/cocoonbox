@@ -33,6 +33,14 @@ use tonic::{Code, Request};
 use common::{owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
+
+/// The routing as the box's agent reads it: the one-look tier names the subagent it delegates to.
+fn in_box(routing: &str) -> String {
+    routing.replace(
+        "`computer_state`, `computer_act`.",
+        "`computer_state`, `computer_act` (yours: `delegate_computer`).",
+    )
+}
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
 
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
@@ -4119,7 +4127,7 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     );
     let system = chats[0]["messages"][0]["content"].as_str().unwrap();
     assert!(
-        system.ends_with(&format!("{routing}\n\n{DEMO_ROUTING}")),
+        system.ends_with(&format!("{}\n\n{DEMO_ROUTING}", in_box(&routing))),
         "{system}"
     );
     let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
@@ -4352,7 +4360,7 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     assert!(offered.contains(&"delegate_computer"), "{offered:?}");
     assert!(!offered.contains(&"cua_route"), "{offered:?}");
     let system = chats[0]["messages"][0]["content"].as_str().unwrap();
-    assert!(system.ends_with(&routing), "{system}");
+    assert!(system.ends_with(&in_box(&routing)), "{system}");
     let asked = gw_bodies(&h.gw_log, "decisions");
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0]["state"]["task"], "save a note in mousepad");
@@ -4418,6 +4426,12 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
         instructions.ends_with(&format!("\n\n{routing}")),
         "{instructions}"
     );
+    for loop_only in ["delegate_computer", "request_take_over"] {
+        assert!(
+            !instructions.contains(loop_only),
+            "{loop_only}: {instructions}"
+        );
+    }
     let version = match std::fs::read_to_string("/etc/os-release") {
         Ok(release) => release
             .lines()

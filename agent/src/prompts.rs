@@ -103,6 +103,11 @@ const IMAGE_POINTS: &str = "Coordinates are pixels of the latest screenshot imag
 
 /// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
 pub const ROUTING: &str = include_str!("../../image/desk/routing.md");
+/// The one-look tier of [`ROUTING`], which names the MCP tools, and that tier for the box's agent, which delegates them.
+const LOOK_TIER: [&str; 2] = [
+    "`computer_state`, `computer_act`.",
+    "`computer_state`, `computer_act` (yours: `delegate_computer`).",
+];
 
 const KEYS_HEAD: &str = "API keys: these shell env vars hold placeholders that the box's network swaps for the real key only on the listed hosts. Send them exactly as shown; never ask for, print or replace a key";
 
@@ -144,7 +149,7 @@ pub fn main(
         Automation::Minimal | Automation::Android => {}
         Automation::Desk => {
             prompt.push_str("\n\nThis box runs GUI plans and desk scripts.\n\n");
-            prompt.push_str(ROUTING);
+            prompt.push_str(&ROUTING.replace(LOOK_TIER[0], LOOK_TIER[1]));
             for part in routing_extra {
                 prompt.push_str("\n\n");
                 prompt.push_str(part);
@@ -291,8 +296,12 @@ mod tests {
     fn main_prompt_on_a_desk_box_ends_with_its_routing() {
         let p = main("m", "c", false, Automation::Desk, &[], None);
         assert!(p.contains("delegate_computer hands one task"), "{p}");
-        assert!(p.ends_with(ROUTING), "{p}");
-        assert!(ROUTING.contains("script_run") && ROUTING.contains("delegate_computer"));
+        assert!(ROUTING.contains(LOOK_TIER[0]), "{ROUTING}");
+        assert!(
+            p.ends_with(&ROUTING.replace(LOOK_TIER[0], LOOK_TIER[1])),
+            "{p}"
+        );
+        assert!(ROUTING.contains("script_run") && !ROUTING.contains("delegate_computer"));
         assert!(ROUTING.contains("nor rebuild documents in code"));
         assert!(!MAIN.contains("not /workspace"));
         assert!(ROUTING.contains(
@@ -315,7 +324,10 @@ mod tests {
         let extra = ["Use x_run for x.".to_owned()];
         let p = main("m", "c", false, Automation::Desk, &extra, None);
         assert!(
-            p.ends_with(&format!("{ROUTING}\n\nUse x_run for x.")),
+            p.ends_with(&format!(
+                "{}\n\nUse x_run for x.",
+                ROUTING.replace(LOOK_TIER[0], LOOK_TIER[1])
+            )),
             "{p}"
         );
         assert!(!main("m", "c", false, Automation::Minimal, &extra, None).contains("x_run"));
