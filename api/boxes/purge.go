@@ -4,13 +4,10 @@ import (
 	"context"
 	"errors"
 	"maps"
-	"slices"
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/store"
 )
-
-const purgeBatch = 1000
 
 // deletedBox records when a GC pass first found a box's state without its box.
 type deletedBox struct {
@@ -27,10 +24,8 @@ func DeleteState(ctx context.Context, st store.Store, user string) (int, error) 
 	for i, obj := range listing {
 		keys[i] = obj.Key
 	}
-	for part := range slices.Chunk(keys, purgeBatch) {
-		if err := st.Delete(ctx, part); err != nil {
-			return 0, err
-		}
+	if err := st.Delete(ctx, keys); err != nil {
+		return 0, err
 	}
 	return len(keys), nil
 }

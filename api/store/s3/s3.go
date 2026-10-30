@@ -26,6 +26,9 @@ const (
 	defaultPresignTTL = 10 * time.Minute
 	maxGetTTL         = time.Hour
 	deleteConcurrency = 32
+	// deleteBatchSize is the most keys one DeleteObjects request takes.
+	deleteBatchSize        = 1000
+	deleteBatchConcurrency = 8
 )
 
 // Options configures the bucket and credentials.
@@ -172,17 +175,7 @@ func (s *S3) Delete(ctx context.Context, keys []string) error {
 	if s3utils.IsGoogleEndpoint(*s.client.EndpointURL()) {
 		return s.deleteEach(ctx, objects)
 	}
-	results, err := s.client.RemoveObjectsWithIter(ctx, s.opts.Bucket, slices.Values(objects), minio.RemoveObjectsOptions{})
-	if err != nil {
-		return fmt.Errorf("delete %d objects: %w", len(keys), err)
-	}
-	var errs []error
-	for res := range results {
-		if res.Err != nil {
-			errs = append(errs, fmt.Errorf("delete %s: %w", strings.TrimPrefix(res.ObjectName, s.base()), res.Err))
-		}
-	}
-	return errors.Join(append(errs, ctx.Err())...)
+	return s.deleteBatches(ctx, objects)
 }
 
 // Copy copies src to dst inside the service, without moving the data through the api.
@@ -215,6 +208,38 @@ func (s *S3) put(ctx context.Context, key string, data []byte, opts minio.PutObj
 		return fmt.Errorf("put %s: %w", key, err)
 	}
 	return nil
+}
+
+func (s *S3) deleteBatches(ctx context.Context, objects []minio.ObjectInfo) error {
+	batches := slices.Collect(slices.Chunk(objects, deleteBatchSize))
+	errs := make([]error, len(batches))
+	var g errgroup.Group
+	g.SetLimit(deleteBatchConcurrency)
+	for i, batch := range batches {
+		if ctx.Err() != nil {
+			break
+		}
+		g.Go(func() error {
+			errs[i] = s.deleteBatch(ctx, batch)
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return errors.Join(append(errs, ctx.Err())...)
+}
+
+func (s *S3) deleteBatch(ctx context.Context, objects []minio.ObjectInfo) error {
+	results, err := s.client.RemoveObjectsWithIter(ctx, s.opts.Bucket, slices.Values(objects), minio.RemoveObjectsOptions{})
+	if err != nil {
+		return fmt.Errorf("delete %d objects: %w", len(objects), err)
+	}
+	var errs []error
+	for res := range results {
+		if res.Err != nil {
+			errs = append(errs, fmt.Errorf("delete %s: %w", strings.TrimPrefix(res.ObjectName, s.base()), res.Err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (s *S3) deleteEach(ctx context.Context, objects []minio.ObjectInfo) error {
