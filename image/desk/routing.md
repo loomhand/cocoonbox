@@ -4,7 +4,7 @@ GUI work in a desktop app (menus, toggles, dialogs, settings, Save As, typing a 
 
 Else take the first tier that fits:
 1. Command: `shell` and the file tools; `browser_fetch` to read a web page. Do not open an app to do a command's job, nor rebuild documents in code.
-2. One look, or a click no plan can name: `screenshot`, `computer_state`, `computer_act` (in-box agent: `delegate_computer`). A web page to click, type or sign in on, or a form filled often: the `browser_*` tools.
+2. One look, or a click no plan can name: `screenshot`, `computer_state`, `computer_act`. A web page to click, type or sign in on, or a form filled often: the `browser_*` tools.
 
 A plan or script that fails twice at one step: look with `computer_state`, then fix it or use `computer_act`. Watch a chat or inbox by polling its activity list, not just known pages.
 
