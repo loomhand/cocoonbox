@@ -258,6 +258,67 @@ func TestDeleteOnGCSRunsBoundedParallelDeletes(t *testing.T) {
 	}
 }
 
+func TestDeleteSendsBatchesInBoundedParallel(t *testing.T) {
+	const (
+		n       = 6 * deleteBatchSize
+		latency = 50 * time.Millisecond
+	)
+	var (
+		mu       sync.Mutex
+		keys     int
+		inFlight int
+		peak     int
+		largest  int
+	)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		if r.Method != http.MethodPost || !r.URL.Query().Has("delete") {
+			t.Errorf("request %s %s, want POST ?delete", r.Method, r.URL)
+		}
+		batch := strings.Count(string(raw), "<Key>")
+		mu.Lock()
+		keys += batch
+		largest = max(largest, batch)
+		inFlight++
+		peak = max(peak, inFlight)
+		mu.Unlock()
+		time.Sleep(latency)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/xml")
+		result := "<DeleteResult>"
+		if strings.Contains(string(raw), "<Key>state/alice/chunks/denied</Key>") {
+			result += "<Error><Key>state/alice/chunks/denied</Key><Code>AccessDenied</Code><Message>denied</Message></Error>"
+		}
+		_, _ = w.Write([]byte(result + "</DeleteResult>"))
+	}))
+	t.Cleanup(srv.Close)
+	s, err := New(Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	all := make([]string, n, n+1)
+	for i := range n {
+		all[i] = fmt.Sprintf("alice/chunks/%05d", i)
+	}
+	start := time.Now()
+	err = s.Delete(t.Context(), append(all, "alice/chunks/denied"))
+	elapsed := time.Since(start)
+	if err == nil || !strings.Contains(err.Error(), "delete alice/chunks/denied") || strings.Count(err.Error(), "delete ") != 1 {
+		t.Errorf("Delete = %v, want only the denied failure", err)
+	}
+	if keys != n+1 || largest != deleteBatchSize {
+		t.Errorf("sent %d keys, at most %d per request; want %d, at most %d", keys, largest, n+1, deleteBatchSize)
+	}
+	if peak > deleteBatchConcurrency || peak < 2 {
+		t.Errorf("peak in-flight batches = %d, want 2..%d", peak, deleteBatchConcurrency)
+	}
+	if serial := 7 * latency; elapsed > serial*3/4 {
+		t.Errorf("Delete took %v, serial is %v", elapsed, serial)
+	}
+}
+
 func TestGetMapsMissingObject(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/xml")
