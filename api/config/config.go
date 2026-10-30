@@ -34,6 +34,10 @@ const (
 
 	defaultIdleHibernate = 30 * time.Minute
 
+	defaultIdentityTimeout = 5 * time.Second
+
+	schemeHTTPS = "https"
+
 	defaultVCPUs     = 4
 	defaultMemoryMiB = 8192
 	defaultDiskGiB   = 40
@@ -179,13 +183,56 @@ type OAuth struct {
 
 func (o OAuth) validate() error {
 	var errs []error
-	if u, err := url.Parse(o.PublicURL); o.PublicURL != "" && (err != nil || u.Scheme != "https" || u.Host == "" || u.Path != "") {
+	if u, err := url.Parse(o.PublicURL); o.PublicURL != "" && (err != nil || u.Scheme != schemeHTTPS || u.Host == "" || u.Path != "") {
 		errs = append(errs, fmt.Errorf("oauth.public_url must be an https origin, got %q", o.PublicURL))
 	}
 	if *o.IdleHibernate < 0 {
 		errs = append(errs, fmt.Errorf("oauth.idle_hibernate must not be negative, got %s", time.Duration(*o.IdleHibernate)))
 	}
 	return errors.Join(errs...)
+}
+
+// Identity names another user system whose token review endpoint resolves the bearer tokens cocoonbox does not issue; it alone decides who gets in.
+type Identity struct {
+	// URL takes POST {"token", "entry"} and {"credential", "entry"} and answers 200 with a review; empty keeps cocoonbox's own users alone.
+	URL string `json:"url"`
+	// TokenFile holds the api's bearer for url, read on every call; Exec runs a credential plugin that prints it as
+	// {"token", "expiresAt"}. Neither sends none.
+	TokenFile string   `json:"token_file"`
+	Exec      *Exec    `json:"exec"`
+	Timeout   Duration `json:"timeout"`
+}
+
+func (i Identity) validate() error {
+	if i.URL == "" && i.TokenFile == "" && i.Exec == nil {
+		return nil
+	}
+	var errs []error
+	if u, err := url.Parse(i.URL); err != nil || u.Scheme != schemeHTTPS || u.Host == "" {
+		errs = append(errs, fmt.Errorf("identity.url must be an https url, got %q", i.URL))
+	}
+	if i.Timeout <= 0 {
+		errs = append(errs, errors.New("identity.timeout must be positive"))
+	}
+	return errors.Join(append(errs, i.validateBearer())...)
+}
+
+func (i Identity) validateBearer() error {
+	switch {
+	case i.Exec == nil:
+		return nil
+	case i.TokenFile != "":
+		return errors.New("identity takes token_file or exec, not both")
+	case !filepath.IsAbs(i.Exec.Command):
+		return fmt.Errorf("identity.exec.command must be an absolute path, got %q", i.Exec.Command)
+	}
+	return nil
+}
+
+// Exec names a credential plugin, run without a shell.
+type Exec struct {
+	Command string   `json:"command"`
+	Args    []string `json:"args"`
 }
 
 // Wake bounds the scheduled wakes of boxes (design §15.13).
@@ -225,10 +272,11 @@ type Config struct {
 	State             State    `json:"state"`
 	Connect           Connect  `json:"connect"`
 	// OperatorSocket serves the root CLI's box commands on this unix socket; empty turns them off.
-	OperatorSocket string  `json:"operator_socket"`
-	Wake           Wake    `json:"wake"`
-	OAuth          OAuth   `json:"oauth"`
-	Cluster        Cluster `json:"cluster"`
+	OperatorSocket string   `json:"operator_socket"`
+	Wake           Wake     `json:"wake"`
+	OAuth          OAuth    `json:"oauth"`
+	Cluster        Cluster  `json:"cluster"`
+	Identity       Identity `json:"identity"`
 }
 
 // Load reads, defaults and validates the file at path.
@@ -301,6 +349,7 @@ func (c *Config) applyDefaults() {
 	c.Wake.MaxAwakeFor = cmp.Or(c.Wake.MaxAwakeFor, Duration(defaultMaxAwakeFor))
 	c.Connect.PublicURL = strings.TrimSuffix(c.Connect.PublicURL, "/")
 	c.OAuth.PublicURL = strings.TrimSuffix(c.OAuth.PublicURL, "/")
+	c.Identity.Timeout = cmp.Or(c.Identity.Timeout, Duration(defaultIdentityTimeout))
 	if c.OAuth.IdleHibernate == nil {
 		c.OAuth.IdleHibernate = new(Duration(defaultIdleHibernate))
 	}
@@ -308,7 +357,7 @@ func (c *Config) applyDefaults() {
 
 // resolvePaths anchors relative file paths at dir, which lets systemd LoadCredential= hand over all files in one directory.
 func (c *Config) resolvePaths(dir string) {
-	for _, p := range []*string{&c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Provision.GWAdmin.TokenFile, &c.Sandboxd.TokenFile, &c.Accounts.DSNFile, &c.Accounts.MasterKeyFile} {
+	for _, p := range []*string{&c.State.CredentialsFile, &c.Provision.SigningKeyFile, &c.Provision.GWAdmin.TokenFile, &c.Sandboxd.TokenFile, &c.Accounts.DSNFile, &c.Accounts.MasterKeyFile, &c.Identity.TokenFile} {
 		if *p != "" && !filepath.IsAbs(*p) {
 			*p = filepath.Join(dir, *p)
 		}
@@ -344,7 +393,7 @@ func (c *Config) validate() error {
 	if c.MaxRunningBoxes < 1 {
 		errs = append(errs, fmt.Errorf("max_running_boxes must be at least 1, got %d", c.MaxRunningBoxes))
 	}
-	if u, err := url.Parse(c.Connect.PublicURL); c.Connect.PublicURL != "" && (err != nil || u.Scheme != "https" || u.Host == "" || strings.Trim(u.Path, "/") != "") {
+	if u, err := url.Parse(c.Connect.PublicURL); c.Connect.PublicURL != "" && (err != nil || u.Scheme != schemeHTTPS || u.Host == "" || strings.Trim(u.Path, "/") != "") {
 		errs = append(errs, fmt.Errorf("connect.public_url must be an https origin, got %q", c.Connect.PublicURL))
 	}
 	if ip, err := netip.ParseAddrPort(c.Connect.BoxListen); c.Connect.BoxListen != "" && (err != nil || ip.Addr().IsUnspecified() || c.Connect.PublicURL == "") {
@@ -354,7 +403,7 @@ func (c *Config) validate() error {
 	if c.AgentPort < 1 || c.AgentPort > 65535 {
 		errs = append(errs, fmt.Errorf("agent_port must be in 1..65535, got %d", c.AgentPort))
 	}
-	errs = append(errs, c.Cluster.validate(c.State.ConditionalWrites))
+	errs = append(errs, c.Cluster.validate(c.State.ConditionalWrites), c.Identity.validate())
 	return errors.Join(errs...)
 }
 

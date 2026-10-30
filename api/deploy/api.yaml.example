@@ -41,6 +41,12 @@ wake:                          # scheduled box wakes (design §15.13)
   max_schedules: 3             # wake schedules per user
   floor: 1h                    # least time between two wakes of one box from hibernation
   max_awake_for: 1h            # longest awake_for a schedule may ask
+# identity:                    # users of another system through its token review webhook (design §22.6); omit to keep cocoonbox's own users alone
+#   url: https://id.example/v1/identity/token-review
+#   exec:                      # a credential plugin that prints {"token", "expiresAt"}; or token_file: identity-token
+#     command: /usr/local/bin/identity-token
+#     args: [--audience, https://id.example]
+#   timeout: 5s
 cluster:                       # state api processes share in the users database; remove the block before rolling back to an older binary
   ledger: false                # copy machines, box heads and operations there and verify the copy every minute
   shared: false                # make that copy the truth, so api processes may serve together; needs ledger and state.conditional_writes

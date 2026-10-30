@@ -43,6 +43,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/store/s3"
 	"github.com/loomhand/cocoonbox/api/users"
 	"github.com/loomhand/cocoonbox/api/vault"
+	"github.com/loomhand/cocoonbox/api/webhook"
 )
 
 const (
@@ -159,7 +160,7 @@ func main() {
 	proxy := edge.NewProxy(svc, signer, pool)
 	accounts.OnShareEnd(func(ctx context.Context, sh users.Share) { go endShare(ctx, proxy, sh) })
 
-	authn := auth.New(accounts, accounts)
+	authn := authenticator(ctx, cfg, accounts)
 	shareSvc := shares.New(accounts)
 	access := boxes.NewAccessLog(authn.Identify)
 	server := grpc.NewServer(
@@ -421,6 +422,43 @@ func openConnect(ctx context.Context, cfg *config.Config, accounts *users.Servic
 	}
 	log.WithFunc("main.openConnect").Infof(ctx, "connect on %s", cfg.Connect.PublicURL)
 	return broker, nil
+}
+
+// authenticator admits cocoonbox's tokens, the identity webhook's users and share secrets, and stops the api when the webhook cannot open.
+func authenticator(ctx context.Context, cfg *config.Config, accounts *users.Service) *auth.Authenticator {
+	identities, err := openIdentities(ctx, cfg, accounts)
+	if err != nil {
+		log.WithFunc("main.authenticator").Fatalf(ctx, err, "open the identity webhook")
+	}
+	return auth.WithIdentities(identities, accounts)
+}
+
+// openIdentities resolves cocoonbox's own tokens, and with identity.url every other bearer through the token review webhook,
+// which reviews again the credentials calls hold until ctx ends.
+func openIdentities(ctx context.Context, cfg *config.Config, accounts interface {
+	auth.Users
+	webhook.Accounts
+},
+) (auth.Identities, error) {
+	own := auth.Tokens(accounts)
+	if cfg.Identity.URL == "" {
+		return own, nil
+	}
+	timeout := time.Duration(cfg.Identity.Timeout)
+	var bearer webhook.Bearer
+	switch id := cfg.Identity; {
+	case id.TokenFile != "":
+		bearer = webhook.FileBearer(id.TokenFile)
+	case id.Exec != nil:
+		bearer = webhook.ExecBearer(append([]string{id.Exec.Command}, id.Exec.Args...), timeout)
+	}
+	hook, err := webhook.New(webhook.Options{URL: cfg.Identity.URL, Bearer: bearer, Timeout: timeout, Every: time.Second}, accounts)
+	if err != nil {
+		return nil, err
+	}
+	go hook.Run(ctx)
+	log.WithFunc("main.openIdentities").Infof(ctx, "users of another system come through %s", cfg.Identity.URL)
+	return auth.Outside(own, hook), nil
 }
 
 // openSignup opens sign-in with GitHub and signup on the users database, with the login client from LOGIN_GITHUB_CLIENT_ID and _SECRET.
