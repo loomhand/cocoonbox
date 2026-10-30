@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"runtime/debug"
@@ -59,6 +60,37 @@ func TestInitializeAndToolsList(t *testing.T) {
 	}
 	if ping := post(t, srv, aliceToken, `{"jsonrpc":"2.0","id":3,"method":"ping"}`); ping.Error != nil || ping.Result == nil {
 		t.Fatalf("ping = %+v", ping)
+	}
+}
+
+func TestACallIsBoundToTheCredentialItsProviderNamed(t *testing.T) {
+	srv, _ := newTestServer(t)
+	ids := &boundIdentities{}
+	srv.authn = auth.WithIdentities(ids, nil)
+	if list := post(t, srv, "ext-alice", `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"box_list"}}`); list.Error != nil {
+		t.Fatalf("box_list = %+v", list)
+	}
+	if want := []string{"alice idp:session-1"}; !slices.Equal(ids.bound, want) {
+		t.Errorf("bound %v, want %v", ids.bound, want)
+	}
+}
+
+func TestAnIdentityProviderOutageIsUnavailableNotUnauthorized(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.authn = auth.WithIdentities(&boundIdentities{}, nil)
+	if rec := serve(srv, http.MethodPost, "ext-down", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("a provider outage = %d, want 503", rec.Code)
+	}
+	if rec := serve(srv, http.MethodPost, "ext-nobody", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); rec.Code != http.StatusUnauthorized {
+		t.Errorf("an unknown token = %d, want 401", rec.Code)
+	}
+}
+
+func TestATokenItsProviderKeepsOffMCPIsForbidden(t *testing.T) {
+	srv, _ := newTestServer(t)
+	srv.authn = auth.WithIdentities(&boundIdentities{}, nil)
+	if rec := serve(srv, http.MethodPost, "ext-grpc", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); rec.Code != http.StatusForbidden {
+		t.Errorf("a gRPC-only token on MCP = %d, want 403", rec.Code)
 	}
 }
 
@@ -681,6 +713,32 @@ func sseMessages(t *testing.T, body string) []map[string]any {
 		msgs = append(msgs, msg)
 	}
 	return msgs
+}
+
+// boundIdentities names alice for ext-alice and records every user and credential a call is bound to.
+type boundIdentities struct {
+	mu    sync.Mutex
+	bound []string
+}
+
+func (*boundIdentities) Resolve(_ context.Context, token string, entry auth.Entry) (auth.Identity, error) {
+	if token == "ext-grpc" && entry != auth.EntryGRPC {
+		return auth.Identity{}, auth.ErrNotAllowed
+	}
+	if token == "ext-down" {
+		return auth.Identity{}, errors.New("identity provider unreachable")
+	}
+	if token != "ext-alice" {
+		return auth.Identity{}, auth.ErrUnknownToken
+	}
+	return auth.Identity{User: "alice", Credential: "idp:session-1"}, nil
+}
+
+func (b *boundIdentities) Lifetime(user, credential string) (context.Context, func()) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.bound = append(b.bound, user+" "+credential)
+	return context.Background(), func() {}
 }
 
 type staticUsers map[string]string

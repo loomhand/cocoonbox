@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/mcpwire"
@@ -35,12 +37,19 @@ var listChanged = mcpwire.Event([]byte(`{"jsonrpc":"2.0","method":"notifications
 
 // Authenticator maps an Authorization header value to its user and binds a call to the user and credential, so it ends when the user is disabled or deleted or the credential ends.
 type Authenticator interface {
-	Authenticate(ctx context.Context, header string) (string, error)
+	Authenticate(ctx context.Context, entry auth.Entry, header string) (auth.Identity, error)
 	Bind(ctx context.Context, user, credential string) (context.Context, context.CancelFunc)
 }
 
-// authFunc maps an Authorization header value to its user and, on the box door, the calling machine.
-type authFunc func(ctx context.Context, header string) (string, string, error)
+// authFunc maps an Authorization header value to who it admits.
+type authFunc func(ctx context.Context, header string) (admitted, error)
+
+// admitted is a door call's user, the calling machine on the box door, and the credential the call is bound to.
+type admitted struct {
+	user       string
+	machine    string
+	credential string
+}
 
 type session struct {
 	client string
@@ -63,7 +72,7 @@ type response struct {
 type Door struct {
 	svc   *Service
 	authn authFunc
-	bind  func(ctx context.Context, user, header string) (context.Context, context.CancelFunc)
+	bind  func(ctx context.Context, user, credential string) (context.Context, context.CancelFunc)
 	door  string
 
 	mu      sync.Mutex
@@ -72,12 +81,13 @@ type Door struct {
 
 func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
-	user, machine, err := d.authn(r.Context(), r.Header.Get(headerAuthorization))
+	in, err := d.authn(r.Context(), r.Header.Get(headerAuthorization))
 	if err != nil {
-		w.WriteHeader(http.StatusUnauthorized)
+		w.WriteHeader(refusal(err))
 		return
 	}
-	ctx, stop := d.bind(r.Context(), user, r.Header.Get(headerAuthorization))
+	user, machine := in.user, in.machine
+	ctx, stop := d.bind(r.Context(), user, in.credential)
 	defer stop()
 	r = r.WithContext(ctx)
 	switch r.Method {
@@ -241,24 +251,31 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 	}
 }
 
+// refusal is the status of a failed authentication: 503 when the identity provider could not answer, else 401.
+func refusal(err error) int {
+	switch status.Code(err) {
+	case codes.Unavailable:
+		return http.StatusServiceUnavailable
+	case codes.PermissionDenied:
+		return http.StatusForbidden
+	}
+	return http.StatusUnauthorized
+}
+
 // NewDoor serves the tools for door, authenticating with authn.
 func (s *Service) NewDoor(authn Authenticator, door string) *Door {
-	bind := func(ctx context.Context, user, header string) (context.Context, context.CancelFunc) {
-		token, _ := auth.Bearer(header)
-		return authn.Bind(ctx, user, auth.TokenCredential(token))
-	}
-	return &Door{svc: s, door: door, clients: map[string]session{}, bind: bind, authn: func(ctx context.Context, header string) (string, string, error) {
-		user, err := authn.Authenticate(ctx, header)
-		return user, "", err
+	return &Door{svc: s, door: door, clients: map[string]session{}, bind: authn.Bind, authn: func(ctx context.Context, header string) (admitted, error) {
+		id, err := authn.Authenticate(ctx, auth.EntryMCP, header)
+		return admitted{user: id.User, credential: id.Credential}, err
 	}}
 }
 
 // NewBoxDoor serves the box door, authenticating each call by the door key of its machine and binding it to the machine's owner with authn.
 func (s *Service) NewBoxDoor(authn Authenticator) *Door {
-	bind := func(ctx context.Context, user, _ string) (context.Context, context.CancelFunc) {
-		return authn.Bind(ctx, user, "")
-	}
-	return &Door{svc: s, door: DoorBox, clients: map[string]session{}, bind: bind, authn: s.BoxCaller}
+	return &Door{svc: s, door: DoorBox, clients: map[string]session{}, bind: authn.Bind, authn: func(ctx context.Context, header string) (admitted, error) {
+		user, machine, err := s.BoxCaller(ctx, header)
+		return admitted{user: user, machine: machine}, err
+	}}
 }
 
 type watchers struct {

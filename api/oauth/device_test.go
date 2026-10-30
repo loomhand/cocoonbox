@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/users"
 )
@@ -23,8 +24,8 @@ func TestCLISignsInWithADeviceTokenThatOutlivesThePersonalToken(t *testing.T) {
 		t.Fatalf("consent = %+v", consent)
 	}
 	token := e.redeemAccount(t, q, verifier)
-	if user, err := e.authn.Authenticate(t.Context(), "Bearer "+token); err != nil || user != e.alice {
-		t.Fatalf("the device token authenticates as %q, %v", user, err)
+	if id, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+token); err != nil || id.User != e.alice {
+		t.Fatalf("the device token authenticates as %q, %v", id.User, err)
 	}
 	var devices []users.Device
 	e.console(t, http.MethodGet, "devices", nil, &devices)
@@ -32,16 +33,16 @@ func TestCLISignsInWithADeviceTokenThatOutlivesThePersonalToken(t *testing.T) {
 		t.Fatalf("devices = %+v", devices)
 	}
 	e.console(t, http.MethodPost, "me/token", map[string]any{}, nil)
-	if user, err := e.authn.Authenticate(t.Context(), "Bearer "+token); err != nil || user != e.alice {
-		t.Errorf("after the personal token's regenerate the device token authenticates as %q, %v", user, err)
+	if id, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+token); err != nil || id.User != e.alice {
+		t.Errorf("after the personal token's regenerate the device token authenticates as %q, %v", id.User, err)
 	}
-	if user, err := e.authn.Authenticate(t.Context(), "Bearer "+e.userToken); err == nil {
-		t.Errorf("the replaced personal token still authenticates as %q", user)
+	if id, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+e.userToken); err == nil {
+		t.Errorf("the replaced personal token still authenticates as %q", id.User)
 	}
 	if resp := e.post(t, oauth.RevokePath, "application/x-www-form-urlencoded", url.Values{"token": {token}, "client_id": {oauth.CLIClient}}.Encode()); resp.StatusCode != http.StatusOK {
 		t.Fatalf("revoke: %d", resp.StatusCode)
 	}
-	if _, err := e.authn.Authenticate(t.Context(), "Bearer "+token); err == nil {
+	if _, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+token); err == nil {
 		t.Error("a revoked device token still authenticates")
 	}
 	e.console(t, http.MethodGet, "devices", nil, &devices)
@@ -63,11 +64,11 @@ func TestEachFirstPartySignInIsItsOwnDeviceAndTheConsoleRevokesOne(t *testing.T)
 	if status, _ := e.consoleStatus(t, http.MethodDelete, "devices/"+devices[1].ID, map[string]any{}); status != http.StatusNoContent {
 		t.Fatalf("revoke the CLI's device: %d", status)
 	}
-	if _, err := e.authn.Authenticate(t.Context(), "Bearer "+cli); err == nil {
+	if _, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+cli); err == nil {
 		t.Error("the CLI's revoked device token still authenticates")
 	}
-	if user, err := e.authn.Authenticate(t.Context(), "Bearer "+app); err != nil || user != e.alice {
-		t.Errorf("the app's device token authenticates as %q, %v after the CLI's revoke", user, err)
+	if id, err := e.authn.Authenticate(t.Context(), auth.EntryGRPC, "Bearer "+app); err != nil || id.User != e.alice {
+		t.Errorf("the app's device token authenticates as %q, %v after the CLI's revoke", id.User, err)
 	}
 	if status, _ := e.consoleStatus(t, http.MethodDelete, "devices/"+devices[1].ID, map[string]any{}); status != http.StatusNotFound {
 		t.Errorf("revoke again: %d, want 404", status)

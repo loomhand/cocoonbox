@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
@@ -186,9 +188,8 @@ func (s *Server) answer(ctx context.Context, w http.ResponseWriter, id jsontext.
 func (s *Server) authenticate(r *http.Request) (string, string, *oauth.Grant, error) {
 	header := r.Header.Get("Authorization")
 	if s.grants == nil || !oauth.IsAccessToken(header) {
-		user, err := s.authn.Authenticate(r.Context(), header)
-		token, _ := auth.Bearer(header)
-		return user, auth.TokenCredential(token), nil, err
+		id, err := s.authn.Authenticate(r.Context(), auth.EntryMCP, header)
+		return id.User, id.Credential, nil, err
 	}
 	g, err := s.grants.Authenticate(r.Context(), header)
 	if err != nil {
@@ -197,8 +198,16 @@ func (s *Server) authenticate(r *http.Request) (string, string, *oauth.Grant, er
 	return g.User, g.ID, &g, nil
 }
 
-// refuse answers a failed authentication: 401 with the OAuth challenge, or 503 when the grant store failed.
+// refuse answers a failed authentication: 401 with the OAuth challenge, or 503 when the identity provider or the grant store failed.
 func (s *Server) refuse(w http.ResponseWriter, r *http.Request, err error) {
+	switch status.Code(err) {
+	case codes.Unavailable:
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	case codes.PermissionDenied:
+		w.WriteHeader(http.StatusForbidden)
+		return
+	}
 	if s.grants == nil {
 		w.WriteHeader(http.StatusUnauthorized)
 		return

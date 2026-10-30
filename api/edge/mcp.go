@@ -146,28 +146,12 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	if m.grants != nil && oauth.IsAccessToken(authorization) {
 		return m.grantRoute(r, authorization, boxID)
 	}
-	owner, err := m.authn.Authenticate(r.Context(), authorization)
-	var user, credential string
-	if secret, ok := auth.ShareSecret(authorization); err != nil && ok && boxID != "" {
-		var guest string
-		if guest, err = m.authn.Guest(r.Context(), r.Header.Get(auth.HeaderGuestToken)); err != nil {
-			return rt, err
-		}
-		var grant auth.Grant
-		if grant, err = m.authn.Admit(secret, boxID, guest); err != nil {
-			return rt, err
-		}
-		rt.grant, owner, rt.caller = &grant, grant.Owner, grant.Principal()
-		user, credential = guest, auth.TokenCredential(r.Header.Get(auth.HeaderGuestToken))
-	} else {
-		if err != nil {
-			return rt, err
-		}
-		token, _ := auth.Bearer(authorization)
-		rt.caller, user, credential = owner, owner, auth.TokenCredential(token)
+	owner, caller, err := m.admit(r, &rt, authorization, boxID)
+	if err != nil {
+		return rt, err
 	}
-	if user != "" {
-		rt.ctx, rt.stop = m.authn.Bind(r.Context(), user, credential)
+	if caller.User != "" {
+		rt.ctx, rt.stop = m.authn.Bind(r.Context(), caller.User, caller.Credential)
 	}
 	if boxID == "" {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
@@ -176,6 +160,27 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 		rt.left = m.reached(r, boxID)
 	}
 	return rt, err
+}
+
+// admit authenticates the bearer for boxID and returns the box owner and the caller, or, when no user holds it and it is a
+// share secret, admits the share into rt and returns the guest as the caller, the zero Identity for an open share; a
+// provider that could not answer is not a token it does not know, so it is never tried as a share.
+func (m *MCP) admit(r *http.Request, rt *route, authorization, boxID string) (string, auth.Identity, error) {
+	caller, err := m.authn.Authenticate(r.Context(), auth.EntryMCP, authorization)
+	secret, ok := auth.ShareSecret(authorization)
+	if status.Code(err) != codes.Unauthenticated || !ok || boxID == "" {
+		rt.caller = caller.User
+		return caller.User, caller, err
+	}
+	if caller, err = m.authn.Guest(r.Context(), auth.EntryMCP, r.Header.Get(auth.HeaderGuestToken)); err != nil {
+		return "", caller, err
+	}
+	grant, err := m.authn.Admit(secret, boxID, caller.User)
+	if err != nil {
+		return "", caller, err
+	}
+	rt.grant, rt.caller = &grant, grant.Principal()
+	return grant.Owner, caller, nil
 }
 
 // reached records an exchange that keeps box up: every one but a GET, whose event stream only watches the box.
