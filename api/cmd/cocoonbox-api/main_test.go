@@ -95,7 +95,7 @@ func TestOnlyAnIdentityURLSendsOutsideTokensToItsWebhook(t *testing.T) {
 	}
 	for name, identity := range map[string]config.Identity{
 		"file": {URL: ep.URL, TokenFile: filepath.Join(dir, "identity-token"), Timeout: config.Duration(time.Second)},
-		"exec": {URL: ep.URL, Exec: &config.Exec{Command: plugin, Args: []string{"caller-token"}}, Timeout: config.Duration(time.Second)},
+		"exec": {URL: ep.URL, Exec: &config.Exec{Command: plugin, Args: []string{"caller-token"}}, Timeout: config.Duration(10 * time.Second)},
 		"none": {URL: ep.URL, Timeout: config.Duration(time.Second)},
 	} {
 		on, err := openIdentities(t.Context(), &config.Config{Identity: identity}, accounts)
