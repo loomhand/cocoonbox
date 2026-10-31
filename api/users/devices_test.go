@@ -287,8 +287,6 @@ func TestAGrantCheckLeavesTheCredentialsOfOtherSourcesAlone(t *testing.T) {
 	}
 }
 
-func ownsGrant(credential string) bool { return strings.HasPrefix(credential, "oag_") }
-
 func TestCheckingGrantsWhileCallsStartAndEndIsSafe(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
@@ -343,3 +341,5 @@ func TestAnEndedCredentialEndsItsCallsInEveryApi(t *testing.T) {
 		t.Error("the other api admits a new call on the ended grant")
 	}
 }
+
+func ownsGrant(credential string) bool { return strings.HasPrefix(credential, "oag_") }

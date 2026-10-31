@@ -12,6 +12,9 @@ import (
 	"time"
 )
 
+// roomy is a plugin timeout no test means to reach, however slowly a loaded host starts the plugin.
+const roomy = 10 * time.Second
+
 func TestAFileBearerFollowsTheFile(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "token")
 	bearer := FileBearer(path)
@@ -151,9 +154,6 @@ func TestACallStopsWaitingForThePluginWhenItsContextEnds(t *testing.T) {
 		t.Errorf("Token with a 50ms context = %v after %s", err, time.Since(start))
 	}
 }
-
-// roomy is a plugin timeout no test means to reach, however slowly a loaded host starts the plugin.
-const roomy = 10 * time.Second
 
 func exists(path string) bool {
 	_, err := os.Stat(path)
