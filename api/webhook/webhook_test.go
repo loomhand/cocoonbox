@@ -95,6 +95,7 @@ func TestTheReviewDecidesUnknownForbiddenOrBroken(t *testing.T) {
 	ep := newEndpoint(t)
 	ep.reviews["sapi_grpc"] = review{Authenticated: true, Allowed: false, TTLSeconds: 60}
 	ep.reviews["sapi_nameless"] = review{Authenticated: true, Allowed: true, Credential: "cred", TTLSeconds: 60}
+	ep.reviews["sapi_idpless"] = review{Authenticated: true, Allowed: true, User: "alice", Credential: "cred", TTLSeconds: 60}
 	hook := newHook(t, ep, &fakeAccounts{})
 	if _, err := hook.Resolve(t.Context(), "sapi_grpc", auth.EntryMCP); !errors.Is(err, auth.ErrNotAllowed) {
 		t.Errorf("a token kept off the entry = %v, want ErrNotAllowed", err)
@@ -104,6 +105,14 @@ func TestTheReviewDecidesUnknownForbiddenOrBroken(t *testing.T) {
 	}
 	if _, err := hook.Resolve(t.Context(), "sapi_nameless", auth.EntryMCP); err == nil || errors.Is(err, auth.ErrUnknownToken) {
 		t.Errorf("an admission without a user = %v, want an outage", err)
+	}
+	for range 2 {
+		if _, err := hook.Resolve(t.Context(), "sapi_idpless", auth.EntryMCP); err == nil || errors.Is(err, auth.ErrUnknownToken) {
+			t.Errorf("an admission without an idp = %v, want an outage", err)
+		}
+	}
+	if n := ep.count(); n != 5 {
+		t.Errorf("the endpoint was asked %d times, want an admission without an idp asked again", n)
 	}
 }
 

@@ -143,8 +143,8 @@ func (h *Hook) tokenReview(ctx context.Context, token string, entry auth.Entry) 
 	if err != nil {
 		return review{}, err
 	}
-	if rv.Authenticated && rv.Allowed && (rv.User == "" || rv.Credential == "") {
-		return review{}, errors.New("the identity webhook admitted a token without its user or credential")
+	if rv.Authenticated && rv.Allowed && (rv.IDP == "" || rv.User == "" || rv.Credential == "") {
+		return review{}, errors.New("the identity webhook admitted a token without its idp, user or credential")
 	}
 	h.keep(key, answer{review: rv, until: time.Now().Add(rv.ttl())})
 	return rv, nil
