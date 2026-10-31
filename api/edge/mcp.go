@@ -162,9 +162,7 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	return rt, err
 }
 
-// admit authenticates the bearer for boxID and returns the box owner and the caller, or, when no user holds it and it is a
-// share secret, admits the share into rt and returns the guest as the caller, the zero Identity for an open share; a
-// provider that could not answer is not a token it does not know, so it is never tried as a share.
+// admit returns the box owner and the bearer's caller, or for an unknown token that is a share secret admits the share into rt with the guest as the caller; a provider failure is never tried as a share.
 func (m *MCP) admit(r *http.Request, rt *route, authorization, boxID string) (string, auth.Identity, error) {
 	caller, err := m.authn.Authenticate(r.Context(), auth.EntryMCP, authorization)
 	secret, ok := auth.ShareSecret(authorization)
