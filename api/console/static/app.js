@@ -1,53 +1,8 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
-
-async function api(method, path, body) {
-  const resp = await fetch("api/" + path, {
-    method,
-    headers: method === "GET" ? {} : { "Content-Type": "application/json" },
-    body: method === "GET" ? undefined : JSON.stringify(body || {}),
-    credentials: "same-origin",
-  });
-  if (resp.status === 204) return null;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const err = new Error(data.error || resp.statusText);
-    err.status = resp.status;
-    throw err;
-  }
-  return data;
-}
-
-function notice(text, isError) {
-  const el = $("notice");
-  el.textContent = text;
-  el.className = isError ? "error" : "";
-  el.hidden = !text;
-}
-
-function cell(row, text) {
-  const td = document.createElement("td");
-  td.textContent = text;
-  row.appendChild(td);
-  return td;
-}
-
-function button(label, onClick, danger) {
-  const b = document.createElement("button");
-  b.textContent = label;
-  if (danger) b.className = "danger";
-  b.addEventListener("click", () => onClick().catch((e) => notice(e.message, true)));
-  return b;
-}
-
 let providers = null;
 const params = new URLSearchParams(location.search);
 const invite = params.get("invite") || "";
-
-function when(iso) {
-  return iso ? new Date(iso).toLocaleString() : "never";
-}
 
 function show(view) {
   for (const id of ["login", "me", "admin"]) $(id).hidden = !view.includes(id);
@@ -357,9 +312,13 @@ async function loadShares(boxes) {
   form.hidden = !unshared.length;
 }
 
-async function shareCall(method, id, suffix, body) {
+function shareCall(method, id, suffix, body) {
+  return saved(api(method, "shares/" + encodeURIComponent(id) + suffix, body));
+}
+
+async function saved(call) {
   try {
-    await api(method, "shares/" + encodeURIComponent(id) + suffix, body);
+    await call;
     notice("Saved.");
   } catch (e) {
     notice(e.message, true);
@@ -394,13 +353,7 @@ async function setDailyCap(id, text) {
     }
     micros = Math.round(usd * 1e6);
   }
-  try {
-    await api("PUT", "users/" + encodeURIComponent(id) + "/daily-cap", { micros });
-    notice("Saved.");
-  } catch (e) {
-    notice(e.message, true);
-  }
-  await load().catch((e) => notice(e.message, true));
+  await saved(api("PUT", "users/" + encodeURIComponent(id) + "/daily-cap", { micros }));
 }
 
 function number(value, onChange) {
@@ -412,14 +365,12 @@ function number(value, onChange) {
   return input;
 }
 
-async function update(id, settings) {
-  try {
-    await api("PATCH", "users/" + encodeURIComponent(id), settings);
-    notice("Saved.");
-  } catch (e) {
-    notice(e.message, true);
-  }
-  await load().catch((e) => notice(e.message, true));
+function update(id, settings) {
+  return saved(api("PATCH", "users/" + encodeURIComponent(id), settings));
+}
+
+function click(id, fn) {
+  $(id).addEventListener("click", () => fn().catch((e) => notice(e.message, true)));
 }
 
 function submit(id, fn) {
@@ -474,62 +425,42 @@ submit("create-form", async (f) => {
   await load();
 });
 
-$("regenerate").addEventListener("click", async () => {
+click("regenerate", async () => {
   if (!confirm("Regenerate the personal token? The old one stops working at once; devices signed in through the browser stay signed in.")) return;
-  try {
-    const { token } = await api("POST", "me/token");
-    const pre = $("token");
-    pre.textContent = token;
-    pre.hidden = false;
-    notice("Copy the token now; it is not shown again.");
-    await load();
-  } catch (e) {
-    notice(e.message, true);
-  }
+  const { token } = await api("POST", "me/token");
+  const pre = $("token");
+  pre.textContent = token;
+  pre.hidden = false;
+  notice("Copy the token now; it is not shown again.");
+  await load();
 });
 
-$("revoke-token").addEventListener("click", async () => {
+click("revoke-token", async () => {
   if (!confirm("Revoke the personal token? Whatever holds it is signed out at once; devices signed in through the browser stay signed in.")) return;
-  try {
-    await api("DELETE", "me/token");
-    $("token").hidden = true;
-    $("token").textContent = "";
-    notice("The personal token is revoked.");
-    await load();
-  } catch (e) {
-    notice(e.message, true);
-  }
+  await api("DELETE", "me/token");
+  $("token").hidden = true;
+  $("token").textContent = "";
+  notice("The personal token is revoked.");
+  await load();
 });
 
-$("sign-out-everywhere").addEventListener("click", async () => {
+click("sign-out-everywhere", async () => {
   if (!confirm("Sign out everywhere? This page, the CLI, the app, scripts with the personal token and every agent must sign in again.")) return;
-  try {
-    await api("POST", "me/sign-out-everywhere");
-    $("token").hidden = true;
-    $("token").textContent = "";
-    await load();
-    notice("Signed out everywhere.");
-  } catch (e) {
-    notice(e.message, true);
-  }
+  await api("POST", "me/sign-out-everywhere");
+  $("token").hidden = true;
+  $("token").textContent = "";
+  await load();
+  notice("Signed out everywhere.");
 });
 
-$("github-button").addEventListener("click", async () => {
-  try {
-    const { url } = await api("POST", "auth/github/begin", { invite });
-    location.assign(url);
-  } catch (e) {
-    notice(e.message, true);
-  }
+click("github-button", async () => {
+  const { url } = await api("POST", "auth/github/begin", { invite });
+  location.assign(url);
 });
 
-$("link-github").addEventListener("click", async () => {
-  try {
-    const { url } = await api("POST", "me/identities/github");
-    location.assign(url);
-  } catch (e) {
-    notice(e.message, true);
-  }
+click("link-github", async () => {
+  const { url } = await api("POST", "me/identities/github");
+  location.assign(url);
 });
 
 $("delete-me").addEventListener("click", async () => {
