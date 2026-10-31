@@ -100,4 +100,4 @@ $("add-form").addEventListener("submit", (ev) => {
     .catch((e) => notice(e.message, true));
 });
 
-load();
+load().catch((e) => notice(e.message, true));

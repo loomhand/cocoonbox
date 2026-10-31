@@ -240,8 +240,8 @@ async function loadDevices() {
     const row = body.insertRow();
     cell(row, d.client);
     cell(row, d.label || "-");
-    cell(row, new Date(d.created_at).toLocaleString());
-    cell(row, d.used_at ? new Date(d.used_at).toLocaleString() : "never");
+    cell(row, when(d.created_at));
+    cell(row, when(d.used_at));
     const actions = cell(row, "");
     actions.className = "actions";
     actions.appendChild(button("Revoke", async () => {
@@ -364,7 +364,7 @@ async function shareCall(method, id, suffix, body) {
   } catch (e) {
     notice(e.message, true);
   }
-  await load();
+  await load().catch((e) => notice(e.message, true));
 }
 
 function showLink(created) {
@@ -400,7 +400,7 @@ async function setDailyCap(id, text) {
   } catch (e) {
     notice(e.message, true);
   }
-  await load();
+  await load().catch((e) => notice(e.message, true));
 }
 
 function number(value, onChange) {
@@ -419,7 +419,7 @@ async function update(id, settings) {
   } catch (e) {
     notice(e.message, true);
   }
-  await load();
+  await load().catch((e) => notice(e.message, true));
 }
 
 function submit(id, fn) {
@@ -450,7 +450,7 @@ submit("box-form", async (f) => {
 });
 
 submit("share-form", async (f) => {
-  const names = f.users.value.split(/[\s,]+/).filter(Boolean);
+  const names = list(f.users.value);
   const created = await api("POST", "shares", {
     box_id: f.box.value, ttl_seconds: Number(f.ttl.value), user_names: names, write: f.write.checked,
   });
@@ -541,7 +541,7 @@ $("delete-me").addEventListener("click", async () => {
   } catch (e) {
     notice(e.message, true);
   }
-  await load();
+  await load().catch((e) => notice(e.message, true));
 });
 
 submit("signup-form", async (f) => {
@@ -586,7 +586,7 @@ $("logout").addEventListener("click", async () => {
     $(id).hidden = true;
     $(id).textContent = "";
   }
-  await load();
+  await load().catch((e) => notice(e.message, true));
 });
 
 const loginErrors = {
@@ -607,4 +607,4 @@ else if (params.get("linked")) notice("Connected " + params.get("linked") + ": y
 api("GET", "auth/providers").catch(() => null).then((p) => {
   providers = p;
   return load();
-});
+}).catch((e) => notice(e.message, true));
