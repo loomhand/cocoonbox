@@ -60,6 +60,11 @@ const (
 	endShareTimeout     = 10 * time.Second
 )
 
+type identityAccounts interface {
+	auth.Users
+	webhook.Accounts
+}
+
 func main() {
 	configPath := flag.String("config", "/etc/cocoonbox/api.yaml", "config file")
 	flag.Parse()
@@ -434,11 +439,7 @@ func authenticator(ctx context.Context, cfg *config.Config, accounts *users.Serv
 }
 
 // openIdentities resolves cocoonbox's own tokens, and with identity.url every other bearer through the token review webhook.
-func openIdentities(ctx context.Context, cfg *config.Config, accounts interface {
-	auth.Users
-	webhook.Accounts
-},
-) (auth.Identities, error) {
+func openIdentities(ctx context.Context, cfg *config.Config, accounts identityAccounts) (auth.Identities, error) {
 	own := auth.Tokens(accounts)
 	if cfg.Identity.URL == "" {
 		return own, nil

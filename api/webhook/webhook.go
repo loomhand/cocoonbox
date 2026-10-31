@@ -1,5 +1,4 @@
-// Package webhook resolves the bearer tokens of another user system through its token review endpoint and makes each user it
-// names a cocoonbox user the first time.
+// Package webhook resolves the bearer tokens of another user system through its token review endpoint and makes each user it names a cocoonbox user.
 package webhook
 
 import (
@@ -26,8 +25,7 @@ import (
 const (
 	// maxTTL caps how long the api keeps a review of a token it knows, so a revoked one opens no call a minute later.
 	maxTTL = time.Minute
-	// maxUnknownTTL caps how long the api keeps a review of a token it does not know, so a new key works within seconds
-	// and random bearers do not pile up.
+	// maxUnknownTTL caps how long the api keeps a review of a token it does not know, so a new key works within seconds.
 	maxUnknownTTL = 5 * time.Second
 	// sweepAt is the cache size past which a new answer first drops the expired ones.
 	sweepAt = 4096
@@ -167,24 +165,6 @@ func (h *Hook) keep(key string, a answer) {
 	h.answers[key] = a
 }
 
-// decodeReview reads a review; only an explicit false refuses, and one missing its verdict is an outage, which never ends a call.
-func decodeReview(body io.Reader) (review, error) {
-	var verdict struct {
-		review
-		Authenticated *bool `json:"authenticated"`
-		Allowed       *bool `json:"allowed"`
-	}
-	if err := json.UnmarshalRead(body, &verdict); err != nil {
-		return review{}, fmt.Errorf("decode the identity webhook review: %w", err)
-	}
-	if verdict.Authenticated == nil || *verdict.Authenticated && verdict.Allowed == nil {
-		return review{}, errors.New("the identity webhook review lacks authenticated or allowed")
-	}
-	rv := verdict.review
-	rv.Authenticated, rv.Allowed = *verdict.Authenticated, verdict.Allowed != nil && *verdict.Allowed
-	return rv, nil
-}
-
 // review is the endpoint's answer for a token at one entry.
 type review struct {
 	Authenticated bool   `json:"authenticated"`
@@ -208,4 +188,22 @@ func (rv review) ttl() time.Duration {
 type answer struct {
 	review
 	until time.Time
+}
+
+// decodeReview reads a review; only an explicit false refuses, and one missing its verdict is an outage, which never ends a call.
+func decodeReview(body io.Reader) (review, error) {
+	var verdict struct {
+		review
+		Authenticated *bool `json:"authenticated"`
+		Allowed       *bool `json:"allowed"`
+	}
+	if err := json.UnmarshalRead(body, &verdict); err != nil {
+		return review{}, fmt.Errorf("decode the identity webhook review: %w", err)
+	}
+	if verdict.Authenticated == nil || *verdict.Authenticated && verdict.Allowed == nil {
+		return review{}, errors.New("the identity webhook review lacks authenticated or allowed")
+	}
+	rv := verdict.review
+	rv.Authenticated, rv.Allowed = *verdict.Authenticated, verdict.Allowed != nil && *verdict.Allowed
+	return rv, nil
 }

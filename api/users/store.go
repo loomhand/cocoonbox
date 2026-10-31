@@ -254,8 +254,7 @@ func (s *store) clearToken(ctx context.Context, id string) error {
 	return s.exec(ctx, "UPDATE users SET token_sha256 = NULL WHERE id = $1", id)
 }
 
-// lockUser holds an advisory lock on user id in every api until the returned func runs, on a connection of its own:
-// the holder still needs the pool, which waiters on a pooled connection could exhaust.
+// lockUser holds an advisory lock on user id in every api until the returned func runs, on its own connection so waiters cannot exhaust the pool the holder needs.
 func (s *store) lockUser(ctx context.Context, id string) (func(), error) {
 	conn, err := pgx.ConnectConfig(ctx, s.pool.Config().ConnConfig.Copy())
 	if err != nil {

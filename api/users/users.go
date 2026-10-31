@@ -829,8 +829,7 @@ func (s *Service) EndCredential(ctx context.Context, credential string) {
 	}
 }
 
-// KeepGrants registers live, which reports which of the grant ids owns names still exist, so a listener that reconnects
-// ends the calls of the rest; credentials of other sources are not its business.
+// KeepGrants registers live, which reports which of the grant ids owns names still exist, so a reconnecting listener ends the calls of the rest.
 func (s *Service) KeepGrants(owns func(credential string) bool, live func(ctx context.Context, ids []string) (map[string]bool, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
