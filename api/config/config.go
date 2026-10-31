@@ -194,7 +194,7 @@ func (o OAuth) validate() error {
 
 // Identity names another user system whose token review endpoint resolves the bearer tokens cocoonbox does not issue; it alone decides who gets in.
 type Identity struct {
-	// URL takes POST {"token", "entry"} and {"credential", "entry"} and answers 200 with a review; empty keeps cocoonbox's own users alone.
+	// URL takes POST {"token", "entry"} and answers 200 with a review; empty keeps cocoonbox's own users alone.
 	URL string `json:"url"`
 	// TokenFile holds the api's bearer for url, read on every call; empty sends none.
 	TokenFile string   `json:"token_file"`
