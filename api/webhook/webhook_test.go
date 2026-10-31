@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,7 +30,7 @@ func TestAnAdmittedTokenIsTheUserItsReviewNamesBoundToItsCredentialAtThatEntry(t
 	if accounts.ensured["alice"] != "example" {
 		t.Errorf("ensured %v, want alice from example", accounts.ensured)
 	}
-	if got := ep.last(); got.bearer != "Bearer caller-token" || got.Token != "sapi_alice" || got.Entry != "mcp" || got.Credential != "" {
+	if got := ep.last(); got.bearer != "Bearer caller-token" || got.Token != "sapi_alice" || got.Entry != "mcp" {
 		t.Errorf("the endpoint got %+v", got)
 	}
 }
@@ -128,29 +130,6 @@ func TestAReviewMissingItsVerdictIsAnOutageNotARefusal(t *testing.T) {
 	}
 }
 
-func TestAReReviewMissingItsVerdictKeepsTheCalls(t *testing.T) {
-	ep := newEndpoint(t)
-	ep.admit("sapi_alice", "alice", "cred-alice", 1)
-	accounts := &fakeAccounts{}
-	hook := newHook(t, ep, accounts)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go hook.Run(ctx)
-	id, err := hook.Resolve(t.Context(), "sapi_alice", auth.EntryGRPC)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	defer hook.Watch(id.Credential)()
-	ep.mu.Lock()
-	ep.rawAgain = `{}`
-	ep.mu.Unlock()
-	waitFor(t, func() bool { return ep.reviewed("cred-alice") > 0 })
-	time.Sleep(100 * time.Millisecond)
-	if ended := accounts.endedCredentials(); len(ended) != 0 {
-		t.Errorf("an empty re-review ended %v", ended)
-	}
-}
-
 func TestAUserCocoonboxRefusesIsAnUnknownToken(t *testing.T) {
 	ep := newEndpoint(t)
 	for token, user := range map[string]string{"sapi_taken": "taken", "sapi_off": "off", "sapi_bad": "bad id", "sapi_down": "down"} {
@@ -167,67 +146,6 @@ func TestAUserCocoonboxRefusesIsAnUnknownToken(t *testing.T) {
 	}
 }
 
-func TestAWatchedCredentialIsReviewedAgainAndEndsWhenRefused(t *testing.T) {
-	ep := newEndpoint(t)
-	ep.admit("sapi_alice", "alice", "cred-alice", 1)
-	accounts := &fakeAccounts{}
-	hook := newHook(t, ep, accounts)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go hook.Run(ctx)
-	id, err := hook.Resolve(t.Context(), "sapi_alice", auth.EntryGRPC)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	release := hook.Watch(id.Credential)
-	defer release()
-	waitFor(t, func() bool { return ep.reviewed("cred-alice") > 0 })
-	if got := ep.lastReview(); got.Token != "" || got.Entry != "grpc" {
-		t.Errorf("the review again got %+v, want the credential at grpc without the token", got)
-	}
-	if ended := accounts.endedCredentials(); len(ended) != 0 {
-		t.Fatalf("ended %v while the review still admits it", ended)
-	}
-	ep.revoke("cred-alice")
-	waitFor(t, func() bool { return len(accounts.endedCredentials()) > 0 })
-	if ended := accounts.endedCredentials(); ended[0] != "grpc:cred-alice" {
-		t.Errorf("ended %v, want grpc:cred-alice", ended)
-	}
-	if _, err := hook.Resolve(t.Context(), "sapi_alice", auth.EntryGRPC); !errors.Is(err, auth.ErrUnknownToken) {
-		t.Errorf("the token of an ended credential = %v, want it asked again and refused", err)
-	}
-}
-
-func TestAHeldCredentialIsNotReviewedBeforeItsTTL(t *testing.T) {
-	ep := newEndpoint(t)
-	ep.admit("sapi_alice", "alice", "cred-alice", 60)
-	hook := newHook(t, ep, &fakeAccounts{})
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go hook.Run(ctx)
-	id, err := hook.Resolve(t.Context(), "sapi_alice", auth.EntryGRPC)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	defer hook.Watch(id.Credential)()
-	time.Sleep(300 * time.Millisecond)
-	if n := ep.reviewed("cred-alice"); n != 0 {
-		t.Errorf("a credential a minute from its review was reviewed %d times", n)
-	}
-}
-
-func TestForgettingACredentialDropsOnlyTheAnswersThatNamedIt(t *testing.T) {
-	hook := newHook(t, newEndpoint(t), &fakeAccounts{})
-	future := time.Now().Add(time.Minute)
-	hook.remember("grpc:cred-a", "cred-a", auth.EntryGRPC, time.Minute)
-	hook.answers["a"] = answer{review: review{Credential: "cred-a"}, until: future}
-	hook.answers["b"] = answer{review: review{Credential: "cred-b"}, until: future}
-	hook.forget("grpc:cred-a")
-	if _, a := hook.answers["a"]; a || len(hook.answers) != 1 || len(hook.held) != 0 {
-		t.Errorf("after forget the cache holds %v and %d held, want only b", hook.answers, len(hook.held))
-	}
-}
-
 func TestAFullCacheDropsWhatExpiredBeforeKeepingMore(t *testing.T) {
 	hook := newHook(t, newEndpoint(t), &fakeAccounts{})
 	past, future := time.Now().Add(-time.Second), time.Now().Add(time.Minute)
@@ -241,44 +159,13 @@ func TestAFullCacheDropsWhatExpiredBeforeKeepingMore(t *testing.T) {
 	}
 }
 
-func TestACredentialNoCallHoldsIsNotReviewedAgain(t *testing.T) {
-	ep := newEndpoint(t)
-	ep.admit("sapi_alice", "alice", "cred-alice", 1)
-	hook := newHook(t, ep, &fakeAccounts{})
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go hook.Run(ctx)
-	id, err := hook.Resolve(t.Context(), "sapi_alice", auth.EntryGRPC)
-	if err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
-	hook.Watch(id.Credential)()
-	hook.Watch("mcp:not-ours")()
-	time.Sleep(1500 * time.Millisecond)
-	if n := ep.reviewed("cred-alice"); n != 0 {
-		t.Errorf("a released credential was reviewed %d times", n)
-	}
-}
-
-func TestABearerTheEndpointRejectsIsDroppedAndTheReviewIsAnOutage(t *testing.T) {
+func TestAnEndpointThatRefusesTheApisBearerIsAnOutage(t *testing.T) {
 	ep := newEndpoint(t)
 	ep.admit("sapi_alice", "alice", "cred-alice", 60)
 	ep.fail(http.StatusUnauthorized)
-	bearer := &fakeBearer{token: "caller-token"}
-	hook, err := New(Options{URL: ep.URL, Bearer: bearer, Timeout: time.Second, Every: time.Second}, &fakeAccounts{})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	hook.http.Transport = ep.Client().Transport
+	hook := newHook(t, ep, &fakeAccounts{})
 	if _, err := hook.Resolve(t.Context(), "sapi_alice", auth.EntryMCP); err == nil || errors.Is(err, auth.ErrUnknownToken) {
 		t.Errorf("Resolve with the api's bearer refused = %v, want an outage", err)
-	}
-	if len(bearer.rejected) != 1 || bearer.rejected[0] != "caller-token" {
-		t.Errorf("rejected %v, want the bearer sent", bearer.rejected)
-	}
-	ep.fail(http.StatusServiceUnavailable)
-	if _, err := hook.Resolve(t.Context(), "sapi_alice", auth.EntryMCP); err == nil || len(bearer.rejected) != 1 {
-		t.Errorf("Resolve on a 503 = %v, rejected %v, want an outage that keeps the bearer", err, bearer.rejected)
 	}
 }
 
@@ -293,7 +180,7 @@ func TestARedirectIsAnOutageAndIsNeverFollowed(t *testing.T) {
 		http.Redirect(w, r, plain.URL, http.StatusTemporaryRedirect)
 	}))
 	defer ep.Close()
-	hook, err := New(Options{URL: ep.URL, Bearer: &fakeBearer{token: "caller-token"}, Timeout: time.Second, Every: time.Second}, &fakeAccounts{})
+	hook, err := New(Options{URL: ep.URL, TokenFile: tokenFile(t), Timeout: time.Second}, &fakeAccounts{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -314,7 +201,7 @@ func TestOnlyAnHTTPSEndpointIsAsked(t *testing.T) {
 
 func newHook(t *testing.T, ep *endpoint, accounts Accounts) *Hook {
 	t.Helper()
-	hook, err := New(Options{URL: ep.URL, Bearer: &fakeBearer{token: "caller-token"}, Timeout: time.Second, Every: 50 * time.Millisecond}, accounts)
+	hook, err := New(Options{URL: ep.URL, TokenFile: tokenFile(t), Timeout: time.Second}, accounts)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -322,34 +209,19 @@ func newHook(t *testing.T, ep *endpoint, accounts Accounts) *Hook {
 	return hook
 }
 
-func waitFor(t *testing.T, cond func() bool) {
+func tokenFile(t *testing.T) string {
 	t.Helper()
-	for deadline := time.Now().Add(5 * time.Second); !cond(); time.Sleep(20 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("timed out")
-		}
+	path := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(path, []byte("caller-token\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-}
-
-type fakeBearer struct {
-	mu       sync.Mutex
-	token    string
-	rejected []string
-}
-
-func (f *fakeBearer) Token(context.Context) (string, error) { return f.token, nil }
-
-func (f *fakeBearer) Rejected(token string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rejected = append(f.rejected, token)
+	return path
 }
 
 type request struct {
-	bearer     string
-	Token      string `json:"token"`
-	Credential string `json:"credential"`
-	Entry      string `json:"entry"`
+	bearer string
+	Token  string `json:"token"`
+	Entry  string `json:"entry"`
 }
 
 type endpoint struct {
@@ -357,14 +229,12 @@ type endpoint struct {
 	mu       sync.Mutex
 	reviews  map[string]review
 	raw      map[string]string
-	rawAgain string
-	revoked  map[string]bool
 	requests []request
 	failing  int
 }
 
 func newEndpoint(t *testing.T) *endpoint {
-	ep := &endpoint{reviews: map[string]review{}, raw: map[string]string{}, revoked: map[string]bool{}}
+	ep := &endpoint{reviews: map[string]review{}, raw: map[string]string{}}
 	ep.Server = httptest.NewTLSServer(http.HandlerFunc(ep.serve))
 	t.Cleanup(ep.Close)
 	return ep
@@ -388,27 +258,15 @@ func (e *endpoint) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(e.failing)
 		return
 	}
-	if raw, ok := e.raw[req.Token]; ok && req.Credential == "" {
+	if raw, ok := e.raw[req.Token]; ok {
 		_, _ = w.Write([]byte(raw))
 		return
 	}
-	if e.rawAgain != "" && req.Credential != "" {
-		_, _ = w.Write([]byte(e.rawAgain))
-		return
-	}
 	answer := review{TTLSeconds: 5}
-	if req.Credential != "" {
-		answer = review{Authenticated: !e.revoked[req.Credential], Allowed: true, TTLSeconds: 1}
-	} else if rv, ok := e.reviews[req.Token]; ok && !e.revoked[rv.Credential] {
+	if rv, ok := e.reviews[req.Token]; ok {
 		answer = rv
 	}
 	_ = json.MarshalWrite(w, answer)
-}
-
-func (e *endpoint) revoke(credential string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.revoked[credential] = true
 }
 
 func (e *endpoint) fail(code int) {
@@ -429,33 +287,9 @@ func (e *endpoint) last() request {
 	return e.requests[len(e.requests)-1]
 }
 
-func (e *endpoint) reviewed(credential string) int {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	n := 0
-	for _, r := range e.requests {
-		if r.Credential == credential {
-			n++
-		}
-	}
-	return n
-}
-
-func (e *endpoint) lastReview() request {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	for i := len(e.requests) - 1; i >= 0; i-- {
-		if e.requests[i].Credential != "" {
-			return e.requests[i]
-		}
-	}
-	return request{}
-}
-
 type fakeAccounts struct {
 	mu      sync.Mutex
 	ensured map[string]string
-	ended   []string
 }
 
 func (f *fakeAccounts) Ensure(_ context.Context, idp, id string) (users.User, error) {
@@ -476,16 +310,4 @@ func (f *fakeAccounts) Ensure(_ context.Context, idp, id string) (users.User, er
 	}
 	f.ensured[id] = idp
 	return users.User{ID: id, IDP: idp}, nil
-}
-
-func (f *fakeAccounts) EndCredential(_ context.Context, credential string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.ended = append(f.ended, credential)
-}
-
-func (f *fakeAccounts) endedCredentials() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.ended...)
 }

@@ -92,10 +92,9 @@ func (t tokens) Resolve(ctx context.Context, token string, _ Entry) (Identity, e
 	return Identity{User: user, Credential: credential}, nil
 }
 
-// Resolver resolves a bearer token as Identities does, for the users of another system, and keeps checking a credential it named while calls hold it.
+// Resolver resolves a bearer token as Identities does, for the users of another system.
 type Resolver interface {
 	Resolve(ctx context.Context, token string, entry Entry) (Identity, error)
-	Watch(credential string) (release func())
 }
 
 // Outside resolves the tokens cocoonbox does not issue through outside; its own stay with local, which also gives every call's lifetime.
@@ -113,15 +112,6 @@ func (s split) Resolve(ctx context.Context, token string, entry Entry) (Identity
 		return s.Identities.Resolve(ctx, token, entry)
 	}
 	return s.outside.Resolve(ctx, token, entry)
-}
-
-func (s split) Lifetime(user, credential string) (context.Context, func()) {
-	life, release := s.Identities.Lifetime(user, credential)
-	unwatch := s.outside.Watch(credential)
-	return life, func() {
-		unwatch()
-		release()
-	}
 }
 
 // Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.

@@ -196,15 +196,13 @@ func (o OAuth) validate() error {
 type Identity struct {
 	// URL takes POST {"token", "entry"} and {"credential", "entry"} and answers 200 with a review; empty keeps cocoonbox's own users alone.
 	URL string `json:"url"`
-	// TokenFile holds the api's bearer for url, read on every call; Exec runs a credential plugin that prints it as
-	// {"token", "expiresAt"}. Neither sends none.
+	// TokenFile holds the api's bearer for url, read on every call; empty sends none.
 	TokenFile string   `json:"token_file"`
-	Exec      *Exec    `json:"exec"`
 	Timeout   Duration `json:"timeout"`
 }
 
 func (i Identity) validate() error {
-	if i.URL == "" && i.TokenFile == "" && i.Exec == nil {
+	if i.URL == "" && i.TokenFile == "" {
 		return nil
 	}
 	var errs []error
@@ -214,25 +212,7 @@ func (i Identity) validate() error {
 	if i.Timeout <= 0 {
 		errs = append(errs, errors.New("identity.timeout must be positive"))
 	}
-	return errors.Join(append(errs, i.validateBearer())...)
-}
-
-func (i Identity) validateBearer() error {
-	switch {
-	case i.Exec == nil:
-		return nil
-	case i.TokenFile != "":
-		return errors.New("identity takes token_file or exec, not both")
-	case !filepath.IsAbs(i.Exec.Command):
-		return fmt.Errorf("identity.exec.command must be an absolute path, got %q", i.Exec.Command)
-	}
-	return nil
-}
-
-// Exec names a credential plugin, run without a shell.
-type Exec struct {
-	Command string   `json:"command"`
-	Args    []string `json:"args"`
+	return errors.Join(errs...)
 }
 
 // Wake bounds the scheduled wakes of boxes (design §15.13).
