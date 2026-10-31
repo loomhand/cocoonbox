@@ -141,8 +141,9 @@ Save a script that works as `/workspace/flows/<name>.mts` and replay it with new
   then deadlocks it. `press` clicks a shown control instead; for a dialog behind a hidden entry,
   use its shortcut.
 - When an app hangs, its accessibility calls fail after 3 s with "AT-SPI peer … is not responding"
-  and the app is skipped for 10 s. Close its window with `close` (or kill its pid) and reopen it;
-  more input does nothing.
+  and the app is skipped for 10 s. An action that timed out may still take effect once the app
+  answers: check it before you send it again. Close its window with `close` (or kill its pid) and
+  reopen it; more input does nothing.
 - A dialog that ignores clicks and keys while its app still answers sits under a newer dialog of
   the same app: close the newest dialog first.
 - GTK file dialogs: type absolute paths (`/home/user/...`); `~` is not expanded. The first Return
