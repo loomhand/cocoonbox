@@ -117,7 +117,9 @@ check() {
 	runuser -u user -- /usr/local/bin/node --check "$ROOT/lib/gui_plan.mts"
 	for f in desk gui_plan png; do [ -s "$ROOT/lib/$f.mts" ]; done
 	[ "$(readlink -f /usr/local/bin/shuttle)" = "/opt/loomhand/shuttle/$SHUTTLE_VERSION/shuttle" ]
-	[ ! -e /opt/cocoon-shuttle ] && [ ! -e /usr/local/bin/cocoon-shuttle ] && [ ! -e /etc/systemd/user/cocoon-shuttle.service ]
+	[ ! -e /opt/cocoon-shuttle ]
+	[ ! -e /usr/local/bin/cocoon-shuttle ]
+	[ ! -e /etc/systemd/user/cocoon-shuttle.service ]
 	systemctl --user -M user@ -q is-enabled shuttle.service
 	[ "$(systemctl --user -M user@ is-enabled cua-driver.service 2>/dev/null)" = masked ]
 	[ ! -e /etc/xdg/autostart/cocoonbox-cua-driver.desktop ]
@@ -132,13 +134,15 @@ check() {
 	systemctl show -p Environment cocoonbox-agent | grep 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock' | grep -q 'TOOLHOST_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl show -p Environment cocoonbox-session | grep -q 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
 	systemctl --user -M user@ show-environment | grep -qx 'SHUTTLE_SOCKET=/run/cocoonbox/desk.sock'
-	! systemctl cat cocoonbox-toolhost >/dev/null 2>&1
+	systemctl cat cocoonbox-toolhost >/dev/null 2>&1 && exit 1
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
 	grep -q '^GW_BASE_URL=http' "$ENV_FILE"
 	[ "$(stat -c %a "$ENV_FILE")" = 644 ]
 	[ -x /usr/local/bin/desk ]
-	[ ! -e /opt/cua-driver ] && [ ! -e /usr/local/bin/cua-driver ] && [ ! -e /usr/local/lib/cocoonbox/cua-driver-session ]
+	[ ! -e /opt/cua-driver ]
+	[ ! -e /usr/local/bin/cua-driver ]
+	[ ! -e /usr/local/lib/cocoonbox/cua-driver-session ]
 	[ "$(readlink -f /usr/bin/x-www-browser)" = /usr/local/bin/cocoonbox-chrome ]
 	for f in google-chrome com.google.Chrome; do grep -qx 'Exec=/usr/local/bin/cocoonbox-chrome %U' "/usr/local/share/applications/$f.desktop"; done
 	grep -qx 'URIs: mirror+file:/etc/apt/cocoonbox-ubuntu.mirrors' /etc/apt/sources.list.d/ubuntu.sources
