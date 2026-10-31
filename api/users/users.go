@@ -83,6 +83,14 @@ type User struct {
 	Policy        Policy    `json:"policy"`
 }
 
+// from returns u when outside identity provider idp holds it.
+func (u User) from(idp string) (User, error) {
+	if u.IDP != idp {
+		return User{}, fmt.Errorf("%w: user %s comes from %s", ErrExists, u.ID, u.IDP)
+	}
+	return u, nil
+}
+
 // Policy is the image a user's boxes start from and upgrade to, whether its saves write delta records, and whether the parking and the gc skip it.
 type Policy struct {
 	Image  string `json:"image,omitempty"`
@@ -945,25 +953,6 @@ func (s *Service) persist(ctx context.Context, nu NewUser, r record, tenantToken
 	return nil
 }
 
-// from returns u when outside identity provider idp holds it.
-func (u User) from(idp string) (User, error) {
-	if u.IDP != idp {
-		return User{}, fmt.Errorf("%w: user %s comes from %s", ErrExists, u.ID, u.IDP)
-	}
-	return u, nil
-}
-
-// outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.
-func outsideUser(idp, id string) error {
-	switch {
-	case id == "":
-		return fmt.Errorf("%w: an outside user needs its id", ErrInvalid)
-	case idp == "" || idp == passwordIDP || idp == githubIDP:
-		return fmt.Errorf("%w: %q is not an outside identity provider", ErrInvalid, idp)
-	}
-	return nil
-}
-
 // endLocally ends the calls bound to credential in this api, for an ended credential of any api.
 func (s *Service) endLocally(credential string) {
 	s.mu.Lock()
@@ -1121,6 +1110,17 @@ func (s *Service) put(r record) {
 	}
 	s.byID[r.ID] = r
 	addTokens(s.byToken, r)
+}
+
+// outsideUser checks that idp is an outside identity provider, not cocoonbox's own, and names a user id.
+func outsideUser(idp, id string) error {
+	switch {
+	case id == "":
+		return fmt.Errorf("%w: an outside user needs its id", ErrInvalid)
+	case idp == "" || idp == passwordIDP || idp == githubIDP:
+		return fmt.Errorf("%w: %q is not an outside identity provider", ErrInvalid, idp)
+	}
+	return nil
 }
 
 func addTokens(byToken map[string]tokenOwner, r record) {
