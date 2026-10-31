@@ -165,7 +165,8 @@ chrome() {
 }
 
 check() {
-	[ -d /workspace ] && [ -d /run/cocoonbox ]
+	[ -d /workspace ]
+	[ -d /run/cocoonbox ]
 	[ "$(stat -f %Su:%Sg:%Mp%Lp /run/cocoonbox)" = "$BOX_USER:$AGENT_GROUP:2750" ]
 	[ "$(stat -f %Su:%Lp "$STATE_DIR")" = _cbagent:700 ]
 	[ "$(stat -f %Su:%Sg:%Lp "$ETC/agent.env")" = _cbagent:wheel:600 ]
