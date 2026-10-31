@@ -192,7 +192,6 @@ type review struct {
 	IDP           string `json:"idp,omitempty"`
 	User          string `json:"user,omitempty"`
 	Credential    string `json:"credential,omitempty"`
-	Kind          string `json:"kind,omitempty"`
 	TTLSeconds    int    `json:"ttlSeconds"`
 }
 

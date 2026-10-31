@@ -241,7 +241,7 @@ func newEndpoint(t *testing.T) *endpoint {
 }
 
 func (e *endpoint) admit(token, user, credential string, ttlSeconds int) {
-	e.reviews[token] = review{Authenticated: true, Allowed: true, IDP: "example", User: user, Credential: credential, Kind: "key", TTLSeconds: ttlSeconds}
+	e.reviews[token] = review{Authenticated: true, Allowed: true, IDP: "example", User: user, Credential: credential, TTLSeconds: ttlSeconds}
 }
 
 func (e *endpoint) serve(w http.ResponseWriter, r *http.Request) {
