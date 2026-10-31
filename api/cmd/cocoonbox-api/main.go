@@ -433,8 +433,7 @@ func authenticator(ctx context.Context, cfg *config.Config, accounts *users.Serv
 	return auth.WithIdentities(identities, accounts)
 }
 
-// openIdentities resolves cocoonbox's own tokens, and with identity.url every other bearer through the token review webhook,
-// which reviews again the credentials calls hold until ctx ends.
+// openIdentities resolves cocoonbox's own tokens, and with identity.url every other bearer through the token review webhook.
 func openIdentities(ctx context.Context, cfg *config.Config, accounts interface {
 	auth.Users
 	webhook.Accounts
@@ -444,19 +443,10 @@ func openIdentities(ctx context.Context, cfg *config.Config, accounts interface 
 	if cfg.Identity.URL == "" {
 		return own, nil
 	}
-	timeout := time.Duration(cfg.Identity.Timeout)
-	var bearer webhook.Bearer
-	switch id := cfg.Identity; {
-	case id.TokenFile != "":
-		bearer = webhook.FileBearer(id.TokenFile)
-	case id.Exec != nil:
-		bearer = webhook.ExecBearer(append([]string{id.Exec.Command}, id.Exec.Args...), timeout)
-	}
-	hook, err := webhook.New(webhook.Options{URL: cfg.Identity.URL, Bearer: bearer, Timeout: timeout, Every: time.Second}, accounts)
+	hook, err := webhook.New(webhook.Options{URL: cfg.Identity.URL, TokenFile: cfg.Identity.TokenFile, Timeout: time.Duration(cfg.Identity.Timeout)}, accounts)
 	if err != nil {
 		return nil, err
 	}
-	go hook.Run(ctx)
 	log.WithFunc("main.openIdentities").Infof(ctx, "users of another system come through %s", cfg.Identity.URL)
 	return auth.Outside(own, hook), nil
 }

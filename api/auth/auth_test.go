@@ -131,29 +131,11 @@ func TestAProviderLearnsTheEntryAndMayKeepATokenOutOfOne(t *testing.T) {
 	}
 }
 
-func TestAnOutsideCredentialIsWatchedWhileACallHoldsIt(t *testing.T) {
-	outside := &recorder{}
-	a := WithIdentities(Outside(Tokens(anyToken{}), outside), noShares{})
-	_, stop := a.Bind(t.Context(), "outside", "outside:sapi_0123")
-	if len(outside.watched) != 1 || len(outside.released) != 0 {
-		t.Fatalf("watched %v, released %v while the call runs", outside.watched, outside.released)
-	}
-	stop()
-	if len(outside.released) != 1 || outside.released[0] != "outside:sapi_0123" {
-		t.Errorf("released %v after the call", outside.released)
-	}
-}
-
-type recorder struct{ seen, watched, released []string }
+type recorder struct{ seen []string }
 
 func (r *recorder) Resolve(_ context.Context, token string, _ Entry) (Identity, error) {
 	r.seen = append(r.seen, token)
 	return Identity{User: "outside", Credential: "outside:" + token}, nil
-}
-
-func (r *recorder) Watch(credential string) func() {
-	r.watched = append(r.watched, credential)
-	return func() { r.released = append(r.released, credential) }
 }
 
 type noToken struct{ anyToken }
@@ -174,8 +156,6 @@ func (p provider) Resolve(_ context.Context, token string, entry Entry) (Identit
 	}
 	return Identity{}, ErrUnknownToken
 }
-
-func (provider) Watch(string) func() { return func() {} }
 
 func (provider) Lifetime(string, string) (context.Context, func()) {
 	return context.Background(), func() {}

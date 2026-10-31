@@ -81,10 +81,6 @@ func TestOnlyAnIdentityURLSendsOutsideTokensToItsWebhook(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "identity-token"), []byte("caller-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	plugin := filepath.Join(dir, "plugin")
-	if err := os.WriteFile(plugin, []byte("#!/bin/sh\nprintf '{\"token\":\"%s\"}' \"$1\"\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	accounts := &oneUser{}
 	off, err := openIdentities(t.Context(), &config.Config{}, accounts)
 	if err != nil {
@@ -95,7 +91,6 @@ func TestOnlyAnIdentityURLSendsOutsideTokensToItsWebhook(t *testing.T) {
 	}
 	for name, identity := range map[string]config.Identity{
 		"file": {URL: ep.URL, TokenFile: filepath.Join(dir, "identity-token"), Timeout: config.Duration(time.Second)},
-		"exec": {URL: ep.URL, Exec: &config.Exec{Command: plugin, Args: []string{"caller-token"}}, Timeout: config.Duration(10 * time.Second)},
 		"none": {URL: ep.URL, Timeout: config.Duration(time.Second)},
 	} {
 		on, err := openIdentities(t.Context(), &config.Config{Identity: identity}, accounts)
@@ -129,5 +124,3 @@ func (o *oneUser) Ensure(_ context.Context, idp, id string) (users.User, error) 
 	o.idp = idp
 	return users.User{ID: id, IDP: idp}, nil
 }
-
-func (*oneUser) EndCredential(context.Context, string) {}
