@@ -1,49 +1,12 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
 const params = new URLSearchParams(location.search);
-
-async function api(method, path, body) {
-  const resp = await fetch("/cb/api/" + path, {
-    method,
-    headers: method === "GET" ? {} : { "Content-Type": "application/json" },
-    body: method === "GET" ? undefined : JSON.stringify(body || {}),
-    credentials: "same-origin",
-  });
-  if (resp.status === 204) return null;
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const err = new Error(data.error || resp.statusText);
-    err.status = resp.status;
-    throw err;
-  }
-  return data;
-}
-
-function notice(text, isError) {
-  const el = $("notice");
-  el.textContent = text;
-  el.className = isError ? "error" : "";
-  el.hidden = !text;
-}
 
 function el(tag, text, className) {
   const e = document.createElement(tag);
   if (text) e.textContent = text;
   if (className) e.className = className;
   return e;
-}
-
-function cell(row, text) {
-  const td = el("td", String(text));
-  row.appendChild(td);
-  return td;
-}
-
-function button(label, onClick, danger) {
-  const b = el("button", label, danger ? "danger" : "");
-  b.addEventListener("click", () => onClick().catch((e) => notice(e.message, true)));
-  return b;
 }
 
 async function begin(id, body) {
