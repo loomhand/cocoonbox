@@ -113,4 +113,4 @@ async function load() {
   if (grants.some((g) => !g.seen)) await api("POST", "agents/seen");
 }
 
-load();
+load().catch((e) => notice(e.message, true));

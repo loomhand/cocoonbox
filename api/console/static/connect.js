@@ -219,4 +219,4 @@ $("custom-form").addEventListener("submit", (ev) => {
 if (params.get("connected")) notice("Connected " + params.get("connected") + ".");
 if (params.get("installed")) notice("GitHub saved your repository choice. Connect GitHub here if it is not connected yet.");
 if (params.get("error")) notice(params.get("error"), true);
-load().then(prefill);
+load().then(prefill).catch((e) => notice(e.message, true));
