@@ -12,6 +12,8 @@ import (
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 )
 
+var clock = time.Now
+
 type Meter interface {
 	Usage(ctx context.Context, user string, since time.Time) ([]gwkeys.Usage, error)
 	DailyCap(ctx context.Context, user string) (*int64, error)
@@ -29,7 +31,7 @@ func (s *Service) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*contro
 	if s.usage == nil {
 		return nil, status.Error(codes.FailedPrecondition, "usage is not metered")
 	}
-	now := time.Now().UTC()
+	now := clock().UTC()
 	day := now.Truncate(24 * time.Hour)
 	month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
 	resp := &controlv1.UsageResponse{}
