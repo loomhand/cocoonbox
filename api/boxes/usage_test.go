@@ -15,7 +15,9 @@ import (
 )
 
 func TestUsageSumsTodayAndMonthByModelUnderTheCap(t *testing.T) {
-	now := time.Now().UTC()
+	now := time.Date(2026, 10, 14, 15, 4, 5, 0, time.UTC)
+	clock = func() time.Time { return now }
+	t.Cleanup(func() { clock = time.Now })
 	day := now.Truncate(24 * time.Hour)
 	meter := &fakeMeter{
 		rows: map[time.Time][]gwkeys.Usage{
