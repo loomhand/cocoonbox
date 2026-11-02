@@ -3847,6 +3847,8 @@ async fn mcp_lists_a_plugin_after_the_script_tool_with_its_resource() {
     assert_eq!(plugin["description"], "Run a demo script.");
     assert_eq!(plugin["inputSchema"], script["inputSchema"]);
     assert_eq!(plugin["_meta"]["anthropic/alwaysLoad"], true);
+    assert_eq!(plugin["title"], "demo_run");
+    assert_eq!(plugin["annotations"]["destructiveHint"], true);
 
     let listed = mcp.rpc("resources/list", json!({})).await;
     let uris: Vec<&str> = listed["result"]["resources"]
@@ -4136,6 +4138,40 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let ran = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
     let ran: Vec<&str> = ran.lines().filter(|l| *l != "desk_screen").collect();
     assert_eq!(ran, ["demo_run"]);
+}
+
+#[tokio::test]
+async fn mcp_lists_a_title_and_one_hint_for_every_tool() {
+    let h = Harness::with_desk(Vec::new()).await;
+    let mut mcp = McpClient::connect(&h).await;
+    let listed = mcp.rpc("tools/list", json!({})).await;
+    let reads = [
+        "read_file",
+        "list_dir",
+        "screenshot",
+        "computer_state",
+        "browser_snapshot",
+        "browser_read",
+        "browser_fetch",
+        "browser_tabs",
+    ];
+    for tool in listed["result"]["tools"].as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        assert_ne!(tool["title"], name, "{tool}");
+        assert_eq!(tool["annotations"]["title"], tool["title"], "{tool}");
+        let read = reads.contains(&name);
+        assert_eq!(tool["annotations"]["readOnlyHint"] == true, read, "{tool}");
+        assert_eq!(
+            tool["annotations"]["destructiveHint"] == true,
+            !read,
+            "{tool}"
+        );
+    }
+    for spec in cocoonbox_agent::tools::remote_tools(Automation::Android) {
+        let mut tool = json!({});
+        cocoonbox_agent::tools::annotate(&mut tool, &spec.name);
+        assert_ne!(tool["title"], spec.name.as_ref(), "{tool}");
+    }
 }
 
 #[tokio::test]

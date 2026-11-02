@@ -106,6 +106,7 @@ impl Mcp {
             .map(|t| {
                 let mut tool = json!({"name": t.name, "description": t.description});
                 tool["inputSchema"] = t.parameters;
+                tools::annotate(&mut tool, &t.name);
                 let always = ALWAYS_LOAD.contains(&t.name.as_ref())
                     || plugins.iter().any(|p| p.name == t.name);
                 if automation.scripts() && always {

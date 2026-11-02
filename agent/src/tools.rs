@@ -50,6 +50,32 @@ pub const READ_ONLY: [&str; 6] = [
     "browser_read",
 ];
 
+/// Remote tools that only read but stay out of a read-only share.
+const READS: [&str; 2] = ["browser_fetch", "browser_tabs"];
+
+/// The display name of each remote tool; a plugin tool goes by its name.
+const TITLES: [(&str, &str); 19] = [
+    ("shell", "Run shell command"),
+    ("read_file", "Read file"),
+    ("write_file", "Write file"),
+    ("edit_file", "Edit file"),
+    ("list_dir", "List directory"),
+    ("screenshot", "Take screenshot"),
+    ("computer_state", "Read screen state"),
+    ("computer_act", "Act on screen"),
+    ("gui_plan", "Run GUI plan"),
+    ("script_run", "Run automation script"),
+    ("desk", "Call desktop accessibility"),
+    ("browser_navigate", "Open web page"),
+    ("browser_snapshot", "Read page elements"),
+    ("browser_click", "Click page element"),
+    ("browser_type", "Type in web page"),
+    ("browser_read", "Read page text"),
+    ("browser_fetch", "Fetch web page"),
+    ("browser_fill", "Fill web form"),
+    ("browser_tabs", "List browser tabs"),
+];
+
 /// Tools of the main agent: a vision model adds a screenshot, a desk box `gui_plan`, its scripts and `browser_fetch`, Android its own.
 pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     let mut tools = base_tools(vision, automation);
@@ -111,6 +137,21 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
         with_budget(&mut tools);
     }
     tools
+}
+
+/// Sets the `title` and `annotations` of the remote tool `name` in `tool`.
+pub fn annotate(tool: &mut serde_json::Value, name: &str) {
+    let title = TITLES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map_or(name, |(_, t)| t);
+    let hint = if READ_ONLY.contains(&name) || READS.contains(&name) {
+        "readOnlyHint"
+    } else {
+        "destructiveHint"
+    };
+    tool["title"] = title.into();
+    tool["annotations"] = json!({"title": title, hint: true});
 }
 
 /// Adds `plugins` after the script tool, each with that tool's parameters; a box without one gets none.

@@ -36,57 +36,75 @@ const (
 var toolSpecs = []toolSpec{
 	{
 		Name:         "box_list",
+		Title:        "List boxes",
 		Description:  "List your cocoonbox boxes with their names, states and images.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{},"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"boxes":{"type":"array","items":{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","last_saved_at_ms"]}}},"required":["boxes"]}`),
+		Annotations:  jsontext.Value(`{"title":"List boxes","readOnlyHint":true}`),
 	},
 	{
 		Name:         "box_status",
+		Title:        "Show box status",
 		Description:  "Show the state of your cocoonbox box: running or hibernated, its image, whether an upgrade is available, and when your files were last saved.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"latest_image":{"type":"string"},"upgrade_available":{"type":"boolean"},"last_saved_at_ms":{"type":"integer"}},"required":["box_id","name","state","image","latest_image","upgrade_available","last_saved_at_ms"]}`),
+		Annotations:  jsontext.Value(`{"title":"Show box status","readOnlyHint":true}`),
 	},
 	{
 		Name:         "box_ensure",
+		Title:        "Start or wake box",
 		Description:  "Start or wake your cocoonbox box and wait until it is running. Waking takes a few seconds; creating a new box takes longer.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `,"wait":{"type":"boolean","default":true}},"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
+		Annotations:  jsontext.Value(`{"title":"Start or wake box","destructiveHint":false}`),
 	},
 	{
 		Name:         "box_create",
+		Title:        "Create box",
 		Description:  "Create another cocoonbox box with this name and wait until it is running. Your other boxes stay as they are; only a limited number may run at once.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"name":{"type":"string"},"image":{"type":"string","description":"An image family, such as cbdroid for an Android phone, or an image; without it, your usual desktop."},"wait":{"type":"boolean","default":true}},"required":["name"],"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"name":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","name","state","operation_id"]}`),
+		Annotations:  jsontext.Value(`{"title":"Create box","destructiveHint":false}`),
 	},
 	{
 		Name:         "box_hibernate",
+		Title:        "Hibernate box",
 		Description:  "Hibernate your cocoonbox box. Running programs and memory are kept and come back on the next wake.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","operation_id"]}`),
+		Annotations:  jsontext.Value(`{"title":"Hibernate box","destructiveHint":false}`),
 	},
 	{
 		Name:         "box_save",
+		Title:        "Save box",
 		Description:  "Save your files, logins and agent history from the box to storage now. On a desktop box the browser closes during the save.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `},"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"last_saved_at_ms":{"type":"integer"},"operation_id":{"type":"string"},"bytes":{"type":"integer"}},"required":["box_id","last_saved_at_ms","operation_id","bytes"]}`),
+		Annotations:  jsontext.Value(`{"title":"Save box","destructiveHint":true}`),
 	},
 	{
 		Name:         "box_upgrade",
+		Title:        "Upgrade box",
 		Description:  "Move your box to the latest image of its kind. Running programs restart; files, logins and agent history are kept. Requires confirm: true.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["confirm"],"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"state":{"type":"string"},"image":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","state","image","operation_id"]}`),
+		Annotations:  jsontext.Value(`{"title":"Upgrade box","destructiveHint":true}`),
 	},
 	{
 		Name:         "box_delete",
+		Title:        "Delete box",
 		Description:  "Delete one of your cocoonbox boxes. A running box is saved first; its saved state is kept for 7 days, then removed. Requires the box and confirm: true.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{"box":` + boxProperty + `,"confirm":{"type":"boolean"}},"required":["box","confirm"],"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"box_id":{"type":"string"},"operation_id":{"type":"string"}},"required":["box_id","operation_id"]}`),
+		Annotations:  jsontext.Value(`{"title":"Delete box","destructiveHint":true}`),
 	},
 	{
 		Name:         "usage",
+		Title:        "Show model usage",
 		Description:  "Show the model usage gw metered for your account, all your boxes together: requests, tokens and cost in micro-dollars today and this month (UTC), by model, with your daily cost cap (-1 unlimited) and what is left of it today. Your own model client's tokens are not in it.",
 		InputSchema:  jsontext.Value(`{"type":"object","properties":{},"additionalProperties":false}`),
 		OutputSchema: jsontext.Value(`{"type":"object","properties":{"today":` + usagePeriodSchema + `,"month":` + usagePeriodSchema + `,"daily_cap_micros":{"type":"integer"},"default_cap":{"type":"boolean"},"remaining_today_micros":{"type":"integer"}},"required":["today","month","daily_cap_micros","default_cap","remaining_today_micros"]}`),
+		Annotations:  jsontext.Value(`{"title":"Show model usage","readOnlyHint":true}`),
 	},
 }
 
@@ -102,9 +120,11 @@ func (e toolError) Error() string { return string(e) }
 
 type toolSpec struct {
 	Name         string         `json:"name"`
+	Title        string         `json:"title"`
 	Description  string         `json:"description"`
 	InputSchema  jsontext.Value `json:"inputSchema"`
 	OutputSchema jsontext.Value `json:"outputSchema"`
+	Annotations  jsontext.Value `json:"annotations"`
 }
 
 type toolResult struct {
