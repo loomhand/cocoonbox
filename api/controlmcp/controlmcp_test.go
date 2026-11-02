@@ -53,6 +53,13 @@ func TestInitializeAndToolsList(t *testing.T) {
 		if spec["inputSchema"].(map[string]any)["type"] != "object" || spec["outputSchema"].(map[string]any)["type"] != "object" || spec["description"] == "" {
 			t.Errorf("%v: incomplete spec %v", spec["name"], spec)
 		}
+		hints := spec["annotations"].(map[string]any)
+		if spec["title"] == "" || hints["title"] != spec["title"] {
+			t.Errorf("%v: title %v, annotations %v", spec["name"], spec["title"], hints)
+		}
+		if readOnly := slices.Contains([]string{"box_list", "box_status", "usage"}, spec["name"].(string)); readOnly != (hints["readOnlyHint"] == true) || readOnly == (hints["destructiveHint"] != nil) {
+			t.Errorf("%v: annotations %v", spec["name"], hints)
+		}
 		names = append(names, spec["name"].(string))
 	}
 	if want := []string{"box_list", "box_status", "box_ensure", "box_create", "box_hibernate", "box_save", "box_upgrade", "box_delete", "usage"}; !slices.Equal(names, want) {
