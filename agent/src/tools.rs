@@ -10,7 +10,6 @@ use crate::plugins::Plugin;
 
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 const TARGET_HINT: &str = "With action click or locate, in place of element or x,y: the element by its accessibility name in the focused window, else by a unique match of text on the screen. Returns the tier, the point in screenshot pixels and a crop around it; locate does not click. Not found returns the screenshot for x,y.";
-const PLAN_HINT: &str = "On this box, desktop-app GUI work (menus, dialogs, settings, Save As) goes to one gui_plan call with the whole plan, and loops over many items to one script_run script, instead of a chain of computer_act calls. ";
 const DESK_OPS: [&str; 15] = [
     "windows", "snapshot", "find", "read", "press", "act", "at", "key", "type", "click", "focus",
     "close", "launch", "shot", "screen",
@@ -108,7 +107,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
     });
     if let Some(script) = script_tool(automation) {
         if let Some(act) = tools.iter_mut().find(|t| t.name == "computer_act") {
-            act.description = Cow::Owned(format!("{PLAN_HINT}{}{LIST_HINT}", act.description));
+            act.description = Cow::Owned(format!("{}{LIST_HINT}", act.description));
             if let Some(actions) = act.parameters["properties"]["action"]["enum"].as_array_mut() {
                 actions.insert(3, "triple_click".into());
             }
@@ -539,7 +538,7 @@ fn desk_script_tool() -> ToolSpec {
     ToolSpec {
         name: Cow::Borrowed("script_run"),
         description: Cow::Borrowed(
-            "Run one script for desktop work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 that drives the desktop through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, clicks, screen crops, gw model calls); the desk command does the same from shell. Read /opt/desk/AGENTS.md first (also the resource cocoonbox://desk/AGENTS.md). Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
+            "Run one script for desktop work a single gui_plan cannot hold: loops over many items, data between apps, logic. A script is a JavaScript or TypeScript ES module run by Node 24 that drives the desktop through the desk API (import * as desk from '/opt/desk/lib/desk.mts': windows, accessibility snapshots with checked states, find and press elements, keys, typing, clicks, screen crops, gw model calls); the desk command does the same from shell. Pass code, or script: a file in the box. A module that exports main(params) is called with params and its return value comes back as result. Nothing persists between runs. Returns JSON {result, logs, error?: {kind, message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path} and a screenshot taken after the run.",
         ),
         parameters: json!({
             "type": "object",

@@ -4521,17 +4521,6 @@ async fn a_desk_box_serves_no_cua_route_over_mcp() {
 async fn a_desk_box_points_a_streak_of_computer_acts_to_script_run_once() {
     let h = Harness::with_desk(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
-    let listed = mcp.rpc("tools/list", json!({})).await;
-    let act = listed["result"]["tools"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|t| t["name"] == "computer_act")
-        .unwrap();
-    assert!(
-        act["description"].as_str().unwrap().contains("script_run"),
-        "{act}"
-    );
     let press = json!({"action": "key", "key": "a"});
     let mut nudged = Vec::new();
     for _ in 0..3 {
