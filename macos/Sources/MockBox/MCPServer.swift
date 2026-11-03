@@ -187,11 +187,11 @@ final class MCPServer: Sendable {
     private let control: ControlMCP
     private let oauth: MockOAuth
 
-    init(world: MockWorld, token: String, issuer: String) {
+    init(world: MockWorld, token: String, issuer: String, discovery: MockOAuth.Discovery) {
         self.world = world
         self.token = token
         control = ControlMCP(world: world)
-        oauth = MockOAuth(token: token, issuer: issuer)
+        oauth = MockOAuth(token: token, issuer: issuer, discovery: discovery)
     }
 
     private static func tool(_ name: String, _ description: String, _ properties: [String: String]) -> [String: Any] {
@@ -207,6 +207,7 @@ final class MCPServer: Sendable {
         let auth = authorization == "Bearer \(token)" ? "ok" : authorization.contains("${") ? "unexpanded" : authorization.isEmpty ? "missing" : "bad"
         var line = "mcp \(method) \(path) auth=\(auth) ua=\(headers["user-agent"]?.split(separator: " ").first ?? "-")"
         defer { print(line) }
+        guard let path = oauth.served(path) else { return HTTPResponse(status: 404, reason: "Not Found") }
         if let response = oauth.handle(method: method, path: path, headers: headers, body: body, line: &line) {
             return response
         }

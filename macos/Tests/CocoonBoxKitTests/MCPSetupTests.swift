@@ -4,11 +4,16 @@ import Foundation
 import Testing
 
 @Suite struct MCPSetupTests {
-    let setup = MCPSetup(endpoint: Endpoint(url: "https://box.example.com")!, boxID: "cb-9f86d081884c")
+    let setup = Self.setup("https://box.example.com", box: "cb-9f86d081884c")
+
+    static func setup(_ url: String, box: String) -> MCPSetup {
+        let endpoint = Endpoint(url: url)!
+        return MCPSetup(endpoint: endpoint, routes: ServerRoutes(endpoint: endpoint), boxID: box)
+    }
 
     @Test func urlNamesTheBoxUnderTheMCPPrefix() {
         #expect(setup.url == "https://box.example.com/cocoonbox.mcp/cb-9f86d081884c")
-        let mock = MCPSetup(endpoint: Endpoint(url: "http://127.0.0.1:50051")!, boxID: "cb-mock00000000")
+        let mock = Self.setup("http://127.0.0.1:50051", box: "cb-mock00000000")
         #expect(mock.url == "http://127.0.0.1:50051/cocoonbox.mcp/cb-mock00000000")
     }
 

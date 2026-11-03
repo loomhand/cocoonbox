@@ -50,7 +50,7 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 
 ### Copy-paste setup
 
-**Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<endpoint>/cocoonbox.mcp/<box id>`, and ready-to-paste setup for the three agent CLIs: `claude mcp add --scope user --transport http … --header 'Authorization: Bearer ${COCOONBOX_TOKEN}'`, `~/.codex/config.toml` with `bearer_token_env_var = "COCOONBOX_TOKEN"`, and `~/.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}`. No snippet contains the token, so none of it lands in a config file or shell history: every client expands `COCOONBOX_TOKEN` at runtime, and one more snippet sets it from the Keychain (`export COCOONBOX_TOKEN="$(security find-generic-password -s io.github.loomhand.cocoonbox -a <endpoint> -w)"`; macOS asks once whether `security` may read the CocoonBox item).
+**Connect a Local Agent** (toolbar and File menu) shows the box's MCP endpoint, `<MCP root>/<box id>`, where the root is the first entry of `protected_resources` in the server's sign-in metadata (default `<endpoint>/cocoonbox.mcp`), and ready-to-paste setup for the three agent CLIs: `claude mcp add --scope user --transport http … --header 'Authorization: Bearer ${COCOONBOX_TOKEN}'`, `~/.codex/config.toml` with `bearer_token_env_var = "COCOONBOX_TOKEN"`, and `~/.cursor/mcp.json` with `${env:COCOONBOX_TOKEN}`. No snippet contains the token, so none of it lands in a config file or shell history: every client expands `COCOONBOX_TOKEN` at runtime, and one more snippet sets it from the Keychain (`export COCOONBOX_TOKEN="$(security find-generic-password -s io.github.loomhand.cocoonbox -a <endpoint> -w)"`; macOS asks once whether `security` may read the CocoonBox item).
 
 ## Sharing
 

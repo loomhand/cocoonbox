@@ -6,6 +6,16 @@ import Synchronization
 // browser back to the client's loopback port with a code, the token endpoint redeems the code with PKCE for the
 // mock token, and the revoke endpoint logs what it revoked.
 final class MockOAuth: Sendable {
+    // Discovery is what the mock's metadata says and where its routes live.
+    enum Discovery: String {
+        case full
+        case renamed
+        case old
+        case off
+        case broken
+    }
+
+    static let metadataPath = "/.well-known/oauth-authorization-server"
     static let authorizePath = "/cb/oauth/authorize"
     static let tokenPath = "/cocoonbox.oauth/token"
     static let revokePath = "/cocoonbox.oauth/revoke"
@@ -21,11 +31,28 @@ final class MockOAuth: Sendable {
 
     private let token: String
     private let issuer: String
+    private let discovery: Discovery
     private let codes = Mutex<[String: Code]>([:])
 
-    init(token: String, issuer: String) {
+    init(token: String, issuer: String, discovery: Discovery) {
         self.token = token
         self.issuer = issuer
+        self.discovery = discovery
+    }
+
+    // served maps a requested path to the one the mock handles, nil for a path this discovery mode does not serve.
+    func served(_ path: String) -> String? {
+        var moved = [("/oauth/", "/cocoonbox.oauth/")]
+        switch discovery {
+        case .full, .off, .broken: return path
+        case .renamed: moved.append(("/mcp/", MCPServer.prefix))
+        case .old: break
+        }
+        for (new, old) in moved {
+            if path.hasPrefix(old) { return nil }
+            if path.hasPrefix(new) { return old + path.dropFirst(new.count) }
+        }
+        return path
     }
 
     // handle answers a request for one of the three paths, nil for any other.
@@ -34,6 +61,8 @@ final class MockOAuth: Sendable {
         switch (method, components?.path) {
         case (_, Self.invitesPath):
             return invites(method: method, authorization: headers["authorization"] ?? "", body: body, line: &line)
+        case ("GET", Self.metadataPath):
+            return metadata()
         case ("GET", Self.authorizePath):
             return authorize(components?.queryItems ?? [], line: &line)
         case ("POST", Self.tokenPath):
@@ -44,6 +73,19 @@ final class MockOAuth: Sendable {
         default:
             return nil
         }
+    }
+
+    private func metadata() -> HTTPResponse? {
+        let oauth = discovery == .renamed || discovery == .old ? "/oauth" : "/cocoonbox.oauth"
+        var fields: [String: Any] = ["issuer": issuer, "token_endpoint": issuer + oauth + "/token", "revocation_endpoint": issuer + oauth + "/revoke"]
+        switch discovery {
+        case .off: return nil
+        case .broken: return HTTPResponse(status: 500, reason: "Internal Server Error")
+        case .full: fields["protected_resources"] = [issuer + "/cocoonbox.mcp"]
+        case .renamed: fields["protected_resources"] = [issuer + "/mcp"]
+        case .old: break
+        }
+        return Self.json(200, fields)
     }
 
     private func authorize(_ query: [URLQueryItem], line: inout String) -> HTTPResponse {
@@ -104,7 +146,7 @@ final class MockOAuth: Sendable {
         return Dictionary((components.queryItems ?? []).map { ($0.name, $0.value ?? "") }) { _, last in last }
     }
 
-    private static func json(_ status: Int, _ object: [String: String]) -> HTTPResponse {
+    private static func json(_ status: Int, _ object: [String: Any]) -> HTTPResponse {
         HTTPResponse(status: status, reason: status == 200 ? "OK" : "Bad Request", headers: ["Content-Type": "application/json"],
                      body: (try? JSONSerialization.data(withJSONObject: object)) ?? Data())
     }

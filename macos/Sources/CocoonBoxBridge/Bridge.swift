@@ -27,6 +27,7 @@ public actor Bridge {
     private let link: AgentLinkClient?
     private let cache: URL
     private let output: @Sendable (Data) -> Void
+    private var routes: ServerRoutes?
     private var client: [String: Any] = [:]
     private var control: MCPUpstream?
     private var sessions: [String: MCPUpstream] = [:]
@@ -410,7 +411,7 @@ public actor Bridge {
 
     private func openBox(_ box: String) async throws -> MCPUpstream {
         if let upstream = sessions[box] { return upstream }
-        let upstream = try MCPUpstream(endpoint: endpoint, path: "/cocoonbox.mcp/\(box)", token: token)
+        let upstream = try MCPUpstream(url: try await serverRoutes().box(box), token: token)
         let instructions = try await initialize(upstream)
         sessions[box] = upstream
         boxInstructions[box] = instructions
@@ -523,9 +524,17 @@ public actor Bridge {
         cache.deletingLastPathComponent().appendingPathComponent("\(cache.deletingPathExtension().lastPathComponent)-\(box).\(suffix)")
     }
 
+    // serverRoutes reads the routes once; a failed read is not kept, so the next call tries again.
+    private func serverRoutes() async throws -> ServerRoutes {
+        if let routes { return routes }
+        let found = try await ServerRoutes.discover(endpoint)
+        routes = found
+        return found
+    }
+
     private func openConnect() async throws -> MCPUpstream {
         if let connect { return connect }
-        let upstream = try MCPUpstream(endpoint: endpoint, path: "/cocoonbox.mcp/connect", token: token)
+        let upstream = try MCPUpstream(url: try await serverRoutes().connect, token: token)
         try await initialize(upstream)
         connect = upstream
         return upstream
@@ -533,7 +542,7 @@ public actor Bridge {
 
     private func openControl() async throws -> MCPUpstream {
         if let control { return control }
-        let upstream = try MCPUpstream(endpoint: endpoint, path: "/cocoonbox.mcp/control", token: token)
+        let upstream = try MCPUpstream(url: try await serverRoutes().control, token: token)
         try await initialize(upstream)
         control = upstream
         return upstream

@@ -64,7 +64,7 @@ func TestAgentGetsAGrantThroughConsentAndActsOnlyOnItsOwnBoxes(t *testing.T) {
 	}
 	var asm map[string]any
 	e.getJSON(t, oauth.ServerMetadataPath, &asm)
-	if asm["issuer"] != e.srv.URL || asm["client_id_metadata_document_supported"] != true || fmt.Sprint(asm["code_challenge_methods_supported"]) != "[S256]" {
+	if asm["issuer"] != e.srv.URL || asm["client_id_metadata_document_supported"] != true || fmt.Sprint(asm["code_challenge_methods_supported"]) != "[S256]" || fmt.Sprint(asm["protected_resources"]) != "["+e.resource+"]" {
 		t.Errorf("server metadata = %v", asm)
 	}
 

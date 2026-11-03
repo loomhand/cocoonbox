@@ -19,8 +19,8 @@ public struct MCPSetup: Sendable, Equatable {
     public let url: String
     let account: String
 
-    public init(endpoint: Endpoint, boxID: String) {
-        url = "\(endpoint.url)/cocoonbox.mcp/\(boxID)"
+    public init(endpoint: Endpoint, routes: ServerRoutes, boxID: String) {
+        url = routes.box(boxID)
         account = endpoint.url
     }
 

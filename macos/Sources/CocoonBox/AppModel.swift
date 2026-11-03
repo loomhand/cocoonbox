@@ -50,6 +50,7 @@ struct OperationProgress: Equatable {
 @MainActor @Observable
 final class AppModel {
     let endpointURL: String
+    private var routes: ServerRoutes?
     var showSignIn = false
     var showConnectAgent = false
     var showShare = false
@@ -164,8 +165,8 @@ final class AppModel {
     }
 
     var mcpSetup: MCPSetup? {
-        guard let box, let endpoint = Endpoint(url: endpointURL) else { return nil }
-        return MCPSetup(endpoint: endpoint, boxID: box.id)
+        guard let box, let routes, let endpoint = Endpoint(url: endpointURL) else { return nil }
+        return MCPSetup(endpoint: endpoint, routes: routes, boxID: box.id)
     }
 
     var selectedLocal: LocalAgentSession? {
@@ -370,8 +371,8 @@ final class AppModel {
     }
 
     var shareSetup: ShareSetup? {
-        guard let box, let share, let shareSecret, let endpoint = Endpoint(url: endpointURL) else { return nil }
-        return ShareSetup(endpoint: endpoint, boxID: box.id, secret: shareSecret, named: !share.users.isEmpty)
+        guard let box, let share, let shareSecret, let routes, let endpoint = Endpoint(url: endpointURL) else { return nil }
+        return ShareSetup(endpoint: endpoint, routes: routes, boxID: box.id, secret: shareSecret, named: !share.users.isEmpty)
     }
 
     @discardableResult
@@ -631,11 +632,23 @@ final class AppModel {
     private func received(boxes list: [Box], offered: [String]) async {
         imageChoices = ImageChoice.choices(offered)
         apply(boxes: list)
-        guard !boxesLive else { return }
-        boxesLive = true
-        lastError = nil
-        await refreshOffloads()
-        await refreshConnectors()
+        if !boxesLive {
+            boxesLive = true
+            lastError = nil
+            await refreshOffloads()
+            await refreshConnectors()
+        }
+        await loadRoutes()
+    }
+
+    // loadRoutes reads the server's routes until a read succeeds; each list from the watch tries again.
+    private func loadRoutes() async {
+        guard routes == nil, let endpoint = Endpoint(url: endpointURL) else { return }
+        do {
+            routes = try await ServerRoutes.discover(endpoint)
+        } catch {
+            Perf.mark("routes_failed", "\(error)")
+        }
     }
 
     // boxesDropped reports a watch that never delivered a list, such as one refused for a bad token; the watch resubscribes.

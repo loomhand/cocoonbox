@@ -701,7 +701,7 @@ let shareUsage = "usage: cocoonbox share [create BOX [--ttl 24h] | ls | revoke I
 
 // shareLink is empty for a share created before the api kept secrets.
 func shareLink(_ share: Cocoonbox_Control_V1_Share, _ endpoint: Endpoint) -> String {
-    share.secret.isEmpty ? "" : ShareSetup(endpoint: endpoint, boxID: share.boxID, secret: share.secret, named: !share.users.isEmpty).link
+    share.secret.isEmpty ? "" : ShareSetup.link(endpoint: endpoint, secret: share.secret)
 }
 
 func shareObject(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: Endpoint) -> [String: Any] {
