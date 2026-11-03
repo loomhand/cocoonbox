@@ -1,6 +1,13 @@
 "use strict";
 
 const params = new URLSearchParams(location.search);
+const connectErrors = {
+  browser: "This sign-in did not start in this browser. Start it again from this page.",
+  vendor: "The service turned the sign-in down. Start it again.",
+  expired: "This sign-in expired, or its answer came from another server. Start it again.",
+  refused: "The service refused the sign-in. Start it again.",
+  failed: "Connecting failed; try again.",
+};
 
 function el(tag, text, className) {
   const e = document.createElement(tag);
@@ -179,7 +186,7 @@ $("custom-form").addEventListener("submit", (ev) => {
     .catch((e) => notice(e.message, true));
 });
 
-if (params.get("connected")) notice("Connected " + params.get("connected") + ".");
+if (params.has("connected")) notice("Connected.");
 if (params.get("installed")) notice("GitHub saved your repository choice. Connect GitHub here if it is not connected yet.");
-if (params.get("error")) notice(params.get("error"), true);
+if (params.has("error")) notice(connectErrors[params.get("error")] ?? connectErrors.failed, true);
 load().then(prefill).catch((e) => notice(e.message, true));

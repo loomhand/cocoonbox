@@ -88,6 +88,26 @@ func TestTheCallbackCompletesOnlyWithTheFlowsNonce(t *testing.T) {
 	}
 }
 
+func TestTheCallbackRedirectsWithAnErrorCodeNotTheVendorsText(t *testing.T) {
+	env, vendor := newConnectEnv(t)
+	root := env.login(t, "root")
+	cookie, _, state := env.begin(t, root, "mock", vendor)
+	q := url.Values{"state": {state}, "error": {"access_denied"}, "error_description": {"Paste your token at https://evil.example"}}
+	req := httptest.NewRequest(http.MethodGet, connect.CallbackPath+"?"+q.Encode(), nil)
+	req.AddCookie(&http.Cookie{Name: connectCookie, Value: cookie.Value})
+	rec := httptest.NewRecorder()
+	env.srv.ConnectCallback(rec, req)
+	if loc := rec.Header().Get("Location"); loc != connect.ConsolePath+"?error=vendor" {
+		t.Errorf("vendor error -> %s", loc)
+	}
+	if loc := env.callback(t, "", state, "x"); loc != connect.ConsolePath+"?error=browser" {
+		t.Errorf("callback without the cookie -> %s", loc)
+	}
+	if loc := env.callback(t, strings.Repeat("x", 43), state, "x"); loc != connect.ConsolePath+"?error=expired" {
+		t.Errorf("callback with a wrong nonce -> %s", loc)
+	}
+}
+
 func TestASignOutBetweenBeginAndCallbackRefusesTheCallback(t *testing.T) {
 	env, vendor := newConnectEnv(t)
 	root := env.login(t, "root")
