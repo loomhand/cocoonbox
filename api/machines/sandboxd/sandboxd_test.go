@@ -1194,6 +1194,32 @@ func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
 	}
 }
 
+func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	db := clustertest.Open(t)
+	other := openSharedBackend(t, entry, db)
+	a := newSharedBackend(t, entry, db)
+	claimRunning(t, a)
+	clustertest.WaitFor(t, "the other api sees the claim", func() bool {
+		m, err := other.cached(boxID)
+		return err == nil && m.State == machines.StateRunning
+	})
+	peer.handOver(entry)
+	if _, err := other.Get(t.Context(), boxID); !errors.Is(err, machines.ErrNotFound) {
+		t.Fatalf("Get on an api without the token = %v, want ErrNotFound", err)
+	}
+	if _, err := other.cached(boxID); err != nil {
+		t.Fatalf("the api without the token dropped the machine: %v", err)
+	}
+	if err := a.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if got, err := a.cached(boxID); err != nil || got.State != machines.StateHibernated {
+		t.Errorf("the handed-over machine = %+v, %v, want it adopted and hibernated", got, err)
+	}
+}
+
 func TestARefreshFollowsAMachineItsAnsweringNodeHandedOver(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
@@ -1646,13 +1672,17 @@ func newTestBackend(t *testing.T, fake *fakeSandboxd) *Backend {
 
 func newSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Backend {
 	t.Helper()
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Shared: db})
+	b := openSharedBackend(t, fake, db)
+	go b.Run(t.Context())
+	return b
+}
+
+func openSharedBackend(t *testing.T, fake *fakeSandboxd, db *cluster.Store) *Backend {
+	t.Helper()
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Shared: db})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	go b.Run(ctx)
 	return b
 }
 
