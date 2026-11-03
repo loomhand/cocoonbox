@@ -186,15 +186,20 @@ func (s *Service) customTarget(req StartRequest) (string, string, error) {
 	if !connectorPattern.MatchString(req.Name) || s.entry(req.Name) != nil {
 		return "", "", status.Error(codes.InvalidArgument, "a custom connector's name is 1 to 24 lowercase letters, digits or -, starting with a letter, and not a catalog name")
 	}
-	u, err := url.Parse(req.URL)
-	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && (u.Scheme != "http" || !s.allowPrivate)) {
+	if !s.safeURL(req.URL) {
 		return "", "", status.Error(codes.InvalidArgument, "a custom connector's URL is an https URL")
 	}
+	u, _ := url.Parse(req.URL)
 	if req.Key != "" && (!httpguts.ValidHeaderFieldName(cmp.Or(req.Header, headerAuthorization)) || !httpguts.ValidHeaderFieldValue(req.Key)) {
 		return "", "", status.Error(codes.InvalidArgument, "the header name or the key is not valid in an HTTP header")
 	}
 	u.Fragment = ""
 	return req.Name, u.String(), nil
+}
+
+func (s *Service) safeURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Host != "" && u.User == nil && (u.Scheme == "https" || u.Scheme == "http" && s.allowPrivate)
 }
 
 // connectDirect stores a grant without a sign-in, with cred or none, only after the server listed its tools with it.
