@@ -1110,7 +1110,7 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
 	return nil
 }
 
-// dropUnlisted drops the machines that lists, taken at listed, lack while their node answered, or that no node answers for once their node stayed out of the mesh for nodeLostAfter.
+// dropUnlisted drops the machines that lists, taken at listed, lack while their node answered or stayed out of the mesh for nodeLostAfter, unless a node answers for the claim.
 func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, listed time.Time) error {
 	present := map[string]bool{}
 	for _, rows := range lists {
@@ -1120,20 +1120,17 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, list
 	}
 	now := time.Now()
 	b.mu.Lock()
-	gone, lost := map[string]string{}, map[string]string{}
+	missing := map[string]string{}
 	for id, e := range b.entries {
 		if present[id] || e.busy(now) || e.row == nil || !e.rowAt.Before(listed) {
 			continue
 		}
-		if _, answered := lists[e.ownerAddr]; answered {
-			gone[id] = e.row.ID
-		} else if b.lostLocked(e.ownerAddr, now) {
-			lost[id] = e.row.ID
+		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
+			missing[id] = e.row.ID
 		}
 	}
 	b.mu.Unlock()
-	maps.Copy(gone, b.unadopted(ctx, slices.Collect(maps.Keys(lists)), lost))
-	for id, sandbox := range gone {
+	for id, sandbox := range b.unadopted(ctx, slices.Collect(maps.Keys(lists)), missing) {
 		if _, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox }); err != nil {
 			return err
 		}
@@ -1141,13 +1138,13 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, list
 	return nil
 }
 
-// unadopted returns the machines of lost that no node at addrs answers for, and rereads the others on the node that does.
-func (b *Backend) unadopted(ctx context.Context, addrs []string, lost map[string]string) map[string]string {
+// unadopted returns the machines of missing that no node at addrs answers for, and rereads the others on the node that does.
+func (b *Backend) unadopted(ctx context.Context, addrs []string, missing map[string]string) map[string]string {
 	var mu sync.Mutex
 	out := map[string]string{}
 	var g errgroup.Group
 	g.SetLimit(probeFanout)
-	for id, sandbox := range lost {
+	for id, sandbox := range missing {
 		g.Go(func() error {
 			if to, ok := b.follow(ctx, addrs, id, sandbox); ok && b.reread(ctx, id, to, sandbox) == nil {
 				return nil
