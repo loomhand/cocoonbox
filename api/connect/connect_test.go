@@ -188,6 +188,21 @@ func TestTheExpectedIssuerIsTheMetadataIssuerOnlyOnTheServersOrigin(t *testing.T
 	}
 }
 
+func TestOnlyAnHTTPSEndpointIsSafeUnlessTheBrokerMayReachPrivateAddresses(t *testing.T) {
+	public := &Service{}
+	for raw, want := range map[string]bool{
+		"https://as.example/authorize": true, "http://as.example/token": false, "https://user@as.example/token": false,
+		"app.example:authorize": false, "": false,
+	} {
+		if got := public.safeURL(raw); got != want {
+			t.Errorf("safeURL(%q) = %t, want %t", raw, got, want)
+		}
+	}
+	if !(&Service{allowPrivate: true}).safeURL("http://127.0.0.1:8080/token") {
+		t.Error("a test broker refuses a plain http endpoint")
+	}
+}
+
 func TestASessionEndedBeforeTheCallbackRefusesIt(t *testing.T) {
 	env := newEnv(t)
 	started := env.start(t, alice, mockName)

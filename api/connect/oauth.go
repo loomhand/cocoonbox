@@ -132,6 +132,9 @@ func (s *Service) discover(ctx context.Context, mcpURL string, preset client) (*
 		return nil, fmt.Errorf("authorization server %s names no authorization or token endpoint", issuer)
 	case !slices.Contains(as.CodeChallengeMethods, "S256"):
 		return nil, fmt.Errorf("authorization server %s does not offer PKCE S256", issuer)
+	case !s.safeURL(as.AuthorizationEndpoint) || !s.safeURL(as.TokenEndpoint) ||
+		as.RegistrationEndpoint != "" && !s.safeURL(as.RegistrationEndpoint) || as.RevocationEndpoint != "" && !s.safeURL(as.RevocationEndpoint):
+		return nil, fmt.Errorf("authorization server %s names an endpoint that is not https", issuer)
 	}
 	auth := &authorization{authorizeURL: as.AuthorizationEndpoint, scopes: prm.ScopesSupported, issuer: issuerOf(issuer, as.Issuer), issRequired: as.IssParameterSupported}
 	if scope != "" {
