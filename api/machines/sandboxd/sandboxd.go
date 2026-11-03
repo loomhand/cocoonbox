@@ -913,8 +913,9 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 	b.mu.Lock()
 	e := b.entries[id]
 	var sandbox, addr string
+	var held bool
 	if e != nil && e.row != nil {
-		sandbox, addr = e.row.ID, e.ownerAddr
+		sandbox, addr, held = e.row.ID, e.ownerAddr, e.token != ""
 	}
 	b.mu.Unlock()
 	if e != nil && sandbox == "" {
@@ -928,6 +929,9 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 		r, addr, err = b.find(ctx, id)
 	}
 	if errors.Is(err, machines.ErrNotFound) {
+		if b.opts.Shared != nil && sandbox != "" && !held {
+			return machines.Machine{}, machines.ErrNotFound
+		}
 		if err = b.forget(ctx, id, sandbox); err != nil {
 			return machines.Machine{}, err
 		}
