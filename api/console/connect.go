@@ -83,21 +83,25 @@ func (s *Server) ConnectCallback(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(connectCookie)
 	if err != nil {
 		logger.Warnf(r.Context(), "callback without the connect cookie from %s", clientAddr(r))
-		redirect(w, r, "error", "This sign-in did not start in this browser. Start it again from this page.")
+		redirect(w, r, "error", "browser")
 		return
 	}
 	if vendorErr := q.Get("error"); vendorErr != "" {
-		redirect(w, r, "error", strings.TrimSuffix("The vendor answered "+vendorErr+": "+q.Get("error_description"), ": "))
+		logger.Warnf(r.Context(), "the vendor answered a sign-in from %s with %q: %q", clientAddr(r), vendorErr, q.Get("error_description"))
+		redirect(w, r, "error", "vendor")
 		return
 	}
 	id, err := s.connect.Complete(r.Context(), c.Value, q.Get("state"), q.Get("code"), q.Get("iss"))
 	if err != nil {
 		logger.Warnf(r.Context(), "complete a sign-in from %s: %v", clientAddr(r), err)
-		message := "Connecting failed; try again."
-		if st, ok := status.FromError(err); ok && st.Code() != codes.Unknown && st.Code() != codes.Internal {
-			message = st.Message()
+		switch status.Code(err) {
+		case codes.PermissionDenied:
+			redirect(w, r, "error", "expired")
+		case codes.FailedPrecondition:
+			redirect(w, r, "error", "refused")
+		default:
+			redirect(w, r, "error", "failed")
 		}
-		redirect(w, r, "error", message)
 		return
 	}
 	redirect(w, r, "connected", id)

@@ -534,7 +534,7 @@ const loginErrors = {
   github_denied: "GitHub did not allow the sign-in.",
 };
 if (params.get("login_error")) notice(loginErrors[params.get("login_error")] || "Signing in with GitHub failed; try again.", true);
-else if (params.get("linked")) notice("Connected " + params.get("linked") + ": you can sign in with it now.");
+else if (params.has("linked")) notice("Connected GitHub: you can sign in with it now.");
 api("GET", "auth/providers").catch(() => null).then((p) => {
   providers = p;
   return load();
