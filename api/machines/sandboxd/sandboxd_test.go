@@ -1147,7 +1147,8 @@ func TestAMachineWhoseNodeIsGoneFollowsTheNodeThatAdoptsIt(t *testing.T) {
 		t.Fatalf("Hibernate: %v", err)
 	}
 	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
-	peer.archiveTo(entry)
+	peer.handOver(entry)
+	peer.srv.Close()
 	w, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
 	if err != nil || action != machines.ActionWoken {
 		t.Fatalf("Ensure after the node went = %+v, %v, %v, want the machine woken where it was adopted", w, action, err)
@@ -1169,7 +1170,8 @@ func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	b := newTestBackend(t, entry)
 	claimRunning(t, b)
-	peer.archiveTo(entry)
+	peer.handOver(entry)
+	peer.srv.Close()
 	entry.mu.Lock()
 	entry.peers = nil
 	entry.mu.Unlock()
@@ -1189,6 +1191,42 @@ func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
 	}
 	if entry.count("owner") == 0 {
 		t.Error("the refresh asked no node for the owner")
+	}
+}
+
+func TestARefreshFollowsAMachineItsAnsweringNodeHandedOver(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	claimRunning(t, b)
+	peer.handOver(entry)
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the hand-over: %v", err)
+	}
+	if got, err := b.cached(boxID); err != nil || got.State != machines.StateHibernated {
+		t.Fatalf("the machine its node handed over = %+v, %v, want it archived on the adopter", got, err)
+	}
+	b.mu.Lock()
+	addr := b.entries[boxID].ownerAddr
+	b.mu.Unlock()
+	if addr != entry.addr() {
+		t.Errorf("owner %q, want the adopter %q", addr, entry.addr())
+	}
+}
+
+func TestARefreshDropsAMachineNoNodeAnswersFor(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	fake.remove(fake.only())
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the release: %v", err)
+	}
+	if _, err := b.cached(boxID); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("a machine no node answers for = %v, want it gone", err)
+	}
+	if fake.count("owner") == 0 {
+		t.Error("the refresh dropped the machine without asking the node for the owner")
 	}
 }
 
@@ -1484,13 +1522,12 @@ func (f *fakeSandboxd) addr() string {
 	return strings.TrimPrefix(f.srv.URL, "http://")
 }
 
-// archiveTo stops f and leaves its claims for peer to adopt, as an archive in the shared store.
-func (f *fakeSandboxd) archiveTo(peer *fakeSandboxd) {
+// handOver leaves f's claims for peer to adopt, as an archive in the shared store.
+func (f *fakeSandboxd) handOver(peer *fakeSandboxd) {
 	f.mu.Lock()
 	claims := f.sandboxes
 	f.sandboxes = map[string]*fakeSandbox{}
 	f.mu.Unlock()
-	f.srv.Close()
 	peer.mu.Lock()
 	defer peer.mu.Unlock()
 	maps.Copy(peer.adoptable, claims)
