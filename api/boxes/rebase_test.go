@@ -104,6 +104,9 @@ func newFakeNode(t *testing.T) *fakeNode {
 	t.Helper()
 	n := &fakeNode{rows: map[string]*nodeRow{}}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/info", func(w http.ResponseWriter, _ *http.Request) {
+		nodeJSON(w, http.StatusOK, map[string]string{"advertise_addr": strings.TrimPrefix(n.srv.URL, "http://")})
+	})
 	mux.HandleFunc("POST /v1/claim", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Template string            `json:"template"`

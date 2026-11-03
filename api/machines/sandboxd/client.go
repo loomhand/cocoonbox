@@ -152,6 +152,24 @@ func (c *client) peers(ctx context.Context) ([]string, error) {
 	return resp.Peers, err
 }
 
+// advertised returns the address the node gives clients and its mesh names it by, "" for a node that advertises none.
+func (c *client) advertised(ctx context.Context) (string, error) {
+	var resp struct {
+		AdvertiseAddr string `json:"advertise_addr"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v1/info", nil, nil, &resp)
+	return resp.AdvertiseAddr, err
+}
+
+// owner asks the node which node owns sandbox id, with the sandbox's own token; a node may adopt an archived claim to answer.
+func (c *client) owner(ctx context.Context, id, token string) (string, error) {
+	var resp struct {
+		OwnerAddr string `json:"owner_addr"`
+	}
+	err := c.request(ctx, token, http.MethodGet, "/v1/sandboxes/"+url.PathEscape(id)+"/owner", nil, nil, &resp)
+	return resp.OwnerAddr, err
+}
+
 func (c *client) list(ctx context.Context) ([]row, error) {
 	var resp struct {
 		Sandboxes []row `json:"sandboxes"`

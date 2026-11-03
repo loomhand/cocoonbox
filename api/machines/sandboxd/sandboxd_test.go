@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -953,8 +954,11 @@ func TestASingleNodeMakesNoMeshCallOnClaimWakeOrExec(t *testing.T) {
 	b.nodeMu.Lock()
 	nodes := len(b.nodes)
 	b.nodeMu.Unlock()
-	if addr != "" || nodes != 0 {
+	if addr != fake.addr() || nodes != 0 {
 		t.Errorf("owner %q, node clients %d, want the entry node only", addr, nodes)
+	}
+	if fake.count("info") != 1 || fake.count("owner") != 0 {
+		t.Errorf("info reads %d, owner asks %d, want one info read at start and no owner ask", fake.count("info"), fake.count("owner"))
 	}
 }
 
@@ -1034,6 +1038,160 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 	}
 }
 
+func TestAFailedEntryListDropsNothingAndTheRefreshReadsThePeers(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, peer.next = []*fakeSandboxd{peer}, 100
+	b := newTestBackend(t, entry)
+	claimRunning(t, b)
+	entry.mu.Lock()
+	entry.redirect = []*fakeSandboxd{peer}
+	entry.mu.Unlock()
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: "cb-peer", Owner: owner, Flavor: xlarge})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	waitState(t, b, "cb-peer", m.Revision, machines.StateRunning)
+	entry.mu.Lock()
+	entry.down = true
+	entry.mu.Unlock()
+	peer.mutate(func(sb *fakeSandbox) { sb.row.Hibernated = true })
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh with the entry down: %v", err)
+	}
+	if _, err := b.cached(boxID); err != nil {
+		t.Errorf("the machine of an entry whose list failed went: %v", err)
+	}
+	if got, err := b.cached("cb-peer"); err != nil || got.State != machines.StateHibernated {
+		t.Errorf("the machine of the peer = %+v, %v, want the hibernation the peer listed", got, err)
+	}
+}
+
+func TestARollingSwitchOfTheEntryNodeKeepsEveryMachineOnItsNode(t *testing.T) {
+	a, b := newFakeSandboxd(t), newFakeSandboxd(t)
+	a.peers, b.peers = []*fakeSandboxd{b}, []*fakeSandboxd{a}
+	db := clustertest.Open(t)
+	before := newSharedBackend(t, a, db)
+	claimRunning(t, before)
+	a.mu.Lock()
+	a.down = true
+	a.mu.Unlock()
+	after := newSharedBackend(t, b, db)
+	if _, err := after.cached(boxID); err != nil {
+		t.Fatalf("an api entering through the other node dropped the machine of a node that did not answer: %v", err)
+	}
+	a.mu.Lock()
+	a.down = false
+	a.mu.Unlock()
+	var version int64
+	for i, be := range []*Backend{before, after, before, after} {
+		if err := be.refresh(t.Context()); err != nil {
+			t.Fatalf("refresh: %v", err)
+		}
+		rec, err := db.Machine(t.Context(), boxID)
+		if err != nil || rec.OwnerAddr != a.addr() || (i > 0 && rec.Version != version) {
+			t.Fatalf("after refresh %d the row names %q at version %d (was %d), %v; want %q unchanged", i, rec.OwnerAddr, rec.Version, version, err, a.addr())
+		}
+		version = rec.Version
+	}
+	h, err := after.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, before, boxID, h.Revision, machines.StateHibernated)
+	if a.count("hibernate") != 1 || b.count("hibernate") != 0 {
+		t.Errorf("hibernates on the owner %d, on the new entry %d, want the owner's", a.count("hibernate"), b.count("hibernate"))
+	}
+}
+
+func TestAStoredEmptyOwnerResolvesToTheNodeThatHoldsTheClaim(t *testing.T) {
+	a, b := newFakeSandboxd(t), newFakeSandboxd(t)
+	a.peers, b.peers = []*fakeSandboxd{b}, []*fakeSandboxd{a}
+	sb := &fakeSandbox{row: row{
+		ID: "sb_1", Key: poolKey{Template: template, Net: "none", Size: "xlarge"}, ClaimedAt: time.Now().UTC(),
+		Metadata: map[string]string{"cb_machine": boxID, "cb_owner": owner},
+	}, token: "tok"}
+	a.add(sb)
+	claim, err := json.Marshal(sb.row)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	db := clustertest.Open(t)
+	if err := db.PutMachine(t.Context(), cluster.Machine{ID: boxID, Owner: owner, Image: template, CreatedAt: time.Now(), Claim: claim, Ready: true}); err != nil {
+		t.Fatalf("PutMachine: %v", err)
+	}
+	a.mu.Lock()
+	a.down = true
+	a.mu.Unlock()
+	next := newSharedBackend(t, b, db)
+	if _, err := next.cached(boxID); err != nil {
+		t.Fatalf("a row an older api wrote went while its node did not answer: %v", err)
+	}
+	a.mu.Lock()
+	a.down = false
+	a.mu.Unlock()
+	if got, err := next.Get(t.Context(), boxID); err != nil || got.State != machines.StateRunning {
+		t.Fatalf("Get = %+v, %v, want the running machine on its node", got, err)
+	}
+	if rec, err := db.Machine(t.Context(), boxID); err != nil || rec.OwnerAddr != a.addr() {
+		t.Errorf("the row names %q, %v, want %q", rec.OwnerAddr, err, a.addr())
+	}
+}
+
+func TestAMachineWhoseNodeIsGoneFollowsTheNodeThatAdoptsIt(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	claimRunning(t, b)
+	h, err := b.Hibernate(t.Context(), boxID)
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	waitState(t, b, boxID, h.Revision, machines.StateHibernated)
+	peer.archiveTo(entry)
+	w, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
+	if err != nil || action != machines.ActionWoken {
+		t.Fatalf("Ensure after the node went = %+v, %v, %v, want the machine woken where it was adopted", w, action, err)
+	}
+	waitState(t, b, boxID, w.Revision, machines.StateRunning)
+	if entry.count("owner") == 0 || entry.count("wake") != 1 || entry.count("claim") != 0 {
+		t.Errorf("on the adopter: owner asks %d, wakes %d, claims %d; want it adopted and woken, no new claim", entry.count("owner"), entry.count("wake"), entry.count("claim"))
+	}
+	b.mu.Lock()
+	addr := b.entries[boxID].ownerAddr
+	b.mu.Unlock()
+	if addr != entry.addr() {
+		t.Errorf("owner %q, want the adopter %q", addr, entry.addr())
+	}
+}
+
+func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
+	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
+	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
+	b := newTestBackend(t, entry)
+	claimRunning(t, b)
+	peer.archiveTo(entry)
+	entry.mu.Lock()
+	entry.peers = nil
+	entry.mu.Unlock()
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the node left: %v", err)
+	}
+	b.mu.Lock()
+	for addr, since := range b.away {
+		b.away[addr] = since.Add(-nodeLostAfter)
+	}
+	b.mu.Unlock()
+	if err := b.refresh(t.Context()); err != nil {
+		t.Fatalf("refresh after the node stayed away: %v", err)
+	}
+	if got, err := b.cached(boxID); err != nil || got.State != machines.StateHibernated {
+		t.Fatalf("the machine of the lost node = %+v, %v, want it archived on the adopter", got, err)
+	}
+	if entry.count("owner") == 0 {
+		t.Error("the refresh asked no node for the owner")
+	}
+}
+
 func TestFingerprintOfAStoredEntryStaysTheSame(t *testing.T) {
 	v := &envVar{Value: "p&ss<word>", Guest: new(false), Inject: &inject{Hosts: []string{"api.example.com"}, Header: "Authorization", Placeholder: "Bearer <key>"}}
 	if got, want := fingerprint(v), "0ab05bc9d861004d0c83514c9e357831ce427514362edb059a76ac2c209fa60d"; got != want {
@@ -1064,6 +1222,7 @@ type fakeSandboxd struct {
 	refusals    int
 	agent       string
 	tenants     map[string]tenantRequest
+	adoptable   map[string]*fakeSandbox
 	peers       []*fakeSandboxd
 	redirect    []*fakeSandboxd
 	down        bool
@@ -1071,6 +1230,28 @@ type fakeSandboxd struct {
 
 func (f *fakeSandboxd) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/info", f.root(func(w http.ResponseWriter, _ *http.Request) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.calls["info"]++
+		writeJSON(w, map[string]any{"advertise_addr": f.addr()})
+	}))
+	mux.HandleFunc("GET /v1/sandboxes/{id}/owner", func(w http.ResponseWriter, r *http.Request) {
+		id, token := r.PathValue("id"), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		f.calls["owner"]++
+		if sb := f.adoptable[id]; sb != nil && sb.token == token {
+			sb.row.Archived = true
+			f.sandboxes[id] = sb
+			delete(f.adoptable, id)
+		}
+		if sb := f.sandboxes[id]; sb == nil || sb.token != token {
+			writeError(w, http.StatusNotFound, "not owned here")
+			return
+		}
+		writeJSON(w, map[string]string{"owner_addr": f.addr()})
+	})
 	mux.HandleFunc("GET /v1/peers", f.root(func(w http.ResponseWriter, _ *http.Request) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -1303,6 +1484,18 @@ func (f *fakeSandboxd) addr() string {
 	return strings.TrimPrefix(f.srv.URL, "http://")
 }
 
+// archiveTo stops f and leaves its claims for peer to adopt, as an archive in the shared store.
+func (f *fakeSandboxd) archiveTo(peer *fakeSandboxd) {
+	f.mu.Lock()
+	claims := f.sandboxes
+	f.sandboxes = map[string]*fakeSandbox{}
+	f.mu.Unlock()
+	f.srv.Close()
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	maps.Copy(peer.adoptable, claims)
+}
+
 func (f *fakeSandboxd) add(sb *fakeSandbox) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1384,7 +1577,7 @@ func (f *fakeSandboxd) renewed() []string {
 
 func newFakeSandboxd(t *testing.T) *fakeSandboxd {
 	t.Helper()
-	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}}
+	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}, adoptable: map[string]*fakeSandbox{}}
 	mux := f.handler()
 	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()

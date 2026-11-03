@@ -42,6 +42,7 @@ const (
 	probeTimeout    = 2 * time.Second
 	probeFanout     = 8
 	sharedTimeout   = 10 * time.Second
+	ownerTimeout    = 10 * time.Second
 	nodeLostAfter   = 5 * time.Minute
 )
 
@@ -96,6 +97,7 @@ type Backend struct {
 
 	opts                 Options
 	api                  *client
+	entryAddr            string
 	ctx                  context.Context
 	mirror               *cluster.Mirror
 	leaseFor, renewEvery time.Duration
@@ -118,16 +120,21 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 	if err != nil {
 		return nil, err
 	}
+	advertised, err := api.advertised(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read the sandboxd entry node: %w", err)
+	}
 	b := &Backend{
-		Tenants: &Tenants{api: api, egressClass: opts.TenantEgressClass},
-		opts:    opts,
-		api:     api,
-		ctx:     ctx,
-		nodes:   map[string]*client{},
-		entries: map[string]*entry{},
-		owners:  map[string]chan struct{}{},
-		views:   map[string]view{},
-		away:    map[string]time.Time{},
+		Tenants:   &Tenants{api: api, egressClass: opts.TenantEgressClass},
+		opts:      opts,
+		api:       api,
+		entryAddr: cmp.Or(advertised, opts.URL),
+		ctx:       ctx,
+		nodes:     map[string]*client{},
+		entries:   map[string]*entry{},
+		owners:    map[string]chan struct{}{},
+		views:     map[string]view{},
+		away:      map[string]time.Time{},
 
 		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
@@ -247,14 +254,11 @@ func (b *Backend) Hibernate(ctx context.Context, id string) (machines.Machine, e
 	}
 	if started {
 		b.run(id, opHibernate, m.Revision, func(ctx context.Context) error {
-			node, err := b.node(addr)
+			at, err := b.atOwner(ctx, id, addr, sandbox, func(node *client) error { return node.verb(ctx, sandbox, "hibernate", nil) })
 			if err != nil {
 				return err
 			}
-			if err := node.verb(ctx, sandbox, "hibernate", nil); err != nil {
-				return err
-			}
-			return b.reread(ctx, id, addr, sandbox)
+			return b.reread(ctx, id, at, sandbox)
 		})
 	}
 	return m, nil
@@ -558,7 +562,7 @@ func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*ent
 		}
 		if changed {
 			if next.sandbox() != sandbox {
-				next.rowAt = time.Now()
+				next.rowAt, next.token = time.Now(), ""
 			}
 			b.entries[id] = next
 			b.touchLocked(next)
@@ -727,7 +731,7 @@ func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size s
 func (b *Backend) claimFollow(ctx context.Context, tenant string, req claimRequest) (string, string, error) {
 	resp, err := b.api.claim(ctx, tenant, req)
 	if err != nil || len(resp.Redirect) == 0 {
-		return resp.ID, "", err
+		return resp.ID, cmp.Or(resp.OwnerAddr, b.entryAddr), err
 	}
 	req.NoRedirect, req.RequirePromoted = true, resp.RequirePromoted
 	var lastErr error
@@ -741,10 +745,10 @@ func (b *Backend) claimFollow(ctx context.Context, tenant string, req claimReque
 	if !transient(lastErr) {
 		return "", "", fmt.Errorf("all redirect targets failed: %w", lastErr)
 	}
-	if resp, err = b.claimAt(ctx, "", tenant, req); err != nil {
+	if resp, err = b.claimAt(ctx, b.entryAddr, tenant, req); err != nil {
 		return "", "", fmt.Errorf("all redirect targets failed, the entry node too: %w", errors.Join(lastErr, err))
 	}
-	return resp.ID, "", nil
+	return resp.ID, cmp.Or(resp.OwnerAddr, b.entryAddr), nil
 }
 
 // claimAt claims on node addr with req, which must not be redirected.
@@ -761,11 +765,12 @@ func (b *Backend) claimAt(ctx context.Context, addr, tenant string, req claimReq
 }
 
 func (b *Backend) wake(ctx context.Context, id, addr, sandbox string) error {
-	node, err := b.node(addr)
+	addr, err := b.atOwner(ctx, id, addr, sandbox, func(node *client) error { return node.verb(ctx, sandbox, "wake", nil) })
 	if err != nil {
 		return err
 	}
-	if err := node.verb(ctx, sandbox, "wake", nil); err != nil {
+	node, err := b.node(addr)
+	if err != nil {
 		return err
 	}
 	b.mu.Lock()
@@ -789,25 +794,118 @@ func (b *Backend) wake(ctx context.Context, id, addr, sandbox string) error {
 	return b.reread(ctx, id, addr, sandbox)
 }
 
-// reread replaces machine id's row with the current one of sandbox on node addr.
+// reread replaces machine id's row with the current one of sandbox on node addr, or on the node the mesh names its owner.
 func (b *Backend) reread(ctx context.Context, id, addr, sandbox string) error {
-	node, err := b.node(addr)
+	r, addr, err := b.read(ctx, id, addr, sandbox)
 	if err != nil {
 		return err
 	}
-	r, err := node.get(ctx, sandbox)
-	if err != nil {
-		return err
-	}
+	token := r.Token
 	r.Token = ""
-	_, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
+	if _, err = b.mutate(ctx, id, func(e *entry) (*entry, bool) {
 		if e == nil {
 			return e, false
 		}
 		e.row, e.ownerAddr = &r, addr
 		return e, true
+	}); err != nil {
+		return err
+	}
+	b.keepToken(id, sandbox, token)
+	return nil
+}
+
+// read returns the row of sandbox, machine id's claim, and the node that answered: addr, or the node the mesh names its owner.
+func (b *Backend) read(ctx context.Context, id, addr, sandbox string) (row, string, error) {
+	var r row
+	addr, err := b.atOwner(ctx, id, addr, sandbox, func(node *client) error {
+		var err error
+		r, err = node.get(ctx, sandbox)
+		return err
 	})
-	return err
+	return r, addr, err
+}
+
+// atOwner runs fn on node addr and, when the failure says the claim may have moved, once more on the node the mesh names its owner; it returns the node fn last ran on.
+func (b *Backend) atOwner(ctx context.Context, id, addr, sandbox string, fn func(*client) error) (string, error) {
+	node, err := b.node(addr)
+	if err == nil {
+		err = fn(node)
+	}
+	if err == nil || !b.moved(addr, err) {
+		return addr, err
+	}
+	meshCtx, cancel := context.WithTimeout(ctx, ownerTimeout)
+	addrs := b.mesh(meshCtx)
+	cancel()
+	to, ok := b.follow(ctx, addrs, id, sandbox)
+	if !ok {
+		return addr, err
+	}
+	if node, err = b.node(to); err != nil {
+		return addr, err
+	}
+	return to, fn(node)
+}
+
+// moved reports whether err from node addr may mean the claim lives on another node: the node does not hold it, does not answer or has left the mesh.
+func (b *Backend) moved(addr string, err error) bool {
+	if apiErr, ok := errors.AsType[*apiError](err); ok && apiErr.status != http.StatusNotFound {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		_, away := b.away[addr]
+		return away
+	}
+	return true
+}
+
+// follow asks the nodes at addrs which one owns sandbox, machine id's claim, with the claim's token, which lets a node adopt an archived claim.
+func (b *Backend) follow(ctx context.Context, addrs []string, id, sandbox string) (string, bool) {
+	b.mu.Lock()
+	var token string
+	if e := b.entries[id]; e != nil && e.sandbox() == sandbox {
+		token = e.token
+	}
+	b.mu.Unlock()
+	if token == "" {
+		return "", false
+	}
+	ctx, cancel := context.WithTimeout(ctx, ownerTimeout)
+	defer cancel()
+	owners := make([]string, len(addrs))
+	var g errgroup.Group
+	g.SetLimit(probeFanout)
+	for i, addr := range addrs {
+		g.Go(func() error {
+			node, err := b.node(addr)
+			if err != nil {
+				return nil
+			}
+			if owner, err := node.owner(ctx, sandbox, token); err == nil {
+				owners[i] = cmp.Or(owner, addr)
+			}
+			return nil
+		})
+	}
+	_ = g.Wait()
+	i := slices.IndexFunc(owners, func(owner string) bool { return owner != "" })
+	if i < 0 {
+		return "", false
+	}
+	log.WithFunc("sandboxd.Backend.follow").WithField("machine", id).Infof(ctx, "%s owns sandbox %s", owners[i], sandbox)
+	return owners[i], true
+}
+
+// keepToken holds token for machine id while its claim is sandbox.
+func (b *Backend) keepToken(id, sandbox, token string) {
+	if token == "" {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if e := b.entries[id]; e != nil && e.sandbox() == sandbox {
+		e.token = token
+	}
 }
 
 // lookup refreshes id's row from sandboxd, finding it by metadata when the index lacks it.
@@ -824,11 +922,8 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 	}
 	var r row
 	var err error
-	if sandbox != "" {
-		var node *client
-		if node, err = b.node(addr); err == nil {
-			r, err = node.get(ctx, sandbox)
-		}
+	if sandbox != "" && addr != "" {
+		r, addr, err = b.read(ctx, id, addr, sandbox)
 	} else {
 		r, addr, err = b.find(ctx, id)
 	}
@@ -841,7 +936,6 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 	if err != nil {
 		return machines.Machine{}, err
 	}
-	r.Token = ""
 	if err := b.index(ctx, addr, []row{r}); err != nil {
 		return machines.Machine{}, err
 	}
@@ -850,19 +944,13 @@ func (b *Backend) lookup(ctx context.Context, id string) (machines.Machine, erro
 
 // find looks machine id up on the entry node, then on the peers of the last refresh; it is ErrNotFound only when every node answered.
 func (b *Backend) find(ctx context.Context, id string) (row, string, error) {
-	rows, err := b.api.find(ctx, metaMachine, id)
-	if err != nil {
-		return row{}, "", err
-	}
-	if len(rows) > 0 {
-		return rows[0], "", nil
-	}
 	b.nodeMu.Lock()
-	peers := b.peers
+	addrs := slices.Concat([]string{b.entryAddr}, b.peers)
 	b.nodeMu.Unlock()
 	var errs []error
-	for _, peer := range peers {
-		node, err := b.node(peer)
+	for _, addr := range addrs {
+		node, err := b.node(addr)
+		var rows []row
 		if err == nil {
 			rows, err = node.find(ctx, metaMachine, id)
 		}
@@ -870,7 +958,7 @@ func (b *Backend) find(ctx context.Context, id string) (row, string, error) {
 		case err != nil:
 			errs = append(errs, err)
 		case len(rows) > 0:
-			return rows[0], peer, nil
+			return rows[0], addr, nil
 		}
 	}
 	if len(errs) > 0 {
@@ -969,7 +1057,7 @@ func (b *Backend) refresh(ctx context.Context) error {
 	return nil
 }
 
-// index merges the rows of node addr, reading the env of unseen claims.
+// index merges the rows of node addr, reading the env of unseen claims and the token of claims whose token this process lacks.
 func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
 	node, err := b.node(addr)
 	if err != nil {
@@ -980,13 +1068,22 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
 		if id == "" {
 			continue
 		}
+		token := r.Token
+		r.Token = ""
 		b.mu.Lock()
 		e := b.entries[id]
 		known := e != nil && e.row != nil && e.row.ID == r.ID
 		unchanged := known && reflect.DeepEqual(*e.row, r) && e.owner == cmp.Or(r.Tenant, e.owner) && e.image == r.Key.Template &&
 			e.ownerAddr == addr
+		held := known && e.token != ""
 		b.mu.Unlock()
+		if token == "" && !held {
+			if full, getErr := node.get(ctx, r.ID); getErr == nil {
+				token = full.Token
+			}
+		}
 		if unchanged {
+			b.keepToken(id, r.ID, token)
 			continue
 		}
 		var env map[string]envVar
@@ -1008,11 +1105,12 @@ func (b *Backend) index(ctx context.Context, addr string, rows []row) error {
 		}); err != nil {
 			return err
 		}
+		b.keepToken(id, r.ID, token)
 	}
 	return nil
 }
 
-// dropUnlisted drops the machines that lists, taken at listed, lack while their node answered or has stayed out of the mesh for nodeLostAfter.
+// dropUnlisted drops the machines that lists, taken at listed, lack while their node answered, or that no node answers for once their node stayed out of the mesh for nodeLostAfter.
 func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, listed time.Time) error {
 	present := map[string]bool{}
 	for _, rows := range lists {
@@ -1022,16 +1120,19 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, list
 	}
 	now := time.Now()
 	b.mu.Lock()
-	gone := map[string]string{}
+	gone, lost := map[string]string{}, map[string]string{}
 	for id, e := range b.entries {
 		if present[id] || e.busy(now) || e.row == nil || !e.rowAt.Before(listed) {
 			continue
 		}
-		if _, answered := lists[e.ownerAddr]; answered || b.lostLocked(e.ownerAddr, now) {
+		if _, answered := lists[e.ownerAddr]; answered {
 			gone[id] = e.row.ID
+		} else if b.lostLocked(e.ownerAddr, now) {
+			lost[id] = e.row.ID
 		}
 	}
 	b.mu.Unlock()
+	maps.Copy(gone, b.unadopted(ctx, slices.Collect(maps.Keys(lists)), lost))
 	for id, sandbox := range gone {
 		if _, err := b.drop(ctx, id, func(e *entry) bool { return !e.busy(now) && e.row != nil && e.row.ID == sandbox }); err != nil {
 			return err
@@ -1040,18 +1141,31 @@ func (b *Backend) dropUnlisted(ctx context.Context, lists map[string][]row, list
 	return nil
 }
 
-// listMesh lists the claims of the entry node, "", and of each peer, keyed by node; a peer that fails is left out.
+// unadopted returns the machines of lost that no node at addrs answers for, and rereads the others on the node that does.
+func (b *Backend) unadopted(ctx context.Context, addrs []string, lost map[string]string) map[string]string {
+	var mu sync.Mutex
+	out := map[string]string{}
+	var g errgroup.Group
+	g.SetLimit(probeFanout)
+	for id, sandbox := range lost {
+		g.Go(func() error {
+			if to, ok := b.follow(ctx, addrs, id, sandbox); ok && b.reread(ctx, id, to, sandbox) == nil {
+				return nil
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			out[id] = sandbox
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return out
+}
+
+// listMesh lists the claims of every node of the mesh, keyed by node; a node that fails is left out, and the list fails only when every node does.
 func (b *Backend) listMesh(ctx context.Context) (map[string][]row, error) {
 	logger := log.WithFunc("sandboxd.Backend.listMesh")
-	peers, err := b.api.peers(ctx)
-	b.nodeMu.Lock()
-	if err != nil {
-		logger.Warnf(ctx, "list the peers: %v", err)
-		peers = b.peers
-	}
-	b.peers = peers
-	b.nodeMu.Unlock()
-	addrs := slices.Concat([]string{""}, peers)
+	addrs := b.mesh(ctx)
 	lists := make([][]row, len(addrs))
 	errs := make([]error, len(addrs))
 	var wg sync.WaitGroup
@@ -1065,9 +1179,6 @@ func (b *Backend) listMesh(ctx context.Context) (map[string][]row, error) {
 		})
 	}
 	wg.Wait()
-	if errs[0] != nil {
-		return nil, errs[0]
-	}
 	out := make(map[string][]row, len(addrs))
 	for i, addr := range addrs {
 		if errs[i] != nil {
@@ -1076,25 +1187,42 @@ func (b *Backend) listMesh(ctx context.Context) (map[string][]row, error) {
 		}
 		out[addr] = lists[i]
 	}
-	b.trackAway(peers, out)
+	if len(out) == 0 {
+		return nil, errors.Join(errs...)
+	}
+	b.trackAway(addrs, out)
 	return out, nil
 }
 
-// trackAway notes when a node that machines name stopped being a peer and answering the list.
-func (b *Backend) trackAway(peers []string, lists map[string][]row) {
-	present := func(addr string) bool {
-		_, answered := lists[addr]
-		return answered || addr == "" || slices.Contains(peers, addr)
+// mesh returns the entry node and its peers, the peers it last named when it does not answer.
+func (b *Backend) mesh(ctx context.Context) []string {
+	peers, err := b.api.peers(ctx)
+	b.nodeMu.Lock()
+	defer b.nodeMu.Unlock()
+	if err != nil {
+		log.WithFunc("sandboxd.Backend.mesh").Warnf(ctx, "list the peers: %v", err)
+		peers = b.peers
 	}
+	b.peers = peers
+	return slices.Concat([]string{b.entryAddr}, peers)
+}
+
+// trackAway notes when a node that claims name stopped being in the mesh and answering the list, and forgets nodes no claim names.
+func (b *Backend) trackAway(nodes []string, lists map[string][]row) {
 	now := time.Now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	named := map[string]bool{}
 	for _, e := range b.entries {
-		if _, ok := b.away[e.ownerAddr]; !ok && !present(e.ownerAddr) {
+		if _, answered := lists[e.ownerAddr]; e.row == nil || answered || slices.Contains(nodes, e.ownerAddr) {
+			continue
+		}
+		named[e.ownerAddr] = true
+		if _, ok := b.away[e.ownerAddr]; !ok {
 			b.away[e.ownerAddr] = now
 		}
 	}
-	maps.DeleteFunc(b.away, func(addr string, _ time.Time) bool { return present(addr) })
+	maps.DeleteFunc(b.away, func(addr string, _ time.Time) bool { return !named[addr] })
 }
 
 func (b *Backend) lostLocked(addr string, now time.Time) bool {
@@ -1102,9 +1230,9 @@ func (b *Backend) lostLocked(addr string, now time.Time) bool {
 	return ok && now.Sub(since) >= nodeLostAfter
 }
 
-// node returns the client of the node at addr, the entry node's for "".
+// node returns the client of the node at addr, the entry node's for its own address and for the "" an older api wrote.
 func (b *Backend) node(addr string) (*client, error) {
-	if addr == "" {
+	if addr == "" || addr == b.entryAddr {
 		return b.api, nil
 	}
 	b.nodeMu.Lock()
@@ -1268,7 +1396,7 @@ func (b *Backend) loadLocked(rec cluster.Machine) *entry {
 		busy, opErr, meta, sandbox := e.op != "", e.opErr, e.meta, e.sandbox()
 		e.load(rec)
 		if e.sandbox() != sandbox {
-			e.rowAt = time.Now()
+			e.rowAt, e.token = time.Now(), ""
 		}
 		// Like a change in memory, only an op end, a failure or a meta change wakes the watchers before their next poll.
 		if (busy && e.op == "") || opErr != e.opErr || !maps.Equal(meta, e.meta) {
