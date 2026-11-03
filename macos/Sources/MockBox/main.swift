@@ -7,11 +7,12 @@ import GRPCNIOTransportHTTP2TransportServices
 // /cocoonbox.mcp/<box id>, /control and /connect and the first-party clients' browser sign-in on the same port, with canned agent turns and a
 // synthetic RFB desktop, for running the app without a box. It starts with
 // one box, main; Boxes.Create adds more, which show the same desktop.
-//   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS] [--external-ms MS] [--external-history 1] [--restore-on-wake 1] [--credentials 0] [--workspace DIR]
+//   MockBox [--port 50051] [--token mock-token] [--boot-ms 2000] [--animate FPS] [--external-ms MS] [--external-history 1] [--restore-on-wake 1] [--credentials 0] [--discovery MODE] [--workspace DIR]
 // --external-ms starts one scripted guest MCP session through the share (agent mcp:claude-code@<share id>) MS after the box runs.
 // --external-history 1 adds idle guest sessions from earlier hours.
 // --restore-on-wake 1 wakes the box as the api does a box without a machine: restored into a new one.
 // --credentials 0 answers ActiveOrigin and FillCredential with UNIMPLEMENTED, as an agent before v12 does.
+// --discovery full|renamed|old|off|broken sets the sign-in metadata: renamed moves MCP to /mcp and token and revoke to /oauth, old moves only those two and omits protected_resources, off serves no metadata, broken answers it with a 500.
 // --workspace DIR is where Session.Exec runs commands, on this Mac (default: the temporary directory).
 
 setvbuf(stdout, nil, _IOLBF, 0)
@@ -42,7 +43,7 @@ try await withThrowingTaskGroup(of: Void.self) { group in
     group.addTask { try await server.serve() }
     guard let grpc = try await transport.listeningAddress.ipv4 else { throw CancellationError() }
     do {
-        try await FrontDoor(grpcPort: UInt16(grpc.port), mcp: MCPServer(world: world, token: token, issuer: "http://127.0.0.1:\(port)")).start(port: UInt16(port))
+        try await FrontDoor(grpcPort: UInt16(grpc.port), mcp: MCPServer(world: world, token: token, issuer: "http://127.0.0.1:\(port)", discovery: MockOAuth.Discovery(rawValue: options["--discovery"] ?? "") ?? .full)).start(port: UInt16(port))
     } catch {
         print("mockbox cannot listen on http://127.0.0.1:\(port): \(error)")
         exit(1)

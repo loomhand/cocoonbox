@@ -19,11 +19,15 @@ public struct ShareSetup: Sendable, Equatable {
     let secret: String
     let named: Bool
 
-    public init(endpoint: Endpoint, boxID: String, secret: String, named: Bool) {
-        link = "\(endpoint.url)/cb/s/#\(secret)"
-        url = "\(endpoint.url)/cocoonbox.mcp/\(boxID)"
+    public init(endpoint: Endpoint, routes: ServerRoutes, boxID: String, secret: String, named: Bool) {
+        link = Self.link(endpoint: endpoint, secret: secret)
+        url = routes.box(boxID)
         self.secret = secret
         self.named = named
+    }
+
+    public static func link(endpoint: Endpoint, secret: String) -> String {
+        "\(endpoint.url)/cb/s/#\(secret)"
     }
 
     public func text(_ snippet: Snippet) -> String {

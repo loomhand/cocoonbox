@@ -7,7 +7,7 @@ import Testing
     let secret = "cbs_0123456789abcdef0123456789abcdef"
 
     func setup(named: Bool) -> ShareSetup {
-        ShareSetup(endpoint: endpoint, boxID: "cb-9f86d081884c", secret: secret, named: named)
+        ShareSetup(endpoint: endpoint, routes: ServerRoutes(endpoint: endpoint), boxID: "cb-9f86d081884c", secret: secret, named: named)
     }
 
     @Test func linkKeepsTheSecretInTheFragment() throws {

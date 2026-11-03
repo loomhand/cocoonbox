@@ -422,9 +422,9 @@ final class MockBoxProcess: @unchecked Sendable {
     let root: URL
     private let input: Pipe
 
-    init() async throws {
+    init(discovery: String = "full") async throws {
         root = try Harness.temporary("connect")
-        (endpoint, input) = try await Harness.mockBox(["--boot-ms", "100"], log: root.appendingPathComponent("mockbox.log"), environment: Harness.environment.merging(["HOME": root.path]) { $1 })
+        (endpoint, input) = try await Harness.mockBox(["--boot-ms", "100", "--discovery", discovery], log: root.appendingPathComponent("mockbox.log"), environment: Harness.environment.merging(["HOME": root.path]) { $1 })
         connection = try BoxConnection(endpoint: endpoint, token: "mock-token")
     }
 

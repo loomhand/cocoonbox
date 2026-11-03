@@ -216,6 +216,7 @@ func (s *Service) ServeServerMetadata(w http.ResponseWriter, _ *http.Request) {
 		"token_endpoint":                                 s.issuer + TokenPath,
 		"registration_endpoint":                          s.issuer + RegisterPath,
 		"revocation_endpoint":                            s.issuer + RevokePath,
+		"protected_resources":                            []string{s.resource},
 		"scopes_supported":                               []string{Scope},
 		"response_types_supported":                       []string{codeParam},
 		"grant_types_supported":                          grantTypes,

@@ -30,8 +30,6 @@ public struct BrowserLogin: Sendable {
     public static let cliClient = "cocoonbox-cli"
     public static let appClient = "cocoonbox-app"
     static let authorizePath = "/cb/oauth/authorize"
-    static let tokenPath = "/cocoonbox.oauth/token"
-    static let revokePath = "/cocoonbox.oauth/revoke"
     static let maxDeviceName = 64
 
     public let endpoint: Endpoint
@@ -79,7 +77,7 @@ public struct BrowserLogin: Sendable {
 
     // revoke ends a device token at the server; a token that is no device's is left alone.
     public static func revoke(token: String, endpoint: Endpoint, client: String) async throws {
-        let (_, status) = try await post(endpoint, revokePath, ["token": token, "client_id": client])
+        let (_, status) = try await post(try await ServerRoutes.discover(endpoint).revoke, ["token": token, "client_id": client])
         guard status == 200 else { throw Failure.revoke(status) }
     }
 
@@ -108,7 +106,7 @@ public struct BrowserLogin: Sendable {
     }
 
     func redeem(code: String, redirect: String, verifier: String) async throws -> String {
-        let (object, status) = try await Self.post(endpoint, Self.tokenPath, [
+        let (object, status) = try await Self.post(try await ServerRoutes.discover(endpoint).token, [
             "grant_type": "authorization_code", "code": code, "client_id": client, "redirect_uri": redirect, "code_verifier": verifier,
         ])
         guard status == 200, let token = object["access_token"] as? String, !token.isEmpty else {
@@ -117,8 +115,9 @@ public struct BrowserLogin: Sendable {
         return token
     }
 
-    static func post(_ endpoint: Endpoint, _ path: String, _ fields: [String: String]) async throws -> ([String: Any], Int) {
-        var request = URLRequest(url: URL(string: endpoint.url + path)!)
+    static func post(_ url: String, _ fields: [String: String]) async throws -> ([String: Any], Int) {
+        guard let target = URL(string: url) else { throw ServerRoutes.Failure.route(url) }
+        var request = URLRequest(url: target)
         request.httpMethod = "POST"
         request.timeoutInterval = 15
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")

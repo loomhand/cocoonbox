@@ -25,9 +25,10 @@ final class MCPUpstream: Sendable {
     private let token: String
     private let sessionID = Mutex<String?>(nil)
 
-    init(endpoint: Endpoint, path: String, token: String) throws {
+    init(url: String, token: String) throws {
+        guard let endpoint = Endpoint(url: url), let target = URL(string: url) else { throw ServerRoutes.Failure.route(url) }
         guard endpoint.usesTLS || endpoint.isLoopback else { throw Failure.plaintext(endpoint.host) }
-        url = URL(string: endpoint.url + path)!
+        self.url = target
         self.token = token
     }
 
