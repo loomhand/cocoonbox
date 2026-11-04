@@ -1,12 +1,7 @@
 import CryptoKit
 import Foundation
 
-// LocalAgentRecord is an open local agent as the session file keeps it, so
-// the app reopens it with the CLI's own resume after a restart. `boxID` is
-// the agent's default box, which the user can change. Codex and
-// Cursor pick their session id themselves; `until` is when the next fresh
-// session of the same kind started, which bounds the sessions this one can
-// claim in the shared workspace.
+// LocalAgentRecord is an open local agent as the session file keeps it, so the app resumes it after a restart.
 public struct LocalAgentRecord: Codable, Equatable, Sendable {
     public var id = UUID()
     public var kind: LocalAgentKind
@@ -32,18 +27,14 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
         name ?? title ?? kind.title
     }
 
-    // resumable reports whether the CLI keeps a conversation under sessionID.
-    // Claude Code writes its file at the first prompt; Codex and Cursor ids
-    // are only claimed from sessions that hold a conversation.
+    // resumable reports whether the CLI keeps a conversation under sessionID; Claude Code writes it at the first prompt.
     public func resumable(home: URL) -> Bool {
         guard let sessionID else { return false }
         guard kind == .claudeCode else { return true }
         return FileManager.default.fileExists(atPath: claudeFile(home: home, id: sessionID).path)
     }
 
-    // settle records the session Codex or Cursor chose once it is on disk,
-    // and names a Codex or Claude Code session after its first prompt until
-    // the CLI titles it; Codex sets no title, Claude Code none for a short prompt.
+    // settle records the session Codex or Cursor chose and names a session after its first prompt until the CLI titles it.
     public mutating func settle(home: URL, now: Date = Date()) {
         if let sessionID {
             guard title == nil else { return }
@@ -59,14 +50,12 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
         title = title ?? session.name
     }
 
-    // retitle names the session after the CLI's terminal title, or after its
-    // first prompt while the title only names the CLI.
+    // retitle names the session after the CLI's terminal title, or after its first prompt while the title only names the CLI.
     public mutating func retitle(_ terminalTitle: String, home: URL) {
         if let name = kind.autoName(fromTitle: terminalTitle) { title = name } else { settle(home: home) }
     }
 
-    // claim finds the session this record's process began: the earliest one
-    // in the workspace that started after it and before `until`.
+    // claim finds the earliest session in the workspace that started after this record and before `until`.
     public func claim(home: URL, now: Date = Date()) -> (id: String, name: String?)? {
         let sessions = switch kind {
         case .claudeCode: [Session]()
@@ -81,9 +70,7 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
 
     private typealias Session = (id: String, startedAt: Date, name: String?)
 
-    // codexSessions reads the session_meta line and the first prompt of
-    // rollouts created since the record started, in the day directories Codex
-    // files them under; a rollout holds a conversation once it has a prompt.
+    // codexSessions reads the meta line and first prompt of rollouts created since the record started.
     private func codexSessions(home: URL, now: Date) -> [Session] {
         let calendar = Calendar.current
         let root = home.appendingPathComponent(".codex/sessions")
@@ -115,8 +102,7 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
         return nil
     }
 
-    // claudeName reads the first prompt of a Claude Code conversation, past
-    // slash commands and the CLI's own entries.
+    // claudeName reads the first prompt of a Claude Code conversation, past slash commands and the CLI's own entries.
     private func claudeName(home: URL, id: String) -> String? {
         var name: String?
         Self.lines(claudeFile(home: home, id: id)) { entry in
@@ -134,8 +120,7 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
         return home.appendingPathComponent(".claude/projects/\(project)/\(id).jsonl")
     }
 
-    // cursorSessions lists the workspace's chats that hold a conversation;
-    // Cursor keeps them under the MD5 of the workspace path.
+    // cursorSessions lists the workspace's chats that hold a conversation, kept under the MD5 of the workspace path.
     private func cursorSessions(home: URL) -> [Session] {
         let hash = Insecure.MD5.hash(data: Data(workspace.utf8)).map { String(format: "%02x", $0) }.joined()
         let root = home.appendingPathComponent(".cursor/chats/\(hash)")
@@ -151,8 +136,7 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
 
     static let stamp = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
-    // rollout reads a rollout of workspace up to its first user message,
-    // which names the session.
+    // rollout reads a rollout of workspace up to its first user message, which names the session.
     private static func rollout(_ file: URL, workspace: String) -> Session? {
         var meta: (id: String, startedAt: Date)?
         var session: Session?
@@ -198,8 +182,7 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
     }
 }
 
-// LocalAgentStore keeps the open local agents in one JSON file, rewritten
-// whole on every change so a killed app loses nothing.
+// LocalAgentStore keeps the open local agents in one JSON file, rewritten whole on every change.
 public enum LocalAgentStore {
     public static let defaultURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("CocoonBox/local-agents.json")

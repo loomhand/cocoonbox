@@ -3,12 +3,7 @@ import Foundation
 import GRPCCore
 import Synchronization
 
-// MockConnect plays the api's Connect broker (contracts.md "Connect"): the
-// user's grants and their tools, the mode B door with its list_changed stream,
-// and connector approvals. The mock-only JSON-RPC method `mock/connect` on the
-// door replaces the grants and sets how the door fails, so tests can change the
-// tools and break the door while the rest of MockBox keeps working; `mock/answer`
-// answers an approval as the console does.
+// MockConnect plays the api's Connect broker; mock/connect sets the grants and door failures, mock/answer answers an approval.
 final class MockConnect: Sendable {
     static let path = "/cocoonbox.mcp/connect"
 
@@ -52,11 +47,11 @@ final class MockConnect: Sendable {
         if rpc == "mock/connect", let id = message["id"] {
             configure(message["params"] as? [String: Any] ?? [:])
             line += " rpc=mock/connect"
-            return Self.reply(id, [:])
+            return .rpcResult(id, [:])
         }
         if rpc == "mock/answer", let id = message["id"], let approval = (message["params"] as? [String: Any])?["approval_id"] as? String {
             line += " rpc=mock/answer"
-            return answer(approval, .deny) ? Self.reply(id, [:]) : Self.error(id, -32602, "approval \(approval) not pending")
+            return answer(approval, .deny) ? HTTPResponse.rpcResult(id, [:]) : HTTPResponse.rpcError(id, -32602, "approval \(approval) not pending")
         }
         let (fail, hang) = state.withLock { ($0.failStatus, $0.hang) }
         if hang { try? await pause(.seconds(3600)) }
@@ -82,7 +77,7 @@ final class MockConnect: Sendable {
         switch rpc {
         case "initialize":
             line += " client=\((params["clientInfo"] as? [String: Any])?["name"] as? String ?? "unknown")"
-            var response = Self.reply(id, [
+            var response = HTTPResponse.rpcResult(id, [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-11-25",
                 "capabilities": ["tools": ["listChanged": true]],
                 "serverInfo": ["name": "cocoonbox-connect", "version": "mock"],
@@ -90,17 +85,17 @@ final class MockConnect: Sendable {
             response.headers["Mcp-Session-Id"] = UUID().uuidString.lowercased()
             return response
         case "tools/list":
-            return Self.reply(id, ["tools": tools()])
+            return .rpcResult(id, ["tools": tools()])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             line += " tool=\(name)"
-            guard tools().contains(where: { $0["name"] as? String == name }) else { return Self.error(id, -32602, "unknown tool: \(name)") }
+            guard tools().contains(where: { $0["name"] as? String == name }) else { return .rpcError(id, -32602, "unknown tool: \(name)") }
             let arguments = (try? JSONSerialization.data(withJSONObject: params["arguments"] ?? [:], options: [.sortedKeys])).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-            return Self.reply(id, ["content": [["type": "text", "text": "\(name) ran with \(arguments)"]], "isError": false])
+            return .rpcResult(id, ["content": [["type": "text", "text": "\(name) ran with \(arguments)"]], "isError": false])
         case "ping":
-            return Self.reply(id, [:])
+            return .rpcResult(id, [:])
         default:
-            return Self.error(id, -32601, "method not found: \(rpc)")
+            return .rpcError(id, -32601, "method not found: \(rpc)")
         }
     }
 
@@ -173,18 +168,6 @@ final class MockConnect: Sendable {
 
     func url(_ query: String) -> String {
         base + "/cb/connect" + query
-    }
-
-    private static func reply(_ id: Any, _ result: [String: Any]) -> HTTPResponse {
-        HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: encode(["jsonrpc": "2.0", "id": id, "result": result]))
-    }
-
-    private static func error(_ id: Any, _ code: Int, _ message: String) -> HTTPResponse {
-        HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: encode(["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]]))
-    }
-
-    private static func encode(_ object: [String: Any]) -> Data {
-        (try? JSONSerialization.data(withJSONObject: object)) ?? Data()
     }
 }
 

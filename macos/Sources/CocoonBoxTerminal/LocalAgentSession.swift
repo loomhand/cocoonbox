@@ -13,9 +13,7 @@ public enum LocalAgentError: Error, CustomStringConvertible {
     }
 }
 
-// LocalAgentSession runs one agent CLI on a pseudo-terminal it owns and
-// shows it in a Ghostty surface fed through the in-memory backend. The
-// terminal view outlives SwiftUI remounts; close hangs up the CLI.
+// LocalAgentSession runs one agent CLI on a pseudo-terminal it owns and shows it in a Ghostty surface.
 @MainActor @Observable
 public final class LocalAgentSession: Identifiable, HostedTerminal {
     public let id: UUID
@@ -43,10 +41,7 @@ public final class LocalAgentSession: Identifiable, HostedTerminal {
     public var startedAt: Date { record.startedAt }
     public var view: NSView { terminal }
 
-    // start resolves the CLI on the login shell's PATH, writes the workspace
-    // files and runs the CLI. The workspace is a private directory per CLI,
-    // outside ~/Documents, so each CLI's trust prompt is answered once. A
-    // saved record reopens its conversation when the CLI still has it.
+    // start runs the CLI in a private workspace per CLI outside ~/Documents, so its trust prompt is answered once.
     public static func start(_ kind: LocalAgentKind, target: MCPTarget, boxID: String, restoring saved: LocalAgentRecord? = nil) async throws -> LocalAgentSession {
         let shell = await LoginShell.environment()
         guard let executable = LoginShell.find(kind.executable, in: shell["PATH"] ?? "") else {
@@ -74,15 +69,9 @@ public final class LocalAgentSession: Identifiable, HostedTerminal {
             write: { process.write($0) },
             resize: { process.resize(columns: $0.columns, rows: $0.rows, width: $0.widthPixels, height: $0.heightPixels) }
         )
-        GhosttyResources.prepared
-        let terminal = AppTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
-        terminal.controller = TerminalController(theme: Self.theme) {
-            $0.withFontFamily("Menlo")
-            $0.withFontFamily("PingFang SC")
-        }
-        terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(backend))
+        let terminal = GhosttyResources.surface(backend: backend) { AppTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400)) }
         let session = LocalAgentSession(record: record, home: home, terminal: terminal, process: process)
-        let started = Date()
+        let started = record.startedAt
         process.start(
             output: { backend.receive($0) },
             exited: { [weak session] code in
@@ -93,10 +82,7 @@ public final class LocalAgentSession: Identifiable, HostedTerminal {
         return session
     }
 
-    static let theme = TerminalTheme(light: .afterglow.background("000000"), dark: .afterglow.background("000000"))
-
-    // terminal names the workspace in PWD, which Claude Code takes as its
-    // project, and a terminal type every CLI knows.
+    // terminal names the workspace in PWD, which Claude Code takes as its project.
     private static func terminal(directory: String) -> [String: String] {
         ["PWD": directory, "TERM": "xterm-256color", "COLORTERM": "truecolor"]
     }

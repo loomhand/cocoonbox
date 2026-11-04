@@ -3,10 +3,7 @@ import RFB
 import RFBMetal
 import Synchronization
 
-// LiveScreen shows the box's desktop: a swift-rfb client over Session.Screen
-// drawn by RFBView. It reconnects while started, and follows a box deleted and
-// created again under its name (BoxConnection.retarget). The app reaches
-// swift-rfb only through this type.
+// LiveScreen shows the box's desktop over Session.Screen; the app reaches swift-rfb only through this type.
 @MainActor
 public final class LiveScreen {
     public enum Status: Equatable, Sendable {
@@ -154,8 +151,7 @@ public final class LiveScreen {
         Self.paste(text, on: client)
     }
 
-    // copy sends Control+Insert, or Shift+Delete to cut. Terminals, GTK and
-    // Chrome all honour these, while a terminal reads Control+C as an interrupt.
+    // copy sends Control+Insert, or Shift+Delete to cut, since a terminal reads Control+C as an interrupt.
     public nonisolated static func copy(cut: Bool, on client: RFBClient) {
         if cut {
             chord(Keysym.shift, Keysym.delete, on: client)
@@ -164,15 +160,13 @@ public final class LiveScreen {
         }
     }
 
-    // paste offers text as the box's clipboard, then sends Shift+Insert; a
-    // terminal reads Control+V as a literal next character.
+    // paste offers text as the box's clipboard, then sends Shift+Insert, since a terminal reads Control+V as a literal next key.
     public nonisolated static func paste(_ text: String, on client: RFBClient) {
         client.setClipboard(text)
         chord(Keysym.shift, Keysym.insert, on: client)
     }
 
-    // chord lifts both Super keys first: a Command shortcut that lands here
-    // has already pressed Super in the box.
+    // chord lifts both Super keys first: a Command shortcut has already pressed Super in the box.
     private nonisolated static func chord(_ modifier: UInt32, _ key: UInt32, on client: RFBClient) {
         client.key(modifier, down: true)
         for command: UInt16 in [0x37, 0x36] {
@@ -270,8 +264,7 @@ public final class LiveScreen {
         follow(after: .zero)
     }
 
-    // follow moves the connection to the box created again under its deleted box's name, and keeps
-    // looking at the reconnect backoff while no box has the name, as another client recreates it later.
+    // follow moves the connection to the box created again under its deleted box's name, retrying at the backoff while no box has it.
     private func follow(after delay: Duration) {
         guard let connection else { return }
         reconnectTask?.cancel()
@@ -299,9 +292,7 @@ public final class LiveScreen {
                     deleted?.reported = true
                     onBoxChange?(nil)
                 }
-                let delay = Backoff(initial: .milliseconds(500), max: .seconds(10)).delay(attempt: attempt)
-                attempt += 1
-                follow(after: delay)
+                follow(after: nextDelay())
             } catch {
                 guard !Task.isCancelled else { return }
                 scheduleReconnect()
@@ -311,8 +302,7 @@ public final class LiveScreen {
 
     private func scheduleReconnect() {
         guard connection != nil else { return }
-        let delay = Backoff(initial: .milliseconds(500), max: .seconds(10)).delay(attempt: attempt)
-        attempt += 1
+        let delay = nextDelay()
         reconnectTask?.cancel()
         reconnectTask = Task {
             try? await pause(delay)
@@ -320,10 +310,14 @@ public final class LiveScreen {
             open()
         }
     }
+
+    private func nextDelay() -> Duration {
+        defer { attempt += 1 }
+        return Backoff(initial: .milliseconds(500), max: .seconds(10)).delay(attempt: attempt)
+    }
 }
 
-// InputLatency marks input_rtt, from an input to the next decoded update,
-// and input_to_present, to the next frame on the display after that update.
+// InputLatency marks input_rtt to the next decoded update and input_to_present to the next frame after it.
 final class InputLatency: Sendable {
     let updates = Atomic(0)
     private let state = Mutex<(inputAt: Double?, updatedAt: Double?)>((nil, nil))

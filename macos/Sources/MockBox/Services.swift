@@ -309,8 +309,7 @@ struct SessionService: Cocoonbox_Agent_V1_Session.SimpleServiceProtocol {
         }
     }
 
-    // exec runs the command with bash on this Mac in workspace, standing in for the box's desktop
-    // user; it takes no terminal and ignores sizes.
+    // exec runs the command with bash on this Mac in workspace, standing in for the box's desktop user.
     func exec(request: RPCAsyncSequence<Cocoonbox_Agent_V1_ExecClientFrame, any Error>, response: RPCWriter<Cocoonbox_Agent_V1_ExecServerFrame>, context: ServerContext) async throws {
         let (commands, command) = AsyncStream<String>.makeStream()
         let (signals, signal) = AsyncStream<Cocoonbox_Agent_V1_ExecSignal>.makeStream()

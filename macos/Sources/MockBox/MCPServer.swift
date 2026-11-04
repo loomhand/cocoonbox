@@ -2,9 +2,7 @@ import Foundation
 import Network
 import Synchronization
 
-// FrontDoor listens on the public port like the edge does: HTTP/2 prior
-// knowledge (gRPC) is spliced to the gRPC server, and HTTP/1.1 requests for
-// /cocoonbox.mcp/<box id> are answered by MCPServer.
+// FrontDoor splices HTTP/2 (gRPC) to the gRPC server and answers HTTP/1.1 with MCPServer, as the edge does.
 final class FrontDoor: Sendable {
     private let grpcPort: UInt16
     private let mcp: MCPServer
@@ -125,8 +123,7 @@ private final class HTTPConnection: @unchecked Sendable {
     }
 }
 
-// HTTPResponse is a whole body, or with `events` an SSE stream written as it
-// arrives on a connection that closes after it.
+// HTTPResponse is a whole body, or with `events` an SSE stream on a connection that closes after it.
 struct HTTPResponse {
     var status: Int
     var reason: String
@@ -146,9 +143,22 @@ struct HTTPResponse {
     }
 }
 
-// MCPServer answers MCP Streamable HTTP with JSON responses, a tool call with
-// a progress token as an SSE stream (no server stream). Every session is the owner's, which the box does not track as an agent.
-// It logs one line per request with the auth verdict, never the token.
+extension HTTPResponse {
+    static func json(_ status: Int, _ object: Any) -> HTTPResponse {
+        HTTPResponse(status: status, reason: status == 200 ? "OK" : "Bad Request", headers: ["Content-Type": "application/json"],
+                     body: (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data())
+    }
+
+    static func rpcResult(_ id: Any, _ result: [String: Any]) -> HTTPResponse {
+        json(200, ["jsonrpc": "2.0", "id": id, "result": result])
+    }
+
+    static func rpcError(_ id: Any, _ code: Int, _ message: String) -> HTTPResponse {
+        json(200, ["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]])
+    }
+}
+
+// MCPServer answers MCP Streamable HTTP and logs one line per request with the auth verdict, never the token.
 final class MCPServer: Sendable {
     static let prefix = "/cocoonbox.mcp/"
     nonisolated(unsafe) static let tools: [[String: Any]] = [
@@ -166,19 +176,15 @@ final class MCPServer: Sendable {
         tool("computer_act", "Click, type or press keys on the desktop.", ["action": "string", "x": "integer", "y": "integer", "text": "string"]),
         tool("screenshot", "Take a PNG screenshot of the desktop.", ["max_edge": "integer"]),
     ]
-    nonisolated(unsafe) static let scriptTools: [[String: Any]] = (tools + [tool("gui_plan", "Run a GUI plan on the desktop.", ["steps": "array"]), tool("script_run", "Run a script on the desktop.", ["code": "string"])]).map { tool in
-        ["shell", "gui_plan", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
-    }
+    nonisolated(unsafe) static let scriptTools = alwaysLoad(tools + [tool("gui_plan", "Run a GUI plan on the desktop.", ["steps": "array"]), tool("script_run", "Run a script on the desktop.", ["code": "string"])])
     nonisolated(unsafe) static let planTools = scriptTools.filter { $0["name"] as? String != "script_run" }
-    nonisolated(unsafe) static let androidTools: [[String: Any]] = (tools.filter { !($0["name"] as? String ?? "").hasPrefix("browser_") && !["computer_state", "computer_act", "screenshot"].contains($0["name"] as? String) } + [
+    nonisolated(unsafe) static let androidTools = alwaysLoad(tools.filter { !($0["name"] as? String ?? "").hasPrefix("browser_") && !["computer_state", "computer_act", "screenshot"].contains($0["name"] as? String) } + [
         tool("computer_state", "List the phone screen's UI elements.", [:]),
         tool("computer_act", "Tap, swipe, type or press keys on the phone.", ["action": "string", "element": "integer", "text": "string"]),
         tool("screenshot", "Take a PNG screenshot of the phone.", ["max_edge": "integer"]),
         tool("gui_plan", "Run an Android GUI plan on the phone.", ["steps": "array"]),
         tool("script_run", "Run a script on the phone.", ["code": "string"]),
-    ]).map { tool in
-        ["shell", "gui_plan", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
-    }
+    ])
     static let androidInstructions = "These tools act on an Android 16 phone (720x1280) that runs in a cloud computer: Ubuntu 24.04 with no desktop. shell has adb."
 
     private let world: MockWorld
@@ -200,6 +206,19 @@ final class MCPServer: Sendable {
             "description": description,
             "inputSchema": ["type": "object", "properties": properties.mapValues { ["type": $0] }],
         ]
+    }
+
+    private static func alwaysLoad(_ tools: [[String: Any]]) -> [[String: Any]] {
+        tools.map { tool in
+            ["shell", "gui_plan", "script_run"].contains(tool["name"] as? String) ? tool.merging(["_meta": ["anthropic/alwaysLoad": true]]) { $1 } : tool
+        }
+    }
+
+    private static func profile(for image: String) -> (tools: [[String: Any]], instructions: String) {
+        if image.hasPrefix("cbdroid:") { return (androidTools, androidInstructions) }
+        if image.hasPrefix("cbcore:") { return (scriptTools, "Mock cbcore box: write one script with script_run for a multi-step task.") }
+        if image.hasPrefix("cbdesk:") { return (tools, "Mock cbdesk box.") }
+        return (planTools, "Mock box that runs GUI plans.")
     }
 
     func handle(method: String, path: String, headers: [String: String], body: Data) async -> HTTPResponse {
@@ -254,7 +273,7 @@ final class MCPServer: Sendable {
         guard let id = message["id"] else {
             return HTTPResponse(status: 202, reason: "Accepted")
         }
-        var headersOut: [String: String] = ["Content-Type": "application/json"]
+        var headersOut: [String: String] = [:]
         let result: [String: Any]
         switch rpc {
         case "initialize":
@@ -268,10 +287,10 @@ final class MCPServer: Sendable {
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "cocoonbox-mock", "version": "0.1"],
-                "instructions": box.image.hasPrefix("cbdroid:") ? Self.androidInstructions : box.image.hasPrefix("cbcore:") ? "Mock cbcore box: write one script with script_run for a multi-step task." : box.image.hasPrefix("cbdesk:") ? "Mock cbdesk box." : "Mock box that runs GUI plans.",
+                "instructions": Self.profile(for: box.image).instructions,
             ]
         case "tools/list":
-            result = ["tools": box.image.hasPrefix("cbdroid:") ? Self.androidTools : box.image.hasPrefix("cbcore:") ? Self.scriptTools : box.image.hasPrefix("cbdesk:") ? Self.tools : Self.planTools]
+            result = ["tools": Self.profile(for: box.image).tools]
         case "tools/call":
             guard sessions.withLock({ $0.contains(sessionID) }) else {
                 return HTTPResponse(status: 404, reason: "Not Found")
@@ -296,10 +315,10 @@ final class MCPServer: Sendable {
         case "ping":
             result = [:]
         default:
-            let error: [String: Any] = ["jsonrpc": "2.0", "id": id, "error": ["code": -32601, "message": "method not found: \(rpc)"]]
-            return HTTPResponse(status: 200, reason: "OK", headers: headersOut, body: (try? JSONSerialization.data(withJSONObject: error)) ?? Data())
+            return .rpcError(id, -32601, "method not found: \(rpc)")
         }
-        let reply: [String: Any] = ["jsonrpc": "2.0", "id": id, "result": result]
-        return HTTPResponse(status: 200, reason: "OK", headers: headersOut, body: (try? JSONSerialization.data(withJSONObject: reply)) ?? Data())
+        var response = HTTPResponse.rpcResult(id, result)
+        response.headers.merge(headersOut) { $1 }
+        return response
     }
 }

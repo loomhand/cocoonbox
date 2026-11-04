@@ -179,7 +179,6 @@ struct HelpLine: View {
 
 // PluginSetupSheet shows the run of `cocoonbox setup claude`.
 struct PluginSetupSheet: View {
-    @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     let setup: PluginSetup
 

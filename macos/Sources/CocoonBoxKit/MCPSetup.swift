@@ -1,9 +1,6 @@
 import Foundation
 
-// MCPSetup renders the configuration that points a local agent at the box's
-// MCP endpoint. No snippet carries the token: each names COCOONBOX_TOKEN,
-// which the client expands at runtime, and the environment snippet reads it
-// from the Keychain.
+// MCPSetup renders a local agent's MCP configuration; no snippet carries the token, each names COCOONBOX_TOKEN.
 public struct MCPSetup: Sendable, Equatable {
     public enum Snippet: String, CaseIterable, Sendable {
         case url

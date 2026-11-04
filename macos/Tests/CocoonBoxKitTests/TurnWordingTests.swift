@@ -1,7 +1,6 @@
 import CocoonBoxKit
 import Testing
 
-// TurnWordingTests checks the line a turn end shows, and that a turn the model's credits stopped says so.
 @Suite struct TurnWordingTests {
     @Test func aTurnStoppedByUsedUpCreditsSaysSoAndEveryOtherFailureShowsItsError() {
         var end = Cocoonbox_Agent_V1_TurnEnd()

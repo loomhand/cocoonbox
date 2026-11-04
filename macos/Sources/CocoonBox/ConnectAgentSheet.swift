@@ -20,16 +20,16 @@ struct ConnectAgentSheet: View {
                     GridRow {
                         Text("Endpoint").foregroundStyle(.secondary)
                         Text(setup.url).font(.callout.monospaced()).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
-                        CopyButton(snippet: .url)
+                        CopyButton { model.copyMCP(.url) }
                     }
                 }
-                SnippetBox(title: "Token", caption: "Every client reads the token from COCOONBOX_TOKEN. Run this in the shell that starts the client, or add it to your shell profile; macOS asks once whether `security` may read the CocoonBox item.",
-                           setup: setup, snippets: [.environment])
-                SnippetBox(title: "Claude Code", caption: "Run once in Terminal. It adds the server for all your projects and stores ${COCOONBOX_TOKEN}, not the token.",
-                           setup: setup, snippets: [.claudeCode])
-                SnippetBox(title: "Codex", caption: "Add to ~/.codex/config.toml.",
-                           setup: setup, snippets: [.codexConfig])
-                SnippetBox(title: "Cursor", caption: "Merge into ~/.cursor/mcp.json.", setup: setup, snippets: [.cursor])
+                SnippetCard(title: "Token", caption: "Every client reads the token from COCOONBOX_TOKEN. Run this in the shell that starts the client, or add it to your shell profile; macOS asks once whether `security` may read the CocoonBox item.",
+                            text: setup.text(.environment)) { model.copyMCP(.environment) }
+                SnippetCard(title: "Claude Code", caption: "Run once in Terminal. It adds the server for all your projects and stores ${COCOONBOX_TOKEN}, not the token.",
+                            text: setup.text(.claudeCode)) { model.copyMCP(.claudeCode) }
+                SnippetCard(title: "Codex", caption: "Add to ~/.codex/config.toml.",
+                            text: setup.text(.codexConfig)) { model.copyMCP(.codexConfig) }
+                SnippetCard(title: "Cursor", caption: "Merge into ~/.cursor/mcp.json.", text: setup.text(.cursor)) { model.copyMCP(.cursor) }
             } else {
                 Text("Sign in and pick a box first.").foregroundStyle(.secondary)
             }
@@ -41,50 +41,5 @@ struct ConnectAgentSheet: View {
         }
         .padding(24)
         .frame(width: 640)
-    }
-}
-
-private struct SnippetBox: View {
-    let title: String
-    let caption: String
-    let setup: MCPSetup
-    let snippets: [MCPSetup.Snippet]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.headline)
-            Text(caption).font(.caption).foregroundStyle(.secondary)
-            ForEach(snippets, id: \.self) { snippet in
-                HStack(alignment: .top, spacing: 8) {
-                    Text(setup.text(snippet))
-                        .font(.caption.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-                    CopyButton(snippet: snippet)
-                }
-            }
-        }
-    }
-}
-
-private struct CopyButton: View {
-    @Environment(AppModel.self) private var model
-    let snippet: MCPSetup.Snippet
-    @State private var copied = false
-
-    var body: some View {
-        Button {
-            copied = model.copyMCP(snippet)
-            Task {
-                try? await pause(.seconds(2))
-                copied = false
-            }
-        } label: {
-            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-        }
-        .controlSize(.small)
-        .help("Copy")
     }
 }

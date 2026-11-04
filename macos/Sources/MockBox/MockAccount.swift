@@ -5,7 +5,7 @@ import GRPCCore
 // MockAccount is the user's sign-ins as the api keeps them: the CLI's device is the caller's, and a revoke takes a device away.
 actor MockAccount {
     private var devices: [Cocoonbox_Control_V1_Device] = {
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let now = MockWorld.now()
         return [
             .with {
                 $0.id = "dev_app0000000000000"

@@ -5,12 +5,7 @@ import ImageIO
 import UniformTypeIdentifiers
 import zlib
 
-// SyntheticRFBServer is an in-memory RFB 3.8 server (security None, Raw
-// encoding) that draws a small desktop with a text editor. Typed keys land in
-// the editor, so input round trips are observable in the frames it sends.
-// With ExtendedClipboard it acts as a terminal under the TigerVNC module:
-// Control+Insert and Shift+Delete copy and cut the editor's text, Shift+Insert
-// pastes, and Control+C and Control+V do neither.
+// SyntheticRFBServer is an in-memory RFB 3.8 server with a text editor; with ExtendedClipboard it copies and pastes as a terminal does.
 public final class SyntheticRFBServer: @unchecked Sendable {
     public let width: Int
     public let height: Int
@@ -50,10 +45,10 @@ public final class SyntheticRFBServer: @unchecked Sendable {
     private var announced = false
     private var pasteWaiting = false
 
-    public private(set) var encodings: [Int32] = []
-    public private(set) var clipboardCaps: UInt32 = 0
-    public private(set) var keyEvents = 0
-    public private(set) var pointerEvents = 0
+    private var clientEncodings: [Int32] = []
+    private var clientCaps: UInt32 = 0
+    private var keyCount = 0
+    private var pointerCount = 0
 
     public init(width: Int = 1280, height: Int = 800, output: @escaping @Sendable (Data) -> Void) {
         self.width = width
@@ -76,6 +71,22 @@ public final class SyntheticRFBServer: @unchecked Sendable {
 
     public var editorText: String {
         lock.withLock { text }
+    }
+
+    public var encodings: [Int32] {
+        lock.withLock { clientEncodings }
+    }
+
+    public var clipboardCaps: UInt32 {
+        lock.withLock { clientCaps }
+    }
+
+    public var keyEvents: Int {
+        lock.withLock { keyCount }
+    }
+
+    public var pointerEvents: Int {
+        lock.withLock { pointerCount }
     }
 
     public func snapshotPNG() -> Data {
@@ -130,8 +141,6 @@ public final class SyntheticRFBServer: @unchecked Sendable {
         timer.resume()
     }
 
-    // MARK: protocol
-
     private func take(_ count: Int) -> [UInt8]? {
         guard input.count >= count else { return nil }
         let bytes = Array(input.prefix(count))
@@ -173,13 +182,10 @@ public final class SyntheticRFBServer: @unchecked Sendable {
             return take(20) != nil
         case 2:
             guard let header = peek(2, 2) else { return false }
-            let count = Int(header[0]) << 8 | Int(header[1])
+            let count = u16(header, at: 0)
             guard let bytes = take(4 + count * 4) else { return false }
-            encodings = (0..<count).map { i in
-                let o = 4 + i * 4
-                return Int32(bitPattern: UInt32(bytes[o]) << 24 | UInt32(bytes[o + 1]) << 16 | UInt32(bytes[o + 2]) << 8 | UInt32(bytes[o + 3]))
-            }
-            if encodings.contains(Clip.encoding) {
+            clientEncodings = (0..<count).map { Int32(bitPattern: u32(bytes, at: 4 + $0 * 4)) }
+            if clientEncodings.contains(Clip.encoding) {
                 output(cutText(Clip.caps | Clip.request | Clip.peek | Clip.notify | Clip.provide | Clip.text, be32(0)))
             }
             return true
@@ -193,8 +199,8 @@ public final class SyntheticRFBServer: @unchecked Sendable {
             return true
         case 4:
             guard let bytes = take(8) else { return false }
-            keyEvents += 1
-            let key = UInt32(bytes[4]) << 24 | UInt32(bytes[5]) << 16 | UInt32(bytes[6]) << 8 | UInt32(bytes[7])
+            keyCount += 1
+            let key = u32(bytes, at: 4)
             if key == 0xffe3 || key == 0xffe4 {
                 control = bytes[1] == 1
             } else if key == 0xffe1 || key == 0xffe2 {
@@ -205,9 +211,9 @@ public final class SyntheticRFBServer: @unchecked Sendable {
             return true
         case 5:
             guard let bytes = take(6) else { return false }
-            pointerEvents += 1
-            let x = Int(bytes[2]) << 8 | Int(bytes[3])
-            let y = Int(bytes[4]) << 8 | Int(bytes[5])
+            pointerCount += 1
+            let x = u16(bytes, at: 2)
+            let y = u16(bytes, at: 4)
             if bytes[1] & 1 == 1 {
                 drawClick(CGPoint(x: x, y: y))
                 flush()
@@ -215,10 +221,10 @@ public final class SyntheticRFBServer: @unchecked Sendable {
             return true
         case 6:
             guard let header = peek(4, 4) else { return false }
-            let length = Int32(bitPattern: UInt32(header[0]) << 24 | UInt32(header[1]) << 16 | UInt32(header[2]) << 8 | UInt32(header[3]))
+            let length = Int32(bitPattern: u32(header, at: 0))
             guard let bytes = take(8 + Int(length.magnitude)) else { return false }
             if length <= -4 {
-                clientClipboard(flags: UInt32(bytes[8]) << 24 | UInt32(bytes[9]) << 16 | UInt32(bytes[10]) << 8 | UInt32(bytes[11]), payload: Array(bytes[12...]))
+                clientClipboard(flags: u32(bytes, at: 8), payload: Array(bytes[12...]))
             }
             return true
         case 150:
@@ -259,10 +265,7 @@ public final class SyntheticRFBServer: @unchecked Sendable {
         flush()
     }
 
-    // MARK: clipboard
-
-    // shortcut fetches an announced client clipboard on paste and offers a
-    // copy unsolicited to a client that takes text, as TigerVNC does.
+    // shortcut fetches an announced client clipboard on paste and offers a copy as TigerVNC does.
     private func shortcut(_ key: UInt32) {
         switch (key, shift) {
         case (0xff63, true):
@@ -274,7 +277,7 @@ public final class SyntheticRFBServer: @unchecked Sendable {
             text += clipboard
         case (0xff63, false), (0xffff, true):
             clipboard = text
-            if clipboardCaps & Clip.provide != 0, clientTextSize > 0 {
+            if clientCaps & Clip.provide != 0, clientTextSize > 0 {
                 output(cutText(Clip.provide | Clip.text, pack(clipboard)))
             } else {
                 output(cutText(Clip.notify | Clip.text, Data()))
@@ -291,8 +294,8 @@ public final class SyntheticRFBServer: @unchecked Sendable {
     private func clientClipboard(flags: UInt32, payload: [UInt8]) {
         guard flags & Clip.text != 0 else { return }
         if flags & Clip.caps != 0 {
-            clipboardCaps = flags
-            clientTextSize = payload.count >= 4 ? Int(payload[0]) << 24 | Int(payload[1]) << 16 | Int(payload[2]) << 8 | Int(payload[3]) : 0
+            clientCaps = flags
+            clientTextSize = payload.count >= 4 ? Int(u32(payload, at: 0)) : 0
         } else if flags & Clip.notify != 0 {
             announced = true
         } else if flags & Clip.request != 0 {
@@ -317,8 +320,7 @@ public final class SyntheticRFBServer: @unchecked Sendable {
         return data
     }
 
-    // pack and unpack carry text as the extension does: zlib over a length
-    // and the NUL-terminated UTF-8 with CRLF line ends.
+    // pack and unpack carry text as zlib over a length and NUL-terminated CRLF UTF-8.
     private func pack(_ text: String) -> Data {
         let body = Data(text.replacingOccurrences(of: "\n", with: "\r\n").utf8) + [0]
         let plain = [UInt8](be32(body.count) + body)
@@ -332,7 +334,7 @@ public final class SyntheticRFBServer: @unchecked Sendable {
         var plain = [UInt8](repeating: 0, count: Clip.maxText + 4)
         var plainLength = uLongf(plain.count)
         guard uncompress(&plain, &plainLength, payload, uLong(payload.count)) == Z_OK, plainLength >= 4 else { return nil }
-        let length = Int(plain[0]) << 24 | Int(plain[1]) << 16 | Int(plain[2]) << 8 | Int(plain[3])
+        let length = Int(u32(plain, at: 0))
         guard length <= Int(plainLength) - 4 else { return nil }
         var text = plain[4..<(4 + length)]
         if text.last == 0 { text = text.dropLast() }
@@ -362,8 +364,8 @@ public final class SyntheticRFBServer: @unchecked Sendable {
 
     private func be16(_ v: Int) -> Data { Data([UInt8(v >> 8 & 0xff), UInt8(v & 0xff)]) }
     private func be32(_ v: Int) -> Data { Data([UInt8(v >> 24 & 0xff), UInt8(v >> 16 & 0xff), UInt8(v >> 8 & 0xff), UInt8(v & 0xff)]) }
-
-    // MARK: drawing (top-left origin)
+    private func u16(_ b: [UInt8], at o: Int) -> Int { Int(b[o]) << 8 | Int(b[o + 1]) }
+    private func u32(_ b: [UInt8], at o: Int) -> UInt32 { UInt32(b[o]) << 24 | UInt32(b[o + 1]) << 16 | UInt32(b[o + 2]) << 8 | UInt32(b[o + 3]) }
 
     private var editorFrame: CGRect { CGRect(x: 220, y: 140, width: 840, height: 480) }
 

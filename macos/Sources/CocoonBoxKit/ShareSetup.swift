@@ -1,8 +1,6 @@
 import Foundation
 
-// ShareSetup renders what a box owner sends a guest: the share page link and
-// the MCP configuration of each client. A named share also needs the guest's
-// own token, which every snippet takes from COCOONBOX_TOKEN at runtime.
+// ShareSetup renders the share page link and each client's MCP configuration, which reads COCOONBOX_TOKEN at runtime.
 public struct ShareSetup: Sendable, Equatable {
     public enum Snippet: String, CaseIterable, Sendable {
         case link

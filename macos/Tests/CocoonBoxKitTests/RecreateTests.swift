@@ -2,9 +2,6 @@ import CocoonBoxKit
 import Foundation
 import Testing
 
-// RecreateTests deletes a box another client holds and creates one under its
-// name: the holder follows the new box by name, and reports a deleted box when
-// no box has the name.
 @Suite struct RecreateTests {
     @MainActor @Test func liveScreenFollowsABoxRecreatedUnderItsName() async throws {
         let mock = try await MockBoxProcess()
@@ -112,7 +109,6 @@ import Testing
         #expect(await until(seconds: 10) { (try? await connection.listBoxes())?.contains { $0.id == id } == false })
     }
 
-    // recreate deletes box id and creates a box under its name, as a second client does; it returns the new id.
     static func recreate(_ connection: BoxConnection, _ id: String) async throws -> String {
         let name = try #require(try await connection.listBoxes().first { $0.id == id }).name
         try await delete(connection, id)

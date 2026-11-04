@@ -272,6 +272,12 @@ public enum OffloadNames {
     }
 
     static func hex(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        SHA256.hash(data: data).hex
+    }
+}
+
+extension Sequence where Element == UInt8 {
+    public var hex: String {
+        map { String(format: "%02x", $0) }.joined()
     }
 }

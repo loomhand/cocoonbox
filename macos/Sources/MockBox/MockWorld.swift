@@ -1,10 +1,7 @@
 import CocoonBoxKit
 import Foundation
 import GRPCCore
-import ImageIO
 import RFBTestServer
-import SwiftProtobuf
-import UniformTypeIdentifiers
 
 typealias Box = Cocoonbox_Control_V1_Box
 typealias OperationEvent = Cocoonbox_Control_V1_OperationEvent
@@ -13,9 +10,7 @@ typealias Entry = Cocoonbox_Agent_V1_TranscriptEntry
 typealias Agent = Cocoonbox_Agent_V1_Agent
 typealias Share = Cocoonbox_Control_V1_Share
 
-// MockWorld holds the state of a user's fake boxes: their lifecycle within
-// the api's running limit and box quota, and the agents, transcript, event
-// bus and synthetic desktop that every box shows alike.
+// MockWorld holds a user's fake boxes and the agents, events and desktop every box shows alike.
 actor MockWorld {
     static let ringSize = 512
     static let maxBoxes = 3
@@ -39,8 +34,7 @@ actor MockWorld {
             $0.totalTokens = 930
             $0.costMicros = 1500
         }
-        $0.today = .with {
-            $0.sinceMs = 1_760_313_600_000
+        let period = Cocoonbox_Control_V1_UsagePeriod.with {
             $0.requests = 5
             $0.promptTokens = 1900
             $0.completionTokens = 130
@@ -48,15 +42,10 @@ actor MockWorld {
             $0.costMicros = 4_001_500
             $0.models = [sonnet, jev]
         }
-        $0.month = .with {
-            $0.sinceMs = 1_759_276_800_000
-            $0.requests = 5
-            $0.promptTokens = 1900
-            $0.completionTokens = 130
-            $0.totalTokens = 2030
-            $0.costMicros = 4_001_500
-            $0.models = [sonnet, jev]
-        }
+        $0.today = period
+        $0.today.sinceMs = 1_760_313_600_000
+        $0.month = period
+        $0.month.sinceMs = 1_759_276_800_000
         $0.dailyCapMicros = 5_000_000
         $0.defaultCap = true
         $0.remainingTodayMicros = 998_500
@@ -122,8 +111,7 @@ actor MockWorld {
         }
     }
 
-    // externalHistory is idle MCP sessions of several clients, hours old,
-    // like a box that other clients have used before.
+    // externalHistory is idle MCP sessions of several clients, hours old.
     private static func externalHistory() -> [String: Agent] {
         var agents: [String: Agent] = [:]
         let now = Self.now()
@@ -134,7 +122,7 @@ actor MockWorld {
         ]
         for (client, age) in sessions {
             var agent = Agent()
-            agent.id = "ag-\(UUID().uuidString.prefix(8).lowercased())"
+            agent.id = Self.id("ag-", 8)
             agent.name = "mcp:\(client)@\(Self.shareID)"
             agent.status = .idle
             agent.createdAtMs = now - age
@@ -148,7 +136,9 @@ actor MockWorld {
         Int64(Date().timeIntervalSince1970 * 1000)
     }
 
-    // MARK: boxes
+    private static func id(_ prefix: String, _ length: Int) -> String {
+        prefix + UUID().uuidString.prefix(length).lowercased()
+    }
 
     // watchBoxes returns the boxes and a stream of the boxes after each later change, as Boxes.Watch sends them.
     func watchBoxes() -> (boxes: [Box], changes: AsyncStream<[Box]>) {
@@ -297,8 +287,7 @@ actor MockWorld {
         return operation(id)
     }
 
-    // rebase plays an image upgrade with the box states the api reports: save
-    // on the old machine, new machine from the latest image, restore, switch.
+    // rebase plays an image upgrade: save, new machine from the latest image, restore, switch.
     func rebase(_ boxID: String = "", image: String) -> Cocoonbox_Control_V1_Operation {
         let rebased = box(boxID) ?? box
         let id = newOperation(rebased.id)
@@ -372,8 +361,7 @@ actor MockWorld {
         return operation(id)
     }
 
-    // setWakeSchedule keeps the api's checks a client sees: an IANA zone, five cron fields, awake_for in 1 min..1 h
-    // (0 is 15 min) and 3 schedules a user; the next time is an hour ahead, since the mock reads no cron.
+    // setWakeSchedule keeps the api's checks; the next time is an hour ahead, since the mock reads no cron.
     func setWakeSchedule(box boxID: String, _ request: Cocoonbox_Control_V1_SetWakeScheduleRequest) throws -> Cocoonbox_Control_V1_WakeSchedule {
         guard TimeZone(identifier: request.tz) != nil else {
             throw RPCError(code: .invalidArgument, message: "tz \"\(request.tz)\" must name an IANA zone, such as Asia/Singapore")
@@ -424,7 +412,7 @@ actor MockWorld {
     }
 
     private func newOperation(_ boxID: String) -> String {
-        let id = "op-\(UUID().uuidString.prefix(8).lowercased())"
+        let id = Self.id("op-", 8)
         operations[id] = []
         operationBoxes[id] = boxID
         return id
@@ -503,8 +491,6 @@ actor MockWorld {
         operationWaiters[id]?[key] = nil
     }
 
-    // MARK: event bus
-
     func subscribe(from offset: UInt64) throws -> (replay: [Event], live: AsyncStream<Event>) {
         var replay: [Event] = []
         if offset > 0 {
@@ -539,14 +525,12 @@ actor MockWorld {
         }
     }
 
-    // MARK: agents
-
     func createAgent(name: String, nonce: String, model: String) -> Agent {
         if !nonce.isEmpty, let id = nonces["create:\(nonce)"], let agent = agents[id] {
             return agent
         }
         var agent = Agent()
-        agent.id = "ag-\(UUID().uuidString.prefix(8).lowercased())"
+        agent.id = Self.id("ag-", 8)
         agent.name = name.isEmpty ? "agent" : name
         agent.status = .idle
         agent.mainModel = model.isEmpty ? "deepseek/deepseek-v4.1-flash" : model
@@ -580,7 +564,7 @@ actor MockWorld {
         if !nonce.isEmpty, let turn = nonces["send:\(id):\(nonce)"] {
             return turn
         }
-        let turn = "turn-\(UUID().uuidString.prefix(8).lowercased())"
+        let turn = Self.id("turn-", 8)
         if !nonce.isEmpty {
             nonces["send:\(id):\(nonce)"] = turn
         }
@@ -669,7 +653,7 @@ actor MockWorld {
         return entry
     }
 
-    private func computer(agent id: String, action: String, x: Int32, y: Int32, text: String = "") {
+    private func play(agent id: String, action: String, x: Int32, y: Int32, text: String) async {
         publish(.computerAction(.with {
             $0.agentID = id
             $0.action = action
@@ -677,12 +661,18 @@ actor MockWorld {
             $0.y = y
             $0.text = text
         }))
+        try? await Task.sleep(for: .milliseconds(150))
+        if text.isEmpty {
+            screen?.click(x: Int(x), y: Int(y))
+        } else {
+            desktopText += text
+            screen?.type(text)
+        }
     }
 
-    // connectorTask plays a box agent's write through the box door (design §16.5): the
-    // broker asks, the user answers in Connectors.Approve and Agents.Respond, the agent retries.
+    // connectorTask plays a box agent's connector write that waits for the user's approval.
     private func connectorTask(agent id: String, turn: String) async {
-        let approval = "apr_\(UUID().uuidString.prefix(8).lowercased())"
+        let approval = Self.id("apr_", 8)
         connect.pend(approval)
         append(agent: id, turn: turn, role: .assistant, body: .approval(.with {
             $0.approvalID = approval
@@ -697,7 +687,7 @@ actor MockWorld {
             append(agent: id, turn: turn, role: .user, body: .text(.with { $0.text = "Denied." }))
             return
         }
-        let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
+        let call = Self.id("call-", 6)
         append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
             $0.callID = call
             $0.name = "github_create_issue"
@@ -729,7 +719,7 @@ actor MockWorld {
         if prompt.contains("mousepad") || prompt.contains("type") || prompt.contains("click") {
             await guiTask(agent: id, turn: turn, pause: pause)
         } else if prompt.contains("login") || prompt.contains("take over") {
-            let approval = "ap-\(UUID().uuidString.prefix(6).lowercased())"
+            let approval = Self.id("ap-", 6)
             append(agent: id, turn: turn, role: .assistant, body: .approval(.with {
                 $0.approvalID = approval
                 $0.kind = "take_over"
@@ -744,7 +734,7 @@ actor MockWorld {
         } else if prompt.contains("issue") {
             await connectorTask(agent: id, turn: turn)
         } else {
-            let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
+            let call = Self.id("call-", 6)
             append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
                 $0.callID = call
                 $0.name = "shell"
@@ -796,21 +786,14 @@ actor MockWorld {
             $0.subagent = "computer"
         }))
         for (action, x, y, text) in steps {
-            let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
+            let call = Self.id("call-", 6)
             append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
                 $0.callID = call
                 $0.name = "computer"
                 $0.subagent = "computer"
                 $0.argumentsJson = text.isEmpty ? #"{"action":"\#(action)","x":\#(x),"y":\#(y)}"# : #"{"action":"\#(action)","text":"\#(text.replacingOccurrences(of: "\n", with: "\\n"))"}"#
             }))
-            computer(agent: id, action: action, x: x, y: y, text: text)
-            try? await Task.sleep(for: .milliseconds(150))
-            if text.isEmpty {
-                screen?.click(x: Int(x), y: Int(y))
-            } else {
-                desktopText += text
-                screen?.type(text)
-            }
+            await play(agent: id, action: action, x: x, y: y, text: text)
             try? await Task.sleep(for: pause)
             append(agent: id, turn: turn, role: .tool, body: .toolResult(.with {
                 $0.callID = call
@@ -844,8 +827,6 @@ actor MockWorld {
         }
         if openSessions.contains(id) { closeExternal(agent: id, reason: "deleted by the client") }
     }
-
-    // MARK: shares
 
     func createShare(_ request: Cocoonbox_Control_V1_CreateShareRequest) throws -> Cocoonbox_Control_V1_ShareSecret {
         guard box(request.boxID)?.id == request.boxID else { throw MockWorld.noBox }
@@ -920,11 +901,7 @@ actor MockWorld {
         }
     }
 
-    // MARK: external agents (MCP)
-
-    // openExternal starts an MCP session's agent, named mcp:<clientInfo.name>
-    // as the contract says, with the session notes the box's agent writes:
-    // system text entries that share turn and block.
+    // openExternal starts an MCP session's agent, named mcp:<clientInfo.name> as the contract says.
     func openExternal(client: String, version: String) -> String {
         let id = createAgent(name: "mcp:\(client)", nonce: "", model: "").id
         openSessions.insert(id)
@@ -942,7 +919,7 @@ actor MockWorld {
 
     // externalCall runs one MCP tool call against the mock desktop and records it in the agent's transcript; an owner session has no agent and records nothing.
     func externalCall(agent id: String, tool: String, arguments: String, on boxName: String = "main") async -> (text: String, image: Data?, isError: Bool) {
-        let call = "call-\(UUID().uuidString.prefix(6).lowercased())"
+        let call = Self.id("call-", 6)
         let turn = "mcp-\(id)"
         append(agent: id, turn: turn, role: .assistant, body: .toolCall(.with {
             $0.callID = call
@@ -970,14 +947,7 @@ actor MockWorld {
             let x = Int32(args["x"] as? Int ?? 640)
             let y = Int32(args["y"] as? Int ?? 380)
             let typed = args["text"] as? String ?? ""
-            computer(agent: id, action: action, x: x, y: y, text: typed)
-            try? await Task.sleep(for: .milliseconds(150))
-            if typed.isEmpty {
-                screen?.click(x: Int(x), y: Int(y))
-            } else {
-                desktopText += typed
-                screen?.type(typed)
-            }
+            await play(agent: id, action: action, x: x, y: y, text: typed)
             text = "\(action) ok"
             image = screen?.snapshotPNG()
         case let name where name.hasPrefix("browser_"):
@@ -994,8 +964,6 @@ actor MockWorld {
         }))
         return (text, image, isError)
     }
-
-    // MARK: screen
 
     func attach(screen server: SyntheticRFBServer) {
         if !desktopText.isEmpty {

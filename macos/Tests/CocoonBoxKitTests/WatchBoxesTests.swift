@@ -4,8 +4,6 @@ import GRPCCore
 import Synchronization
 import Testing
 
-// WatchBoxesTests follows Boxes.Watch through the Kit against MockBox: the watcher sees every change another client
-// makes, and a resubscription starts again from the whole list.
 @Suite struct WatchBoxesTests {
     @Test func watchSeesEveryChangeAnotherClientMakes() async throws {
         let mock = try await MockBoxProcess()
@@ -119,7 +117,6 @@ final class Lists: Sendable {
         state.withLock { $0.append(list) }
     }
 
-    // seen waits for a list after the first `from` that matches.
     func seen(after from: Int, _ match: ([Cocoonbox_Control_V1_Box]) -> Bool) async -> Bool {
         await RecreateTests.until(seconds: 10) { state.withLock { $0.dropFirst(from).contains(where: match) } }
     }

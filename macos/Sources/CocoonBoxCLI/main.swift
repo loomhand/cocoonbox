@@ -136,8 +136,6 @@ func value(of flag: String) -> String? {
     return arguments[index + 1]
 }
 
-// MARK: settings
-
 // home honours HOME, as the agent CLIs this one configures do.
 let home = ProcessInfo.processInfo.environment["HOME"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
 let support = ProcessInfo.processInfo.environment["COCOONBOX_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
@@ -201,8 +199,6 @@ func connection(_ endpoint: Endpoint = endpoint()) -> BoxConnection {
     }
 }
 
-// MARK: lifecycle
-
 func stateName(_ state: Cocoonbox_Control_V1_BoxState) -> String {
     switch state {
     case .starting: "starting"
@@ -232,11 +228,7 @@ func printBox(_ box: Cocoonbox_Control_V1_Box?, json: Bool) {
         "latest_image": box?.latestImage ?? "", "last_saved_at_ms": box?.lastSavedAtMs ?? 0,
         "upgrade_available": box.map { !$0.latestImage.isEmpty && $0.latestImage != $0.image } ?? false,
     ]
-    if json {
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])) ?? Data()
-        print(String(decoding: data, as: UTF8.self))
-        return
-    }
+    if json { return printJSON(object) }
     guard let box else { return print("no box yet; run cocoonbox ensure") }
     var line = "\(box.name) \(box.id) \(stateName(box.state)) \(box.image)"
     if !box.latestImage.isEmpty, box.latestImage != box.image { line += " (upgrade available: \(box.latestImage))" }
@@ -320,8 +312,6 @@ func boxCommand() async {
     }
 }
 
-// MARK: wake schedules
-
 let scheduleUsage = "usage: cocoonbox box schedule [set BOX --cron \"M H DOM MON DOW\" --tz ZONE [--awake-for 15m] | list | clear BOX] [--json]"
 
 // seconds reads a duration such as 90s, 15m, 1h or 7d.
@@ -382,8 +372,6 @@ func scheduleCommand() async {
     }
 }
 
-// MARK: usage
-
 func dollars(_ micros: Int64) -> String {
     "$" + String(format: "%.4f", Double(micros) / 1_000_000)
 }
@@ -413,8 +401,6 @@ func usageCommand() async {
     }
 }
 
-// MARK: flows
-
 let flowsUsage = "usage: cocoonbox flows [list [--json] | export [NAME...] [-o FILE] | import FILE|- [--json] | rm NAME...]"
 
 func flowObject(_ flow: Cocoonbox_Control_V1_Flow, content: Bool) -> [String: Any] {
@@ -429,6 +415,10 @@ func flowObject(_ flow: Cocoonbox_Control_V1_Flow, content: Bool) -> [String: An
 func printJSON(_ object: Any) {
     let data = (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
     print(String(decoding: data, as: UTF8.self))
+}
+
+func iso(_ ms: Int64) -> String {
+    Date(timeIntervalSince1970: Double(ms) / 1000).formatted(.iso8601)
 }
 
 // readExport turns an export file (or stdin for -) into flows to import: name, content and image of each.
@@ -461,7 +451,7 @@ func flowsCommand() async {
             if flags.contains("--json") { return printJSON(["rev": library.rev, "flows": library.flows.map { flowObject($0, content: false) }]) }
             if library.flows.isEmpty { return print("no saved flows") }
             for flow in library.flows {
-                let saved = Date(timeIntervalSince1970: Double(flow.savedAtMs) / 1000).formatted(.iso8601)
+                let saved = iso(flow.savedAtMs)
                 let origin = flow.boxID.isEmpty ? "imported" : flow.boxID
                 print("\(flow.name)  rev \(flow.rev)  \(flow.size) bytes  \(saved)  \(origin)  \(flow.image.isEmpty ? "-" : flow.image)")
             }
@@ -493,8 +483,6 @@ func flowsCommand() async {
     }
 }
 
-// MARK: keys
-
 let keysUsage = "usage: cocoonbox keys [add NAME --host HOST... [--header H] [--template T | --query P] | ls | rotate NAME | rm NAME] [--json]"
 
 // keyOptions splits the words after `keys` into positional words and the values of its flags; --host repeats and takes commas.
@@ -521,9 +509,8 @@ func readKeyValue(_ name: String) -> String {
         value = String(decoding: FileHandle.standardInput.readDataToEndOfFile(), as: UTF8.self)
         if value.hasSuffix("\n") { value.removeLast() }
     } else {
-        var buffer = [CChar](repeating: 0, count: 4096)
-        guard let line = readpassphrase("value of \(name): ", &buffer, buffer.count, 0) else { fail("no value read") }
-        value = String(cString: line)
+        guard let line = readSecret("value of \(name): ") else { fail("no value read") }
+        value = line
     }
     guard !value.isEmpty else { fail("no value read for \(name)") }
     return value
@@ -538,11 +525,9 @@ func keyObject(_ key: Cocoonbox_Control_V1_Key) -> [String: Any] {
 
 func keyLine(_ key: Cocoonbox_Control_V1_Key) -> String {
     let sent = key.query.isEmpty ? "\(key.header): \(key.template)" : "?\(key.query)={}"
-    let created = Date(timeIntervalSince1970: Double(key.createdAtMs) / 1000).formatted(.iso8601)
+    let created = iso(key.createdAtMs)
     return "\(key.name)  \(key.hosts.joined(separator: ","))  \(sent)  \(key.hint.isEmpty ? "-" : "…" + key.hint)  \(created)"
 }
-
-// MARK: invite
 
 // inviteToken reads the invite-scoped token from COCOONBOX_INVITE_TOKEN, else a file, so it never sits in argv.
 func inviteToken() -> String {
@@ -656,8 +641,6 @@ func keysCommand() async {
     }
 }
 
-// MARK: devices
-
 let devicesUsage = "usage: cocoonbox devices [list] [--json] | devices revoke ID"
 
 func deviceObject(_ device: Cocoonbox_Control_V1_Device) -> [String: Any] {
@@ -668,9 +651,8 @@ func deviceObject(_ device: Cocoonbox_Control_V1_Device) -> [String: Any] {
 }
 
 func deviceLine(_ device: Cocoonbox_Control_V1_Device) -> String {
-    func at(_ ms: Int64) -> String { Date(timeIntervalSince1970: Double(ms) / 1000).formatted(.iso8601) }
-    let used = device.usedAtMs > 0 ? "used \(at(device.usedAtMs))" : "never used"
-    return "\(device.current ? "*" : " ") \(device.id)  \(device.client)  \(device.label.isEmpty ? "-" : device.label)  signed in \(at(device.createdAtMs))  \(used)"
+    let used = device.usedAtMs > 0 ? "used \(iso(device.usedAtMs))" : "never used"
+    return "\(device.current ? "*" : " ") \(device.id)  \(device.client)  \(device.label.isEmpty ? "-" : device.label)  signed in \(iso(device.createdAtMs))  \(used)"
 }
 
 func devicesCommand() async {
@@ -695,8 +677,6 @@ func devicesCommand() async {
     }
 }
 
-// MARK: shares
-
 let shareUsage = "usage: cocoonbox share [create BOX [--ttl 24h] | ls | revoke ID] [--json]"
 
 // shareLink is empty for a share created before the api kept secrets.
@@ -711,7 +691,7 @@ func shareObject(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: En
 
 func shareLine(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: Endpoint) -> String {
     let who = share.users.isEmpty ? "anyone with the link" : share.users.map(\.name).joined(separator: ",")
-    let expires = Date(timeIntervalSince1970: Double(share.expiresAtMs) / 1000).formatted(.iso8601)
+    let expires = iso(share.expiresAtMs)
     let link = shareLink(share, endpoint)
     return "\(share.id)  \(name)  \(share.write ? "write" : "read")  \(who)  expires \(expires)  \(link.isEmpty ? "-" : link)"
 }
@@ -741,7 +721,7 @@ func shareCommand() async {
             let share = created.share
             if json { return printJSON(shareObject(share, name: target.name, endpoint: connection.endpoint)) }
             print(shareLink(share, connection.endpoint))
-            print("read-only share \(share.id) of \(target.name), expires \(Date(timeIntervalSince1970: Double(share.expiresAtMs) / 1000).formatted(.iso8601))")
+            print("read-only share \(share.id) of \(target.name), expires \(iso(share.expiresAtMs))")
         case "ls", "list":
             let shares = try await connection.listShares()
             if json { return printJSON(["shares": shares.map { shareObject($0, name: names[$0.boxID] ?? "", endpoint: connection.endpoint) }]) }
@@ -759,15 +739,16 @@ func shareCommand() async {
     }
 }
 
-// MARK: login
-
 func readToken() -> String {
     if isatty(STDIN_FILENO) == 0 {
         return (readLine(strippingNewline: true) ?? "").trimmingCharacters(in: .whitespaces)
     }
+    return (readSecret("cocoonbox token: ") ?? "").trimmingCharacters(in: .whitespaces)
+}
+
+func readSecret(_ prompt: String) -> String? {
     var buffer = [CChar](repeating: 0, count: 4096)
-    guard let line = readpassphrase("cocoonbox token: ", &buffer, buffer.count, 0) else { return "" }
-    return String(cString: line).trimmingCharacters(in: .whitespaces)
+    return readpassphrase(prompt, &buffer, buffer.count, 0).map { String(cString: $0) }
 }
 
 // pastesToken keeps today's paste for --token -, an SSH session and a stdin that is no terminal, unless --browser.
@@ -870,8 +851,6 @@ func logout() async {
     print("signed out")
 }
 
-// MARK: mcp
-
 // Output serialises writes from the bridge and its upstream streams to stdout.
 final class Output: Sendable {
     private let lock = Mutex(())
@@ -916,8 +895,6 @@ func headers() {
     let data = (try? JSONSerialization.data(withJSONObject: ["Authorization": "Bearer \(token(endpoint))"])) ?? Data()
     print(String(decoding: data, as: UTF8.self))
 }
-
-// MARK: rsh
 
 let rshUsage = "usage: cocoonbox rsh [--box NAME|ID] [-t] [-l USER] [HOST] COMMAND..."
 let maxTerminfo = 256 << 10
@@ -1002,19 +979,9 @@ final class Terminal: Sendable {
 // terminfo is the local terminfo source of term as `infocmp -x` prints it, which a box without
 // the entry compiles; empty when infocmp has none or it is larger than a box takes.
 func terminfo(_ term: String) -> String {
-    guard !term.isEmpty else { return "" }
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = ["infocmp", "-x", term]
-    let output = Pipe()
-    process.standardInput = FileHandle.nullDevice
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-    guard (try? process.run()) != nil else { return "" }
-    let data = output.fileHandleForReading.readDataToEndOfFile()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0, data.count <= maxTerminfo else { return "" }
-    return String(decoding: data, as: UTF8.self)
+    guard !term.isEmpty, let run = try? Command.run(["infocmp", "-x", term], environment: ProcessInfo.processInfo.environment),
+          run.status == 0, run.out.count <= maxTerminfo else { return "" }
+    return String(decoding: run.out, as: UTF8.self)
 }
 
 // retry says whether a failed read or write of fd should run again, after waiting for fd when
@@ -1082,11 +1049,7 @@ func rsh() async {
             words.removeFirst()
         }
         guard !words.isEmpty else { fail("no command: rsh runs a command, not a login shell\n\(rshUsage)") }
-        if box.state != .running {
-            FileHandle.standardError.write(Data("cocoonbox: waking \(box.name)\n".utf8))
-            let response = try await connection.ensure(boxID: box.id)
-            if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
-        }
+        if box.state != .running { try await wake(connection, box) }
         connection.boxID = box.id
     } catch {
         fail(BoxConnection.describe(error))
@@ -1145,8 +1108,6 @@ func rsh() async {
     exit(code)
 }
 
-// MARK: offload
-
 let offloadStore = OffloadStore(support: support)
 
 // working names the box CLI sessions at work in a running box, for the warning before a hibernate or an upgrade.
@@ -1167,10 +1128,14 @@ func runningBox(_ connection: BoxConnection, _ ref: String?) async throws -> Coc
     let boxes = try await connection.listBoxes()
     guard let box = ref.map({ CocoonBoxCLI.box($0, in: boxes) }) ?? boxes.first else { fail("no box yet") }
     guard box.state != .running else { return box }
+    try await wake(connection, box)
+    return try await connection.listBoxes().first { $0.id == box.id } ?? box
+}
+
+func wake(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) async throws {
     FileHandle.standardError.write(Data("cocoonbox: waking \(box.name)\n".utf8))
     let response = try await connection.ensure(boxID: box.id)
     if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
-    return try await connection.listBoxes().first { $0.id == box.id } ?? box
 }
 
 // offloadKey is the repo key of --dir or the working directory. For an offload in flight it falls back
@@ -1372,8 +1337,6 @@ func secrets() {
     print(entries.isEmpty ? "no secrets opted in" : entries.joined(separator: "\n"))
 }
 
-// MARK: setup
-
 let ownPath = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath().path
 
 let executable: String = {
@@ -1452,8 +1415,6 @@ func install() {
     }
     print("linked \(link.path) -> \(ownPath)")
 }
-
-// MARK: main
 
 switch command {
 case "login":

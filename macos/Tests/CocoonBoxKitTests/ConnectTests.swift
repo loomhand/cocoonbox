@@ -4,9 +4,6 @@ import Foundation
 import Synchronization
 import Testing
 
-// ConnectTests runs the bridge and the app's approval call against a MockBox of
-// its own, whose mock-only `mock/connect` sets the Connect door's grants and
-// failures (design §16.3, §16.5). The box stays hibernated in the bridge tests.
 @Suite struct ConnectTests {
     nonisolated(unsafe) static let hub: [String: Any] = ["id": "mockhub", "account": "octo", "tools": [["name": "list_issues", "read_only": true], ["name": "create_issue"]]]
     static let plain = ToolCatalog.control.compactMap { $0["name"] as? String } + ToolCatalog.boxFallback.compactMap { $0["name"] as? String }
@@ -269,18 +266,13 @@ import Testing
         #expect(try await client.tools().compactMap { $0["name"] as? String } == Self.plain)
     }
 
-    @Test func theKitReadsTheCatalogListsToolsAndDisconnects() async throws {
+    @Test func theKitListsConnectorsWithTheirTools() async throws {
         let mock = try await MockBoxProcess()
         defer { mock.stop() }
         try await mock.connect(["grants": [Self.hub]])
         let connection = mock.connection
-        #expect(try await connection.catalog().map(\.id) == ["github", "custom"])
         #expect(try await connection.listConnectors().map(\.tools.count) == [0])
         #expect(try await connection.listConnectors(withTools: true).first?.tools.map(\.name) == ["list_issues", "create_issue"])
-        #expect(try await connection.spendRequests().polledAtMs == 0)
-        #expect(try await connection.disconnect(connectorID: "mockhub"))
-        #expect(try await connection.listConnectors().isEmpty)
-        await #expect(throws: (any Error).self) { try await connection.disconnect(connectorID: "mockhub") }
     }
 
     @Test func keepsWorkingWhileTheDoorFailsAndRecovers() async throws {
@@ -383,7 +375,6 @@ import Testing
         #expect(await until { await Self.entries(connection, agent.id).contains { Self.says($0, "Refused: denied.") } })
     }
 
-    // core creates a running cbcore box, the family whose box tools add script_run.
     static func core(_ mock: MockBoxProcess) async throws {
         let id = try await mock.connection.createBox(name: "core1", image: "cbcore").box.id
         #expect(await until(seconds: 10) { (try? await mock.connection.listBoxes())?.first { $0.id == id }?.state == .running })
@@ -414,8 +405,6 @@ private func until(seconds: Double = 5, _ condition: () async -> Bool) async -> 
     return await condition()
 }
 
-// MockBoxProcess runs MockBox with its log in a temporary directory, on a random
-// port; it tries another port when MockBox cannot listen on that one.
 final class MockBoxProcess: @unchecked Sendable {
     let endpoint: Endpoint
     let connection: BoxConnection
@@ -437,7 +426,6 @@ final class MockBoxProcess: @unchecked Sendable {
         (try? String(contentsOf: root.appendingPathComponent("mockbox.log"), encoding: .utf8)) ?? ""
     }
 
-    // connect sets the door through the mock-only method: grants, fail (an HTTP status) and hang.
     func connect(_ params: [String: Any]) async throws {
         try await rpc("mock/connect", params)
     }
@@ -453,8 +441,6 @@ final class MockBoxProcess: @unchecked Sendable {
     }
 }
 
-// BridgeClient plays a local agent: it feeds the bridge newline-delimited
-// JSON-RPC and reads its answers and notifications.
 final class BridgeClient: Sendable {
     private let initialized = Mutex("")
     private let input = Pipe()

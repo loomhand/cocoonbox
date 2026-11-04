@@ -65,8 +65,8 @@ final class Script: Sendable {
         )
         #expect(script.calls.withLock { $0 } == [0, 3])
         #expect(seen.withLock { $0 } == [1, 2, 3, 4, 5])
-        try? await Task.sleep(for: .milliseconds(50))
-        #expect(resyncs.withLock { $0 } == 1)
+        let resynced = await eventually { resyncs.withLock { $0 } == 1 }
+        #expect(resynced)
     }
 
     @Test func backsOffWhileFailingAndResetsAfterProgress() async {
@@ -117,7 +117,7 @@ final class Script: Sendable {
         )
         #expect(script.calls.withLock { $0 } == [42, 0])
         #expect(seen.withLock { $0 } == [1])
-        try? await Task.sleep(for: .milliseconds(50))
-        #expect(resyncs.withLock { $0 } == 1)
+        let resynced = await eventually { resyncs.withLock { $0 } == 1 }
+        #expect(resynced)
     }
 }

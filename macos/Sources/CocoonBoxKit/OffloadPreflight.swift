@@ -1,8 +1,7 @@
 import Darwin
 import Foundation
 
-// Finding is one preflight result: a block stops with nothing changed, a warn
-// or a confirm (a warn naming the size) goes on only with the user's yes.
+// Finding is one preflight result: a block stops with nothing changed, a warn or a confirm needs the user's yes.
 public struct Finding: Codable, Equatable, Sendable {
     public enum Outcome: String, Codable, Sendable {
         case block
@@ -49,8 +48,6 @@ enum Preflight {
             + carried(repo.top)
     }
 
-    // MARK: macOS-only work
-
     static func macOSOnly(_ top: URL, files: [String], handover: String) -> [Finding] {
         let used = Set(commands(handover).filter(macTools.contains))
         if !used.isEmpty {
@@ -90,8 +87,6 @@ enum Preflight {
         let names = list.matches(of: /\.([A-Za-z]+)\(/).map { String($0.1) } + list.matches(of: /\.([A-Za-z]+)\s*[,\]]/).map { String($0.1) }
         return !names.isEmpty && names.allSatisfy(applePlatforms.contains)
     }
-
-    // MARK: local services and hosts
 
     // configTexts is the repo's .env* files, compose files and top-level config, which name services and hosts.
     static func configTexts(_ top: URL, ignored: [String]) -> [(name: String, text: String)] {
@@ -150,12 +145,8 @@ enum Preflight {
                 hosts.append(String(at.split(separator: "@").last ?? at))
             }
         }
-        let url = try? NSRegularExpression(pattern: "[a-z][a-z0-9+.-]*://(?:[^@/\\s\"']+@)?([A-Za-z0-9.-]+)")
         for (_, text) in texts {
-            let range = NSRange(text.startIndex..., in: text)
-            url?.enumerateMatches(in: text, range: range) { match, _, _ in
-                if let match, let r = Range(match.range(at: 1), in: text) { hosts.append(String(text[r])) }
-            }
+            hosts += text.matches(of: #/[a-z][a-z0-9+.-]*://(?:[^@/\s"']+@)?([A-Za-z0-9.-]+)/#).map { String($0.1) }
         }
         let split = splitDomains(environment)
         var findings: [Finding] = []
@@ -214,8 +205,6 @@ enum Preflight {
         return octets[0] == 10 || (octets[0] == 172 && (16...31).contains(octets[1])) || (octets[0] == 192 && octets[1] == 168)
             || (octets[0] == 100 && (64...127).contains(octets[1]))
     }
-
-    // MARK: secrets, LFS and submodules
 
     static func secrets(_ repo: GitRepo, ignored: [String], handover: String, optedIn: [String], environment: [String: String]) -> [Finding] {
         var findings: [Finding] = []

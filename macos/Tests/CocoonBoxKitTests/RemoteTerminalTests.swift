@@ -4,7 +4,6 @@ import Foundation
 import Synchronization
 import Testing
 
-// RemoteTerminalTests pastes from a private pasteboard into a terminal whose input stands in for the Exec's stdin.
 @MainActor @Suite(.serialized) struct RemoteTerminalTests {
     @Test func commandVPastesThePasteboardIntoStdin() async throws {
         let fixture = try await PasteFixture()
@@ -30,9 +29,9 @@ import Testing
         let fixture = try await PasteFixture()
         defer { fixture.pasteboard.releaseGlobally() }
         fixture.terminal.feed.receive(Data("\u{1B}[?2004h".utf8))
-        // the mode applies on Ghostty's own thread, so paste until a framed paste arrives
         let framed = await eventually {
-            fixture.stdin.text.contains("\u{1B}[200~code#state-1\u{1B}[201~") || !fixture.terminal.paste()
+            _ = fixture.terminal.view.tryToPerform(#selector(NSText.paste(_:)), with: nil)
+            return fixture.stdin.text.contains("\u{1B}[200~code#state-1\u{1B}[201~")
         }
         #expect(framed && fixture.stdin.text.contains("\u{1B}[200~code#state-1\u{1B}[201~"))
     }
@@ -45,7 +44,6 @@ import Testing
     }
 }
 
-// Stdin collects what a terminal writes to its program.
 final class Stdin: Sendable {
     private let data = Mutex(Data())
 
@@ -60,7 +58,6 @@ final class Stdin: Sendable {
     }
 }
 
-// PasteFixture is a terminal in a window, focused, once its surface takes a paste, with "code#state-1" on a private pasteboard.
 @MainActor
 final class PasteFixture {
     let pasteboard = NSPasteboard(name: .init("io.github.loomhand.cocoonbox.test.\(UUID().uuidString)"))
@@ -76,9 +73,11 @@ final class PasteFixture {
         try #require(window.firstResponder === terminal.view)
         pasteboard.clearContents()
         pasteboard.setString("probe", forType: .string)
-        let ready = await eventually { terminal.paste() }
-        let probed = await eventually { stdin.text.contains("probe") }
-        try #require(ready && probed)
+        let probed = await eventually {
+            _ = terminal.view.tryToPerform(#selector(NSText.paste(_:)), with: nil)
+            return stdin.text.contains("probe")
+        }
+        try #require(probed)
         stdin.reset()
         pasteboard.clearContents()
         pasteboard.setString("code#state-1", forType: .string)

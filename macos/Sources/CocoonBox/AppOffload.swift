@@ -124,26 +124,14 @@ extension AppModel {
         }
     }
 
-    // run runs executable to its end, off the main actor, and returns its exit code and its stdout and stderr together.
+    // run runs executable to its end, off the main actor, and returns its exit code and its stdout then its stderr.
     nonisolated static func run(_ executable: String, _ arguments: [String], environment: [String: String]) async -> (Int32, String) {
-        await Task.detached {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
-            process.environment = environment
-            process.standardInput = FileHandle.nullDevice
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = pipe
-            do {
-                try process.run()
-            } catch {
-                return (-1, "\(error)")
-            }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            return (process.terminationStatus, String(decoding: data, as: UTF8.self))
-        }.value
+        do {
+            let run = try Command.run([executable] + arguments, environment: environment)
+            return (run.status, String(decoding: run.out + run.err, as: UTF8.self))
+        } catch {
+            return (-1, "\(error)")
+        }
     }
 
     // attach runs command in box on a terminal over Session.Exec, passing its output on to watch too; the Exec ends when the command does or the task is cancelled.
@@ -217,12 +205,13 @@ extension AppModel {
         }
         guard let text, Bundle.main.bundleIdentifier != nil else { return }
         let id = "offload-\(update.repo)-\(update.seq)"
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
+        Task {
+            let center = UNUserNotificationCenter.current()
+            guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else { return }
             let content = UNMutableNotificationContent()
             content.title = "CocoonBox"
             content.body = text
-            UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
+            try? await center.add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
         }
     }
 
