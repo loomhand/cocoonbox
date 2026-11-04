@@ -116,8 +116,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
-// Exchange sends req to the MCP endpoint of the agent of user's box with the owner's credential and hands use the response; the call is a reach until use returns.
-// A box that is not running is Unavailable before anything is sent; a request that may have reached the agent without an answer is Unknown.
+// Exchange sends req as the owner to the agent MCP of user's box and hands use the response, a reach until use returns; Unavailable when stopped, Unknown when unanswered.
 func (m *MCP) Exchange(req *http.Request, user, box string, use func(*http.Response) error) error {
 	ep, wake, err := m.resolver.Resolve(req.Context(), user, box)
 	if err != nil {
@@ -162,7 +161,7 @@ func (m *MCP) route(r *http.Request, boxID string) (rt route, err error) {
 	return rt, err
 }
 
-// admit returns the box owner and the bearer's caller, or for an unknown token that is a share secret admits the share into rt with the guest as the caller; a provider failure is never tried as a share.
+// admit returns the box owner and the bearer's caller, or admits an unknown share secret into rt as the guest; a provider failure is never tried as a share.
 func (m *MCP) admit(r *http.Request, rt *route, authorization, boxID string) (string, auth.Identity, error) {
 	caller, err := m.authn.Authenticate(r.Context(), auth.EntryMCP, authorization)
 	secret, ok := auth.ShareSecret(authorization)

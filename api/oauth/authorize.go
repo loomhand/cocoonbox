@@ -43,8 +43,7 @@ func ParseRequest(q url.Values) Request {
 	}
 }
 
-// Consent is what the consent page shows of a request it may approve; Existing marks a client that already holds a live grant of the user,
-// which an approval renews, Chosen that grant's chosen boxes, and Account a first-party client that signs in to the whole account.
+// Consent is what the consent page shows of a request: Existing marks a live grant the approval renews, Chosen its boxes, Account a whole-account first-party client.
 type Consent struct {
 	ClientName string `json:"client_name"`
 	ClientID   string `json:"client_id"`
@@ -59,8 +58,7 @@ type Consent struct {
 	Defaults     Caps     `json:"defaults"`
 }
 
-// AuthorizeError refuses an authorization request; Redirect takes the error back to the client, and is empty when the
-// client or its redirect URI is not trusted, so the page shows the error instead.
+// AuthorizeError refuses an authorization request; an empty Redirect means the client or its redirect URI is not trusted, so the page shows the error.
 type AuthorizeError struct {
 	Code        string
 	Description string
@@ -94,8 +92,7 @@ func (s *Service) Check(ctx context.Context, user string, req Request) (Consent,
 	}, nil
 }
 
-// Approve records user's consent to req within caps and with the user's own boxes of chosen, which a first-party client goes without,
-// and returns where the browser takes the code.
+// Approve records user's consent to req within caps and the user's own boxes of chosen (none for a first-party client), and returns where the browser takes the code.
 func (s *Service) Approve(ctx context.Context, user string, req Request, caps Caps, chosen []string) (string, error) {
 	c, err := s.check(ctx, req)
 	if err != nil {

@@ -300,7 +300,7 @@ func (s *Server) ready(ctx context.Context, user string, sess *session, ref stri
 	}
 }
 
-// forward sends body to the agent session of the box ref names, else of the default box, again on a new one once when the agent forgot the session or the box went, and returns the box and the agent session it last tried.
+// forward sends body to the agent session of ref's box, else the default box, once more on a new session when the old one went, and returns the box and session it last tried.
 func (s *Server) forward(ctx context.Context, user string, sess *session, ref string, body []byte, accept string, use func(*http.Response) error) (string, string, error) {
 	for retried := false; ; retried = true {
 		box, upstream, err := s.connect(ctx, user, sess, ref)
