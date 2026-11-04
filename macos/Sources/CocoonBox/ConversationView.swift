@@ -61,7 +61,7 @@ enum TranscriptRow: Identifiable {
                 rows.append(.approval(entry.seq, approval, answered: later || answered.contains(approval.approvalID)))
             case .turnEnd(let end):
                 rows.append(.turnEnd(entry.seq, end))
-            case nil:
+            case .usage, nil:
                 break
             }
         }
