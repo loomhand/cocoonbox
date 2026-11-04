@@ -1,8 +1,22 @@
 "use strict";
 
+const loginErrors = {
+  signup_closed: "Signup is closed. Sign in with your password and connect GitHub on your page, or ask an admin for an account.",
+  email_unverified: "Your GitHub account has no verified primary email.",
+  email_not_allowed: "Signup is not open to your email address.",
+  invite_required: "Signup is by invite only; this sign-in carried no invite, or its invite is used up or expired.",
+  declined: "Your signup request was declined.",
+  disabled: "This cocoonbox account is disabled.",
+  github_taken: "This GitHub account already signs in to another cocoonbox account.",
+  github_linked: "Your account already has a GitHub sign-in; disconnect it first.",
+  browser: "This sign-in did not start in this browser. Start it again.",
+  too_many: "Too many sign-ins from this address; try again later.",
+  github_denied: "GitHub did not allow the sign-in.",
+};
+
 let providers = null;
 const params = new URLSearchParams(location.search);
-const invite = params.get("invite") || "";
+const invite = params.get("invite") ?? "";
 
 function show(view) {
   for (const id of ["login", "me", "admin"]) $(id).hidden = !view.includes(id);
@@ -16,8 +30,8 @@ async function load() {
     if (e.status !== 401) notice(e.message, true);
     $("whoami").textContent = "";
     $("logout").hidden = true;
-    $("github-login").hidden = !(providers && providers.github);
-    $("signup-note").textContent = providers && providers.signup
+    $("github-login").hidden = !providers?.github;
+    $("signup-note").textContent = providers?.signup
       ? (invite ? "Your invite is kept: sign in with GitHub to use it." : providers.invite_only ? "New here? Signup is by invite." : "New here? Sign in with GitHub to sign up.")
       : "";
     show(["login"]);
@@ -89,8 +103,8 @@ async function load() {
 }
 
 async function loadIdentities(u) {
-  $("identities-section").hidden = !(providers && providers.github);
-  if (!providers || !providers.github) return;
+  $("identities-section").hidden = !providers?.github;
+  if (!providers?.github) return;
   const ids = await api("GET", "me/identities");
   const body = $("identities");
   body.replaceChildren();
@@ -183,10 +197,6 @@ async function loadSignup() {
   if (!tokens.length) cell(tbody.insertRow(), "No invite token.");
 }
 
-function list(text) {
-  return text.split(/[\s,]+/).filter(Boolean);
-}
-
 async function loadDevices() {
   const devices = await api("GET", "devices");
   const body = $("devices");
@@ -213,7 +223,7 @@ async function loadAgents() {
   const agents = await api("GET", "agents").catch(() => null);
   $("agents-link").hidden = !agents;
   $("setup-link").hidden = !agents;
-  const fresh = (agents ? agents.grants : []).filter((g) => !g.seen);
+  const fresh = (agents?.grants ?? []).filter((g) => !g.seen);
   if (fresh.length) notice(fresh.map((g) => g.client_name).join(", ") + " got access to manage boxes for you. Review it on the Agents page.");
 }
 
@@ -230,17 +240,18 @@ async function loadUsers(self) {
     const res = document.createElement("input");
     res.type = "checkbox";
     res.checked = u.residential;
+    res.setAttribute("aria-label", "Residential exit for " + u.name);
     res.addEventListener("change", () => update(u.id, { residential: res.checked }));
     cell(row, "").appendChild(res);
-    const max = number(u.max_boxes, (v) => update(u.id, { max_boxes: v }));
+    const max = number(u.max_boxes, "Max boxes for " + u.name, (v) => update(u.id, { max_boxes: v }));
     cell(row, "").appendChild(max);
-    const cap = number(u.max_boxes_cap, (v) => update(u.id, { max_boxes_cap: v }));
+    const cap = number(u.max_boxes_cap, "Box cap for " + u.name, (v) => update(u.id, { max_boxes_cap: v }));
     cell(row, "").appendChild(cap);
-    const running = number(u.max_running || "", (v) => update(u.id, { max_running: v || 0 }));
+    const running = number(u.max_running || "", "Boxes running at once for " + u.name, (v) => update(u.id, { max_running: v || 0 }));
     running.placeholder = "default";
     running.title = "How many of the user's boxes run at once; empty for the default";
     cell(row, "").appendChild(running);
-    const agents = number(u.max_agent_boxes || "", (v) => update(u.id, { max_agent_boxes: v || 0 }));
+    const agents = number(u.max_agent_boxes || "", "Agent boxes for " + u.name, (v) => update(u.id, { max_agent_boxes: v || 0 }));
     agents.placeholder = "no cap";
     agents.title = "How many boxes all of the user's agents may hold together; empty for no cap";
     cell(row, "").appendChild(agents);
@@ -248,6 +259,7 @@ async function loadUsers(self) {
     daily.size = 9;
     daily.placeholder = "default";
     daily.title = "A dollar amount, unlimited, or empty for the default";
+    daily.setAttribute("aria-label", "Daily model cap in USD for " + u.name);
     daily.value = u.daily_cap_micros == null ? "" : u.daily_cap_micros === -1 ? "unlimited" : String(u.daily_cap_micros / 1e6);
     daily.addEventListener("change", () => setDailyCap(u.id, daily.value.trim()));
     cell(row, "").appendChild(daily);
@@ -282,6 +294,7 @@ async function loadShares(boxes) {
     const write = document.createElement("input");
     write.type = "checkbox";
     write.checked = sh.write;
+    write.setAttribute("aria-label", "Share can type and click");
     write.addEventListener("change", () => {
       if (write.checked && !confirm($("write-warning").textContent)) {
         write.checked = false;
@@ -356,11 +369,12 @@ async function setDailyCap(id, text) {
   await saved(api("PUT", "users/" + encodeURIComponent(id) + "/daily-cap", { micros }));
 }
 
-function number(value, onChange) {
+function number(value, label, onChange) {
   const input = document.createElement("input");
   input.type = "number";
   input.min = 1;
   input.value = value;
+  input.setAttribute("aria-label", label);
   input.addEventListener("change", () => onChange(Number(input.value)));
   return input;
 }
@@ -520,19 +534,6 @@ $("logout").addEventListener("click", async () => {
   await load().catch((e) => notice(e.message, true));
 });
 
-const loginErrors = {
-  signup_closed: "Signup is closed. Sign in with your password and connect GitHub on your page, or ask an admin for an account.",
-  email_unverified: "Your GitHub account has no verified primary email.",
-  email_not_allowed: "Signup is not open to your email address.",
-  invite_required: "Signup is by invite only; this sign-in carried no invite, or its invite is used up or expired.",
-  declined: "Your signup request was declined.",
-  disabled: "This cocoonbox account is disabled.",
-  github_taken: "This GitHub account already signs in to another cocoonbox account.",
-  github_linked: "Your account already has a GitHub sign-in; disconnect it first.",
-  browser: "This sign-in did not start in this browser. Start it again.",
-  too_many: "Too many sign-ins from this address; try again later.",
-  github_denied: "GitHub did not allow the sign-in.",
-};
 if (params.get("login_error")) notice(loginErrors[params.get("login_error")] || "Signing in with GitHub failed; try again.", true);
 else if (params.has("linked")) notice("Connected GitHub: you can sign in with it now.");
 api("GET", "auth/providers").catch(() => null).then((p) => {

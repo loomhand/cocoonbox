@@ -1,32 +1,7 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
 const query = location.search.slice(1);
-const invite = new URLSearchParams(location.search).get("invite") || "";
-
-async function api(method, path, body) {
-  const resp = await fetch("/cb/api/" + path, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body || {}),
-    credentials: "same-origin",
-  });
-  const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) {
-    const err = new Error(data.error || resp.statusText);
-    err.status = resp.status;
-    err.redirect = data.redirect;
-    throw err;
-  }
-  return data;
-}
-
-function notice(text, isError) {
-  const el = $("notice");
-  el.textContent = text;
-  el.className = isError ? "error" : "";
-  el.hidden = !text;
-}
+const invite = new URLSearchParams(location.search).get("invite") ?? "";
 
 function show(id) {
   for (const s of ["login", "device", "consent"]) $(s).hidden = s !== id;
@@ -49,10 +24,9 @@ async function load() {
   } catch (e) {
     if (e.status === 401) {
       show("login");
-      fetch("/cb/api/auth/providers", { credentials: "same-origin" })
-        .then((r) => (r.ok ? r.json() : null))
+      api("GET", "auth/providers")
         .then((p) => {
-          $("github-login").hidden = !(p && p.github);
+          $("github-login").hidden = !p?.github;
           $("invite-note").hidden = !invite;
         })
         .catch(() => {});
@@ -152,4 +126,4 @@ function deny() {
 $("deny").addEventListener("click", deny);
 $("device-deny").addEventListener("click", deny);
 
-load();
+load().catch((e) => notice(e.message, true));

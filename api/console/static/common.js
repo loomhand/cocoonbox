@@ -14,6 +14,7 @@ async function api(method, path, body) {
   if (!resp.ok) {
     const err = new Error(data.error || resp.statusText);
     err.status = resp.status;
+    err.redirect = data.redirect;
     throw err;
   }
   return data;
@@ -39,6 +40,10 @@ function button(label, onClick, danger) {
   if (danger) b.className = "danger";
   b.addEventListener("click", () => onClick().catch((e) => notice(e.message, true)));
   return b;
+}
+
+function list(text) {
+  return text.split(/[\s,]+/).filter(Boolean);
 }
 
 function when(iso) {
