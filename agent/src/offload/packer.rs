@@ -1,6 +1,7 @@
 //! The box packer verbs: `begin`, the `send` stream, messages, `post`, `end` and `wipe-secrets`.
 
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::io::Read;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Component, Path, PathBuf};
@@ -110,9 +111,12 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
         _ => {}
     }
     if !findings.is_empty() {
+        let mut detail = json!({});
+        detail["findings"] = findings.into();
+        detail["cli"] = cli;
         return Err(Fail::Refused(
             "the box preflight blocks this offload".to_owned(),
-            json!({"findings": findings, "cli": cli}),
+            detail,
         ));
     }
     let workspace = layout.workspace.clone();
@@ -161,16 +165,12 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
     } else {
         Vec::new()
     };
-    Ok(json!({
-        "ok": true,
-        "dir": copy.dir,
-        "name": copy.name,
-        "copy": was,
-        "refs": refs,
-        "ignored": ignored,
-        "cli": cli,
-        "findings": [],
-    }))
+    let mut out = json!({"ok": true, "dir": copy.dir, "name": copy.name, "copy": was});
+    out["refs"] = refs;
+    out["ignored"] = ignored.into();
+    out["cli"] = cli;
+    out["findings"] = json!([]);
+    Ok(out)
 }
 
 /// The offload stream: history, environment, secrets, the check against S, and the first prompt.
@@ -437,20 +437,17 @@ impl Offload<'_> {
         if !self.no_repo {
             prompt.push_str(&self.attached(&base, spec.as_ref()).await);
         }
+        let mut req = json!({
+            "op": "send",
+            "repo": self.repo,
+            "name": self.copy.name,
+            "cli": self.kind,
+            "offload_id": self.id,
+        });
+        req["body"] = prompt.into();
+        req["start"] = true.into();
         let started_ms = crate::now_ms();
-        let resp = call(
-            self.layout,
-            &json!({
-                "op": "send",
-                "repo": self.repo,
-                "name": self.copy.name,
-                "cli": self.kind,
-                "offload_id": self.id,
-                "body": prompt,
-                "start": true,
-            }),
-        )
-        .await?;
+        let resp = call(self.layout, &req).await?;
         lap("start", timings);
         let accepted = self.wait_accepted(started_ms).await;
         lap("accept", timings);
@@ -1031,7 +1028,7 @@ async fn write_excludes(layout: &Layout, dir: &Path) -> Result<(), Fail> {
             .map(|l| format!("{l}\n"))
             .collect();
         for p in ignored {
-            text.push_str(&format!("{}\n", p.display()));
+            let _ = writeln!(text, "{}", p.display());
         }
         let tmp = file.with_extension("tmp");
         std::fs::write(&tmp, text).map_err(|e| format!("write {}: {e}", tmp.display()))?;

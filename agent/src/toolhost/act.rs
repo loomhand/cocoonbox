@@ -360,7 +360,6 @@ mod tests {
         path.display().to_string()
     }
 
-    /// A shuttle on `socket` that logs every call and types the first `typed` texts; acts answer with an image.
     fn fake_shuttle(socket: &Path, typed: usize) -> Calls {
         let mut listener = super::super::bind(socket, "").unwrap();
         let calls = Calls::default();

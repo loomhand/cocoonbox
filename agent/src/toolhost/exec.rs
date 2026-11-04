@@ -487,7 +487,6 @@ mod tests {
         Some(json!({"term": DEFAULT_TERM, "rows": rows, "cols": cols}))
     }
 
-    /// Reads stdout frames until the output holds `text`; the output so far.
     async fn until(conn: &mut rpc::Stream, text: &str) -> String {
         let mut out = Vec::new();
         while !String::from_utf8_lossy(&out).contains(text) {
@@ -498,7 +497,6 @@ mod tests {
         String::from_utf8_lossy(&out).into_owned()
     }
 
-    /// Reads frames until the exit frame; stdout, stderr and the exit code.
     async fn finish(conn: &mut rpc::Stream) -> (String, String, i32) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         loop {

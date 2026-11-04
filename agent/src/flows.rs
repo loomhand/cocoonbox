@@ -164,14 +164,14 @@ impl Syncer {
                 .await?;
         }
         let held: HashSet<&str> = library.flows.iter().map(|r| r.name.as_str()).collect();
-        for (name, (_, synced)) in rows.iter().filter(|(n, _)| !held.contains(n.as_str())) {
-            if local.get(name) == Some(synced) {
+        for (name, (_, synced)) in rows.into_iter().filter(|(n, _)| !held.contains(n.as_str())) {
+            if local.get(&name) == Some(&synced) {
                 if name.ends_with(".json") {
                     self.stale_index.store(true, Ordering::SeqCst);
                 }
                 self.run("flows_remove", json!({"name": name})).await?;
             }
-            self.store.drop_flow_row(name.clone()).await?;
+            self.store.drop_flow_row(name).await?;
         }
         let folder = if folder.is_empty() {
             self.mark().await?
@@ -665,7 +665,6 @@ mod tests {
         refuse: bool,
     }
 
-    /// A box door that answers one HTTP/1.1 request per connection.
     struct Door {
         addr: std::net::SocketAddr,
         state: Arc<Mutex<DoorState>>,

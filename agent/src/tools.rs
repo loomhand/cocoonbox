@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::config::Automation;
 use crate::llm::ToolSpec;
@@ -139,7 +139,7 @@ pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
 }
 
 /// Sets the `title` and `annotations` of the remote tool `name` in `tool`.
-pub fn annotate(tool: &mut serde_json::Value, name: &str) {
+pub fn annotate(tool: &mut Value, name: &str) {
     let title = TITLES
         .iter()
         .find(|(n, _)| *n == name)
@@ -522,7 +522,7 @@ fn android_tools() -> Vec<ToolSpec> {
 }
 
 /// Gives `computer_act` of a box that runs GUI plans the `locate` action and the described `target`.
-fn with_target(parameters: &mut serde_json::Value) {
+fn with_target(parameters: &mut Value) {
     if let Some(actions) = parameters["properties"]["action"]["enum"].as_array_mut() {
         actions.push("locate".into());
     }
@@ -681,6 +681,6 @@ fn tabs_tool() -> ToolSpec {
     }
 }
 
-fn max_edge() -> serde_json::Value {
+fn max_edge() -> Value {
     json!({"type": "integer", "description": "Scale the screenshot so its long edge is at most this many pixels; x,y then refer to the scaled image"})
 }

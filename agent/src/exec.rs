@@ -46,7 +46,10 @@ pub async fn relay(
     }
     let tty = start.tty.map(|tty| {
         let window = tty.window.unwrap_or_default();
-        json!({"term": tty.term, "terminfo": tty.terminfo, "rows": window.rows, "cols": window.cols})
+        let mut t = json!({"rows": window.rows, "cols": window.cols});
+        t["term"] = tty.term.into();
+        t["terminfo"] = tty.terminfo.into();
+        t
     });
     let (mut rd, mut wr) = tokio::io::split(
         tools

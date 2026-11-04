@@ -485,17 +485,17 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         }
         "event" => {
             let payload = match a.positional.first() {
-                Some(p) => p.clone(),
-                None => stdin_text().await?,
-            };
-            let payload: Value = serde_json::from_str(&payload).unwrap_or(Value::Null);
-            let req = json!({
+                Some(p) => serde_json::from_str(p),
+                None => serde_json::from_str(&stdin_text().await?),
+            }
+            .unwrap_or(Value::Null);
+            let mut req = json!({
                 "op": "event",
                 "repo": a.repo()?,
                 "cli": a.required("cli")?,
                 "hook": a.required("hook")?,
-                "payload": payload,
             });
+            req["payload"] = payload;
             call(layout, &req).await?
         }
         "serve" => {

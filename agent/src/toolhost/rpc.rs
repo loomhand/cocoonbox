@@ -127,10 +127,12 @@ impl Client {
     /// Starts `command` as `user`, on a terminal when `tty` is `{term, rows, cols}`; the
     /// connection then carries [`write_tagged`] frames both ways. Closing it kills the command.
     pub async fn exec(&self, command: &str, tty: Option<Value>) -> Result<Stream, String> {
+        let mut args = json!({"command": command});
+        args["tty"] = tty.unwrap_or(Value::Null);
         let call = Call {
             agent_id: String::new(),
             tool: "exec".to_owned(),
-            args: json!({"command": command, "tty": tty}),
+            args,
         };
         let mut stream = self.open(&call).await?;
         let started: Output = read_frame(&mut stream).await?;

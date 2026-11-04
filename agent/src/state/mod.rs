@@ -207,7 +207,7 @@ impl StateEngine {
                 )));
             }
             let path = snap.spool.join(&put.chunk_id);
-            if !path.exists() {
+            if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
                 return Err(StateError::Invalid(format!(
                     "chunk {} was not spooled because the last upload held it; plan again without a parent",
                     put.chunk_id
@@ -258,17 +258,7 @@ impl StateEngine {
         let _one = self.pinned.lock().await;
         let opened = self.open(&mut reqs).await?;
         let cache = self.cache().await?;
-        let result = self
-            .restore_from(
-                &opened.keys,
-                &opened.manifest,
-                opened.gets,
-                reqs,
-                &cache,
-                progress,
-                &opened.manifest_id,
-            )
-            .await;
+        let result = self.restore_from(opened, reqs, &cache, progress).await;
         let _ = tokio::fs::remove_dir_all(&cache).await;
         result
     }
@@ -367,20 +357,23 @@ impl StateEngine {
         Ok(cache)
     }
 
-    #[allow(clippy::too_many_arguments)]
     async fn restore_from<S>(
         &self,
-        keys: &Arc<Keys>,
-        manifest: &Manifest,
-        queue: Vec<pb::PresignedGet>,
+        opened: Opened,
         reqs: S,
         cache: &Path,
         progress: mpsc::Sender<pb::TransferProgress>,
-        manifest_id: &str,
     ) -> Result<(), StateError>
     where
         S: Stream<Item = Result<pb::RestoreRequest, String>> + Unpin,
     {
+        let Opened {
+            keys,
+            manifest,
+            manifest_id,
+            gets: queue,
+            ..
+        } = opened;
         let mut targets = Vec::new();
         let mut finals = Vec::with_capacity(self.roots.len());
         let mut swaps = Vec::with_capacity(self.roots.len());
@@ -429,19 +422,19 @@ impl StateEngine {
             });
         }
         let mut filled = self
-            .fill(keys, targets, queue, reqs, cache, progress)
+            .fill(&keys, targets, queue, reqs, cache, progress)
             .await?;
         for last in finals {
             self.tool("state_apply", last).await?;
         }
         let quiet = self.quiesce().await?;
-        let result = self.swap_in(manifest, cache, swaps).await;
+        let result = self.swap_in(&manifest, cache, swaps).await;
         self.resume(quiet, result.is_ok());
         result?;
-        if let Err(e) = self.seed_known(manifest, &filled).await {
+        if let Err(e) = self.seed_known(&manifest, &filled).await {
             eprintln!("state: seed the reuse cache: {e}");
         }
-        filled.meter.finish(manifest_id).await;
+        filled.meter.finish(&manifest_id).await;
         Ok(())
     }
 
@@ -553,8 +546,8 @@ impl StateEngine {
         gets: &Semaphore,
         filled: &Mutex<Filled>,
     ) -> Result<(), String> {
-        let mut key = match &dest {
-            Dest::Staged(_, e) => Some(format!("{}/{}", e.root, e.path)),
+        let mut entry = match &dest {
+            Dest::Staged(_, e) => Some(*e),
             Dest::Local(_) => None,
         };
         let mut sink = match dest {
@@ -572,10 +565,14 @@ impl StateEngine {
             .buffered(RESTORE_AHEAD);
         while let Some(d) = data.next().await {
             let d = d?;
-            if let Some(k) = key.take()
+            if let Some(e) = entry.take()
                 && d.starts_with(SQLITE_MAGIC)
             {
-                filled.lock().await.sqlite.insert(k);
+                filled
+                    .lock()
+                    .await
+                    .sqlite
+                    .insert(format!("{}/{}", e.root, e.path));
             }
             sink.send(&d).await?;
         }
@@ -1354,7 +1351,7 @@ pub fn default_roots(home: &Path, workspace: &Path) -> Vec<Root> {
         Root {
             name: HOME_ROOT.to_owned(),
             path: home.to_owned(),
-            excluded: HOME_EXCLUDED.map(str::to_owned).to_vec(),
+            excluded: HOME_EXCLUDED.map(str::to_owned).into(),
         },
         Root {
             name: WORKSPACE_ROOT.to_owned(),
@@ -1407,7 +1404,7 @@ fn stage<'a>(
     (first, last)
 }
 
-/// `path` without its prefix and root: `/home/user` is `home/user`, and `C:\\Users\\user` is `Users\\user`.
+/// `path` without its prefix and root: `/home/user` is `home/user`, and `C:\Users\user` is `Users\user`.
 fn relative(path: &Path) -> PathBuf {
     path.components()
         .filter(|c| matches!(c, Component::Normal(_)))

@@ -442,8 +442,9 @@ fn swap_moves(
             continue;
         }
         let aside = trash.join(&name);
-        fs::rename(entry.path(), &aside).map_err(|e| format!("move aside {name}: {e}"))?;
-        moved.push((entry.path(), aside));
+        let from = entry.path();
+        fs::rename(&from, &aside).map_err(|e| format!("move aside {name}: {e}"))?;
+        moved.push((from, aside));
         removed += 1;
     }
     for name in a.names.iter().filter(|n| !n.starts_with(TRASH_PREFIX)) {
@@ -557,14 +558,15 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
             {
                 continue;
             }
-            let Ok(meta) = fs::symlink_metadata(child.path()) else {
+            let full = child.path();
+            let Ok(meta) = fs::symlink_metadata(&full) else {
                 continue;
             };
             let ft = meta.file_type();
             let (kind, target) = if sys::is_dir_link(&ft) {
                 continue;
             } else if ft.is_symlink() {
-                let target = fs::read_link(child.path())
+                let target = fs::read_link(&full)
                     .ok()
                     .map(|t| t.to_string_lossy().into_owned());
                 (Kind::Symlink, target)
@@ -585,7 +587,7 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
                 size: if kind == Kind::File { meta.len() } else { 0 },
                 target,
                 ctime_ns: (kind == Kind::File)
-                    .then(|| sys::ctime_ns(&child.path(), &meta))
+                    .then(|| sys::ctime_ns(&full, &meta))
                     .flatten(),
             });
         }
