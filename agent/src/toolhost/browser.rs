@@ -1786,11 +1786,7 @@ fn web_url(url: String) -> Result<String, String> {
     } else {
         format!("https://{given}")
     };
-    let invalid = |why: &dyn std::fmt::Display| format!("{given:?} is not a valid URL: {why}");
-    let parsed = reqwest::Url::parse(&url).map_err(|e| invalid(&e))?;
-    if matches!(parsed.scheme(), "http" | "https") && parsed.host_str().is_none_or(str::is_empty) {
-        return Err(invalid(&"it names no host"));
-    }
+    reqwest::Url::parse(&url).map_err(|e| format!("{given:?} is not a valid URL: {e}"))?;
     Ok(url)
 }
 
