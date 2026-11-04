@@ -435,11 +435,10 @@ fn early_transient(message: &str) -> bool {
             .is_some_and(|e| TRANSIENT_ERRORS.iter().any(|t| e["type"] == *t))
 }
 
-/// The error of a gw answer that is not a success; a 402 or gw's quota class says the model credits are used up.
+/// The error of a gw answer that is not a success; gw's quota class says the model credits are used up.
 fn refused(what: &str, status: reqwest::StatusCode, body: &str) -> String {
     let error = serde_json::from_str::<Value>(body).unwrap_or_default()["error"].take();
-    let quota = status == reqwest::StatusCode::BAD_REQUEST && error["code"] == QUOTA_EXCEEDED;
-    if status != reqwest::StatusCode::PAYMENT_REQUIRED && !quota {
+    if status != reqwest::StatusCode::BAD_REQUEST || error["code"] != QUOTA_EXCEEDED {
         return format!("{what} returned {status}: {body}");
     }
     used_up(
@@ -604,8 +603,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_402_or_the_gw_quota_answer_says_the_model_credits_are_used_up_without_a_retry() {
+    async fn the_gw_quota_answer_says_the_model_credits_are_used_up_without_a_retry() {
         let quota = r#"{"error":{"message":"daily token quota exhausted for key ak-1","type":"invalid_request_error","param":null,"code":"service_quota_exceeded_exception"}}"#;
+        let bare = r#"{"error":{"message":"","type":"invalid_request_error","param":null,"code":"service_quota_exceeded_exception"}}"#;
         let other = r#"{"error":{"message":"bad","type":"invalid_request_error","param":null,"code":"validation_exception"}}"#;
         let http = |status: &str, body: &str| {
             format!(
@@ -614,9 +614,8 @@ mod tests {
             )
         };
         let gw = mock_gw(vec![
-            http("402 Payment Required", "daily credit exhausted"),
-            http("402 Payment Required", ""),
             http("400 Bad Request", quota),
+            http("400 Bad Request", bare),
             http("400 Bad Request", other),
         ])
         .await;
@@ -627,12 +626,11 @@ mod tests {
             )
         };
         let want = [
-            spent("402 Payment Required", ": daily credit exhausted"),
-            spent("402 Payment Required", ""),
             spent(
                 "400 Bad Request",
                 ": daily token quota exhausted for key ak-1",
             ),
+            spent("400 Bad Request", ""),
             format!("gw chat/completions returned 400 Bad Request: {other}"),
         ];
         for want in want {
