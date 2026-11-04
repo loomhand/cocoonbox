@@ -5,19 +5,6 @@ import Foundation
 import Synchronization
 import UserNotifications
 
-// BoxCLISheet installs a box CLI in a box, or signs it in there.
-enum BoxCLISheet: Identifiable {
-    case install(OffloadKind, Box)
-    case signIn(OffloadKind, Box)
-
-    var id: String {
-        switch self {
-        case .install(let kind, let box): "install-\(kind.rawValue)-\(box.id)"
-        case .signIn(let kind, let box): "signin-\(kind.rawValue)-\(box.id)"
-        }
-    }
-}
-
 // BusyWarning asks before a hibernate or an upgrade while a box agent works (design.md §27, D20).
 struct BusyWarning: Identifiable {
     let id = UUID()

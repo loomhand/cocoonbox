@@ -114,11 +114,6 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         MockWorld.usage
     }
 
-    private func owned(_ boxID: String) async throws -> Cocoonbox_Control_V1_Box {
-        guard let box = await world.box(boxID), box.id == boxID else { throw MockWorld.noBox }
-        return box
-    }
-
     func watchOperation(request: Cocoonbox_Control_V1_WatchOperationRequest, response: RPCWriter<Cocoonbox_Control_V1_OperationEvent>, context: ServerContext) async throws {
         let (replay, live) = try await world.watch(operation: request.operationID, after: request.fromOffsetKey)
         for event in replay {
@@ -128,6 +123,11 @@ struct BoxesService: Cocoonbox_Control_V1_Boxes.SimpleServiceProtocol {
         for await event in live {
             try await response.write(event)
         }
+    }
+
+    private func owned(_ boxID: String) async throws -> Cocoonbox_Control_V1_Box {
+        guard let box = await world.box(boxID), box.id == boxID else { throw MockWorld.noBox }
+        return box
     }
 }
 
