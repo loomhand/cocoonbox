@@ -39,6 +39,13 @@ type chunkDelta struct {
 	Removed []string `json:"removed"`
 }
 
+// fileOp copies Count files of the base from index From, or, with Count 0, puts one file record verbatim.
+type fileOp struct {
+	From  int    `json:"from,omitzero"`
+	Count int    `json:"count,omitzero"`
+	Put   string `json:"put,omitempty"`
+}
+
 // manifestDelta rebuilds a manifest's exact plaintext from its base: Prefix, the files array from Ops, then Suffix.
 type manifestDelta struct {
 	Version int      `json:"version"`
@@ -62,13 +69,6 @@ func (d manifestDelta) apply(base manifestParts) (manifestParts, error) {
 		}
 	}
 	return out, nil
-}
-
-// fileOp copies Count files of the base from index From, or, with Count 0, puts one file record verbatim.
-type fileOp struct {
-	From  int    `json:"from,omitzero"`
-	Count int    `json:"count,omitzero"`
-	Put   string `json:"put,omitempty"`
 }
 
 // manifestParts is a compact manifest split around its files array, each file record verbatim.
