@@ -322,6 +322,15 @@ public nonisolated struct Cocoonbox_Agent_V1_TranscriptEntry: Sendable {
     set {body = .turnEnd(newValue)}
   }
 
+  /// The turn's usage so far, recorded after each completed model call; TurnEnd.usage is the final sum.
+  public var usage: Cocoonbox_Agent_V1_Usage {
+    get {
+      if case .usage(let v)? = body {return v}
+      return Cocoonbox_Agent_V1_Usage()
+    }
+    set {body = .usage(newValue)}
+  }
+
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public nonisolated enum OneOf_Body: Equatable, Sendable {
@@ -331,6 +340,8 @@ public nonisolated struct Cocoonbox_Agent_V1_TranscriptEntry: Sendable {
     case toolResult(Cocoonbox_Agent_V1_ToolResult)
     case approval(Cocoonbox_Agent_V1_ApprovalRequest)
     case turnEnd(Cocoonbox_Agent_V1_TurnEnd)
+    /// The turn's usage so far, recorded after each completed model call; TurnEnd.usage is the final sum.
+    case usage(Cocoonbox_Agent_V1_Usage)
 
   }
 
@@ -971,7 +982,7 @@ nonisolated extension Cocoonbox_Agent_V1_TranscriptPage: SwiftProtobuf.Message, 
 
 nonisolated extension Cocoonbox_Agent_V1_TranscriptEntry: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".TranscriptEntry"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{3}agent_id\0\u{3}turn_id\0\u{1}role\0\u{3}at_ms\0\u{2}\u{5}text\0\u{1}reasoning\0\u{3}tool_call\0\u{3}tool_result\0\u{1}approval\0\u{3}turn_end\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}seq\0\u{3}agent_id\0\u{3}turn_id\0\u{1}role\0\u{3}at_ms\0\u{2}\u{5}text\0\u{1}reasoning\0\u{3}tool_call\0\u{3}tool_result\0\u{1}approval\0\u{3}turn_end\0\u{1}usage\0")
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
     while let fieldNumber = try decoder.nextFieldNumber() {
@@ -1062,6 +1073,19 @@ nonisolated extension Cocoonbox_Agent_V1_TranscriptEntry: SwiftProtobuf.Message,
           self.body = .turnEnd(v)
         }
       }()
+      case 16: try {
+        var v: Cocoonbox_Agent_V1_Usage?
+        var hadOneofValue = false
+        if let current = self.body {
+          hadOneofValue = true
+          if case .usage(let m) = current {v = m}
+        }
+        try decoder.decodeSingularMessageField(value: &v)
+        if let v = v {
+          if hadOneofValue {try decoder.handleConflictingOneOf()}
+          self.body = .usage(v)
+        }
+      }()
       default: break
       }
     }
@@ -1111,6 +1135,10 @@ nonisolated extension Cocoonbox_Agent_V1_TranscriptEntry: SwiftProtobuf.Message,
     case .turnEnd?: try {
       guard case .turnEnd(let v)? = self.body else { preconditionFailure() }
       try visitor.visitSingularMessageField(value: v, fieldNumber: 15)
+    }()
+    case .usage?: try {
+      guard case .usage(let v)? = self.body else { preconditionFailure() }
+      try visitor.visitSingularMessageField(value: v, fieldNumber: 16)
     }()
     case nil: break
     }
