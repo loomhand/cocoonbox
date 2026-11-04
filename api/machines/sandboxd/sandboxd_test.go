@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -74,7 +75,7 @@ func TestEnsureClaimsAndReportsRunningOnceTheAgentAnswers(t *testing.T) {
 		TTLSeconds: 3600, OnExpire: "archive",
 		Metadata: map[string]string{"cb_machine": boxID, "cb_owner": owner},
 	}
-	if fmt.Sprint(claim) != fmt.Sprint(want) {
+	if !reflect.DeepEqual(claim, want) {
 		t.Errorf("claim = %+v, want %+v", claim, want)
 	}
 	if again, action, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge}); err != nil || action != machines.ActionNone || again.State != machines.StateRunning {
@@ -994,7 +995,7 @@ func TestAClaimTheEntryRedirectsRunsOnThePeerAndStaysAfterARestart(t *testing.T)
 func TestAClaimWhosePeerFailsRunsOnTheEntryWithoutARedirect(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.redirect = []*fakeSandboxd{peer}
-	peer.down = true
+	peer.setDown(true)
 	b := newTestBackend(t, entry)
 	claimRunning(t, b)
 	if entry.count("claim") != 1 || !entry.lastClaim().NoRedirect {
@@ -1007,9 +1008,7 @@ func TestAMachineOfAPeerThatLeftTheMeshGoesOnlyAfterItStaysAway(t *testing.T) {
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
 	b := newTestBackend(t, entry)
 	claimRunning(t, b)
-	peer.mu.Lock()
-	peer.down = true
-	peer.mu.Unlock()
+	peer.setDown(true)
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh with the peer down: %v", err)
 	}
@@ -1051,9 +1050,7 @@ func TestAFailedEntryListDropsNothingAndTheRefreshReadsThePeers(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	waitState(t, b, "cb-peer", m.Revision, machines.StateRunning)
-	entry.mu.Lock()
-	entry.down = true
-	entry.mu.Unlock()
+	entry.setDown(true)
 	peer.mutate(func(sb *fakeSandbox) { sb.row.Hibernated = true })
 	if err := b.refresh(t.Context()); err != nil {
 		t.Fatalf("refresh with the entry down: %v", err)
@@ -1072,16 +1069,12 @@ func TestARollingSwitchOfTheEntryNodeKeepsEveryMachineOnItsNode(t *testing.T) {
 	db := clustertest.Open(t)
 	before := newSharedBackend(t, a, db)
 	claimRunning(t, before)
-	a.mu.Lock()
-	a.down = true
-	a.mu.Unlock()
+	a.setDown(true)
 	after := newSharedBackend(t, b, db)
 	if _, err := after.cached(boxID); err != nil {
 		t.Fatalf("an api entering through the other node dropped the machine of a node that did not answer: %v", err)
 	}
-	a.mu.Lock()
-	a.down = false
-	a.mu.Unlock()
+	a.setDown(false)
 	var version int64
 	for i, be := range []*Backend{before, after, before, after} {
 		if err := be.refresh(t.Context()); err != nil {
@@ -1119,16 +1112,12 @@ func TestAStoredEmptyOwnerResolvesToTheNodeThatHoldsTheClaim(t *testing.T) {
 	if err := db.PutMachine(t.Context(), cluster.Machine{ID: boxID, Owner: owner, Image: template, CreatedAt: time.Now(), Claim: claim, Ready: true}); err != nil {
 		t.Fatalf("PutMachine: %v", err)
 	}
-	a.mu.Lock()
-	a.down = true
-	a.mu.Unlock()
+	a.setDown(true)
 	next := newSharedBackend(t, b, db)
 	if _, err := next.cached(boxID); err != nil {
 		t.Fatalf("a row an older api wrote went while its node did not answer: %v", err)
 	}
-	a.mu.Lock()
-	a.down = false
-	a.mu.Unlock()
+	a.setDown(false)
 	if got, err := next.Get(t.Context(), boxID); err != nil || got.State != machines.StateRunning {
 		t.Fatalf("Get = %+v, %v, want the running machine on its node", got, err)
 	}
@@ -1581,6 +1570,12 @@ func (f *fakeSandboxd) mutate(fn func(*fakeSandbox)) {
 	for _, sb := range f.sandboxes {
 		fn(sb)
 	}
+}
+
+func (f *fakeSandboxd) setDown(down bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.down = down
 }
 
 func (f *fakeSandboxd) only() string {

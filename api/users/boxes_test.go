@@ -8,7 +8,8 @@ import (
 	"slices"
 	"sync"
 	"testing"
-	"time"
+
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 )
 
 func TestEveryUserStartsWithOneBox(t *testing.T) {
@@ -248,23 +249,17 @@ func TestABoxChangeOfOneApiReachesAnother(t *testing.T) {
 	if _, err := a.AddBox(t.Context(), Box{ID: "cb-x", Owner: u.ID, Name: "extra"}); err != nil {
 		t.Fatalf("AddBox: %v", err)
 	}
-	if took, ok := within(2*time.Second, func() bool { return b.HasBox(u.ID, "cb-x") }); !ok {
-		t.Fatalf("the other api does not know the added box %s later", took)
-	}
+	clustertest.WaitFor(t, "the other api knows the added box", func() bool { return b.HasBox(u.ID, "cb-x") })
 	if _, err := a.RenameBox(t.Context(), u.ID, "cb-x", "renamed"); err != nil {
 		t.Fatalf("RenameBox: %v", err)
 	}
-	if took, ok := within(2*time.Second, func() bool {
+	clustertest.WaitFor(t, "the other api knows the new name", func() bool {
 		return slices.ContainsFunc(b.Boxes(u.ID), func(x Box) bool { return x.ID == "cb-x" && x.Name == "renamed" })
-	}); !ok {
-		t.Fatalf("the other api does not know the new name %s later", took)
-	}
+	})
 	if err := a.RemoveBox(t.Context(), u.ID, "cb-x"); err != nil {
 		t.Fatalf("RemoveBox: %v", err)
 	}
-	if took, ok := within(2*time.Second, func() bool { return !b.HasBox(u.ID, "cb-x") }); !ok {
-		t.Errorf("the other api still has the removed box %s later", took)
-	}
+	clustertest.WaitFor(t, "the other api drops the removed box", func() bool { return !b.HasBox(u.ID, "cb-x") })
 }
 
 func firstBoxID(user string) string {

@@ -2,11 +2,9 @@ package boxes
 
 import (
 	"context"
-	"crypto/rand"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -15,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -23,6 +20,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/console"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
@@ -100,7 +98,7 @@ type disableEnv struct {
 func newDisableEnv(t *testing.T) *disableEnv {
 	t.Helper()
 	gw := &fakeGW{off: map[string]bool{}}
-	us, err := users.Open(t.Context(), users.Options{DSN: testDatabase(t), MasterKeyFile: masterKey(t), GW: gw, Tenants: fakeTenants{}, FirstBoxID: BoxID})
+	us, err := users.Open(t.Context(), users.Options{DSN: clustertest.EmptyDSN(t), MasterKeyFile: masterKey(t), GW: gw, Tenants: fakeTenants{}, FirstBoxID: BoxID})
 	if err != nil {
 		t.Fatalf("open users: %v", err)
 	}
@@ -215,35 +213,6 @@ type fakeTenants struct{}
 func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
 
 func (fakeTenants) DeleteTenant(context.Context, string) error { return nil }
-
-func testDatabase(t *testing.T) string {
-	t.Helper()
-	base := os.Getenv("COCOONBOX_TEST_DSN")
-	if base == "" {
-		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
-	}
-	conn, err := pgx.Connect(t.Context(), base)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { _ = conn.Close(context.Background()) }()
-	name := "t_" + strings.ToLower(rand.Text()[:12])
-	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() {
-		if c, err := pgx.Connect(context.Background(), base); err == nil {
-			_, _ = c.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)")
-			_ = c.Close(context.Background())
-		}
-	})
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse COCOONBOX_TEST_DSN: %v", err)
-	}
-	u.Path = "/" + name
-	return u.String()
-}
 
 func masterKey(t *testing.T) string {
 	t.Helper()

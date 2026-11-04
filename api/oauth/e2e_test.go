@@ -1,6 +1,7 @@
 package oauth_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -31,6 +32,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/account"
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/console"
 	"github.com/loomhand/cocoonbox/api/controlmcp"
 	"github.com/loomhand/cocoonbox/api/edge"
@@ -373,8 +375,7 @@ func TestAGrantDrivesOnlyItsOwnBoxesThroughTheBoxMCP(t *testing.T) {
 
 func TestAGrantReachesTheBoxesTheUserChoseAndNoOther(t *testing.T) {
 	e := newEnv(t)
-	two := 2
-	if _, err := e.users.Update(t.Context(), e.alice, users.Settings{MaxBoxesCap: &two, MaxBoxes: &two}); err != nil {
+	if _, err := e.users.Update(t.Context(), e.alice, users.Settings{MaxBoxesCap: new(2), MaxBoxes: new(2)}); err != nil {
 		t.Fatalf("raise max boxes: %v", err)
 	}
 	work, err := e.users.AddBox(t.Context(), users.Box{ID: "cb-work00000000", Owner: e.alice, Name: "work"})
@@ -488,10 +489,7 @@ func TestAGrantKeepsOneAgentSessionAcrossClientSessionsUntilItEnds(t *testing.T)
 		t.Fatalf("three client sessions of a grant: the agent saw %v, want one initialize", seen)
 	}
 	e.console(t, http.MethodDelete, "agents/"+e.grants(t)[0].ID, map[string]any{}, nil)
-	deadline := time.Now().Add(5 * time.Second)
-	for !slices.Contains(e.seen.list(), "DELETE agent-session") && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, "the shared agent session closes", func() bool { return slices.Contains(e.seen.list(), "DELETE agent-session") })
 	if seen := e.seen.list(); !slices.Equal(seen, []string{"initialize", "DELETE agent-session"}) {
 		t.Fatalf("after the revoke the agent saw %v, want the shared session closed", seen)
 	}
@@ -562,8 +560,7 @@ func TestSigningInAgainRenewsTheClientsGrant(t *testing.T) {
 func TestDisabledUserLosesItsGrants(t *testing.T) {
 	e := newEnv(t)
 	access, _ := e.authorize(t, e.register(t, "Agent"), oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
-	disabled := true
-	if _, err := e.users.Update(t.Context(), e.alice, users.Settings{Disabled: &disabled}); err != nil {
+	if _, err := e.users.Update(t.Context(), e.alice, users.Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if resp := e.mcp(t, access, "tools/list", nil); resp.StatusCode != http.StatusUnauthorized {
@@ -586,7 +583,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	dsn := freshDatabase(t)
+	dsn := clustertest.EmptyDSN(t)
 	us, err := users.Open(t.Context(), users.Options{
 		DSN: dsn, MasterKeyFile: masterKeyFile(t), GW: &fakeGW{}, Tenants: fakeTenants{},
 		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] },
@@ -716,7 +713,7 @@ func (e *env) tokenError(t *testing.T, form url.Values) (int, string) {
 func (e *env) mcp(t *testing.T, token, method string, params any) *http.Response {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.Path, strings.NewReader(string(body)))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.Path, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -729,7 +726,6 @@ func (e *env) mcp(t *testing.T, token, method string, params any) *http.Response
 	return resp
 }
 
-// result calls tool as token and returns the tool result.
 func (e *env) result(t *testing.T, token, tool string, args map[string]any) (bool, string, jsontext.Value) {
 	t.Helper()
 	resp := e.mcp(t, token, "tools/call", map[string]any{"name": tool, "arguments": args})
@@ -799,7 +795,7 @@ func (e *env) grants(t *testing.T) []oauth.Grant {
 func (e *env) rootCall(t *testing.T, token, session string, args map[string]any) (bool, string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "shell", "arguments": args}})
-	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.RootPath, strings.NewReader(string(body)))
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, e.srv.URL+controlmcp.RootPath, bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -854,7 +850,7 @@ func (e *env) consoleStatus(t *testing.T, method, path string, body any) (int, s
 	var reader io.Reader
 	if body != nil {
 		data, _ := json.Marshal(body)
-		reader = strings.NewReader(string(data))
+		reader = bytes.NewReader(data)
 	}
 	req, _ := http.NewRequestWithContext(t.Context(), method, e.srv.URL+console.Prefix+"api/"+path, reader)
 	if body != nil {
@@ -1045,7 +1041,7 @@ type fakeTenants struct{}
 func (fakeTenants) PutTenant(context.Context, string, string, int) error { return nil }
 func (fakeTenants) DeleteTenant(context.Context, string) error           { return nil }
 
-// newFakeAgent answers every MCP request over h2c, opens a session on initialize, logs initializes and deletes to seen, and echoes the credential and authorization it saw, and in its text the credential and the body.
+// newFakeAgent echoes the credential and authorization it saw.
 func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 	t.Helper()
 	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1089,33 +1085,4 @@ func masterKeyFile(t *testing.T) string {
 func lifetime(us *users.Service, id, credential string) context.Context {
 	ctx, _ := us.Lifetime(id, credential)
 	return ctx
-}
-
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-	base := os.Getenv("COCOONBOX_TEST_DSN")
-	if base == "" {
-		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
-	}
-	conn, err := pgx.Connect(t.Context(), base)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { _ = conn.Close(t.Context()) }()
-	name := "t_" + strings.ToLower(rand.Text()[:12])
-	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() {
-		if c, err := pgx.Connect(context.Background(), base); err == nil {
-			_, _ = c.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)")
-			_ = c.Close(context.Background())
-		}
-	})
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse COCOONBOX_TEST_DSN: %v", err)
-	}
-	u.Path = "/" + name
-	return u.String()
 }

@@ -376,7 +376,6 @@ func serveHTTP(t *testing.T, handler http.Handler) string {
 	return lis.Addr().String()
 }
 
-// fakeMCP answers POST with what it received and GET with one SSE event per signal on next.
 type livingUsers struct {
 	staticUsers
 	life        context.Context

@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -214,14 +217,14 @@ func TestGCAndADeltaSaveInterleave(t *testing.T) {
 				done <- err
 			}
 			save := func() { done <- env.trySave() }
-			first, second := save, collect
+			first, second, contended := save, collect, "(*stateLayer).prune("
 			if gcFirst {
-				first, second = collect, save
+				first, second, contended = collect, save, "(*stateLayer).save("
 			}
 			go first()
 			<-held
 			go second()
-			time.Sleep(50 * time.Millisecond)
+			waitLocked(t, contended)
 			close(hold)
 			for range 2 {
 				if err := <-done; err != nil {
@@ -348,6 +351,19 @@ func newDeltaEnv(t *testing.T) *stateEnv {
 	env := newStateEnv(t)
 	env.svc.registry.(*fakeRegistry).setPolicy(alice, users.Policy{Delta: true})
 	return env
+}
+
+func waitLocked(t *testing.T, in string) {
+	t.Helper()
+	clustertest.WaitFor(t, in+" waits on its lock", func() bool {
+		buf := make([]byte, 1<<20)
+		for g := range strings.SplitSeq(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
+			if strings.Contains(g, "[sync.Mutex.Lock") && strings.Contains(g, in) {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func (e *stateEnv) trySave() error {

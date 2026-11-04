@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -117,10 +118,7 @@ func TestRestorePathsPresignsOnlyTheirChunksAndPinsTheSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RestorePaths: %v", err)
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for len(env.agent.pathRestoreCalls()) == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, "the file restore reaches the agent", func() bool { return len(env.agent.pathRestoreCalls()) > 0 })
 	if _, err := env.svc.SaveState(env.ctx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.FailedPrecondition {
 		t.Errorf("SaveState during a file restore = %v, want FailedPrecondition", err)
 	}

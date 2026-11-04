@@ -25,6 +25,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/dialer"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
@@ -639,10 +640,7 @@ func TestNoClientReachesAMachineWhileItIsRestored(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	env.fake.push(machines.Machine{ID: env.fake.waitSpec(t, 1).ID, State: machines.StateRunning})
-	deadline := time.Now().Add(5 * time.Second)
-	for env.agent.restoreCount() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, "the restore reaches the agent", func() bool { return env.agent.restoreCount() > 0 })
 	if _, _, err := env.svc.Resolve(env.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve while restoring = %v, want Unavailable", err)
 	}

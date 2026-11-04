@@ -162,6 +162,11 @@ func TestANamedViewersScreenEndsWhenTheViewerSignsOutEverywhere(t *testing.T) {
 	}
 }
 
+type shareResponse struct {
+	Share  share  `json:"share"`
+	Secret string `json:"secret"`
+}
+
 type shareEnv struct {
 	*env
 	owner   users.User
@@ -188,16 +193,13 @@ func newShareEnv(t *testing.T) *shareEnv {
 	return e
 }
 
-func (e *shareEnv) createShare(t *testing.T, session, body string) (out struct {
-	Share  share  `json:"share"`
-	Secret string `json:"secret"`
-},
-) {
+func (e *shareEnv) createShare(t *testing.T, session, body string) shareResponse {
 	t.Helper()
 	resp := e.do(t, http.MethodPost, "api/shares", session, body)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("create share = %d %s", resp.Code, resp.Body)
 	}
+	var out shareResponse
 	if err := json.Unmarshal(resp.Body.Bytes(), &out); err != nil || !strings.HasPrefix(out.Secret, auth.SecretPrefix) {
 		t.Fatalf("create share: %v", err)
 	}

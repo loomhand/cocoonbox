@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 )
 
 func TestDeviceTokensServeBesideTheAPITokenUntilRevoked(t *testing.T) {
@@ -126,15 +128,11 @@ func TestADeviceTokenAnotherProcessIssuedWorksAtOnceAndItsRevokeReachesListeners
 	if err != nil {
 		t.Fatalf("IssueDevice: %v", err)
 	}
-	if took, ok := within(time.Second, func() bool { id, ok := svc.ByTokenSHA256(t.Context(), sum(token)); return ok && id == u.ID }); !ok {
-		t.Fatalf("a device token another process issued is unknown after %s", took)
-	}
+	clustertest.WaitFor(t, "a device token another process issued resolves", func() bool { id, ok := svc.ByTokenSHA256(t.Context(), sum(token)); return ok && id == u.ID })
 	if err := other.RevokeDeviceSHA256(t.Context(), sum(token)); err != nil {
 		t.Fatalf("RevokeDeviceSHA256: %v", err)
 	}
-	if took, ok := within(time.Second, func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(token)); return !ok }); !ok {
-		t.Errorf("a device token another process revoked still resolves after %s", took)
-	}
+	clustertest.WaitFor(t, "a device token another process revoked stops resolving", func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(token)); return !ok })
 }
 
 func TestACredentialsLifetimeEndsWithItsRevokeAndWithItsUser(t *testing.T) {
@@ -247,9 +245,7 @@ func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, ok := within(2*time.Second, func() bool { _, err := b.Get(u.ID); return err == nil }); !ok {
-		t.Fatal("the other api does not know the user")
-	}
+	clustertest.WaitFor(t, "the other api knows the user", func() bool { _, err := b.Get(u.ID); return err == nil })
 	call := lifetime(b, u.ID, "oag_missed")
 	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
 		t.Fatalf("end the listening connection: %v", err)
@@ -327,9 +323,7 @@ func TestAnEndedCredentialEndsItsCallsInEveryApi(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, ok := within(2*time.Second, func() bool { _, err := b.Get(u.ID); return err == nil }); !ok {
-		t.Fatal("the other api does not know the user")
-	}
+	clustertest.WaitFor(t, "the other api knows the user", func() bool { _, err := b.Get(u.ID); return err == nil })
 	call := lifetime(b, u.ID, "oag_shared")
 	a.EndCredential(t.Context(), "oag_shared")
 	select {

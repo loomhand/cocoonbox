@@ -1,9 +1,9 @@
 package signup_test
 
 import (
+	"bytes"
 	"cmp"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/console"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
@@ -640,7 +641,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	e := &env{dsn: freshDatabase(t), gw: &fakeGW{caps: map[string]int64{}}}
+	e := &env{dsn: clustertest.EmptyDSN(t), gw: &fakeGW{caps: map[string]int64{}}}
 	us, err := users.Open(t.Context(), users.Options{
 		DSN: e.dsn, MasterKeyFile: masterKeyFile(t), GW: e.gw, Tenants: fakeTenants{},
 		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] },
@@ -684,7 +685,7 @@ func (e *env) bearer(t *testing.T, token, method, path string, body any) (int, s
 	var reader io.Reader
 	if body != nil {
 		data, _ := json.Marshal(body)
-		reader = strings.NewReader(string(data))
+		reader = bytes.NewReader(data)
 	}
 	req, _ := http.NewRequestWithContext(t.Context(), method, e.srv.URL+path, reader)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -787,7 +788,7 @@ func (b *browser) call(t *testing.T, method, path string, body any) (int, string
 	var reader io.Reader
 	if body != nil {
 		data, _ := json.Marshal(body)
-		reader = strings.NewReader(string(data))
+		reader = bytes.NewReader(data)
 	}
 	req, _ := http.NewRequestWithContext(t.Context(), method, b.e.srv.URL+console.Prefix+"api/"+path, reader)
 	if body != nil {
@@ -926,25 +927,6 @@ func masterKeyFile(t *testing.T) string {
 		t.Fatalf("setup: %v", err)
 	}
 	return path
-}
-
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-	base := os.Getenv("COCOONBOX_TEST_DSN")
-	if base == "" {
-		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
-	}
-	name := "t_" + strings.ToLower(rand.Text()[:12])
-	if err := exec(t, base, "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() { _ = exec(t, base, "DROP DATABASE "+name+" WITH (FORCE)") })
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse COCOONBOX_TEST_DSN: %v", err)
-	}
-	u.Path = "/" + name
-	return u.String()
 }
 
 func query(t *testing.T, dsn, sql string, args ...any) pgx.Row {

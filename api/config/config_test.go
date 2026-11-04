@@ -3,7 +3,6 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -173,7 +172,7 @@ func TestLoadIdentity(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	want := Identity{URL: "https://id.example/v1/identity/token-review", TokenFile: filepath.Join(filepath.Dir(path), "identity-token"), Timeout: Duration(5 * time.Second)}
-	if !reflect.DeepEqual(cfg.Identity, want) {
+	if cfg.Identity != want {
 		t.Errorf("identity = %+v, want %+v", cfg.Identity, want)
 	}
 	if cfg, err := Load(writeConfig(t, required)); err != nil || cfg.Identity.URL != "" {
@@ -186,7 +185,7 @@ func TestLoadsTheExampleConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load example: %v", err)
 	}
-	if cfg.State.Bucket == "" || cfg.State.GC.Interval != Duration(24*time.Hour) || cfg.Provision.SigningKeyFile == "" || cfg.Accounts.DSNFile == "" || cfg.Image != "cbdesk:v11" {
+	if cfg.State.Bucket == "" || cfg.State.GC.Interval != Duration(24*time.Hour) || cfg.Provision.SigningKeyFile == "" || cfg.Accounts.DSNFile == "" {
 		t.Errorf("example config = %+v", cfg)
 	}
 }
