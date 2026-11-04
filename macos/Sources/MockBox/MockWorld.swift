@@ -70,6 +70,7 @@ actor MockWorld {
             for watcher in boxWatchers.values { watcher.yield(boxes) }
         }
     }
+    private let seed: Box
     private var boxWatchers: [UUID: AsyncStream<[Box]>.Continuation] = [:]
     // deletions counts deleted boxes; a delete ends every screen stream, as removing a machine ends its own.
     private(set) var deletions = 0
@@ -114,6 +115,7 @@ actor MockWorld {
         box.flavor.memoryMib = 8192
         box.flavor.diskGib = 40
         box.createdAtMs = Self.now()
+        seed = box
         boxes = [box]
         if externalHistory {
             agents = Self.externalHistory()
@@ -206,7 +208,7 @@ actor MockWorld {
         guard !boxes.contains(where: { $0.name == name }) else { throw RPCError(code: .alreadyExists, message: "already exists: a box is already named \"\(name)\"") }
         guard boxes.count < Self.maxBoxes else { throw RPCError(code: .failedPrecondition, message: "quota reached: \(Self.maxBoxes) boxes is the most this user may have") }
         try checkRunning(besides: "")
-        var created = boxes[0]
+        var created = seed
         created.id = "cb-mock" + String(format: "%08d", boxesCreated)
         boxesCreated += 1
         created.name = name
