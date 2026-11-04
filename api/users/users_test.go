@@ -21,6 +21,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/utils"
@@ -64,8 +65,7 @@ func TestAUsersPolicyIsKeptAndReloaded(t *testing.T) {
 	if p := openTestService(t, dsn, gw, tenants).Policy(u.ID); p != want {
 		t.Errorf("policy another api loads = %+v, want %+v", p, want)
 	}
-	park := false
-	if _, err := svc.Update(t.Context(), u.ID, Settings{NoPark: &park}); err != nil {
+	if _, err := svc.Update(t.Context(), u.ID, Settings{NoPark: new(false)}); err != nil {
 		t.Fatalf("Update of one field: %v", err)
 	}
 	if want.NoPark = false; svc.Policy(u.ID) != want {
@@ -174,7 +174,7 @@ func TestEnsureTakesOnlyAnOutsideSource(t *testing.T) {
 }
 
 func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
-	dsn := freshDatabase(t)
+	dsn := clustertest.EmptyDSN(t)
 	gw := &gatedGW{fakeGW: fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}, open: make(chan struct{})}
 	svc := openTestService(t, dsn, gw, &fakeTenants{tenants: map[string]tenant{}})
 	var wg sync.WaitGroup
@@ -185,10 +185,7 @@ func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 			errs <- err
 		})
 	}
-	deadline := time.Now().Add(5 * time.Second)
-	for gw.active.Load() < ensureLimit && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, "the first creates start", func() bool { return gw.active.Load() >= ensureLimit })
 	time.Sleep(200 * time.Millisecond)
 	if most := gw.most.Load(); most != ensureLimit {
 		t.Errorf("%d creates ran at once, want %d", most, ensureLimit)
@@ -235,7 +232,7 @@ func TestEnsuresRacingInTwoProcessesLeaveOneWorkingUser(t *testing.T) {
 }
 
 func TestEnsuresOnASaturatedPoolDoNotWaitOnEachOther(t *testing.T) {
-	dsn := freshDatabase(t)
+	dsn := clustertest.EmptyDSN(t)
 	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}
 	tenants := &fakeTenants{tenants: map[string]tenant{}}
 	u, err := url.Parse(dsn)
@@ -297,8 +294,7 @@ func TestTokensPasswordsAndDisabling(t *testing.T) {
 	if got, err := svc.Session(t.Context(), secret); err != nil || got.ID != u.ID {
 		t.Errorf("Session = %+v, %v", got, err)
 	}
-	disabled := true
-	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: &disabled}); err != nil {
+	if _, err := svc.Update(t.Context(), u.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if _, ok := svc.ByTokenSHA256(t.Context(), sum(second)); ok {
@@ -435,15 +431,11 @@ func TestRegeneratingTheTokenDropsTheOldOneFromAListeningService(t *testing.T) {
 	console := openTestService(t, dsn, gw, tenants)
 	u, _ := console.Create(t.Context(), NewUser{Name: "qa1"})
 	old, _ := console.RegenerateToken(t.Context(), u.ID)
-	if took, ok := within(time.Second, func() bool { id, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return ok && id == u.ID }); !ok {
-		t.Fatalf("the listening api does not know the first token %s after it was set", took)
-	}
+	clustertest.WaitFor(t, "the listening api knows the first token", func() bool { id, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return ok && id == u.ID })
 	if _, err := console.RegenerateToken(t.Context(), u.ID); err != nil {
 		t.Fatalf("RegenerateToken: %v", err)
 	}
-	if took, ok := within(time.Second, func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok }); !ok {
-		t.Errorf("the listening api still takes the replaced token %s after the regenerate", took)
-	}
+	clustertest.WaitFor(t, "the listening api drops the token a regenerate replaced", func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok })
 }
 
 func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testing.T) {
@@ -458,9 +450,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(old)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
-	if took, ok := within(time.Second, func() bool { _, err := svc.Get(u.ID); return err == nil }); !ok {
-		t.Fatalf("the user another process added is unknown %s after the write", took)
-	}
+	clustertest.WaitFor(t, "the user another process added is known", func() bool { _, err := svc.Get(u.ID); return err == nil })
 	if id, ok := svc.ByTokenSHA256(t.Context(), sum(old)); !ok || id != u.ID {
 		t.Fatalf("old token resolves to %q, %t", id, ok)
 	}
@@ -469,11 +459,9 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(replaced)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
-	took, ok := within(time.Second, func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok })
-	if !ok {
-		t.Fatalf("the replaced token still works %s after the write", took)
-	}
-	t.Logf("the replaced token stopped working %s after the write", took)
+	start := time.Now()
+	clustertest.WaitFor(t, "the replaced token stops working", func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok })
+	t.Logf("the replaced token stopped working %s after the write", time.Since(start))
 
 	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
 		t.Fatalf("end the listening connection: %v", err)
@@ -482,9 +470,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(missed)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
 	}
-	if took, ok := within(listenRetry+time.Second, func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(replaced)); return !ok }); !ok {
-		t.Errorf("a token replaced while the listener was down still works %s later", took)
-	}
+	clustertest.WaitFor(t, "a token replaced while the listener was down stops working", func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(replaced)); return !ok })
 }
 
 func TestUnknownTokensCheckTheTableAtMostOncePerInterval(t *testing.T) {
@@ -635,7 +621,7 @@ func TestAdminsHaveNoGWCapAndDeleteDropsTheCap(t *testing.T) {
 		t.Fatalf("Create admin: %v", err)
 	}
 	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if caps, _ := svc.DailyCaps(t.Context()); fmt.Sprint(caps) != fmt.Sprint(map[string]int64{admin.ID: gwkeys.Unlimited}) {
+	if caps, _ := svc.DailyCaps(t.Context()); !maps.Equal(caps, map[string]int64{admin.ID: gwkeys.Unlimited}) {
 		t.Errorf("gw caps after create = %v, want only the admin unlimited", caps)
 	}
 	for _, bad := range []int64{-2, -100} {
@@ -704,7 +690,7 @@ func TestReconcileLiftsTheCapOfAdminsOnTheDefaultOnly(t *testing.T) {
 		t.Fatalf("Reconcile: %v", err)
 	}
 	want := map[string]int64{onDefault.ID: gwkeys.Unlimited, capped.ID: 7}
-	if fmt.Sprint(gw.caps) != fmt.Sprint(want) {
+	if !maps.Equal(gw.caps, want) {
 		t.Errorf("gw caps after Reconcile = %v, want %v and none for %s", gw.caps, want, u.ID)
 	}
 }
@@ -849,10 +835,9 @@ func (f *fakeTenants) DeleteTenant(_ context.Context, name string) error {
 	return nil
 }
 
-// newTestService opens a Service on a fresh database of the server COCOONBOX_TEST_DSN names.
 func newTestService(t *testing.T) (*Service, *fakeGW, *fakeTenants, string) {
 	t.Helper()
-	dsn := freshDatabase(t)
+	dsn := clustertest.EmptyDSN(t)
 	gw := &fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}
 	tenants := &fakeTenants{tenants: map[string]tenant{}}
 	return openTestService(t, dsn, gw, tenants), gw, tenants, dsn
@@ -894,25 +879,6 @@ func masterKeyFile(t *testing.T) string {
 	return keyFile
 }
 
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-	base := os.Getenv("COCOONBOX_TEST_DSN")
-	if base == "" {
-		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
-	}
-	name := "t_" + utils.RandomHex(6)
-	if err := exec(t, base, "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() { _ = exec(t, base, "DROP DATABASE "+name+" WITH (FORCE)") })
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse COCOONBOX_TEST_DSN: %v", err)
-	}
-	u.Path = "/" + name
-	return u.String()
-}
-
 func query(t *testing.T, dsn, sql string, args ...any) pgx.Row {
 	t.Helper()
 	conn, err := pgx.Connect(t.Context(), dsn)
@@ -932,17 +898,6 @@ func exec(t *testing.T, dsn, sql string, args ...any) error {
 	defer func() { _ = conn.Close(context.Background()) }()
 	_, err = conn.Exec(context.Background(), sql, args...)
 	return err
-}
-
-func within(limit time.Duration, cond func() bool) (time.Duration, bool) {
-	start := time.Now()
-	for !cond() {
-		if time.Since(start) > limit {
-			return time.Since(start), false
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return time.Since(start), true
 }
 
 func lifetime(svc *Service, id, credential string) context.Context {

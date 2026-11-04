@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -24,6 +23,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/connect/connecttest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
@@ -44,7 +44,6 @@ const (
 )
 
 var (
-	// testKeys gives every user a fixed state key of its own.
 	testKeys = keyFunc(func(_ context.Context, user string) (keyring.Key, error) {
 		return keyring.Key{ID: "k-" + user, Secret: []byte(strings.Repeat(user[len(user)-1:], keyring.KeySize))}, nil
 	})
@@ -822,6 +821,7 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("call: %v", err)
 	}
+	defer func() { _ = callResp.Body.Close() }()
 	var call struct {
 		Result callResult `json:"result"`
 	}
@@ -1284,7 +1284,7 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	dsn := freshDatabase(t)
+	dsn := clustertest.EmptyDSN(t)
 	conn, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -1407,7 +1407,6 @@ func (fakeAuthn) Authenticate(_ context.Context, entry auth.Entry, header string
 	return auth.Identity{}, status.Error(codes.Unauthenticated, "invalid bearer token")
 }
 
-// bindingAuthn is fakeAuthn recording every user and credential a call is bound to.
 type bindingAuthn struct {
 	fakeAuthn
 	mu    sync.Mutex
@@ -1421,36 +1420,6 @@ func (b *bindingAuthn) Bind(ctx context.Context, user, credential string) (conte
 	return context.WithCancel(ctx)
 }
 
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-	base := os.Getenv("COCOONBOX_TEST_DSN")
-	if base == "" {
-		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
-	}
-	conn, err := pgx.Connect(t.Context(), base)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { _ = conn.Close(t.Context()) }()
-	name := "t_" + utils.RandomHex(6)
-	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() {
-		if c, err := pgx.Connect(context.Background(), base); err == nil {
-			_, _ = c.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)")
-			_ = c.Close(context.Background())
-		}
-	})
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse COCOONBOX_TEST_DSN: %v", err)
-	}
-	u.Path = "/" + name
-	return u.String()
-}
-
-// call runs doorCall and decodes its result the way a client does.
 func call(ctx context.Context, s *Service, c caller, name string, args jsontext.Value, approvalID string) (*callResult, error) {
 	v, err := s.doorCall(ctx, c, name, args, approvalID)
 	if err != nil {

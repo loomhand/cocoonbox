@@ -10,7 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/boxes"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -286,7 +286,10 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	env := newEnv(t)
 	root := env.login(t, "root")
 	u, _ := env.users.Create(t.Context(), users.NewUser{Name: "qa1", Password: password})
-	token, _ := env.users.RegenerateToken(t.Context(), u.ID)
+	token, err := env.users.RegenerateToken(t.Context(), u.ID)
+	if err != nil {
+		t.Fatalf("RegenerateToken: %v", err)
+	}
 	qa1 := env.login(t, "qa1")
 	env.boxes.onRelease = func() {
 		sum := sha256.Sum256([]byte(token))
@@ -376,23 +379,13 @@ type env struct {
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
-	base := os.Getenv("COCOONBOX_TEST_DSN")
-	if base == "" {
-		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
-	}
-	name := "t_" + utils.RandomHex(6)
-	if err := exec(base, "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() { _ = exec(base, "DROP DATABASE "+name+" WITH (FORCE)") })
-	u, _ := url.Parse(base)
-	u.Path = "/" + name
+	dsn := clustertest.EmptyDSN(t)
 	keyFile := filepath.Join(t.TempDir(), "master.key")
 	if err := os.WriteFile(keyFile, []byte(strings.Repeat("k", 32)), 0o600); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 	e := &env{boxes: &fakeBoxes{}, gw: &fakeGW{keys: map[string]string{}, caps: map[string]int64{}}, tenants: &fakeTenants{tenants: map[string]tenant{}}}
-	us, err := users.Open(t.Context(), users.Options{DSN: u.String(), MasterKeyFile: keyFile, GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID})
+	us, err := users.Open(t.Context(), users.Options{DSN: dsn, MasterKeyFile: keyFile, GW: e.gw, Tenants: e.tenants, FirstBoxID: boxes.BoxID})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
@@ -400,7 +393,7 @@ func newEnv(t *testing.T) *env {
 	if _, err := us.Create(t.Context(), users.NewUser{Name: "root", Password: password, Admin: true}); err != nil {
 		t.Fatalf("create admin: %v", err)
 	}
-	e.users, e.srv, e.dsn = us, New(us, e.boxes, 5_000_000, 1), u.String()
+	e.users, e.srv, e.dsn = us, New(us, e.boxes, 5_000_000, 1), dsn
 	return e
 }
 

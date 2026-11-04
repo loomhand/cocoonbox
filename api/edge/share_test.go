@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -142,24 +143,28 @@ func TestShareStreamsEndWithTheShare(t *testing.T) {
 }
 
 func TestWriteSwitchCutsOnlyServerStreams(t *testing.T) {
-	cut, moded := make(chan struct{}), make(chan struct{})
-	g := &auth.Grant{Share: auth.Share{Cut: cut, Moded: moded}}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	done := make(chan struct{})
-	go func() { cutOnEnd(ctx, cancel, g, false); close(done) }()
-	close(moded)
-	select {
-	case <-done:
-		t.Fatal("a write switch cut a POST exchange, which may carry a running tool call")
-	case <-time.After(100 * time.Millisecond):
-	}
-	close(cut)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("the end of the share did not cut the POST exchange")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		cut, moded := make(chan struct{}), make(chan struct{})
+		g := &auth.Grant{Share: auth.Share{Cut: cut, Moded: moded}}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan struct{})
+		go func() { cutOnEnd(ctx, cancel, g, false); close(done) }()
+		close(moded)
+		synctest.Wait()
+		select {
+		case <-done:
+			t.Fatal("a write switch cut a POST exchange, which may carry a running tool call")
+		default:
+		}
+		close(cut)
+		synctest.Wait()
+		select {
+		case <-done:
+		default:
+			t.Fatal("the end of the share did not cut the POST exchange")
+		}
+	})
 }
 
 func TestShareSecretIsNoGRPCToken(t *testing.T) {
@@ -243,13 +248,9 @@ func TestScreenFiltersBothDirections(t *testing.T) {
 	if !bytes.Equal(atBox, toBox) {
 		t.Errorf("the box saw %v, want %v", atBox, toBox)
 	}
-	start := time.Now()
 	close(cut)
 	select {
 	case <-served:
-		if took := time.Since(start); took > time.Second {
-			t.Errorf("the bridge ended %s after the share", took)
-		}
 	case <-time.After(time.Second):
 		t.Fatal("the bridge outlived its share by 1 s")
 	}

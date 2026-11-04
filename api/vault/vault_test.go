@@ -3,8 +3,6 @@ package vault
 import (
 	"context"
 	"fmt"
-	"net/url"
-	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -15,10 +13,10 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/keyring"
 	"github.com/loomhand/cocoonbox/api/machines"
-	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -185,7 +183,7 @@ func onlyName(t *testing.T, m map[string]*machines.Secret) string {
 
 func newService(t *testing.T) *Service {
 	t.Helper()
-	dsn := freshDatabase(t)
+	dsn := clustertest.EmptyDSN(t)
 	conn, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
@@ -200,35 +198,6 @@ func newService(t *testing.T) *Service {
 	}
 	t.Cleanup(svc.Close)
 	return svc
-}
-
-func freshDatabase(t *testing.T) string {
-	t.Helper()
-	base := os.Getenv("COCOONBOX_TEST_DSN")
-	if base == "" {
-		t.Skip("COCOONBOX_TEST_DSN names no PostgreSQL server")
-	}
-	conn, err := pgx.Connect(t.Context(), base)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { _ = conn.Close(context.Background()) }()
-	name := "t_" + utils.RandomHex(6)
-	if _, err := conn.Exec(t.Context(), "CREATE DATABASE "+name); err != nil {
-		t.Fatalf("create database: %v", err)
-	}
-	t.Cleanup(func() {
-		if c, err := pgx.Connect(context.Background(), base); err == nil {
-			_, _ = c.Exec(context.Background(), "DROP DATABASE "+name+" WITH (FORCE)")
-			_ = c.Close(context.Background())
-		}
-	})
-	u, err := url.Parse(base)
-	if err != nil {
-		t.Fatalf("parse COCOONBOX_TEST_DSN: %v", err)
-	}
-	u.Path = "/" + name
-	return u.String()
 }
 
 type testKeys struct{}

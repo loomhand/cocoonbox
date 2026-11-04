@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 )
 
 func TestShareLifecycle(t *testing.T) {
@@ -157,8 +158,7 @@ func TestShareExpiresAndDiesWithItsOwner(t *testing.T) {
 	again, _ := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-2"})
 	secret = again.Secret
 	live, _ = svc.ShareBySecretSHA256(sum(secret))
-	disabled := true
-	if _, err := svc.Update(t.Context(), owner.ID, Settings{Disabled: &disabled}); err != nil {
+	if _, err := svc.Update(t.Context(), owner.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("disable: %v", err)
 	}
 	if _, ok := svc.ShareBySecretSHA256(sum(secret)); ok || !closed(live.Cut) {
@@ -247,13 +247,11 @@ func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
 		t.Fatalf("CreateShare: %v", err)
 	}
 	var seen auth.Share
-	if took, ok := within(2*time.Second, func() bool {
+	clustertest.WaitFor(t, "the other api knows the new share", func() bool {
 		var found bool
 		seen, found = b.ShareBySecretSHA256(sum(sh.Secret))
 		return found
-	}); !ok {
-		t.Fatalf("the other api does not know the new share %s later", took)
-	}
+	})
 	if _, err := a.SetShareWrite(t.Context(), owner.ID, sh.ID, true); err != nil {
 		t.Fatalf("SetShareWrite: %v", err)
 	}
@@ -266,13 +264,11 @@ func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RegenerateShare: %v", err)
 	}
-	if took, ok := within(2*time.Second, func() bool {
+	clustertest.WaitFor(t, "the other api takes only the new secret after a regenerate", func() bool {
 		_, oldWorks := b.ShareBySecretSHA256(sum(sh.Secret))
 		_, newWorks := b.ShareBySecretSHA256(sum(renewed.Secret))
 		return !oldWorks && newWorks
-	}); !ok {
-		t.Fatalf("the other api still takes the old secret %s after a regenerate", took)
-	}
+	})
 	select {
 	case <-ended:
 	case <-time.After(2 * time.Second):
@@ -307,13 +303,11 @@ func TestDisablingAnOwnerCutsItsSharesInEveryApi(t *testing.T) {
 		t.Fatalf("CreateShare: %v", err)
 	}
 	var seen auth.Share
-	if took, ok := within(2*time.Second, func() bool {
+	clustertest.WaitFor(t, "the other api knows the share", func() bool {
 		var found bool
 		seen, found = b.ShareBySecretSHA256(sum(sh.Secret))
 		return found
-	}); !ok {
-		t.Fatalf("the other api does not know the share %s later", took)
-	}
+	})
 	if _, err := a.Update(t.Context(), owner.ID, Settings{Disabled: new(true)}); err != nil {
 		t.Fatalf("Update: %v", err)
 	}
