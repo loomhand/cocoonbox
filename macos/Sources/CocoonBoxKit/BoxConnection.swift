@@ -31,7 +31,6 @@ public final class BoxConnection: Sendable {
     private let auth: AuthInterceptor
     // names is the name of every box id this connection has seen, so retarget can follow a deleted box's name.
     private let names = Mutex<[String: String]>([:])
-    private let runner: Task<Void, Never>
 
     public init(endpoint: Endpoint, token: String) throws {
         guard endpoint.usesTLS || endpoint.isLoopback else {
@@ -59,7 +58,7 @@ public final class BoxConnection: Sendable {
         self.account = AccountClient(wrapping: client)
         self.agents = AgentsClient(wrapping: client)
         self.session = SessionClient(wrapping: client)
-        self.runner = Task { try? await client.runConnections() }
+        Task { try? await client.runConnections() }
     }
 
     // boxID is the box of every agent call; setting an id whose name is unknown lists the boxes once to learn it.
@@ -97,8 +96,6 @@ public final class BoxConnection: Sendable {
     public func close() {
         client.beginGracefulShutdown()
     }
-
-    // MARK: Boxes
 
     public func firstBox() async throws -> Cocoonbox_Control_V1_Box? {
         try await listBoxes().first
@@ -208,8 +205,6 @@ public final class BoxConnection: Sendable {
         })
     }
 
-    // MARK: Wake schedules
-
     // setWakeSchedule wakes the box, when it is hibernated, a minute before each time of cron in tz and lets it
     // hibernate again after awakeForSeconds (0 is the api's default) unless a client reached it.
     public func setWakeSchedule(boxID: String, cron: String, tz: String, awakeForSeconds: UInt32 = 0) async throws -> Cocoonbox_Control_V1_WakeSchedule {
@@ -248,8 +243,6 @@ public final class BoxConnection: Sendable {
         }
     }
 
-    // MARK: Shares
-
     public func createShare(boxID: String, ttlSeconds: Int64, userNames: [String], write: Bool) async throws -> Cocoonbox_Control_V1_ShareSecret {
         try await shares.create(.with {
             $0.boxID = boxID
@@ -278,8 +271,6 @@ public final class BoxConnection: Sendable {
         _ = try await shares.revoke(.with { $0.shareID = shareID })
     }
 
-    // MARK: Flows
-
     // listFlows returns the user's flow library without contents, newest first.
     public func listFlows() async throws -> Cocoonbox_Control_V1_ListFlowsResponse {
         try await flows.list(Cocoonbox_Control_V1_ListFlowsRequest())
@@ -297,8 +288,6 @@ public final class BoxConnection: Sendable {
     public func deleteFlows(names: [String]) async throws -> [String] {
         try await flows.delete(.with { $0.names = names }).deleted
     }
-
-    // MARK: Keys
 
     public func addKey(_ request: Cocoonbox_Control_V1_AddKeyRequest) async throws -> Cocoonbox_Control_V1_Key {
         try await keys.add(request)
@@ -319,8 +308,6 @@ public final class BoxConnection: Sendable {
         _ = try await keys.delete(.with { $0.name = name })
     }
 
-    // MARK: Account
-
     // listDevices returns the user's device tokens, newest first; current marks the one this connection signs in with.
     public func listDevices() async throws -> [Cocoonbox_Control_V1_Device] {
         try await account.listDevices(Cocoonbox_Control_V1_ListDevicesRequest()).devices
@@ -335,28 +322,9 @@ public final class BoxConnection: Sendable {
         _ = try await account.signOutEverywhere(Cocoonbox_Control_V1_SignOutEverywhereRequest())
     }
 
-    // MARK: Connectors
-
-    // catalog lists the connectors the api offers; `custom` connects any MCP server by URL.
-    public func catalog() async throws -> [Cocoonbox_Control_V1_CatalogEntry] {
-        try await connectors.catalog(Cocoonbox_Control_V1_CatalogRequest()).entries
-    }
-
     // listConnectors returns the user's connected accounts; withTools lists each one's tools from its MCP server.
     public func listConnectors(withTools: Bool = false) async throws -> [Cocoonbox_Control_V1_Connector] {
         try await connectors.list(.with { $0.withTools = withTools }).connectors
-    }
-
-    // disconnect revokes the grant at the vendor where it can and deletes it; it returns whether the vendor revoked it.
-    @discardableResult
-    public func disconnect(connectorID: String) async throws -> Bool {
-        try await connectors.disconnect(.with { $0.connectorID = connectorID }).revoked
-    }
-
-    // spendRequests returns the user's Link spend requests that wait for an approval in the Link app, as the api last
-    // read them; polledAtMs is 0 before the first read and without an active Link grant.
-    public func spendRequests() async throws -> Cocoonbox_Control_V1_SpendRequestsResponse {
-        try await connectors.spendRequests(Cocoonbox_Control_V1_SpendRequestsRequest())
     }
 
     // answerConnector answers a connector approval (design §16.5): the broker
@@ -364,20 +332,18 @@ public final class BoxConnection: Sendable {
     // It returns false when the broker no longer holds the approval (expired, or
     // answered in the console); the turn resumes anyway, and the broker decides the retry.
     public func answerConnector(agentID: String, approvalID: String, decision: Cocoonbox_Control_V1_ApprovalDecision) async throws -> Bool {
+        var found = true
         do {
             _ = try await connectors.approve(.with {
                 $0.approvalID = approvalID
                 $0.decision = decision
             })
         } catch let error as RPCError where error.code == .notFound {
-            try await respond(agentID: agentID, approvalID: approvalID, approve: decision != .deny, text: "")
-            return false
+            found = false
         }
         try await respond(agentID: agentID, approvalID: approvalID, approve: decision != .deny, text: "")
-        return true
+        return found
     }
-
-    // MARK: Session
 
     public func hello(clientVersion: String) async throws -> Cocoonbox_Agent_V1_HelloResponse {
         try await session.hello(.with { $0.clientVersion = clientVersion })
@@ -450,8 +416,6 @@ public final class BoxConnection: Sendable {
     var screenTransport: any ScreenTransport {
         GRPCScreenTransport(session: session)
     }
-
-    // MARK: Agents
 
     public func listAgents() async throws -> [Cocoonbox_Agent_V1_Agent] {
         try await agents.list(Cocoonbox_Agent_V1_ListAgentsRequest()).agents

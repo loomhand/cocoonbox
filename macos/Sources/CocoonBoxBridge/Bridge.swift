@@ -104,7 +104,7 @@ public actor Bridge {
             reply(id, [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
                 "capabilities": ["tools": ["listChanged": true], "resources": [:] as [String: Any]],
-                "serverInfo": ["name": "cocoonbox", "version": "0.16.0"],
+                "serverInfo": ["name": "cocoonbox", "version": Plugin.version],
                 "instructions": await instructionsText(),
             ])
         case "ping":

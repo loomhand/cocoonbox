@@ -2,10 +2,9 @@ import Darwin
 import Foundation
 import os
 
-// Perf writes timestamped lines to ~/Library/Logs/CocoonBox/debug.log and
-// emits os_signpost events, both keyed by milliseconds since process start.
+// Perf writes timestamped lines to ~/Library/Logs/CocoonBox/debug.log and emits os_signpost events.
 public enum Perf {
-    public static let log = OSLog(subsystem: "io.github.loomhand.cocoonbox", category: .pointsOfInterest)
+    private static let log = OSLog(subsystem: "io.github.loomhand.cocoonbox", category: .pointsOfInterest)
     public static let processStart: Date = {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
@@ -16,7 +15,7 @@ public enum Perf {
     }()
 
     private static let queue = DispatchQueue(label: "cocoonbox.perf", qos: .utility)
-    nonisolated(unsafe) private static var handle: FileHandle? = {
+    private static let handle: FileHandle? = {
         let dir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/CocoonBox")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("debug.log")

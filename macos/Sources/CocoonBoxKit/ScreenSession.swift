@@ -3,18 +3,13 @@ import GRPCCore
 import RFB
 import Synchronization
 
-// ScreenTransport carries one RFB session: client bytes arrive on `outbound`,
-// server bytes go to `inbound`. It returns when either side closes.
+// ScreenTransport carries one RFB session and returns when either side closes.
 public protocol ScreenTransport: Sendable {
     func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws
 }
 
 struct GRPCScreenTransport: ScreenTransport {
     let session: SessionClient
-
-    init(session: SessionClient) {
-        self.session = session
-    }
 
     func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws {
         var options = CallOptions.defaults
@@ -40,9 +35,7 @@ struct GRPCScreenTransport: ScreenTransport {
     }
 }
 
-// ScreenSession runs one swift-rfb client straight over a ScreenTransport:
-// server bytes feed an RFBPipe and the client's bytes go back up the
-// stream. The client paces its own update requests.
+// ScreenSession runs one swift-rfb client straight over a ScreenTransport.
 public final class ScreenSession: Sendable {
     public struct Stats: Sendable {
         public var bytesFromServer = 0
@@ -68,8 +61,7 @@ public final class ScreenSession: Sendable {
         counters.withLock { $0 }
     }
 
-    // run returns when either the stream or the RFB session ends, with the
-    // error that ended it: the transport's when the transport failed.
+    // run returns when the stream or the RFB session ends, with the transport's error when it failed.
     public func run(_ events: @escaping @Sendable (RFBEvent) -> Void) async throws {
         do {
             try await stream(events)

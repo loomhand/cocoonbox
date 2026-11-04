@@ -332,8 +332,6 @@ struct ShareSessionRow: View {
     }
 }
 
-// LocalAgentRow is a local agent with the boxes it acted on in the last
-// minute, on a line kept when empty so the row height stays fixed.
 // FailedLocalAgentRow is a local agent the app could not reopen, kept with its reason until the user removes it.
 struct FailedLocalAgentRow: View {
     @Environment(AppModel.self) private var model

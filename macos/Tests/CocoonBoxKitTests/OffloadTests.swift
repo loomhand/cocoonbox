@@ -4,11 +4,6 @@ import Darwin
 import Foundation
 import Testing
 
-// OffloadTests runs the Mac packer against MockBox, whose Session.Exec runs
-// commands on this Mac in a test workspace with a test HOME as the box's
-// home, and scripts/offload-box-stub as `cocoonbox-agent offload`. rsync and
-// git run for real, over the cocoonbox CLI's rsh. Nothing touches the real
-// HOME: the Mac side and the box each get their own temporary one.
 @Suite(.serialized) struct OffloadTests {
     @Test func roundTripKeepsStagedUnstagedAndUntrackedChanges() async throws {
         let box = try await Harness.shared()
@@ -393,7 +388,6 @@ import Testing
     }
 }
 
-// Harness runs MockBox once for the suite, with the box stub on its PATH.
 final class Harness: @unchecked Sendable {
     static let environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "GIT_CONFIG_NOSYSTEM": "1", "LANG": "en_US.UTF-8"]
     nonisolated(unsafe) private static var started: Task<Harness, any Error>?
@@ -450,7 +444,6 @@ final class Harness: @unchecked Sendable {
             let input = Pipe()
             let process = Process()
             try? FileManager.default.removeItem(at: log)
-            // the shell kills MockBox when the caller or this process closes its stdin
             process.executableURL = URL(fileURLWithPath: "/bin/sh")
             process.arguments = ["-c", "log=$1; shift; \"$0\" \"$@\" >\"$log\" 2>&1 & pid=$!; read _; kill $pid", built.appendingPathComponent("MockBox").path, log.path, "--port", "\(port)"] + arguments
             process.environment = environment
@@ -473,7 +466,6 @@ final class Harness: @unchecked Sendable {
                          environment: Self.environment.merging(["HOME": macHome.path]) { $1 }, progress: { _ in })
     }
 
-    // repo makes a repository with two committed files under the Mac side's HOME.
     func repo(_ name: String) throws -> URL {
         let dir = macHome.appendingPathComponent("src/\(name)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -495,14 +487,12 @@ final class Harness: @unchecked Sendable {
         try Self.run(["sh", "-c", "export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t; " + script], in: dir, extra: ["HOME": macHome.path])
     }
 
-    // state is what a round trip must keep: the index and work tree against HEAD, and the diffs.
     func state(_ dir: URL) throws -> String {
         let status = try sh("git status --porcelain=v2 --untracked-files=all", in: dir)
         let diffs = try sh("git diff; git diff --cached", in: dir)
-        return status + "\n" + SHA256.hash(data: Data(diffs.utf8)).map { String(format: "%02x", $0) }.joined()
+        return status + "\n" + SHA256.hash(data: Data(diffs.utf8)).hex
     }
 
-    // post plays the box agent handing back: the stub's `post --back` in the copy, as the box user.
     func post(back body: String, in copy: URL, key: String) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: root.appendingPathComponent("bin/cocoonbox-agent").path)
@@ -528,7 +518,6 @@ final class Harness: @unchecked Sendable {
         if on { try Data().write(to: flag) } else { try? FileManager.default.removeItem(at: flag) }
     }
 
-    // temporary makes a directory under one per run, removed when the tests exit.
     static func temporary(_ name: String) throws -> URL {
         let dir = URL(fileURLWithPath: base).appendingPathComponent("\(name)-\(UUID().uuidString.prefix(8))")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

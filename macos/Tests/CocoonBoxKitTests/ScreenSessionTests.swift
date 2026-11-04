@@ -15,7 +15,6 @@ final class SyntheticTransport: ScreenTransport {
         self.animateFPS = animateFPS
     }
 
-    // delayed replays a stream `oneWay` later, in order, like a long network path.
     func delayed(_ source: AsyncStream<Data>) -> AsyncStream<Data> {
         guard oneWay > .zero else { return source }
         let (stream, continuation) = AsyncStream<Data>.makeStream()
@@ -65,7 +64,6 @@ func eventually(_ timeout: Duration = .seconds(5), isolation: isolated (any Acto
     return condition()
 }
 
-// Recorder counts what a ScreenSession's client reports.
 final class Recorder: Sendable {
     let resized = Atomic(0)
     let updates = Atomic(0)
@@ -137,8 +135,6 @@ func headless(_ configure: (inout RFBClient.Configuration) -> Void = { _ in }) -
         await #expect(throws: (any Error).self) { try await session.run { _ in } }
     }
 
-    // With 100 ms each way one request per update caps near 5/s; pacing keeps
-    // a request at the server so a 30 fps source gets through.
     @Test(arguments: [false, true])
     func updateRateAcrossALongPath(pacing: Bool) async throws {
         let transport = SyntheticTransport(oneWay: .milliseconds(100), animateFPS: 30)
@@ -164,7 +160,6 @@ func headless(_ configure: (inout RFBClient.Configuration) -> Void = { _ in }) -
     }
 }
 
-// ClosingTransport answers with a banner and then ends the stream.
 final class ClosingTransport: ScreenTransport {
     func run(outbound: AsyncStream<Data>, inbound: @escaping @Sendable (Data) async throws -> Void) async throws {
         try await inbound(Data("RFB 003.008\n".utf8))

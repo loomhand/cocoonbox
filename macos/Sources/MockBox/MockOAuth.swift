@@ -2,9 +2,7 @@ import CryptoKit
 import Foundation
 import Synchronization
 
-// MockOAuth plays the api's sign-in of the first-party clients: the consent page allows at once and sends the
-// browser back to the client's loopback port with a code, the token endpoint redeems the code with PKCE for the
-// mock token, and the revoke endpoint logs what it revoked.
+// MockOAuth plays the api's sign-in of the first-party clients: consent allows at once and the code redeems with PKCE.
 final class MockOAuth: Sendable {
     // Discovery is what the mock's metadata says and where its routes live.
     enum Discovery: String {
@@ -55,7 +53,6 @@ final class MockOAuth: Sendable {
         return path
     }
 
-    // handle answers a request for one of the three paths, nil for any other.
     func handle(method: String, path: String, headers: [String: String], body: Data, line: inout String) -> HTTPResponse? {
         let components = URLComponents(string: path)
         switch (method, components?.path) {
@@ -85,7 +82,7 @@ final class MockOAuth: Sendable {
         case .renamed: fields["protected_resources"] = [issuer + "/mcp"]
         case .old: break
         }
-        return Self.json(200, fields)
+        return .json(200, fields)
     }
 
     private func authorize(_ query: [URLQueryItem], line: inout String) -> HTTPResponse {
@@ -108,21 +105,21 @@ final class MockOAuth: Sendable {
     private func invites(method: String, authorization: String, body: Data, line: inout String) -> HTTPResponse {
         guard authorization == "Bearer \(Self.inviteToken)" else {
             line += " invites=refused"
-            return Self.json(401, ["error": "invalid invite token"])
+            return .json(401, ["error": "invalid invite token"])
         }
         let invite: [String: Any] = ["id": "inv_mock", "uses_left": 1, "expires_at": "2026-10-18T00:00:00Z", "token_id": "itk_mock"]
         if method == "GET" {
             line += " invites=listed"
-            return HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: (try? JSONSerialization.data(withJSONObject: [invite])) ?? Data())
+            return .json(200, [invite])
         }
         let days = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["days"] as? Int ?? 2
         guard (1...7).contains(days) else {
             line += " invites=bad-days"
-            return Self.json(400, ["error": "invalid request: an invite made with a token lasts 1 to 7 days"])
+            return .json(400, ["error": "invalid request: an invite made with a token lasts 1 to 7 days"])
         }
         line += " invites=created days=\(days)"
         let made: [String: Any] = ["code": "cbi_mock", "invite": invite]
-        return HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: (try? JSONSerialization.data(withJSONObject: made)) ?? Data())
+        return .json(200, made)
     }
 
     private func redeem(_ form: [String: String], line: inout String) -> HTTPResponse {
@@ -134,20 +131,14 @@ final class MockOAuth: Sendable {
               challenge == stored.challenge
         else {
             line += " token=refused"
-            return Self.json(400, ["error": "invalid_grant", "error_description": "the code is invalid, spent, or for another client"])
+            return .json(400, ["error": "invalid_grant", "error_description": "the code is invalid, spent, or for another client"])
         }
         line += " token=issued"
-        return Self.json(200, ["access_token": token, "token_type": "Bearer", "scope": "account"])
+        return .json(200, ["access_token": token, "token_type": "Bearer", "scope": "account"])
     }
 
     private static func form(_ body: Data) -> [String: String] {
         var components = URLComponents()
         components.percentEncodedQuery = String(decoding: body, as: UTF8.self)
         return Dictionary((components.queryItems ?? []).map { ($0.name, $0.value ?? "") }) { _, last in last }
-    }
-
-    private static func json(_ status: Int, _ object: [String: Any]) -> HTTPResponse {
-        HTTPResponse(status: status, reason: status == 200 ? "OK" : "Bad Request", headers: ["Content-Type": "application/json"],
-                     body: (try? JSONSerialization.data(withJSONObject: object)) ?? Data())
-    }
-}
+    }}

@@ -11,7 +11,7 @@ actor MockKeys {
             throw RPCError(code: .invalidArgument, message: "a key needs a name, hosts and a value")
         }
         guard keys[request.name] == nil else { throw RPCError(code: .alreadyExists, message: "a key is already named \(request.name)") }
-        let now = Int64(Date().timeIntervalSince1970 * 1000)
+        let now = MockWorld.now()
         let key = Cocoonbox_Control_V1_Key.with {
             $0.name = request.name
             $0.hosts = request.hosts
@@ -34,7 +34,7 @@ actor MockKeys {
     func rotate(_ name: String, _ value: String) throws -> Cocoonbox_Control_V1_Key {
         guard var key = keys[name] else { throw RPCError(code: .notFound, message: "no such key") }
         key.hint = Self.hint(value)
-        key.updatedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+        key.updatedAtMs = MockWorld.now()
         keys[name] = key
         return key
     }

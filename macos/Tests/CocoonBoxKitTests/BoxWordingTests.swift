@@ -1,7 +1,6 @@
 import CocoonBoxKit
 import Testing
 
-// BoxWordingTests checks the app's words for a phone and a desktop, from the automation a Hello names.
 @Suite struct BoxWordingTests {
     @Test func aPhoneHasPhoneWordsAndNoBrowserAndEveryOtherBoxIsADesktop() {
         let phone = BoxWording(.android)

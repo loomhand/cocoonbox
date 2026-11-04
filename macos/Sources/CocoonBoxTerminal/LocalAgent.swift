@@ -1,9 +1,6 @@
 import Foundation
 
-// MCPTarget is all this module knows about the box: the cocoonbox CLI whose
-// stdio bridge serves it, the default box id, the endpoint, the bearer token
-// and the app's socket. The token and the socket only ever reach a child
-// through its environment, which the bridge reads.
+// MCPTarget is all this module knows about the box; the token and the socket reach a child only through its environment.
 public struct MCPTarget: Sendable {
     public let bridge: String
     public let box: String
@@ -53,11 +50,7 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
         }
     }
 
-    // launch builds the child's argv, environment and workspace files: the CLI
-    // runs the bridge as its stdio MCP server and hands it the token variable,
-    // and with a socket the app's socket and agent's id. Only the environment
-    // carries their values; argv and files name the variables. With resume the
-    // CLI reopens `session`; Claude Code also starts a new conversation under `session`.
+    // launch builds the child's argv, environment and files; only the environment carries the token and socket values.
     public func launch(executable path: String, target: MCPTarget, agent: UUID? = nil, session: String? = nil, resume: Bool = false) -> LocalAgentLaunch {
         let server = Self.server
         var environment = [Self.tokenVariable: target.token]
@@ -91,9 +84,7 @@ public enum LocalAgentKind: String, CaseIterable, Codable, Identifiable, Sendabl
         return LocalAgentLaunch(arguments: arguments, environment: environment, files: files)
     }
 
-    // autoName takes the conversation's name from the CLI's terminal title,
-    // without spinners, status and the workspace name; nil while the title
-    // only names the CLI.
+    // autoName takes the conversation's name from the CLI's terminal title; nil while the title only names the CLI.
     public func autoName(fromTitle title: String) -> String? {
         let generic = Set([self.title, executable, rawValue, "Cursor Agent", "New Agent"].map { $0.lowercased() })
         for part in title.components(separatedBy: " | ") {

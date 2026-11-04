@@ -1,11 +1,8 @@
 import Foundation
 
-// SignInLink finds the sign-in link a box CLI prints on its terminal, for the
-// Mac's browser. The box is untrusted, so only an https link on the vendor's
-// own hosts counts.
+// SignInLink finds a box CLI's sign-in link; the box is untrusted, so only an https link on the vendor's hosts counts.
 public enum SignInLink {
-    // find returns the first allowed link in output: an OSC 8 hyperlink's target,
-    // which line wrapping does not cut, else a link in the text without its escape sequences.
+    // find returns the first allowed link: an OSC 8 hyperlink's target, which wrapping does not cut, else one in the text.
     public static func find(in output: String, kind: OffloadKind) -> URL? {
         let targets = output.matches(of: #/\x1B\]8;[^;\x07\x1B]*;([^\x07\x1B]+)(?:\x07|\x1B\\)/#).map { String($0.output.1) }
         let text = output.replacing(#/\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-?]*[ -\/]*[@-~]|[@-Z\\-_])/#, with: "")

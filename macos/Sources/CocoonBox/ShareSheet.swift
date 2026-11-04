@@ -139,50 +139,20 @@ private struct LiveShareView: View {
 }
 
 private struct ShareSnippets: View {
+    @Environment(AppModel.self) private var model
     let setup: ShareSetup
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SnippetRow(title: "Link", caption: "Opens the live view in a browser, view only.", setup: setup, snippet: .link)
-            SnippetRow(title: "Claude Code", caption: setup.text(.claudeCode).contains(ShareSetup.guestHeader)
-                       ? "The guest runs it with their own token in COCOONBOX_TOKEN." : "The guest runs it once in Terminal.",
-                       setup: setup, snippet: .claudeCode)
-            SnippetRow(title: "Codex", caption: "Add to ~/.codex/config.toml.", setup: setup, snippet: .codexConfig)
-            SnippetRow(title: "Cursor", caption: "Merge into ~/.cursor/mcp.json.", setup: setup, snippet: .cursor)
+            card("Link", "Opens the live view in a browser, view only.", .link)
+            card("Claude Code", setup.text(.claudeCode).contains(ShareSetup.guestHeader)
+                 ? "The guest runs it with their own token in COCOONBOX_TOKEN." : "The guest runs it once in Terminal.", .claudeCode)
+            card("Codex", "Add to ~/.codex/config.toml.", .codexConfig)
+            card("Cursor", "Merge into ~/.cursor/mcp.json.", .cursor)
         }
     }
-}
 
-private struct SnippetRow: View {
-    @Environment(AppModel.self) private var model
-    let title: String
-    let caption: String
-    let setup: ShareSetup
-    let snippet: ShareSetup.Snippet
-    @State private var copied = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.headline)
-            Text(caption).font(.caption).foregroundStyle(.secondary)
-            HStack(alignment: .top, spacing: 8) {
-                Text(setup.text(snippet))
-                    .font(.caption.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-                Button {
-                    copied = model.copyShare(snippet)
-                    Task {
-                        try? await pause(.seconds(2))
-                        copied = false
-                    }
-                } label: {
-                    Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
-                }
-                .controlSize(.small)
-            }
-        }
+    private func card(_ title: String, _ caption: String, _ snippet: ShareSetup.Snippet) -> SnippetCard {
+        SnippetCard(title: title, caption: caption, text: setup.text(snippet)) { model.copyShare(snippet) }
     }
 }

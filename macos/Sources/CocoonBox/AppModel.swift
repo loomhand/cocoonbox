@@ -388,8 +388,6 @@ final class AppModel {
         screen.pasteboard.setString(text, forType: .string)
     }
 
-    // MARK: sharing
-
     func loadShare() async {
         guard let connection, let box else { return }
         do {
@@ -460,8 +458,6 @@ final class AppModel {
         Perf.mark("share", "\(what) id=\(share?.id ?? "-") write=\(share?.write ?? false) users=\(share?.users.map(\.name).joined(separator: ",") ?? "-") expires_in_s=\(share.map { ($0.expiresAtMs - Int64(Date().timeIntervalSince1970 * 1000)) / 1000 } ?? 0) secret_len=\(shareSecret?.count ?? 0)")
     }
 
-    // MARK: time capsule
-
     static let restoreTitle = "Restoring files"
 
     // openCapsule lists the selected box's snapshots and shows the newest one's roots.
@@ -504,8 +500,6 @@ final class AppModel {
             }
         }
     }
-
-    // MARK: session
 
     func start() {
         if ProcessInfo.processInfo.environment["CB_TOKEN_STDIN"] == "1", let endpoint = Endpoint(url: endpointURL),
@@ -727,8 +721,6 @@ final class AppModel {
         if boxRunning { startAgentSide() }
     }
 
-    // MARK: boxes
-
     func createBox(name: String, image: String = "") {
         guard let connection else { return }
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -773,8 +765,6 @@ final class AppModel {
             }
         }
     }
-
-    // MARK: box lifecycle
 
     func ensure() {
         guard let connection else { return }
@@ -895,8 +885,6 @@ final class AppModel {
             apply(box: current)
         }
     }
-
-    // MARK: agent side
 
     private func startAgentSide() {
         guard let connection, let box else { return }
@@ -1084,8 +1072,6 @@ final class AppModel {
         }
         transcripts[entry.agentID] = list
     }
-
-    // MARK: agent actions
 
     func createAgent(name: String = "") {
         guard let connection else { return }

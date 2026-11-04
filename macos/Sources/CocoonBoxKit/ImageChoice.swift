@@ -15,8 +15,8 @@ public struct ImageChoice: Equatable, Sendable {
         guard families.count > 1 else { return [] }
         var labels: Set<String> = []
         return families.map { family in
-            let label = labels.insert(label(of: family)).inserted ? label(of: family) : family
-            return ImageChoice(label: label, image: family)
+            let name = label(of: family)
+            return ImageChoice(label: labels.insert(name).inserted ? name : family, image: family)
         }
     }
 

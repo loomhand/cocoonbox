@@ -102,9 +102,7 @@ public struct BackOutcome: Sendable {
     public var landing: GitRepo.Landing?
 }
 
-// Offloader is the Mac packer (design.md §27): the preflight, the snapshot,
-// the transfer and the way back, over Session.Exec to `cocoonbox-agent
-// offload` in the box and rsync and git over `cocoonbox rsh`.
+// Offloader is the Mac packer: preflight, snapshot, transfer and back, over Session.Exec, rsync and git.
 public struct Offloader: Sendable {
     // backWait is how long back waits for the hand-over: one read's longest wait.
     static let backWait: TimeInterval = 600
@@ -130,8 +128,6 @@ public struct Offloader: Sendable {
         self.environment = environment.filter { credentials[$0.key] == nil }
         self.progress = progress
     }
-
-    // MARK: offload
 
     public func offload(_ request: OffloadRequest) async throws -> OffloadOutcome {
         let problems = Handover.problems(request.handover)
@@ -317,10 +313,7 @@ public struct Offloader: Sendable {
         }
     }
 
-    // MARK: back
-
-    // back asks the box agent for its hand-over, waits for it, fetches the box's
-    // commits and lands them against S, then ends the box CLI session.
+    // back asks the box agent for its hand-over, fetches the box's commits and lands them against S.
     public func back(_ key: String, interrupt: Bool, onEntry: @Sendable (OutboxEntry) -> Void = { _ in }) async throws -> BackOutcome {
         guard let record = store.record(key) else { throw OffloadError.failed("nothing of this repo is in the box") }
         var (entries, _) = try await read(key, since: 0)
@@ -362,8 +355,6 @@ public struct Offloader: Sendable {
         return BackOutcome(record: record, handover: back!.body, file: file, landing: landing)
     }
 
-    // MARK: inbox
-
     public func read(_ key: String, since: UInt64, wait: Int? = nil) async throws -> ([OutboxEntry], String) {
         let reply = try await verb(["read", "--repo", key, "--since", String(since)] + (wait.map { ["--wait", String($0)] } ?? []))
         let status = reply["status"] as? String ?? ""
@@ -386,15 +377,11 @@ public struct Offloader: Sendable {
         ((try? await status()) ?? []).filter { $0.status == "working" }
     }
 
-    // MARK: box CLI
-
     // run runs a command in the box with no input, passing its output on as it comes.
     public func run(_ command: String, output: @escaping @Sendable (Data) -> Void) async throws -> Int32 {
         let code = try await connection.exec(start: .with { $0.command = command }, input: ExecFrames([])) { data, _ in output(data) }
         return code ?? 255
     }
-
-    // MARK: transport
 
     func verb(_ args: [String], input: ExecFrames = ExecFrames([])) async throws -> [String: Any] {
         let command = "cocoonbox-agent offload " + args.map(Self.quote).joined(separator: " ")
@@ -436,8 +423,7 @@ public struct Offloader: Sendable {
     }
 }
 
-// ExecFrames is an Exec's stdin: byte and file parts in 64 KiB chunks, read
-// as the stream asks for them, then the end of stdin.
+// ExecFrames is an Exec's stdin: byte and file parts in 64 KiB chunks, read as the stream asks for them.
 public struct ExecFrames: AsyncSequence, Sendable {
     public typealias Element = Cocoonbox_Agent_V1_ExecClientFrame
     public typealias Failure = Never

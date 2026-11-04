@@ -1,9 +1,6 @@
 import Foundation
 
-// LoginShell reads the environment the user's login shell sets up, as a
-// terminal's shell would have it. An app started by launchd sees only the
-// system PATH, and one started by `open` carries the caller's shell state
-// (PWD and the like), so neither is handed to a CLI as is.
+// LoginShell reads the login shell's environment, since a launchd or `open` start carries the wrong PATH and shell state.
 public enum LoginShell {
     static let seed = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "SSH_AUTH_SOCK", "LANG"]
     static let dropped = ["PWD", "OLDPWD", "SHLVL", "_"]

@@ -2,10 +2,7 @@ import AppKit
 import GhosttyTerminal
 import Observation
 
-// RemoteTerminal shows a program that runs in a box in a Ghostty surface:
-// keys go to `input` and sizes to `resize`, and the program's output comes
-// in through `feed`, from any thread. Command-V and Edit > Paste paste the
-// text on `pasteboard`.
+// RemoteTerminal shows a program that runs in a box in a Ghostty surface fed through `feed` from any thread.
 @MainActor @Observable
 public final class RemoteTerminal: HostedTerminal {
     public private(set) var exitCode: Int32?
@@ -19,25 +16,13 @@ public final class RemoteTerminal: HostedTerminal {
         let backend = InMemoryTerminalSession(write: input, resize: { resize($0.columns, $0.rows) })
         feed = TerminalFeed(backend: backend)
         self.input = input
-        GhosttyResources.prepared
-        terminal = PastingTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400), pasteboard: pasteboard)
-        terminal.controller = TerminalController(theme: LocalAgentSession.theme) {
-            $0.withFontFamily("Menlo")
-            $0.withFontFamily("PingFang SC")
-        }
-        terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(backend))
+        terminal = GhosttyResources.surface(backend: backend) { PastingTerminalView(frame: NSRect(x: 0, y: 0, width: 640, height: 400), pasteboard: pasteboard) }
     }
 
     public var view: NSView { terminal }
 
     public func focus() {
         _ = terminal.acquireProgrammaticFocus()
-    }
-
-    // paste pastes the pasteboard's text; false when it holds none or the surface is not up yet.
-    @discardableResult
-    public func paste() -> Bool {
-        terminal.pasteText()
     }
 
     // send types text and Return into the program.

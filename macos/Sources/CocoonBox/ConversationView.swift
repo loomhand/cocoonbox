@@ -152,7 +152,6 @@ struct LocalAgentPane: View {
 }
 
 struct TranscriptView: View {
-    @Environment(AppModel.self) private var model
     let agent: Agent
     let rows: [TranscriptRow]
 
@@ -187,7 +186,6 @@ struct TranscriptView: View {
 }
 
 struct RowView: View {
-    @Environment(AppModel.self) private var model
     let agentID: String
     let row: TranscriptRow
 

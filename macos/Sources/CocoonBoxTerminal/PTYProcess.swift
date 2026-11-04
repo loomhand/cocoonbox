@@ -1,10 +1,7 @@
 import Darwin
 import Foundation
 
-// PTYProcess runs a program as the session leader of a new pseudo-terminal,
-// with an exact argv: no shell parses it. Ghostty's own exec backend wraps
-// the command in /usr/bin/login, which spins at full CPU when the app was
-// started by launchd.
+// PTYProcess runs an exact argv on a new pseudo-terminal; Ghostty's exec backend wraps it in login, which spins under launchd.
 final class PTYProcess: @unchecked Sendable {
     let pid: pid_t
     private let master: Int32
@@ -83,8 +80,7 @@ final class PTYProcess: @unchecked Sendable {
         _ = ioctl(master, TIOCSWINSZ, &size)
     }
 
-    // hangUp closes the terminal and signals the program's process group, as
-    // closing a terminal window does, then kills what is left after `grace`.
+    // hangUp closes the terminal and signals the process group, then kills what is left after `grace`.
     func hangUp(grace: Duration = .seconds(2)) {
         kill(-pid, SIGHUP)
         queue.sync {

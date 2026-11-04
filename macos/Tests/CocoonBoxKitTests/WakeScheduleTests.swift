@@ -3,8 +3,6 @@ import Foundation
 import GRPCCore
 import Testing
 
-// WakeScheduleTests sets, lists and clears wake schedules through the Kit against MockBox, which keeps the api's
-// checks a client sees (design §15.13).
 @Suite struct WakeScheduleTests {
     @Test func setListAndClearASchedule() async throws {
         let mock = try await MockBoxProcess()

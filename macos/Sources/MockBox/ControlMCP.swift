@@ -2,8 +2,7 @@ import CocoonBoxKit
 import Foundation
 import GRPCCore
 
-// ControlMCP plays the api's control MCP (contracts.md "Control MCP") on
-// MockWorld: the lifecycle tools of the user's boxes, their progress and their errors.
+// ControlMCP plays the api's control MCP on MockWorld: the lifecycle tools of the user's boxes.
 final class ControlMCP: Sendable {
     static let path = "/cocoonbox.mcp/control"
     static let versions = ["2025-06-18", "2025-11-25"]
@@ -40,7 +39,7 @@ final class ControlMCP: Sendable {
         switch rpc {
         case "initialize":
             let asked = params["protocolVersion"] as? String ?? ""
-            var response = Self.reply(id, [
+            var response = HTTPResponse.rpcResult(id, [
                 "protocolVersion": Self.versions.contains(asked) ? asked : Self.versions[1],
                 "capabilities": ["tools": [:] as [String: Any]],
                 "serverInfo": ["name": "cocoonbox-control", "version": "mock"],
@@ -48,9 +47,9 @@ final class ControlMCP: Sendable {
             response.headers["Mcp-Session-Id"] = UUID().uuidString.lowercased()
             return response
         case "tools/list":
-            return Self.reply(id, ["tools": Self.tools])
+            return .rpcResult(id, ["tools": Self.tools])
         case "ping":
-            return Self.reply(id, [:])
+            return .rpcResult(id, [:])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
@@ -58,7 +57,7 @@ final class ControlMCP: Sendable {
             line += " tool=\(name)"
             return await call(name, arguments, id: id, token: token)
         default:
-            return Self.error(id, -32601, "method not found: \(rpc)")
+            return .rpcError(id, -32601, "method not found: \(rpc)")
         }
     }
 
@@ -66,52 +65,52 @@ final class ControlMCP: Sendable {
         let ref = arguments["box"] as? String ?? ""
         if name == "box_list" {
             let boxes = await world.boxes.map { ["box_id": $0.id, "name": $0.name, "state": Self.state($0.state), "image": $0.image, "last_saved_at_ms": $0.lastSavedAtMs] as [String: Any] }
-            return Self.reply(id, Self.success(["boxes": boxes]))
+            return .rpcResult(id, Self.success(["boxes": boxes]))
         }
         if name == "box_create" {
             do {
                 let response = try await world.create(name: arguments["name"] as? String ?? "", image: arguments["image"] as? String ?? "")
                 guard arguments["wait"] as? Bool ?? true else {
-                    return Self.reply(id, Self.success(["box_id": response.box.id, "name": response.box.name, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
+                    return .rpcResult(id, Self.success(["box_id": response.box.id, "name": response.box.name, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
                 }
                 return await wait(response.operation.id, box: response.box.id, id: id, token: token, verb: "Create") { box, op in
                     ["box_id": box.id, "name": box.name, "state": Self.state(box.state), "operation_id": op]
                 }
             } catch let error as RPCError {
-                return Self.reply(id, Self.failure(error.message))
+                return .rpcResult(id, Self.failure(error.message))
             } catch {
-                return Self.error(id, -32603, "\(error)")
+                return .rpcError(id, -32603, "\(error)")
             }
         }
         if name == "usage" {
-            return Self.reply(id, Self.success(MockWorld.usage.object))
+            return .rpcResult(id, Self.success(MockWorld.usage.object))
         }
         if name == "box_delete", ref.isEmpty {
-            return Self.reply(id, Self.failure("Name the box to delete in box."))
+            return .rpcResult(id, Self.failure("Name the box to delete in box."))
         }
         guard let box = await world.box(ref) else {
-            return Self.reply(id, Self.failure("You have no box \"\(ref)\"; box_list lists your boxes."))
+            return .rpcResult(id, Self.failure("You have no box \"\(ref)\"; box_list lists your boxes."))
         }
         switch name {
         case "box_status":
-            return Self.reply(id, Self.success(status(box)))
+            return .rpcResult(id, Self.success(status(box)))
         case "box_ensure":
             let response: Cocoonbox_Control_V1_EnsureResponse
             do {
                 response = try await world.ensure(box.id)
             } catch let error as RPCError {
-                return Self.reply(id, Self.failure(error.message))
+                return .rpcResult(id, Self.failure(error.message))
             } catch {
-                return Self.error(id, -32603, "\(error)")
+                return .rpcError(id, -32603, "\(error)")
             }
             guard response.hasOperation, !response.operation.id.isEmpty, arguments["wait"] as? Bool ?? true else {
-                return Self.reply(id, Self.success(["box_id": box.id, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
+                return .rpcResult(id, Self.success(["box_id": box.id, "state": Self.state(response.box.state), "operation_id": response.operation.id]))
             }
             return await wait(response.operation.id, box: box.id, id: id, token: token, verb: "Ensure") { box, op in
                 ["box_id": box.id, "state": Self.state(box.state), "operation_id": op]
             }
         case "box_hibernate", "box_save":
-            guard box.state == .running else { return Self.reply(id, Self.failure("The box is \(Self.state(box.state)).")) }
+            guard box.state == .running else { return .rpcResult(id, Self.failure("The box is \(Self.state(box.state)).")) }
             let hibernate = name == "box_hibernate"
             let op = hibernate ? await world.hibernate(box.id) : await world.saveState(box.id)
             return await wait(op.id, box: box.id, id: id, token: token, verb: hibernate ? "Hibernate" : "Save") { box, op in
@@ -121,29 +120,29 @@ final class ControlMCP: Sendable {
             }
         case "box_upgrade":
             guard arguments["confirm"] as? Bool == true else {
-                return Self.reply(id, Self.failure("Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."))
+                return .rpcResult(id, Self.failure("Upgrading restarts running programs; files, logins and agent history are kept. Call again with confirm: true."))
             }
-            guard box.latestImage != box.image else { return Self.reply(id, Self.failure("Already on the latest image.")) }
+            guard box.latestImage != box.image else { return .rpcResult(id, Self.failure("Already on the latest image.")) }
             let op = await world.rebase(box.id, image: box.latestImage)
             return await wait(op.id, box: box.id, id: id, token: token, verb: "Upgrade") { box, op in
                 ["box_id": box.id, "state": Self.state(box.state), "image": box.image, "operation_id": op]
             }
         case "box_delete":
             guard arguments["confirm"] as? Bool == true else {
-                return Self.reply(id, Self.failure("Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true."))
+                return .rpcResult(id, Self.failure("Deleting removes the box and stops its running programs; its last saved state is kept for 7 days, then removed. Call again with confirm: true."))
             }
             let op: Cocoonbox_Control_V1_Operation
             do {
                 op = try await world.delete(box: box.id)
             } catch {
-                return Self.error(id, -32603, "\(error)")
+                return .rpcError(id, -32603, "\(error)")
             }
             let deleted = box.id
             return await wait(op.id, box: box.id, id: id, token: token, verb: "Delete") { _, op in
                 ["box_id": deleted, "operation_id": op]
             }
         default:
-            return Self.error(id, -32602, "unknown tool \(name)")
+            return .rpcError(id, -32602, "unknown tool \(name)")
         }
     }
 
@@ -236,11 +235,4 @@ final class ControlMCP: Sendable {
         (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
     }
 
-    private static func reply(_ id: Any, _ result: [String: Any]) -> HTTPResponse {
-        HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: encode(["jsonrpc": "2.0", "id": id, "result": result]))
-    }
-
-    private static func error(_ id: Any, _ code: Int, _ message: String) -> HTTPResponse {
-        HTTPResponse(status: 200, reason: "OK", headers: ["Content-Type": "application/json"], body: encode(["jsonrpc": "2.0", "id": id, "error": ["code": code, "message": message]]))
-    }
 }

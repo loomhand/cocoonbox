@@ -1,7 +1,6 @@
 import Foundation
 
-// EnvProbe writes env.json: the versions this Mac runs of the tools the repo
-// uses, its package manager, and which toolchain files and lockfiles it has.
+// EnvProbe writes env.json: this Mac's versions of the repo's tools, its package manager, toolchain files and lockfiles.
 enum EnvProbe {
     static let files = [".mise.toml", "mise.toml", ".tool-versions", ".nvmrc", ".node-version", ".python-version", ".go-version", "rust-toolchain",
                         "rust-toolchain.toml", "go.mod", "package.json", "Cargo.toml", ".devcontainer/devcontainer.json", "flake.nix", "shell.nix"]

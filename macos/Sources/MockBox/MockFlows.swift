@@ -3,18 +3,13 @@ import CryptoKit
 import Foundation
 import GRPCCore
 
-// MockFlows is the user's flow library as the api keeps it (contracts.md "Flow library"): last write wins, a write of
-// the same content keeps its rev, and names are .json or .mts file names.
+// MockFlows is the user's flow library as the api keeps it: last write wins and the same content keeps its rev.
 actor MockFlows {
     private var rev: UInt64 = 0
     private var flows: [String: Cocoonbox_Control_V1_Flow] = [:]
 
     func list() -> Cocoonbox_Control_V1_ListFlowsResponse {
-        let entries = flows.values.sorted { $0.rev > $1.rev }.map { flow in
-            var entry = flow
-            entry.content = Data()
-            return entry
-        }
+        let entries = flows.values.sorted { $0.rev > $1.rev }.map(\.withoutContent)
         return .with {
             $0.rev = rev
             $0.flows = entries
@@ -34,7 +29,7 @@ actor MockFlows {
             throw RPCError(code: .invalidArgument, message: "invalid flow: \(item.name)")
         }
         return items.map { item in
-            let sha = SHA256.hash(data: item.content).map { String(format: "%02x", $0) }.joined()
+            let sha = SHA256.hash(data: item.content).hex
             if let stored = flows[item.name], stored.sha256 == sha { return stored.withoutContent }
             rev += 1
             let flow = Cocoonbox_Control_V1_Flow.with {
@@ -43,7 +38,7 @@ actor MockFlows {
                 $0.rev = rev
                 $0.sha256 = sha
                 $0.size = UInt64(item.content.count)
-                $0.savedAtMs = Int64(Date().timeIntervalSince1970 * 1000)
+                $0.savedAtMs = MockWorld.now()
                 $0.image = item.image
             }
             flows[item.name] = flow

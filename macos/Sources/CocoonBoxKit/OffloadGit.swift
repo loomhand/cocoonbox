@@ -1,19 +1,18 @@
 import Darwin
 import Foundation
 
-// Command runs a program found on the given environment's PATH, feeding it
-// input and collecting stdout and stderr in full.
-struct Command {
-    struct Run {
-        var status: Int32
-        var out: Data
-        var err: Data
+// Command runs a program found on the given environment's PATH and collects stdout and stderr in full.
+public struct Command {
+    public struct Run {
+        public var status: Int32
+        public var out: Data
+        public var err: Data
 
-        var text: String { String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
-        var error: String { String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+        public var text: String { String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
+        public var error: String { String(decoding: err, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines) }
     }
 
-    static func run(_ argv: [String], in dir: URL? = nil, environment: [String: String], input: Data? = nil, timeout: Double? = nil) throws -> Run {
+    public static func run(_ argv: [String], in dir: URL? = nil, environment: [String: String], input: Data? = nil, timeout: Double? = nil) throws -> Run {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = argv
@@ -47,8 +46,7 @@ struct Command {
     }
 }
 
-// GitRepo runs git in one work tree for the packer: the snapshot, the
-// ignored list, the bundle and the merge at back.
+// GitRepo runs git in one work tree for the packer.
 public struct GitRepo: Sendable {
     public let top: URL
     let environment: [String: String]
@@ -103,8 +101,7 @@ public struct GitRepo: Sendable {
         return path.hasPrefix("/") ? URL(fileURLWithPath: path) : top.appendingPathComponent(path)
     }
 
-    // snapshot commits the work tree, tracked and untracked files that are not
-    // ignored, through a temporary index over HEAD's tree, with HEAD as parent.
+    // snapshot commits the work tree's non-ignored files through a temporary index, with HEAD as parent.
     func snapshot(index: URL, message: String) throws -> String {
         try? FileManager.default.removeItem(at: index)
         defer { try? FileManager.default.removeItem(at: index) }
@@ -124,8 +121,7 @@ public struct GitRepo: Sendable {
 
     static let ident = ["GIT_AUTHOR_NAME": "cocoonbox", "GIT_AUTHOR_EMAIL": "cocoonbox@localhost", "GIT_COMMITTER_NAME": "cocoonbox", "GIT_COMMITTER_EMAIL": "cocoonbox@localhost"]
 
-    // keepIndex points ref at a commit of the index's tree, so a bundle carries
-    // staged content no other ref reaches; a conflicted index is left out.
+    // keepIndex points ref at a commit of the index's tree, so a bundle carries staged content; a conflicted index is left out.
     func keepIndex(_ ref: String, scratch: URL) throws {
         try? FileManager.default.removeItem(at: scratch)
         defer { try? FileManager.default.removeItem(at: scratch) }
@@ -154,8 +150,6 @@ public struct GitRepo: Sendable {
         throw OffloadError.failed("git bundle: \(run.error)")
     }
 
-    // MARK: back
-
     public enum Landing: Equatable, Sendable {
         case unchanged
         case fastForward
@@ -172,10 +166,7 @@ public struct GitRepo: Sendable {
         }
     }
 
-    // land brings the box's snapshot S' home against base S: a fast-forward
-    // when this repo still equals S, else a clean three-way merge applied
-    // uncommitted that leaves the user's uncommitted paths alone, else a
-    // branch at S' with this work tree untouched.
+    // land brings S' home against S: a fast-forward, else a clean uncommitted three-way merge, else a branch at S'.
     func land(id: String, base: String, box: String, index: URL, now: Date = Date()) throws -> Landing {
         let start = verify(base + "^")
         let boxHead = verify(box + "^")
@@ -203,8 +194,7 @@ public struct GitRepo: Sendable {
         return .merged(files)
     }
 
-    // settle moves the work tree between trees and, with move, HEAD's branch and the index; the index is
-    // built aside under git's index.lock first, so a held lock or a patch that does not apply changes nothing.
+    // settle builds the index aside under index.lock first, so a held lock or a failed patch changes nothing.
     private func settle(id: String, from: String, to: String, move: (old: String?, new: String)?, scratch: URL) throws -> Bool {
         let manager = FileManager.default
         var lock: URL?

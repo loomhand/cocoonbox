@@ -3,8 +3,6 @@ import Foundation
 import Synchronization
 import Testing
 
-// BrowserLoginTests plays the browser: it follows the consent page's URL to MockBox, which allows at once,
-// or brings an answer of its own back to the loopback port.
 @Suite struct BrowserLoginTests {
     static let unreachable = Endpoint(host: "127.0.0.1", port: 9, usesTLS: false)
 
@@ -94,7 +92,6 @@ import Testing
         #expect(name.utf8.count == 63)
     }
 
-    // failure runs a sign-in whose browser brings answer back to the loopback port, after a stray GET when stray is set.
     static func failure(stray: Bool = false, answer: @escaping @Sendable (URL) -> [String: String]) async -> String? {
         do {
             _ = try await BrowserLogin(endpoint: unreachable, client: BrowserLogin.cliClient).run(timeout: .seconds(20)) { url in

@@ -2,11 +2,7 @@ import Foundation
 import GhosttyTerminal
 import ObjectiveC
 
-// GhosttyResources points GhosttyTerminal's resource lookup at
-// Contents/Resources. SwiftPM's generated accessor looks only in the app
-// bundle's root, where a signed app cannot hold files, and then in the build
-// directory, which lives under ~/Documents and raises a privacy prompt. The
-// accessor runs once, so bundleURL is redirected just for that one call.
+// GhosttyResources points GhosttyTerminal's one resource lookup at Contents/Resources: a signed app holds no files at its bundle root.
 @MainActor
 enum GhosttyResources {
     static let name = "GhosttyKit_GhosttyTerminal.bundle"
@@ -27,4 +23,17 @@ enum GhosttyResources {
         _ = GhosttyRuntimeResources.directoryURL
         method_setImplementation(method, original)
     }()
+
+    private static let theme = TerminalTheme(light: .afterglow.background("000000"), dark: .afterglow.background("000000"))
+
+    static func surface<View: AppTerminalView>(backend: InMemoryTerminalSession, _ make: () -> View) -> View {
+        prepared
+        let terminal = make()
+        terminal.controller = TerminalController(theme: theme) {
+            $0.withFontFamily("Menlo")
+            $0.withFontFamily("PingFang SC")
+        }
+        terminal.configuration = TerminalSurfaceOptions(backend: .inMemory(backend))
+        return terminal
+    }
 }

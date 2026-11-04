@@ -148,7 +148,7 @@ public struct BrowserLogin: Sendable {
 
 // Loopback listens on 127.0.0.1 on a free port for the browser's GET of /callback.
 final class Loopback: Sendable {
-    static let page = "<!doctype html><meta charset=utf-8><title>cocoonbox</title><p>cocoonbox has the answer. You can close this tab and return to the terminal."
+    static let page = "<!doctype html><meta charset=utf-8><title>cocoonbox</title><p>cocoonbox has the answer. You can close this tab."
 
     static let pollMillis: Int64 = 200
 
