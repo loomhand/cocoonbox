@@ -6,7 +6,7 @@ mod common;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -34,6 +34,8 @@ use common::{owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
+const TEST_TERMINFO: &str =
+    "cb-test-term|cocoonbox test terminal,\n\tam, cols#80, lines#24, clear=\\E[H\\E[2J, Cbx,\n";
 
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
@@ -560,8 +562,8 @@ async fn mock_door(
 ) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}/mcp", listener.local_addr().unwrap());
-    let added = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let readers = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let added = Arc::new(AtomicBool::new(false));
+    let readers = Arc::new(AtomicUsize::new(0));
     let born = std::time::Instant::now();
     tokio::spawn(async move {
         loop {
@@ -594,9 +596,7 @@ async fn mock_door(
                 let mut body = vec![0u8; len];
                 reader.read_exact(&mut body).await.unwrap();
                 let mut stream = reader.into_inner();
-                if line.starts_with("GET")
-                    && readers.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < refused
-                {
+                if line.starts_with("GET") && readers.fetch_add(1, Ordering::SeqCst) < refused {
                     log.lock().unwrap().push((
                         "GET refused".into(),
                         json!({"ms": born.elapsed().as_millis()}),
@@ -620,7 +620,7 @@ async fn mock_door(
                             return;
                         }
                         if msg.contains("list_changed") {
-                            added.store(true, std::sync::atomic::Ordering::SeqCst);
+                            added.store(true, Ordering::SeqCst);
                         }
                         let frame = format!("event: message\ndata: {msg}\n\n");
                         if stream.write_all(frame.as_bytes()).await.is_err() {
@@ -645,7 +645,7 @@ async fn mock_door(
                             json!({"name": "mock_create_item", "description": "Create an item", "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}}}}),
                             json!({"name": "shell", "description": "not the box shell", "inputSchema": {"type": "object"}}),
                         ];
-                        if added.load(std::sync::atomic::Ordering::SeqCst) {
+                        if added.load(Ordering::SeqCst) {
                             tools.push(json!({"name": "mock_new", "description": "New", "inputSchema": {"type": "object"}}));
                         }
                         json!({"tools": tools})
@@ -3140,9 +3140,6 @@ async fn exec_tty(h: &Harness, command: &str, term: &str, terminfo: &str) -> (St
         String::from_utf8(err).unwrap(),
     )
 }
-
-const TEST_TERMINFO: &str =
-    "cb-test-term|cocoonbox test terminal,\n\tam, cols#80, lines#24, clear=\\E[H\\E[2J, Cbx,\n";
 
 #[tokio::test]
 async fn exec_tty_installs_the_terminfo_sent_for_a_term_the_box_lacks() {
@@ -6113,7 +6110,7 @@ async fn live_snapshot_skips_a_file_that_keeps_changing() {
     let growing = h.workspace.join("growing.bin");
     std::fs::write(&growing, noise(16 << 20, 5)).unwrap();
     std::fs::write(h.workspace.join("steady.txt"), b"steady").unwrap();
-    let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop = Arc::new(AtomicBool::new(false));
     let writer = {
         let stop = Arc::clone(&stop);
         let growing = growing.clone();
@@ -6123,14 +6120,14 @@ async fn live_snapshot_skips_a_file_that_keeps_changing() {
                 .append(true)
                 .open(growing)
                 .unwrap();
-            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+            while !stop.load(Ordering::Relaxed) {
                 f.write_all(b"x").unwrap();
                 std::thread::sleep(Duration::from_millis(1));
             }
         })
     };
     let planned = plan(&h, pb::Consistency::Live, "").await;
-    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    stop.store(true, Ordering::Relaxed);
     writer.join().unwrap();
     upload_missing(&h, &base, &objects, &planned).await;
     let m = manifest_of(&objects, &planned.snapshot_id);
@@ -6531,7 +6528,6 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
 
 #[tokio::test]
 async fn restore_writes_files_under_a_read_only_directory_and_keeps_its_mode() {
-    use std::os::unix::fs::PermissionsExt;
     let h = Harness::start(Vec::new(), false).await;
     let (base, objects) = fake_store().await;
     let ro = h.home.join("go/pkg/mod/example.com/m@v1.0.0");

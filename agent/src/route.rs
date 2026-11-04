@@ -7,13 +7,6 @@ use serde_json::Value;
 
 use crate::llm::Usage;
 
-const DESK_ROUTE: &str = include_str!("../../image/desk/route.json");
-const TASK: &str = "\"__TASK__\"";
-const TIMEOUT: Duration = Duration::from_secs(2);
-const BUILDS: &str = "typesafe/jev-1.14-";
-pub(crate) const BUILD: &str = "typesafe/jev-1.14-20261014";
-const ERROR_BODY_CHARS: usize = 300;
-
 /// Lowest confidence at which a route is followed rather than left to the caller.
 pub const CONFIDENT: f64 = 0.8;
 
@@ -37,6 +30,14 @@ pub const TIERS: &[(&str, &str)] = &[
         "a pure judgment from the given text: no action on the computer is needed",
     ),
 ];
+
+pub(crate) const BUILD: &str = "typesafe/jev-1.14-20261014";
+
+const DESK_ROUTE: &str = include_str!("../../image/desk/route.json");
+const TASK: &str = "\"__TASK__\"";
+const TIMEOUT: Duration = Duration::from_secs(2);
+const BUILDS: &str = "typesafe/jev-1.14-";
+const ERROR_BODY_CHARS: usize = 300;
 
 static WARNED: AtomicBool = AtomicBool::new(false);
 

@@ -24,18 +24,6 @@ const PUSH_DELAY: Duration = Duration::from_millis(500);
 const WATCH_RETRY: Duration = Duration::from_secs(60);
 const FLOW_OWNER: &str = "flows";
 
-#[derive(Deserialize)]
-struct Library {
-    flows: Vec<Remote>,
-}
-
-#[derive(Deserialize)]
-struct Remote {
-    name: String,
-    rev: u64,
-    sha256: String,
-}
-
 /// Keeps `/workspace/flows` and the owner's library in step.
 pub struct Syncer {
     url: String,
@@ -269,6 +257,18 @@ impl Syncer {
         }
         Ok(out.text)
     }
+}
+
+#[derive(Deserialize)]
+struct Library {
+    flows: Vec<Remote>,
+}
+
+#[derive(Deserialize)]
+struct Remote {
+    name: String,
+    rev: u64,
+    sha256: String,
 }
 
 /// Whether call `name` reads saved flows, so the library is pulled before it runs.

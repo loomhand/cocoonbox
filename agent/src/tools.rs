@@ -8,6 +8,16 @@ use crate::config::Automation;
 use crate::llm::ToolSpec;
 use crate::plugins::Plugin;
 
+/// Remote tools that only read the box: all a read-only share offers.
+pub const READ_ONLY: [&str; 6] = [
+    "screenshot",
+    "computer_state",
+    "read_file",
+    "list_dir",
+    "browser_snapshot",
+    "browser_read",
+];
+
 const LOOP_ONLY: [&str; 2] = ["delegate_computer", "request_take_over"];
 const TARGET_HINT: &str = "With action click or locate, in place of element or x,y: the element by its accessibility name in the focused window, else by a unique match of text on the screen. Returns the tier, the point in screenshot pixels and a crop around it; locate does not click. Not found returns the screenshot for x,y.";
 const DESK_OPS: [&str; 15] = [
@@ -38,16 +48,6 @@ const LIST_HINT: &str = " For a few steps you can already place, such as opening
 
 /// The tools of a box without desktop automation: shell and files.
 const FILE_TOOLS: [&str; 5] = ["shell", "read_file", "write_file", "edit_file", "list_dir"];
-
-/// Remote tools that only read the box: all a read-only share offers.
-pub const READ_ONLY: [&str; 6] = [
-    "screenshot",
-    "computer_state",
-    "read_file",
-    "list_dir",
-    "browser_snapshot",
-    "browser_read",
-];
 
 /// Remote tools that only read but stay out of a read-only share.
 const READS: [&str; 2] = ["browser_fetch", "browser_tabs"];

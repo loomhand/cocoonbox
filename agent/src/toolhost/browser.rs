@@ -1905,472 +1905,6 @@ pub(super) mod tests {
         for (let n = 1; n <= 8; n++) { const d = document.createElement('div'); d.innerHTML = '<p>Card ' + n + '</p><button>Resolve</button>'; cards.append(d); }\
         </script>";
 
-    async fn fake_chrome() -> u16 {
-        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = http.local_addr().unwrap().port();
-        let version = json!({
-            "webSocketDebuggerUrl": format!("ws://{}/devtools/browser/fake", ws.local_addr().unwrap()),
-        })
-        .to_string();
-        let (closed, mut stopped) = tokio::sync::watch::channel(false);
-        tokio::spawn(async move {
-            let (stream, _) = ws.accept().await.unwrap();
-            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-            while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
-                let v: Value = serde_json::from_str(&text).unwrap();
-                if v["method"] == "Browser.close" {
-                    let reply = json!({"id": v["id"], "result": {}}).to_string();
-                    ws.send(WsMessage::text(reply)).await.unwrap();
-                    closed.send(true).unwrap();
-                    return;
-                }
-            }
-        });
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    _ = stopped.changed() => return,
-                    Ok((mut s, _)) = http.accept() => {
-                        let mut buf = [0u8; 1024];
-                        let n = s.read(&mut buf).await.unwrap_or(0);
-                        let body = if buf[..n].starts_with(b"GET /json/version") { version.as_str() } else { "[]" };
-                        let head = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len());
-                        let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-                    }
-                }
-            }
-        });
-        port
-    }
-
-    pub(in crate::toolhost) async fn slow_chrome(delay: Duration) -> u16 {
-        let socket = tokio::net::TcpSocket::new_v4().unwrap();
-        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-        let port = socket.local_addr().unwrap().port();
-        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = ws.local_addr().unwrap();
-        let list = json!([{
-            "id": "1",
-            "type": "page",
-            "url": "about:blank",
-            "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/1"),
-        }])
-        .to_string();
-        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
-            .to_string();
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = ws.accept().await {
-                tokio::spawn(async move {
-                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
-                        let v: Value = serde_json::from_str(&text).unwrap();
-                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "Page: slow"}}});
-                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
-                    }
-                });
-            }
-        });
-        tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
-            let http = socket.listen(1024).unwrap();
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    &version
-                } else {
-                    &list
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
-        });
-        port
-    }
-
-    pub(in crate::toolhost) async fn web_chrome(targets: &[(&str, &str, &str)]) -> u16 {
-        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = http.local_addr().unwrap().port();
-        let mut list = Vec::new();
-        for (i, (kind, url, value)) in targets.iter().enumerate() {
-            let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = ws.local_addr().unwrap();
-            list.push(json!({"id": i.to_string(), "type": kind, "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/{i}")}));
-            let value = (*value).to_owned();
-            tokio::spawn(async move {
-                while let Ok((stream, _)) = ws.accept().await {
-                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
-                        let v: Value = serde_json::from_str(&text).unwrap();
-                        let reply = json!({"id": v["id"], "result": {"result": {"value": value}}});
-                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
-                    }
-                }
-            });
-        }
-        let list = Value::from(list).to_string();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let _ = s.read(&mut buf).await;
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    list.len()
-                );
-                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
-            }
-        });
-        port
-    }
-
-    async fn tabs_chrome(tabs: &[(&str, &str, &str)]) -> u16 {
-        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = http.local_addr().unwrap().port();
-        let mut list = Vec::new();
-        for (i, (first, shown, title)) in tabs.iter().enumerate() {
-            let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = ws.local_addr().unwrap();
-            let url = format!("https://t{i}.test/");
-            list.push(json!({"id": format!("T{i}"), "type": "page", "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/T{i}")}));
-            let history = json!({"entries": [{"url": first}]});
-            let info = json!([shown, title, url]);
-            tokio::spawn(async move {
-                while let Ok((stream, _)) = ws.accept().await {
-                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
-                        let v: Value = serde_json::from_str(&text).unwrap();
-                        let result = match v["method"].as_str().unwrap() {
-                            "Page.getNavigationHistory" => history.clone(),
-                            _ if v["params"]["expression"] == TAB_JS => {
-                                json!({"result": {"value": info}})
-                            }
-                            _ => json!({"result": {"value": format!("Page: tab {i}")}}),
-                        };
-                        let reply = json!({"id": v["id"], "result": result});
-                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
-                    }
-                }
-            });
-        }
-        let list = Value::from(list).to_string();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let _ = s.read(&mut buf).await;
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    list.len()
-                );
-                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
-            }
-        });
-        port
-    }
-
-    async fn fetch_chrome(text: String, loads: bool) -> (u16, Arc<std::sync::Mutex<Vec<Value>>>) {
-        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = http.local_addr().unwrap().port();
-        let version = json!({
-            "webSocketDebuggerUrl": format!("ws://{}/devtools/browser/fake", ws.local_addr().unwrap()),
-        })
-        .to_string();
-        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = Arc::clone(&log);
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = ws.accept().await {
-                let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-                let (log, text) = (Arc::clone(&seen), text.clone());
-                tokio::spawn(async move {
-                    let (mut retrying, mut late, mut held) = (false, false, false);
-                    let (mut spa, mut hang, mut grow, mut reads) = (false, false, false, 0);
-                    let (mut shell, mut texts) = (false, 0);
-                    while let Some(Ok(WsMessage::Text(msg))) = ws.next().await {
-                        let v: Value = serde_json::from_str(&msg).unwrap();
-                        log.lock().unwrap().push(v.clone());
-                        let method = v["method"].as_str().unwrap();
-                        let read = method == "Runtime.evaluate" && v["params"]["expression"] != "0";
-                        if retrying && !late && (read || method == "Page.stopLoading") {
-                            late = true;
-                            held = true;
-                            let paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
-                                "requestId": "r2", "frameId": "hidden", "responseStatusCode": 302, "responseHeaders": []}});
-                            ws.send(WsMessage::text(paused.to_string())).await.unwrap();
-                        }
-                        if method == "Page.stopLoading" {
-                            held = false;
-                        }
-                        if held && method == "Runtime.evaluate" {
-                            continue;
-                        }
-                        if method == "Runtime.evaluate" && v["params"]["expression"] == TEXT_LEN_JS
-                        {
-                            reads += 1;
-                            if spa && !hang && reads == 3 {
-                                let done = json!({"method": "Network.loadingFinished", "sessionId": "s1",
-                                    "params": {"requestId": "x1"}});
-                                ws.send(WsMessage::text(done.to_string())).await.unwrap();
-                            }
-                            let len = if grow {
-                                reads
-                            } else if spa && reads > 3 && !hang {
-                                50
-                            } else {
-                                5
-                            };
-                            let reply = json!({"id": v["id"], "sessionId": "s1", "result": {"result": {"value": len}}});
-                            ws.send(WsMessage::text(reply.to_string())).await.unwrap();
-                            continue;
-                        }
-                        let result = match method {
-                            "Target.createTarget" => json!({"targetId": "hidden"}),
-                            "Target.attachToTarget" => json!({"sessionId": "s1"}),
-                            "Page.getFrameTree" => {
-                                json!({"frameTree": {"frame": {"id": "hidden"}}})
-                            }
-                            "Page.navigate" => json!({"frameId": "hidden", "loaderId": "l2"}),
-                            "Runtime.evaluate"
-                                if v["params"]["expression"]
-                                    .as_str()
-                                    .unwrap()
-                                    .starts_with("document.title") =>
-                            {
-                                json!({"result": {"value": "Doc (https://a.test/)"}})
-                            }
-                            "Runtime.evaluate" if shell && read => {
-                                texts += 1;
-                                let page = if texts < 3 {
-                                    "Loading your feed…"
-                                } else {
-                                    "feed item one"
-                                };
-                                json!({"result": {"value": page}})
-                            }
-                            "Runtime.evaluate" => json!({"result": {"value": text}}),
-                            _ => json!({}),
-                        };
-                        let zip = v["params"]["url"]
-                            .as_str()
-                            .is_some_and(|u| u.ends_with(".zip"));
-                        let challenge = v["params"]["url"]
-                            .as_str()
-                            .is_some_and(|u| u.contains("/challenge"));
-                        let retries = v["params"]["url"]
-                            .as_str()
-                            .is_some_and(|u| u.ends_with("/challenge-retry"));
-                        if v["method"] == "Page.navigate" {
-                            let url = v["params"]["url"].as_str().unwrap();
-                            (spa, hang, grow) = (
-                                url.contains("/spa"),
-                                url.ends_with("/spa-hang"),
-                                url.ends_with("/spa-grow"),
-                            );
-                            shell = url.ends_with("/shell");
-                            if spa {
-                                let xhr = json!({"method": "Network.requestWillBeSent", "sessionId": "s1",
-                                    "params": {"requestId": "x1", "type": "XHR"}});
-                                ws.send(WsMessage::text(xhr.to_string())).await.unwrap();
-                            }
-                            let kind = if zip {
-                                "application/zip"
-                            } else {
-                                "text/html; charset=utf-8"
-                            };
-                            let mut paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
-                                "requestId": "r1", "frameId": "hidden", "responseStatusCode": 200,
-                                "responseHeaders": [{"name": "Content-Type", "value": kind}]}});
-                            if challenge {
-                                paused["params"]["responseStatusCode"] = 403.into();
-                                paused["params"]["responseHeaders"]
-                                    .as_array_mut()
-                                    .unwrap()
-                                    .push(json!({"name": "cf-mitigated", "value": "challenge"}));
-                            }
-                            ws.send(WsMessage::text(paused.to_string())).await.unwrap();
-                            retrying = retries;
-                            if retries {
-                                tokio::time::sleep(Duration::from_secs(3)).await;
-                                let mut redirect = paused.clone();
-                                redirect["params"]["responseStatusCode"] = 302.into();
-                                redirect["params"]["responseHeaders"] = json!([]);
-                                paused["params"]["responseStatusCode"] = 429.into();
-                                for p in [redirect, paused] {
-                                    ws.send(WsMessage::text(p.to_string())).await.unwrap();
-                                }
-                            }
-                        }
-                        let mut result = result;
-                        if zip {
-                            result["errorText"] = "net::ERR_BLOCKED_BY_CLIENT".into();
-                        }
-                        if v["params"]["url"]
-                            .as_str()
-                            .is_some_and(|u| u.contains("unreachable"))
-                        {
-                            result["errorText"] = "net::ERR_TUNNEL_CONNECTION_FAILED".into();
-                        }
-                        let reply =
-                            json!({"id": v["id"], "sessionId": v["sessionId"], "result": result});
-                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
-                        if v["method"] != "Page.navigate" {
-                            continue;
-                        }
-                        let names: &[&str] = if loads {
-                            &["init", "DOMContentLoaded", "load", "networkAlmostIdle"]
-                        } else {
-                            &["DOMContentLoaded", "load", "networkAlmostIdle"]
-                        };
-                        for name in names {
-                            let event = json!({"method": "Page.lifecycleEvent", "sessionId": "s1",
-                                "params": {"frameId": "hidden", "name": name}});
-                            ws.send(WsMessage::text(event.to_string())).await.unwrap();
-                        }
-                    }
-                });
-            }
-        });
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    version.as_str()
-                } else {
-                    "[]"
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
-        });
-        (port, log)
-    }
-
-    async fn page_chrome() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
-        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = http.local_addr().unwrap().port();
-        let addr = ws.local_addr().unwrap();
-        let list = json!([{"id": "1", "type": "page", "url": AGENT_PAGE, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/1")}])
-            .to_string();
-        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
-            .to_string();
-        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = Arc::clone(&log);
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = ws.accept().await {
-                let log = Arc::clone(&seen);
-                tokio::spawn(async move {
-                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
-                        let v: Value = serde_json::from_str(&text).unwrap();
-                        log.lock()
-                            .unwrap()
-                            .push(v["method"].as_str().unwrap().to_owned());
-                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "complete"}}});
-                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
-                    }
-                });
-            }
-        });
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    &version
-                } else {
-                    &list
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
-        });
-        (port, log)
-    }
-
-    #[cfg(unix)]
-    async fn startup_chrome(
-        delay: Duration,
-        before: (&str, &str),
-        after: &[(&str, &str)],
-    ) -> (u16, Arc<std::sync::Mutex<Vec<(String, Value)>>>) {
-        let socket = tokio::net::TcpSocket::new_v4().unwrap();
-        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
-        let port = socket.local_addr().unwrap().port();
-        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = ws.local_addr().unwrap();
-        let tab = |(id, url): (&str, &str)| json!({"id": id, "type": "page", "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/{id}")});
-        let lists = [
-            json!([tab(before)]).to_string(),
-            Value::from_iter(after.iter().copied().chain([("1", AGENT_PAGE)]).map(tab)).to_string(),
-        ];
-        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
-            .to_string();
-        let created = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let create = Arc::clone(&created);
-        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let seen = Arc::clone(&log);
-        tokio::spawn(async move {
-            while let Ok((stream, _)) = ws.accept().await {
-                let log = Arc::clone(&seen);
-                let create = Arc::clone(&create);
-                tokio::spawn(async move {
-                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
-                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
-                        let v: Value = serde_json::from_str(&text).unwrap();
-                        if v["method"] == "Target.createTarget" {
-                            create.store(true, std::sync::atomic::Ordering::SeqCst);
-                        }
-                        log.lock().unwrap().push((
-                            v["method"].as_str().unwrap().to_owned(),
-                            v["params"].clone(),
-                        ));
-                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "complete"}}});
-                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
-                    }
-                });
-            }
-        });
-        tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
-            let http = socket.listen(1024).unwrap();
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 1024];
-                let n = s.read(&mut buf).await.unwrap_or(0);
-                let body = if buf[..n].starts_with(b"GET /json/version") {
-                    &version
-                } else {
-                    &lists[usize::from(created.load(std::sync::atomic::Ordering::SeqCst))]
-                };
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    body.len()
-                );
-                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
-            }
-        });
-        (port, log)
-    }
-
-    #[cfg(unix)]
-    fn alive_chrome(dir: &std::path::Path) -> String {
-        let chrome = dir.join("chrome");
-        std::fs::write(&chrome, "#!/bin/sh\nsleep 5\n").unwrap();
-        std::fs::set_permissions(&chrome, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
-        chrome.display().to_string()
-    }
-
     #[cfg(unix)]
     #[tokio::test]
     async fn a_start_after_agent_windows_were_left_open_scans_once() {
@@ -3194,41 +2728,6 @@ pub(super) mod tests {
         assert_eq!(out, "Page: Doc (https://a.test/)\n\nLoading…");
     }
 
-    struct ChromeGuard(PathBuf);
-
-    impl Drop for ChromeGuard {
-        fn drop(&mut self) {
-            let _ = std::process::Command::new("pkill")
-                .arg("-f")
-                .arg(self.0.as_os_str())
-                .status();
-        }
-    }
-
-    fn headless_chrome(dir: &std::path::Path) -> Option<(String, ChromeGuard)> {
-        let Some(chrome) = std::env::var("CHROME_BIN").ok().filter(|b| !b.is_empty()) else {
-            assert!(
-                cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
-                "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
-            );
-            eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
-            return None;
-        };
-        let wrapper = dir.join("chrome");
-        std::fs::write(
-            &wrapper,
-            format!("#!/bin/sh\nexec \"{chrome}\" --headless=new --use-mock-keychain \"$@\"\n"),
-        )
-        .unwrap();
-        #[cfg(unix)]
-        std::fs::set_permissions(
-            &wrapper,
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .unwrap();
-        Some((wrapper.display().to_string(), ChromeGuard(dir.to_owned())))
-    }
-
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn a_test_chrome_ends_with_its_guard_even_when_the_browser_is_only_dropped() {
@@ -3267,23 +2766,6 @@ pub(super) mod tests {
             "Chrome under {} outlived its guard",
             dir.path().display()
         );
-    }
-
-    async fn page_server(page: &'static str) -> u16 {
-        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = http.local_addr().unwrap().port();
-        tokio::spawn(async move {
-            while let Ok((mut s, _)) = http.accept().await {
-                let mut buf = [0u8; 4096];
-                let _ = s.read(&mut buf).await;
-                let head = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
-                    page.len()
-                );
-                let _ = s.write_all(format!("{head}{page}").as_bytes()).await;
-            }
-        });
-        port
     }
 
     #[tokio::test]
@@ -3773,5 +3255,523 @@ pub(super) mod tests {
         for page in ["article", &long, "Just a moment..."] {
             assert!(!loading(page), "{page:?}");
         }
+    }
+
+    async fn fake_chrome() -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let version = json!({
+            "webSocketDebuggerUrl": format!("ws://{}/devtools/browser/fake", ws.local_addr().unwrap()),
+        })
+        .to_string();
+        let (closed, mut stopped) = tokio::sync::watch::channel(false);
+        tokio::spawn(async move {
+            let (stream, _) = ws.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+            while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                let v: Value = serde_json::from_str(&text).unwrap();
+                if v["method"] == "Browser.close" {
+                    let reply = json!({"id": v["id"], "result": {}}).to_string();
+                    ws.send(WsMessage::text(reply)).await.unwrap();
+                    closed.send(true).unwrap();
+                    return;
+                }
+            }
+        });
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = stopped.changed() => return,
+                    Ok((mut s, _)) = http.accept() => {
+                        let mut buf = [0u8; 1024];
+                        let n = s.read(&mut buf).await.unwrap_or(0);
+                        let body = if buf[..n].starts_with(b"GET /json/version") { version.as_str() } else { "[]" };
+                        let head = format!("HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n", body.len());
+                        let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    pub(in crate::toolhost) async fn slow_chrome(delay: Duration) -> u16 {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = ws.local_addr().unwrap();
+        let list = json!([{
+            "id": "1",
+            "type": "page",
+            "url": "about:blank",
+            "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/1"),
+        }])
+        .to_string();
+        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
+            .to_string();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "Page: slow"}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let http = socket.listen(1024).unwrap();
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    &version
+                } else {
+                    &list
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    pub(in crate::toolhost) async fn web_chrome(targets: &[(&str, &str, &str)]) -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let mut list = Vec::new();
+        for (i, (kind, url, value)) in targets.iter().enumerate() {
+            let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = ws.local_addr().unwrap();
+            list.push(json!({"id": i.to_string(), "type": kind, "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/{i}")}));
+            let value = (*value).to_owned();
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = ws.accept().await {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        let reply = json!({"id": v["id"], "result": {"result": {"value": value}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                }
+            });
+        }
+        let list = Value::from(list).to_string();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    list.len()
+                );
+                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    async fn tabs_chrome(tabs: &[(&str, &str, &str)]) -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let mut list = Vec::new();
+        for (i, (first, shown, title)) in tabs.iter().enumerate() {
+            let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = ws.local_addr().unwrap();
+            let url = format!("https://t{i}.test/");
+            list.push(json!({"id": format!("T{i}"), "type": "page", "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/T{i}")}));
+            let history = json!({"entries": [{"url": first}]});
+            let info = json!([shown, title, url]);
+            tokio::spawn(async move {
+                while let Ok((stream, _)) = ws.accept().await {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        let result = match v["method"].as_str().unwrap() {
+                            "Page.getNavigationHistory" => history.clone(),
+                            _ if v["params"]["expression"] == TAB_JS => {
+                                json!({"result": {"value": info}})
+                            }
+                            _ => json!({"result": {"value": format!("Page: tab {i}")}}),
+                        };
+                        let reply = json!({"id": v["id"], "result": result});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                }
+            });
+        }
+        let list = Value::from(list).to_string();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = s.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    list.len()
+                );
+                let _ = s.write_all(format!("{head}{list}").as_bytes()).await;
+            }
+        });
+        port
+    }
+
+    async fn fetch_chrome(text: String, loads: bool) -> (u16, Arc<std::sync::Mutex<Vec<Value>>>) {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let version = json!({
+            "webSocketDebuggerUrl": format!("ws://{}/devtools/browser/fake", ws.local_addr().unwrap()),
+        })
+        .to_string();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let (log, text) = (Arc::clone(&seen), text.clone());
+                tokio::spawn(async move {
+                    let (mut retrying, mut late, mut held) = (false, false, false);
+                    let (mut spa, mut hang, mut grow, mut reads) = (false, false, false, 0);
+                    let (mut shell, mut texts) = (false, 0);
+                    while let Some(Ok(WsMessage::Text(msg))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&msg).unwrap();
+                        log.lock().unwrap().push(v.clone());
+                        let method = v["method"].as_str().unwrap();
+                        let read = method == "Runtime.evaluate" && v["params"]["expression"] != "0";
+                        if retrying && !late && (read || method == "Page.stopLoading") {
+                            late = true;
+                            held = true;
+                            let paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
+                                "requestId": "r2", "frameId": "hidden", "responseStatusCode": 302, "responseHeaders": []}});
+                            ws.send(WsMessage::text(paused.to_string())).await.unwrap();
+                        }
+                        if method == "Page.stopLoading" {
+                            held = false;
+                        }
+                        if held && method == "Runtime.evaluate" {
+                            continue;
+                        }
+                        if method == "Runtime.evaluate" && v["params"]["expression"] == TEXT_LEN_JS
+                        {
+                            reads += 1;
+                            if spa && !hang && reads == 3 {
+                                let done = json!({"method": "Network.loadingFinished", "sessionId": "s1",
+                                    "params": {"requestId": "x1"}});
+                                ws.send(WsMessage::text(done.to_string())).await.unwrap();
+                            }
+                            let len = if grow {
+                                reads
+                            } else if spa && reads > 3 && !hang {
+                                50
+                            } else {
+                                5
+                            };
+                            let reply = json!({"id": v["id"], "sessionId": "s1", "result": {"result": {"value": len}}});
+                            ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                            continue;
+                        }
+                        let result = match method {
+                            "Target.createTarget" => json!({"targetId": "hidden"}),
+                            "Target.attachToTarget" => json!({"sessionId": "s1"}),
+                            "Page.getFrameTree" => {
+                                json!({"frameTree": {"frame": {"id": "hidden"}}})
+                            }
+                            "Page.navigate" => json!({"frameId": "hidden", "loaderId": "l2"}),
+                            "Runtime.evaluate"
+                                if v["params"]["expression"]
+                                    .as_str()
+                                    .unwrap()
+                                    .starts_with("document.title") =>
+                            {
+                                json!({"result": {"value": "Doc (https://a.test/)"}})
+                            }
+                            "Runtime.evaluate" if shell && read => {
+                                texts += 1;
+                                let page = if texts < 3 {
+                                    "Loading your feed…"
+                                } else {
+                                    "feed item one"
+                                };
+                                json!({"result": {"value": page}})
+                            }
+                            "Runtime.evaluate" => json!({"result": {"value": text}}),
+                            _ => json!({}),
+                        };
+                        let zip = v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.ends_with(".zip"));
+                        let challenge = v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.contains("/challenge"));
+                        let retries = v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.ends_with("/challenge-retry"));
+                        if v["method"] == "Page.navigate" {
+                            let url = v["params"]["url"].as_str().unwrap();
+                            (spa, hang, grow) = (
+                                url.contains("/spa"),
+                                url.ends_with("/spa-hang"),
+                                url.ends_with("/spa-grow"),
+                            );
+                            shell = url.ends_with("/shell");
+                            if spa {
+                                let xhr = json!({"method": "Network.requestWillBeSent", "sessionId": "s1",
+                                    "params": {"requestId": "x1", "type": "XHR"}});
+                                ws.send(WsMessage::text(xhr.to_string())).await.unwrap();
+                            }
+                            let kind = if zip {
+                                "application/zip"
+                            } else {
+                                "text/html; charset=utf-8"
+                            };
+                            let mut paused = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
+                                "requestId": "r1", "frameId": "hidden", "responseStatusCode": 200,
+                                "responseHeaders": [{"name": "Content-Type", "value": kind}]}});
+                            if challenge {
+                                paused["params"]["responseStatusCode"] = 403.into();
+                                paused["params"]["responseHeaders"]
+                                    .as_array_mut()
+                                    .unwrap()
+                                    .push(json!({"name": "cf-mitigated", "value": "challenge"}));
+                            }
+                            ws.send(WsMessage::text(paused.to_string())).await.unwrap();
+                            retrying = retries;
+                            if retries {
+                                tokio::time::sleep(Duration::from_secs(3)).await;
+                                let mut redirect = paused.clone();
+                                redirect["params"]["responseStatusCode"] = 302.into();
+                                redirect["params"]["responseHeaders"] = json!([]);
+                                paused["params"]["responseStatusCode"] = 429.into();
+                                for p in [redirect, paused] {
+                                    ws.send(WsMessage::text(p.to_string())).await.unwrap();
+                                }
+                            }
+                        }
+                        let mut result = result;
+                        if zip {
+                            result["errorText"] = "net::ERR_BLOCKED_BY_CLIENT".into();
+                        }
+                        if v["params"]["url"]
+                            .as_str()
+                            .is_some_and(|u| u.contains("unreachable"))
+                        {
+                            result["errorText"] = "net::ERR_TUNNEL_CONNECTION_FAILED".into();
+                        }
+                        let reply =
+                            json!({"id": v["id"], "sessionId": v["sessionId"], "result": result});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                        if v["method"] != "Page.navigate" {
+                            continue;
+                        }
+                        let names: &[&str] = if loads {
+                            &["init", "DOMContentLoaded", "load", "networkAlmostIdle"]
+                        } else {
+                            &["DOMContentLoaded", "load", "networkAlmostIdle"]
+                        };
+                        for name in names {
+                            let event = json!({"method": "Page.lifecycleEvent", "sessionId": "s1",
+                                "params": {"frameId": "hidden", "name": name}});
+                            ws.send(WsMessage::text(event.to_string())).await.unwrap();
+                        }
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    version.as_str()
+                } else {
+                    "[]"
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        (port, log)
+    }
+
+    async fn page_chrome() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        let addr = ws.local_addr().unwrap();
+        let list = json!([{"id": "1", "type": "page", "url": AGENT_PAGE, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/1")}])
+            .to_string();
+        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
+            .to_string();
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                let log = Arc::clone(&seen);
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        log.lock()
+                            .unwrap()
+                            .push(v["method"].as_str().unwrap().to_owned());
+                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "complete"}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    &version
+                } else {
+                    &list
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        (port, log)
+    }
+
+    #[cfg(unix)]
+    async fn startup_chrome(
+        delay: Duration,
+        before: (&str, &str),
+        after: &[(&str, &str)],
+    ) -> (u16, Arc<std::sync::Mutex<Vec<(String, Value)>>>) {
+        let socket = tokio::net::TcpSocket::new_v4().unwrap();
+        socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = ws.local_addr().unwrap();
+        let tab = |(id, url): (&str, &str)| json!({"id": id, "type": "page", "url": url, "webSocketDebuggerUrl": format!("ws://{addr}/devtools/page/{id}")});
+        let lists = [
+            json!([tab(before)]).to_string(),
+            Value::from_iter(after.iter().copied().chain([("1", AGENT_PAGE)]).map(tab)).to_string(),
+        ];
+        let version = json!({"webSocketDebuggerUrl": format!("ws://{addr}/devtools/browser/fake")})
+            .to_string();
+        let created = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let create = Arc::clone(&created);
+        let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = Arc::clone(&log);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = ws.accept().await {
+                let log = Arc::clone(&seen);
+                let create = Arc::clone(&create);
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+                    while let Some(Ok(WsMessage::Text(text))) = ws.next().await {
+                        let v: Value = serde_json::from_str(&text).unwrap();
+                        if v["method"] == "Target.createTarget" {
+                            create.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                        log.lock().unwrap().push((
+                            v["method"].as_str().unwrap().to_owned(),
+                            v["params"].clone(),
+                        ));
+                        let reply = json!({"id": v["id"], "result": {"targetId": "1", "result": {"value": "complete"}}});
+                        ws.send(WsMessage::text(reply.to_string())).await.unwrap();
+                    }
+                });
+            }
+        });
+        tokio::spawn(async move {
+            tokio::time::sleep(delay).await;
+            let http = socket.listen(1024).unwrap();
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 1024];
+                let n = s.read(&mut buf).await.unwrap_or(0);
+                let body = if buf[..n].starts_with(b"GET /json/version") {
+                    &version
+                } else {
+                    &lists[usize::from(created.load(std::sync::atomic::Ordering::SeqCst))]
+                };
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = s.write_all(format!("{head}{body}").as_bytes()).await;
+            }
+        });
+        (port, log)
+    }
+
+    #[cfg(unix)]
+    fn alive_chrome(dir: &std::path::Path) -> String {
+        let chrome = dir.join("chrome");
+        std::fs::write(&chrome, "#!/bin/sh\nsleep 5\n").unwrap();
+        std::fs::set_permissions(&chrome, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        chrome.display().to_string()
+    }
+
+    struct ChromeGuard(PathBuf);
+
+    impl Drop for ChromeGuard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("pkill")
+                .arg("-f")
+                .arg(self.0.as_os_str())
+                .status();
+        }
+    }
+
+    fn headless_chrome(dir: &std::path::Path) -> Option<(String, ChromeGuard)> {
+        let Some(chrome) = std::env::var("CHROME_BIN").ok().filter(|b| !b.is_empty()) else {
+            assert!(
+                cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
+                "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
+            );
+            eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
+            return None;
+        };
+        let wrapper = dir.join("chrome");
+        std::fs::write(
+            &wrapper,
+            format!("#!/bin/sh\nexec \"{chrome}\" --headless=new --use-mock-keychain \"$@\"\n"),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        std::fs::set_permissions(
+            &wrapper,
+            std::os::unix::fs::PermissionsExt::from_mode(0o755),
+        )
+        .unwrap();
+        Some((wrapper.display().to_string(), ChromeGuard(dir.to_owned())))
+    }
+
+    async fn page_server(page: &'static str) -> u16 {
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = http.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = http.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let head = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+                    page.len()
+                );
+                let _ = s.write_all(format!("{head}{page}").as_bytes()).await;
+            }
+        });
+        port
     }
 }

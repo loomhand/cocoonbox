@@ -10,6 +10,9 @@ pub const KEYS_FILE: &str = "/run/cocoonbox-vault/keys";
 /// Sent once when a step returns neither a tool call nor visible text.
 pub const CONTINUE: &str = "Continue: call the next tool, or give your final answer.";
 
+/// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
+pub const ROUTING: &str = include_str!("../../image/desk/routing.md");
+
 const MAIN: &str = "\
 You are {model}, served through the cocoonbox gateway. If asked which model you are, say exactly \"{model}\".
 
@@ -101,8 +104,6 @@ const XFCE_HINT: &str = " The Applications menu is the button at the left end of
 
 const IMAGE_POINTS: &str = "Coordinates are pixels of the latest screenshot image as you see it, origin at the top-left; the box maps them to the screen, so never scale them yourself.";
 
-/// The tool-tier policy of a box that runs GUI plans, shared by its MCP instructions, its own agent and its guide.
-pub const ROUTING: &str = include_str!("../../image/desk/routing.md");
 /// The one-look tier of [`ROUTING`], which names the MCP tools, and that tier for the box's agent, which delegates them.
 const LOOK_TIER: [&str; 2] = [
     "`computer_state`, `computer_act`.",
