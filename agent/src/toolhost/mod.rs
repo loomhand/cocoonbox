@@ -643,6 +643,28 @@ fn shuttle_tool(tool: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    const SHUTTLE_ANDROID: [&str; 19] = [
+        "desk_windows",
+        "desk_wait",
+        "desk_snapshot",
+        "desk_find",
+        "desk_read",
+        "desk_press",
+        "desk_act",
+        "desk_at",
+        "desk_key",
+        "desk_type",
+        "desk_click",
+        "desk_focus",
+        "desk_close",
+        "desk_launch",
+        "desk_screen",
+        "desk_shot",
+        "desk_computer_state",
+        "desk_computer_act",
+        "desk_computer_end",
+    ];
+
     #[tokio::test]
     async fn bind_keeps_a_socket_another_process_serves_and_replaces_a_stale_one() {
         let dir = tempfile::tempdir().unwrap();
@@ -756,28 +778,6 @@ mod tests {
         assert_eq!(desktop_name("XFCE"), Some("XFCE"));
         assert_eq!(desktop_name(""), None);
     }
-
-    const SHUTTLE_ANDROID: [&str; 19] = [
-        "desk_windows",
-        "desk_wait",
-        "desk_snapshot",
-        "desk_find",
-        "desk_read",
-        "desk_press",
-        "desk_act",
-        "desk_at",
-        "desk_key",
-        "desk_type",
-        "desk_click",
-        "desk_focus",
-        "desk_close",
-        "desk_launch",
-        "desk_screen",
-        "desk_shot",
-        "desk_computer_state",
-        "desk_computer_act",
-        "desk_computer_end",
-    ];
 
     #[tokio::test]
     async fn an_android_box_sends_its_screen_desk_and_run_calls_to_shuttle() {

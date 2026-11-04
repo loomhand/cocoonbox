@@ -46,17 +46,6 @@ pub type AgentWrite = OwnedWriteHalf;
 #[cfg(windows)]
 pub type AgentWrite = WriteHalf<NamedPipeServer>;
 
-type Reader = Box<dyn AsyncRead + Send + Unpin>;
-type Writer = Box<dyn AsyncWrite + Send + Unpin>;
-type Exit = Pin<Box<dyn Future<Output = io::Result<i32>> + Send>>;
-
-/// The terminal a command runs on, which takes its resizes.
-#[cfg(unix)]
-type Terminal = OwnedFd;
-/// The terminal a command runs on, which takes its resizes.
-#[cfg(windows)]
-type Terminal = Arc<sys::Pty>;
-
 /// The agent's read end of an exec connection, with the pipe whose hang-up it watches.
 #[cfg(windows)]
 pub struct AgentRead {
@@ -74,6 +63,17 @@ impl AsyncRead for AgentRead {
         Pin::new(&mut self.half).poll_read(cx, buf)
     }
 }
+
+type Reader = Box<dyn AsyncRead + Send + Unpin>;
+type Writer = Box<dyn AsyncWrite + Send + Unpin>;
+type Exit = Pin<Box<dyn Future<Output = io::Result<i32>> + Send>>;
+
+/// The terminal a command runs on, which takes its resizes.
+#[cfg(unix)]
+type Terminal = OwnedFd;
+/// The terminal a command runs on, which takes its resizes.
+#[cfg(windows)]
+type Terminal = Arc<sys::Pty>;
 
 /// A started command: its exit code to come, its process tree, its stdin, its output, and the terminal it runs on, if any.
 struct Started {
