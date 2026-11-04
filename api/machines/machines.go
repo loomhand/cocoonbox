@@ -77,6 +77,8 @@ type Machine struct {
 	Meta map[string]string
 	// Routed reports that the machine's egress leaves through an upstream proxy.
 	Routed bool
+	// Squeezed reports that the machine's node has no room for another running machine.
+	Squeezed bool
 }
 
 // Identity tells a box agent which box and wake it serves and which edge key signs its credentials; the guest takes Name as its hostname.

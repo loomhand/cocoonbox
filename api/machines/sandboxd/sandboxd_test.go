@@ -1183,6 +1183,37 @@ func TestARefreshFollowsAMachineOfALostNodeInsteadOfDroppingIt(t *testing.T) {
 	}
 }
 
+func TestAMachineOnAFullNodeIsSqueezedUntilTheNodeHasRoom(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	claimRunning(t, b)
+	for _, step := range []struct {
+		name string
+		info map[string]any
+		want bool
+	}{
+		{"room", nil, false},
+		{"at capacity", map[string]any{"at_capacity": true, "at_capacity_reason": "memory below reserve"}, true},
+		{"running cap reached", map[string]any{"running": 3, "max_running": 3}, true},
+		{"disk below reserve", map[string]any{"at_capacity": true, "at_capacity_reason": "disk below reserve"}, false},
+		{"room again", map[string]any{"running": 2, "max_running": 3}, false},
+	} {
+		fake.mu.Lock()
+		fake.info = step.info
+		fake.mu.Unlock()
+		if err := b.readRoom(t.Context()); err != nil {
+			t.Fatalf("%s: readRoom: %v", step.name, err)
+		}
+		ms, err := b.List(t.Context(), "")
+		if err != nil || len(ms) != 1 || ms[0].Squeezed != step.want {
+			t.Errorf("%s: List = %+v, %v, want one machine squeezed %t", step.name, ms, err, step.want)
+		}
+		if m, err := b.Get(t.Context(), boxID); err != nil || m.Squeezed != step.want {
+			t.Errorf("%s: Get squeezed = %t, %v, want %t", step.name, m.Squeezed, err, step.want)
+		}
+	}
+}
+
 func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}
@@ -1279,6 +1310,7 @@ type fakeSandboxd struct {
 	peers       []*fakeSandboxd
 	redirect    []*fakeSandboxd
 	down        bool
+	info        map[string]any
 }
 
 func (f *fakeSandboxd) handler() http.Handler {
@@ -1287,7 +1319,9 @@ func (f *fakeSandboxd) handler() http.Handler {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.calls["info"]++
-		writeJSON(w, map[string]any{"advertise_addr": f.addr()})
+		resp := map[string]any{"advertise_addr": f.addr()}
+		maps.Copy(resp, f.info)
+		writeJSON(w, resp)
 	}))
 	mux.HandleFunc("GET /v1/sandboxes/{id}/owner", func(w http.ResponseWriter, r *http.Request) {
 		id, token := r.PathValue("id"), strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")

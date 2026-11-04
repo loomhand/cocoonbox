@@ -450,7 +450,7 @@ func TestAClientOfOneProcessKeepsTheBoxUpForTheOthersIdleSweep(t *testing.T) {
 	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
 	b.svc = New(a.fake, testDefaults, a.svc.registry)
 	b.svc.EnableState(a.agent, a.store, a.keys)
-	b.svc.EnableIdle(0, userIdleAfter)
+	b.svc.EnableIdle(0, userIdleAfter, 0)
 	b.svc.idle.now = a.svc.idle.now
 	for _, env := range []*stateEnv{a, b} {
 		env.svc.EnableLedger(t.Context(), db)
