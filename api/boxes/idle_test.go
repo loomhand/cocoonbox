@@ -13,7 +13,10 @@ import (
 	"github.com/loomhand/cocoonbox/api/users"
 )
 
-const userIdleAfter = 2 * time.Hour
+const (
+	userIdleAfter = 2 * time.Hour
+	squeezedAfter = 5 * time.Minute
+)
 
 func TestAnIdleUserBoxIsSavedLiveThenHibernated(t *testing.T) {
 	env, clock := newUserIdleEnv(t)
@@ -31,6 +34,20 @@ func TestAnIdleUserBoxIsSavedLiveThenHibernated(t *testing.T) {
 	}
 }
 
+func TestAnIdleBoxOnAFullNodeHibernatesAfterTheSqueezedThreshold(t *testing.T) {
+	env, clock := newUserIdleEnv(t)
+	env.svc.idle.squeezed = squeezedAfter
+	env.svc.hibernateIdle(t.Context())
+	*clock = clock.Add(squeezedAfter)
+	env.svc.hibernateIdle(t.Context())
+	if got := env.fake.state(aliceBox); got != machines.StateRunning {
+		t.Fatalf("state = %v on a node with room, want it up until the user threshold", got)
+	}
+	env.fake.squeeze()
+	env.svc.hibernateIdle(t.Context())
+	waitState(t, env.fake, aliceBox, machines.StateHibernating)
+}
+
 func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -44,6 +61,10 @@ func TestAnIdleUserBoxStaysUpWhileSomethingKeepsIt(t *testing.T) {
 			e.svc.EnableWake(store, testWakeLimits)
 		}},
 		{"user boxes never idle out", func(e *stateEnv, _ *fakeActivity, _ *time.Time) { e.svc.idle.user = 0 }},
+		{"user boxes never idle out, even on a full node", func(e *stateEnv, _ *fakeActivity, _ *time.Time) {
+			e.svc.idle.user, e.svc.idle.squeezed = 0, squeezedAfter
+			e.fake.squeeze()
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -127,7 +148,7 @@ func TestAnIdleHibernatedUserBoxWakesOnEnsure(t *testing.T) {
 func newUserIdleEnv(t *testing.T) (*stateEnv, *time.Time) {
 	t.Helper()
 	env := newStateEnv(t)
-	env.svc.EnableIdle(0, userIdleAfter)
+	env.svc.EnableIdle(0, userIdleAfter, 0)
 	env.svc.EnableActivity(&fakeActivity{})
 	clock := time.Unix(1_000_000, 0)
 	env.svc.idle.now = func() time.Time { return clock }

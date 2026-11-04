@@ -751,6 +751,15 @@ func (f *fakeMachines) take(ctx context.Context) (machines.Machine, bool, <-chan
 	return m, true, f.pushed
 }
 
+func (f *fakeMachines) squeeze() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for id, m := range f.machines {
+		m.Squeezed = true
+		f.machines[id] = m
+	}
+}
+
 func (f *fakeMachines) state(id string) machines.State {
 	f.mu.Lock()
 	defer f.mu.Unlock()

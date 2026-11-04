@@ -23,6 +23,8 @@ const (
 	requestTimeout = 30 * time.Second
 	dialTimeout    = 5 * time.Second
 	maxErrorBody   = 4 << 10
+
+	diskLowReason = "disk below reserve"
 )
 
 // apiError is a sandboxd error answer; 400 is machines.ErrRefused, 404 machines.ErrNotFound, 409 machines.ErrConflict and 429 machines.ErrCapacity.
@@ -159,6 +161,26 @@ func (c *client) advertised(ctx context.Context) (string, error) {
 	}
 	err := c.do(ctx, http.MethodGet, "/v1/info", nil, nil, &resp)
 	return resp.AdvertiseAddr, err
+}
+
+// full names why the node has no room for another running sandbox, "" while it has room or only its disk is low, which a hibernation does not relieve.
+func (c *client) full(ctx context.Context) (string, error) {
+	var resp struct {
+		AtCapacity       bool   `json:"at_capacity"`
+		AtCapacityReason string `json:"at_capacity_reason"`
+		Running          int    `json:"running"`
+		MaxRunning       int    `json:"max_running"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/v1/info", nil, nil, &resp); err != nil {
+		return "", err
+	}
+	switch {
+	case resp.AtCapacity && !strings.HasPrefix(resp.AtCapacityReason, diskLowReason):
+		return cmp.Or(resp.AtCapacityReason, "at capacity"), nil
+	case resp.MaxRunning > 0 && resp.Running >= resp.MaxRunning:
+		return fmt.Sprintf("%d of %d sandboxes running", resp.Running, resp.MaxRunning), nil
+	}
+	return "", nil
 }
 
 // owner asks the node which node owns sandbox id, with the sandbox's own token; a node may adopt an archived claim to answer.

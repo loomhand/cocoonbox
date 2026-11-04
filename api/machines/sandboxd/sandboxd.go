@@ -35,6 +35,7 @@ const (
 	screenPort             = 5900
 
 	refreshInterval = 2 * time.Second
+	roomInterval    = 30 * time.Second
 	renewInterval   = 5 * time.Minute
 	watchInterval   = 500 * time.Millisecond
 	opTimeout       = 10 * time.Minute
@@ -111,6 +112,7 @@ type Backend struct {
 	views   map[string]view
 	// away maps a node that machines name to when the refresh first saw it out of the mesh.
 	away map[string]time.Time
+	full map[string]bool
 }
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
@@ -134,6 +136,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 		owners:    map[string]chan struct{}{},
 		views:     map[string]view{},
 		away:      map[string]time.Time{},
+		full:      map[string]bool{},
 
 		leaseFor: cluster.Lease, renewEvery: cluster.LeaseRenew,
 	}
@@ -164,6 +167,7 @@ func New(ctx context.Context, opts Options) (*Backend, error) {
 func (b *Backend) Run(ctx context.Context) {
 	var wg sync.WaitGroup
 	wg.Go(func() { b.loop(ctx, refreshInterval, b.refresh) })
+	wg.Go(func() { b.loop(ctx, roomInterval, b.readRoom) })
 	wg.Go(func() { b.loop(ctx, renewInterval, b.renew) })
 	wg.Wait()
 }
@@ -220,7 +224,7 @@ func (b *Backend) List(_ context.Context, owner string) ([]machines.Machine, err
 	var out []machines.Machine
 	for _, e := range b.entries {
 		if owner == "" || e.owner == owner {
-			out = append(out, e.machine(b.opts.DiskGiB))
+			out = append(out, b.machineLocked(e))
 		}
 	}
 	slices.SortFunc(out, func(x, y machines.Machine) int { return cmp.Compare(x.ID, y.ID) })
@@ -977,7 +981,13 @@ func (b *Backend) cached(id string) (machines.Machine, error) {
 	if e == nil {
 		return machines.Machine{}, machines.ErrNotFound
 	}
-	return e.machine(b.opts.DiskGiB), nil
+	return b.machineLocked(e), nil
+}
+
+func (b *Backend) machineLocked(e *entry) machines.Machine {
+	m := e.machine(b.opts.DiskGiB)
+	m.Squeezed = b.full[cmp.Or(e.ownerAddr, b.entryAddr)]
+	return m
 }
 
 func (b *Backend) notify(id string) {
@@ -1192,6 +1202,41 @@ func (b *Backend) listMesh(ctx context.Context) (map[string][]row, error) {
 	}
 	b.trackAway(addrs, out)
 	return out, nil
+}
+
+// readRoom asks every node of the mesh whether it has room for another running sandbox; machines of a full node are squeezed.
+func (b *Backend) readRoom(ctx context.Context) error {
+	addrs := b.mesh(ctx)
+	reasons := make([]string, len(addrs))
+	var wg sync.WaitGroup
+	for i, addr := range addrs {
+		wg.Go(func() {
+			if node, err := b.node(addr); err == nil {
+				reasons[i], _ = node.full(ctx)
+			}
+		})
+	}
+	wg.Wait()
+	full := map[string]bool{}
+	for i, addr := range addrs {
+		if reasons[i] != "" {
+			full[addr] = true
+		}
+	}
+	b.mu.Lock()
+	was := b.full
+	b.full = full
+	b.mu.Unlock()
+	logger := log.WithFunc("sandboxd.Backend.readRoom")
+	for i, addr := range addrs {
+		switch {
+		case full[addr] && !was[addr]:
+			logger.Infof(ctx, "%s is full (%s): its idle boxes hibernate sooner", addr, reasons[i])
+		case !full[addr] && was[addr]:
+			logger.Infof(ctx, "%s has room again", addr)
+		}
+	}
+	return nil
 }
 
 // mesh returns the entry node and its peers, the peers it last named when it does not answer.

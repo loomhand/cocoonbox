@@ -23,9 +23,9 @@ type Activity interface {
 	Busy(ctx context.Context, box string, ep machines.Endpoint) (bool, error)
 }
 
-// EnableIdle hibernates a running box with no open client call and none begun or ended for agent (an agent's box) or user (the user's own); zero leaves it up.
-func (s *Service) EnableIdle(agent, user time.Duration) {
-	s.idle = &idling{agent: agent, user: user, probe: probeTimeout, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
+// EnableIdle hibernates a running box with no open client call and none begun or ended for agent (an agent's box) or user (the user's own), or squeezed when shorter on a full node; zero leaves it up.
+func (s *Service) EnableIdle(agent, user, squeezed time.Duration) {
+	s.idle = &idling{agent: agent, user: user, squeezed: squeezed, probe: probeTimeout, now: time.Now, last: map[string]time.Time{}, open: map[string]int{}}
 }
 
 // EnableActivity asks activity before an idle user box hibernates; a box it calls busy, or cannot answer for, stays up.
@@ -66,13 +66,13 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 	for _, box := range slices.Sorted(maps.Keys(byBox)) {
 		m := byBox[box][0]
 		agent := s.agentBox(m.Owner, box)
-		after := s.idle.threshold(agent)
+		after := s.idle.threshold(agent, m.Squeezed)
 		if after == 0 || len(byBox[box]) > 1 || m.State != machines.StateRunning || !s.ready(m) || s.ops.activeFor(box) != nil ||
 			!s.registry.HasBox(m.Owner, box) || !s.idle.idleAt(box, now, after, s.reachedElsewhere(box)) {
 			continue
 		}
 		if !agent {
-			s.sleepIdle(ctx, m)
+			s.sleepIdle(ctx, m, after)
 			continue
 		}
 		if !s.stillIdle(ctx, box, after) {
@@ -87,7 +87,7 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 }
 
 // sleepIdle saves the idle user box of m and hibernates it, unless a scheduled wake or work in it keeps it up.
-func (s *Service) sleepIdle(ctx context.Context, m machines.Machine) {
+func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.Duration) {
 	box := boxOfMachine(m.ID)
 	logger := log.WithFunc("boxes.Service.sleepIdle").WithField("box", box)
 	if reason := s.keepAwake(ctx, m); reason != "" {
@@ -98,8 +98,8 @@ func (s *Service) sleepIdle(ctx context.Context, m machines.Machine) {
 	if !started {
 		return
 	}
-	logger.Infof(ctx, "box of user %s idle for %s; saving it before it hibernates as operation %s", m.Owner, s.idle.user, op.id)
-	go s.runIdleSleep(op, m)
+	logger.Infof(ctx, "box of user %s idle for %s; saving it before it hibernates as operation %s", m.Owner, after, op.id)
+	go s.runIdleSleep(op, m, after)
 }
 
 // keepAwake names why idle box m stays up: its scheduled wake, work in it, or a check that failed; empty lets it sleep.
@@ -138,7 +138,7 @@ func (s *Service) stillIdle(ctx context.Context, box string, after time.Duration
 	return s.idle.idleAt(box, s.idle.now(), after, s.reachedElsewhere(box))
 }
 
-func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
+func (s *Service) runIdleSleep(op *operation, m machines.Machine, after time.Duration) {
 	logger := log.WithFunc("boxes.Service.runIdleSleep").WithField("box", op.boxID)
 	detail := "saved the idle box; hibernating it"
 	if s.state != nil {
@@ -147,7 +147,7 @@ func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
 			detail = "save failed; hibernating it"
 		}
 	}
-	if !s.stillIdle(op.ctx, op.boxID, s.idle.user) {
+	if !s.stillIdle(op.ctx, op.boxID, after) {
 		op.succeed("a client came back while saving; the box stays up")
 		return
 	}
@@ -157,26 +157,31 @@ func (s *Service) runIdleSleep(op *operation, m machines.Machine) {
 		logger.Warnf(ctx, "hibernate the idle box: %v", err)
 		return
 	}
-	logger.Infof(ctx, "hibernating the box of user %s, idle for %s", op.user, s.idle.user)
+	logger.Infof(ctx, "hibernating the box of user %s, idle for %s", op.user, after)
 }
 
 // idling keeps, per box, how many client calls are open and when the last one began or ended.
 type idling struct {
-	agent time.Duration
-	user  time.Duration
-	probe time.Duration
-	now   func() time.Time
+	agent    time.Duration
+	user     time.Duration
+	squeezed time.Duration
+	probe    time.Duration
+	now      func() time.Time
 
 	mu   sync.Mutex
 	last map[string]time.Time
 	open map[string]int
 }
 
-func (i *idling) threshold(agent bool) time.Duration {
+func (i *idling) threshold(agent, squeezed bool) time.Duration {
+	after := i.user
 	if agent {
-		return i.agent
+		after = i.agent
 	}
-	return i.user
+	if squeezed && after > 0 && i.squeezed > 0 {
+		return min(after, i.squeezed)
+	}
+	return after
 }
 
 // enter records a call to box that runs until the returned func; ended, when set, learns when it ended.

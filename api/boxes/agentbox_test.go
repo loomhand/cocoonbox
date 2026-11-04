@@ -185,7 +185,7 @@ func newIdleService(t *testing.T, agent bool) (*Service, *fakeMachines, *time.Ti
 	if agent {
 		box = addAgentBox(t, svc, fake)
 	}
-	svc.EnableIdle(idleAfter, 0)
+	svc.EnableIdle(idleAfter, 0, 0)
 	clock := time.Unix(1_000_000, 0)
 	svc.idle.now = func() time.Time { return clock }
 	return svc, fake, &clock, box

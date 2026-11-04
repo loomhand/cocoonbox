@@ -302,10 +302,10 @@ func enableIdle(ctx context.Context, cfg *config.Config, svc *boxes.Service, age
 	if agentIdle == 0 && userIdle == 0 {
 		return
 	}
-	svc.EnableIdle(agentIdle, userIdle)
+	svc.EnableIdle(agentIdle, userIdle, time.Duration(cfg.SqueezedIdleHibernate))
 	svc.EnableActivity(dialer.New(pool))
 	loops.add(func(ctx context.Context) { svc.RunIdle(ctx, idleInterval) })
-	log.WithFunc("main.enableIdle").Infof(ctx, "idle boxes hibernate: an agent's after %s, a user's after %s (0s: never)", agentIdle, userIdle)
+	log.WithFunc("main.enableIdle").Infof(ctx, "idle boxes hibernate: an agent's after %s, a user's after %s, either after at most %s on a full node (0s: never)", agentIdle, userIdle, time.Duration(cfg.SqueezedIdleHibernate))
 }
 
 func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Service, accounts *users.Service, loops *leaderLoops) (*credential.Signer, error) {

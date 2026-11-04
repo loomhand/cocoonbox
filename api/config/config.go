@@ -249,8 +249,10 @@ type Config struct {
 	MaxRunningBoxes int `json:"max_running_boxes"`
 	// UserIdleHibernate saves and hibernates a user's running box no client reached for this long; 0s (the default) leaves it up.
 	UserIdleHibernate Duration `json:"user_idle_hibernate"`
-	State             State    `json:"state"`
-	Connect           Connect  `json:"connect"`
+	// SqueezedIdleHibernate, when shorter, replaces either idle threshold for a box whose sandboxd node is full; 0s (the default) never does.
+	SqueezedIdleHibernate Duration `json:"squeezed_idle_hibernate"`
+	State                 State    `json:"state"`
+	Connect               Connect  `json:"connect"`
 	// OperatorSocket serves the root CLI's box commands on this unix socket; empty turns them off.
 	OperatorSocket string   `json:"operator_socket"`
 	Wake           Wake     `json:"wake"`
@@ -360,6 +362,9 @@ func (c *Config) validate() error {
 	}
 	if c.UserIdleHibernate < 0 {
 		errs = append(errs, fmt.Errorf("user_idle_hibernate must not be negative, got %s", time.Duration(c.UserIdleHibernate)))
+	}
+	if c.SqueezedIdleHibernate < 0 {
+		errs = append(errs, fmt.Errorf("squeezed_idle_hibernate must not be negative, got %s", time.Duration(c.SqueezedIdleHibernate)))
 	}
 	if c.State.ParkAfter < 0 {
 		errs = append(errs, fmt.Errorf("state.park_after must not be negative, got %s", time.Duration(c.State.ParkAfter)))
