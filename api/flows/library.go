@@ -5,8 +5,6 @@ package flows
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -127,8 +125,7 @@ func (l *Library) Put(ctx context.Context, user, name string, content []byte, o 
 	if err != nil {
 		return Entry{}, err
 	}
-	sum := sha256.Sum256(content)
-	digest := hex.EncodeToString(sum[:])
+	digest := utils.HashHex(string(content))
 	i := idx.find(name)
 	if i >= 0 && idx.Flows[i].SHA256 == digest {
 		return idx.Flows[i].Entry, nil
@@ -246,7 +243,7 @@ func (l *Library) dropObjects(ctx context.Context, user string, objects []string
 
 // Check refuses a name that is no plain .json or .mts file name, and content that is too large or not UTF-8.
 func Check(name string, content []byte) error {
-	if !ValidName(name) {
+	if !namePattern.MatchString(name) || !strings.HasSuffix(name, ".json") && !strings.HasSuffix(name, ".mts") {
 		return fmt.Errorf("%w: name %q must be a .json or .mts file name of letters, digits, '.', '_' and '-'", ErrInvalid, name)
 	}
 	if len(content) > MaxContent {
@@ -256,11 +253,6 @@ func Check(name string, content []byte) error {
 		return fmt.Errorf("%w: %s is not UTF-8 text", ErrInvalid, name)
 	}
 	return nil
-}
-
-// ValidName reports whether name is a flow file name the library takes.
-func ValidName(name string) bool {
-	return namePattern.MatchString(name) && (strings.HasSuffix(name, ".json") || strings.HasSuffix(name, ".mts"))
 }
 
 // index is a library as stored: every flow with the object that holds its content.

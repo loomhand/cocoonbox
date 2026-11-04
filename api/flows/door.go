@@ -106,7 +106,7 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrFull):
 		http.Error(w, err.Error(), http.StatusRequestEntityTooLarge)
 	default:
-		log.WithFunc("flows.Door").Error(r.Context(), err, "serve a box's flow request")
+		log.WithFunc("flows.fail").Error(r.Context(), err, "serve a box's flow request")
 		http.Error(w, "the flow request failed", http.StatusInternalServerError)
 	}
 }

@@ -3,8 +3,6 @@ package connect
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -120,8 +118,7 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 	if err := canonical.Canonicalize(jsontext.CanonicalizeRawInts(false)); err != nil {
 		return nil, &mcpwire.Error{Code: mcpwire.CodeInvalidParams, Message: "arguments are not valid JSON"}
 	}
-	sum := sha256.Sum256(canonical)
-	rec := &record{user: c.user, connector: connector, tool: toolName, door: c.door, caller: c.name, argsSHA256: hex.EncodeToString(sum[:])}
+	rec := &record{user: c.user, connector: connector, tool: toolName, door: c.door, caller: c.name, argsSHA256: utils.HashHex(string(canonical))}
 	start := time.Now()
 	defer func() {
 		rec.latency = time.Since(start)

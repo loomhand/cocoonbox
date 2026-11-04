@@ -2,8 +2,6 @@ package boxes
 
 import (
 	"cmp"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"strconv"
 	"strings"
@@ -51,9 +49,7 @@ func BoxID(user string) string {
 
 // newBoxID draws the id of a new box; it never carries machineSuffix.
 func newBoxID() string {
-	raw := make([]byte, idHexLen/2)
-	_, _ = rand.Read(raw)
-	return idPrefix + hex.EncodeToString(raw)
+	return idPrefix + utils.RandomHex(idHexLen/2)
 }
 
 func newMachineID(box string) string {
