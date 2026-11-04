@@ -1,18 +1,19 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
-
 function show(id) {
   for (const s of ["waiting", "admitted", "gone"]) $(s).hidden = s !== id;
 }
 
 async function load() {
-  const resp = await fetch("/cb/api/queue/me", { credentials: "same-origin" });
-  if (!resp.ok) {
+  let place;
+  try {
+    place = await api("GET", "queue/me");
+  } catch (e) {
+    if (e.status !== 404) throw e;
     show("gone");
     return;
   }
-  const place = await resp.json();
+  notice("");
   if (place.status === "admitted") {
     show("admitted");
     return;
@@ -22,15 +23,22 @@ async function load() {
     return;
   }
   $("position").textContent = "You are number " + place.position + " in line";
-  $("details").textContent = place.waiting + " waiting in all. You joined as " + place.email + " on " + new Date(place.since).toLocaleString() + ".";
+  $("details").textContent = place.waiting + " waiting in all. You joined as " + place.email + " on " + when(place.since) + ".";
   show("waiting");
 }
 
-$("leave").addEventListener("click", async () => {
+async function leave() {
   if (!confirm("Leave the queue? Your place is not kept.")) return;
-  await fetch("/cb/api/queue/me", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: "{}", credentials: "same-origin" });
+  try {
+    await api("DELETE", "queue/me");
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
   show("gone");
-});
+}
 
-load();
-setInterval(load, 60000);
+const refresh = () => load().catch((e) => notice(e.message, true));
+
+$("leave").addEventListener("click", () => leave().catch((e) => notice(e.message, true)));
+refresh();
+setInterval(refresh, 60000);
