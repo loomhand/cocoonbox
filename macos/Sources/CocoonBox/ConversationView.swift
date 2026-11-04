@@ -256,6 +256,9 @@ struct AssistantText: View {
             Text(markdown)
                 .foregroundStyle(subagent.isEmpty ? .primary : .secondary)
                 .textSelection(.enabled)
+                .environment(\.openURL, OpenURLAction { url in
+                    ["http", "https"].contains(url.scheme?.lowercased() ?? "") ? .systemAction : .discarded
+                })
                 .frame(maxWidth: .infinity, alignment: .leading)
             if streaming {
                 ProgressView().controlSize(.mini)
