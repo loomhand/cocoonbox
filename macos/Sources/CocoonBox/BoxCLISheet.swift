@@ -2,6 +2,19 @@ import CocoonBoxKit
 import CocoonBoxTerminal
 import SwiftUI
 
+// BoxCLISheet installs a box CLI in a box, or signs it in there.
+enum BoxCLISheet: Identifiable {
+    case install(OffloadKind, Box)
+    case signIn(OffloadKind, Box)
+
+    var id: String {
+        switch self {
+        case .install(let kind, let box): "install-\(kind.rawValue)-\(box.id)"
+        case .signIn(let kind, let box): "signin-\(kind.rawValue)-\(box.id)"
+        }
+    }
+}
+
 // BoxCLISheetView installs a box CLI with the vendor's installer, or runs its
 // own sign-in on a terminal in the box. The login stays in the box; nothing
 // is copied from this Mac (design.md §27.1).

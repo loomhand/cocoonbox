@@ -82,11 +82,6 @@ public final class LocalAgentSession: Identifiable, HostedTerminal {
         return session
     }
 
-    // terminal names the workspace in PWD, which Claude Code takes as its project.
-    private static func terminal(directory: String) -> [String: String] {
-        ["PWD": directory, "TERM": "xterm-256color", "COLORTERM": "truecolor"]
-    }
-
     public func focus() {
         _ = terminal.acquireProgrammaticFocus()
     }
@@ -147,6 +142,11 @@ public final class LocalAgentSession: Identifiable, HostedTerminal {
         if record.title != before { onTitle?() }
     }
 
+    // terminal names the workspace in PWD, which Claude Code takes as its project.
+    private static func terminal(directory: String) -> [String: String] {
+        ["PWD": directory, "TERM": "xterm-256color", "COLORTERM": "truecolor"]
+    }
+
     private static func workspace(_ kind: LocalAgentKind) throws -> URL {
         let root = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             .appendingPathComponent("CocoonBox/local-agents/\(kind.rawValue)", isDirectory: true)
@@ -169,59 +169,5 @@ private final class SurfaceEvents: TerminalSurfaceTitleDelegate {
 
     func terminalDidChangeTitle(_ title: String) {
         session?.titleChanged(title)
-    }
-}
-
-// HostedTerminal is a terminal view that outlives SwiftUI remounts.
-@MainActor
-public protocol HostedTerminal: AnyObject {
-    var view: NSView { get }
-    func focus()
-}
-
-// LocalAgentTerminal hosts a session's or a box program's terminal view in SwiftUI.
-public struct LocalAgentTerminal: NSViewRepresentable {
-    let session: any HostedTerminal
-    let takesFocus: Bool
-
-    public init(session: any HostedTerminal, takesFocus: Bool = false) {
-        self.session = session
-        self.takesFocus = takesFocus
-    }
-
-    public func makeNSView(context: Context) -> NSView {
-        let container = TerminalContainer()
-        container.session = session
-        container.takesFocus = takesFocus
-        if session.view.superview == nil { container.claim() }
-        return container
-    }
-
-    public func updateNSView(_ container: NSView, context: Context) {
-        guard let container = container as? TerminalContainer, container.session !== session else { return }
-        container.session = session
-        container.claim()
-    }
-}
-
-// TerminalContainer takes the terminal when it enters a window and focuses it unless another view, not the sidebar list, holds the keyboard and it does not take focus.
-private final class TerminalContainer: NSView {
-    weak var session: (any HostedTerminal)?
-    var takesFocus = false
-
-    func claim() {
-        guard let view = session?.view, view.superview !== self else { return }
-        view.removeFromSuperview()
-        view.frame = bounds
-        view.autoresizingMask = [.width, .height]
-        addSubview(view)
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        guard let window else { return }
-        claim()
-        if !takesFocus, let responder = window.firstResponder, responder !== window, !(responder is NSTableView) { return }
-        session?.focus()
     }
 }
