@@ -104,7 +104,8 @@ impl Mcp {
         let tools = specs
             .into_iter()
             .map(|t| {
-                let mut tool = json!({"name": t.name, "description": t.description});
+                let mut tool = json!({"name": &*t.name});
+                tool["description"] = t.description.into();
                 tool["inputSchema"] = t.parameters;
                 tools::annotate(&mut tool, &t.name);
                 let always = ALWAYS_LOAD.contains(&t.name.as_ref())
@@ -847,8 +848,11 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
         }
     };
     if !batch && messages[0]["method"] == "tools/call" && accepts_events(&headers) {
-        let msg = messages.swap_remove(0);
-        let token = Some(msg["params"]["_meta"]["progressToken"].clone()).filter(|t| !t.is_null());
+        let mut msg = messages.swap_remove(0);
+        let token = msg
+            .pointer_mut("/params/_meta/progressToken")
+            .map(Value::take)
+            .filter(|t| !t.is_null());
         let call = {
             let session = session.clone();
             async move { mcp.dispatch(session.as_deref(), &principal, msg).await }

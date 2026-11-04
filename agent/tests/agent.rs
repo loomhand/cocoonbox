@@ -77,7 +77,6 @@ impl Harness {
         .await
     }
 
-    /// A desk box whose MCP sessions close after `mcp_idle`.
     async fn desk_with_idle(mcp_idle: Duration) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
@@ -95,7 +94,6 @@ impl Harness {
         .await
     }
 
-    /// A harness whose toolhost drives a headless `chrome`.
     async fn with_chrome(script: Vec<(&'static str, String)>, chrome: &Path) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
@@ -113,7 +111,6 @@ impl Harness {
         .await
     }
 
-    /// A harness whose loop reaches the Connect box door at `connect_url`.
     async fn with_connect(script: Vec<(&'static str, String)>, connect_url: String) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
@@ -131,7 +128,6 @@ impl Harness {
         .await
     }
 
-    /// A desk box whose image adds the plugin `demo_run`, its guide resource and a routing.d paragraph.
     async fn with_plugin(script: Vec<(&'static str, String)>) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
@@ -149,7 +145,6 @@ impl Harness {
         .await
     }
 
-    /// A harness of an Android box, whose toolhost relays to a fake shuttle.
     async fn with_android() -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
@@ -167,12 +162,10 @@ impl Harness {
         .await
     }
 
-    /// A harness of a box with the desk runtime, which runs GUI plans and scripts on Node.
     async fn with_desk(script: Vec<(&'static str, String)>) -> Self {
         Self::with_desk_wire(script, false).await
     }
 
-    /// A desk box whose loop speaks the Messages wire to `anthropic/` models when `anthropic_messages`.
     async fn with_desk_wire(script: Vec<(&'static str, String)>, anthropic_messages: bool) -> Self {
         let day = Duration::from_secs(24 * 3600);
         Self::boot(
@@ -342,7 +335,6 @@ impl Harness {
     }
 }
 
-/// The routing as the box's agent reads it: the one-look tier names the subagent it delegates to.
 fn in_box(routing: &str) -> String {
     routing.replace(
         "`computer_state`, `computer_act`.",
@@ -561,8 +553,6 @@ async fn mock_gw(script: Vec<(&'static str, String)>, log: Log) -> String {
     addr
 }
 
-/// The Connect box door: a read tool, a write tool the broker holds for approval, a tool named like a box tool, and
-/// its event stream, which carries each message sent on `events`, ends on `close` and refuses its first `refused` readers; a `list_changed` also adds a tool.
 async fn mock_door(
     log: Log,
     events: tokio::sync::broadcast::Sender<String>,
@@ -699,8 +689,6 @@ async fn mock_door(
     url
 }
 
-/// A fake shuttle on `path` that logs each call's tool to `log` and the call to `calls`: a run answers as shuttle's
-/// runner, a plan with `ok`, a computer call with a screenshot.
 fn fake_shuttle(path: &Path, log: PathBuf, calls: Log) {
     let listener = UnixListener::bind(path).unwrap();
     let mut ended = HashSet::new();
@@ -772,7 +760,6 @@ fn fake_shuttle(path: &Path, log: PathBuf, calls: Log) {
     });
 }
 
-/// Kills the test's Chrome, found by its profile path, even when the test fails.
 struct ChromeGuard(PathBuf);
 
 impl Drop for ChromeGuard {
@@ -784,7 +771,6 @@ impl Drop for ChromeGuard {
     }
 }
 
-/// The Chrome to test with; `None` skips the test, which only macOS or `CB_NO_BROWSER` allow.
 fn test_chrome() -> Option<PathBuf> {
     let chrome = find_chrome();
     if chrome.is_none() {
@@ -803,7 +789,6 @@ fn find_chrome() -> Option<PathBuf> {
     {
         return Some(bin.into());
     }
-    // a test Chrome on macOS reaches for the login keychain, so it runs there only on request
     if cfg!(target_os = "macos") {
         return None;
     }
@@ -817,8 +802,6 @@ fn find_chrome() -> Option<PathBuf> {
     .find(|p| p.exists())
 }
 
-/// A free port below Linux's ephemeral range, so no `bind(0)` or outgoing connection of a parallel
-/// test takes it before Chrome binds it.
 fn cdp_port() -> u16 {
     let start = 20_000 + (uuid::Uuid::new_v4().as_u128() % 12_000) as u16;
     (start..32_000)
@@ -827,7 +810,6 @@ fn cdp_port() -> u16 {
         .unwrap()
 }
 
-/// Serves at every path a page titled with the path and holding one text field.
 async fn field_pages() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -852,8 +834,6 @@ async fn field_pages() -> String {
     addr
 }
 
-/// Serves `/spa`, a page that shows "Loading your feed…" until a script puts the reply of `/feed` in its
-/// place; `/feed` replies after 1 s.
 async fn feed_pages() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap().to_string();
@@ -882,7 +862,6 @@ async fn feed_pages() -> String {
     addr
 }
 
-/// Chrome's open tabs as (target id, url, websocket url).
 async fn tabs(port: u16) -> Vec<(String, String, String)> {
     let list: Vec<Value> = reqwest::get(format!("http://127.0.0.1:{port}/json/list"))
         .await
@@ -899,7 +878,6 @@ async fn tabs(port: u16) -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// Evaluates `expr` in a tab over its own CDP connection.
 async fn tab_eval(ws_url: &str, expr: &str) -> Value {
     let (mut ws, _) = tokio_tungstenite::connect_async(ws_url).await.unwrap();
     let msg = json!({"id": 1, "method": "Runtime.evaluate", "params": {"expression": expr, "returnByValue": true}});
@@ -959,7 +937,6 @@ fn credential(key: &SigningKey, key_id: &str, box_id: &str, wake_id: &str) -> St
     sign_credential(key, "v1", &format!("{key_id}|{box_id}|{wake_id}|{exp}"))
 }
 
-/// The box identity of a harness and the credentials the edge would sign for it.
 struct Edge {
     key: SigningKey,
     key_id: String,
@@ -1703,7 +1680,6 @@ async fn the_reasoning_effort_rides_on_every_model_request_and_is_off_by_default
     }
 }
 
-/// A desk box whose main model delegates one look to the computer subagent, which takes one step.
 async fn delegate_once(
     checkpoint_nudge: Option<Duration>,
     reasoning_effort: Option<&'static str>,
@@ -2969,7 +2945,6 @@ fn exec_stdin(data: &[u8]) -> pb::ExecClientFrame {
     }
 }
 
-/// Reads an Exec stream to its end: stdout, stderr and the exit code of the last frame.
 async fn exec_output(
     mut frames: tonic::Streaming<pb::ExecServerFrame>,
 ) -> (Vec<u8>, Vec<u8>, Option<i32>) {
@@ -2985,7 +2960,6 @@ async fn exec_output(
     (out, err, code)
 }
 
-/// Runs `command` through Session.Exec, sends `stdin` in 64 KiB frames and half-closes.
 async fn exec(h: &Harness, command: &str, stdin: Vec<u8>) -> (Vec<u8>, Vec<u8>, Option<i32>) {
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     tx.send(exec_start(command)).await.unwrap();
@@ -3137,7 +3111,6 @@ async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
     assert_eq!(code, Some(4));
 }
 
-/// Runs `command` on a terminal of type `term` with `terminfo` sent along and stdin ended.
 async fn exec_tty(h: &Harness, command: &str, term: &str, terminfo: &str) -> (String, String) {
     let (tx, rx) = tokio::sync::mpsc::channel(2);
     tx.send(pb::ExecClientFrame {
@@ -3359,7 +3332,6 @@ async fn an_exec_with_a_full_stdin_leaves_the_connection_to_other_calls() {
     assert_eq!((out.len(), code), (chunk.len(), Some(0)));
 }
 
-/// A TCP forwarder to `endpoint`; aborting it closes every connection, as a client that dies does.
 async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
     let target = endpoint.trim_start_matches("http://").to_owned();
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3525,7 +3497,6 @@ struct McpClient {
     url: String,
     session: String,
     next_id: u64,
-    /// The edge credential each request carries; `None` sends the owner's.
     credential: Option<String>,
 }
 
@@ -3772,7 +3743,6 @@ async fn mcp_script_run_reports_result_logs_and_a_screenshot() {
     reports_result_logs_and_a_screenshot(&Harness::with_desk(Vec::new()).await, "script_run").await;
 }
 
-/// Runs scripts through `tool`.
 async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
     let mut mcp = McpClient::connect(h).await;
 
@@ -6878,7 +6848,6 @@ async fn restore_paths(
     Ok(last.unwrap())
 }
 
-/// Every entry under the roots with its kind, mode and content.
 fn tree(roots: &[&Path]) -> Vec<(PathBuf, String)> {
     let mut out = Vec::new();
     let mut stack: Vec<PathBuf> = roots.iter().map(|r| r.to_path_buf()).collect();

@@ -302,11 +302,9 @@ impl Session for SessionSvc {
         req: Request<pb::FillCredentialRequest>,
     ) -> Result<Response<pb::FillCredentialResponse>, Status> {
         let mut req = req.into_inner();
-        let mut args = json!({
-            "origin": req.origin,
-            "username": std::mem::take(&mut req.username),
-            "submit": req.submit,
-        });
+        let mut args = json!({"submit": req.submit});
+        args["origin"] = req.origin.into();
+        args["username"] = req.username.into();
         match req.secret.take() {
             Some(Secret::Password(p)) => args["password"] = p.into(),
             Some(Secret::Code(c)) => args["code"] = c.into(),

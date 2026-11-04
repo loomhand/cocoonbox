@@ -1668,7 +1668,10 @@ impl Cdp {
 
     async fn snapshot(&mut self, plans: bool) -> Result<String, String> {
         let v = self.eval(&format!("{SNAPSHOT_JS}({plans})")).await?;
-        let snapshot = v.as_str().unwrap_or_default().to_owned();
+        let snapshot = match v {
+            Value::String(s) => s,
+            _ => String::new(),
+        };
         timing::mark("snapshot");
         timing::note("snapshot_bytes", snapshot.len());
         Ok(snapshot)
@@ -1902,7 +1905,6 @@ pub(super) mod tests {
         for (let n = 1; n <= 8; n++) { const d = document.createElement('div'); d.innerHTML = '<p>Card ' + n + '</p><button>Resolve</button>'; cards.append(d); }\
         </script>";
 
-    /// Serves Chrome's CDP endpoints on the returned port until a `Browser.close` arrives.
     async fn fake_chrome() -> u16 {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1942,7 +1944,6 @@ pub(super) mod tests {
         port
     }
 
-    /// Serves CDP on the returned port only after `delay`; every new window is page 1, whose script evaluations return "Page: slow".
     pub(in crate::toolhost) async fn slow_chrome(delay: Duration) -> u16 {
         let socket = tokio::net::TcpSocket::new_v4().unwrap();
         socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
@@ -1991,7 +1992,6 @@ pub(super) mod tests {
         port
     }
 
-    /// Serves CDP on the returned port for `targets` of (type, url, value); every script evaluation in a target returns its value.
     pub(in crate::toolhost) async fn web_chrome(targets: &[(&str, &str, &str)]) -> u16 {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = http.local_addr().unwrap().port();
@@ -2027,8 +2027,6 @@ pub(super) mod tests {
         port
     }
 
-    /// Serves CDP on the returned port for page tabs of (first history entry, visibility, title); a tab's
-    /// other script evaluations return `Page: tab <index>`.
     async fn tabs_chrome(tabs: &[(&str, &str, &str)]) -> u16 {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = http.local_addr().unwrap().port();
@@ -2073,11 +2071,6 @@ pub(super) mod tests {
         port
     }
 
-    /// Serves CDP on the returned port with a hidden tab whose page text is `text`, logging every message;
-    /// its navigation loads only with `loads`, else only the blank page's events come again. A page under
-    /// `/spa` starts an XHR that ends at the 3rd text length read, after which the text grows; one under
-    /// `/spa-hang` never ends it, and the text of one under `/spa-grow` grows at every read. The text of a page
-    /// under `/shell` is a loading shell at the first two reads and `feed item one` after.
     async fn fetch_chrome(text: String, loads: bool) -> (u16, Arc<std::sync::Mutex<Vec<Value>>>) {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2259,8 +2252,6 @@ pub(super) mod tests {
         (port, log)
     }
 
-    /// Serves CDP on the returned port with one page, 1, which a new window opens as, logging every method called;
-    /// every script evaluation returns "complete".
     async fn page_chrome() -> (u16, Arc<std::sync::Mutex<Vec<String>>>) {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2371,7 +2362,6 @@ pub(super) mod tests {
         (port, log)
     }
 
-    /// A stand-in Chrome binary in `dir` that lives 5 s.
     #[cfg(unix)]
     fn alive_chrome(dir: &std::path::Path) -> String {
         let chrome = dir.join("chrome");
@@ -3215,7 +3205,6 @@ pub(super) mod tests {
         }
     }
 
-    /// A wrapper in `dir` that runs `CHROME_BIN` headless, and the guard that kills its Chrome; none when no Chrome is set and CB_NO_BROWSER allows the skip.
     fn headless_chrome(dir: &std::path::Path) -> Option<(String, ChromeGuard)> {
         let Some(chrome) = std::env::var("CHROME_BIN").ok().filter(|b| !b.is_empty()) else {
             assert!(
@@ -3280,7 +3269,6 @@ pub(super) mod tests {
         );
     }
 
-    /// Serves `page` for every request on the returned port.
     async fn page_server(page: &'static str) -> u16 {
         let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = http.local_addr().unwrap().port();

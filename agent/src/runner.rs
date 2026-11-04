@@ -372,7 +372,7 @@ impl Runtime {
     }
 
     /// Waits up to `limit` for interrupted turns and cleanups, then checkpoints the store.
-    pub async fn drain(&self, limit: std::time::Duration) {
+    pub async fn drain(&self, limit: Duration) {
         self.tasks.close();
         if tokio::time::timeout(limit, self.tasks.wait())
             .await
@@ -438,11 +438,11 @@ impl Runtime {
             .await?;
         said.push(self.end_block(ctx, &mut pending, Kind::Text, subagent));
         for (part, index) in said {
+            text.push_str(&part);
             if let Some(index) = index.filter(|_| !cut) {
-                self.record_block(ctx, Kind::Text, &part, index, subagent)
+                self.record_block(ctx, Kind::Text, part, index, subagent)
                     .await?;
             }
-            text.push_str(&part);
         }
         if cut {
             calls.clear();
@@ -1034,19 +1034,19 @@ impl Runtime {
         });
     }
 
-    /// Records a finished block and returns its text; blank blocks were never streamed and are not recorded.
+    /// Records a finished block; blank blocks were never streamed and are not recorded.
     async fn flush_block(
         &self,
         ctx: &TurnCtx,
         block: &mut Block,
         kind: Kind,
         subagent: &str,
-    ) -> Result<String, String> {
+    ) -> Result<(), String> {
         let (text, index) = self.end_block(ctx, block, kind, subagent);
-        if let Some(index) = index {
-            self.record_block(ctx, kind, &text, index, subagent).await?;
+        match index {
+            Some(index) => self.record_block(ctx, kind, text, index, subagent).await,
+            None => Ok(()),
         }
-        Ok(text)
     }
 
     /// Ends the live stream of `block` and takes its text and index.
@@ -1068,18 +1068,18 @@ impl Runtime {
         &self,
         ctx: &TurnCtx,
         kind: Kind,
-        text: &str,
+        text: String,
         index: u32,
         subagent: &str,
     ) -> Result<(), String> {
         let body = match kind {
             Kind::Text => Body::Text(pb::TextBlock {
-                text: text.to_owned(),
+                text,
                 subagent: subagent.to_owned(),
                 block: index,
             }),
             Kind::Reasoning => Body::Reasoning(pb::ReasoningBlock {
-                text: text.to_owned(),
+                text,
                 block: index,
                 subagent: subagent.to_owned(),
             }),

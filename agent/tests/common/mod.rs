@@ -1,5 +1,3 @@
-//! The box identity the integration tests provision and the credentials the edge signs for it.
-
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -18,7 +16,6 @@ static OWNER: LazyLock<String> = LazyLock::new(|| {
     sign_credential(&key, "v1", &format!("{}|cb-box|w1|{exp}", key_id(&key)))
 });
 
-/// Writes the identity of box `cb-box` at wake `wake_id`, signed by `key`, to `path` and returns its key id.
 pub fn write_identity(path: &Path, key: &SigningKey, wake_id: &str) -> String {
     let key_id = key_id(key);
     let dir = path.parent().unwrap();
@@ -36,19 +33,16 @@ pub fn write_identity(path: &Path, key: &SigningKey, wake_id: &str) -> String {
     key_id
 }
 
-/// Signs `fields` as a credential of `version`.
 pub fn sign_credential(key: &SigningKey, version: &str, fields: &str) -> String {
     let signed = format!("{version}.{}", URL_SAFE_NO_PAD.encode(fields));
     let sig = URL_SAFE_NO_PAD.encode(key.sign(signed.as_bytes()).to_bytes());
     format!("{signed}.{sig}")
 }
 
-/// Provisions the box at `path` with the edge key at wake `w1`.
 pub fn provision(path: &Path) {
     write_identity(path, &edge_key(), "w1");
 }
 
-/// The owner credential of a box that [`provision`] wrote.
 pub fn owner() -> &'static str {
     &OWNER
 }

@@ -128,8 +128,8 @@ pub async fn read(
             continue;
         }
         let chars = line.chars().count();
-        let shown_line: String = line.chars().take(LINE_CHARS).collect();
-        let _ = write!(out, "{total:>6}\t{shown_line}");
+        let _ = write!(out, "{total:>6}\t");
+        out.extend(line.chars().take(LINE_CHARS));
         if chars > LINE_CHARS {
             let _ = write!(out, " [line cut: {LINE_CHARS} of {chars} characters shown]");
         }

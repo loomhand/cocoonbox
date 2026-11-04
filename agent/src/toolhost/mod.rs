@@ -135,9 +135,9 @@ impl Host {
         };
         let result = match call.tool.as_str() {
             "shell" => {
-                let command = call.args["command"].as_str().unwrap_or_default().to_owned();
-                let out = self.shell(&call.agent_id, call.args).await;
-                let note = self.held(|name| files::writes(&command, name)).await;
+                let command = call.args["command"].as_str().unwrap_or_default();
+                let out = self.shell(&call.agent_id, &call.args).await;
+                let note = self.held(|name| files::writes(command, name)).await;
                 out.map(|mut out| {
                     out.text.push_str(&note);
                     out
@@ -273,7 +273,7 @@ impl Host {
             .unwrap_or_else(Output::error))
     }
 
-    async fn shell(&self, agent_id: &str, args: Value) -> Result<Output, String> {
+    async fn shell(&self, agent_id: &str, args: &Value) -> Result<Output, String> {
         let command = args["command"]
             .as_str()
             .ok_or("shell needs a command string")?;
@@ -514,7 +514,13 @@ async fn desktop_info(shuttle: &Client) -> String {
     {
         info["os"] = os.into();
     }
-    let desktop = std::env::var(DESKTOP_VAR).ok().or_else(session_desktop);
+    let desktop = match std::env::var(DESKTOP_VAR) {
+        Ok(d) => Some(d),
+        Err(_) => tokio::task::spawn_blocking(session_desktop)
+            .await
+            .ok()
+            .flatten(),
+    };
     if let Some(desktop) = desktop.as_deref().and_then(desktop_name) {
         info["desktop"] = desktop.into();
     }

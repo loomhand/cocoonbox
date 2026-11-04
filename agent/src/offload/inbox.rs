@@ -1,6 +1,7 @@
 //! The inbox (`offload serve`, a user unit of `user`): owns each repo's box CLI session in tmux,
 //! keeps its inbox and outbox, follows the CLI's hooks, and restarts a lost session.
 
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
@@ -405,24 +406,23 @@ impl Inbox {
         let hooks = self.layout.repo_dir(&rec.repo).join(HOOKS_FILE);
         write_hooks(&hooks, &rec.repo).await?;
         let command = cli_command(rec, prompt, &hooks)?;
-        let dir = rec.dir.to_string_lossy().into_owned();
+        let dir = rec.dir.to_string_lossy();
+        let pairs: Vec<String> = envs.iter().map(|(k, v)| format!("{k}={v}")).collect();
         let mut args = vec![
-            "new-session".to_owned(),
-            "-d".to_owned(),
-            "-s".to_owned(),
-            session.clone(),
-            "-x".to_owned(),
-            "200".to_owned(),
-            "-y".to_owned(),
-            "50".to_owned(),
-            "-c".to_owned(),
-            dir,
+            "new-session",
+            "-d",
+            "-s",
+            &session,
+            "-x",
+            "200",
+            "-y",
+            "50",
+            "-c",
+            &dir,
         ];
-        for (k, v) in envs {
-            args.push("-e".to_owned());
-            args.push(format!("{k}={v}"));
+        for p in &pairs {
+            args.extend(["-e", p]);
         }
-        let args: Vec<&str> = args.iter().map(String::as_str).collect();
         self.tmux(&args, None).await?;
         self.tmux(
             &[
@@ -796,10 +796,7 @@ impl Inbox {
         loop {
             match changes.recv().await {
                 Ok(c) => {
-                    let Ok(line) = serde_json::to_value(&c) else {
-                        continue;
-                    };
-                    if reply(wr, &line).await.is_err() {
+                    if reply(wr, &c).await.is_err() {
                         return;
                     }
                 }
@@ -837,8 +834,7 @@ impl Inbox {
             time_ms: crate::now_ms(),
             body,
         };
-        let line = serde_json::to_value(&entry).map_err(|e| format!("encode entry: {e}"))?;
-        append(&self.layout.repo_dir(&rec.repo).join(OUTBOX_FILE), &line).await?;
+        append(&self.layout.repo_dir(&rec.repo).join(OUTBOX_FILE), &entry).await?;
         self.publish(rec, Some((kind, entry.seq)));
         Ok(entry.seq)
     }
@@ -1146,10 +1142,10 @@ async fn secret_env(layout: &Layout, repo: &str) -> Vec<(String, String)> {
 async fn blocking_message(payload: &Value) -> Option<String> {
     let given = ["last_assistant_message", "last-assistant-message"]
         .iter()
-        .find_map(|k| payload[*k].as_str().map(str::to_owned));
-    let text = match (given, payload["transcript_path"].as_str()) {
-        (Some(t), _) => t,
-        (None, Some(path)) => last_assistant_text(Path::new(path)).await?,
+        .find_map(|k| payload[*k].as_str());
+    let text: Cow<str> = match (given, payload["transcript_path"].as_str()) {
+        (Some(t), _) => t.into(),
+        (None, Some(path)) => last_assistant_text(Path::new(path)).await?.into(),
         (None, None) => return None,
     };
     let t = text.trim_start();
@@ -1307,7 +1303,7 @@ async fn read_entries(path: &Path, since: u64) -> Result<Vec<Entry>, String> {
         .collect())
 }
 
-async fn append(path: &Path, line: &Value) -> Result<(), String> {
+async fn append(path: &Path, line: &impl Serialize) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -1329,7 +1325,7 @@ async fn append(path: &Path, line: &Value) -> Result<(), String> {
         .map_err(|e| format!("append {}: {e}", path.display()))
 }
 
-async fn reply(wr: &mut OwnedWriteHalf, v: &Value) -> std::io::Result<()> {
+async fn reply(wr: &mut OwnedWriteHalf, v: &impl Serialize) -> std::io::Result<()> {
     let mut line = serde_json::to_vec(v).map_err(std::io::Error::other)?;
     line.push(b'\n');
     wr.write_all(&line).await

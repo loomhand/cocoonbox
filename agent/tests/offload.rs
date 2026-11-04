@@ -35,7 +35,6 @@ struct TestBox {
 }
 
 impl TestBox {
-    /// A box with a copy of REPO held by ID and a running inbox over a fake tmux.
     async fn start(unreturned: bool) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let fake = dir.path().join("fake");

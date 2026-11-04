@@ -54,7 +54,6 @@ const CARD_PAGE: &str = r#"<!doctype html><title>checkout</title>
 
 type Posts = Arc<Mutex<Vec<(String, String)>>>;
 
-/// Kills the test's Chrome, found by its profile path, even when the test fails.
 struct ChromeGuard(PathBuf);
 
 impl Drop for ChromeGuard {
@@ -81,7 +80,6 @@ fn find_chrome() -> Option<PathBuf> {
     {
         return Some(bin.into());
     }
-    // a test Chrome on macOS reaches for the login keychain, so it runs there only on request
     if cfg!(target_os = "macos") {
         return None;
     }
@@ -104,7 +102,6 @@ async fn free_port() -> u16 {
         .port()
 }
 
-/// Serves the sign-in pages and records every POST as (path, body).
 async fn site(posts: Posts) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -165,7 +162,6 @@ async fn site(posts: Posts) -> u16 {
     port
 }
 
-/// Collects a child's stderr until it exits.
 fn capture(child: &mut Child) -> tokio::task::JoinHandle<String> {
     let mut err = child.stderr.take().unwrap();
     tokio::spawn(async move {
@@ -445,7 +441,6 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     );
 }
 
-/// Starts a toolhost on a headless Chrome in `dir`; None when no Chrome is found where the test may skip.
 async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client)> {
     let Some(chrome) = find_chrome() else {
         assert!(
