@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -156,11 +157,7 @@ func (h *Hook) keep(key string, a answer) {
 	defer h.mu.Unlock()
 	if len(h.answers) >= sweepAt {
 		now := time.Now()
-		for k, old := range h.answers {
-			if !now.Before(old.until) {
-				delete(h.answers, k)
-			}
-		}
+		maps.DeleteFunc(h.answers, func(_ string, old answer) bool { return !now.Before(old.until) })
 	}
 	h.answers[key] = a
 }

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -81,7 +82,7 @@ func (l *Link) ExpireAccess() {
 func (l *Link) Snapshot() (refreshes, polls int, revoked []string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.refreshes, l.polls, append([]string(nil), l.revoked...)
+	return l.refreshes, l.polls, slices.Clone(l.revoked)
 }
 
 func (l *Link) authorize(w http.ResponseWriter, r *http.Request) {

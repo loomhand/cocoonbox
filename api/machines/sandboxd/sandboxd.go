@@ -4,8 +4,6 @@ package sandboxd
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
@@ -26,6 +24,7 @@ import (
 
 	"github.com/loomhand/cocoonbox/api/cluster"
 	"github.com/loomhand/cocoonbox/api/machines"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -1517,6 +1516,5 @@ func fingerprint(v *envVar) string {
 		return ""
 	}
 	raw, _ := json.Marshal(v, jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
+	return utils.HashHex(string(raw))
 }

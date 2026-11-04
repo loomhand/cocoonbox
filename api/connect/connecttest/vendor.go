@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -132,7 +133,7 @@ func (v *Vendor) RejectRefresh() {
 func (v *Vendor) Snapshot() (refreshes int, revoked []string, calls []Call) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.refreshes, append([]string(nil), v.revoked...), append([]Call(nil), v.calls...)
+	return v.refreshes, slices.Clone(v.revoked), slices.Clone(v.calls)
 }
 
 func (v *Vendor) resourceMetadata(w http.ResponseWriter, _ *http.Request) {

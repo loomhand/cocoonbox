@@ -260,11 +260,9 @@ func main() {
 		timer.Stop()
 	}()
 	loops.add(func(ctx context.Context) { svc.RunAlarms(ctx, alarmInterval) })
-	if cfg.Cluster.Shared {
-		loops.add(backend.Run)
-	}
 	var shared *cluster.Store
 	if cfg.Cluster.Shared {
+		loops.add(backend.Run)
 		shared = ledger
 	}
 	loops.run(ctx, shared)

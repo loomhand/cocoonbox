@@ -2,8 +2,6 @@ package boxes
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -132,10 +130,8 @@ func (s *Service) provisionOnce(ctx context.Context, m machines.Machine) (string
 			keys[gwKeyEnv] = &machines.Secret{Value: "Bearer " + key}
 		}
 	}
-	raw := make([]byte, 16)
-	_, _ = rand.Read(raw)
 	box := boxOfMachine(m.ID)
-	identity := machines.Identity{BoxID: box, WakeID: hex.EncodeToString(raw), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
+	identity := machines.Identity{BoxID: box, WakeID: utils.RandomHex(16), KeyID: p.signer.KeyID(), PublicKey: p.signer.PublicKey(), Name: s.boxName(m.Owner, box)}
 	owned := !s.agentBox(m.Owner, box)
 	if s.connect != nil && owned {
 		key, err := s.connect.DoorKey(ctx, m.ID, m.Owner, m.Incarnation)
