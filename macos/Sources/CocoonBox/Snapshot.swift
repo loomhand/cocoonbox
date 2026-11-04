@@ -12,22 +12,22 @@ enum Snapshot {
 
     static func write(window: NSWindow, to path: String, framebuffer: CGImage?, screenFrame: CGRect?) -> String {
         if let image = windowServerImage(window), !isBlank(image) {
-            save(image, path)
-            return "window-server"
+            return save(image, path) ? "window-server" : "failed"
         }
         guard let view = window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return "failed" }
         view.cacheDisplay(in: view.bounds, to: rep)
-        guard let base = rep.cgImage else { return "failed" }
+        guard let base = rep.cgImage,
+              let context = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return "failed" }
         let scale = CGFloat(base.width) / view.bounds.width
-        let context = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
         context.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
         if let framebuffer, let screenFrame {
             let rect = CGRect(x: screenFrame.minX * scale, y: screenFrame.minY * scale, width: screenFrame.width * scale, height: screenFrame.height * scale)
             context.interpolationQuality = .high
             context.draw(framebuffer, in: rect)
         }
-        if let image = context.makeImage() { save(image, path) }
+        guard let image = context.makeImage(), save(image, path) else { return "failed" }
         return "self-render"
     }
 
@@ -41,10 +41,11 @@ enum Snapshot {
         image.width < 8 || image.height < 8
     }
 
-    static func save(_ image: CGImage, _ path: String) {
+    @discardableResult
+    static func save(_ image: CGImage, _ path: String) -> Bool {
         let url = URL(fileURLWithPath: path)
-        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return }
+        guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { return false }
         CGImageDestinationAddImage(destination, image, nil)
-        CGImageDestinationFinalize(destination)
+        return CGImageDestinationFinalize(destination)
     }
 }
