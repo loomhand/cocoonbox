@@ -28,7 +28,7 @@ public struct Endpoint: Sendable, Hashable {
 
     // isLoopback is true for endpoints on this Mac, the only ones allowed over plaintext.
     public var isLoopback: Bool {
-        host == "localhost" || host == "::1" || host.hasPrefix("127.")
+        host == "localhost" || host == "[::1]" || host == "::1" || host.hasPrefix("127.")
     }
 
     public var url: String {
