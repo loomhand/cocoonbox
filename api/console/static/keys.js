@@ -49,7 +49,7 @@ async function load() {
 $("add-form").addEventListener("submit", (ev) => {
   ev.preventDefault();
   const f = ev.target;
-  const hosts = f.hosts.value.split(/[\s,]+/).filter(Boolean);
+  const hosts = list(f.hosts.value);
   api("POST", "keys", { name: f.name.value, hosts, header: f.header.value, template: f.template.value, query: f.query.value, value: f.value.value })
     .then((k) => {
       f.reset();

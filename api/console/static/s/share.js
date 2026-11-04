@@ -14,7 +14,6 @@ const secret = location.hash.match(/cbs_[0-9a-f]+/)?.[0] ?? "";
 let current = null;
 let paused = false;
 
-// connect opens the view; a hidden tab closes it, so a share left in the background keeps the box up for nobody.
 function connect() {
   const url = new URL("ws", location.href);
   url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -49,6 +48,7 @@ function connect() {
   };
 }
 
+// a hidden tab drops the view so an unwatched share does not keep the box running
 function pause() {
   paused = true;
   $("state").textContent = "Paused while this tab is hidden";

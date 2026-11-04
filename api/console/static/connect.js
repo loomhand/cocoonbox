@@ -36,6 +36,7 @@ function toolsTable(c) {
     name.title = t.description;
     cell(row, t.read_only ? "read" : t.destructive ? "write (destructive)" : "write");
     const select = el("select");
+    select.setAttribute("aria-label", "Policy for " + t.name);
     for (const p of ["default", "allow", "ask", "off"]) {
       const label = p === "default" ? "default (" + (t.read_only ? "allow" : "ask") + ")" : p;
       select.appendChild(new Option(label, p, false, p === t.policy));
