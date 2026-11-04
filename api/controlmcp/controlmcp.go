@@ -61,6 +61,49 @@ type ToolLists interface {
 	Get(id string) (users.User, error)
 }
 
+type grantKey struct{}
+
+type request struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id"`
+	Method  string         `json:"method"`
+	Params  jsontext.Value `json:"params"`
+}
+
+type callParams struct {
+	Name      string         `json:"name"`
+	Arguments jsontext.Value `json:"arguments"`
+	Meta      struct {
+		ProgressToken jsontext.Value `json:"progressToken"`
+	} `json:"_meta"`
+}
+
+type response struct {
+	JSONRPC string         `json:"jsonrpc"`
+	ID      jsontext.Value `json:"id"`
+	Result  any            `json:"result,omitzero"`
+	Error   *mcpwire.Error `json:"error,omitzero"`
+}
+
+func newResponse(id jsontext.Value, result any, rpcErr *mcpwire.Error) response {
+	if rpcErr != nil {
+		return response{JSONRPC: mcpwire.Version, ID: id, Error: rpcErr}
+	}
+	return response{JSONRPC: mcpwire.Version, ID: id, Result: result}
+}
+
+type notification struct {
+	JSONRPC string `json:"jsonrpc"`
+	Method  string `json:"method"`
+	Params  any    `json:"params"`
+}
+
+type progressParams struct {
+	ProgressToken jsontext.Value `json:"progressToken"`
+	Progress      int            `json:"progress"`
+	Message       string         `json:"message"`
+}
+
 // Server answers MCP Streamable HTTP on Path for the boxes of the bearer token's user, or of its grant, and on RootPath with box tools too.
 type Server struct {
 	boxes  controlv1.BoxesServer
@@ -219,49 +262,6 @@ func (s *Server) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	}
 	w.Header().Set("WWW-Authenticate", s.grants.Challenge(r.Header.Get("Authorization") != ""))
 	w.WriteHeader(http.StatusUnauthorized)
-}
-
-type grantKey struct{}
-
-type request struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      jsontext.Value `json:"id"`
-	Method  string         `json:"method"`
-	Params  jsontext.Value `json:"params"`
-}
-
-type callParams struct {
-	Name      string         `json:"name"`
-	Arguments jsontext.Value `json:"arguments"`
-	Meta      struct {
-		ProgressToken jsontext.Value `json:"progressToken"`
-	} `json:"_meta"`
-}
-
-type response struct {
-	JSONRPC string         `json:"jsonrpc"`
-	ID      jsontext.Value `json:"id"`
-	Result  any            `json:"result,omitzero"`
-	Error   *mcpwire.Error `json:"error,omitzero"`
-}
-
-func newResponse(id jsontext.Value, result any, rpcErr *mcpwire.Error) response {
-	if rpcErr != nil {
-		return response{JSONRPC: mcpwire.Version, ID: id, Error: rpcErr}
-	}
-	return response{JSONRPC: mcpwire.Version, ID: id, Result: result}
-}
-
-type notification struct {
-	JSONRPC string `json:"jsonrpc"`
-	Method  string `json:"method"`
-	Params  any    `json:"params"`
-}
-
-type progressParams struct {
-	ProgressToken jsontext.Value `json:"progressToken"`
-	Progress      int            `json:"progress"`
-	Message       string         `json:"message"`
 }
 
 // eventStream answers one tools/call as server-sent events: progress notifications, then the response.

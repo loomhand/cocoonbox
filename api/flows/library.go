@@ -61,6 +61,11 @@ type Origin struct {
 	Image string
 }
 
+type stored struct {
+	Entry
+	Object string `json:"object"`
+}
+
 // Library keeps every user's flows in the state store, sealed under a key derived from the user's state key.
 type Library struct {
 	store store.Store
@@ -263,11 +268,6 @@ type index struct {
 
 func (idx *index) find(name string) int {
 	return slices.IndexFunc(idx.Flows, func(f stored) bool { return f.Name == name })
-}
-
-type stored struct {
-	Entry
-	Object string `json:"object"`
 }
 
 func indexKey(user string) string           { return user + "/flows/index" }

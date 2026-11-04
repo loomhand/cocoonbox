@@ -41,6 +41,11 @@ var (
 	stateRoots = []stateRoot{{name: "home", path: "/home/user"}, {name: "workspace", path: "/workspace"}}
 )
 
+type stateRoot struct {
+	name string
+	path string
+}
+
 // manifest is the agent's sealed list of a snapshot's files, as the api reads it.
 type manifest struct {
 	Version int            `json:"version"`
@@ -110,11 +115,6 @@ func (f manifestFile) boxPath() string {
 		}
 	}
 	return path.Join("/", f.Root, f.Path)
-}
-
-type stateRoot struct {
-	name string
-	path string
 }
 
 // boxPath is a validated box path: a root and a path relative to it, empty for the root itself.
