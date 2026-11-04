@@ -110,8 +110,7 @@ type NewUser struct {
 	DailyCapMicros *int64
 }
 
-// Settings changes a user's settings; a nil field keeps its value, MaxRunning 0 returns the user to the api's default and
-// MaxAgentBoxes 0 drops the user's agent box cap. Admin gives the user no gw cap, or the tenant's default when it ends.
+// Settings changes a user's settings: nil keeps a value, MaxRunning 0 is the api default, MaxAgentBoxes 0 no cap, and Admin lifts the gw cap while set.
 type Settings struct {
 	Admin         *bool `json:"admin,omitempty"`
 	Disabled      *bool `json:"disabled,omitempty"`
@@ -306,7 +305,7 @@ func (s *Service) Load(ctx context.Context) error {
 	return nil
 }
 
-// Listen reloads the index and the shares on every users notify, and ends each credential another api ended, until ctx ends; it reloads after each LISTEN too, since a notify sent while none listens is lost.
+// Listen reloads the index and shares on each users notify and after each LISTEN, which misses earlier notifies, and ends credentials other apis ended, until ctx ends.
 func (s *Service) Listen(ctx context.Context) {
 	for {
 		err := s.listen(ctx)

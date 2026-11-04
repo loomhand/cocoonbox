@@ -79,8 +79,7 @@ var (
 	grantTypes = []string{authorizationCode, refreshToken}
 )
 
-// Accounts returns a user, so a disabled or deleted user's tokens stop working, issues and revokes the device tokens of first-party
-// clients, and ends the calls bound to a revoked grant, whose id is its credential.
+// Accounts resolves users so a disabled or deleted user's tokens stop working, keeps first-party device tokens, and ends the calls of a revoked grant.
 type Accounts interface {
 	Get(id string) (users.User, error)
 	IssueDevice(ctx context.Context, user, client, label string) (string, error)
@@ -181,8 +180,7 @@ func (s *Service) LiveGrants(ctx context.Context, ids []string) (map[string]bool
 // Close releases the database pool.
 func (s *Service) Close() { s.store.close() }
 
-// ResourceMetadataPath is where the protected resource's RFC 9728 metadata lives: the well-known prefix and the resource's path;
-// the same metadata also answers under it, for clients that probe the path of the endpoint they use.
+// ResourceMetadataPath is the RFC 9728 well-known prefix plus the resource's path; the metadata also answers under the endpoint's own path.
 func (s *Service) ResourceMetadataPath() string {
 	u, _ := url.Parse(s.resource)
 	return resourceMetadataPrefix + u.Path

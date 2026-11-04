@@ -377,7 +377,7 @@ func (l *stateLayer) lastSaved(ctx context.Context, p statePath) int64 {
 	return h.SavedAtMs
 }
 
-// commit writes the snapshot record (a delta against base when set), adds the uploaded chunks to the index, then writes the timeline and the head, so a crash leaves the previous head valid.
+// commit writes the record (a delta when base is set), the chunk index, the timeline, then the head, so a crash leaves the previous head valid.
 func (l *stateLayer) commit(ctx context.Context, p statePath, keyID string, rec *snapshotRecord, base *snapshotRecord, h head) error {
 	if err := l.retry(ctx, func() error { return l.putRecord(ctx, p, rec, base) }); err != nil {
 		return err

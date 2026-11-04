@@ -20,8 +20,7 @@ const (
 	invalidClient = "invalid_client"
 )
 
-// Link is a mock of Link's authorization server and API: the publishable key as a Bearer token on every token and
-// revoke request, the client secret in the form, PKCE, single-use rotating refresh tokens, revocation, and spend requests.
+// Link mocks Link's authorization server and API: the publishable key as Bearer, the client secret in the form, PKCE, rotating refresh tokens and spend requests.
 type Link struct {
 	*httptest.Server
 	ClientID     string
