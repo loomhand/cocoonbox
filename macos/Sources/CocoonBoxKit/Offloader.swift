@@ -114,9 +114,10 @@ public struct Offloader: Sendable {
     public let store: OffloadStore
     let rsh: String
     let environment: [String: String]
+    let credentials: [String: String]
     let progress: @Sendable (String) -> Void
 
-    // cli is the cocoonbox CLI that rsync and git run as their remote shell; its children get the endpoint and token through the environment.
+    // cli is the cocoonbox CLI that rsync and git run as their remote shell; only those two get the endpoint and token.
     public init(connection: BoxConnection, box: Cocoonbox_Control_V1_Box, token: String, cli: String, store: OffloadStore,
                 environment: [String: String], progress: @escaping @Sendable (String) -> Void) {
         connection.boxID = box.id
@@ -124,7 +125,9 @@ public struct Offloader: Sendable {
         self.box = box
         self.store = store
         rsh = "\(Self.quote(cli)) rsh --box \(box.id)"
-        self.environment = environment.merging(["COCOONBOX_ENDPOINT": connection.endpoint.url, "COCOONBOX_TOKEN": token]) { $1 }
+        let credentials = ["COCOONBOX_ENDPOINT": connection.endpoint.url, "COCOONBOX_TOKEN": token]
+        self.credentials = credentials
+        self.environment = environment.filter { credentials[$0.key] == nil }
         self.progress = progress
     }
 
@@ -247,7 +250,7 @@ public struct Offloader: Sendable {
         let report = excludes.deletingLastPathComponent().appendingPathComponent("rsh-report")
         try? FileManager.default.removeItem(at: report)
         defer { try? FileManager.default.removeItem(at: report) }
-        let run = try Command.run(argv, environment: environment.merging(["COCOONBOX_RSH_REPORT": report.path]) { $1 })
+        let run = try Command.run(argv, environment: environment.merging(credentials) { $1 }.merging(["COCOONBOX_RSH_REPORT": report.path]) { $1 })
         guard run.status == 0 else { throw OffloadError.failed(Self.rsyncFailure(run.status, stderr: run.error, report: try? String(contentsOf: report, encoding: .utf8))) }
         let line = run.text.split(separator: "\n").first { $0.hasPrefix("Total sent:") || $0.hasPrefix("Total bytes sent:") } ?? ""
         return Int64(line.filter(\.isNumber)) ?? 0
@@ -350,7 +353,7 @@ public struct Offloader: Sendable {
             guard let repo = GitRepo.open(URL(fileURLWithPath: top), environment: environment) else { throw OffloadError.failed("\(top) is no longer a git repository") }
             let ref = "refs/cocoonbox/back/\(record.id)"
             let fetch = try repo.run(["fetch", "-q", "box:\(record.dir)", "+refs/heads/*:refs/cocoonbox/box/*", "+\(ref):\(ref)"],
-                                     extra: ["GIT_SSH_COMMAND": rsh, "GIT_SSH_VARIANT": "simple"])
+                                     extra: credentials.merging(["GIT_SSH_COMMAND": rsh, "GIT_SSH_VARIANT": "simple"]) { $1 })
             guard fetch.status == 0 else { throw OffloadError.failed("git fetch from the box failed (\(fetch.status)):\n\(fetch.error)") }
             landing = try repo.land(id: record.id, base: base, box: ref, index: try store.directory(key).appendingPathComponent("snapshot.index"))
         }
