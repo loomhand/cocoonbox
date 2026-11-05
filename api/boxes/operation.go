@@ -25,7 +25,7 @@ const (
 	sharedTimeout      = 5 * time.Second
 )
 
-var ended = func() context.Context {
+var endedCtx = func() context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	return ctx
@@ -506,7 +506,7 @@ func (r *operations) running() []*operation {
 // remoteOperation is a read-only copy of rec; nothing it records leaves this process.
 func (r *operations) remoteOperation(rec cluster.Operation) *operation {
 	op := &operation{
-		id: rec.ID, user: rec.User, boxID: rec.Box, phase: controlv1.Phase(rec.Phase), park: rec.Park, gen: rec.Gen, ctx: ended, stop: func() {},
+		id: rec.ID, user: rec.User, boxID: rec.Box, phase: controlv1.Phase(rec.Phase), park: rec.Park, gen: rec.Gen, ctx: endedCtx, stop: func() {},
 		watchers: r.watchers, created: rec.CreatedAt, remote: true, changed: make(chan struct{}),
 	}
 	op.adoptLocked(rec)
@@ -548,4 +548,31 @@ func lastOffset(events []*controlv1.OperationEvent) int {
 func offsetOf(key string) int {
 	n, _ := strconv.Atoi(key)
 	return n
+}
+
+func fromEventRecords(id string, raw []byte) []*controlv1.OperationEvent {
+	var recs []eventRecord
+	if json.Unmarshal(raw, &recs) != nil {
+		return nil
+	}
+	events := make([]*controlv1.OperationEvent, len(recs))
+	for i, e := range recs {
+		events[i] = &controlv1.OperationEvent{
+			OperationId: id, Phase: controlv1.Phase(e.Phase), Detail: e.Detail, OffsetKey: e.OffsetKey, AtMs: e.AtMs,
+			BoxState: controlv1.BoxState(e.BoxState), DoneBytes: e.DoneBytes, TotalBytes: e.TotalBytes,
+		}
+	}
+	return events
+}
+
+func eventRecords(events []*controlv1.OperationEvent) []byte {
+	recs := make([]eventRecord, len(events))
+	for i, ev := range events {
+		recs[i] = eventRecord{
+			Phase: int32(ev.GetPhase()), Detail: ev.GetDetail(), OffsetKey: ev.GetOffsetKey(), AtMs: ev.GetAtMs(),
+			BoxState: int32(ev.GetBoxState()), DoneBytes: ev.GetDoneBytes(), TotalBytes: ev.GetTotalBytes(),
+		}
+	}
+	raw, _ := json.Marshal(recs)
+	return raw
 }

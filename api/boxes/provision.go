@@ -34,6 +34,14 @@ type Signer interface {
 	Credential(box, wake string) string
 }
 
+// provisioner writes each machine's identity file on every boot and its gw key on first boot.
+type provisioner struct {
+	signer  Signer
+	backoff time.Duration
+
+	locks utils.Locks
+}
+
 // EnableProvisioning gives every machine an identity file for signer and, with accounts, its user's gw key.
 func (s *Service) EnableProvisioning(signer Signer) {
 	s.provision = &provisioner{signer: signer, backoff: provisionBackoff}
@@ -192,14 +200,6 @@ func (s *Service) ready(m machines.Machine) bool {
 	active := s.ops.activeFor(boxOfMachine(m.ID))
 	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && m.Meta[metaRestore] == "" &&
 		(active == nil || (active.phase != controlv1.Phase_PHASE_RESTORING && !active.park))
-}
-
-// provisioner writes each machine's identity file on every boot and its gw key on first boot.
-type provisioner struct {
-	signer  Signer
-	backoff time.Duration
-
-	locks utils.Locks
 }
 
 // wakeOf returns the wake id recorded for m's current incarnation, "" when none.

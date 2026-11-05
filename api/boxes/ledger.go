@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/cluster"
-	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 )
 
 const (
@@ -160,31 +159,4 @@ func decodeHead(row cluster.Head) (head, error) {
 
 func comparePaths(a, b statePath) int {
 	return cmp.Or(cmp.Compare(a.user, b.user), cmp.Compare(a.box, b.box))
-}
-
-func fromEventRecords(id string, raw []byte) []*controlv1.OperationEvent {
-	var recs []eventRecord
-	if json.Unmarshal(raw, &recs) != nil {
-		return nil
-	}
-	events := make([]*controlv1.OperationEvent, len(recs))
-	for i, e := range recs {
-		events[i] = &controlv1.OperationEvent{
-			OperationId: id, Phase: controlv1.Phase(e.Phase), Detail: e.Detail, OffsetKey: e.OffsetKey, AtMs: e.AtMs,
-			BoxState: controlv1.BoxState(e.BoxState), DoneBytes: e.DoneBytes, TotalBytes: e.TotalBytes,
-		}
-	}
-	return events
-}
-
-func eventRecords(events []*controlv1.OperationEvent) []byte {
-	recs := make([]eventRecord, len(events))
-	for i, ev := range events {
-		recs[i] = eventRecord{
-			Phase: int32(ev.GetPhase()), Detail: ev.GetDetail(), OffsetKey: ev.GetOffsetKey(), AtMs: ev.GetAtMs(),
-			BoxState: int32(ev.GetBoxState()), DoneBytes: ev.GetDoneBytes(), TotalBytes: ev.GetTotalBytes(),
-		}
-	}
-	raw, _ := json.Marshal(recs)
-	return raw
 }

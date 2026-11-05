@@ -18,6 +18,11 @@ import (
 // metaSlept records when the api last hibernated a machine, in Unix milliseconds.
 const metaSlept = "slept"
 
+type parking struct {
+	after time.Duration
+	now   func() time.Time
+}
+
 // EnableParking parks every box hibernated longer than after whose owner's policy does not skip it: RunParking saves it and removes its machine, and the next Ensure restores it.
 func (s *Service) EnableParking(after time.Duration) {
 	s.park = &parking{after: after, now: time.Now}
@@ -179,9 +184,4 @@ func (s *Service) sleep(ctx context.Context, id string) (machines.Machine, error
 		}
 	}
 	return s.machines.Hibernate(ctx, id)
-}
-
-type parking struct {
-	after time.Duration
-	now   func() time.Time
 }

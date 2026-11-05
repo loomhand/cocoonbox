@@ -10,6 +10,11 @@ import (
 // ResidentialFunc reports whether user's boxes leave through the residential exit.
 type ResidentialFunc func(user string) bool
 
+type exitPolicy struct {
+	upstream    string
+	residential ResidentialFunc
+}
+
 // EnableResidential sends the machines of users residential reports through the proxy at upstream, and the rest direct.
 func (s *Service) EnableResidential(upstream string, residential ResidentialFunc) {
 	s.exit = &exitPolicy{upstream: upstream, residential: residential}
@@ -42,9 +47,4 @@ func (s *Service) syncExit(ctx context.Context, m machines.Machine) error {
 		upstream = s.exit.upstream
 	}
 	return s.machines.SetEgress(ctx, m.ID, upstream)
-}
-
-type exitPolicy struct {
-	upstream    string
-	residential ResidentialFunc
 }

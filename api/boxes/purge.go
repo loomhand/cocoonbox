@@ -14,22 +14,6 @@ type deletedBox struct {
 	DeletedAtMs int64 `json:"deleted_at_ms"`
 }
 
-// DeleteState removes every object of user's state from st and returns how many it removed; a user without state has none.
-func DeleteState(ctx context.Context, st store.Store, user string) (int, error) {
-	listing, err := st.List(ctx, user+"/")
-	if err != nil {
-		return 0, err
-	}
-	keys := make([]string, len(listing))
-	for i, obj := range listing {
-		keys[i] = obj.Key
-	}
-	if err := st.Delete(ctx, keys); err != nil {
-		return 0, err
-	}
-	return len(keys), nil
-}
-
 // DeleteState removes user's saved state once its machines are released; a user without state is not an error.
 func (s *Service) DeleteState(ctx context.Context, user string) error {
 	if s.state == nil {
@@ -108,4 +92,20 @@ func (l *stateLayer) forgetCache(p statePath) {
 	maps.DeleteFunc(l.browsed, func(k statePath, _ browsed) bool { return match(k) })
 	maps.DeleteFunc(l.bases, func(k statePath, _ *snapshotRecord) bool { return match(k) })
 	l.dropped++
+}
+
+// DeleteState removes every object of user's state from st and returns how many it removed; a user without state has none.
+func DeleteState(ctx context.Context, st store.Store, user string) (int, error) {
+	listing, err := st.List(ctx, user+"/")
+	if err != nil {
+		return 0, err
+	}
+	keys := make([]string, len(listing))
+	for i, obj := range listing {
+		keys[i] = obj.Key
+	}
+	if err := st.Delete(ctx, keys); err != nil {
+		return 0, err
+	}
+	return len(keys), nil
 }

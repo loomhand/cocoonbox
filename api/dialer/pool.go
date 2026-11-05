@@ -27,6 +27,11 @@ var connectParams = grpc.ConnectParams{
 	MinConnectTimeout: 5 * time.Second,
 }
 
+type agentConn struct {
+	conn *grpc.ClientConn
+	used time.Time
+}
+
 // Pool keeps one connection per box and agent endpoint, for the edge and the control plane alike.
 type Pool struct {
 	now func() time.Time
@@ -83,9 +88,4 @@ func (p *Pool) Close() {
 		}
 		delete(p.conns, box)
 	}
-}
-
-type agentConn struct {
-	conn *grpc.ClientConn
-	used time.Time
 }
