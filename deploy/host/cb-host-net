@@ -3,7 +3,7 @@
 set -eu
 
 UPLINK=${CB_UPLINK:-$(ip -4 route show default | awk '{for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit }}')}
-HOST_IP=$(ip -4 -o addr show dev "$UPLINK" | awk '{print $4}' | cut -d/ -f1)
+HOST_IP=$(ip -4 -o addr show dev "$UPLINK" | awk '{print $4}' | cut -d/ -f1 | head -n1)
 BRIDGE=cbc0
 BRIDGE_ADDR=10.203.0.1/24
 BRIDGE_IP=${BRIDGE_ADDR%/*}

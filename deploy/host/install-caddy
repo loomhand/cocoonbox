@@ -19,7 +19,7 @@ if ! command -v caddy >/dev/null; then
 	apt-get install -y -q caddy >/dev/null
 fi
 install -d -m 0755 /etc/systemd/system/caddy.service.d
-printf '[Service]\nRestart=on-failure\nRestartSec=5s\nOOMScoreAdjust=-900\n' > /etc/systemd/system/caddy.service.d/restart.conf
+printf '[Unit]\nAfter=cb-host-net.service\n\n[Service]\nRestart=on-failure\nRestartSec=5s\nOOMScoreAdjust=-900\n' > /etc/systemd/system/caddy.service.d/restart.conf
 systemctl daemon-reload
 
 SITE=Caddyfile.cocoonbox
