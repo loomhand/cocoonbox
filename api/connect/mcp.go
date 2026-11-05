@@ -30,6 +30,7 @@ const (
 
 	sessionTTL    = 24 * time.Hour
 	maxClientName = 64
+	maxSessions   = 10000
 	answersQueued = 8
 )
 
@@ -192,6 +193,12 @@ func (d *Door) initialize(w http.ResponseWriter, params jsontext.Value) map[stri
 	now := time.Now()
 	d.mu.Lock()
 	maps.DeleteFunc(d.clients, func(_ string, v session) bool { return now.Sub(v.at) > sessionTTL })
+	for old := range d.clients {
+		if len(d.clients) < maxSessions {
+			break
+		}
+		delete(d.clients, old)
+	}
 	d.clients[id] = session{client: shorten(cmp.Or(req.ClientInfo.Name, "unknown"), maxClientName), at: now}
 	d.mu.Unlock()
 	w.Header().Set(mcpwire.SessionHeader, id)

@@ -912,6 +912,16 @@ func TestDoorKeepsAShortClientName(t *testing.T) {
 	}
 }
 
+func TestDoorKeepsAtMostMaxSessionsClientNames(t *testing.T) {
+	door := (&Service{}).NewDoor(fakeAuthn{}, DoorMCP)
+	for range maxSessions + 5 {
+		door.initialize(httptest.NewRecorder(), nil)
+	}
+	if len(door.clients) != maxSessions {
+		t.Errorf("door keeps %d client names, want %d", len(door.clients), maxSessions)
+	}
+}
+
 func TestBoxDoorTakesTheApprovalFromMeta(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
