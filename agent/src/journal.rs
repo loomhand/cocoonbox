@@ -1,7 +1,9 @@
 //! Transcript and status persistence with event fan-out, shared by every layer that writes history.
 
+use tokio::sync::Mutex;
+
 use crate::bus::Bus;
-use crate::pb::{AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
+use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
 use crate::secrets::SECRETS;
 use crate::store::Store;
 
@@ -9,6 +11,7 @@ use crate::store::Store;
 pub struct Journal {
     pub store: Store,
     pub bus: Bus,
+    rows: Mutex<()>,
 }
 
 impl Journal {
@@ -17,6 +20,7 @@ impl Journal {
         Self {
             store,
             bus: Bus::new(),
+            rows: Mutex::new(()),
         }
     }
 
@@ -52,6 +56,7 @@ impl Journal {
 
     /// Updates an agent's status and publishes the new row.
     pub async fn set_status(&self, agent_id: &str, status: AgentStatus) {
+        let _rows = self.rows.lock().await;
         match self.store.set_status(agent_id.to_owned(), status).await {
             Ok(Some(agent)) => {
                 self.bus.publish(event::Body::Agent(agent));
@@ -63,6 +68,7 @@ impl Journal {
 
     /// Names an agent created without a name and publishes the new row.
     pub async fn title(&self, agent_id: &str, title: String) {
+        let _rows = self.rows.lock().await;
         match self.store.title_agent(agent_id.to_owned(), title).await {
             Ok(Some(agent)) => {
                 self.bus.publish(event::Body::Agent(agent));
@@ -70,5 +76,30 @@ impl Journal {
             Ok(None) => {}
             Err(e) => eprintln!("title {agent_id}: {e}"),
         }
+    }
+
+    pub async fn rename(
+        &self,
+        agent_id: String,
+        name: String,
+    ) -> Result<Option<pb::Agent>, String> {
+        let _rows = self.rows.lock().await;
+        let agent = self.store.rename_agent(agent_id, name).await?;
+        if let Some(agent) = &agent {
+            self.bus.publish(event::Body::Agent(agent.clone()));
+        }
+        Ok(agent)
+    }
+
+    pub async fn delete(&self, agent_id: &str) -> Result<bool, String> {
+        let _rows = self.rows.lock().await;
+        let existed = self.store.delete_agent(agent_id.to_owned()).await?;
+        if existed {
+            self.bus
+                .publish(event::Body::AgentDeleted(pb::AgentDeleted {
+                    agent_id: agent_id.to_owned(),
+                }));
+        }
+        Ok(existed)
     }
 }

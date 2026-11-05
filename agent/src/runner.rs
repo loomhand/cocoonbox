@@ -257,15 +257,11 @@ impl Runtime {
         if name.is_empty() {
             return Err(Status::invalid_argument("name is empty"));
         }
-        let agent = self
-            .journal
-            .store
-            .rename_agent(req.agent_id.clone(), name.to_owned())
+        self.journal
+            .rename(req.agent_id.clone(), name.to_owned())
             .await
             .map_err(Status::internal)?
-            .ok_or_else(|| Status::not_found(format!("agent {} not found", req.agent_id)))?;
-        self.journal.bus.publish(event::Body::Agent(agent.clone()));
-        Ok(agent)
+            .ok_or_else(|| Status::not_found(format!("agent {} not found", req.agent_id)))
     }
 
     /// Cancels the agent's running turn, waits for it to end, then removes the agent and its history.
@@ -287,18 +283,12 @@ impl Runtime {
         if closed.is_error {
             eprintln!("delete {agent_id}: close its window: {}", closed.text);
         }
-        let deleted = self.journal.store.delete_agent(agent_id.to_owned()).await;
+        let deleted = self.journal.delete(agent_id).await;
         lock(&self.slots).remove(agent_id);
         let _ = slot.queue.try_send(String::new());
-        let existed = deleted.map_err(Status::internal)?;
-        if !existed {
+        if !deleted.map_err(Status::internal)? {
             return Err(Status::not_found(format!("agent {agent_id} not found")));
         }
-        self.journal
-            .bus
-            .publish(event::Body::AgentDeleted(pb::AgentDeleted {
-                agent_id: agent_id.to_owned(),
-            }));
         Ok(())
     }
 
