@@ -11,7 +11,7 @@ import urllib.parse
 HOP = ("connection", "proxy-connection", "keep-alive", "proxy-authorization")
 
 
-def pipe(src, dst):
+def pipe(src: socket.socket, dst: socket.socket) -> None:
     try:
         while data := src.recv(1 << 16):
             dst.sendall(data)
@@ -20,7 +20,7 @@ def pipe(src, dst):
         pass
 
 
-def handle(client):
+def handle(client: socket.socket) -> None:
     with client:
         head = b""
         while b"\r\n\r\n" not in head:
@@ -53,16 +53,18 @@ def handle(client):
             pipe(upstream, client)
 
 
-def main():
-    path = sys.argv[1] if len(sys.argv) == 2 else sys.exit(__doc__)
+def main() -> None:
+    if len(sys.argv) != 2:
+        sys.exit(__doc__)
+    path = sys.argv[1]
     if os.path.exists(path):
         os.unlink(path)
-    server = socket.socket(socket.AF_UNIX)
-    server.bind(path)
-    server.listen(64)
-    while True:
-        conn, _ = server.accept()
-        threading.Thread(target=handle, args=(conn,), daemon=True).start()
+    with socket.socket(socket.AF_UNIX) as server:
+        server.bind(path)
+        server.listen(64)
+        while True:
+            conn, _ = server.accept()
+            threading.Thread(target=handle, args=(conn,), daemon=True).start()
 
 
 if __name__ == "__main__":
