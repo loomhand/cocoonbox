@@ -132,14 +132,13 @@ func resolveFlavor(req *controlv1.Flavor, def machines.Flavor) machines.Flavor {
 }
 
 func every(ctx context.Context, interval time.Duration, fn func()) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	tick := time.Tick(interval)
 	for {
 		fn()
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 	}
 }
