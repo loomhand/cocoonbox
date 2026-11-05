@@ -3,8 +3,6 @@ package edge
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"io"
@@ -26,7 +24,7 @@ import (
 
 func TestMCPPostRoundTrip(t *testing.T) {
 	env := newMCPEnv(t)
-	req := env.request(t, http.MethodPost, boxes.BoxID("alice")+"/extra?x=1", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	req := env.request(t, http.MethodPost, boxes.BoxID("alice")+"/extra?x=1", toolsListRPC)
 	req.Header.Set("Mcp-Session-Id", "s0")
 	req.Header.Set(credential.Header, "forged")
 	env.resolver.wake = "w1"
@@ -43,7 +41,7 @@ func TestMCPPostRoundTrip(t *testing.T) {
 	want := map[string]string{
 		"path": "/mcp/extra", "query": "x=1", "session": "s0", "authorization": "",
 		"credential": "cred:" + boxes.BoxID("alice") + ":w1",
-		"body":       `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		"body":       toolsListRPC,
 	}
 	for k, v := range want {
 		if got[k] != v {
@@ -58,7 +56,7 @@ func TestMCPPostRoundTrip(t *testing.T) {
 func TestMCPDialsTheEndpointNotItsKey(t *testing.T) {
 	env := newMCPEnv(t)
 	env.resolver.opaque = true
-	resp := env.do(t, env.request(t, http.MethodPost, boxes.BoxID("alice"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	resp := env.do(t, env.request(t, http.MethodPost, boxes.BoxID("alice"), toolsListRPC))
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status %d through an endpoint whose key resolves nowhere, want 200", resp.StatusCode)
@@ -106,83 +104,65 @@ func TestMCPStreamsEvents(t *testing.T) {
 	}
 }
 
-func TestMCPStreamEndsWhenItsUserIsDisabled(t *testing.T) {
-	env := newMCPEnv(t)
-	req := env.request(t, http.MethodGet, boxes.BoxID("alice"), "")
-	req.Header.Set("Accept", "text/event-stream")
-	resp := env.do(t, req)
-	defer resp.Body.Close()
-	if line, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil || line != "data: 0\n" {
-		t.Fatalf("first event = %q, %v", line, err)
+func TestMCPStreamEndsWithItsCredential(t *testing.T) {
+	external := func(t *testing.T) *mcpEnv {
+		return newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
+			return externalIdentities{token: "ext-alice", id: auth.Identity{User: "alice", Credential: "idp:session-1"}, life: life, credLife: aliceLife}
+		})
 	}
-	env.disable()
-	select {
-	case <-env.upstream.closed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the stream outlived its user")
+	tests := []struct {
+		name  string
+		env   func(*testing.T) *mcpEnv
+		token string
+		end   func(*mcpEnv)
+	}{
+		{name: "user disabled", env: newMCPEnv, token: aliceToken, end: func(e *mcpEnv) { e.disable() }},
+		{name: "token revoked", env: newMCPEnv, token: aliceToken, end: func(e *mcpEnv) { e.revoke() }},
+		{name: "provider credential ended", env: external, token: "ext-alice", end: func(e *mcpEnv) { e.revoke() }},
 	}
-}
-
-func TestMCPStreamEndsWhenItsTokenIsRevoked(t *testing.T) {
-	env := newMCPEnv(t)
-	req := env.request(t, http.MethodGet, boxes.BoxID("alice"), "")
-	req.Header.Set("Accept", "text/event-stream")
-	resp := env.do(t, req)
-	defer resp.Body.Close()
-	if line, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil || line != "data: 0\n" {
-		t.Fatalf("first event = %q, %v", line, err)
-	}
-	env.revoke()
-	select {
-	case <-env.upstream.closed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the stream outlived its token")
-	}
-}
-
-func TestMCPStreamEndsWhenItsProvidersCredentialEnds(t *testing.T) {
-	env := newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
-		return externalIdentities{token: "ext-alice", id: auth.Identity{User: "alice", Credential: "idp:session-1"}, life: life, credLife: aliceLife}
-	})
-	req := env.request(t, http.MethodGet, boxes.BoxID("alice"), "")
-	req.Header.Set("Authorization", "Bearer ext-alice")
-	req.Header.Set("Accept", "text/event-stream")
-	resp := env.do(t, req)
-	defer resp.Body.Close()
-	if line, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil || line != "data: 0\n" {
-		t.Fatalf("first event = %q, %v", line, err)
-	}
-	env.revoke()
-	select {
-	case <-env.upstream.closed:
-	case <-time.After(5 * time.Second):
-		t.Fatal("the stream outlived its provider's credential")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := tt.env(t)
+			req := env.request(t, http.MethodGet, boxes.BoxID("alice"), "")
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+			req.Header.Set("Accept", "text/event-stream")
+			resp := env.do(t, req)
+			defer resp.Body.Close()
+			if line, err := bufio.NewReader(resp.Body).ReadString('\n'); err != nil || line != "data: 0\n" {
+				t.Fatalf("first event = %q, %v", line, err)
+			}
+			tt.end(env)
+			select {
+			case <-env.upstream.closed:
+			case <-time.After(5 * time.Second):
+				t.Fatal("the stream outlived its credential")
+			}
+		})
 	}
 }
 
-func TestMCPAnIdentityProviderOutageIsNotTriedAsAShare(t *testing.T) {
-	env := newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
-		return externalIdentities{down: true, life: life, credLife: aliceLife}
-	})
-	req := env.request(t, http.MethodPost, boxes.BoxID("alice"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	req.Header.Set("Authorization", "Bearer "+auth.SecretPrefix+"unknown")
-	resp := env.do(t, req)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("a share secret while the provider is down = %d, want 503", resp.StatusCode)
+func TestMCPRefusesWhatItsProviderRefuses(t *testing.T) {
+	tests := []struct {
+		name, token string
+		down        bool
+		want        int
+	}{
+		{name: "a share secret while the provider is down", token: auth.SecretPrefix + "unknown", down: true, want: http.StatusServiceUnavailable},
+		{name: "a gRPC-only token", token: "ext-grpc", want: http.StatusForbidden},
 	}
-}
-
-func TestMCPForbidsATokenItsProviderKeepsOffMCP(t *testing.T) {
-	env := newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
-		return externalIdentities{life: life, credLife: aliceLife}
-	})
-	req := env.request(t, http.MethodPost, boxes.BoxID("alice"), `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	req.Header.Set("Authorization", "Bearer ext-grpc")
-	resp := env.do(t, req)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Errorf("a gRPC-only token on MCP = %d, want 403", resp.StatusCode)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := newMCPEnvWith(t, staticUsers{}, func(life, aliceLife context.Context) auth.Identities {
+				return externalIdentities{down: tt.down, life: life, credLife: aliceLife}
+			})
+			req := env.request(t, http.MethodPost, boxes.BoxID("alice"), toolsListRPC)
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+			resp := env.do(t, req)
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.want {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.want)
+			}
+		})
 	}
 }
 
@@ -226,14 +206,7 @@ func TestMCPRejects(t *testing.T) {
 
 func TestMCPAgentUnreachable(t *testing.T) {
 	env := newMCPEnv(t)
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	env.resolver.addr = lis.Addr().String()
-	if err := lis.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
+	env.resolver.addr = deadAddr(t)
 	resp := env.do(t, env.request(t, http.MethodPost, boxes.BoxID("alice"), `{}`))
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
@@ -245,7 +218,7 @@ func TestMCPAgentUnreachable(t *testing.T) {
 func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
 	env := newMCPEnv(t)
 	env.resolver.wake = "w1"
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://unset/", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://unset/", strings.NewReader(toolsListRPC))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -254,7 +227,7 @@ func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
 	err = env.mcp.Exchange(req, "alice", boxes.BoxID("alice"), func(resp *http.Response) error {
 		return json.UnmarshalRead(resp.Body, &got)
 	})
-	if err != nil || got["path"] != "/mcp" || got["credential"] != "cred:"+boxes.BoxID("alice")+":w1" || got["body"] != `{"jsonrpc":"2.0","id":1,"method":"tools/list"}` {
+	if err != nil || got["path"] != "/mcp" || got["credential"] != "cred:"+boxes.BoxID("alice")+":w1" || got["body"] != toolsListRPC {
 		t.Fatalf("exchange = %v, upstream saw %v", err, got)
 	}
 	if reached := env.resolver.reaches(); !slices.Equal(reached, []string{boxes.BoxID("alice")}) {
@@ -272,14 +245,7 @@ func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
 	}
 
 	env.resolver.err = nil
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	env.resolver.addr = lis.Addr().String()
-	if err = lis.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
+	env.resolver.addr = deadAddr(t)
 	if err = env.mcp.Exchange(req.Clone(t.Context()), "alice", boxes.BoxID("alice"), func(*http.Response) error { used = true; return nil }); status.Code(err) != codes.Unknown || used {
 		t.Fatalf("exchange with an agent that does not answer = %v, used %t", err, used)
 	}
@@ -300,11 +266,9 @@ type mcpEnv struct {
 
 func newMCPEnv(t *testing.T) *mcpEnv {
 	t.Helper()
-	sum := sha256.Sum256([]byte(aliceToken))
-	bobSum, carolSum := sha256.Sum256([]byte(bobToken)), sha256.Sum256([]byte(carolToken))
-	users := staticUsers{hex.EncodeToString(sum[:]): "alice", hex.EncodeToString(bobSum[:]): "bob", hex.EncodeToString(carolSum[:]): "carol"}
+	users := staticUsers{auth.TokenCredential(aliceToken): "alice", auth.TokenCredential(bobToken): "bob", auth.TokenCredential(carolToken): "carol"}
 	return newMCPEnvWith(t, users, func(life, aliceLife context.Context) auth.Identities {
-		return auth.Tokens(livingUsers{staticUsers: users, life: life, credentials: map[string]context.Context{hex.EncodeToString(sum[:]): aliceLife}})
+		return auth.Tokens(livingUsers{staticUsers: users, life: life, credentials: map[string]context.Context{auth.TokenCredential(aliceToken): aliceLife}})
 	})
 }
 
@@ -343,6 +307,19 @@ func (e *mcpEnv) do(t *testing.T, req *http.Request) *http.Response {
 		t.Fatalf("%s %s: %v", req.Method, req.URL.Path, err)
 	}
 	return resp
+}
+
+func deadAddr(t *testing.T) string {
+	t.Helper()
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	addr := lis.Addr().String()
+	if err := lis.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	return addr
 }
 
 func serveHTTP(t *testing.T, handler http.Handler) string {

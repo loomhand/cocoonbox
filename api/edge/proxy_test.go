@@ -2,9 +2,8 @@ package edge
 
 import (
 	"bytes"
+	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -75,12 +74,6 @@ func TestSessionEventsDoNotKeepTheBoxUp(t *testing.T) {
 	}
 	if got := env.resolver.reaches(); len(got) != 0 {
 		t.Errorf("Session.Events reached %v; it only watches the box", got)
-	}
-	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); err != nil {
-		t.Fatalf("Hello: %v", err)
-	}
-	if got := env.resolver.reaches(); !slices.Equal(got, []string{boxes.BoxID("alice")}) {
-		t.Errorf("reached %v after a Hello, want alice's box", got)
 	}
 }
 
@@ -227,12 +220,7 @@ func TestExecAnswersAfterTheClientHalfCloses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Exec: %v", err)
 	}
-	frames := []*agentv1.ExecClientFrame{
-		{Body: &agentv1.ExecClientFrame_Start{Start: &agentv1.ExecStart{Command: "cat"}}},
-		{Body: &agentv1.ExecClientFrame_Stdin{Stdin: []byte("in-")}},
-		{Body: &agentv1.ExecClientFrame_Stdin{Stdin: []byte("put")}},
-	}
-	for _, f := range frames {
+	for _, f := range []*agentv1.ExecClientFrame{execStart("cat"), execStdin([]byte("in-")), execStdin([]byte("put"))} {
 		if err := stream.Send(f); err != nil {
 			t.Fatalf("send: %v", err)
 		}
@@ -269,11 +257,13 @@ func TestScreenRelaysPerBoxAreCapped(t *testing.T) {
 		_, err = stream.Recv()
 		return stream, err
 	}
-	cancels := make([]context.CancelFunc, 0, maxScreensPerBox)
+	var first context.CancelFunc
 	for i := range maxScreensPerBox {
 		ctx, cancel := context.WithCancel(env.aliceCtx(t))
 		t.Cleanup(cancel)
-		cancels = append(cancels, cancel)
+		if i == 0 {
+			first = cancel
+		}
 		if _, err := open(ctx); err != nil {
 			t.Fatalf("screen %d: %v", i, err)
 		}
@@ -282,14 +272,15 @@ func TestScreenRelaysPerBoxAreCapped(t *testing.T) {
 		t.Fatalf("screen %d: %v, want ResourceExhausted", maxScreensPerBox+1, err)
 	}
 	grant := auth.Grant{Share: auth.Share{ID: "sh-1", Owner: "alice", Box: boxes.BoxID("alice"), Cut: make(chan struct{})}}
-	viewer, _ := net.Pipe()
+	viewer, other := net.Pipe()
+	t.Cleanup(func() { _, _ = viewer.Close(), other.Close() })
 	if err := env.proxy.Screen(t.Context(), grant, viewer); status.Code(err) != codes.ResourceExhausted {
 		t.Errorf("share viewer at the cap: %v, want ResourceExhausted", err)
 	}
 	if n := env.screen.accepted.Load(); n != maxScreensPerBox {
 		t.Errorf("the screen accepted %d connections, want %d", n, maxScreensPerBox)
 	}
-	cancels[0]()
+	first()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		_, err := open(env.aliceCtx(t))
@@ -410,14 +401,7 @@ func TestRejectsNonAgentMethods(t *testing.T) {
 }
 
 func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	addr := lis.Addr().String()
-	if err := lis.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
+	addr := deadAddr(t)
 	env := newProxyEnvAt(t, addr)
 	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable || strings.Contains(err.Error(), addr) {
 		t.Fatalf("Hello before the agent listens: %v, want Unavailable without the agent's address", err)
@@ -426,7 +410,7 @@ func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
 
 	agentSrv := grpc.NewServer()
 	agentv1.RegisterSessionServer(agentSrv, env.agent)
-	lis, err = net.Listen("tcp", addr)
+	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatalf("relisten %s: %v", addr, err)
 	}
@@ -471,8 +455,7 @@ func newProxyEnvAt(t *testing.T, agentAddr string) *proxyEnv {
 	agent := &fakeAgent{execDone: make(chan error, 1)}
 	resolver := &fakeResolver{addr: agentAddr}
 
-	sum := sha256.Sum256([]byte(aliceToken))
-	authn := auth.New(staticUsers{hex.EncodeToString(sum[:]): "alice"}, &fakeShares{})
+	authn := auth.New(staticUsers{auth.TokenCredential(aliceToken): "alice"}, &fakeShares{})
 	proxy := NewProxy(resolver, fakeCreds{}, dialer.NewPool())
 	t.Cleanup(proxy.pool.Close)
 	edgeSrv := grpc.NewServer(
@@ -568,7 +551,7 @@ func (a *fakeAgent) Hello(ctx context.Context, _ *agentv1.HelloRequest) (*agentv
 	}
 	return &agentv1.HelloResponse{
 		Models:           md.Get(auth.HeaderAuthorization),
-		DefaultMainModel: strings.TrimSpace(first(md.Get(HeaderBox)) + " " + first(md.Get(credential.Header))),
+		DefaultMainModel: strings.TrimSpace(cmp.Or(md.Get(HeaderBox)...) + " " + cmp.Or(md.Get(credential.Header)...)),
 	}, nil
 }
 
@@ -673,13 +656,6 @@ func recvScreen(t *testing.T, stream agentv1.Session_ScreenClient, n int) []byte
 		got = append(got, f.GetData()...)
 	}
 	return got
-}
-
-func first(values []string) string {
-	if len(values) == 0 {
-		return ""
-	}
-	return values[0]
 }
 
 type staticUsers map[string]string

@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"io"
 	"net"
@@ -23,6 +21,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/boxes"
 	"github.com/loomhand/cocoonbox/api/dialer"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -89,8 +88,7 @@ func TestMCPAuthorizesOwnerOrShare(t *testing.T) {
 func TestUserTokenWinsOverTheSharePrefix(t *testing.T) {
 	env := newMCPEnv(t)
 	env.resolver.wake = "w1"
-	sum := sha256.Sum256([]byte(shareLikeToken))
-	env.users[hex.EncodeToString(sum[:])] = "dave"
+	env.users[auth.TokenCredential(shareLikeToken)] = "dave"
 	env.shares.put(shareLikeToken, auth.Share{ID: "sh-twin", Owner: "alice", Box: boxes.BoxID("alice")})
 	req := env.request(t, http.MethodPost, boxes.BoxID("dave"), toolsListRPC)
 	req.Header.Set("Authorization", "Bearer "+shareLikeToken)
@@ -346,10 +344,9 @@ func (f *fakeShares) put(secret string, sh auth.Share) {
 	if sh.ExpiresAt.IsZero() {
 		sh.ExpiresAt = time.Now().Add(time.Hour)
 	}
-	sum := sha256.Sum256([]byte(secret))
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.bySum[hex.EncodeToString(sum[:])] = sh
+	f.bySum[utils.HashHex(secret)] = sh
 }
 
 func served(env *mcpEnv) <-chan struct{} {
