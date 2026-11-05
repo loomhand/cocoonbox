@@ -111,7 +111,7 @@ These environment variables serve test runs:
 - `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `io.github.loomhand.cocoonbox`). Set it to `io.github.loomhand.cocoonbox.dev` for an ad hoc signed dev build, so it never reads the installed app's item and never raises its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s io.github.loomhand.cocoonbox.dev -a <endpoint url>`.
 - `CB_KEYCHAIN_FILE`: a keychain file to use instead of the login keychain, so tests never touch the user's own. Create it with `security create-keychain` and unlock it with `security unlock-keychain`; `scripts/test-cli.sh` does this, and also runs with `HOME` set to a test directory.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
-- `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.
+- `CB_AUTOPILOT`: a `;`-separated list of steps, the cases of the `switch` in `Sources/CocoonBox/Autopilot.swift`.
 - `CB_PASTEBOARD=<name>`: use that private pasteboard instead of the general one, so a test run leaves the user's clipboard alone. Autopilot's `clip-paste` and `signin-paste` need it.
 - `CB_NO_BROWSER=1`: log a box CLI's sign-in link (`signin_link`) instead of opening it in the Mac's browser.
 - `CB_RFB_RAW=1`: offer only Raw, for throughput baselines.
@@ -120,7 +120,7 @@ These environment variables serve test runs:
 - `CB_SCREEN_TRACE=<n>`: log the first n Screen chunks each way (`screen_up`/`screen_down`, default 8). Autopilot's `reopen-screen` starts a new RFB session, which begins with a full frame.
 - `CB_RFB_PROBE=1`: count the RFB rectangle encodings the server uses. It logs `rfb_encodings` when the session ends, and adds a clock read per rectangle.
 
-Timings go to `~/Library/Logs/CocoonBox/debug.log` and to os_signpost (subsystem `io.github.loomhand.cocoonbox`), in milliseconds since process start. The key lines are `first_frame_presented`, `rfb_first_update`, `input_rtt` (from input to the decoded update) and `input_to_present` (from input to the frame on glass).
+Timings go to `~/Library/Logs/CocoonBox/debug.log` and to os_signpost (subsystem `io.github.loomhand.cocoonbox`), in milliseconds since process start; the log starts over when the app starts with it past 16 MiB. The key lines are `first_frame_presented`, `rfb_first_update`, `input_rtt` (from input to the decoded update) and `input_to_present` (from input to the frame on glass).
 
 Ad hoc signing gives every build a new code hash. After a rebuild, the Keychain asks before it lets the new binary read a token that an older build stored. A Developer ID signature removes the prompt.
 
