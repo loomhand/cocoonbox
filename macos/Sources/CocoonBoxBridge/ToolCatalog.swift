@@ -1,9 +1,6 @@
 import Foundation
 
-// ToolCatalog holds the tools the bridge lists without asking a box: the
-// control tools from contracts.md "Control MCP", and the box tools from the
-// cache of a box's last answer, else the contract's names with open schemas.
-// Every box serves the same box tools, so they are listed once, with `box`.
+// ToolCatalog holds the tools the bridge lists without asking a box: the control tools, and the box-tool fallback until a box's list is cached.
 public enum ToolCatalog {
     nonisolated(unsafe) static let box: [String: Any] = ["type": "string", "description": "The box's name or id, as box_list shows them; without it, the default box of this session."]
 
@@ -21,7 +18,7 @@ public enum ToolCatalog {
 
     public static let controlNames = Set(control.compactMap { $0["name"] as? String })
 
-    // boxNames are the per-box tools of contracts.md "Remote tools over MCP".
+    // boxNames are the box tools a connector tool cannot shadow; boxFallback lists the ones every box serves.
     public static let boxNames = [
         "shell", "read_file", "write_file", "edit_file", "list_dir", "browser_navigate", "browser_snapshot",
         "browser_click", "browser_type", "browser_read", "computer_state", "computer_act", "screenshot",
