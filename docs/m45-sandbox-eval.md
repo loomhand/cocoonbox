@@ -185,7 +185,7 @@ Why:
 - Wake and new-box latency drop by 10x or more: wake 0.3–0.6 s to ready vs 4.6 s + ~12 s, new box 1 ms + ~1 s vs 4–10 s. Hibernate is 2–3x faster (23–50 s vs 80 s). Local archive (1.7 s back) and per-user checkpoints (1.6 s branch) exist; CocoonSet has neither.
 - Density: 320 MiB PSS per warm desktop and ~1 GiB active, against 1.2–2.2 GB per CocoonSet box today.
 - It removes K3s, vk-cocoon, the operator, the registry and the cb bridge from the box path; gw stays reachable with the key held host-side.
-- Only `api/` (a backend + the edge dialer) and `image/` (silkd, proxy drop-ins, per-claim env) change, as design.md §10 planned; the agent and the app do not.
+- Only `api/` (a backend + the edge dialer) and `image/` (silkd, proxy drop-ins, per-claim env) change, as design.md planned; the agent and the app do not.
 
 Risks:
 - Disk, not RAM, becomes the cost: 8 GiB per hibernated or archived user until snapshots are sparse or compressed (§7). At 1,000 users that is ~8 TB on the store.

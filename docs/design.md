@@ -139,7 +139,7 @@ Cocoon OCI VM image (`vmlinuz` + `initrd.img` + rootfs) built from cocoon's `os-
 
 ## 6. Bench host layout (isolated env `cb`)
 
-The layout: the cbsbx sandboxd instance under `/srv/cb/sbx` (its own cocoon root, `net none` pools, egress proxy), gw and the MinIO state store on the bridge address `10.203.0.1` (`cbc0`, which holds no VMs), cocoonbox-api behind Caddy, and the guards in `cb-host-net`. The K3s, vk-cocoon, cocoon-operator, registry and `cocoon-cb` stack that ran the boxes until M4.8 was removed on 2026-10-01.
+The layout: the cbsbx sandboxd instance under `/srv/cb/sbx` (its own cocoon root, `net none` pools, egress proxy), gw on the bridge address `10.203.0.1` (`cbc0`, which holds no VMs), cocoonbox-api behind Caddy, and the guards in `cb-host-net`. The state store is an external S3 endpoint since 2026-10-16 (374b5722), when MinIO left the host. The K3s, vk-cocoon, cocoon-operator, registry and `cocoon-cb` stack that ran the boxes until M4.8 was removed on 2026-10-01.
 
 ## 7. Milestones
 
@@ -188,7 +188,7 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
 - **Who does what (boundaries):**
   - api (service layer): owns timing and the store. It decides when to snapshot or restore, holds per-user keys, keeps the chunk index and the manifest chain per user, and presigns every object URL.
   - agent: owns content. `State.Plan` walks and chunks the state (files read by the toolhost as `user`, `agent.db` via SQLite backup by `serve`), `State.Upload` writes only the chunks the api says are missing, `State.Restore` rebuilds the tree. It never holds storage credentials; the key lives only in memory for one request.
-  - Storage: any S3-compatible bucket, one prefix per user. On the bench host, MinIO on the host bridge for now.
+  - Storage: any S3-compatible bucket, one prefix per user. On the bench host, an external S3 endpoint since 2026-10-16 (MinIO on the host bridge before).
 - **When:** every 15 min while active (incremental), and a quiesced snapshot (browser closed, writers stopped) before hibernate-to-release, before rebase, and on request from the app.
 - **Rebase (image upgrade) and node loss:** new box from the current golden → `State.Restore` from the latest manifest → start the desktop. Running programs restart; files, logins and agent history carry over.
 - **Not stored:** memory images. Cross-node moves no longer ship 18 GiB checkpoints; the zero-page skip in the CH fork is then a local win only (hibernate time, disk, page-cache pressure).
@@ -297,7 +297,7 @@ Constraints:
 |---|---|---|
 | `cocoonbox` CLI | `macos/` (Swift, a new product next to the app, on CocoonBoxKit) | login and logout (Keychain), box lifecycle commands, the stdio MCP bridge, a `headersHelper` command, per-client setup |
 | Control MCP | api service layer, `https://<endpoint>/cocoonbox.mcp/control` | box lifecycle tools for the caller's own box, over the existing `Boxes` semantics |
-| Plugin | `plugins/cocoonbox/` (no code) | one directory with a manifest per client, a shared `.mcp.json` that runs `cocoonbox mcp`, a skill and slash commands |
+| Plugin | written by `cocoonbox plugin export DIR` (`CocoonBoxBridge/Plugin.swift`) | one directory with a manifest per client, a shared `.mcp.json` that runs `cocoonbox mcp`, a skill and slash commands |
 
 The CLI is Swift on CocoonBoxKit because it needs the Keychain and the app already solved endpoint parsing, the loopback-only plaintext rule, the HTTP/2 connection and the `Boxes` calls. That is vertical reuse inside one component (`macos/`), not coupling to another. It ships inside the app bundle (`CocoonBox.app/Contents/MacOS/cocoonbox`), and `cocoonbox install` links it into `~/.local/bin`; a standalone build works the same way for users who never open the app.
 
@@ -318,7 +318,7 @@ Why a bridge rather than pointing clients at the HTTPS endpoint directly (what t
 
 The cost is one local stdio hop per message, next to a 230 ms WAN round trip; the bridge holds one HTTP/2 connection for both endpoints.
 
-**Tool list while the box is down.** The box tool names and input schemas are the contract, so the bridge can answer `tools/list` without the box. It caches the box's own `tools/list` answer (not secret) in `~/Library/Caches/cocoonbox/tools.json` whenever the box is running, falls back to a copy compiled into the CLI, and sends `notifications/tools/list_changed` when the live list differs. Lifecycle tools come from the control MCP, or from a compiled-in copy when the edge is unreachable.
+**Tool list while the box is down.** The box tool names and input schemas are the contract, so the bridge can answer `tools/list` without the box. It caches the box's own `tools/list` answer (not secret) in `~/Library/Caches/cocoonbox/tools-<host>-<box>.json` whenever the box is running, falls back to a copy compiled into the CLI, and sends `notifications/tools/list_changed` when the live list differs. Lifecycle tools come from the control MCP, or from a compiled-in copy when the edge is unreachable.
 
 **Connector tools (§16).** At `initialize` the bridge also opens a session to `/cocoonbox.mcp/connect` with the client's own `initialize`, and holds that door's GET stream. Its `tools/list` answer appends the door's tools, after waiting at most 3 s for the first list. A connector tool whose name a control or box tool already has is left out, with a line on stderr. On the door's `list_changed` the bridge lists again, and sends `notifications/tools/list_changed` when the connector tools differ from those the client last listed. A call to a listed connector tool goes to the door and wakes no box. When the door fails, the bridge serves the other tools and retries with backoff, from 1 s up to 60 s. A 401, 403, 404 or 405 from an api without the door ends the retries.
 
@@ -360,8 +360,8 @@ These are thin wrappers over `Ensure`, `Hibernate`, `SaveState`, `Rebase` and `W
 
 ### 13.5 Plugin packaging
 
-`plugins/cocoonbox/`:
-- `.claude-plugin/plugin.json`, `.codex-plugin/plugin.json` and a third manifest for `cursor-agent`, which also reads `.claude-plugin/plugin.json`; its own manifest carries its interface fields. Each points at the shared `.mcp.json` above and at `skills/`.
+`cocoonbox plugin export DIR` writes:
+- `.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`. Each points at the shared `.mcp.json` above and at `skills/`.
 - `skills/cocoonbox/SKILL.md`: the computer is the user's cocoonbox cloud desktop, not this Mac. Check `box_status` first. Use `screenshot` to confirm GUI actions. Call `box_save` before long idle.
 - `claude` commands `/cocoonbox:status`, `/cocoonbox:wake`, `/cocoonbox:save` and `/cocoonbox:sleep`, which tell the model to call the matching control tool.
 
@@ -370,7 +370,7 @@ None of these files contains a URL or a token: the endpoint comes from `cocoonbo
 - **`codex`:** `codex plugin marketplace add` takes a local or Git marketplace, then `codex plugin add cocoonbox@<marketplace>`. `cocoonbox setup codex` runs both the same way.
 - **`cursor-agent`:** `agent plugin marketplace add` takes only a git repository URL, and the CLI has no plugin install command. Until the repository is public, `cocoonbox setup cursor` falls back to the MCP config: it merges the stdio entry above into `~/.cursor/mcp.json`, with no token or URL in it. `agent --plugin-dir <dir>` loads the full plugin (skill included) for one run.
 
-CI checks the directory with `claude plugin validate`.
+No CI step validates it.
 
 ### 13.6 Acceptance and work split
 
@@ -530,7 +530,7 @@ type Endpoint struct {
 Address(ctx context.Context, id string) (Endpoint, error)
 ```
 
-- sandboxd: `Key` = `sandboxd:<sandbox id>`. `Dial` opens the relay with the api's root token, which gives the **passive** relay.
+- sandboxd: `Key` = `<sandbox id>.sandboxd:<agent port>`. `Dial` opens the relay with the api's root token, which gives the **passive** relay.
   - It never wakes a hibernated box and answers 409 instead (`Unavailable`, the same as `NotRunningError` today).
   - It never stamps idle activity, so an open edge connection cannot keep a box awake. The M4.5 finding stops mattering.
   - A failed claim also answers 409.
@@ -562,7 +562,7 @@ The service layer computes each incarnation's identity and hands it to the backe
 | `Incarnation` | a backend concern. It changes on claim, wake, unarchive and cold restart, and needs a per-claim boot counter in the sandbox row (upstream, 14.7). Until then, the backend derives it from `claimed_at`, `restarts` and its own wake count, kept in meta |
 
 - **H3 closes** inside the sandboxd `Deliver`.
-  - The key becomes the entry `GW_KEY = Bearer <per-machine key>`. It feeds the node secret `{name: gw, header: Authorization, value_env: GW_KEY}` on the pool rule `{host 10.203.0.1, ports [18090], secret gw}`, with `egress_internal_allow: [10.203.0.1/32:18090,9000]`.
+  - The key becomes the entry `GW_KEY = Bearer <per-machine key>`. It feeds the node secret `{name: gw, header: Authorization, value_env: GW_KEY}` on the pool rule `{host 10.203.0.1, ports [18090], secret gw}`, with `egress_internal_allow: [10.203.0.1/32:18090,9000]` (now the secret `GW_KEY` and the ports 18090, 18091 and 3142; see `deploy/cbsbx/cbsbx-conf`).
   - The agent sends the placeholder from the static `agent.env`, and sandboxd swaps in the machine's key on the host side of the vsock door.
   - The real key is never in the guest, on its disk or in any hibernate image, because `guest: false` values never enter the guest (#268).
   - The node environment carries no `GW_KEY`, so a claim without one fails closed (gw answers 401). A key can be set or rotated even while the box is paused.
@@ -1237,7 +1237,7 @@ Tables (migration `0001`; `connect_door_keys` came with the box door; since migr
 | Table | Columns | Notes |
 |---|---|---|
 | `connect_grants` | `id` PK, `user_id`, `connector`, `kind`, `mcp_url`, `account_label`, `scopes text[]`, `status` (`active` / `needs_reconnect`), `policy jsonb`, `sealed bytea` (access token, refresh token, an API key and its header, a registered client), `token_expires_at`, `created_at`, `updated_at` | unique (`user_id`, `connector`); `policy` and the expiry stay plain, so listing and the refresh check need no decrypt |
-| `connect_flows` | `id` PK, `user_id`, `connector`, `kind`, `mcp_url`, `state_sha256`, `session_sha256`, `sealed bytea` (PKCE verifier, the registered client), `expires_at` | 10 min TTL; deleted when the callback takes it |
+| `connect_flows` | `id` PK, `user_id`, `connector`, `kind`, `mcp_url`, `state_sha256`, `session_sha256`, `nonce_sha256` (0002), `sealed bytea` (PKCE verifier, the registered client), `expires_at` | 10 min TTL; deleted when the callback takes it |
 | `connect_approvals` | `id` PK, `user_id`, `grant_id`, `tool`, `args_sha256`, `summary`, `decision` (`pending`, `once`, `always`, `deny`), `expires_at`, `used_at` | used once, 10 min (16.5) |
 | `connect_door_keys` | `key_sha256` PK, `machine_id`, `user_id`, `incarnation`, `created_at` | the box door key (16.3, migration `0003`); the key itself is never stored |
 | `connect_audit` | `id` bigserial PK, `at`, `user_id`, `connector`, `tool`, `door`, `caller`, `decision`, `outcome`, `upstream_status`, `latency_ms`, `req_bytes`, `resp_bytes`, `args_sha256` | index (`user_id`, `connector`, `at`); a daily job deletes rows older than 90 days |
@@ -1329,7 +1329,7 @@ The box door follows §12.2 (the proof comes from the channel) and the gw patter
   - the pool rule `{host 10.203.0.1, ports [18091], secret CB_CONNECT_KEY}`, ahead of `{host *, intercept inject}`, because a plain request takes the first rule that matches;
   - the secret `{name CB_CONNECT_KEY, header Authorization}` with no `value_env`, so only the claim's entry feeds it, and a claim without one fails closed.
   
-  `egress_internal_allow` becomes `10.203.0.1/32:18090,18091,9000`, and the host firewall (`cb-host-net`, CB-OUTPUT) lets the proxy reach 18091. The api listens on `connect.box_listen` (`10.203.0.1:18091`); CB-INPUT drops the port on the uplink. The proxy overwrites `Authorization` on every request to the door. Older pools reach the port through their `*` rule, but without a key, so they get 401.
+  `egress_internal_allow` becomes `10.203.0.1/32:18090,18091,9000` (now `18090,18091,3142`), and the host firewall (`cb-host-net`, CB-OUTPUT) lets the proxy reach 18091. The api listens on `connect.box_listen` (`10.203.0.1:18091`); CB-INPUT drops the port on the uplink. The proxy overwrites `Authorization` on every request to the door. Older pools reach the port through their `*` rule, but without a key, so they get 401.
 - **Requests answer `application/json`.** The agent's `GET` event stream, which carries `list_changed`, streams through the forward proxy: since sandboxd b778c66 the proxy passes an event stream through as each chunk arrives.
 - **Mode A connectors ride the sandboxd egress door (M4.8).** A per-box key in `agent.env` would be a credential at rest in the VM, one that opens the user's accounts. `agent.env` carries only the door's URL, `CONNECT_URL`, which is the same for every box.
 
@@ -1485,7 +1485,7 @@ Split:
   - the `Connectors` service and `/cocoonbox.mcp/connect`;
   - the listener for the box door;
   - `CB_CONNECT` in the sandboxd `Deliver`;
-  - M5.2: `machines.SetSecret`, and the token push on refresh and before wake.
+  - M5.2: `machines.SetCredentials`, and the token push on refresh and before wake.
 - **agent:**
   - an MCP client for one upstream, the box door, with its URL from `agent.env`, reached through the proxy;
   - connector tools join the dispatcher's list for the loop only. They are not added to the box's `/mcp`, because mode B gets them from the api;
@@ -1748,9 +1748,9 @@ Open (deferred to the backlog):
 - **Zero-page skip in the CH fork snapshot writer** (measured: v6 golden 8.00 → 3.22 GiB, mmap restore of a hole-punched file works; design and hard gate: full snapshots only, never diff snapshots). With the state layer carrying user data across nodes, the remaining cost of dense snapshots is local only: hibernate writes the full memory (23–50 s at 8 GiB), each hibernated box pins its memory size on local disk until released, and the write evicts neighbours' page cache. Revisit when hibernate time or per-node disk becomes the constraint.
 - **S3 checkpoint export sparse + compressed** (sandbox store): only needed if memory-image checkpoints ever travel between nodes again.
 - **Price a proactive wake in the free-tier cost model** (§15.4). Done 2026-10-01 in §15.8: about $0.007 for a text run at list price and $0.059 for a GUI run, or $0.63 a user-month at 3 text runs a day. A free tier's day budget is still open (§15.12, decision 1).
-- **Off-node state store (GCS) for real node-loss recovery.** On the bench host the MinIO state store (`/srv/cb/state`) sits on the same GCP local NVMe as the boxes. That disk survives a host restart but not an instance stop or termination, so a lost node takes the state layer with it, and §14.6's restore-on-missing only covers a lost machine on a live node.
+- **Off-node state store (GCS) for real node-loss recovery.** Done 2026-10-16 (374b5722): the state store is an external S3 endpoint. Before, on the bench host the MinIO state store (`/srv/cb/state`) sits on the same GCP local NVMe as the boxes. That disk survives a host restart but not an instance stop or termination, so a lost node takes the state layer with it, and §14.6's restore-on-missing only covers a lost machine on a live node.
 - **Re-seed cbsbx after a local-SSD wipe.** The template tarballs (`/srv/cb/sbx/build`), the imported templates and the sandboxd goldens live on the same local NVMe as the boxes, so an instance stop leaves no template to claim from. Keep the current and previous template tarball off the node (next to the off-node state store) and document the re-seed: mkfs, `deploy/cbsbx/install`, `cocoon-cbsbx image import`, `cbsbx-conf`.
-- **Per-port internal allow in the sandboxd egress guard** (upstream sandbox mechanism; cocoonstack/sandbox#276). Done 2026-10-01: cbsbx runs sandboxd 90230c0 (#277) with `egress_internal_allow [10.203.0.1/32:18090,9000]`, so the proxy itself refuses any other port on 10.203.0.1; cb-host-net's `CB-OUTPUT` stays as the second layer.
+- **Per-port internal allow in the sandboxd egress guard** (upstream sandbox mechanism; cocoonstack/sandbox#276). Done 2026-10-01: cbsbx runs sandboxd 90230c0 (#277) with `egress_internal_allow [10.203.0.1/32:18090,9000]` (now `18090,18091,3142`), so the proxy itself refuses any other port on 10.203.0.1; cb-host-net's `CB-OUTPUT` stays as the second layer.
 - **Reopen local agents after an app restart** (app). Quitting the app ended every local agent under On this Mac, and the next launch started none, although the CLIs keep their sessions on disk. Done 2026-10-01:
   - `~/Library/Application Support/CocoonBox/local-agents.json` lists each open local agent: kind, box id, the CLI's session id, workspace, start time, the automatic and the user's name. The app rewrites it on every change (start, End, rename, a new terminal title), so a killed app loses nothing.
   - Session ids: `claude` gets one from the app (`--session-id`). `codex` and `cursor-agent` choose their own; the app claims the earliest session in the shared workspace that began after the agent started and before the next agent of the same kind started (`codex`: the rollout's `session_meta` `cwd` and `timestamp`; `cursor-agent`: `~/.cursor/chats/<md5 of the workspace>/<chat id>/meta.json` with a conversation). Two agents of one kind started within the CLI's start-up time can still swap.
@@ -2033,7 +2033,7 @@ Hot path: none. Token checks read an in-memory index, updated by every write; th
 - **What it buys:**
   - a file present in two of the user's boxes is stored once, because chunk ids are keyed hashes under the same key;
   - a new box can start from another box's snapshot with no copy and no re-encryption (§19 create-from);
-  - deleting the user drops the key, which makes every snapshot of every box unreadable at once; the prefix is then removed by the retention sweep.
+  - deleting the user drops the key, which makes every snapshot of every box unreadable at once, and removes the prefix (since 49ad10b3).
 - **What it costs:** a box that is compromised during a save or restore, when it holds the key in memory, can keep it and read the user's other boxes' state. Accepted: the boxes belong to one user and are one trust domain. The alternative (per-box keys derived from the user key) keeps boxes apart but loses cross-box dedup and cheap copies.
 - **Concurrency:** saves of two boxes of one user both update `<user>/index.json`. The state layer's lock moves from per box to per user for the index write (plan, upload and restore of different boxes still run in parallel).
 - **GC** (§25.3): a chunk is garbage only when no kept snapshot of any of the user's boxes references it, so the sweep walks every box's snapshot records under the user.
@@ -2042,7 +2042,7 @@ Hot path: none. Token checks read an in-memory index, updated by every write; th
 Hot path: none. Save and restore read one sealed key per request instead of one keyring file.
 
 As built (api 185e1bf, b8de45e; switched 2026-10-02):
-- **Key:** columns `users.state_key_id` (plain) and `users.state_key_sealed` (AES-256-GCM under the master key, additional data `users|<id>|state_key`), migration 0002. The key id is stored because the agent ignores its `known-chunks.json` stamps under another key id and the api ignores an index under another key id; keeping the box key's id kept both. `Create` draws a key (id `users:<id>:<unix>`); a user without a key cannot save or restore (no key is created on first use, so a user that missed the migration fails loudly instead of starting a second key). Deleting the user drops the row and with it the key; the prefix stays, as before.
+- **Key:** columns `users.state_key_id` (plain) and `users.state_key_sealed` (AES-256-GCM under the master key, additional data `users|<id>|state_key`), migration 0002. The key id is stored because the agent ignores its `known-chunks.json` stamps under another key id and the api ignores an index under another key id; keeping the box key's id kept both. `Create` draws a key (id `users:<id>:<unix>`); a user without a key cannot save or restore (no key is created on first use, so a user that missed the migration fails loudly instead of starting a second key). Deleting the user drops the row and with it the key; since 49ad10b3 it also removes every object under `<user id>/`.
 - **Layout and locks** as above. A save or restore holds the box's lock; the index write is a read-modify-write under a lock on `<user>/index.json`, so two boxes of one user save in parallel and neither drops the other's chunks.
 - **Migration:** `cocoonbox-api state migrate [-keyring DIR]`, safe to rerun at any time. Per user it imports `<keyring>/<box>.json` into the row (a no-op when the row holds that key, an error when it holds another; a user without a file and without a key gets a new one), copies every object of `<box>/` missing under the new layout with CopyObject, writes the union of both indexes, and moves the new head only forward (by `saved_at_ms`). It reads the old head and index before listing, so everything they name is copied. Unknown objects or indexes under different key ids stop it.
 - **Commit failures** (185e1bf): the commit writes the index first (its chunks are stored once Upload returns), then the record, then the head, each retried 3 times (1 s, 2 s). If a commit still fails after a successful Upload, the agent's known chunks are ahead of the index, and the next save's Upload is refused with InvalidArgument (`plan again without a parent`). The api then plans once more without a parent, which spools every chunk. The heal keeps no state, so it survives an api restart; it costs one full read of the tree, once.
@@ -2069,7 +2069,7 @@ Decided 2026-10-02, revised 2026-10-03. A box owner shares one box through a sha
 
 ### 23.1 Decisions
 
-- **Share:** one per box, created by the owner in the app or the console. It always expires: 24 h by default, and the owner picks a longer expiry when creating it. The owner can revoke it or regenerate it at any time. Revoking, regenerating, expiry and deleting the box all cut every open share session at once.
+- **Share:** one per box, created by the owner in the app or the console. It always expires: 24 h by default, and the owner picks a longer expiry when creating it. The owner can revoke it or regenerate it at any time. Revoking, regenerating, expiry and deleting the box all cut every open share session at once; a hibernated box keeps its agent's sessions until the idle reaper closes them.
 - **Who may use it:** anyone holding the link, or only named cocoonbox users. An open share needs no account. A named share also needs the caller's user token. Both reach the box over the same connection.
 - **Link:** `https://<endpoint>/cb/s/#<secret>`, a 128-bit random secret. The secret sits in the fragment, so it reaches neither the server's access logs nor a `Referer`. The page reads it and sends it on its WebSocket. The api looks it up by its SHA-256 and keeps it sealed so the owner can see the link again (23.5).
 - **Live view:** the page shows the box screen with noVNC, view-only. The api bridges a WebSocket to the box's RFB server, which it reaches through the sandboxd port relay to 5900, and drops every client input message. The owner can use the same page.
@@ -2126,7 +2126,7 @@ Decisions made while building, on top of 23.1 and 23.2:
   - `tools/list` and `tools/call` follow the mode of each request's credential. A read share gets `screenshot`, `computer_state`, `read_file`, `list_dir`, `browser_snapshot` and `browser_read`, with files only under `/workspace` (23.6); a write share gets all 13 remote tools. A refused call gets JSON-RPC `-32602`.
   - Share sessions declare `listChanged: true`. When a request carries a mode other than the one the session last listed tools in, the session's GET stream sends `notifications/tools/list_changed`.
   - On a write switch, the edge also cuts the share's open GET streams (`Moded`). The client reconnects at once with the new mode and gets the notification, so a client that listed read-only tools learns about `shell` without a restart. POST exchanges are not cut, so a running tool call survives a switch.
-- **Ending.** Revoke, regenerate and expiry close `Cut`. The edge cancels every open MCP exchange of the share, and every share page bridge, at once. The api then calls `Agents.End{share_id}` on the box, best effort: a box that is not running has nothing to close. That call closes the share's sessions, and their agents go idle. The app's End button calls `Agents.End{agent_id}`. A guest whose session the owner ended can open a new one while the share lives; revoke to keep them out.
+- **Ending.** Revoke, regenerate and expiry close `Cut`. The edge cancels every open MCP exchange of the share, and every share page bridge, at once. The api then calls `Agents.End{share_id}` on the box, best effort: a hibernated box keeps the share's sessions until its agent's idle reaper closes them. That call closes the share's sessions, and their agents go idle. The app's End button calls `Agents.End{agent_id}`. A guest whose session the owner ended can open a new one while the share lives; revoke to keep them out.
 - **Tracking.** A share session is the agent `mcp:<client>@<share id>`, with `:<user id>` added for a named share. The owner's sessions create no agent, no transcript and no events, except `ComputerAction` for the live-view marker. Their toolhost shell is keyed by the MCP session id and is closed when the session closes. Before this change it was closed only by the 24 h prune of the agent.
 - **In-flight count.** 23.1 calls it kept, but at main 8ecd6e0 MCP calls did not hold the turn gate, so a quiesce did not wait for them. Every MCP tool call now holds `rt.turns` shared, like a loop turn, so a quiesced save or Rebase waits for it, and the call waits out a running save.
 - **Quiesce bound.** Before this change a quiesce waited 30 s for the gate and then failed with `UNAVAILABLE` ("a turn is still running"); the save failed and a Rebase kept the old machine. A shell call may run 600 s, so a guest could have failed every Rebase. Now, past the 30 s wait, the agent interrupts the share sessions' calls: each returns `interrupted: …` in its transcript and its shell session is ended, so a `sleep 100000` dies. Then the quiesce waits up to 5 s more. The owner's turns and MCP calls are not interrupted; if one still holds the gate, the quiesce fails as before. Hibernate takes no quiesce (sandboxd snapshots the VM), and scheduled saves are live, so neither waits on a guest.
@@ -2197,7 +2197,7 @@ Deploy: ships in the agent of cbdesk:v20; the app and the console wording ship w
 
 ## 24. User data on a persistent data disk
 
-Decided 2026-10-02. An upgrade today saves the user's files to the store and restores them into a new machine. That is fast now for the save, but the restore moves every byte: a box of 96,949 chunks (9.3 GB) restores in about 87 s. Instead, the user's data lives on a persistent data disk that the box carries from machine to machine; an upgrade replaces only the system disk.
+Decided 2026-10-02; not built: upgrades still save and restore through the state layer. An upgrade today saves the user's files to the store and restores them into a new machine. That is fast now for the save, but the restore moves every byte: a box of 96,949 chunks (9.3 GB) restores in about 87 s. Instead, the user's data lives on a persistent data disk that the box carries from machine to machine; an upgrade replaces only the system disk.
 
 ### 24.1 Layout
 
@@ -2282,7 +2282,7 @@ As built (2026-10-03):
 - **One user lock instead of every box lock.** The design took every box lock of the user. A box whose first save starts after the sweep lists the boxes would hold none of them, so the lock is a per-user `RWMutex`: saves take it shared after their box lock (lock order: box, user, index), the sweep takes it exclusively and takes no box lock. Restores take only the box lock: they read a kept snapshot, whose chunks the sweep never deletes, and a prune of the same box waits for them.
 - **Prune runs in the pass, not after each save.** One switch (`dry_run`, the allowlist) then covers every delete, and a save pays nothing for it. Between passes a box keeps at most one interval of extra snapshots.
 - **Kept set** = the rule + the head + pinned snapshots. A Rebase pins its snapshot from its save to the end of its restore; a restore into a missing machine pins the head it restores. A head or pin missing from the timeline stops that user's pass with an error, before any delete.
-- **The parent chain.** Records keep `parent`; pruning leaves it pointing at a removed record, and nothing follows it. The api plans each save on the head, which is always kept. The agent reads `parent` only to decide whether its stamps apply (`agent/src/state/mod.rs:573`) and never looks it up; `rec.Parent` is written and never read; the manifest's sealed `parent` is informational. If the sweep removes a chunk the agent still counts as known (only after a commit that failed), the 185e1bf heal plans again without a parent (test `TestASaveAfterPruningPlansOnTheHead`).
+- **The parent chain.** Records keep `parent`; pruning leaves it pointing at a removed record, and nothing follows it. The api plans each save on the head, which is always kept. The agent reads `parent` only to decide whether its stamps apply (`agent/src/state/mod.rs`) and never looks it up; `rec.Parent` is written and never read; the manifest's sealed `parent` is informational. If the sweep removes a chunk the agent still counts as known (only after a commit that failed), the 185e1bf heal plans again without a parent (test `TestASaveAfterPruningPlansOnTheHead`).
 - **Timeline build.** A pass that finds no `timeline.json` reads every record of the box before taking the box lock, then reads under the lock only the records committed meanwhile. A dry run builds it in memory and does not write it.
 - **Settings:** `state.gc.interval` (absent or 0 turns the pass off), `state.gc.dry_run` (same reads and locks, no write and no delete), every user in the users table but those whose policy sets `-no-gc` (`cocoonbox-api user set`), `state.gc.delete_batch` (default 1000), `state.gc.deleted_retention` (default 168h, 19.6).
 - **Log:** one line per user and pass: snapshots pruned (with kept and boxes), chunks deleted of those stored, index entries dropped, and MiB freed split into records, manifests and chunks. A dry run says "would remove". Keys never reach the pass; it never reads the user's state key (until 25.8, whose manifest compaction reads it).
@@ -2361,7 +2361,7 @@ On a scratch user's box, never a real user's:
 
 ### 25.7 Open
 
-- When the prefix of a deleted user (§22.5) goes, and after how long. A deleted box's prefix goes `state.gc.deleted_retention` after the GC finds it (19.6).
+- A deleted box's prefix goes `state.gc.deleted_retention` after the GC finds it (19.6).
 - A per-user storage quota. Time Machine drops the oldest snapshots when the disk fills; there is no such bound here yet.
 - Slimmer records: built as 25.8. Left open there: the whole `index.json` is still rewritten by every save that adds a chunk.
 
@@ -2371,7 +2371,7 @@ Hot path: none on the claim, screen or edge path. A commit writes one more small
 
 Decided and built 2026-10-03. Each record repeated the full chunk list (5.3 MiB on the box of 25.1) and each manifest the full file list (3.2 MiB), so a save wrote about 8.5 MiB of metadata and every kept snapshot stored it again.
 
-- **Delta records, at the save.** A save of a user whose policy sets delta (`cocoonbox-api user set NAME -delta`) writes its record against a base: the newest full snapshot of the box saved on the same UTC day. The record keeps its timeline fields and parent, names the base in `base`, and its `chunks` is `{"added": [...], "removed": [...]}` instead of the list; an api without delta records fails to decode that field instead of reading an empty list. A full record is written for the first save of a UTC day, for a change (chunks added plus removed) larger than 1/4 of the base's chunks, which keeps a delta under about half a full record, and for a box without a timeline; it becomes the next base. The api keeps the base record in memory per box, so a save reads nothing more.
+- **Delta records, at the save.** A save of a user whose policy sets delta (`cocoonbox-api user set NAME -delta`) writes its record against a base: the newest full snapshot of the box saved on the same UTC day. The record keeps its timeline fields and parent, names the base in `base`, and its `chunks` is `{"added": [...], "removed": [...]}` instead of the list; an api without delta records fails to decode that field instead of reading an empty list. A full record is written for the first save of a UTC day, for a change (chunks added plus removed) larger than 1/4 of the base's chunks, which keeps a delta under about half a full record, and for a box without a timeline; it becomes the next base. The api keeps the base record in memory per box once it has read it, so a save after the first one against a base reads nothing more; a full record a save just wrote is read back once when the next save takes it as its base.
 - **Manifest deltas, by the GC.** The agent still uploads its full manifest; nothing changes in the agent, so every agent version works. The prune turns the full manifest of every kept delta snapshot, except the head and pinned ones, into `manifests/<id>.d`: the base's file records as copy runs plus the records the base lacks, verbatim, sealed under the user key with `<id>.d` as associated data. It deletes the full manifest only after the delta rebuilds it byte for byte. A reader rebuilds the exact plaintext and checks its keyed hash against the snapshot id, so integrity is as before. A restore (Rebase, a missing machine, RestorePaths) first writes the full manifest back (`materialize`); the next pass compacts it again. The GC therefore now reads the user's state key, in memory for the pass.
 - **Pruning across bases.** Every delta is one step from a full base, never a chain. The timeline names each snapshot's base. When the prune drops a base that one kept snapshot needs, it rewrites that snapshot full (record and manifest) and then deletes the base; a dropped base that several kept snapshots need keeps its objects, out of the timeline. So a kept snapshot always has its base. With one base per UTC day and the daily rule, each past day ends as one full snapshot; the rewrite costs what the dropped base freed.
 - **Locks** as in 25.3: a save and a prune of one box serialize on the box lock, so a save never picks a base that a running prune drops, and a prune never sees half a delta.
@@ -2386,7 +2386,7 @@ Hot path: none on claim, screen or edge. A delta save does less store I/O than b
 
 Decided 2026-10-03. Several agents (mode-A loops and MCP sessions) run in one box at once, and today they all drive one desktop. A user saw two agents typing into each other's Chrome tab. Stage 1 gives each agent its own Chrome window on `:0`. Stage 2, private displays per agent, is designed here and built when several agents need non-browser GUI apps at the same time.
 
-### 26.1 The problem (verified 2026-10-03)
+### 26.1 The problem (verified 2026-10-03; since 2c9841ad every desktop tool runs on shuttle, and the toolhost holds no input mutex)
 
 - **One tab for every agent.** Every `browser_*` call attaches to `first_page(targets)`, the first tab of the one Chrome (`agent/src/toolhost/browser.rs:369-399`, `:637`). Two agents' `browser_type` calls land in the same tab.
 - **One lock for every agent.** `Browser.run` takes one `lock` for every browser call (`browser.rs:227`), and the cua client takes one `input` mutex for every action (`agent/src/toolhost/cua.rs:29`, `:135`, `:197`, `:253`). Calls never interleave, but they take turns on the same tab and the same focus.
@@ -2405,7 +2405,7 @@ Hot path: one map lookup per browser call; no new process, no memory beyond the 
 
 - `:0` is the user's desktop.
 - Browser work stays on `:0`, each agent in its own window (26.2).
-- **Until stage 2:** `computer_act` on `:0` works as today. Every agent may use it; the global input mutex keeps one action from interleaving with another, and agents share the focus.
+- **Until stage 2:** `computer_act` on `:0` works as today. Every agent may use it; shuttle runs one desk action at a time, so no action interleaves with another, and agents share the focus.
 - **With stage 2:** pixel and keyboard work (`computer_act`) on `:0` runs only for an agent the user has handed `:0` to in the app, one agent at a time. The user takes it back in the app. Without the hand-over, `computer_act` on `:0` is refused with a message that names the hand-over; `screenshot` and `computer_state` only read and stay open. The other agents act on their own displays (26.4).
 - The hand-over rule ships with stage 2, never before: without a private display to fall back to, it would stop today's single-agent use of `:0`.
 
@@ -2435,7 +2435,7 @@ Hot path: one map lookup per browser call; no new process, no memory beyond the 
 - Selecting an agent shows its display. A strip shows `:0` and each held display. `ComputerAction` markers are drawn only on their agent's display.
 - Take-over is per display. While the user holds display N, the agent's `computer_act` on N returns "the user has control" (the take-over holds N's input mutex). Clipboard is per X server and per RFB connection already.
 
-**What changes, file by file:**
+**What changes, file by file (as of 2026-10-03; several files have gone since):**
 - image:
   - `cocoonbox-xorg.service:8` and `cocoonbox-xorg.conf:34`: `:0` and 5900 fixed;
   - `xauth-init`: a `:0` cookie only;

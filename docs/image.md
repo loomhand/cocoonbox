@@ -35,16 +35,16 @@ A runtime is a directory with a `provision.sh`; each `-r <dir>` copies one into 
 cocoonstack publishes guest images as OCI images on ghcr (`ghcr.io/cocoonstack/...`, built from Dockerfiles by Actions, such as `sandbox/base` with an immutable `24.04-<sha>` and a moving `24.04`). The box is cut from a booted VM instead, so its publish step runs where the cut runs:
 
 - an accepted `cbcore:vN` is published as `ghcr.io/loomhand/cocoonbox/base:vN`, an OCI artifact (`oras push`, one layer of type `application/vnd.loomhand.cocoonbox.rootfs.tar+gzip`), and `latest` moves to it;
-- `vN` is immutable: it is pushed once, never re-tagged, and stays available for a rollback; the workflow refuses a `vN` that already exists;
+- `vN` is immutable: it is pushed once, never re-tagged, and stays available for a rollback; the workflow refuses a `vN` that already exists, unless it carries this run's agent, in which case a re-run only moves `latest`;
 - `latest` always names the newest accepted `vN`;
-- the manifest's annotations pin what the image carries:
+- the manifest's annotations pin the agent and shuttle the image carries (silkd comes from the cutting host's `/srv/cb/sbx/bin/silkd` and is not pinned):
 
   | Annotation | Value |
   |---|---|
   | `org.opencontainers.image.revision` | the release commit the image was cut from |
   | `org.opencontainers.image.source` | this repository |
   | `io.github.loomhand.cocoonbox.agent-sha256` | sha256 of the `cocoonbox-agent` binary in the image |
-  | `io.github.loomhand.cocoonbox.agent-rev` | the revision the agent reports (`0.1.0+<rev>`) |
+  | `io.github.loomhand.cocoonbox.agent-rev` | the revision after `+` in the agent's version (`0.1.0+<rev>`) |
   | `io.github.loomhand.cocoonbox.shuttle-version` | the [loomhand/shuttle](https://github.com/loomhand/shuttle) archive the desk daemon and runtime come from |
   | `io.github.loomhand.cocoonbox.shuttle-sha256` | sha256 of that linux-x64 archive |
 
