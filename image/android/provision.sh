@@ -24,7 +24,7 @@ esac
 NODE_TARBALL="node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz"
 NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}"
 DESK=$(cd "$(dirname "$0")/../desk/rootfs" && pwd)
-# the gw endpoint of the agent's contract (export-rootfs.sh), for the plan executor and scripts
+# the gw endpoint of the agent's contract (export-rootfs.sh)
 GW_BASE_URL=http://10.203.0.1:18090/v1
 # cocoonstack/scrcpy-rfb commit-tagged release master-827baf531 (tag protected by ruleset; 827baf531715d6b86482c7ac6c63fd31030c58aa, run 39217674630); the jar run as shell is vanilla scrcpy 4.1
 SCRCPY_URL=https://github.com/cocoonstack/scrcpy-rfb/releases/download/master-827baf531
@@ -138,9 +138,6 @@ setup_desk() {
 	install -D -m 0755 "$DESK/usr/local/bin/desk" /usr/local/bin/desk
 	install -D -m 0755 "$DESK/usr/local/lib/cocoonbox/shuttle-config" /usr/local/lib/cocoonbox/shuttle-config
 	install -D -m 0644 "$DESK/../service/cocoonbox.json" /etc/cocoonbox/tools.d/cocoonbox.json
-	install -d /etc/cocoonbox
-	printf 'GW_BASE_URL=%s\n' "$GW_BASE_URL" > /etc/cocoonbox/desk.env
-	chmod 0644 /etc/cocoonbox/desk.env
 	write_shuttle_config
 }
 

@@ -6,7 +6,6 @@ set -euo pipefail
 
 NODE_VERSION=24.21.0
 ROOT=/opt/desk
-ENV_FILE=/etc/cocoonbox/desk.env
 AGENT_ENV=/etc/cocoonbox/agent.env
 SHUTTLE_CONFIG=/etc/cocoonbox/shuttle.toml
 WANTS=/home/user/.config/systemd/user/default.target.wants
@@ -40,14 +39,11 @@ install_rootfs() {
 	systemctl --user -M user@ daemon-reload
 }
 
-# the gw endpoint of the agent's contract, for the plan executor and scripts that run as user
-write_env() {
-	log "gw endpoint"
-	grep '^GW_BASE_URL=' "$AGENT_ENV" >"$ENV_FILE.tmp"
-	chmod 0644 "$ENV_FILE.tmp"
-	mv -f "$ENV_FILE.tmp" "$ENV_FILE"
+# shuttle's box config: models through the gw endpoint of the agent's contract
+write_shuttle_config() {
+	log "shuttle config"
 	local gw
-	gw=$(sed -n 's/^GW_BASE_URL=//p' "$ENV_FILE")
+	gw=$(sed -n 's/^GW_BASE_URL=//p' "$AGENT_ENV")
 	cat >"$SHUTTLE_CONFIG.tmp" <<EOF
 base_url = "$gw"
 decisions_url = "$gw/decisions"
@@ -137,8 +133,7 @@ check() {
 	systemctl cat cocoonbox-toolhost >/dev/null 2>&1 && exit 1
 	grep -qxF '## Pick the tool tier first' "$ROOT/AGENTS.md"
 	[ "$(grep -cF '<!-- routing -->' "$ROOT/AGENTS.md")" = 0 ]
-	grep -q '^GW_BASE_URL=http' "$ENV_FILE"
-	[ "$(stat -c %a "$ENV_FILE")" = 644 ]
+	grep -q '^base_url = "http' "$SHUTTLE_CONFIG"
 	[ -x /usr/local/bin/desk ]
 	[ ! -e /opt/cua-driver ]
 	[ ! -e /usr/local/bin/cua-driver ]
@@ -152,7 +147,7 @@ check() {
 
 install_runtime
 install_rootfs
-write_env
+write_shuttle_config
 switch_driver
 apt_sources
 route_chrome
