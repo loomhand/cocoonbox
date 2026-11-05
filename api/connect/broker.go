@@ -297,6 +297,7 @@ func (s *Service) refresh(ctx context.Context, id, stale string, force bool) (st
 	logger := log.WithFunc("connect.Service.refresh")
 	var access string
 	var rotated bool
+	var lost *grant
 	err := s.store.refreshGrant(ctx, id, func(g *grant) (*grant, error) {
 		var sec secrets
 		if err := s.seal.open(ctx, g.user, g.sealed, grantData(g.id, g.user, g.connector), &sec); err != nil {
@@ -318,6 +319,7 @@ func (s *Service) refresh(ctx context.Context, id, stale string, force bool) (st
 		if oauthErr, ok := errors.AsType[*oauthError](err); ok && slices.Contains(lostGrant, oauthErr.code) {
 			logger.Warnf(ctx, "grant %s of %s (%s) needs a reconnect: %v", g.id, g.user, g.connector, err)
 			g.status = statusReconnect
+			lost = g
 			return g, errReconnect
 		}
 		if err != nil {
@@ -336,6 +338,10 @@ func (s *Service) refresh(ctx context.Context, id, stale string, force bool) (st
 	if err != nil && rotated {
 		logger.Errorf(ctx, err, "store the rotated refresh token of grant %s", id)
 		err = errors.Join(err, s.store.setStatus(context.WithoutCancel(ctx), id, statusReconnect))
+	}
+	if lost != nil && errors.Is(err, errReconnect) {
+		s.dropConn(id)
+		s.changed(ctx, lost)
 	}
 	return access, err
 }

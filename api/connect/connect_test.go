@@ -483,12 +483,19 @@ func TestARefusedCredentialIsRefreshedOnceAndALostGrantNeedsAReconnect(t *testin
 	}
 	env.vendor.ExpireAccess()
 	env.vendor.RejectRefresh()
+	watch, stop := env.svc.watchers.add(alice, false)
+	defer stop()
 	out, err := call(t.Context(), env.svc, modeB, listItems, nil, "")
 	if err != nil || !strings.Contains(out.Content[0].Text, "Reconnect mock") {
 		t.Fatalf("Call after invalid_grant = %+v, %v", out, err)
 	}
 	if g := env.grant(t); g.status != statusReconnect {
 		t.Errorf("status = %s", g.status)
+	}
+	select {
+	case <-watch.changed:
+	default:
+		t.Error("no list_changed for the lost grant")
 	}
 	if tools, _ := env.svc.doorTools(t.Context(), modeB); len(tools) != 0 {
 		t.Errorf("a lost grant serves %d tools", len(tools))
@@ -1094,8 +1101,11 @@ func TestCredentialsInjectAnActiveGrantAndClearTheRest(t *testing.T) {
 	if creds, err = env.svc.Credentials(t.Context(), alice); err != nil || creds.Secrets["MOCK_API"] != nil || creds.Flags["COCOONBOX_MOCK"] != "" {
 		t.Errorf("Credentials of a lost grant = %+v, %v, want removals", creds, err)
 	}
-	if _, err := env.svc.Remove(t.Context(), alice, mockName, DoorConsole); err != nil || len(hooked) != 1 || hooked[0] != alice {
-		t.Errorf("Remove = %v, hook calls %v, want one for %s", err, hooked, alice)
+	if len(hooked) != 1 || hooked[0] != alice {
+		t.Errorf("hook calls after the lost grant %v, want one for %s", hooked, alice)
+	}
+	if _, err := env.svc.Remove(t.Context(), alice, mockName, DoorConsole); err != nil || len(hooked) != 2 || hooked[1] != alice {
+		t.Errorf("Remove = %v, hook calls %v, want a second for %s", err, hooked, alice)
 	}
 }
 
