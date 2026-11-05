@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -84,10 +86,15 @@ func (s *Service) Credentials(ctx context.Context, owner string) (machines.Crede
 // BoxCaller maps a box door key to its machine's owner and the machine.
 func (s *Service) BoxCaller(ctx context.Context, header string) (string, string, error) {
 	key, ok := auth.Bearer(header)
-	if !ok || key == "" {
+	if !ok {
 		return "", "", errNoDoorKey
 	}
-	return s.store.doorKey(ctx, utils.HashHex(key))
+	user, machine, err := s.store.doorKey(ctx, utils.HashHex(key))
+	if err != nil && !errors.Is(err, errNoDoorKey) {
+		log.WithFunc("connect.Service.BoxCaller").Error(ctx, err, "check a box door key")
+		return "", "", status.Error(codes.Unavailable, "check the door key")
+	}
+	return user, machine, err
 }
 
 // injectToken returns the access token of e's active grant, "" when there is none or the vendor no longer accepts it.

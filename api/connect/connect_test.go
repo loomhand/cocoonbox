@@ -1052,6 +1052,10 @@ func TestBoxDoorTakesOnlyTheCurrentKeyOfAMachine(t *testing.T) {
 	if err := env.row(t, "SELECT count(*) FROM connect_door_keys WHERE machine_id = 'cb-m1'").Scan(&keys); err != nil || keys != 1 {
 		t.Errorf("door keys of cb-m1 = %d, %v, want 1", keys, err)
 	}
+	env.svc.Close()
+	if resp := post(t, srv.URL, "Bearer "+cur, body); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("box door while the store is down = %d, want 503", resp.StatusCode)
+	}
 }
 
 func TestDoorKeysGoWithTheirMachineAndPruneKeepsLiveAndNewerOnes(t *testing.T) {
