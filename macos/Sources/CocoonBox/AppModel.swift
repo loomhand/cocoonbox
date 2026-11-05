@@ -840,6 +840,7 @@ final class AppModel {
                 watch(operation: op.id, box: box.id, title: "Hibernating")
             } catch {
                 report("hibernate", error)
+                if boxRunning { startAgentSide() }
             }
         }
     }
