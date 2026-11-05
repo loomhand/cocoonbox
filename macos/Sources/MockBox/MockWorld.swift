@@ -165,7 +165,7 @@ actor MockWorld {
         var response = Cocoonbox_Control_V1_EnsureResponse()
         if target.state == .running || target.state == .starting {
             response.box = target
-            if target.state == .starting, let id = operations.keys.filter({ operationBoxes[$0] == target.id }).sorted().last {
+            if target.state == .starting, let id = operations.first(where: { operationBoxes[$0.key] == target.id && ![.done, .failed].contains($0.value.last?.phase) })?.key {
                 response.operation.id = id
                 response.operation.boxID = target.id
             }
