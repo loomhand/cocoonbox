@@ -885,6 +885,35 @@ func (e *env) post(t *testing.T, path, contentType, body string) *http.Response 
 	return resp
 }
 
+func (e *env) approveAccount(t *testing.T, q url.Values) string {
+	t.Helper()
+	var approved struct {
+		Redirect string `json:"redirect"`
+	}
+	e.console(t, http.MethodPost, "oauth/approve", map[string]any{"query": q.Encode()}, &approved)
+	u, err := url.Parse(approved.Redirect)
+	if err != nil || !strings.HasPrefix(approved.Redirect, q.Get("redirect_uri")+"?") || u.Query().Get("state") != "st" || u.Query().Get("iss") != e.srv.URL || u.Query().Get("code") == "" {
+		t.Fatalf("redirect = %q", approved.Redirect)
+	}
+	return u.Query().Get("code")
+}
+
+func (e *env) redeemAccount(t *testing.T, q url.Values, verifier string) string {
+	t.Helper()
+	code := e.approveAccount(t, q)
+	form := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {q.Get("client_id")}, "redirect_uri": {q.Get("redirect_uri")}, "code_verifier": {verifier}}
+	resp := e.post(t, oauth.TokenPath, "application/x-www-form-urlencoded", form.Encode())
+	var tok map[string]any
+	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &tok) != nil {
+		t.Fatalf("token: %d", resp.StatusCode)
+	}
+	token, _ := tok["access_token"].(string)
+	if !strings.HasPrefix(token, users.TokenPrefix) || tok["token_type"] != "Bearer" || tok["scope"] != oauth.AccountScope || tok["refresh_token"] != nil || tok["expires_in"] != nil {
+		t.Fatalf("token answer = %v, want a device token with no expiry or refresh token", tok)
+	}
+	return token
+}
+
 // fakeBoxes keeps box rows in the users service, as boxes.Service does, and every box runs at once.
 type fakeBoxes struct {
 	controlv1.UnimplementedBoxesServer
