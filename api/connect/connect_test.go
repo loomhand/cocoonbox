@@ -366,7 +366,7 @@ func TestBoxDoorAsksAndAnApprovalCoversOneCallWithTheSameArguments(t *testing.T)
 	if err != nil || !out.IsError || !strings.Contains(out.Content[0].Text, `mock: create_item (body="now", title="Fix it")`) {
 		t.Fatalf("write from a box = %+v, %v", out, err)
 	}
-	approvalID := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	approvalID := approvalOf(t, out)
 	if out, _ := call(t.Context(), env.svc, modeA, createItem, args, approvalID); !strings.Contains(out.Content[0].Text, "not answered") {
 		t.Errorf("retry before the answer = %+v", out)
 	}
@@ -390,7 +390,7 @@ func TestBoxDoorAsksAndAnApprovalCoversOneCallWithTheSameArguments(t *testing.T)
 		t.Errorf("vendor ran %d calls, want 2", len(calls))
 	}
 	out, _ = call(t.Context(), env.svc, modeA, createItem, args, "")
-	approvalID = out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	approvalID = approvalOf(t, out)
 	if _, err := env.svc.Approve(ctx, &controlv1.ApproveRequest{ApprovalId: approvalID, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_ALWAYS}); err != nil {
 		t.Fatalf("Approve always: %v", err)
 	}
@@ -423,7 +423,7 @@ func TestADeniedOrExpiredApprovalRefuses(t *testing.T) {
 	env.connect(t)
 	ctx := auth.WithUser(t.Context(), alice)
 	out, _ := call(t.Context(), env.svc, modeA, createItem, nil, "")
-	denied := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	denied := approvalOf(t, out)
 	if _, err := env.svc.Approve(ctx, &controlv1.ApproveRequest{ApprovalId: denied, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_DENY}); err != nil {
 		t.Fatalf("Deny: %v", err)
 	}
@@ -431,7 +431,7 @@ func TestADeniedOrExpiredApprovalRefuses(t *testing.T) {
 		t.Errorf("denied call = %+v", out)
 	}
 	out, _ = call(t.Context(), env.svc, modeA, createItem, nil, "")
-	expired := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	expired := approvalOf(t, out)
 	if _, err := env.svc.Approve(ctx, &controlv1.ApproveRequest{ApprovalId: expired, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE}); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -854,11 +854,11 @@ func TestDoorServesMCPAndStreamsListChanged(t *testing.T) {
 		t.Fatalf("call: %v", err)
 	}
 	defer func() { _ = callResp.Body.Close() }()
-	var call struct {
+	var rpc struct {
 		Result callResult `json:"result"`
 	}
-	if err := json.UnmarshalRead(callResp.Body, &call); err != nil || call.Result.Content[0].Text != "list_items done" {
-		t.Errorf("tools/call = %+v, %v", call, err)
+	if err := json.UnmarshalRead(callResp.Body, &rpc); err != nil || rpc.Result.Content[0].Text != "list_items done" {
+		t.Errorf("tools/call = %+v, %v", rpc, err)
 	}
 	activity, _ := env.svc.Activity(auth.WithUser(t.Context(), alice), &controlv1.ActivityRequest{})
 	if got := activity.GetEntries()[0].GetCaller(); got != "mcp:claude-code" {
@@ -934,7 +934,7 @@ func TestBoxDoorTakesTheApprovalFromMeta(t *testing.T) {
 	if err := json.UnmarshalRead(post(t, srv.URL, "Bearer alice", fmt.Sprintf(body, "")).Body, &first); err != nil || !first.Result.IsError {
 		t.Fatalf("first call = %+v, %v", first, err)
 	}
-	approvalID := first.Result.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	approvalID := approvalOf(t, &first.Result)
 	if _, err := env.svc.Approve(auth.WithUser(t.Context(), alice), &controlv1.ApproveRequest{ApprovalId: approvalID, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE}); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -963,7 +963,7 @@ func TestAnAnswerReachesTheBoxDoorStreamsOnly(t *testing.T) {
 	}
 	defer func() { _ = stream.Body.Close() }()
 	out, _ := call(t.Context(), env.svc, modeA, createItem, nil, "")
-	approvalID := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	approvalID := approvalOf(t, out)
 	if _, err := env.svc.Approve(auth.WithUser(t.Context(), alice), &controlv1.ApproveRequest{ApprovalId: approvalID, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_DENY}); err != nil {
 		t.Fatalf("Deny: %v", err)
 	}
@@ -986,7 +986,7 @@ func TestABoxDoorStreamReplaysTheAnswersNotYetUsed(t *testing.T) {
 	ctx := auth.WithUser(t.Context(), alice)
 	ask := func(args string, decision controlv1.ApprovalDecision) string {
 		out, _ := call(t.Context(), env.svc, modeA, createItem, jsontext.Value(args), "")
-		id := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+		id := approvalOf(t, out)
 		if decision != controlv1.ApprovalDecision_APPROVAL_DECISION_UNSPECIFIED {
 			if _, err := env.svc.Approve(ctx, &controlv1.ApproveRequest{ApprovalId: id, Decision: decision}); err != nil {
 				t.Fatalf("Approve: %v", err)
@@ -1054,9 +1054,9 @@ func TestBoxDoorTakesOnlyTheCurrentKeyOfAMachine(t *testing.T) {
 			t.Errorf("box door with %q = %d, want %d", header, resp.StatusCode, want)
 		}
 	}
-	var caller, user string
-	if err := env.row(t, "SELECT caller, user_id FROM connect_audit ORDER BY id DESC LIMIT 1").Scan(&caller, &user); err != nil || caller != "box:cb-m1" || user != alice {
-		t.Errorf("audit caller = %q of %q, %v, want box:cb-m1 of %s", caller, user, err, alice)
+	var who, owner string
+	if err := env.row(t, "SELECT caller, user_id FROM connect_audit ORDER BY id DESC LIMIT 1").Scan(&who, &owner); err != nil || who != "box:cb-m1" || owner != alice {
+		t.Errorf("audit caller = %q of %q, %v, want box:cb-m1 of %s", who, owner, err, alice)
 	}
 	var keys int
 	if err := env.row(t, "SELECT count(*) FROM connect_door_keys WHERE machine_id = 'cb-m1'").Scan(&keys); err != nil || keys != 1 {
@@ -1207,7 +1207,7 @@ func TestAListenerReplaysTheAnsweredApprovalsWhenItListens(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
 	out, _ := call(t.Context(), env.svc, modeA, createItem, nil, "")
-	id := out.Meta[approvalMeta].(map[string]any)["approval_id"].(string)
+	id := approvalOf(t, out)
 	if _, err := env.svc.Approve(auth.WithUser(t.Context(), alice), &controlv1.ApproveRequest{ApprovalId: id, Decision: controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE}); err != nil {
 		t.Fatalf("Approve: %v", err)
 	}
@@ -1236,7 +1236,11 @@ func TestAnApiTakesItsOwnSignalOnce(t *testing.T) {
 		t.Fatal("the listener did not wake the watchers once it listened")
 	}
 	e.svc.answerFor(t.Context(), "u-1", []byte(`{"answer":1}`))
-	<-watch.answered
+	select {
+	case <-watch.answered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the watcher missed its own api's answer")
+	}
 	select {
 	case msg := <-watch.answered:
 		t.Errorf("the watcher took its own api's answer twice: %s", msg)
@@ -1441,8 +1445,7 @@ func (fakeAuthn) Bind(ctx context.Context, _, _ string) (context.Context, contex
 }
 
 func (fakeAuthn) Authenticate(_ context.Context, entry auth.Entry, header string) (auth.Identity, error) {
-	switch {
-	case header == "Bearer grpc-only" && entry != auth.EntryGRPC:
+	if header == "Bearer grpc-only" && entry != auth.EntryGRPC {
 		return auth.Identity{}, status.Error(codes.PermissionDenied, "this token may not use mcp")
 	}
 	switch header {
@@ -1465,6 +1468,19 @@ func (b *bindingAuthn) Bind(ctx context.Context, user, credential string) (conte
 	defer b.mu.Unlock()
 	b.bound = append(b.bound, user+" "+credential)
 	return context.WithCancel(ctx)
+}
+
+func approvalOf(t *testing.T, out *callResult) string {
+	t.Helper()
+	if out == nil {
+		t.Fatal("no call result")
+	}
+	meta, _ := out.Meta[approvalMeta].(map[string]any)
+	id, _ := meta["approval_id"].(string)
+	if id == "" {
+		t.Fatalf("no approval in %+v", out)
+	}
+	return id
 }
 
 func call(ctx context.Context, s *Service, c caller, name string, args jsontext.Value, approvalID string) (*callResult, error) {
@@ -1589,7 +1605,7 @@ func (m *mixUp) token(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (m *mixUp) consent(t *testing.T, authorizeURL string) url.Values {
+func (*mixUp) consent(t *testing.T, authorizeURL string) url.Values {
 	t.Helper()
 	c := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	next := authorizeURL
