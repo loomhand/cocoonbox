@@ -350,7 +350,7 @@ pub struct StateSvc {
 
 #[tonic::async_trait]
 impl State for StateSvc {
-    type PlanStream = PlanStream;
+    type PlanPagesStream = PlanStream;
     type UploadStream = ProgressStream;
     type RestoreStream = ProgressStream;
     type RestorePathsStream = ProgressStream;
@@ -358,7 +358,18 @@ impl State for StateSvc {
     async fn plan(
         &self,
         req: Request<pb::PlanRequest>,
-    ) -> Result<Response<Self::PlanStream>, Status> {
+    ) -> Result<Response<pb::PlanResponse>, Status> {
+        self.engine
+            .plan(req.into_inner())
+            .await
+            .map(Response::new)
+            .map_err(state_status)
+    }
+
+    async fn plan_pages(
+        &self,
+        req: Request<pb::PlanRequest>,
+    ) -> Result<Response<Self::PlanPagesStream>, Status> {
         let plan = self
             .engine
             .plan(req.into_inner())

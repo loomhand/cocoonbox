@@ -96,29 +96,13 @@ func TestDialerAddsNoCredentialOfItsOwn(t *testing.T) {
 	}
 }
 
-func TestPlanReadsAnAgentThatAnswersInOneUnaryMessage(t *testing.T) {
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	s := grpc.NewServer()
-	s.RegisterService(&grpc.ServiceDesc{
-		ServiceName: "cocoonbox.agent.v1.State",
-		HandlerType: (*any)(nil),
-		Methods: []grpc.MethodDesc{{MethodName: "Plan", Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
-			if err := dec(&agentv1.PlanRequest{}); err != nil {
-				return nil, err
-			}
-			return &agentv1.PlanResponse{SnapshotId: "s1", Chunks: []*agentv1.ChunkRef{{Id: "a"}, {Id: "b"}}}, nil
-		}}},
-	}, struct{}{})
-	go func() { _ = s.Serve(lis) }()
-	t.Cleanup(s.Stop)
+func TestPlanFallsBackToUnaryPlanOnAnAgentWithoutPlanPages(t *testing.T) {
+	ep := machines.TCPEndpoint(serveState(t, unaryPlan{}))
 	pool := NewPool()
 	t.Cleanup(pool.Close)
 	var plan []*agentv1.PlanResponse
-	if err := New(pool).Plan(t.Context(), "cb-1", machines.TCPEndpoint(lis.Addr().String()), &agentv1.PlanRequest{}, collect(&plan)); err != nil || len(plan) != 1 || len(plan[0].GetChunks()) != 2 {
-		t.Errorf("Plan from a unary agent = %v, %v", plan, err)
+	if err := New(pool).Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, collect(&plan)); err != nil || len(plan) != 1 || len(plan[0].GetChunks()) != 2 {
+		t.Errorf("Plan from an agent without PlanPages = %v, %v", plan, err)
 	}
 }
 
@@ -155,7 +139,7 @@ type fakeState struct {
 	agentv1.UnimplementedStateServer
 }
 
-func (fakeState) Plan(_ *agentv1.PlanRequest, stream grpc.ServerStreamingServer[agentv1.PlanResponse]) error {
+func (fakeState) PlanPages(_ *agentv1.PlanRequest, stream grpc.ServerStreamingServer[agentv1.PlanResponse]) error {
 	if err := checkCredential(stream.Context()); err != nil {
 		return err
 	}
@@ -198,11 +182,19 @@ func (fakeState) Restore(stream grpc.BidiStreamingServer[agentv1.RestoreRequest,
 	return stream.Send(&agentv1.TransferProgress{DoneChunks: gets, Finished: gets > 0, ManifestId: manifest})
 }
 
+type unaryPlan struct {
+	agentv1.UnimplementedStateServer
+}
+
+func (unaryPlan) Plan(context.Context, *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
+	return &agentv1.PlanResponse{SnapshotId: "s1", Chunks: []*agentv1.ChunkRef{{Id: "a"}, {Id: "b"}}}, nil
+}
+
 type bigPlan struct {
 	agentv1.UnimplementedStateServer
 }
 
-func (bigPlan) Plan(_ *agentv1.PlanRequest, stream grpc.ServerStreamingServer[agentv1.PlanResponse]) error {
+func (bigPlan) PlanPages(_ *agentv1.PlanRequest, stream grpc.ServerStreamingServer[agentv1.PlanResponse]) error {
 	id := strings.Repeat("a", 64)
 	for range bigPlanPages {
 		page := &agentv1.PlanResponse{SnapshotId: id, Chunks: make([]*agentv1.ChunkRef, bigPlanPage)}
