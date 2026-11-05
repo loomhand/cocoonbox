@@ -71,7 +71,7 @@ impl Default for Boot {
 
 struct Harness {
     _chrome: Option<ChromeGuard>,
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     identity: PathBuf,
     workspace: PathBuf,
     home: PathBuf,
@@ -258,7 +258,7 @@ impl Harness {
         }
         Self {
             _chrome: chrome.map(|_| ChromeGuard(dir.path().join("chrome"))),
-            _dir: dir,
+            dir,
             identity,
             workspace,
             home,
@@ -2432,7 +2432,7 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
         .map(|(_, v)| v.clone())
         .collect();
     assert!(calls.is_empty(), "{calls:?}");
-    let ran = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
+    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
     assert!(ran.lines().any(|l| l == "demo_run"), "{ran}");
 }
 
@@ -2770,7 +2770,7 @@ async fn untitled_agents_take_their_first_line_and_a_rename_wins() {
 }
 
 #[tokio::test]
-async fn screen_is_the_edges() {
+async fn screen_is_unimplemented_on_the_agent() {
     let h = Harness::start(Vec::new()).await;
     let (_tx, rx) = tokio::sync::mpsc::channel(1);
     let err = h
@@ -3395,10 +3395,10 @@ impl McpClient {
     }
 
     fn authorize(&self, mut req: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        req = match &self.credential {
-            Some(c) => req.header("x-cocoonbox-credential", c),
-            None => req.header("x-cocoonbox-credential", owner()),
-        };
+        req = req.header(
+            "x-cocoonbox-credential",
+            self.credential.as_deref().unwrap_or(owner()),
+        );
         if !self.session.is_empty() {
             req = req.header("mcp-session-id", &self.session);
         }
@@ -3646,7 +3646,7 @@ async fn reports_result_logs_and_a_screenshot(h: &Harness, tool: &str) {
 async fn mcp_plugin_runs_on_shuttle_as_its_own_tool() {
     let h = Harness::with_plugin(Vec::new()).await;
     reports_result_logs_and_a_screenshot(&h, "demo_run").await;
-    let ran = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
+    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
     let runs: Vec<&str> = ran.lines().filter(|t| t.ends_with("_run")).collect();
     assert_eq!(runs, ["demo_run", "demo_run"], "{ran}");
 }
@@ -3721,10 +3721,7 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
             out["error"]["message"], "unknown tool: demo_run",
             "{automation:?}: {out}"
         );
-        assert!(
-            !h._dir.path().join("shuttle.log").exists(),
-            "{automation:?}"
-        );
+        assert!(!h.dir.path().join("shuttle.log").exists(), "{automation:?}");
     }
 }
 
@@ -3844,7 +3841,7 @@ async fn mcp_on_an_android_box_drives_the_phone_through_shuttle() {
         .call("computer_act", json!({"action": "tap", "element": 0}))
         .await;
     assert_eq!(tap["isError"], false, "{tap}");
-    let log = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
+    let log = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
     assert_eq!(
         log, "desk_look\ndesk_computer_state\ndesk_computer_act\n",
         "{log}"
@@ -3912,7 +3909,7 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let result = chats[1]["messages"].as_array().unwrap().last().unwrap();
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(report["result"], json!({"params": {"n": 2}}), "{report}");
-    let ran = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
+    let ran = std::fs::read_to_string(h.dir.path().join("shuttle.log")).unwrap();
     let ran: Vec<&str> = ran.lines().filter(|l| *l != "desk_screen").collect();
     assert_eq!(ran, ["demo_run"]);
 }
@@ -5636,12 +5633,12 @@ async fn a_plan_leaves_out_the_offload_excludes_under_the_workspace_only() {
 #[tokio::test]
 async fn an_offload_post_reaches_session_events_without_its_body() {
     let h = Harness::start(Vec::new()).await;
-    let tmux = h._dir.path().join("fake-tmux");
+    let tmux = h.dir.path().join("fake-tmux");
     write_script(&tmux, "cat >/dev/null; exit 0");
     let layout = offload::Layout {
         state: h.home.join(".local/share/cocoonbox/offload"),
-        socket: h._dir.path().join("offload.sock"),
-        secrets: h._dir.path().join("secrets"),
+        socket: h.dir.path().join("offload.sock"),
+        secrets: h.dir.path().join("secrets"),
         workspace: h.workspace.clone(),
         home: h.home.clone(),
         tmux,
