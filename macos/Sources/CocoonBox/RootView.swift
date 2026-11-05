@@ -266,22 +266,11 @@ struct AgentRow: View {
                 .fill(color)
                 .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
-                if let client = agent.externalClient {
-                    Text(agent.name.dropFirst(4)).lineLimit(1)
-                    Text("External · \(client)")
-                        .font(.caption2.bold())
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(.teal.opacity(0.2), in: Capsule())
-                        .foregroundStyle(.teal)
-                        .lineLimit(1)
-                } else {
-                    Text(agent.name).lineLimit(1)
-                    Text(agent.mainModel.split(separator: "/").last.map(String.init) ?? agent.mainModel)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
+                Text(agent.name).lineLimit(1)
+                Text(agent.mainModel.split(separator: "/").last.map(String.init) ?? agent.mainModel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
         }
     }
