@@ -194,26 +194,6 @@ func TestASealedShareSecretOpensOnlyOnItsOwnRow(t *testing.T) {
 	}
 }
 
-func TestALegacyShareHasNoLinkAndStillAdmits(t *testing.T) {
-	svc, gw, tenants, dsn := newTestService(t)
-	owner, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	sh, _ := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-1"})
-	if err := exec(t, dsn, "UPDATE shares SET secret_sealed = NULL WHERE id = $1", sh.ID); err != nil {
-		t.Fatalf("make legacy row: %v", err)
-	}
-	reopened := openTestService(t, dsn, gw, tenants)
-	if got := reopened.Shares(owner.ID); len(got) != 1 || got[0].Secret != "" {
-		t.Errorf("a legacy share lists %d shares with a link %t", len(got), len(got) == 1 && got[0].Secret != "")
-	}
-	if _, ok := reopened.ShareBySecretSHA256(sum(sh.Secret)); !ok {
-		t.Error("a legacy share stopped admitting its secret")
-	}
-	regenerated, err := reopened.RegenerateShare(t.Context(), owner.ID, sh.ID)
-	if err != nil || regenerated.Secret == "" || reopened.Shares(owner.ID)[0].Secret != regenerated.Secret {
-		t.Errorf("regenerating a legacy share gives no link: %v", err)
-	}
-}
-
 func TestShareSecretOpensOnlyWithItsIDAndBox(t *testing.T) {
 	seal, err := newSealer(masterKeyFile(t))
 	if err != nil {

@@ -27,9 +27,8 @@ type Share struct {
 	Owner string
 	Box   string
 	// Users are the users the share admits; empty admits anyone with the link.
-	Users []ShareUser
-	Write bool
-	// Secret is empty for a share created before the api kept secrets.
+	Users     []ShareUser
+	Write     bool
 	Secret    string
 	ExpiresAt time.Time
 	CreatedAt time.Time
@@ -254,9 +253,6 @@ func (s *Service) liveShares(ctx context.Context) ([]*shareRecord, error) {
 		return nil, err
 	}
 	for _, rec := range recs {
-		if rec.secretSealed == nil {
-			continue
-		}
 		if rec.secret, err = s.seal.open(rec.secretSealed, shareData(rec.id, rec.box)); err != nil {
 			log.WithFunc("users.Service.liveShares").Warnf(ctx, "share %s keeps no link: %v", rec.id, err)
 		}
