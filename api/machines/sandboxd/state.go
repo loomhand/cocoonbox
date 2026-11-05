@@ -55,7 +55,8 @@ type entry struct {
 	// ownerAddr names the node that holds the claim as the mesh names it; an older api wrote "" for its entry node.
 	ownerAddr string
 	// token is the claim's own token, kept in memory only, to ask the mesh which node owns the claim.
-	token string
+	token  string
+	loaded uint64
 
 	op    string
 	opErr string

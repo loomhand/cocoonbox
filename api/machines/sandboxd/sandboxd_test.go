@@ -1240,6 +1240,35 @@ func TestAnAPIWithoutTheTokenLeavesAHandedOverMachineToTheRefresh(t *testing.T) 
 	}
 }
 
+func TestAReloadKeepsTheMachinesLoadedAfterItsSnapshot(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	db := clustertest.Open(t)
+	b := newSharedBackend(t, fake, db)
+	b.mu.Lock()
+	since := b.loads
+	b.mu.Unlock()
+	recs, err := db.Machines(t.Context())
+	if err != nil {
+		t.Fatalf("Machines: %v", err)
+	}
+	claimRunning(t, b)
+	b.takeMachines(recs, "", since)
+	b.mu.Lock()
+	e := b.entries[boxID]
+	held := e != nil && e.token != ""
+	b.mu.Unlock()
+	if !held {
+		t.Fatalf("a snapshot older than the claim dropped it or its token: entry %+v", e)
+	}
+	b.mu.Lock()
+	since = b.loads
+	b.mu.Unlock()
+	b.takeMachines(nil, "", since)
+	if _, err := b.cached(boxID); !errors.Is(err, machines.ErrNotFound) {
+		t.Errorf("a snapshot newer than the claim that lacks it = %v, want it dropped", err)
+	}
+}
+
 func TestARefreshFollowsAMachineItsAnsweringNodeHandedOver(t *testing.T) {
 	entry, peer := newFakeSandboxd(t), newFakeSandboxd(t)
 	entry.peers, entry.redirect = []*fakeSandboxd{peer}, []*fakeSandboxd{peer}

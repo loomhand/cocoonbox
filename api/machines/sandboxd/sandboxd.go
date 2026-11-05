@@ -111,8 +111,9 @@ type Backend struct {
 	owners  map[string]chan struct{}
 	views   map[string]view
 	// away maps a node that machines name to when the refresh first saw it out of the mesh.
-	away map[string]time.Time
-	full map[string]bool
+	away  map[string]time.Time
+	full  map[string]bool
+	loads uint64
 }
 
 // New checks opts, reads the instance's claims and keeps them indexed until ctx ends.
@@ -1376,6 +1377,9 @@ func (b *Backend) renew(ctx context.Context) error {
 
 // reload reads the shared table into the cache, only owner's machines unless owner is empty.
 func (b *Backend) reload(ctx context.Context, owner string) error {
+	b.mu.Lock()
+	since := b.loads
+	b.mu.Unlock()
 	var recs []cluster.Machine
 	var err error
 	if owner == "" {
@@ -1386,6 +1390,11 @@ func (b *Backend) reload(ctx context.Context, owner string) error {
 	if err != nil {
 		return err
 	}
+	b.takeMachines(recs, owner, since)
+	return nil
+}
+
+func (b *Backend) takeMachines(recs []cluster.Machine, owner string, since uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	present := make(map[string]bool, len(recs))
@@ -1393,9 +1402,10 @@ func (b *Backend) reload(ctx context.Context, owner string) error {
 		present[rec.ID] = true
 		b.loadLocked(rec)
 	}
-	maps.DeleteFunc(b.entries, func(id string, e *entry) bool { return (owner == "" || e.owner == owner) && !present[id] })
+	maps.DeleteFunc(b.entries, func(id string, e *entry) bool {
+		return (owner == "" || e.owner == owner) && !present[id] && e.loaded <= since
+	})
 	b.publishLocked()
-	return nil
 }
 
 func (b *Backend) changed(ctx context.Context, payload string) {
@@ -1438,6 +1448,8 @@ func (b *Backend) loadLocked(rec cluster.Machine) *entry {
 		b.entries[rec.ID] = e
 	}
 	if rec.Version >= e.version {
+		b.loads++
+		e.loaded = b.loads
 		busy, opErr, meta, sandbox := e.op != "", e.opErr, e.meta, e.sandbox()
 		e.load(rec)
 		if e.sandbox() != sandbox {
