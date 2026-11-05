@@ -458,7 +458,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
         "begin" => packer::begin(layout, &a).await?,
         "send" => {
             if a.flag("message") || a.flag("back") {
-                packer::message(layout, &a, &stdin_text().await?).await?
+                packer::message(layout, &a, stdin_text().await?).await?
             } else {
                 let stdin = std::io::stdin();
                 packer::send(layout, &a, stdin).await?
@@ -493,7 +493,7 @@ async fn dispatch(layout: &Layout, args: Vec<String>) -> Result<Option<Value>, F
             json!({"ok": true, "repo": repo})
         }
         "restart" => call(layout, &json!({"op": "restart", "repo": a.repo()?})).await?,
-        "post" => packer::post(layout, &a, &stdin_text().await?).await?,
+        "post" => packer::post(layout, &a, stdin_text().await?).await?,
         "env" => {
             let repo = a.repo_or_env()?;
             let report = if a.flag("no-wait") {

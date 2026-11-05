@@ -205,28 +205,25 @@ pub async fn send<R: Read + Send + 'static>(
 }
 
 /// A message or BACK for the repo's running session.
-pub async fn message(layout: &Layout, a: &Args, text: &str) -> Result<Value, Fail> {
+pub async fn message(layout: &Layout, a: &Args, text: String) -> Result<Value, Fail> {
     let repo = a.repo()?;
     if text.len() > MAX_BODY {
         return Err(Fail::Usage(format!(
             "a message is at most {MAX_BODY} bytes"
         )));
     }
-    call(
-        layout,
-        &json!({
-            "op": "send",
-            "repo": repo,
-            "body": text,
-            "back": a.flag("back"),
-            "interrupt": a.flag("interrupt"),
-        }),
-    )
-    .await
+    let mut req = json!({
+        "op": "send",
+        "repo": repo,
+        "back": a.flag("back"),
+        "interrupt": a.flag("interrupt"),
+    });
+    req["body"] = text.into();
+    call(layout, &req).await
 }
 
 /// An outbox entry from the box agent; `--back` also records S'.
-pub async fn post(layout: &Layout, a: &Args, body: &str) -> Result<Value, Fail> {
+pub async fn post(layout: &Layout, a: &Args, body: String) -> Result<Value, Fail> {
     let repo = a.repo_or_env()?;
     let kinds: Vec<&str> = ["progress", "question", "back"]
         .into_iter()
@@ -244,7 +241,7 @@ pub async fn post(layout: &Layout, a: &Args, body: &str) -> Result<Value, Fail> 
             )));
         }
     } else {
-        handover::check(body).map_err(Fail::refused)?;
+        handover::check(&body).map_err(Fail::refused)?;
     }
     let copy = read_index(layout)
         .await?
@@ -271,11 +268,9 @@ pub async fn post(layout: &Layout, a: &Args, body: &str) -> Result<Value, Fail> 
         let name = format!("refs/cocoonbox/back/{}", copy.offload_id);
         git(&copy.dir, &["update-ref", &name, &commit]).await?;
     }
-    let resp = call(
-        layout,
-        &json!({"op": "post", "repo": repo, "kind": kind, "body": body}),
-    )
-    .await?;
+    let mut req = json!({"op": "post", "repo": repo, "kind": kind});
+    req["body"] = body.into();
+    let resp = call(layout, &req).await?;
     Ok(json!({
         "ok": true,
         "seq": resp["seq"],

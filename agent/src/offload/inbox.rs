@@ -804,13 +804,13 @@ impl Inbox {
 
     async fn note_inbox(&self, rec: &mut Record, kind: &str, body: &str) -> Result<u64, String> {
         rec.inbox_seq += 1;
-        let line = json!({
-            "seq": rec.inbox_seq,
-            "kind": kind,
-            "offload_id": rec.offload_id,
-            "time_ms": crate::now_ms(),
-            "body": body,
-        });
+        let line = InboxLine {
+            seq: rec.inbox_seq,
+            kind,
+            offload_id: &rec.offload_id,
+            time_ms: crate::now_ms(),
+            body,
+        };
         append(&self.layout.repo_dir(&rec.repo).join(INBOX_FILE), &line).await?;
         Ok(rec.inbox_seq)
     }
@@ -957,6 +957,15 @@ struct SendRequest {
     back: bool,
     #[serde(default)]
     interrupt: bool,
+}
+
+#[derive(Serialize)]
+struct InboxLine<'a> {
+    seq: u64,
+    kind: &'a str,
+    offload_id: &'a str,
+    time_ms: i64,
+    body: &'a str,
 }
 
 /// An error response: `invalid`, `refused` or `failed`.

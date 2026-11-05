@@ -434,13 +434,11 @@ async fn post_refuses_a_hand_over_without_every_heading() {
     b.start_session("FIRST").await;
     let a = args(&["--repo", REPO, "--progress"]);
     let thin = valid_handover().replace("## Decisions made\n", "");
-    let Err(Fail::Refused(msg, _)) = packer::post(&b.layout, &a, &thin).await else {
+    let Err(Fail::Refused(msg, _)) = packer::post(&b.layout, &a, thin).await else {
         panic!("post took a hand-over without ## Decisions made");
     };
     assert!(msg.contains("## Decisions made"), "{msg}");
-    let ok = packer::post(&b.layout, &a, &valid_handover())
-        .await
-        .unwrap();
+    let ok = packer::post(&b.layout, &a, valid_handover()).await.unwrap();
     assert_eq!(ok["status"], "posted");
     assert_eq!(ok["seq"], 1);
 }

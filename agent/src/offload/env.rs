@@ -1,5 +1,6 @@
 //! The environment step: exact Mac versions through mise, pinned per session, then the lockfile fetches.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -109,17 +110,15 @@ pub struct Tool {
     pub wanted: String,
     pub selected: Option<String>,
     pub source: Option<Source>,
-    /// `pending`, `ready`, `missing` or `failed`.
-    pub outcome: String,
+    pub outcome: Cow<'static, str>,
 }
 
 /// One lockfile fetch of the step.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Fetch {
-    pub lockfile: String,
-    pub command: String,
-    /// `pending`, `ok` or `failed`.
-    pub outcome: String,
+    pub lockfile: Cow<'static, str>,
+    pub command: Cow<'static, str>,
+    pub outcome: Cow<'static, str>,
     pub ms: u64,
 }
 
@@ -167,7 +166,7 @@ pub async fn plan(layout: &Layout, repo: &str, dir: &Path, spec: &Spec) -> Repor
         .map(|((tool, version), pick)| Tool {
             tool: tool.clone(),
             wanted: version.clone(),
-            outcome: if pick.is_some() { "pending" } else { "missing" }.to_owned(),
+            outcome: if pick.is_some() { "pending" } else { "missing" }.into(),
             source: pick.as_ref().map(|p| p.1),
             selected: pick.map(|p| p.0),
         })
@@ -176,9 +175,9 @@ pub async fn plan(layout: &Layout, repo: &str, dir: &Path, spec: &Spec) -> Repor
         .iter()
         .filter(|(lock, _)| spec.lockfiles.iter().any(|l| l == lock))
         .map(|(lock, cmd)| Fetch {
-            lockfile: (*lock).to_owned(),
-            command: (*cmd).to_owned(),
-            outcome: "pending".to_owned(),
+            lockfile: (*lock).into(),
+            command: (*cmd).into(),
+            outcome: "pending".into(),
             ms: 0,
         })
         .collect();
@@ -209,7 +208,7 @@ pub async fn run(layout: &Layout, repo: &str, dir: &Path, spec: &Spec, mut repor
         let Some(v) = &t.selected else { continue };
         let cmd = format!("mise install {}@{v}", t.tool);
         let ok = logged(&log, dir, &pins, &cmd).await;
-        report.tools[i].outcome = if ok { "ready" } else { "failed" }.to_owned();
+        report.tools[i].outcome = if ok { "ready" } else { "failed" }.into();
         let _ = report.save(layout, repo).await;
     }
     if MISE_FILES.iter().any(|f| spec.files.iter().any(|g| g == f)) {
@@ -219,7 +218,7 @@ pub async fn run(layout: &Layout, repo: &str, dir: &Path, spec: &Spec, mut repor
         let started = Instant::now();
         let ok = logged(&log, dir, &pins, &report.fetches[i].command).await;
         let f = &mut report.fetches[i];
-        f.outcome = if ok { "ok" } else { "failed" }.to_owned();
+        f.outcome = if ok { "ok" } else { "failed" }.into();
         f.ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let _ = report.save(layout, repo).await;
     }
