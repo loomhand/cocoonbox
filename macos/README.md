@@ -54,7 +54,7 @@ macOS charges a CLI's file access to CocoonBox, so a CLI that reads `~/Documents
 
 ## Sharing
 
-**Share** (toolbar and File menu) creates the box's share link (design.md §23): an expiry of 24 hours, 7 days or 30 days, optionally only for named cocoonbox users, and read-only unless **Allow write** is on. Right after Create or Regenerate the sheet shows the link (`<endpoint>/cb/s/#<secret>`, the secret in the fragment) and the guest's MCP setup for the three agent CLIs (`Authorization: Bearer <secret>`, plus `X-Cocoonbox-Guest-Token: ${COCOONBOX_TOKEN}` for a named share). The secret lives only in the app's memory; after a restart the sheet offers Regenerate instead. Write can be switched at any time and applies to each guest's next call; Regenerate and Revoke end every session of the old link.
+**Share** (toolbar and File menu) creates the box's share link (design.md §23): an expiry of 24 hours, 7 days or 30 days, optionally only for named cocoonbox users, and read-only unless **Allow write** is on. Right after Create or Regenerate the sheet shows the link (`<endpoint>/cb/s/#<secret>`, the secret in the fragment) and the guest's MCP setup for the three agent CLIs (`Authorization: Bearer <secret>`, plus `X-Cocoonbox-Guest-Token: ${COCOONBOX_TOKEN}` for a named share). The api keeps the secret sealed and returns it to the owner, so the sheet shows the link whenever it opens. Write can be switched at any time and applies to each guest's next call; Regenerate and Revoke end every session of the old link.
 
 Each guest's MCP session through the share (`mcp:<client>@<share id>[:<user id>]` in the box) appears in the sidebar's collapsible **External** section while it is open, with who (the user's name, or "link"), the client and since when, and an **End** button (`Agents.End`). A session that closes while selected stays listed until you select something else. Selecting it shows its full tool-call log; its ComputerAction markers render on the live view. Your own MCP sessions are not listed: the box does not track them.
 
@@ -82,7 +82,7 @@ The endpoint comes from `login` (`~/Library/Application Support/CocoonBox/cli.js
 
 `scripts/test-cli.sh` runs the CLI and the bridge against MockBox, which also serves the control MCP and the browser sign-in (it allows at once; `BROWSER` names a stub that follows the consent URL).
 
-The box header shows when the box's user data (home, `/workspace`, agent history) was last saved to storage, with **Save now** (`Boxes.SaveState`; the browser in the box closes during the save). **Upgrade desktop…** is enabled only when `Box.latest_image` differs from `Box.image`; it runs `Boxes.Rebase` after a confirmation that running programs restart while files, logins and agent history are kept. Both show their operation's steps, with a byte progress bar while saving or restoring. MockBox starts on `cocoonbox-desktop-v1` with `v2` available and plays both operations.
+The box header shows when the box's user data (home, `/workspace`, agent history) was last saved to storage, with **Save now** (`Boxes.SaveState`; the browser in the box closes during the save). **Upgrade desktop…** is enabled only when `Box.latest_image` differs from `Box.image`; it runs `Boxes.Rebase` after a confirmation that running programs restart while files, logins and agent history are kept. Both show their operation's steps, with a byte progress bar while saving or restoring. MockBox starts on `cbdesk:v22` with `cbdesk:v23` available and plays both operations.
 
 ## Offload
 
@@ -108,7 +108,7 @@ While you have taken over, the Edit menu's Paste, Copy and Cut (⌘V, ⌘C, ⌘X
 These environment variables serve test runs:
 
 - `CB_ENDPOINT`: the endpoint URL. It overrides the one `scripts/bundle.sh` wrote into the app. The app speaks plaintext `http://` only to loopback (`127.*`, `::1`, `localhost`), so a bearer token never crosses the network unencrypted.
-- `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `io.github.loomhand.cocoonbox`). Ad hoc signed dev builds use `io.github.loomhand.cocoonbox.dev`, so they never read the installed app's item and never raise its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s io.github.loomhand.cocoonbox.dev -a <endpoint url>`.
+- `CB_KEYCHAIN_SERVICE`: the Keychain service for the token (default `io.github.loomhand.cocoonbox`). Set it to `io.github.loomhand.cocoonbox.dev` for an ad hoc signed dev build, so it never reads the installed app's item and never raises its Keychain prompt. To remove that item when you are done: `security delete-generic-password -s io.github.loomhand.cocoonbox.dev -a <endpoint url>`.
 - `CB_KEYCHAIN_FILE`: a keychain file to use instead of the login keychain, so tests never touch the user's own. Create it with `security create-keychain` and unlock it with `security unlock-keychain`; `scripts/test-cli.sh` does this, and also runs with `HOME` set to a test directory.
 - `CB_TOKEN_STDIN=1`: read one token line from stdin and store it in the Keychain before starting. Launch with `open --stdin <fifo> --env CB_TOKEN_STDIN=1 dist/CocoonBox.app`: exec'ing the binary directly may not get the app a window.
 - `CB_AUTOPILOT`: a `;`-separated list of steps, listed in `Sources/CocoonBox/Autopilot.swift`.

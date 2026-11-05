@@ -17,9 +17,9 @@ transports: server.rs (gRPC Agents, Session) · mcp.rs (/mcp)
         │ runner.rs (loop, mode A) and mcp.rs both call dispatch::Dispatcher
         ▼
 dispatch.rs: records every call and result (journal.rs), publishes ComputerAction, injects the desktop session
-        │ Tools interface (dispatch::Tools; production impl: toolhost RPC client)
+        │ Tools interface (dispatch::Tools; production impl: shuttle::Split: desk calls and runs go to shuttle, every other tool to the toolhost RPC client)
         ▼
-toolhost: shell · files · CDP browser · shuttle (desk and computer verbs, runs)
+toolhost: shell · files · CDP browser · shuttle (desk and computer verbs)
 ```
 
 - The loop reaches models only through `llm::Model`. Its production implementation is `llm::Client`, which speaks the chat wire to the gw URL.
@@ -57,15 +57,14 @@ toolhost: shell · files · CDP browser · shuttle (desk and computer verbs, run
 
 External agents, such as local coding agents, use the box through `POST|GET|DELETE /mcp`, with protocol 2025-03-26, 2025-06-18 or 2025-11-25. Every request needs the edge credential, which the edge adds; refusals are 401 and, before the box has an identity, 503.
 
-- `initialize` returns an `Mcp-Session-Id`. The session appears as an agent `mcp:<clientInfo.name>` whose status is RUNNING while the session lives.
-- Each tool call and its result go into that agent's transcript and onto `Session.Events`. `computer_act` also publishes a `ComputerAction` event.
-- Tools: `shell`, `read_file`, `write_file`, `edit_file`, `list_dir`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_read`, `computer_state`, `computer_act`, `screenshot`. A desk box adds `script_run`, its plugins, `gui_plan`, `browser_fetch`, `browser_fill`, `browser_tabs` and `desk`. They run in the toolhost exactly as the loop's calls do.
+- `initialize` returns an `Mcp-Session-Id`. The owner's sessions run untracked. A share session appears as an agent `mcp:<clientInfo.name>@<share>[:<user>]` whose status is RUNNING while the session lives, and each of its tool calls and results goes into that agent's transcript and onto `Session.Events`. Every `computer_act` publishes a `ComputerAction` event.
+- Tools on a desk box: `shell`, `read_file`, `write_file`, `edit_file`, `list_dir`, `browser_navigate`, `browser_snapshot`, `browser_click`, `browser_type`, `browser_read`, `computer_state`, `computer_act`, `screenshot`, `script_run`, its plugins, `gui_plan`, `browser_fetch`, `browser_fill`, `browser_tabs` and `desk`. A box without a guide serves `shell` and the four file tools only; an Android box has no `browser_*` tools and its own `gui_plan` and `script_run` (`tools::remote_tools`). They run as the loop's calls do.
 - Screenshots come back as MCP `image` content (PNG). `max_edge` scales a screenshot, and pixel coordinates then refer to the scaled image: shuttle maps them back to the screen.
 - Each MCP session owns one driver session label on shuttle. It is ended by `DELETE`, by closing the GET stream (a later call starts a new label), or after 10 min without activity, which also closes the MCP session.
-- The toolhost holds one input lock per display, so a `computer_act` from mode A and one over MCP never interleave.
+- Shuttle runs desk actions one at a time, so a `computer_act` from mode A and one over MCP never interleave; the toolhost holds no input lock.
 - An `mcp:*` agent whose session has closed is deleted, together with its transcript, once it has gone untouched for 24 h.
 - Unknown methods get JSON-RPC `-32601` with HTTP 200. Without a session this applies to everything except `tools/*`, which needs `Mcp-Session-Id`.
-- POST answers with `application/json`. GET is an SSE stream that carries only keepalive comments, because the server sends no requests of its own.
+- POST answers with `application/json`. A `tools/call` that runs past 25 s for a client that accepts `text/event-stream` gets an SSE stream instead: a `notifications/progress` every 25 s (a keepalive comment without a progress token), then the result. GET is an SSE stream of keepalive comments and, on a share session, `notifications/tools/list_changed`.
 
 ## State (object storage)
 
@@ -79,7 +78,7 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
   - New chunks and the sealed manifest are spooled under `/var/lib/cocoonbox/state` until Upload. Chunks the last upload already held under the same key are not spooled.
 - **Upload.** It PUTs the requested chunks (32 concurrent, 3 attempts) and streams `TransferProgress`. It may span several calls: only the call that carries `manifest` writes it (last), finishes with `manifest_id == snapshot_id`, and unpins the snapshot. A Plan without `parent` spools every chunk; with one, chunks the last upload already held are not spooled.
 - **Restore.** A bidi stream: the first message carries the key and the manifest URL, later ones pages of chunk URLs (2048 at most). Fetching starts with the first page, and the next page is read only when the queue runs low. After the last page, every chunk the manifest references must have had a URL (`no url for chunk` otherwise).
-  - It downloads and verifies every chunk (authentication and id) before touching anything. Then it pauses turns, closes Chrome and writes each root into a staging dir as `user`.
+  - It writes each root into a staging dir as `user` while it downloads and verifies every chunk (authentication and id). Then it pauses turns, closes Chrome and swaps.
   - Each top-level entry is swapped in with one rename; entries missing from the snapshot are removed, except excluded top-level dirs such as `.cache`.
   - The desktop session (`cocoonbox-session.service`) is stopped for the swaps and started after them, under the contract's polkit grant. Xorg and VNC stay up.
   - `agent.db` is restored through the SQLite backup API, then open turns are marked interrupted.
@@ -100,7 +99,7 @@ External agents, such as local coding agents, use the box through `POST|GET|DELE
 
 These keys come from `/etc/cocoonbox/agent.env` (see `docs/contracts.md`): `GW_BASE_URL`, `GW_API_KEY`, `MODEL_MAIN`, `MODEL_COMPUTER` and `AGENT_LISTEN`. `SHUTTLE_SOCKET`, shuttle's desk endpoint, comes from serve's unit and, for the toolhost, from shuttle, which also sets `SHUTTLE_SERVICE_SOCKET`, the toolhost's own socket.
 
-Optional overrides with contract defaults, used by tests and non-standard layouts. Boxes set none of them; the identity pair moves the trust anchor, so only whoever writes the agent's environment, already root, can change it:
+Optional overrides with contract defaults, used by tests, non-standard layouts and the macOS and Windows boxes. The identity pair moves the trust anchor, so only whoever writes the agent's environment, already root, can change it:
 
 | Key | Default |
 |---|---|

@@ -49,21 +49,22 @@ make image           # syntax-check the image scripts, test cut.sh's dry run and
 make gate            # clean gate over the tracked files and the dependencies
 ```
 
-The agent targets Linux; on macOS run its gates in the pinned toolchain image:
+The agent targets Linux; on macOS run its gates in the pinned toolchain image, with the protoc, rsync and tmux the build and the offload tests need:
 
 ```bash
 docker run --rm -v "$PWD":/w -w /w/agent -e CB_NO_BROWSER=1 rust:1.98.0 \
-  sh -c 'cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked'
+  sh -c 'apt-get update -qq && apt-get install -y -qq protobuf-compiler rsync tmux >/dev/null &&
+    cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked'
 ```
 
 The root `Package.swift` exports `CocoonBoxKit` and `CocoonBoxTerminal` for packages that build on them: `.package(url: "https://github.com/loomhand/cocoonbox.git", from: "<version>")`. Component details are in [agent/README.md](agent/README.md), [api/README.md](api/README.md) and [macos/README.md](macos/README.md).
 
 ## Run
 
-- **api:** `api/deploy/api.yaml.example` lists every key; `api/deploy/cocoonbox-api.service` runs it under systemd behind a reverse proxy (`deploy/host/Caddyfile.cocoonbox`).
-- **sandboxd instance and host:** `deploy/cbsbx/` writes the instance config and units; `deploy/host/` holds the host bridge, gw config, state store, apt cache and backups.
+- **api:** `api/deploy/api.yaml.example` lists the main keys and `api/config/config.go` all of them; `api/deploy/cocoonbox-api.service` runs it under systemd behind a reverse proxy (`deploy/host/Caddyfile.cocoonbox`).
+- **sandboxd instance and host:** `deploy/cbsbx/` writes the instance config and units; `deploy/host/` holds the host bridge, gw config, the state-store client (`cb-s3`), apt cache and backups.
 - **image:** `image/cut.sh` cuts a desktop template from the previous one on the sandboxd host and imports it; versions, pins and publishing are in [docs/image.md](docs/image.md).
-- **app:** `CB_ENDPOINT=https://<api host> macos/scripts/bundle.sh` builds `dist/CocoonBox.app`.
+- **app:** `CB_ENDPOINT=https://<api host> macos/scripts/bundle.sh` builds `macos/dist/CocoonBox.app`.
 
 ## Documentation
 
@@ -71,6 +72,7 @@ The root `Package.swift` exports `CocoonBoxKit` and `CocoonBoxTerminal` for pack
 - [Contracts](docs/contracts.md)
 - [Boundaries](docs/boundaries.md)
 - [Box image](docs/image.md)
+- [Android box](docs/android.md)
 - [Measurements and lessons](docs/bench.md)
 
 ## Related projects
