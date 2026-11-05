@@ -1,5 +1,5 @@
 #!/bin/bash
-# Provisions the cocoonbox desktop guest (Ubuntu 24.04 xface base) in place; idempotent.
+# Provisions the cocoonbox desktop guest (Ubuntu 24.04 xfce base) in place; idempotent.
 # Runs as root inside the guest from an unpacked copy of image/ (see cut.sh -p).
 set -euo pipefail
 
