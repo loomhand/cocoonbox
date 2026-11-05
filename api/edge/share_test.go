@@ -256,6 +256,30 @@ func TestScreenFiltersBothDirections(t *testing.T) {
 	}
 }
 
+func TestAViewerThatStopsReadingStillEndsWithTheShare(t *testing.T) {
+	stream, _ := serverStream()
+	box := serveScriptedScreen(t, stream)
+	proxy := NewProxy(&fakeResolver{screen: box.addr}, fakeCreds{}, dialer.NewPool())
+	t.Cleanup(proxy.pool.Close)
+	cut := make(chan struct{})
+	grant := auth.Grant{Share: auth.Share{ID: "sh-stalled", Owner: "alice", Box: boxes.BoxID("alice"), Cut: cut}}
+	pipe, _ := net.Pipe()
+	viewer := &stalledViewer{Conn: pipe, writing: make(chan struct{})}
+	served := make(chan error, 1)
+	go func() { served <- proxy.Screen(t.Context(), grant, viewer) }()
+	select {
+	case <-viewer.writing:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the bridge never wrote to the viewer")
+	}
+	close(cut)
+	select {
+	case <-served:
+	case <-time.After(time.Second):
+		t.Fatal("a viewer that stopped reading kept the bridge 1 s past its share")
+	}
+}
+
 // scriptedScreen plays stream as the box's RFB server, 7 bytes a write, sending the security part only once the
 // viewer's version has arrived, and reports every byte the bridge forwards.
 type scriptedScreen struct {
@@ -337,4 +361,15 @@ func served(env *mcpEnv) <-chan struct{} {
 	done := make(chan struct{})
 	go func() { <-env.served; close(done) }()
 	return done
+}
+
+type stalledViewer struct {
+	net.Conn
+	writing chan struct{}
+	once    sync.Once
+}
+
+func (v *stalledViewer) Write(p []byte) (int, error) {
+	v.once.Do(func() { close(v.writing) })
+	return v.Conn.Write(p)
 }

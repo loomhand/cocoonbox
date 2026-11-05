@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"time"
 
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
@@ -34,6 +35,9 @@ func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) 
 		case <-ctx.Done():
 		}
 		cancel()
+		if d, ok := viewer.(interface{ SetWriteDeadline(time.Time) error }); ok {
+			_ = d.SetWriteDeadline(time.Now())
+		}
 	}()
 	ep, _, err := p.resolver.Resolve(ctx, g.Owner, g.Box)
 	if err != nil {
