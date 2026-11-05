@@ -791,7 +791,8 @@ func TestARestoreCutShortByARestartRestoresAgain(t *testing.T) {
 	env.fake.mu.Unlock()
 	block := make(chan struct{})
 	env.agent.restoreGate = block
-	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{}); err != nil {
+	cut, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	first := env.fake.waitSpec(t, 1).ID
@@ -808,6 +809,7 @@ func TestARestoreCutShortByARestartRestoresAgain(t *testing.T) {
 		t.Fatalf("Ensure after a restart = %v, %v, deleted %q; want %s discarded and a new restore", resp, err, env.fake.deletedIDs(), first)
 	}
 	close(block)
+	watch(t, env.svc, env.ctx, cut.GetOperation().GetId(), "")
 	env.fake.push(machines.Machine{ID: env.fake.waitSpec(t, 2).ID, State: machines.StateRunning})
 	if last := watch(t, restarted, env.ctx, resp.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
 		t.Fatalf("restore after the restart ended with %v", last[len(last)-1])
