@@ -367,7 +367,7 @@ fn texts_from(description: &str) -> Vec<String> {
     {
         add(pair);
     }
-    let lower = description.to_lowercase();
+    let lower = description.to_ascii_lowercase();
     for say in SAYS {
         if let Some(i) = lower.find(say) {
             add(&description[i + say.len()..]);
@@ -734,6 +734,16 @@ mod tests {
         );
         assert!(texts_from("the slide Format dropdown").contains(&"Format".to_owned()));
         assert!(texts_from("the button").is_empty());
+    }
+
+    #[test]
+    fn a_description_whose_lowercase_changes_its_length_reads_by_its_own_offsets() {
+        assert_eq!(
+            texts_from("\u{212A} 日本 Save in the menu")
+                .first()
+                .map(String::as_str),
+            Some("\u{212A} 日本 Save")
+        );
     }
 
     #[test]
