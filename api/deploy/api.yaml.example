@@ -1,7 +1,7 @@
 listen: 127.0.0.1:18200
 mcp_listen: 127.0.0.1:18201
 # relative paths resolve next to this file (the systemd credentials directory)
-image: cbdesk:v11            # the default sandboxd template
+image: cbcore:v1             # the default sandboxd template
 rebase_images: []            # older templates Rebase may also target; anything else is refused
 agent_port: 7443
 sandboxd:
@@ -13,9 +13,13 @@ flavor:
   memory_mib: 8192
   disk_gib: 40
 flavors: []                  # flavors Ensure accepts besides the default one; anything else is refused
+max_running_boxes: 1         # boxes of one user that run at once; a user's own limit overrides it
 state:
-  endpoint: 10.203.0.1:9000
+  endpoint: s3.example.com:443
+  public_endpoint: ""          # host:port box agents reach the store on; empty uses endpoint
+  secure: true
   bucket: cocoonbox-state
+  prefix: ""                   # key prefix of every object in the bucket
   region: us-east-1
   credentials_file: store.env    # STORE_ACCESS_KEY=... / STORE_SECRET_KEY=...
   interval: 15m
@@ -25,16 +29,24 @@ state:
     interval: 24h              # one pass at start, then every interval
     dry_run: false             # log what a pass would remove, remove nothing
     delete_batch: 1000         # keys per DeleteObjects request, at most 1000
+    deleted_retention: 168h    # a deleted box's state stays this long after the first pass that finds it deleted
   conditional_writes: false    # index and timeline rewrites land only on the version read; the store must honor If-Match on PUT (R2 does)
 provision:                     # every box's identity file (design §12) and its user's gw key
   signing_key_file: edge-signing.key   # PEM PKCS#8 ed25519: openssl genpkey -algorithm ed25519
   gw_admin:                    # per-user gw keys through gw's admin API
     url: http://10.203.0.1:18090
     token_file: gw-admin-token # the cocoonbox-boxes tenant admin token
+  residential_upstream: ""     # the residential forwarder's proxy URL; empty leaves every box's egress alone
 accounts:                      # users, console sessions and each user's sealed gw key, tenant token and state key (design §22)
-  dsn_file: pg.dsn             # postgres://cocoonbox_api:...@127.0.0.1:5432/cocoonbox
+  dsn_file: pg.dsn             # postgres:///cocoonbox?host=/var/run/postgresql&user=cocoonbox-api
   master_key_file: master.key  # 32 random bytes: head -c 32 /dev/urandom
   default_daily_cap_micros: 5000000  # gw tenant's user_daily_cost_quota_micros, shown on the user page
+connect:                       # the Connect broker (design §16); its OAuth clients come from GITHUB_APP_*, GOOGLE_*, HUBSPOT_*, SLACK_* and LINK_* env vars
+  public_url: ""               # the api's public https origin; empty turns Connect off
+  box_listen: ""               # the box door on the host bridge, such as 10.203.0.1:18091; empty turns it off
+oauth:                         # the control MCP as an OAuth 2.1 protected resource
+  public_url: ""               # the api's public https origin and issuer; empty turns OAuth off
+  idle_hibernate: 30m          # hibernate a box an agent created after this long without a client call; 0s turns it off
 operator_socket: /var/lib/cocoonbox-api/operator.sock    # the root CLI's box commands; the 0700 state directory keeps others out; empty turns them off
 user_idle_hibernate: 2h        # save and hibernate a user's box no client reached for this long, unless an agent turn or offloaded session works in it; 0s keeps it up
 squeezed_idle_hibernate: 0s    # a shorter idle threshold for boxes on a sandboxd node that is full (at_capacity or max_running reached); 0s never shortens it
