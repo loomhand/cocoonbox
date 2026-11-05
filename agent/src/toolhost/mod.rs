@@ -13,7 +13,7 @@ mod shell;
 pub mod state;
 mod timing;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -33,11 +33,10 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{Mutex, watch};
 
 use crate::config::{Automation, ToolhostConfig};
-use crate::runs::Shots;
 use browser::Browser;
 use desk::Desk;
 use rpc::{Call, Client, Output};
-use script::{Screen, Scripts, ShuttleScreen};
+use script::Scripts;
 use shell::Shell;
 
 #[cfg(unix)]
@@ -71,8 +70,6 @@ struct Host {
     android: bool,
     desk: Desk,
     scripts: Scripts,
-    /// The plugin script tools, on a box that runs GUI plans.
-    plugins: HashSet<String>,
     session_save: PathBuf,
     home: PathBuf,
     /// A box that runs GUI plans.
@@ -101,12 +98,6 @@ impl Host {
             android: cfg.automation == Automation::Android,
             desk: Desk::new(shuttle.clone()),
             scripts: Scripts::new(PathBuf::from(SCRIPT_DIR), shuttle.clone()),
-            plugins: cfg
-                .plugins
-                .iter()
-                .filter(|_| cfg.automation.plans())
-                .map(|p| p.name.clone())
-                .collect(),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
             plans: cfg.automation.plans(),
@@ -208,11 +199,9 @@ impl Host {
         out
     }
 
-    /// Runs the screen, computer and script tools: runs with shuttle's screen, and a desk box's `computer_act`
-    /// through [`act`] or [`ground`]; every other call comes back, its screen tools under shuttle's names.
+    /// Runs `run_screenshot` and a desk box's `computer_act`; every other call comes back, its screen tools under shuttle's names.
     async fn shuttle_call(&self, mut call: Call) -> Result<Result<Output, String>, Call> {
         let shuttle = &self.shuttle;
-        let screen = ShuttleScreen(shuttle);
         let target = call.args.get("target").is_some_and(|t| !t.is_null());
         Ok(match call.tool.as_str() {
             "computer_act" if !self.android && target => {
@@ -228,14 +217,7 @@ impl Host {
             "computer_act" if !self.android => {
                 act::run(shuttle, &self.browser, &call.agent_id, call.args).await
             }
-            "run_screenshot" => self.run_screenshot(&screen, &call.args).await,
-            "script_run" => self.scripts.run(&screen, &self.workspace, call.args).await,
-            "gui_plan" => self.scripts.plan(&screen, &self.workspace, call.args).await,
-            t if self.plugins.contains(t) => {
-                self.scripts
-                    .run_with(t, &screen, &self.workspace, call.args)
-                    .await
-            }
+            "run_screenshot" => self.run_screenshot(&call.args).await,
             _ => {
                 if let Some(tool) = shuttle_tool(&call.tool) {
                     call.tool = tool;
@@ -246,12 +228,12 @@ impl Host {
     }
 
     /// A screenshot of `screen` for a run on shuttle that serve shapes: the image, and with `keep` the path of its kept file as the text.
-    async fn run_screenshot(&self, screen: &impl Screen, args: &Value) -> Result<Output, String> {
+    async fn run_screenshot(&self, args: &Value) -> Result<Output, String> {
         let max_edge = args["max_edge"]
             .as_u64()
             .and_then(|e| u32::try_from(e).ok());
         let keep = args["keep"].as_bool().unwrap_or(false);
-        let shot = self.scripts.kept(screen).shot(max_edge, keep).await?;
+        let shot = self.scripts.shot(max_edge, keep).await?;
         Ok(shot.map_or_else(Output::default, |s| Output {
             text: s.path.map(|p| p.display().to_string()).unwrap_or_default(),
             image_b64: Some(s.image_b64),
@@ -780,7 +762,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_android_box_sends_its_screen_desk_and_run_calls_to_shuttle() {
+    async fn an_android_box_sends_its_screen_and_desk_calls_to_shuttle() {
         let dir = tempfile::tempdir().unwrap();
         let desk = crate::testing::endpoint(dir.path(), "desk.sock");
         let (seen, mut tools) = tokio::sync::mpsc::unbounded_channel::<String>();
@@ -794,8 +776,6 @@ mod tests {
                         image_b64: Some("aW1n".into()),
                         ..Output::text("720x1280 screen")
                     },
-                    "gui_plan" => Output::text(r#"{"ok":true}"#),
-                    "script_run" => Output::text(r#"{"result":null,"logs":"","duration_ms":1}"#),
                     tool if SHUTTLE_ANDROID.contains(&tool) => Output::text("{}"),
                     tool => Output::error(format!("unknown desk tool {tool}")),
                 };
@@ -831,18 +811,8 @@ mod tests {
             ("run_screenshot", json!({})),
             ("desk_type", json!({"text": "你好"})),
             ("desk", json!({"op": "windows"})),
-            (
-                "gui_plan",
-                json!({"steps": [{"app": "x"}], "screenshot": false}),
-            ),
-            ("script_run", json!({"code": "export function main() {}"})),
-            (
-                "gui_plan",
-                json!({"steps": [{"app": "x"}], "screenshot": true}),
-            ),
         ];
         for (tool, args) in calls {
-            let shot = args["screenshot"] != false && matches!(tool, "script_run" | "gui_plan");
             let out = toolhost
                 .call(&Call {
                     agent_id: "ag".into(),
@@ -852,9 +822,6 @@ mod tests {
                 .await
                 .unwrap();
             assert!(!out.is_error, "{tool}: {}", out.text);
-            if shot {
-                assert_eq!(out.image_b64.as_deref(), Some("aW1n"), "{tool}");
-            }
         }
         let mut got = Vec::new();
         while let Ok(tool) = tools.try_recv() {
@@ -870,12 +837,7 @@ mod tests {
                 "desk_look",
                 "desk_look",
                 "desk_type",
-                "desk_windows",
-                "gui_plan",
-                "script_run",
-                "desk_look",
-                "gui_plan",
-                "desk_look"
+                "desk_windows"
             ]
         );
     }

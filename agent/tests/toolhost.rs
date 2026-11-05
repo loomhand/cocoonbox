@@ -2,13 +2,14 @@
 #![cfg(unix)]
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 use cocoonbox_agent::toolhost::rpc::{Call, Client, Output, read_frame, write_frame};
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::net::UnixListener;
-use tokio::sync::mpsc;
+use tokio::sync::{Notify, mpsc};
 
 const SCRIPT: &str = r"
 const { createConnection } = require('node:net')
@@ -68,15 +69,17 @@ async fn a_node_script_in_the_agent_shell_reaches_shuttle_at_shuttle_socket() {
 }
 
 #[tokio::test]
-async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_the_runs() {
+async fn the_toolhost_relays_desk_and_model_calls_and_drops_a_call_its_caller_dropped() {
     let dir = tempfile::tempdir().unwrap();
     let desk = dir.path().join("desk.sock");
     let (seen, mut calls) = mpsc::unbounded_channel::<(Call, bool)>();
+    let arrived = Arc::new(Notify::new());
+    let held = Arc::clone(&arrived);
     let listener = UnixListener::bind(&desk).unwrap();
     tokio::spawn(async move {
         loop {
             let (mut conn, _) = listener.accept().await.unwrap();
-            let seen = seen.clone();
+            let (seen, held) = (seen.clone(), Arc::clone(&held));
             tokio::spawn(async move {
                 let call: Call = read_frame(&mut conn).await.unwrap();
                 let out = match call.tool.as_str() {
@@ -86,16 +89,13 @@ async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_th
                         image_b64: Some("aW1n".into()),
                         secrets: vec![("number".into(), "4242".into())],
                     },
-                    "script_run" => Output::text(
-                        json!({"duration_ms": 3, "logs": "", "stderr": "", "exit_code": 1, "error": {"kind": "exception", "message": "boom"}, "result": null}).to_string(),
-                    ),
-                    "gui_plan" if call.args["hold"] == true => {
+                    _ if call.args["hold"] == true => {
+                        held.notify_one();
                         let mut probe = [0u8; 1];
                         let closed = conn.read(&mut probe).await.unwrap() == 0;
                         seen.send((call, closed)).unwrap();
                         return;
                     }
-                    "gui_plan" => Output::text(r#"{"ok":true,"steps":1}"#),
                     _ => Output::text("{}"),
                 };
                 seen.send((call, false)).unwrap();
@@ -103,7 +103,6 @@ async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_th
             });
         }
     });
-    std::fs::write(dir.path().join("s.mts"), "export function main() {}").unwrap();
     let (_toolhost, socket) = spawn_toolhost(dir.path(), &desk).await;
     let th = Client::new(socket.clone());
     let call = |tool: &str, args: Value| Call {
@@ -137,48 +136,17 @@ async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_th
         .unwrap();
     assert_eq!(calls.recv().await.unwrap().0.tool, "model_ask");
 
-    let out = th
-        .call(&call(
-            "script_run",
-            json!({"script": "s.mts", "screenshot": false, "timeout_s": 500}),
-        ))
-        .await
-        .unwrap();
-    assert!(out.is_error, "{}", out.text);
-    assert!(out.text.contains(r#","error":{"#), "{}", out.text);
-    let (got, _) = calls.recv().await.unwrap();
-    assert_eq!(
-        got.args["script"],
-        dir.path().join("s.mts").to_string_lossy().as_ref()
-    );
-    assert_eq!(
-        (&got.args["timeout_s"], &got.args["params"]),
-        (&json!(110), &json!({}))
-    );
-
-    let out = th
-        .call(&call(
-            "gui_plan",
-            json!({"steps": [{"app": "x"}], "screenshot": false}),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(
-        (out.is_error, out.text.as_str()),
-        (false, r#"{"ok":true,"steps":1}"#)
-    );
-    let (got, _) = calls.recv().await.unwrap();
-    assert_eq!(got.args, json!({"steps": [{"app": "x"}], "timeout_s": 90}));
-
-    let held = call("gui_plan", json!({"hold": true}));
+    let held = call("model_ask", json!({"hold": true}));
     let pending = tokio::spawn(async move { Client::new(socket).call(&held).await });
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::timeout(Duration::from_secs(5), arrived.notified())
+        .await
+        .unwrap();
     pending.abort();
     let (got, closed) = tokio::time::timeout(Duration::from_secs(5), calls.recv())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(got.tool, "gui_plan");
+    assert_eq!(got.tool, "model_ask");
     assert!(closed, "a dropped call closes its shuttle connection");
 }
 
@@ -201,97 +169,4 @@ async fn spawn_toolhost(dir: &Path, shuttle: &Path) -> (tokio::process::Child, P
     }
     assert!(socket.exists(), "the toolhost did not come up");
     (child, socket)
-}
-
-#[tokio::test]
-async fn a_failed_run_shuttle_answers_as_an_error_keeps_its_report_and_shape() {
-    let dir = tempfile::tempdir().unwrap();
-    let desk = dir.path().join("desk.sock");
-    let listener = UnixListener::bind(&desk).unwrap();
-    tokio::spawn(async move {
-        loop {
-            let (mut conn, _) = listener.accept().await.unwrap();
-            tokio::spawn(async move {
-                let call: Call = read_frame(&mut conn).await.unwrap();
-                let failed = json!({"duration_ms": 2, "logs": "", "stderr": "", "exit_code": 1, "error": {"kind": "exception", "message": "boom"}, "result": null}).to_string();
-                let out = match (
-                    call.tool.as_str(),
-                    call.args["code"].as_str().or(call.args["case"].as_str()),
-                ) {
-                    ("desk_look", _) => Output::error("no screen"),
-                    (_, Some("fail")) => Output::error(failed),
-                    (_, Some("busy")) => {
-                        Output::error("desk busy: another run or action is still going")
-                    }
-                    (_, Some("null")) => Output::text(
-                        json!({"duration_ms": 1, "error": null, "result": 3}).to_string(),
-                    ),
-                    _ => Output::text("{}"),
-                };
-                write_frame(&mut conn, &out).await.unwrap();
-            });
-        }
-    });
-    let (_toolhost, socket) = spawn_toolhost(dir.path(), &desk).await;
-    let th = Client::new(socket);
-    let call = |tool: &str, args: Value| Call {
-        agent_id: "ag".into(),
-        tool: tool.into(),
-        args,
-    };
-
-    let out = th
-        .call(&call(
-            "script_run",
-            json!({"code": "fail", "screenshot": false}),
-        ))
-        .await
-        .unwrap();
-    assert!(
-        out.is_error && out.text.contains(r#","error":{"#),
-        "{}",
-        out.text
-    );
-    assert!(out.text.contains(r#""message":"boom""#), "{}", out.text);
-
-    let out = th
-        .call(&call(
-            "gui_plan",
-            json!({"case": "fail", "screenshot": false}),
-        ))
-        .await
-        .unwrap();
-    assert!(out.is_error, "{}", out.text);
-    let body: Value = serde_json::from_str(&out.text).unwrap();
-    assert_eq!(body["error"]["kind"], "exception", "{body}");
-
-    let out = th
-        .call(&call("gui_plan", json!({"case": "fail"})))
-        .await
-        .unwrap();
-    assert!(out.is_error && out.image_b64.is_none(), "{}", out.text);
-    let body: Value = serde_json::from_str(&out.text).unwrap();
-    assert_eq!(body["error"]["kind"], "exception", "{body}");
-    assert!(body["screenshot_error"].is_string(), "{body}");
-
-    let out = th
-        .call(&call(
-            "script_run",
-            json!({"code": "busy", "screenshot": false}),
-        ))
-        .await
-        .unwrap();
-    assert_eq!(
-        (out.is_error, out.text.as_str()),
-        (true, "desk busy: another run or action is still going")
-    );
-
-    let out = th
-        .call(&call(
-            "script_run",
-            json!({"code": "null", "screenshot": false}),
-        ))
-        .await
-        .unwrap();
-    assert!(!out.is_error, "{}", out.text);
 }

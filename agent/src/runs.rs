@@ -1,5 +1,4 @@
-//! Run results as the box's tools give them: `script_run`, plugin tools and `gui_plan`, run by the toolhost's
-//! Node or by shuttle; the toolhost and serve both shape shuttle's runs here.
+//! serve's `script_run`, plugin tools and `gui_plan` on shuttle, shaped as the box's tools give them.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -11,7 +10,7 @@ use serde_json::{Map, Value, json};
 use crate::toolhost::files;
 use crate::toolhost::rpc::{self, Call, Client, Output};
 
-pub const MAX_RESULT_BYTES: u64 = 256 << 10;
+const MAX_RESULT_BYTES: u64 = 256 << 10;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(90);
 const MAX_TIMEOUT: Duration = Duration::from_secs(110);
 const RUN_MARGIN: Duration = Duration::from_secs(15);
@@ -34,47 +33,43 @@ pub struct Shot {
 
 /// The arguments of `script_run` and plugin tools.
 #[derive(Deserialize)]
-pub struct RunArgs {
+struct RunArgs {
     #[serde(default)]
-    pub code: Option<String>,
+    code: Option<String>,
     #[serde(default)]
-    pub script: Option<String>,
+    script: Option<String>,
     #[serde(default)]
-    pub params: Option<Map<String, Value>>,
+    params: Option<Map<String, Value>>,
     #[serde(default)]
-    pub timeout_s: Option<u64>,
+    timeout_s: Option<u64>,
     #[serde(default = "default_screenshot")]
-    pub screenshot: bool,
+    screenshot: bool,
     #[serde(default)]
-    pub max_edge: Option<u32>,
+    max_edge: Option<u32>,
 }
 
 /// The arguments of `gui_plan`: the plan executor's parameters and the result's own.
 #[derive(Deserialize)]
-pub struct PlanArgs {
+struct PlanArgs {
     #[serde(flatten)]
-    pub params: Map<String, Value>,
+    params: Map<String, Value>,
     #[serde(default)]
-    pub timeout_s: Option<u64>,
+    timeout_s: Option<u64>,
     #[serde(default)]
-    pub screenshot: Option<bool>,
+    screenshot: Option<bool>,
     #[serde(default)]
-    pub max_edge: Option<u32>,
+    max_edge: Option<u32>,
 }
 
 /// A script to run: module source, or a file.
-pub enum Script {
+enum Script {
     Code(String),
     File(PathBuf),
 }
 
 impl Script {
     /// The script of `code` or `script`, a path resolved against `workspace`.
-    pub fn of(
-        code: Option<String>,
-        script: Option<String>,
-        workspace: &Path,
-    ) -> Result<Self, String> {
+    fn of(code: Option<String>, script: Option<String>, workspace: &Path) -> Result<Self, String> {
         match (code, script) {
             (Some(code), None) => Ok(Self::Code(code)),
             (None, Some(path)) => Ok(Self::File(files::resolve(workspace, &path))),
@@ -129,7 +124,7 @@ pub async fn plan_report(
 }
 
 /// A run's report as compact JSON, with a kept screenshot unless turned off; an error in the report is an error result.
-pub async fn finish_run(
+async fn finish_run(
     mut report: Value,
     screenshot: bool,
     max_edge: Option<u32>,
@@ -154,7 +149,7 @@ pub async fn finish_run(
 }
 
 /// A plan's result as compact JSON, with a screenshot only after an escalation or on request.
-pub async fn finish_plan(
+async fn finish_plan(
     mut report: Value,
     screenshot: Option<bool>,
     max_edge: Option<u32>,
@@ -180,7 +175,7 @@ pub async fn finish_plan(
 }
 
 /// The run timeout of `timeout_s`, 90 s by default, from 1 to 110 s.
-pub fn timeout_of(timeout_s: Option<u64>) -> Duration {
+fn timeout_of(timeout_s: Option<u64>) -> Duration {
     timeout_s
         .map_or(DEFAULT_TIMEOUT, Duration::from_secs)
         .clamp(Duration::from_secs(1), MAX_TIMEOUT)
@@ -266,6 +261,14 @@ mod tests {
         }
     }
 
+    struct NoScreen;
+
+    impl Shots for NoScreen {
+        async fn shot(&self, _: Option<u32>, _: bool) -> Result<Option<Shot>, String> {
+            Err("no screen".to_owned())
+        }
+    }
+
     #[test]
     fn a_relayed_result_past_the_cap_becomes_the_local_notice() {
         let mut small = json!({"n": 1});
@@ -285,6 +288,95 @@ mod tests {
         let out = finish_run(report, false, None, &NoShots).await.unwrap();
         assert_eq!(out.text, r#"{"result":{"rows":[1,2]},"logs":["a"]}"#);
         assert!(!out.is_error);
+    }
+
+    #[tokio::test]
+    async fn a_failed_run_shuttle_answers_as_an_error_keeps_its_report_and_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = crate::testing::endpoint(dir.path(), "desk.sock");
+        let mut listener = crate::toolhost::bind(&socket, "").unwrap();
+        let (seen, mut calls) = tokio::sync::mpsc::unbounded_channel::<Call>();
+        tokio::spawn(async move {
+            loop {
+                let mut conn = crate::toolhost::accept(&mut listener).await.unwrap();
+                let call: Call = rpc::read_frame(&mut conn).await.unwrap();
+                let failed = json!({"duration_ms": 2, "error": {"kind": "exception", "message": "boom"}, "result": null});
+                let out = match call.args["code"].as_str().or(call.args["case"].as_str()) {
+                    Some("fail") => Output::error(failed.to_string()),
+                    Some("busy") => {
+                        Output::error("desk busy: another run or action is still going")
+                    }
+                    Some("null") => Output::text(r#"{"duration_ms":1,"error":null,"result":3}"#),
+                    _ => Output::text(r#"{"ok":true,"steps":1}"#),
+                };
+                seen.send(call).unwrap();
+                rpc::write_frame(&mut conn, &out).await.unwrap();
+            }
+        });
+        let shuttle = Client::new(socket);
+        let run = |args| script(&shuttle, &NoScreen, dir.path(), "script_run", args);
+
+        let out = run(json!({"code": "fail", "screenshot": false, "timeout_s": 500}))
+            .await
+            .unwrap();
+        assert!(
+            out.is_error && out.text.contains(r#""message":"boom""#),
+            "{}",
+            out.text
+        );
+        let got = calls.recv().await.unwrap();
+        assert_eq!(
+            (&got.args["timeout_s"], &got.args["params"]),
+            (&json!(110), &json!({}))
+        );
+        let busy = run(json!({"code": "busy", "screenshot": false})).await;
+        assert_eq!(
+            busy.unwrap_err(),
+            "desk busy: another run or action is still going"
+        );
+        let out = run(json!({"code": "null", "screenshot": false}))
+            .await
+            .unwrap();
+        assert!(!out.is_error, "{}", out.text);
+
+        let out = plan(
+            &shuttle,
+            &NoScreen,
+            json!({"steps": [{"app": "x"}], "screenshot": false}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            (out.is_error, out.text.as_str()),
+            (false, r#"{"ok":true,"steps":1}"#)
+        );
+        calls.recv().await.unwrap();
+        calls.recv().await.unwrap();
+        assert_eq!(
+            calls.recv().await.unwrap().args,
+            json!({"steps": [{"app": "x"}], "timeout_s": 90})
+        );
+        let out = plan(
+            &shuttle,
+            &NoScreen,
+            json!({"case": "fail", "screenshot": false}),
+        )
+        .await
+        .unwrap();
+        let body: Value = serde_json::from_str(&out.text).unwrap();
+        assert!(
+            out.is_error && body["error"]["kind"] == "exception",
+            "{body}"
+        );
+        let out = plan(&shuttle, &NoScreen, json!({"case": "fail"}))
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_str(&out.text).unwrap();
+        assert!(out.is_error && out.image_b64.is_none(), "{body}");
+        assert_eq!(
+            (&body["error"]["kind"], &body["screenshot_error"]),
+            (&json!("exception"), &json!("no screen"))
+        );
     }
 
     #[test]

@@ -243,8 +243,11 @@ impl Harness {
             anthropic_messages,
         )
         .unwrap();
-        let tools = Arc::new(cocoonbox_agent::toolhost::rpc::Client::new(
-            cfg.toolhost_socket.clone(),
+        let tools = Arc::new(cocoonbox_agent::shuttle::Split::new(
+            cocoonbox_agent::toolhost::rpc::Client::new(cfg.shuttle_socket.clone()),
+            cocoonbox_agent::toolhost::rpc::Client::new(cfg.toolhost_socket.clone()),
+            cfg.workspace.clone(),
+            cfg.plugins.iter().map(|p| p.name.clone()).collect(),
         ));
         let rt = Runtime::open(cfg, model, tools).await.unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
