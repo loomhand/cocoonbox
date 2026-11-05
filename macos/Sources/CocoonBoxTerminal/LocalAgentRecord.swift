@@ -170,7 +170,9 @@ public struct LocalAgentRecord: Codable, Equatable, Sendable {
         guard let handle = try? FileHandle(forReadingFrom: file) else { return }
         defer { try? handle.close() }
         var buffer = Data()
-        while buffer.count < 4 << 20, let chunk = try? handle.read(upToCount: 64 << 10), !chunk.isEmpty {
+        var total = 0
+        while total < 4 << 20, let chunk = try? handle.read(upToCount: 64 << 10), !chunk.isEmpty {
+            total += chunk.count
             buffer += chunk
             while let newline = buffer.firstIndex(of: 0x0A) {
                 let line = buffer[buffer.startIndex..<newline]
