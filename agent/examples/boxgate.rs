@@ -25,7 +25,7 @@ use cocoonbox_agent::pb::transcript_entry::Body;
 use cocoonbox_agent::pb::{self, exec_client_frame, exec_server_frame};
 
 const USAGE: &str =
-    "usage: boxgate <identity|cred|hello|origin|fill|exec|snap|store|plan|upload|restore|mcp> [args]
+    "usage: boxgate <identity|cred|hello|origin|fill|exec|snap|store|plan|upload|restore|mcp|turn> [args]
   env: BOXGATE_SEED (64 hex: the edge key), BOXGATE_SERVE (default http://127.0.0.1:17443),
        BOXGATE_TIMEOUT (seconds a command may take, default 900; store has none)
   identity [--wake W] [--box B]          print the identity file the api would write
@@ -520,13 +520,12 @@ where
     let name_len = rd.read_u32().await.map_err(io)?;
     let mut name = vec![0; usize::try_from(name_len).map_err(|e| e.to_string())?];
     rd.read_exact(&mut name).await.map_err(io)?;
-    let set_format = vec![
+    let set_format = [
         0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
     ];
     wr.write_all(&set_format).await.map_err(io)?;
-    let mut encodings = vec![2, 0, 0, 1];
-    encodings.extend_from_slice(&RFB_RAW.to_be_bytes());
-    wr.write_all(&encodings).await.map_err(io)?;
+    wr.write_all(&[2, 0, 0, 1]).await.map_err(io)?;
+    wr.write_all(&RFB_RAW.to_be_bytes()).await.map_err(io)?;
     let mut request = vec![3, 0, 0, 0, 0, 0];
     request.extend_from_slice(&width.to_be_bytes());
     request.extend_from_slice(&height.to_be_bytes());
@@ -591,8 +590,8 @@ async fn serve_one(conn: TcpStream, dir: &Path) -> Result<(), String> {
         .map_err(|e| format!("read request: {e}"))?;
     let mut parts = line.split_whitespace();
     let (method, target) = (
-        parts.next().unwrap_or_default().to_owned(),
-        parts.next().unwrap_or_default().to_owned(),
+        parts.next().unwrap_or_default(),
+        parts.next().unwrap_or_default(),
     );
     let mut length = 0usize;
     loop {
@@ -618,7 +617,7 @@ async fn serve_one(conn: TcpStream, dir: &Path) -> Result<(), String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     let path = dir.join(name);
-    let (status, body) = match method.as_str() {
+    let (status, body) = match method {
         _ if !safe => {
             eprintln!("boxgate store: refused {method} {target}");
             ("400 Bad Request", Vec::new())
@@ -631,6 +630,7 @@ async fn serve_one(conn: TcpStream, dir: &Path) -> Result<(), String> {
             std::fs::write(&path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
             ("200 OK", Vec::new())
         }
+        "PUT" => ("413 Payload Too Large", Vec::new()),
         "GET" => match std::fs::read(&path) {
             Ok(b) => ("200 OK", b),
             Err(_) => ("404 Not Found", Vec::new()),
