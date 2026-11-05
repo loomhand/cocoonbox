@@ -286,7 +286,7 @@ const CHOOSE_JS: &str = r#"((ref, text) => {
 
 const READ_JS: &str = r#"((ref) => {
   const el = ref ? window.__cbRefs && window.__cbRefs.get(ref) : document.body;
-  if (!el || !el.ownerDocument.defaultView) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
+  if (!el || !el.isConnected || !el.ownerDocument.defaultView) throw new Error(`unknown or stale ref ${ref}; take a new browser_snapshot`);
   if (ref) return el.innerText || '';
   const frames = (doc) => [...doc.querySelectorAll('iframe,frame')]
     .filter((f) => f.contentDocument && f.contentDocument.body && f.getClientRects().length
