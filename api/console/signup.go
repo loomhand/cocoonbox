@@ -31,8 +31,6 @@ const (
 	idpErrorCode = "github_denied"
 )
 
-var errTooManyLogins = errors.New("too many sign-ins from this address; try again later")
-
 // tokenHandler serves a call of the invite-scoped token whose id it gets.
 type tokenHandler func(w http.ResponseWriter, r *http.Request, token string)
 
@@ -135,7 +133,7 @@ func (s *Server) linkGitHub(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) begin(w http.ResponseWriter, r *http.Request, req signup.BeginRequest) {
 	if !s.limiter.allow("login-begin:"+clientAddr(r), loginLimit) {
-		writeError(w, http.StatusTooManyRequests, errTooManyLogins.Error())
+		writeError(w, http.StatusTooManyRequests, "too many sign-ins from this address; try again later")
 		return
 	}
 	started, err := s.signup.Begin(r.Context(), req)

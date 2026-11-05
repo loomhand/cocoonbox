@@ -83,7 +83,7 @@ async function load() {
 
   const usage = $("usage");
   usage.replaceChildren();
-  for (const r of me.usage || []) {
+  for (const r of me.usage) {
     const row = usage.insertRow();
     cell(row, r.model);
     cell(row, r.requests);
@@ -94,7 +94,7 @@ async function load() {
     "Daily model budget: " + capText(me.daily_cap_micros, me.default_daily_cap_micros) +
     ". Spent today (UTC): $" + (me.spent_today_micros / 1e6).toFixed(4) + ".";
   if (me.usage_error) cell(usage.insertRow(), me.usage_error);
-  else if (!(me.usage || []).length) cell(usage.insertRow(), "No model calls yet.");
+  else if (!me.usage.length) cell(usage.insertRow(), "No model calls yet.");
 
   show(u.admin ? ["me", "admin"] : ["me"]);
   await loadAgents();
@@ -135,8 +135,8 @@ async function loadSignup() {
   f.enabled.checked = settings.enabled;
   f.invite_only.checked = settings.invite_only;
   f.seats.value = settings.seats;
-  f.allow_domains.value = (settings.allow_domains || []).join(", ");
-  f.allow_emails.value = (settings.allow_emails || []).join(", ");
+  f.allow_domains.value = settings.allow_domains.join(", ");
+  f.allow_emails.value = settings.allow_emails.join(", ");
   f.daily_cap.value = String(settings.daily_cap_micros / 1e6);
   f.max_agent_boxes.value = settings.max_agent_boxes;
   f.hourly_accounts.value = settings.hourly_accounts;
@@ -300,7 +300,7 @@ async function loadShares(boxes) {
         write.checked = false;
         return;
       }
-      shareCall("PATCH", sh.id, "", { write: write.checked });
+      shareCall("PATCH", sh.id, { write: write.checked });
     });
     cell(row, "").appendChild(write);
     cell(row, new Date(sh.expires_at_ms).toLocaleString());
@@ -315,7 +315,7 @@ async function loadShares(boxes) {
     actions.appendChild(button("Revoke", async () => {
       if (!confirm("Revoke the share? Every viewer and guest agent is cut off at once.")) return;
       $("share-link").hidden = true;
-      await shareCall("DELETE", sh.id, "");
+      await shareCall("DELETE", sh.id);
     }, true));
   }
   if (!list.length) cell(body.insertRow(), "Not shared.");
@@ -325,8 +325,8 @@ async function loadShares(boxes) {
   form.hidden = !unshared.length;
 }
 
-function shareCall(method, id, suffix, body) {
-  return saved(api(method, "shares/" + encodeURIComponent(id) + suffix, body));
+function shareCall(method, id, body) {
+  return saved(api(method, "shares/" + encodeURIComponent(id), body));
 }
 
 async function saved(call) {

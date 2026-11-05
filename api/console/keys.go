@@ -8,7 +8,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/vault"
 )
 
-const keysPage = "/cb/keys"
+const keysPage = Prefix + "keys"
 
 type key struct {
 	Name        string   `json:"name"`
