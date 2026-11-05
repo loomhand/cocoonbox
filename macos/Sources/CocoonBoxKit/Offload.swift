@@ -55,7 +55,7 @@ public enum Handover {
         "## Goal and definition of done", "## User preferences and constraints", "## Current state", "## Decisions made",
         "## Files touched", "## Next steps", "## Commands", "## Environment facts", "## Gotchas learned", "## Open questions",
     ]
-    public static let limit = 96 << 10
+    public static let limit = 64 << 10
 
     public static let template = """
     # Hand-over: <one-line goal>
