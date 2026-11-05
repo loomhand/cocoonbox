@@ -11,7 +11,7 @@ type failures struct {
 	since time.Time
 }
 
-// limiter counts password attempts per name and per client address in a fixed window; a correct password gives its attempt back.
+// limiter counts attempts per key in a fixed window: password attempts per name and address, and sign-in starts and callbacks per address; a correct password gives its attempt back.
 type limiter struct {
 	window time.Duration
 	now    func() time.Time
@@ -49,8 +49,9 @@ func (l *limiter) allow(key string, limit int) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
+	maps.DeleteFunc(l.failures, func(_ string, f *failures) bool { return now.Sub(f.since) >= l.window })
 	f := l.failures[key]
-	if f == nil || now.Sub(f.since) >= l.window {
+	if f == nil {
 		f = &failures{since: now}
 		l.failures[key] = f
 	}
