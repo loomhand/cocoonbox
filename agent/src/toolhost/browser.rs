@@ -40,6 +40,7 @@ const LOAD_WAIT: Duration = Duration::from_secs(15);
 const CHALLENGE_WAIT: Duration = Duration::from_secs(8);
 const SETTLE: Duration = Duration::from_secs(2);
 const TAB_WAIT: Duration = Duration::from_secs(2);
+const DEVTOOLS_WAIT: Duration = Duration::from_secs(2);
 const SPA_WAIT: Duration = Duration::from_secs(3);
 const SPA_POLL: Duration = Duration::from_millis(150);
 const XHR_STALE: Duration = Duration::from_millis(1500);
@@ -454,6 +455,88 @@ impl Browser {
         self.act(&mut cdp, tool, args).await
     }
 
+    /// Origin of the active tab; Chrome is not started for it.
+    pub async fn origin(&self) -> Result<String, String> {
+        let _life = self.life.read().await;
+        let mut cdp = self.attach().await?;
+        Ok(text_of(cdp.eval("location.origin").await?))
+    }
+
+    /// Succeeds when the keyboard focus is in a web page's text field, or in a frame CDP cannot read; Chrome is not started for it.
+    pub async fn page_field(&self) -> Result<(), String> {
+        let _life = self.life.read().await;
+        let targets = self.targets().await.map_err(|_| NO_PAGE_FOCUS.to_owned())?;
+        let mut frame = false;
+        for t in targets.iter().filter(|t| t.is_web()) {
+            let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
+                continue;
+            };
+            match cdp
+                .eval(FIELD_JS)
+                .await
+                .ok()
+                .as_ref()
+                .and_then(Value::as_str)
+            {
+                Some("field") => return Ok(()),
+                Some("other") => return Err(NOT_A_FIELD.to_owned()),
+                Some("frame") => frame = true,
+                _ => {}
+            }
+        }
+        if frame {
+            Ok(())
+        } else {
+            Err(NO_PAGE_FOCUS.to_owned())
+        }
+    }
+
+    /// Fills the sign-in form of the active tab when its origin equals `origin`; errors never carry a value.
+    pub async fn fill(&self, args: &Value) -> Result<String, String> {
+        let origin = args["origin"].as_str().unwrap_or_default();
+        if origin.is_empty() || origin == "null" {
+            return Err("fill needs the origin of the tab".to_owned());
+        }
+        let (kind, secret) = match (args["password"].as_str(), args["code"].as_str()) {
+            (Some(p), None) => ("password", p),
+            (None, Some(c)) => ("code", c),
+            _ => return Err("fill needs either a password or a code".to_owned()),
+        };
+        let username = args["username"].as_str().unwrap_or_default();
+        let submit = args["submit"].as_bool().unwrap_or(false);
+        let _life = self.life.read().await;
+        let mut cdp = self.attach().await?;
+        let user = js_secret(username);
+        let secret = js_secret(secret);
+        let mut expr = Zeroizing::new(String::with_capacity(
+            FILL_JS.len() + origin.len() * 6 + user.len() + secret.len() + 64,
+        ));
+        for part in [FILL_JS, "(", &js_str(origin), ",", &user, ",", &secret, ","] {
+            expr.push_str(part);
+        }
+        let _ = write!(expr, "{},{submit})", js_str(kind));
+        let mut r = cdp.eval(&expr).await?;
+        if let Some(e) = r["error"].as_str() {
+            return Err(e.to_owned());
+        }
+        let submitted = match r["submitted"].as_str() {
+            Some("click") => {
+                cdp.click(
+                    r["x"].as_f64().unwrap_or(0.0),
+                    r["y"].as_f64().unwrap_or(0.0),
+                )
+                .await?;
+                true
+            }
+            Some("enter") => {
+                cdp.press_enter().await?;
+                true
+            }
+            _ => false,
+        };
+        Ok(json!({"filled": r["filled"].take(), "submitted": submitted}).to_string())
+    }
+
     /// Runs a page tool of `run` in the tab of `cdp` and reports the dialogs the page opened.
     async fn act(&self, cdp: &mut Cdp, tool: &str, args: Value) -> Result<String, String> {
         cdp.enable_page().await?;
@@ -688,88 +771,6 @@ impl Browser {
         read
     }
 
-    /// Origin of the active tab; Chrome is not started for it.
-    pub async fn origin(&self) -> Result<String, String> {
-        let _life = self.life.read().await;
-        let mut cdp = self.attach().await?;
-        Ok(text_of(cdp.eval("location.origin").await?))
-    }
-
-    /// Succeeds when the keyboard focus is in a web page's text field, or in a frame CDP cannot read; Chrome is not started for it.
-    pub async fn page_field(&self) -> Result<(), String> {
-        let _life = self.life.read().await;
-        let targets = self.targets().await.map_err(|_| NO_PAGE_FOCUS.to_owned())?;
-        let mut frame = false;
-        for t in targets.iter().filter(|t| t.is_web()) {
-            let Ok(mut cdp) = Cdp::open(&t.ws_url).await else {
-                continue;
-            };
-            match cdp
-                .eval(FIELD_JS)
-                .await
-                .ok()
-                .as_ref()
-                .and_then(Value::as_str)
-            {
-                Some("field") => return Ok(()),
-                Some("other") => return Err(NOT_A_FIELD.to_owned()),
-                Some("frame") => frame = true,
-                _ => {}
-            }
-        }
-        if frame {
-            Ok(())
-        } else {
-            Err(NO_PAGE_FOCUS.to_owned())
-        }
-    }
-
-    /// Fills the sign-in form of the active tab when its origin equals `origin`; errors never carry a value.
-    pub async fn fill(&self, args: &Value) -> Result<String, String> {
-        let origin = args["origin"].as_str().unwrap_or_default();
-        if origin.is_empty() || origin == "null" {
-            return Err("fill needs the origin of the tab".to_owned());
-        }
-        let (kind, secret) = match (args["password"].as_str(), args["code"].as_str()) {
-            (Some(p), None) => ("password", p),
-            (None, Some(c)) => ("code", c),
-            _ => return Err("fill needs either a password or a code".to_owned()),
-        };
-        let username = args["username"].as_str().unwrap_or_default();
-        let submit = args["submit"].as_bool().unwrap_or(false);
-        let _life = self.life.read().await;
-        let mut cdp = self.attach().await?;
-        let user = js_secret(username);
-        let secret = js_secret(secret);
-        let mut expr = Zeroizing::new(String::with_capacity(
-            FILL_JS.len() + origin.len() * 6 + user.len() + secret.len() + 64,
-        ));
-        for part in [FILL_JS, "(", &js_str(origin), ",", &user, ",", &secret, ","] {
-            expr.push_str(part);
-        }
-        let _ = write!(expr, "{},{submit})", js_str(kind));
-        let mut r = cdp.eval(&expr).await?;
-        if let Some(e) = r["error"].as_str() {
-            return Err(e.to_owned());
-        }
-        let submitted = match r["submitted"].as_str() {
-            Some("click") => {
-                cdp.click(
-                    r["x"].as_f64().unwrap_or(0.0),
-                    r["y"].as_f64().unwrap_or(0.0),
-                )
-                .await?;
-                true
-            }
-            Some("enter") => {
-                cdp.press_enter().await?;
-                true
-            }
-            _ => false,
-        };
-        Ok(json!({"filled": r["filled"].take(), "submitted": submitted}).to_string())
-    }
-
     /// The tab in the X active window, else the window last acted on, else Chrome's first tab.
     async fn attach(&self) -> Result<Cdp, String> {
         let targets = self
@@ -987,7 +988,7 @@ impl Browser {
         let url = format!("http://127.0.0.1:{}/json/{path}", self.port);
         self.http
             .get(&url)
-            .timeout(Duration::from_secs(2))
+            .timeout(DEVTOOLS_WAIT)
             .send()
             .await
             .map_err(|e| format!("get {url}: {e}"))?

@@ -53,6 +53,14 @@ const SYSTEM_VERSION: &str = "/System/Library/CoreServices/SystemVersion.plist";
 const DESKTOP_VAR: &str = "XDG_CURRENT_DESKTOP";
 const SCREEN_WAIT: Duration = Duration::from_secs(2);
 
+/// The named pipe the toolhost serves: a client takes the waiting instance, and a new instance waits for the next one.
+#[cfg(windows)]
+pub(crate) struct Listener {
+    path: PathBuf,
+    security: crate::sys::PipeSecurity,
+    next: NamedPipeServer,
+}
+
 /// One accepted toolhost connection.
 #[cfg(unix)]
 type Conn = UnixStream;
@@ -334,14 +342,6 @@ impl Host {
         files::write_bytes(&path, &data).await?;
         Ok(path.display().to_string())
     }
-}
-
-/// The named pipe the toolhost serves: a client takes the waiting instance, and a new instance waits for the next one.
-#[cfg(windows)]
-pub(crate) struct Listener {
-    path: PathBuf,
-    security: crate::sys::PipeSecurity,
-    next: NamedPipeServer,
 }
 
 /// Runs the toolhost until SIGTERM or SIGINT, which closes Chrome with its agent windows first.
