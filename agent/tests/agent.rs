@@ -5256,7 +5256,7 @@ async fn state_client(h: &Harness) -> cocoonbox_agent::pb::state_client::StateCl
 }
 
 async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::PlanResponse {
-    state_client(h)
+    let mut pages = state_client(h)
         .await
         .plan(authed(pb::PlanRequest {
             key: Some(state_key()),
@@ -5265,7 +5265,12 @@ async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::Pl
         }))
         .await
         .unwrap()
-        .into_inner()
+        .into_inner();
+    let mut plan = pages.message().await.unwrap().unwrap();
+    while let Some(page) = pages.message().await.unwrap() {
+        plan.chunks.extend(page.chunks);
+    }
+    plan
 }
 
 async fn upload_missing(

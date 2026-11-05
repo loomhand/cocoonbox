@@ -48,7 +48,7 @@ var (
 
 // StateAgents is the agents' State service as the control plane calls it.
 type StateAgents interface {
-	Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error)
+	Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest, page dialer.PlanPageFunc) error
 	Upload(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 	Restore(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
 	RestorePaths(ctx context.Context, box string, ep machines.Endpoint, reqs iter.Seq2[*agentv1.RestoreRequest, error], progress dialer.ProgressFunc) (*agentv1.TransferProgress, error)
@@ -216,33 +216,46 @@ func (l *stateLayer) save(ctx context.Context, auth agentAuth, p statePath, ep m
 }
 
 func (l *stateLayer) snapshot(ctx context.Context, auth agentAuth, p statePath, ep machines.Endpoint, key *agentv1.StateKey, consistency agentv1.Consistency, parent string, progress dialer.ProgressFunc) (*snapshotRecord, error) {
-	plan, err := l.agents.Plan(auth(ctx), p.box, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent})
+	var rec *snapshotRecord
+	err := l.agents.Plan(auth(ctx), p.box, ep, &agentv1.PlanRequest{Key: key, Consistency: consistency, Parent: parent}, func(page *agentv1.PlanResponse) error {
+		if rec == nil {
+			if !objectID.MatchString(page.GetSnapshotId()) {
+				return fmt.Errorf("agent returned invalid snapshot id %q", page.GetSnapshotId())
+			}
+			rec = &snapshotRecord{
+				ID: page.GetSnapshotId(), Consistency: consistency.String(), TakenAtMs: page.GetTakenAtMs(),
+				Files: page.GetFiles(), LogicalBytes: page.GetLogicalBytes(), ChangedFiles: page.ChangedFiles,
+			}
+		}
+		for _, c := range page.GetChunks() {
+			if !objectID.MatchString(c.GetId()) {
+				return fmt.Errorf("agent returned invalid chunk id %q", c.GetId())
+			}
+			rec.Chunks = append(rec.Chunks, chunk{ID: c.GetId(), Size: c.GetSize()})
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, fmt.Errorf("plan: %w", err)
 	}
-	if err = checkPlan(plan); err != nil {
-		return nil, err
+	if rec == nil {
+		return nil, errors.New("plan: agent sent no plan")
 	}
 	stored, generation, err := l.index(ctx, p, key.GetKeyId())
 	if err != nil {
 		return nil, err
 	}
-	rec := &snapshotRecord{
-		ID: plan.GetSnapshotId(), Consistency: consistency.String(), TakenAtMs: plan.GetTakenAtMs(),
-		Files: plan.GetFiles(), LogicalBytes: plan.GetLogicalBytes(), ChangedFiles: plan.ChangedFiles,
-		indexGeneration: generation,
-	}
+	rec.indexGeneration = generation
 	var missing []chunk
 	seen := map[string]bool{}
-	for _, c := range plan.GetChunks() {
-		rec.Chunks = append(rec.Chunks, chunk{ID: c.GetId(), Size: c.GetSize()})
-		if stored[c.GetId()] || seen[c.GetId()] {
+	for _, c := range rec.Chunks {
+		if stored[c.ID] || seen[c.ID] {
 			continue
 		}
-		seen[c.GetId()] = true
-		missing = append(missing, chunk{ID: c.GetId(), Size: c.GetSize()})
+		seen[c.ID] = true
+		missing = append(missing, c)
 		rec.NewChunks++
-		rec.UploadedBytes += c.GetSize()
+		rec.UploadedBytes += c.Size
 	}
 	if err = l.upload(ctx, auth, p, ep, rec, key, missing, progress); err != nil {
 		return nil, err
@@ -664,18 +677,6 @@ func (l *stateLayer) userLock(user string) *sync.RWMutex {
 		l.users[user] = m
 	}
 	return m
-}
-
-func checkPlan(plan *agentv1.PlanResponse) error {
-	if !objectID.MatchString(plan.GetSnapshotId()) {
-		return fmt.Errorf("agent returned invalid snapshot id %q", plan.GetSnapshotId())
-	}
-	for _, c := range plan.GetChunks() {
-		if !objectID.MatchString(c.GetId()) {
-			return fmt.Errorf("agent returned invalid chunk id %q", c.GetId())
-		}
-	}
-	return nil
 }
 
 // batches splits missing into runs of at most pageSize chunks and maxBatchBytes; nothing missing gives one empty batch for the manifest.

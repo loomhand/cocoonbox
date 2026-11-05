@@ -47,6 +47,7 @@ const CONNECTION_WINDOW: u32 = 64 << 20;
 const CONNECTION_GRACE: Duration = Duration::from_millis(1000);
 const DRAIN_LIMIT: Duration = Duration::from_millis(700);
 const CLOSE_LIMIT: Duration = Duration::from_secs(2);
+const PLAN_PAGE: usize = 2048;
 
 /// Admits only the owner's calls: a share reaches the box through MCP alone.
 #[derive(Clone)]
@@ -339,6 +340,7 @@ struct Filled {
 }
 
 type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;
+type PlanStream = tokio_stream::Iter<std::vec::IntoIter<Result<pb::PlanResponse, Status>>>;
 
 /// `cocoonbox.agent.v1.State`, called by the api to move user state to and from object storage.
 pub struct StateSvc {
@@ -348,6 +350,7 @@ pub struct StateSvc {
 
 #[tonic::async_trait]
 impl State for StateSvc {
+    type PlanStream = PlanStream;
     type UploadStream = ProgressStream;
     type RestoreStream = ProgressStream;
     type RestorePathsStream = ProgressStream;
@@ -355,12 +358,13 @@ impl State for StateSvc {
     async fn plan(
         &self,
         req: Request<pb::PlanRequest>,
-    ) -> Result<Response<pb::PlanResponse>, Status> {
-        self.engine
+    ) -> Result<Response<Self::PlanStream>, Status> {
+        let plan = self
+            .engine
             .plan(req.into_inner())
             .await
-            .map(Response::new)
-            .map_err(state_status)
+            .map_err(state_status)?;
+        Ok(Response::new(tokio_stream::iter(plan_pages(plan))))
     }
 
     async fn upload(
@@ -559,6 +563,22 @@ where
     ReceiverStream::new(rx)
 }
 
+fn plan_pages(mut plan: pb::PlanResponse) -> Vec<Result<pb::PlanResponse, Status>> {
+    let mut chunks = std::mem::take(&mut plan.chunks).into_iter();
+    plan.chunks = chunks.by_ref().take(PLAN_PAGE).collect();
+    let mut pages = vec![Ok(plan)];
+    loop {
+        let page: Vec<pb::ChunkRef> = chunks.by_ref().take(PLAN_PAGE).collect();
+        if page.is_empty() {
+            return pages;
+        }
+        pages.push(Ok(pb::PlanResponse {
+            chunks: page,
+            ..pb::PlanResponse::default()
+        }));
+    }
+}
+
 fn state_status(e: StateError) -> Status {
     match e {
         StateError::Busy(m) => Status::unavailable(m),
@@ -570,6 +590,30 @@ fn state_status(e: StateError) -> Status {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_plan_goes_out_in_pages_with_its_fields_on_the_first() {
+        let chunks = (0..2 * PLAN_PAGE + 1)
+            .map(|i| pb::ChunkRef {
+                id: i.to_string(),
+                size: 1,
+            })
+            .collect();
+        let plan = pb::PlanResponse {
+            snapshot_id: "s".into(),
+            chunks,
+            files: 3,
+            ..pb::PlanResponse::default()
+        };
+        let pages: Vec<pb::PlanResponse> =
+            plan_pages(plan).into_iter().map(Result::unwrap).collect();
+        let sizes: Vec<usize> = pages.iter().map(|p| p.chunks.len()).collect();
+        assert_eq!(sizes, [PLAN_PAGE, PLAN_PAGE, 1]);
+        assert_eq!((pages[0].snapshot_id.as_str(), pages[0].files), ("s", 3));
+        assert!(pages[1..].iter().all(|p| p.snapshot_id.is_empty()));
+        assert_eq!(pages[2].chunks[0].id, (2 * PLAN_PAGE).to_string());
+        assert_eq!(plan_pages(pb::PlanResponse::default()).len(), 1);
+    }
 
     #[tokio::test]
     async fn accepted_sockets_send_without_delay() {

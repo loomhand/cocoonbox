@@ -1488,7 +1488,7 @@ func newFakeAgent(st *fakeStore) *fakeAgent {
 	return &fakeAgent{store: st, known: map[string]knownChunks{}, pinned: map[string]pinnedPlan{}}
 }
 
-func (a *fakeAgent) Plan(ctx context.Context, _ string, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
+func (a *fakeAgent) Plan(ctx context.Context, _ string, ep machines.Endpoint, req *agentv1.PlanRequest, page dialer.PlanPageFunc) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.planCred = outgoingCredential(ctx)
@@ -1522,7 +1522,20 @@ func (a *fakeAgent) Plan(ctx context.Context, _ string, ep machines.Endpoint, re
 		}
 	}
 	a.pinned[ep.Key] = plan
-	return resp, nil
+	pages := slices.Collect(slices.Chunk(resp.Chunks, 2))
+	resp.Chunks = nil
+	if len(pages) > 0 {
+		resp.Chunks, pages = pages[0], pages[1:]
+	}
+	if err := page(resp); err != nil {
+		return err
+	}
+	for _, chunks := range pages {
+		if err := page(&agentv1.PlanResponse{Chunks: chunks}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (a *fakeAgent) Upload(ctx context.Context, _ string, ep machines.Endpoint, req *agentv1.UploadRequest, progress dialer.ProgressFunc) (*agentv1.TransferProgress, error) {

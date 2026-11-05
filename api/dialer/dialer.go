@@ -17,6 +17,9 @@ import (
 // ProgressFunc receives each progress message of a transfer.
 type ProgressFunc func(*agentv1.TransferProgress)
 
+// PlanPageFunc receives each message of a plan: the first carries the snapshot, every one a page of its chunks.
+type PlanPageFunc func(*agentv1.PlanResponse) error
+
 type restoreCall func(agentv1.StateClient, context.Context, ...grpc.CallOption) (grpc.BidiStreamingClient[agentv1.RestoreRequest, agentv1.TransferProgress], error)
 
 // Dialer calls the agents' State service over pool's connections.
@@ -29,13 +32,30 @@ func New(pool *Pool) *Dialer {
 	return &Dialer{pool: pool}
 }
 
-// Plan calls State.Plan on the agent at ep.
-func (d *Dialer) Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
+// Plan calls State.Plan on the agent at ep and hands each message to page; an error from page ends the call with it.
+func (d *Dialer) Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest, page PlanPageFunc) error {
 	client, err := d.state(box, ep)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return client.Plan(ctx, req)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stream, err := client.Plan(ctx, req)
+	if err != nil {
+		return err
+	}
+	for {
+		msg, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if err := page(msg); err != nil {
+			return err
+		}
+	}
 }
 
 // Upload calls State.Upload and returns the final progress message.
