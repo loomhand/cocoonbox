@@ -23,7 +23,7 @@ public enum Perf {
             FileManager.default.createFile(atPath: url.path, contents: nil)
         }
         let handle = try? FileHandle(forWritingTo: url)
-        _ = try? handle?.seekToEnd()
+        if let size = try? handle?.seekToEnd(), size > 16 << 20 { try? handle?.truncate(atOffset: 0) }
         return handle
     }()
 
