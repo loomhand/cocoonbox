@@ -182,8 +182,6 @@ pub struct ToolhostConfig {
     pub home: PathBuf,
     /// The box's desktop automation.
     pub automation: Automation,
-    /// Script tools the image adds, each run by its own program.
-    pub plugins: Vec<Plugin>,
     /// shuttle's desk endpoint, which answers the desk verbs, model calls and runs.
     pub shuttle_socket: PathBuf,
 }
@@ -209,7 +207,6 @@ impl ToolhostConfig {
             session_save: SESSION_SAVE.into(),
             home: home.into(),
             automation: Automation::detect(),
-            plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),
         })
     }
 }

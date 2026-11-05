@@ -207,7 +207,6 @@ impl Harness {
             session_save: session_save.clone(),
             home: home.clone(),
             automation,
-            plugins: plugins.clone(),
             shuttle_socket: shuttle_socket.clone(),
         };
         tokio::spawn(async move { toolhost::run(th_cfg).await });

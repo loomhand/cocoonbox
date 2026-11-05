@@ -652,7 +652,6 @@ mod tests {
             session_save: dir.join("session-save"),
             home: dir.into(),
             automation,
-            plugins: Vec::new(),
             shuttle_socket: crate::testing::endpoint(dir, "desk.sock"),
         }
     }
