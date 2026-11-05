@@ -511,7 +511,6 @@ mod tests {
         let calls = fake_shuttle(&socket, usize::MAX);
         let shuttle = Client::new(socket);
         let port = slow_chrome(Duration::ZERO).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
         let browser = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
         for app in [
             "google-chrome",

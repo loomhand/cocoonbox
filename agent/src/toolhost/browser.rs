@@ -1991,7 +1991,6 @@ pub(super) mod tests {
         let marker = dir.path().join(AGENT_MARKER);
         std::fs::write(&marker, b"").unwrap();
         let port = slow_chrome(Duration::ZERO).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
         let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         for swept in [true, false] {
             assert_eq!(
@@ -2604,7 +2603,6 @@ pub(super) mod tests {
     async fn without_plans_the_tab_argument_and_the_tab_list_do_not_exist() {
         let dir = tempfile::tempdir().unwrap();
         let port = slow_chrome(Duration::ZERO).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
         let plain = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, false);
         plain.run("a", "browser_show", json!({})).await.unwrap();
         assert_eq!(
@@ -3338,9 +3336,19 @@ pub(super) mod tests {
                 });
             }
         });
+        let early = if delay.is_zero() {
+            Ok(socket.listen(1024).unwrap())
+        } else {
+            Err(socket)
+        };
         tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
-            let http = socket.listen(1024).unwrap();
+            let http = match early {
+                Ok(http) => http,
+                Err(socket) => {
+                    tokio::time::sleep(delay).await;
+                    socket.listen(1024).unwrap()
+                }
+            };
             while let Ok((mut s, _)) = http.accept().await {
                 let mut buf = [0u8; 1024];
                 let n = s.read(&mut buf).await.unwrap_or(0);
