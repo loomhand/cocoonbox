@@ -269,21 +269,16 @@ impl Runtime {
     }
 
     /// Cancels the agent's running turn, waits for it to end, then removes the agent and its history.
-    pub async fn delete(&self, agent_id: &str) -> Result<(), Status> {
-        let slot = self.existing_slot(agent_id);
-        let _idle = match &slot {
-            Some(slot) => {
-                {
-                    let mut state = lock(&slot.state);
-                    state.deleted = true;
-                    if let Some(token) = &state.cancel {
-                        token.cancel();
-                    }
-                }
-                Some(slot.turn.lock().await)
+    pub async fn delete(self: &Arc<Self>, agent_id: &str) -> Result<(), Status> {
+        let slot = self.slot(agent_id);
+        {
+            let mut state = lock(&slot.state);
+            state.deleted = true;
+            if let Some(token) = &state.cancel {
+                token.cancel();
             }
-            None => None,
-        };
+        }
+        let _idle = slot.turn.lock().await;
         let closed = self.dispatcher.close_shell(agent_id).await;
         if closed.is_error {
             eprintln!("delete {agent_id}: close its shell: {}", closed.text);
@@ -294,6 +289,7 @@ impl Runtime {
         }
         let deleted = self.journal.store.delete_agent(agent_id.to_owned()).await;
         lock(&self.slots).remove(agent_id);
+        let _ = slot.queue.try_send(String::new());
         let existed = deleted.map_err(Status::internal)?;
         if !existed {
             return Err(Status::not_found(format!("agent {agent_id} not found")));
