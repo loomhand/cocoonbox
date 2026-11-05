@@ -444,10 +444,6 @@ static int ashmem_mmap(struct file *file, struct vm_area_struct *vma)
 	}
 	get_file(asma->file);
 
-	/*
-	 * XXX - Reworked to use shmem_zero_setup() instead of
-	 * shmem_set_file while we're in staging. -jstultz
-	 */
 	if (vma->vm_flags & VM_SHARED) {
 		ret = shmem_mmap(asma->file, vma);
 		if (ret) {
@@ -970,7 +966,6 @@ out:
 	return ret;
 }
 
-// HACKED
 static void __exit ashmem_exit(void)
 {
 	shrinker_free(ashmem_shrinker);
@@ -983,6 +978,5 @@ static void __exit ashmem_exit(void)
 
 module_init(ashmem_init);
 module_exit(ashmem_exit);
-//device_initcall(ashmem_init);
 MODULE_LICENSE("GPL v2");
 
