@@ -17,6 +17,7 @@ upload() {
 }
 
 umask 077
+rm -f "$DIR"/.*.dump
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 failed=
 trap '[ $? -eq 0 ] || cb-alert "cb-pg-dump failed at $stamp${failed:+, upload:$failed}"' EXIT
