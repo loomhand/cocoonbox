@@ -31,7 +31,7 @@ func (s *Service) Add(ctx context.Context, req *controlv1.AddKeyRequest) (*contr
 	}
 	sec := &secret{
 		id: idPrefix + utils.RandomHex(idBytes), owner: owner, name: req.GetName(), hosts: sp.hosts, header: sp.header, template: sp.template,
-		query: sp.query, placeholder: newPlaceholder(value), hint: valueHint(value), fingerprint: fingerprint(value), valueLen: len(value), version: 1,
+		query: sp.query, placeholder: newPlaceholder(value), hint: valueHint(value), valueLen: len(value), version: 1,
 	}
 	if sec.sealed, err = s.seal.Seal(ctx, owner, []byte(value), valueData(sec.id, owner)); err != nil {
 		return nil, keyStatus(ctx, err, "add key")
@@ -74,7 +74,7 @@ func (s *Service) Rotate(ctx context.Context, req *controlv1.RotateKeyRequest) (
 		if sealErr != nil {
 			return sealErr
 		}
-		sec.sealed, sec.hint, sec.fingerprint, sec.valueLen = sealed, valueHint(value), fingerprint(value), len(value)
+		sec.sealed, sec.hint, sec.valueLen = sealed, valueHint(value), len(value)
 		return nil
 	})
 	if err != nil {

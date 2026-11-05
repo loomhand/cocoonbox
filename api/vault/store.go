@@ -18,8 +18,7 @@ const (
 	migrationLock   = 0x63627674 // "cbvt"
 	uniqueViolation = "23505"
 
-	rowColumns = `id, owner, name, hosts, header, template, query, placeholder, value_sealed, value_hint, value_sha256_prefix, value_len,
-		version, created_at, updated_at`
+	rowColumns = "id, owner, name, hosts, header, template, query, placeholder, value_sealed, value_hint, value_len, version, created_at, updated_at"
 )
 
 //go:embed migrations/*.sql
@@ -80,8 +79,8 @@ func (s *store) insert(ctx context.Context, sec *secret, check func([]*secret) e
 			return err
 		}
 		return tx.QueryRow(ctx, `INSERT INTO vault_secrets (id, owner, name, hosts, header, template, query, placeholder, value_sealed, value_hint,
-			value_sha256_prefix, value_len) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING created_at, updated_at`,
-			sec.id, sec.owner, sec.name, sec.hosts, sec.header, sec.template, sec.query, sec.placeholder, sec.sealed, sec.hint, sec.fingerprint,
+			value_len) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING created_at, updated_at`,
+			sec.id, sec.owner, sec.name, sec.hosts, sec.header, sec.template, sec.query, sec.placeholder, sec.sealed, sec.hint,
 			sec.valueLen).Scan(&sec.createdAt, &sec.updatedAt)
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
@@ -106,9 +105,9 @@ func (s *store) rotate(ctx context.Context, owner, name string, fn func(*secret)
 		if err := fn(sec); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `UPDATE vault_secrets SET value_sealed = $2, value_hint = $3, value_sha256_prefix = $4, value_len = $5,
+		return tx.QueryRow(ctx, `UPDATE vault_secrets SET value_sealed = $2, value_hint = $3, value_len = $4,
 			version = version + 1, updated_at = now() WHERE id = $1 RETURNING version, updated_at`,
-			sec.id, sec.sealed, sec.hint, sec.fingerprint, sec.valueLen).Scan(&sec.version, &sec.updatedAt)
+			sec.id, sec.sealed, sec.hint, sec.valueLen).Scan(&sec.version, &sec.updatedAt)
 	})
 	return sec, err
 }
@@ -139,6 +138,6 @@ func (s *store) audit(ctx context.Context, owner, id, name, op, actor string) er
 func scanSecret(row pgx.CollectableRow) (*secret, error) {
 	sec := &secret{}
 	err := row.Scan(&sec.id, &sec.owner, &sec.name, &sec.hosts, &sec.header, &sec.template, &sec.query, &sec.placeholder, &sec.sealed,
-		&sec.hint, &sec.fingerprint, &sec.valueLen, &sec.version, &sec.createdAt, &sec.updatedAt)
+		&sec.hint, &sec.valueLen, &sec.version, &sec.createdAt, &sec.updatedAt)
 	return sec, err
 }

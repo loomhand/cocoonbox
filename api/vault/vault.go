@@ -40,7 +40,6 @@ const (
 	guestBudget      = 7 << 10
 	hintMinLen       = 12
 	hintLen          = 4
-	fingerprintLen   = 8
 	idBytes          = 6
 	placeholderBytes = 16
 	digestLen        = 16
@@ -170,7 +169,6 @@ type secret struct {
 	placeholder string
 	sealed      []byte
 	hint        string
-	fingerprint string
 	valueLen    int
 	version     int
 	createdAt   time.Time

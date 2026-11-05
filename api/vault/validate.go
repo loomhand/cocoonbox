@@ -140,7 +140,3 @@ func valueHint(value string) string {
 	}
 	return value[len(value)-hintLen:]
 }
-
-func fingerprint(value string) string {
-	return utils.HashHex(value)[:fingerprintLen]
-}
