@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -58,7 +59,12 @@ func (s *Service) provisionStale(ctx context.Context) {
 		log.WithFunc("boxes.Service.provisionStale").Error(ctx, err, "list machines")
 		return
 	}
+	current := serving(ms)
 	for _, m := range ms {
+		if current[boxOfMachine(m.ID)].ID != m.ID {
+			s.dropStray(ctx, m)
+			continue
+		}
 		if err := s.syncExit(ctx, m); err != nil {
 			log.WithFunc("boxes.Service.provisionStale").WithField("machine", m.ID).Error(ctx, err, "sync exit")
 		}
@@ -68,6 +74,21 @@ func (s *Service) provisionStale(ctx context.Context) {
 	}
 	if s.vault != nil {
 		s.reconcileVault(ctx, ms)
+	}
+}
+
+func (s *Service) dropStray(ctx context.Context, m machines.Machine) {
+	box := boxOfMachine(m.ID)
+	if s.ops.activeFor(box) != nil {
+		return
+	}
+	if cur, err := s.current(ctx, m.Owner, box); err != nil || cur.ID == m.ID {
+		return
+	}
+	logger := log.WithFunc("boxes.Service.dropStray").WithField("box", box)
+	logger.Warnf(ctx, "machine %s serves no client and no operation runs on the box; deleting it", m.ID)
+	if err := s.deleteMachine(ctx, m.ID); err != nil && !errors.Is(err, machines.ErrNotFound) {
+		logger.Error(ctx, err, "delete "+m.ID)
 	}
 }
 

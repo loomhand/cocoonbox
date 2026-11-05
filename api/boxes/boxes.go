@@ -405,14 +405,7 @@ func (s *Service) currentMachines(ctx context.Context, user string) (map[string]
 	if err != nil {
 		return nil, err
 	}
-	current := map[string]machines.Machine{}
-	for _, m := range ms {
-		box := boxOfMachine(m.ID)
-		if cur, ok := current[box]; !ok || older(m, cur) {
-			current[box] = m
-		}
-	}
-	return current, nil
+	return serving(ms), nil
 }
 
 // firstBox returns user's oldest box, adding one when the user has none.

@@ -66,6 +66,17 @@ func older(a, b machines.Machine) bool {
 	return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID)) < 0
 }
 
+func serving(ms []machines.Machine) map[string]machines.Machine {
+	current := map[string]machines.Machine{}
+	for _, m := range ms {
+		box := boxOfMachine(m.ID)
+		if cur, ok := current[box]; !ok || older(m, cur) {
+			current[box] = m
+		}
+	}
+	return current
+}
+
 // holdsMemory reports whether m counts against the running limit.
 func holdsMemory(m machines.Machine) bool {
 	return m.State == machines.StateStarting || m.State == machines.StateRunning || m.State == machines.StateHibernating

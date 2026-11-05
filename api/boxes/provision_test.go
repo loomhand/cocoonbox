@@ -223,6 +223,25 @@ func TestReleaseDeletesEveryMachineOfTheUser(t *testing.T) {
 	}
 }
 
+func TestTheProvisionerDeletesAMachineAnInterruptedRebaseLeftOnlyOnceNoOperationRuns(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1", Meta: map[string]string{metaWake: "pod1/vm1|w1"}})
+	stray := aliceBox + "-r1"
+	fake.put(machines.Machine{ID: stray, Owner: alice, State: machines.StateRunning, Incarnation: "pod2/vm2", Meta: map[string]string{metaWake: "pod2/vm2|w2"}})
+	svc := New(fake, testDefaults, newFakeRegistry())
+	svc.EnableProvisioning(fakeSigner{})
+	op, _ := svc.ops.start(t.Context(), alice, aliceBox, controlv1.Phase_PHASE_SAVING, 1, time.Minute)
+	svc.provisionStale(t.Context())
+	if got := fake.deletedIDs(); got != "" {
+		t.Fatalf("the sweep deleted %q while an operation ran on the box", got)
+	}
+	op.fail("interrupted")
+	svc.provisionStale(t.Context())
+	if got := fake.deletedIDs(); got != stray {
+		t.Errorf("the sweep deleted %q, want the stray %s", got, stray)
+	}
+}
+
 func watchWithin(t *testing.T, svc *Service, ctx context.Context, opID string, d time.Duration) []*controlv1.OperationEvent {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(ctx, d)
