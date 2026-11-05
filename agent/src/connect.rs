@@ -393,6 +393,7 @@ fn output(result: &Value) -> ToolOutput {
                     .and_then(|d| B64.decode(d).ok())
                     .map(Bytes::from);
             }
+            Some("image" | "audio") => {}
             _ => {
                 if !text.is_empty() {
                     text.push('\n');
@@ -405,5 +406,22 @@ fn output(result: &Value) -> ToolOutput {
         text,
         image,
         is_error: result["isError"].as_bool().unwrap_or(false),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_answer_keeps_its_first_image_and_no_media_data_in_its_text() {
+        let out = output(&json!({"content": [
+            {"type": "text", "text": "two shots"},
+            {"type": "image", "data": B64.encode(b"one"), "mimeType": "image/png"},
+            {"type": "image", "data": B64.encode(b"two"), "mimeType": "image/png"},
+            {"type": "audio", "data": B64.encode(b"three"), "mimeType": "audio/wav"},
+        ]}));
+        assert_eq!(out.text, "two shots");
+        assert_eq!(out.image.as_deref(), Some(&b"one"[..]));
     }
 }
