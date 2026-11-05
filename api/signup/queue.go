@@ -170,25 +170,28 @@ func (s *Service) admit(ctx context.Context, tx pgx.Tx, st Settings, e entry) er
 		return err
 	}
 	id := "u-" + strings.TrimPrefix(e.id, "sq_")
-	u, err := s.accounts.Get(id)
-	if errors.Is(err, users.ErrNotFound) {
+	made, err := s.store.hasUser(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if !made {
 		err = users.ErrExists
 		for name := range usernames(e.nameHint) {
-			u, err = s.accounts.Create(ctx, users.NewUser{ID: id, Name: name, IDP: e.idp, MaxAgentBoxes: new(st.MaxAgentBoxes), DailyCapMicros: new(st.DailyCapMicros)})
+			_, err = s.accounts.Create(ctx, users.NewUser{ID: id, Name: name, IDP: e.idp, MaxAgentBoxes: new(st.MaxAgentBoxes), DailyCapMicros: new(st.DailyCapMicros)})
 			if !errors.Is(err, users.ErrExists) {
 				break
 			}
 		}
+		if err != nil {
+			return fmt.Errorf("create the account: %w", err)
+		}
 	}
-	if err != nil {
-		return fmt.Errorf("create the account: %w", err)
+	if _, err := s.store.addIdentity(ctx, tx, id, e.idp, identity{subject: e.subject, email: e.email, verified: true}); err != nil {
+		return fmt.Errorf("link the identity of account %s: %w", id, err)
 	}
-	if _, err := s.store.addIdentity(ctx, tx, u.ID, e.idp, identity{subject: e.subject, email: e.email, verified: true}); err != nil {
-		return fmt.Errorf("link the identity of account %s: %w", u.ID, err)
+	if err := s.store.markAdmitted(ctx, tx, e.id, id); err != nil {
+		return fmt.Errorf("mark account %s admitted: %w", id, err)
 	}
-	if err := s.store.markAdmitted(ctx, tx, e.id, u.ID); err != nil {
-		return fmt.Errorf("mark account %s admitted: %w", u.ID, err)
-	}
-	log.WithFunc("signup.Service.admit").Infof(ctx, "admitted queue entry %s as %s (%s)", e.id, u.Name, u.ID)
+	log.WithFunc("signup.Service.admit").Infof(ctx, "admitted queue entry %s as %s", e.id, id)
 	return nil
 }

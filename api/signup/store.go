@@ -121,6 +121,14 @@ func (s *store) markAdmitted(ctx context.Context, tx pgx.Tx, id, user string) er
 	return err
 }
 
+func (s *store) hasUser(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+	var exists bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1)", id).Scan(&exists); err != nil {
+		return false, fmt.Errorf("look up account %s: %w", id, err)
+	}
+	return exists, nil
+}
+
 func (s *store) admittedUser(ctx context.Context, id string) (string, error) {
 	var user *string
 	err := s.pool.QueryRow(ctx, "SELECT user_id FROM signup_queue WHERE id = $1 AND status = 'admitted'", id).Scan(&user)

@@ -281,7 +281,7 @@ func TestOneFreedSeatAdmitsOnePersonWhileTwoApisAdmitAtOnce(t *testing.T) {
 	}
 }
 
-func TestAnAccountAnAdmissionMadeBeforeItFailedTakesNoSeatFromItsEntry(t *testing.T) {
+func TestAnAccountAnAdmissionMadeOnAnotherApiBeforeItFailedTakesNoSeatAndIsReused(t *testing.T) {
 	e := newEnv(t)
 	admin := e.browser(t)
 	admin.password(t, "admin", adminPassword)
@@ -297,9 +297,6 @@ func TestAnAccountAnAdmissionMadeBeforeItFailedTakesNoSeatFromItsEntry(t *testin
 	other := e.openUsers(t)
 	if _, err := other.Create(t.Context(), users.NewUser{ID: made, Name: "bob", IDP: "github"}); err != nil {
 		t.Fatalf("make the account of the failed admission: %v", err)
-	}
-	if err := e.users.Load(t.Context()); err != nil {
-		t.Fatalf("load: %v", err)
 	}
 	if err := exec(t, e.dsn, "UPDATE signup_settings SET seats = 2"); err != nil {
 		t.Fatalf("raise seats: %v", err)
