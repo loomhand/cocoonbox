@@ -190,6 +190,17 @@ async fn a_first_prompt_past_one_argument_is_refused() {
 }
 
 #[tokio::test]
+async fn a_session_whose_tmux_ended_without_a_hook_is_reported_stopped() {
+    let b = TestBox::start(false).await;
+    b.start_session("FIRST").await;
+    std::fs::remove_file(b.fake.join(format!("sessions/cb-off-{REPO}-claude"))).unwrap();
+    let s = b.status().await;
+    assert_eq!(s["status"], "stopped", "{s}");
+    assert_eq!(s["tmux_alive"], false);
+    assert_eq!(s["copy"], "unreturned");
+}
+
+#[tokio::test]
 async fn a_busy_send_is_queued_until_the_idle_hook() {
     let b = TestBox::start(false).await;
     b.start_session("FIRST").await;

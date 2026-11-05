@@ -643,13 +643,14 @@ impl Inbox {
             } else {
                 0
             };
+            let status = if alive { rec.status } else { Status::Stopped };
             sessions.push(json!({
                 "repo": rec.repo,
                 "name": rec.name,
                 "cli": rec.cli,
                 "offload_id": rec.offload_id,
-                "status": rec.status,
-                "copy": super::copy_state(index.get(key), rec.status != Status::Stopped),
+                "status": status,
+                "copy": super::copy_state(index.get(key), status != Status::Stopped),
                 "tmux_alive": alive,
                 "hook_at_ms": rec.hook_at_ms,
                 "hooks_silent": rec.hooks_silent(),
