@@ -163,7 +163,8 @@ func (d *Door) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		out, err := d.svc.doorCall(r.Context(), c, call.Name, call.Arguments, call.Meta.ApprovalID)
-		if errors.As(err, &rpcErr) {
+		if e, ok := errors.AsType[*mcpwire.Error](err); ok {
+			rpcErr = e
 			break
 		}
 		if err != nil {
@@ -256,17 +257,6 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 			return
 		}
 	}
-}
-
-// refusal is the status of a failed authentication: 503 when the identity provider could not answer, 403 when the token may not use the door, else 401.
-func refusal(err error) int {
-	switch status.Code(err) {
-	case codes.Unavailable:
-		return http.StatusServiceUnavailable
-	case codes.PermissionDenied:
-		return http.StatusForbidden
-	}
-	return http.StatusUnauthorized
 }
 
 // NewDoor serves the tools for door, authenticating with authn.
@@ -379,6 +369,17 @@ func approvalAnswered(id, decision string) []byte {
 	msg.Params.ApprovalID, msg.Params.Decision = id, decision
 	data, _ := json.Marshal(msg)
 	return mcpwire.Event(data)
+}
+
+// refusal is the status of a failed authentication: 503 when the identity provider could not answer, 403 when the token may not use the door, else 401.
+func refusal(err error) int {
+	switch status.Code(err) {
+	case codes.Unavailable:
+		return http.StatusServiceUnavailable
+	case codes.PermissionDenied:
+		return http.StatusForbidden
+	}
+	return http.StatusUnauthorized
 }
 
 func internalError(r *http.Request, err error) *mcpwire.Error {

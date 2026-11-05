@@ -96,7 +96,7 @@ func (v *Vendor) OpenURL() string { return v.URL + "/open" }
 // Consent answers an authorization URL the way a user's consent does, and returns the code and state it redirects with.
 func (v *Vendor) Consent(authorizeURL string) (string, string, error) {
 	answer, err := v.Answer(authorizeURL)
-	return answer.Get("code"), answer.Get("state"), err
+	return answer.Get(fieldCode), answer.Get("state"), err
 }
 
 // Answer answers an authorization URL the way a user's consent does, and returns every parameter it redirects with.
@@ -150,7 +150,7 @@ func (v *Vendor) serverMetadata(w http.ResponseWriter, _ *http.Request) {
 		"token_endpoint":                        v.URL + "/token",
 		"registration_endpoint":                 v.URL + "/register",
 		"revocation_endpoint":                   v.URL + "/revoke",
-		"code_challenge_methods_supported":      []string{"S256"},
+		"code_challenge_methods_supported":      []string{pkceS256},
 		"client_id_metadata_document_supported": v.CIMD,
 	}
 	if v.Iss {
@@ -167,7 +167,7 @@ func (v *Vendor) register(w http.ResponseWriter, r *http.Request) {
 		RedirectURIs []string `json:"redirect_uris"`
 	}
 	if json.UnmarshalRead(r.Body, &req) != nil || len(req.RedirectURIs) != 1 {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_client_metadata"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: "invalid_client_metadata"})
 		return
 	}
 	id := "dcr-" + token()
@@ -183,7 +183,7 @@ func (v *Vendor) authorize(w http.ResponseWriter, r *http.Request) {
 	known := v.clients[q.Get("client_id")] || (v.CIMD && strings.HasSuffix(q.Get("client_id"), "/cocoonbox.connect/client.json")) ||
 		(v.ClientID != "" && q.Get("client_id") == v.ClientID)
 	v.mu.Unlock()
-	if !known || q.Get("code_challenge_method") != "S256" || q.Get("code_challenge") == "" || q.Get("resource") != v.MCPURL() {
+	if !known || q.Get("code_challenge_method") != pkceS256 || q.Get("code_challenge") == "" || q.Get("resource") != v.MCPURL() {
 		http.Error(w, "bad authorization request", http.StatusBadRequest)
 		return
 	}
@@ -191,7 +191,7 @@ func (v *Vendor) authorize(w http.ResponseWriter, r *http.Request) {
 	v.mu.Lock()
 	v.codes[code] = codeGrant{challenge: q.Get("code_challenge"), redirectURI: q.Get("redirect_uri"), clientID: q.Get("client_id")}
 	v.mu.Unlock()
-	answer := url.Values{"code": {code}, "state": {q.Get("state")}}
+	answer := url.Values{fieldCode: {code}, "state": {q.Get("state")}}
 	if v.Iss {
 		answer.Set("iss", v.URL)
 	}
@@ -202,43 +202,43 @@ func (v *Vendor) token(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	f := r.PostForm
 	if f.Get("resource") != v.MCPURL() {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_target"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: "invalid_target"})
 		return
 	}
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.ClientID != "" && (f.Get("client_id") != v.ClientID || f.Get("client_secret") != v.ClientSecret) {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_client"})
+		writeJSON(w, http.StatusUnauthorized, map[string]string{errorKey: invalidClient})
 		return
 	}
 	switch f.Get("grant_type") {
 	case "authorization_code":
-		g, ok := v.codes[f.Get("code")]
-		delete(v.codes, f.Get("code"))
+		g, ok := v.codes[f.Get(fieldCode)]
+		delete(v.codes, f.Get(fieldCode))
 		sum := sha256.Sum256([]byte(f.Get("code_verifier")))
 		if !ok || g.challenge != base64.RawURLEncoding.EncodeToString(sum[:]) || g.redirectURI != f.Get("redirect_uri") || g.clientID != f.Get("client_id") {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"})
+			writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: invalidGrant})
 			return
 		}
-	case "refresh_token":
+	case grantRefresh:
 		if v.Delay > 0 {
 			v.mu.Unlock()
 			time.Sleep(v.Delay)
 			v.mu.Lock()
 		}
 		v.refreshes++
-		if v.rejected || !v.refresh[f.Get("refresh_token")] {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"})
+		if v.rejected || !v.refresh[f.Get(grantRefresh)] {
+			writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: invalidGrant})
 			return
 		}
-		delete(v.refresh, f.Get("refresh_token"))
+		delete(v.refresh, f.Get(grantRefresh))
 	default:
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unsupported_grant_type"})
+		writeJSON(w, http.StatusBadRequest, map[string]string{errorKey: "unsupported_grant_type"})
 		return
 	}
 	access, refresh := "at-"+token(), "rt-"+token()
 	v.access[access], v.refresh[refresh] = true, true
-	writeJSON(w, http.StatusOK, map[string]any{"access_token": access, "refresh_token": refresh, "expires_in": accessTTL, "token_type": "Bearer", "scope": "items:read items:write"})
+	writeJSON(w, http.StatusOK, map[string]any{"access_token": access, grantRefresh: refresh, "expires_in": accessTTL, "token_type": "Bearer", "scope": "items:read items:write"})
 }
 
 func (v *Vendor) revoke(w http.ResponseWriter, r *http.Request) {

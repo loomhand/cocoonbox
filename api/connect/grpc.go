@@ -20,12 +20,19 @@ const (
 	maxActivity     = 500
 )
 
-var policies = map[controlv1.Policy]string{
-	controlv1.Policy_POLICY_UNSPECIFIED: "",
-	controlv1.Policy_POLICY_ALLOW:       policyAllow,
-	controlv1.Policy_POLICY_ASK:         policyAsk,
-	controlv1.Policy_POLICY_OFF:         policyOff,
-}
+var (
+	policies = map[controlv1.Policy]string{
+		controlv1.Policy_POLICY_UNSPECIFIED: "",
+		controlv1.Policy_POLICY_ALLOW:       policyAllow,
+		controlv1.Policy_POLICY_ASK:         policyAsk,
+		controlv1.Policy_POLICY_OFF:         policyOff,
+	}
+	decisions = map[controlv1.ApprovalDecision]string{
+		controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE:   decisionOnce,
+		controlv1.ApprovalDecision_APPROVAL_DECISION_ALWAYS: decisionAlways,
+		controlv1.ApprovalDecision_APPROVAL_DECISION_DENY:   decisionDeny,
+	}
+)
 
 // PendingApproval is an approval that waits for the user.
 type PendingApproval struct {
@@ -117,11 +124,7 @@ func (s *Service) Approve(ctx context.Context, req *controlv1.ApproveRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	decision := map[controlv1.ApprovalDecision]string{
-		controlv1.ApprovalDecision_APPROVAL_DECISION_ONCE:   decisionOnce,
-		controlv1.ApprovalDecision_APPROVAL_DECISION_ALWAYS: decisionAlways,
-		controlv1.ApprovalDecision_APPROVAL_DECISION_DENY:   decisionDeny,
-	}[req.GetDecision()]
+	decision := decisions[req.GetDecision()]
 	if decision == "" {
 		return nil, status.Error(codes.InvalidArgument, "a decision is once, always or deny")
 	}
