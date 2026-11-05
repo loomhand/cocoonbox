@@ -89,7 +89,7 @@ pub async fn act(
     args: Value,
 ) -> Result<Output, String> {
     let k = act::scale(shuttle, owner, &args["session"]).await?;
-    let a: TargetArgs = rpc::parse(args)?;
+    let mut a: TargetArgs = rpc::parse(args)?;
     let press = match a.action.as_str() {
         "click" => true,
         "locate" => false,
@@ -136,10 +136,9 @@ pub async fn act(
     if found["served"].is_array() {
         out["a11y"]["served"] = found["served"].take();
     }
-    let texts = match a.target.text.as_deref().filter(|t| !norm(t).is_empty()) {
-        Some(text) => vec![text.to_owned()],
-        None => texts_from(&a.target.description),
-    };
+    let given = a.target.text.take().filter(|t| !norm(t).is_empty());
+    let from_text = given.is_some();
+    let texts = given.map_or_else(|| texts_from(&a.target.description), |t| vec![t]);
     if texts.is_empty() {
         return not_found(shuttle, owner, out, &a, start).await;
     }
@@ -161,7 +160,7 @@ pub async fn act(
     let (text, hits) = first_read(&words, &texts, |r| !titles.contains(r))
         .unwrap_or((texts[0].as_str(), Vec::new()));
     out["ocr"] = json!({"text": text, "matches": hits.len(), "ms": t0.elapsed().as_millis()});
-    if a.target.text.is_none() {
+    if !from_text {
         out["ocr"]["from"] = "description".into();
     }
     if !titles.is_empty() {
@@ -188,7 +187,7 @@ pub async fn act(
     out = json!({
         "tier": "ocr",
         "text": text,
-        "text_from": if a.target.text.is_some() { "text" } else { "description" },
+        "text_from": if from_text { "text" } else { "description" },
         "point": [cx / k, cy / k],
         "scale": k,
         "pressed": press,
