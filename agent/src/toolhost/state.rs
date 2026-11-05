@@ -165,6 +165,7 @@ pub async fn walk(args: Value) -> Result<String, String> {
                 .unwrap_or_default();
             walk_root(root, &a.excludes, &skip, &mut out);
         }
+        out.sort_by(|a, b| (&a.root, &a.path).cmp(&(&b.root, &b.path)));
         out
     })
     .await
@@ -193,9 +194,9 @@ pub async fn read<W: AsyncWrite + Unpin>(args: Value, w: &mut W) -> Result<(), S
             return rpc::write_frame(w, &stamp).await;
         }
     };
-    rpc::write_frame(w, &stamp_of(&a.path)).await?;
+    rpc::write_frame(w, &stamp_of(&a.path).await).await?;
     send_blocks(&mut file, &a.path, w).await?;
-    rpc::write_frame(w, &stamp_of(&a.path)).await?;
+    rpc::write_frame(w, &stamp_of(&a.path).await).await?;
     w.flush().await.map_err(|e| format!("flush: {e}"))
 }
 
@@ -286,7 +287,7 @@ pub async fn place(args: Value) -> Result<String, String> {
 }
 
 async fn stream_backup<W: AsyncWrite + Unpin>(copy: &Path, w: &mut W) -> Result<(), String> {
-    let mut stamp = stamp_of(copy);
+    let mut stamp = stamp_of(copy).await;
     stamp.backup = true;
     rpc::write_frame(w, &stamp).await?;
     let mut file = tokio::fs::File::open(copy)
@@ -592,11 +593,10 @@ fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut
             });
         }
     }
-    out.sort_by(|a, b| (&a.root, &a.path).cmp(&(&b.root, &b.path)));
 }
 
-fn stamp_of(path: &Path) -> Stamp {
-    match fs::metadata(path) {
+async fn stamp_of(path: &Path) -> Stamp {
+    match tokio::fs::metadata(path).await {
         Ok(m) => Stamp {
             size: m.len(),
             mtime_ms: mtime_ms(m.modified().ok()),

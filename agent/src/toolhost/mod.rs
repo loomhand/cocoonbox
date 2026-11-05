@@ -598,7 +598,7 @@ async fn window_titles(shuttle: &Client) -> Vec<String> {
         tool: "desk_windows".to_owned(),
         args: json!({}),
     };
-    let Ok(out) = shuttle.desk(&call, rpc::DESK_DEADLINE).await else {
+    let Ok(out) = shuttle.desk(&call, SCREEN_WAIT).await else {
         return Vec::new();
     };
     let windows: Vec<Value> = serde_json::from_str(&out.text).unwrap_or_default();

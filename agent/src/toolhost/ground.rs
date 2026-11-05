@@ -295,10 +295,14 @@ async fn ocr(shuttle: &Client, owner: &str) -> Result<Vec<Word>, String> {
     let png = B64
         .decode(shot.image_b64.ok_or("the screen shot has no image")?)
         .map_err(|e| format!("decode the screen shot: {e}"))?;
-    let (w, h, rgb) = rgb_of(&png)?;
-    let (sw, sh, big) = upscale(w as usize, h as usize, &rgb, OCR_SCALE);
+    let png = tokio::task::spawn_blocking(move || {
+        let (w, h, rgb) = rgb_of(&png)?;
+        let (sw, sh, big) = upscale(w as usize, h as usize, &rgb, OCR_SCALE);
+        png_rgb(sw, sh, &big)
+    })
+    .await
+    .map_err(|e| format!("scale the screen shot: {e}"))??;
     let path = std::env::temp_dir().join(format!("{}.png", crate::new_id("cb-ocr")));
-    let png = png_rgb(sw, sh, &big)?;
     tokio::fs::write(&path, png)
         .await
         .map_err(|e| format!("write {}: {e}", path.display()))?;
