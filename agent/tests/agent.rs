@@ -364,6 +364,13 @@ async fn wait_turn_end(
     panic!("turn did not end");
 }
 
+fn turn_end(entries: &[pb::TranscriptEntry]) -> &pb::TurnEnd {
+    match entries.last().and_then(|e| e.body.as_ref()) {
+        Some(Body::TurnEnd(end)) => end,
+        last => panic!("want turn end, got {last:?}"),
+    }
+}
+
 fn chat_tool_call(id: &str, name: &str, args: &Value) -> String {
     let args = args.to_string();
     let (a, b) = args.split_at(args.len() / 2);
@@ -1244,9 +1251,7 @@ async fn run_delegate(messages_wire: bool) {
     send(&mut agents, &agent_id, "type hello", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
 
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end");
-    };
+    let end = turn_end(&entries);
     assert!(end.ok, "{}", end.error);
     let sub_calls: Vec<&pb::ToolCall> = entries
         .iter()
@@ -1405,9 +1410,7 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
         let agent_id = create_agent(&mut agents).await;
         send(&mut agents, &agent_id, "list forever", "").await;
         let entries = wait_turn_end(&mut agents, &agent_id).await;
-        let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-            panic!("no turn end");
-        };
+        let end = turn_end(&entries);
         assert!(!end.ok);
         assert_eq!(
             end.error,
@@ -1462,9 +1465,7 @@ async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "list it twice", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let line =
         "If the deliverable is not saved at its target path yet, save a complete first version now";
     let system: Vec<&str> = entries
@@ -1509,9 +1510,7 @@ async fn the_checkpoint_nudge_fires_once_in_the_subagent_and_never_when_off() {
         let agent_id = create_agent(&mut agents).await;
         send(&mut agents, &agent_id, "look", "").await;
         let entries = wait_turn_end(&mut agents, &agent_id).await;
-        assert!(
-            matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-        );
+        assert!(turn_end(&entries).ok);
         let fired: Vec<&pb::TextBlock> = entries
             .iter()
             .filter(|e| e.role == i32::from(pb::Role::System))
@@ -1554,9 +1553,7 @@ async fn each_model_call_records_the_turns_usage_so_far_before_the_turn_ends() {
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "look", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("want turn end, got {:?}", entries.last());
-    };
+    let end = turn_end(&entries);
     assert!(end.ok, "{}", end.error);
     let spent: Vec<(u64, &pb::Usage)> = entries
         .iter()
@@ -1611,9 +1608,7 @@ async fn the_reasoning_effort_rides_on_every_model_request_and_is_off_by_default
         let agent_id = create_agent(&mut agents).await;
         send(&mut agents, &agent_id, "look", "").await;
         let entries = wait_turn_end(&mut agents, &agent_id).await;
-        assert!(
-            matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-        );
+        assert!(turn_end(&entries).ok);
         let chats = gw_bodies(&h.gw_log, "chat/completions");
         assert_eq!(chats.len(), 4);
         for (i, chat) in chats.iter().enumerate() {
@@ -1681,9 +1676,7 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "look", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let delegate = entries
         .iter()
         .find_map(|e| match &e.body {
@@ -1720,9 +1713,7 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
     let listed = create_agent(&mut agents).await;
     send(&mut agents, &listed, "list it", "").await;
     let entries = wait_turn_end(&mut agents, &listed).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let texts: Vec<&str> = entries
         .iter()
         .filter_map(|e| match &e.body {
@@ -1746,9 +1737,7 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
     let silent = create_agent(&mut agents).await;
     send(&mut agents, &silent, "say nothing", "").await;
     let entries = wait_turn_end(&mut agents, &silent).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end");
-    };
+    let end = turn_end(&entries);
     assert!(!end.ok);
     assert_eq!(end.error, "the model returned no answer");
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 6);
@@ -1771,9 +1760,7 @@ async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
     let listed = create_agent(&mut agents).await;
     send(&mut agents, &listed, "list it", "").await;
     let entries = wait_turn_end(&mut agents, &listed).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end");
-    };
+    let end = turn_end(&entries);
     assert!(end.ok, "{}", end.error);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats.len(), 3);
@@ -1787,9 +1774,7 @@ async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
     let cut = create_agent(&mut agents).await;
     send(&mut agents, &cut, "think forever", "").await;
     let entries = wait_turn_end(&mut agents, &cut).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end");
-    };
+    let end = turn_end(&entries);
     assert!(!end.ok);
     assert_eq!(
         end.error,
@@ -1817,9 +1802,7 @@ async fn a_cut_reply_runs_none_of_its_calls_and_leaves_its_text_out_of_the_histo
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "answer", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end");
-    };
+    let end = turn_end(&entries);
     assert!(end.ok, "{}", end.error);
     let calls: Vec<&str> = entries
         .iter()
@@ -1882,9 +1865,7 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
     let listed = create_agent(&mut agents).await;
     send(&mut agents, &listed, "list it", "").await;
     let entries = wait_turn_end(&mut agents, &listed).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     for (markup, next) in [(0, 1), (2, 3)] {
         let before = chats[markup]["messages"].as_array().unwrap();
@@ -1899,16 +1880,12 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
     let prose = create_agent(&mut agents).await;
     send(&mut agents, &prose, "again", "").await;
     let entries = wait_turn_end(&mut agents, &prose).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
     let looping = create_agent(&mut agents).await;
     send(&mut agents, &looping, "run it", "").await;
     let entries = wait_turn_end(&mut agents, &looping).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end");
-    };
+    let end = turn_end(&entries);
     assert_eq!(end.error, "the model returned no answer");
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 7);
 }
@@ -1935,9 +1912,7 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
     let listed = create_agent(&mut agents).await;
     send(&mut agents, &listed, "list it", "").await;
     let entries = wait_turn_end(&mut agents, &listed).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     let before = chats[1]["messages"].as_array().unwrap();
     let after = chats[2]["messages"].as_array().unwrap();
@@ -1950,17 +1925,13 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
     let idle = create_agent(&mut agents).await;
     send(&mut agents, &idle, "run it", "").await;
     let entries = wait_turn_end(&mut agents, &idle).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end");
-    };
+    let end = turn_end(&entries);
     assert_eq!(end.error, "the model returned no answer");
     assert_eq!(gw_bodies(&h.gw_log, "chat/completions").len(), 5);
     let repeated = create_agent(&mut agents).await;
     send(&mut agents, &repeated, "go on", "").await;
     let entries = wait_turn_end(&mut agents, &repeated).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let last = entries.iter().rev().find_map(|e| match &e.body {
         Some(Body::Text(t)) => Some(t.text.as_str()),
         _ => None,
@@ -1990,9 +1961,7 @@ async fn a_reply_that_saved_and_then_announces_a_check_gets_the_continuation() {
     let agent = create_agent(&mut agents).await;
     send(&mut agents, &agent, "save it, then check the widths", "").await;
     let entries = wait_turn_end(&mut agents, &agent).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert_eq!(chats.len(), 3);
     let last = chats[2]["messages"].as_array().unwrap();
@@ -2016,31 +1985,24 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
         ("chat/completions", chat_text("Signed in.")),
         (
             "chat/completions",
-            chat_tool_call("call_s", "shell", &json!({"command": "sleep 30"})),
+            chat_tool_call(
+                "call_s",
+                "shell",
+                &json!({"command": "touch started; sleep 30"}),
+            ),
         ),
     ])
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "log in", "").await;
-    let approval_id = loop {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.clone(),
-                after_seq: 0,
-                limit: 0,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        if let Some(id) = page.entries.iter().find_map(|e| match &e.body {
+    let approval_id = wait_transcript(&mut agents, &agent_id, 0, |entries| {
+        entries.iter().find_map(|e| match &e.body {
             Some(Body::Approval(a)) if a.kind == "take_over" => Some(a.approval_id.clone()),
             _ => None,
-        }) {
-            break id;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+        })
+    })
+    .await;
     let listed = agents
         .list(authed(pb::ListAgentsRequest {}))
         .await
@@ -2075,50 +2037,30 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
     ));
 
     send(&mut agents, &agent_id, "sleep", "").await;
-    loop {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.clone(),
-                after_seq: entries.last().unwrap().seq,
-                limit: 0,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        if page
-            .entries
-            .iter()
-            .any(|e| matches!(&e.body, Some(Body::ToolCall(c)) if c.call_id == "call_s"))
-        {
+    let started = h.workspace.join("started");
+    for _ in 0..250 {
+        if started.exists() {
             break;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(started.exists(), "the shell call never started");
     agents
         .cancel(authed(pb::CancelRequest {
             agent_id: agent_id.clone(),
         }))
         .await
         .unwrap();
-    for _ in 0..200 {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.clone(),
-                after_seq: entries.last().unwrap().seq,
-                limit: 0,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        if let Some(Body::TurnEnd(end)) = page.entries.last().and_then(|e| e.body.as_ref()) {
-            assert!(!end.ok);
-            assert_eq!(end.error, "cancelled");
-            return;
+    let after = entries.last().unwrap().seq;
+    let end = wait_transcript(&mut agents, &agent_id, after, |entries| {
+        match entries.last().and_then(|e| e.body.as_ref()) {
+            Some(Body::TurnEnd(end)) => Some(end.clone()),
+            _ => None,
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("cancel did not end the turn");
+    })
+    .await;
+    assert!(!end.ok);
+    assert_eq!(end.error, "cancelled");
 }
 
 #[tokio::test]
@@ -2142,24 +2084,13 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "log in", "").await;
-    let approval_id = loop {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.clone(),
-                after_seq: 0,
-                limit: 0,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        if let Some(id) = page.entries.iter().find_map(|e| match &e.body {
+    let approval_id = wait_transcript(&mut agents, &agent_id, 0, |entries| {
+        entries.iter().find_map(|e| match &e.body {
             Some(Body::Approval(a)) if a.kind == "take_over" => Some(a.approval_id.clone()),
             _ => None,
-        }) {
-            break id;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+        })
+    })
+    .await;
 
     let started = std::time::Instant::now();
     plan(&h, pb::Consistency::Quiesced, "").await;
@@ -2210,9 +2141,7 @@ async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it()
     quiesced.await.unwrap().unwrap();
     let entries = wait_turn_end(&mut agents, &agent_id).await;
     assert!(h.workspace.join("after").exists());
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("no turn end: {entries:?}");
-    };
+    let end = turn_end(&entries);
     assert!(end.ok, "{end:?}");
 }
 
@@ -2494,9 +2423,7 @@ async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "run the demo", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let calls: Vec<Value> = door_log
         .lock()
         .unwrap()
@@ -2514,25 +2441,13 @@ async fn connector_approval(
     agent_id: &str,
     after_seq: u64,
 ) -> pb::ApprovalRequest {
-    for _ in 0..500 {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.into(),
-                after_seq,
-                limit: 0,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        if let Some(a) = page.entries.iter().find_map(|e| match &e.body {
+    wait_transcript(agents, agent_id, after_seq, |entries| {
+        entries.iter().find_map(|e| match &e.body {
             Some(Body::Approval(a)) if a.kind == "connector" => Some(a.clone()),
             _ => None,
-        }) {
-            return a;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    panic!("no connector approval");
+        })
+    })
+    .await
 }
 
 async fn turn_ends(
@@ -2540,27 +2455,38 @@ async fn turn_ends(
     agent_id: &str,
     n: usize,
 ) -> Vec<pb::TranscriptEntry> {
+    wait_transcript(agents, agent_id, 0, |entries| {
+        let ends = entries
+            .iter()
+            .filter(|e| matches!(e.body, Some(Body::TurnEnd(_))))
+            .count();
+        (ends >= n).then(|| entries.to_vec())
+    })
+    .await
+}
+
+async fn wait_transcript<T>(
+    agents: &mut AgentsClient<Channel>,
+    agent_id: &str,
+    after_seq: u64,
+    mut found: impl FnMut(&[pb::TranscriptEntry]) -> Option<T>,
+) -> T {
     for _ in 0..500 {
         let page = agents
             .transcript(authed(pb::TranscriptRequest {
                 agent_id: agent_id.into(),
-                after_seq: 0,
+                after_seq,
                 limit: 1000,
             }))
             .await
             .unwrap()
             .into_inner();
-        let ends = page
-            .entries
-            .iter()
-            .filter(|e| matches!(e.body, Some(Body::TurnEnd(_))))
-            .count();
-        if ends >= n {
-            return page.entries;
+        if let Some(t) = found(&page.entries) {
+            return t;
         }
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    panic!("fewer than {n} turns ended");
+    panic!("agent {agent_id}'s transcript never showed what the test waits for");
 }
 
 #[tokio::test]
@@ -2589,26 +2515,14 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
     send(&mut agents, &doomed, "sleep", "n1").await;
     send(&mut agents, &doomed, "queued behind the sleep", "n2").await;
     let sleep_pid = h.workspace.join("sleep.pid");
-    loop {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: doomed.clone(),
-                after_seq: 0,
-                limit: 0,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        if page
-            .entries
+    wait_transcript(&mut agents, &doomed, 0, |entries| {
+        (entries
             .iter()
             .any(|e| matches!(&e.body, Some(Body::ToolCall(c)) if c.call_id == "call_s"))
-            && std::fs::read_to_string(&sleep_pid).is_ok_and(|p| p.ends_with('\n'))
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+            && std::fs::read_to_string(&sleep_pid).is_ok_and(|p| p.ends_with('\n')))
+        .then_some(())
+    })
+    .await;
     let started = std::time::Instant::now();
     agents
         .delete(authed(pb::DeleteAgentRequest {
@@ -3331,25 +3245,13 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "wait", "").await;
-    for _ in 0..200 {
-        let page = agents
-            .transcript(authed(pb::TranscriptRequest {
-                agent_id: agent_id.clone(),
-                after_seq: 0,
-                limit: 0,
-            }))
-            .await
-            .unwrap()
-            .into_inner();
-        if page
-            .entries
+    wait_transcript(&mut agents, &agent_id, 0, |entries| {
+        entries
             .iter()
             .any(|e| matches!(&e.body, Some(Body::ToolCall(c)) if c.call_id == "toolu_w"))
-        {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+            .then_some(())
+    })
+    .await;
     agents
         .cancel(authed(pb::CancelRequest {
             agent_id: agent_id.clone(),
@@ -3397,9 +3299,7 @@ async fn vision_main_model_gets_a_screenshot_tool() {
         .id;
     send(&mut agents, &agent_id, "what is on screen", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     assert!(
         chats[0]["tools"]
@@ -3439,6 +3339,7 @@ struct McpClient {
     session: String,
     next_id: u64,
     credential: Option<String>,
+    instructions: String,
 }
 
 impl McpClient {
@@ -3453,6 +3354,7 @@ impl McpClient {
             session: String::new(),
             next_id: 0,
             credential,
+            instructions: String::new(),
         };
         let resp = c
             .post(
@@ -3472,6 +3374,10 @@ impl McpClient {
         assert_eq!(init["result"]["protocolVersion"], "2025-06-18");
         assert_eq!(init["result"]["serverInfo"]["name"], "cocoonbox-agent");
         assert!(init["result"]["capabilities"]["tools"].is_object());
+        c.instructions = init["result"]["instructions"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         let note = c
             .post(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
             .await;
@@ -3825,18 +3731,8 @@ async fn a_box_without_the_desk_ignores_its_plugins() {
 #[tokio::test]
 async fn an_android_box_keeps_its_mcp_texts_within_the_caps() {
     let h = Harness::with_android().await;
-    let init: Value = reqwest::Client::new()
-        .post(format!("{}/mcp", h.endpoint))
-        .header("accept", "application/json, text/event-stream")
-        .header("x-cocoonbox-credential", owner())
-        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let instructions = init["result"]["instructions"].as_str().unwrap();
+    let opened = McpClient::connect(&h).await;
+    let instructions = opened.instructions.as_str();
     assert!(
         instructions.chars().count() <= 1600,
         "{} chars: the bridge prefix must keep the total under Claude Code's 2048 cap",
@@ -3917,18 +3813,8 @@ async fn hello_names_the_box_automation_and_its_screen() {
 #[tokio::test]
 async fn mcp_on_an_android_box_drives_the_phone_through_shuttle() {
     let h = Harness::with_android().await;
-    let init: Value = reqwest::Client::new()
-        .post(format!("{}/mcp", h.endpoint))
-        .header("accept", "application/json, text/event-stream")
-        .header("x-cocoonbox-credential", owner())
-        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let instructions = init["result"]["instructions"].as_str().unwrap();
+    let opened = McpClient::connect(&h).await;
+    let instructions = opened.instructions.as_str();
     assert!(instructions.contains("Android 16 phone"), "{instructions}");
     assert!(!instructions.contains("XFCE"), "{instructions}");
 
@@ -3968,18 +3854,8 @@ async fn mcp_on_an_android_box_drives_the_phone_through_shuttle() {
 #[tokio::test]
 async fn a_plugin_box_keeps_its_mcp_instructions_within_the_cap() {
     let h = Harness::with_plugin(Vec::new()).await;
-    let init: Value = reqwest::Client::new()
-        .post(format!("{}/mcp", h.endpoint))
-        .header("accept", "application/json, text/event-stream")
-        .header("x-cocoonbox-credential", owner())
-        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let instructions = init["result"]["instructions"].as_str().unwrap();
+    let opened = McpClient::connect(&h).await;
+    let instructions = opened.instructions.as_str();
     let extra = format!("\n\n{DEMO_ROUTING}");
     let base = instructions.strip_suffix(&extra).unwrap_or(instructions);
     assert_eq!(
@@ -4015,9 +3891,7 @@ async fn a_plugin_box_gives_its_loop_the_plugin_and_the_routing_extra() {
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "run the demo loop", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     let offered: Vec<&str> = chats[0]["tools"]
         .as_array()
@@ -4247,9 +4121,7 @@ async fn a_turn_sums_the_model_calls_its_script_and_plugin_runs_made() {
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "read the calculator", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("want turn end, got {:?}", entries.last());
-    };
+    let end = turn_end(&entries);
     let usage = end.usage.as_ref().unwrap();
     let vision: Vec<(u64, u64, u64)> = usage
         .models
@@ -4285,9 +4157,7 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     let agent_id = create_agent(&mut agents).await;
     send(&mut agents, &agent_id, "save a note in mousepad", "").await;
     let entries = wait_turn_end(&mut agents, &agent_id).await;
-    assert!(
-        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
-    );
+    assert!(turn_end(&entries).ok);
     let chats = gw_bodies(&h.gw_log, "chat/completions");
     let offered: Vec<&str> = chats[0]["tools"]
         .as_array()
@@ -4316,9 +4186,7 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
     assert_eq!(result["role"], "tool");
     let report: Value = serde_json::from_str(result["content"].as_str().unwrap()).unwrap();
     assert_eq!(report["result"], json!({"params": {"n": 1}}), "{report}");
-    let Some(Body::TurnEnd(end)) = entries.last().and_then(|e| e.body.as_ref()) else {
-        panic!("want turn end, got {:?}", entries.last());
-    };
+    let end = turn_end(&entries);
     let usage = end.usage.as_ref().unwrap();
     let mut models: Vec<(&str, u64, u64, u64, u64)> = usage
         .models
@@ -4349,18 +4217,8 @@ async fn a_desk_box_gives_its_loop_and_its_mcp_clients_script_run_and_the_routin
         (1250, 65, 100)
     );
 
-    let init: Value = reqwest::Client::new()
-        .post(format!("{}/mcp", h.endpoint))
-        .header("accept", "application/json, text/event-stream")
-        .header("x-cocoonbox-credential", owner())
-        .json(&json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}}))
-        .send()
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
-    let instructions = init["result"]["instructions"].as_str().unwrap();
+    let opened = McpClient::connect(&h).await;
+    let instructions = opened.instructions.as_str();
     assert!(
         instructions.ends_with(&format!("\n\n{routing}")),
         "{instructions}"
@@ -4585,6 +4443,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
             session: mcp.session.clone(),
             next_id: 0,
             credential: Some(other),
+            instructions: String::new(),
         };
         let resp = stranger
             .post(json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
@@ -4696,6 +4555,7 @@ async fn a_share_principal_holds_at_most_four_open_sessions() {
         session: String::new(),
         next_id: 0,
         credential: Some(reader.clone()),
+        instructions: String::new(),
     };
     let init = json!({"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {
         "protocolVersion": "2025-06-18",
@@ -4890,10 +4750,20 @@ async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
     let h = Harness::start(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let call = tokio::spawn(async move {
-        mcp.call("shell", json!({"command": "sleep 2; echo slept"}))
-            .await
+        mcp.call(
+            "shell",
+            json!({"command": "touch started; sleep 2; echo slept"}),
+        )
+        .await
     });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let running = h.workspace.join("started");
+    for _ in 0..250 {
+        if running.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(running.exists(), "the MCP shell call never started");
     let started = std::time::Instant::now();
     plan(&h, pb::Consistency::Quiesced, "").await;
     let waited = started.elapsed();
@@ -4940,7 +4810,12 @@ async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
     mcp.call("screenshot", json!({})).await;
     let second = driver_calls(&h, "desk_look")[1]["session"].clone();
     assert_ne!(first, second);
-    tokio::time::sleep(Duration::from_millis(1200)).await;
+    for _ in 0..300 {
+        if driver_calls(&h, "desk_computer_end").len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     let ended = driver_calls(&h, "desk_computer_end");
     assert_eq!(ended.len(), 2, "{ended:?}");
     assert_eq!(ended[1]["session"], second);
@@ -5004,8 +4879,18 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
     );
 
     let mut mine = McpClient::connect_as(&h, Some(owner.clone())).await;
-    let call = tokio::spawn(async move { mine.call("shell", json!({"command": "sleep 8"})).await });
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    let call = tokio::spawn(async move {
+        mine.call("shell", json!({"command": "touch mine.started; sleep 8"}))
+            .await
+    });
+    let running = h.workspace.join("mine.started");
+    for _ in 0..250 {
+        if running.exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(running.exists(), "the owner's MCP shell call never started");
     let busy = state_client(&h).await.plan(quiesced(&owner)).await;
     assert_eq!(busy.unwrap_err().code(), Code::Unavailable);
     assert_eq!(call.await.unwrap()["isError"], false);
