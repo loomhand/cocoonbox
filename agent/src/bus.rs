@@ -95,7 +95,7 @@ impl Bus {
             });
         }
         let first = ring.events.front().map_or(ring.next, |e| e.offset);
-        if from_offset + 1 < first || from_offset >= ring.next {
+        if from_offset.saturating_add(1) < first || from_offset >= ring.next {
             return Err(format!(
                 "offset {from_offset} is outside the replay window [{}, {}); resync with Transcript",
                 first.saturating_sub(1),
@@ -182,6 +182,7 @@ mod tests {
         assert!(bus.subscribe(1000).is_err());
         assert!(bus.subscribe(5).is_err());
         assert!(bus.subscribe(u64::MAX - 1).is_err());
+        assert!(bus.subscribe(u64::MAX).is_err());
         assert!(bus.subscribe(1009).is_ok());
     }
 }
