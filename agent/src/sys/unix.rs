@@ -146,7 +146,7 @@ pub fn is_dir_link(_file_type: &FileType) -> bool {
     false
 }
 
-/// The OS release on unix, where `/etc/os-release` or SystemVersion.plist names it instead.
+/// None: on unix `/etc/os-release` or SystemVersion.plist names the release.
 pub fn os_name() -> Option<String> {
     None
 }
@@ -306,12 +306,6 @@ pub fn open_beneath(dir: &File, path: &Path, directory: bool) -> io::Result<File
     }
     // SAFETY: openat returned a new descriptor that nothing else owns.
     Ok(unsafe { File::from_raw_fd(fd) })
-}
-
-/// Without openat2 or `O_NOFOLLOW_ANY` nothing opens beneath a directory.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
-pub fn open_beneath(_dir: &File, _path: &Path, _directory: bool) -> io::Result<File> {
-    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// The path the open file `fd` resolves to now.
