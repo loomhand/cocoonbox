@@ -8,7 +8,7 @@ source scripts/toolchain.sh
 for product in CocoonBoxKitTests MockBox cocoonbox-cli; do swift build --product "$product"; done
 home="$(mktemp -d)"
 keychain="$home/test.keychain-db"
-trap 'HOME="$home" security delete-keychain "$keychain" 2>/dev/null; rm -rf "$home"' EXIT
+trap 'HOME="$home" security delete-keychain "$keychain" 2>/dev/null || true; rm -rf "$home"' EXIT
 HOME="$home" security create-keychain -p test "$keychain"
 HOME="$home" security set-keychain-settings "$keychain"
 HOME="$home" security unlock-keychain -p test "$keychain"

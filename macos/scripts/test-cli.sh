@@ -44,7 +44,7 @@ cleanup() {
   rm -rf "$work"
 }
 trap cleanup EXIT
-sleep 1
+for _ in $(seq 100); do grep -q "mockbox listening" "$work/mockbox.log" && break; sleep 0.1; done
 echo mock-token | "$bin/cocoonbox-cli" login
 
 python3 - "$bin/cocoonbox-cli" "$work/mockbox.log" "$release" <<'PY'
