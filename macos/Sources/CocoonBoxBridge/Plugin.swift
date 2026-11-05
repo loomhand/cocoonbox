@@ -1,10 +1,7 @@
 import CocoonBoxKit
 import Foundation
 
-// Plugin is the cocoonbox plugin as a local marketplace (design.md §13.5):
-// manifests for Claude Code and Codex (Cursor reads the Claude one), one
-// .mcp.json that runs the bridge, a skill and slash commands. No file holds
-// a URL or a token; `command` is the path of the cocoonbox CLI.
+// Plugin is the cocoonbox plugin as a local marketplace (design.md §13.5); no file holds a URL or a token.
 public enum Plugin {
     public static let name = "cocoonbox"
     public static let marketplace = "cocoonbox"

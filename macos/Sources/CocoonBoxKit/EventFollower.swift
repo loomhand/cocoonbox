@@ -2,8 +2,7 @@ import Foundation
 import GRPCCore
 import Synchronization
 
-// pause sleeps via Task.sleep(nanoseconds:); release builds of the app abort
-// with "freed pointer was not the last allocation" in Task.sleep(for:).
+// pause uses Task.sleep(nanoseconds:): Task.sleep(for:) aborts release builds ("freed pointer was not the last allocation").
 public func pause(_ duration: Duration) async throws {
     let (seconds, attoseconds) = duration.components
     try await Task.sleep(nanoseconds: UInt64(max(0, seconds)) * 1_000_000_000 + UInt64(max(0, attoseconds)) / 1_000_000_000)
@@ -26,9 +25,7 @@ public struct Backoff: Sendable {
     }
 }
 
-// EventFollower keeps a resumable offset-keyed stream alive: it resubscribes
-// after the last delivered offset, backs off between failures, and starts over
-// from live (offset 0) when the server says the offset left its replay window.
+// EventFollower keeps an offset-keyed stream alive, resuming after the last offset and restarting from live when the offset left the replay window.
 public struct EventFollower<Event: Sendable>: Sendable {
     public typealias Deliver = @Sendable (Event) async -> Void
     public typealias Subscribe = @Sendable (_ fromOffset: UInt64, _ deliver: @escaping Deliver) async throws -> Void

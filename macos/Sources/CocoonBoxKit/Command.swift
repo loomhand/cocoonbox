@@ -1,7 +1,7 @@
 import Foundation
 
 // Command runs a program found on the given environment's PATH and collects stdout and stderr in full.
-public struct Command {
+public enum Command {
     public struct Run {
         public var status: Int32
         public var out: Data

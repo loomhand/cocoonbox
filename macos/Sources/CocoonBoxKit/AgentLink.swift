@@ -2,12 +2,7 @@ import Darwin
 import Foundation
 import Synchronization
 
-// AgentLinkServer is the app's end of the local socket between the app and
-// the bridges of the local agents it starts (design.md §19.6). A bridge names
-// its agent, {"agent"}, then reports each box-tool call, {"agent","box","at"};
-// the app answers the first line with the agent's default box, {"box"}, and
-// sends it again on every change. Neither end blocks on the other: a line that
-// does not fit the socket buffer is dropped.
+// AgentLinkServer is the app's end of the socket to its local agents' bridges (design.md §19.6); no line blocks either end.
 public final class AgentLinkServer: Sendable {
     public let path: String
     private let listener: LinePeer.Socket
@@ -98,9 +93,7 @@ public final class AgentLinkClient: Sendable {
     }
 }
 
-// LinePeer is one connected end of the socket. send never blocks: a line goes
-// out whole or not at all, except the rest of a line the buffer cut, which
-// goes before the next one.
+// LinePeer is one connected end; send never blocks and sends a line whole or not at all.
 final class LinePeer: Sendable {
     final class Socket: @unchecked Sendable {
         let fd: Int32
@@ -185,10 +178,6 @@ final class LinePeer: Sendable {
         socket.source.cancel()
     }
 
-    private static func write(_ fd: Int32, _ data: Data) -> Int {
-        data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
-    }
-
     static func address(_ path: String) throws -> sockaddr_un {
         var address = sockaddr_un()
         let bytes = Array(path.utf8)
@@ -197,6 +186,10 @@ final class LinePeer: Sendable {
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
         withUnsafeMutableBytes(of: &address.sun_path) { $0.copyBytes(from: bytes) }
         return address
+    }
+
+    private static func write(_ fd: Int32, _ data: Data) -> Int {
+        data.withUnsafeBytes { Darwin.write(fd, $0.baseAddress, $0.count) }
     }
 }
 

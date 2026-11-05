@@ -3,9 +3,7 @@ import Darwin
 import Foundation
 import Synchronization
 
-// BrowserLogin signs a first-party client in through the browser (RFC 8252): it opens the console's
-// consent page, takes the answer on a loopback port of its own, and redeems the code with PKCE for a
-// device token, which has no expiry and no refresh token.
+// BrowserLogin signs a first-party client in through the browser (RFC 8252) with PKCE for a device token.
 public struct BrowserLogin: Sendable {
     public enum Failure: Error, CustomStringConvertible {
         case listen(Int32)
@@ -50,8 +48,7 @@ public struct BrowserLogin: Sendable {
         self.deviceName = name
     }
 
-    // run hands the consent page's URL to open and returns the device token once the browser brings the answer back;
-    // cancelling the task ends the wait within a poll interval and frees the port.
+    // run opens the consent page and returns the device token; cancelling ends the wait within a poll interval.
     public func run(timeout: Duration = .seconds(600), open: @Sendable (URL) -> Void) async throws -> String {
         let listener = try Loopback()
         defer { listener.close() }

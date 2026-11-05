@@ -13,9 +13,7 @@ typealias AccountClient = Cocoonbox_Control_V1_Account.Client<BoxTransport>
 typealias AgentsClient = Cocoonbox_Agent_V1_Agents.Client<BoxTransport>
 typealias SessionClient = Cocoonbox_Agent_V1_Session.Client<BoxTransport>
 
-// BoxConnection owns the one HTTP/2 connection every call shares. It is the
-// app's only way to the edge: its methods take and return proto messages and
-// keep the gRPC clients to themselves.
+// BoxConnection owns the one HTTP/2 connection to the edge and keeps its gRPC clients to itself.
 public final class BoxConnection: Sendable {
     public let endpoint: Endpoint
     let boxes: BoxesClient
@@ -72,8 +70,7 @@ public final class BoxConnection: Sendable {
         }
     }
 
-    // retarget follows boxID after the edge stopped resolving it: it keeps an id the user still has,
-    // moves to the box that now has the deleted box's name, and throws BoxGone when no box has it.
+    // retarget keeps a box id the user still has, else follows its name to the box created again, else throws BoxGone.
     @discardableResult
     public func retarget() async throws -> String {
         guard let held = boxID else { throw BoxGone(name: "") }
@@ -110,8 +107,7 @@ public final class BoxConnection: Sendable {
         return list
     }
 
-    // watchBoxes runs Boxes.Watch until cancelled; onBoxes gets the user's boxes, oldest first, and the offered images,
-    // at once, after each change by any client or the api, and again after each reconnect.
+    // watchBoxes runs Boxes.Watch until cancelled, handing onBoxes the boxes, oldest first, and the offered images on each change and reconnect.
     public func watchBoxes(
         onBoxes: @escaping @Sendable ([Cocoonbox_Control_V1_Box], [String]) async -> Void,
         onDisconnect: @escaping @Sendable (any Error) async -> Void
@@ -159,11 +155,6 @@ public final class BoxConnection: Sendable {
         return box
     }
 
-    private func seen(_ response: Cocoonbox_Control_V1_EnsureResponse) -> Cocoonbox_Control_V1_EnsureResponse {
-        names.withLock { $0[response.box.id] = response.box.name }
-        return response
-    }
-
     public func deleteBox(boxID: String) async throws -> Cocoonbox_Control_V1_Operation {
         try await boxes.delete(.with { $0.boxID = boxID })
     }
@@ -205,8 +196,7 @@ public final class BoxConnection: Sendable {
         })
     }
 
-    // setWakeSchedule wakes the box, when it is hibernated, a minute before each time of cron in tz and lets it
-    // hibernate again after awakeForSeconds (0 is the api's default) unless a client reached it.
+    // setWakeSchedule wakes a hibernated box a minute before each cron time and lets it hibernate after awakeForSeconds (0: api default).
     public func setWakeSchedule(boxID: String, cron: String, tz: String, awakeForSeconds: UInt32 = 0) async throws -> Cocoonbox_Control_V1_WakeSchedule {
         try await boxes.setWakeSchedule(.with {
             $0.boxID = boxID
@@ -327,10 +317,7 @@ public final class BoxConnection: Sendable {
         try await connectors.list(.with { $0.withTools = withTools }).connectors
     }
 
-    // answerConnector answers a connector approval (design §16.5): the broker
-    // records the decision, then the agent's turn resumes and retries the call.
-    // It returns false when the broker no longer holds the approval (expired, or
-    // answered in the console); the turn resumes anyway, and the broker decides the retry.
+    // answerConnector records an approval decision and resumes the turn; false when the broker no longer holds the approval (design §16.5).
     public func answerConnector(agentID: String, approvalID: String, decision: Cocoonbox_Control_V1_ApprovalDecision) async throws -> Bool {
         var found = true
         do {
@@ -383,9 +370,7 @@ public final class BoxConnection: Sendable {
         })
     }
 
-    // exec runs a command in the box as its desktop user: start names it, and input carries its
-    // stdin, the end of stdin, signals and terminal sizes. stdout and stderr chunks reach output,
-    // flagged true for stderr. It returns the exit code, or nil when the stream ended without one.
+    // exec runs a command as the box's desktop user, streaming input frames in and stdout/stderr (true) out; nil when no exit code came.
     public func exec(
         start: Cocoonbox_Agent_V1_ExecStart,
         input: some AsyncSequence<Cocoonbox_Agent_V1_ExecClientFrame, Never> & Sendable,
@@ -494,6 +479,11 @@ public final class BoxConnection: Sendable {
         default:
             return describe(error)
         }
+    }
+
+    private func seen(_ response: Cocoonbox_Control_V1_EnsureResponse) -> Cocoonbox_Control_V1_EnsureResponse {
+        names.withLock { $0[response.box.id] = response.box.name }
+        return response
     }
 }
 

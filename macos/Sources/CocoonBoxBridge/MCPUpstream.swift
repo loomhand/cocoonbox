@@ -2,18 +2,15 @@ import CocoonBoxKit
 import Foundation
 import Synchronization
 
-// MCPUpstream speaks MCP Streamable HTTP to one endpoint on the edge: POST a
-// JSON-RPC message, read a JSON or an SSE answer, keep the session id.
+// MCPUpstream speaks MCP Streamable HTTP to one edge endpoint and keeps its session id.
 final class MCPUpstream: Sendable {
     enum Failure: Error, CustomStringConvertible {
-        case plaintext(String)
         case http(Int)
         case sessionExpired
         case noResponse
 
         var description: String {
             switch self {
-            case .plaintext(let host): "\(host) is not on this Mac, so it needs https"
             case .http(let status): "HTTP \(status)"
             case .sessionExpired: "the MCP session expired"
             case .noResponse: "the server closed the stream without an answer"
@@ -27,14 +24,12 @@ final class MCPUpstream: Sendable {
 
     init(url: String, token: String) throws {
         guard let endpoint = Endpoint(url: url), let target = URL(string: url) else { throw ServerRoutes.Failure.route(url) }
-        guard endpoint.usesTLS || endpoint.isLoopback else { throw Failure.plaintext(endpoint.host) }
+        guard endpoint.usesTLS || endpoint.isLoopback else { throw ConnectionError.plaintext(endpoint.host) }
         self.url = target
         self.token = token
     }
 
-    // post sends one encoded message whose JSON-RPC id is `id` (nil for a
-    // notification). It returns the encoded answer, and hands every other
-    // message on the stream to `notify`.
+    // post sends one message with JSON-RPC id (nil for a notification), returns the answer and passes other stream messages to notify.
     func post(_ body: Data, id: String?, notify: @Sendable (Data) async -> Void = { _ in }) async throws -> Data? {
         var request = request("POST", accept: "application/json, text/event-stream", timeout: 600)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

@@ -5,7 +5,7 @@ import os
 // Perf writes timestamped lines to ~/Library/Logs/CocoonBox/debug.log and emits os_signpost events.
 public enum Perf {
     private static let log = OSLog(subsystem: "io.github.loomhand.cocoonbox", category: .pointsOfInterest)
-    public static let processStart: Date = {
+    private static let processStart: Date = {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]

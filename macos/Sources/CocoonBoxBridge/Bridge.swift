@@ -1,15 +1,7 @@
 import CocoonBoxKit
 import Foundation
 
-// Bridge is the stdio MCP server a local agent runs as `cocoonbox mcp`
-// (design.md §13.2, §19.2). Lifecycle tools go to the control MCP, box tools
-// to the MCP of the box their `box` argument names, else the default box:
-// `--box`, else the newest running box when the bridge first needs one. It
-// opens one session per box on first use and wakes a box on its first
-// box-tool call unless `wake` is off. With the app's link it reports each
-// box-tool call to the app and takes the default box the app sends. Connector
-// tools come from the Connect door (§16.3) and go back to it, with no box. The
-// token stays in memory and in the Authorization header of its requests.
+// Bridge is the stdio MCP server a local agent runs as `cocoonbox mcp` (design.md §13.2, §19.2).
 public actor Bridge {
     static let defaulted: Set<String> = ["box_status", "box_ensure", "box_hibernate", "box_save", "box_upgrade"]
     static let connectWait = Duration.seconds(3)
@@ -209,8 +201,7 @@ public actor Bridge {
         }
     }
 
-    // follow checks box against a fresh list after the edge refused it: it keeps a box the user has or one it never listed,
-    // moves a deleted default box to the box created again under its name, and refuses an id the call named, giving the new one.
+    // follow rechecks box after the edge refused it and moves a deleted default box to the box now under its name.
     private func follow(_ box: String, explicit: Bool) async throws -> String {
         let list = try await listBoxes()
         guard let name = names[box], !list.contains(where: { $0["box_id"] as? String == box }) else { return box }
@@ -272,9 +263,7 @@ public actor Bridge {
         connectWatch = Task { await self.watchConnect() }
     }
 
-    // watchConnect lists the connector tools, then holds the door's stream and
-    // lists them again on each list_changed; it reconnects with backoff. An api
-    // without the door, or one that refuses the token, ends it with no connector tools.
+    // watchConnect lists the connector tools and relists them on each list_changed, reconnecting with backoff.
     private func watchConnect() async {
         var delay = Duration.seconds(1)
         while !Task.isCancelled {
@@ -301,8 +290,7 @@ public actor Bridge {
         try? await listConnect(connect)
     }
 
-    // listConnect takes the door's tools, leaving out a name a control or box tool
-    // has, and tells the client when they differ from what it last listed.
+    // listConnect takes the door's tools minus cocoonbox names and notifies the client when they changed.
     private func listConnect(_ upstream: MCPUpstream) async throws {
         let answer = try await call(upstream, "tools/list", [:])
         guard let result = answer["result"] as? [String: Any] else { throw ToolFailure("The Connect door refused tools/list.") }
@@ -327,8 +315,7 @@ public actor Bridge {
         connectFirst?.cancel()
     }
 
-    // target returns the id of the box ref names, or of the default box when ref is empty.
-    // An id passes as is, so the edge decides whether it is the user's.
+    // target returns the box id ref names, else the default box's; an id passes as is for the edge to check.
     private func target(_ ref: String?) async throws -> String {
         if let ref, !ref.isEmpty {
             return try await resolve(ref)
@@ -381,12 +368,11 @@ public actor Bridge {
         return list
     }
 
-    // readyBox returns box's session, waking the box first when it is not
-    // known to run; concurrent callers of one box share one wake.
+    // readyBox returns box's session, waking it unless known running; concurrent callers share one wake.
     private func readyBox(_ box: String, progress: Any?, running: Bool = false) async throws -> MCPUpstream {
         if let upstream = sessions[box] { return upstream }
         if let task = opening[box] { return try await task.value }
-        let progressToken = Progress(token: progress)
+        let progressToken = ProgressToken(token: progress)
         let task = Task { running ? try await self.openBox(box) : try await self.wakeAndOpen(box, progress: progressToken.token) }
         opening[box] = task
         defer { opening[box] = nil }
@@ -631,8 +617,8 @@ extension Bridge {
     }
 }
 
-// Progress carries a client's progress token, a plain JSON value, into a task.
-private struct Progress: @unchecked Sendable {
+// ProgressToken carries a client's progress token, a plain JSON value, into a task.
+private struct ProgressToken: @unchecked Sendable {
     let token: Any?
 }
 

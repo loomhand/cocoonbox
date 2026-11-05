@@ -2,8 +2,7 @@ import Foundation
 import Security
 
 public enum Keychain {
-    // CB_KEYCHAIN_SERVICE lets dev builds keep their token apart from the
-    // installed app's item, whose ACL would prompt for a new binary.
+    // CB_KEYCHAIN_SERVICE keeps a dev build's token apart from the installed app's item.
     public static let service = ProcessInfo.processInfo.environment["CB_KEYCHAIN_SERVICE"] ?? "io.github.loomhand.cocoonbox"
 
     // CB_KEYCHAIN_FILE confines tests to a throwaway keychain file instead of the login keychain.
