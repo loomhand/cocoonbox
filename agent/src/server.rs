@@ -32,7 +32,7 @@ use crate::state::{Pause, StateEngine, StateError};
 use crate::toolhost::rpc::{self, Call};
 
 const MAX_REQUEST_BYTES: usize = 64 << 20;
-// The api pages chunk URLs at 2048 a message, about 1 MB.
+// the api pages chunk URLs at 2048 a message, about 1 MB
 const MAX_STATE_MESSAGE_BYTES: usize = 16 << 20;
 const DEFAULT_PAGE: u32 = 100;
 const MAX_PAGE: u32 = 1000;

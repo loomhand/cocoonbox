@@ -15,8 +15,7 @@ use crate::toolhost::rpc::{self, Call, Output};
 
 const DRIVER_TOOLS: [&str; 3] = ["computer_state", "computer_act", "screenshot"];
 
-/// Executes tools on the box; the toolhost RPC client is the production implementation, whose
-/// results never hold a card value a tool typed from a file.
+/// Executes tools on the box; production results never hold a card value a tool typed from a file.
 #[tonic::async_trait]
 pub trait Tools: Send + Sync {
     /// Runs tool `name`; `owner` keys per-agent state such as the shell session.

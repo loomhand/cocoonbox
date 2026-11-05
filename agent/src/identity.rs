@@ -74,7 +74,7 @@ pub struct Gate {
 }
 
 impl Gate {
-    /// Reads the identity at `path`, which with its directory must belong to uid `owner`; on Windows, only SYSTEM and Administrators may write them.
+    /// Admits by the identity at `path`, read on first check; it and its directory must belong to uid `owner` (on Windows, only SYSTEM and Administrators may write them).
     pub fn new(path: PathBuf, owner: u32) -> Self {
         Self {
             path,

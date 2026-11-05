@@ -2,6 +2,9 @@
 
 use std::sync::{PoisonError, RwLock};
 
+/// The registry of this process; it lives as long as the process and is never persisted.
+pub static SECRETS: Secrets = Secrets::new();
+
 const NUMBER: &str = "[card number]";
 const CVC: &str = "[card cvc]";
 const CVC_LABELS: [&str; 5] = ["cvc", "cvv", "csc", "security code", "card code"];
@@ -10,9 +13,6 @@ const MIN_PAN: usize = 12;
 const MIN_FRAGMENT: usize = 8;
 const MAX_REPEAT: usize = 4;
 const MISREAD_SPAN: usize = 10;
-
-/// The registry of this process; it lives as long as the process and is never persisted.
-pub static SECRETS: Secrets = Secrets::new();
 
 /// Registered card numbers as plain digits, and cvcs.
 pub struct Secrets {
@@ -49,7 +49,7 @@ impl Secrets {
         }
     }
 
-    /// Replaces every registered value in tool output `text`; with none registered it costs one lock read.
+    /// Replaces every registered value in tool output `text`.
     pub fn scrub(&self, text: &mut String) {
         self.replace(text, false);
     }
@@ -139,10 +139,7 @@ fn open_run(text: &str) -> usize {
     }
 }
 
-/// Replaces each run of digits joined by single spaces, dashes or dots whose digits hold a registered
-/// number or, when `misread`, share a stretch of [`MISREAD_SPAN`] digits with one, are one edit from
-/// one, are a stretch of one of at least [`MIN_FRAGMENT`] digits or hold one of `stretches`, the varied
-/// stretches of them all; `None` when none does.
+/// Replaces each separator-joined digit run that holds a registered number, or with `misread` a near match of one; `None` when none does.
 fn replace_numbers(
     text: &str,
     numbers: &[String],

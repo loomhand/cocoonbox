@@ -30,7 +30,7 @@ const CHUNK_MIN: u32 = 256 << 10;
 const CHUNK_AVG: u32 = 1 << 20;
 const CHUNK_MAX: u32 = 4 << 20;
 const MANIFEST_LIMIT: u64 = 256 << 20;
-// chunk-body budget per restore: RESTORE_WRITES × (RESTORE_AHEAD + 1) plain chunks plus TRANSFERS in-flight chunks of sealed, packed and plain bodies, each at most CHUNK_MAX (1152 MiB); the manifest (at most MANIFEST_LIMIT) and transport buffers come on top
+// restore memory: RESTORE_WRITES × (RESTORE_AHEAD + 1) plain chunks plus TRANSFERS × 3 in-flight bodies, each ≤ CHUNK_MAX (1152 MiB)
 const RESTORE_WRITES: usize = 64;
 const RESTORE_AHEAD: usize = 2;
 const PLAN_READS: usize = 4;

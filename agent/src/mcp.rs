@@ -1,5 +1,4 @@
-//! MCP Streamable HTTP server at `/mcp`: external agents drive the box through the toolhost (mode B).
-//! The owner's sessions run untracked; a share's sessions are agents `mcp:<client>@<share>` with a transcript.
+//! MCP Streamable HTTP at `/mcp` for external agents: owner sessions run untracked, share sessions are agents `mcp:<client>@<share>`.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -150,7 +149,7 @@ impl Mcp {
             .with_state(self)
     }
 
-    /// Closes idle sessions until the process exits.
+    /// Closes idle sessions and prunes closed `mcp:*` agents until the process exits.
     pub fn spawn_reaper(self: &Arc<Self>) {
         let mcp = Arc::clone(self);
         let period = (self.idle / 2).min(MAX_REAP_PERIOD);
@@ -896,9 +895,7 @@ async fn get_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap) -> Response {
     event_stream(Body::from_stream(stream))
 }
 
-/// Answers a tool call as JSON when it ends within `every`. A longer call gets an SSE stream that sends a
-/// progress notification every `every`, an SSE comment when the client sent no progress token, and then
-/// the answer, so that a client's idle timeout does not cut it.
+/// Answers a tool call as JSON within `every`, else as SSE with a progress notification or keepalive every `every`, then the answer.
 async fn answer<F>(
     call: F,
     token: Option<Value>,
@@ -1013,8 +1010,7 @@ fn with_routing(mut text: String, extra: &[String]) -> (String, Vec<usize>) {
     (text, skipped)
 }
 
-/// `These tools act on a cloud computer: Ubuntu 24.04 with the XFCE desktop at 1280x800.`, without
-/// the parts `info` lacks.
+/// The sentence that names the box's OS, desktop and screen size, leaving out what `info` lacks.
 fn machine_line(info: &Value) -> String {
     let machine = prompts::machine(info).unwrap_or_else(|| "Linux".to_owned());
     let mut line = format!("These tools act on a cloud computer: {machine}");

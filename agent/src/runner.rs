@@ -508,6 +508,39 @@ impl Runtime {
             .await
     }
 
+    /// Returns the checkpoint line the first time a loop of the turn asks once it is due, recorded under `subagent`.
+    pub(crate) async fn checkpoint(
+        &self,
+        ctx: &TurnCtx,
+        subagent: &str,
+    ) -> Result<Option<String>, String> {
+        let Some(minutes) = ctx
+            .checkpoint
+            .as_ref()
+            .and_then(|c| lock(c).due(Instant::now()))
+        else {
+            return Ok(None);
+        };
+        let text = prompts::checkpoint(minutes);
+        let block = ctx.blocks.fetch_add(1, Ordering::Relaxed);
+        let body = Body::Text(pb::TextBlock {
+            text: text.clone(),
+            block,
+            subagent: subagent.to_owned(),
+        });
+        self.record(ctx, Role::System, body, !subagent.is_empty())
+            .await?;
+        Ok(Some(text))
+    }
+
+    /// Records the turn's usage so far, so a transcript reader sees each model call before the turn ends.
+    pub(crate) async fn record_usage(&self, ctx: &TurnCtx, usage: &Tally) {
+        let body = Body::Usage(turn_usage(usage));
+        if let Err(e) = self.record(ctx, Role::System, body, false).await {
+            eprintln!("record usage of turn {}: {e}", ctx.turn_id);
+        }
+    }
+
     fn slot(self: &Arc<Self>, agent_id: &str) -> Arc<Slot> {
         let mut slots = lock(&self.slots);
         if let Some(s) = slots.get(agent_id) {
@@ -809,39 +842,6 @@ impl Runtime {
         Ok(tier)
     }
 
-    /// Returns the checkpoint line the first time a loop of the turn asks once it is due, recorded under `subagent`.
-    pub(crate) async fn checkpoint(
-        &self,
-        ctx: &TurnCtx,
-        subagent: &str,
-    ) -> Result<Option<String>, String> {
-        let Some(minutes) = ctx
-            .checkpoint
-            .as_ref()
-            .and_then(|c| lock(c).due(Instant::now()))
-        else {
-            return Ok(None);
-        };
-        let text = prompts::checkpoint(minutes);
-        let block = ctx.blocks.fetch_add(1, Ordering::Relaxed);
-        let body = Body::Text(pb::TextBlock {
-            text: text.clone(),
-            block,
-            subagent: subagent.to_owned(),
-        });
-        self.record(ctx, Role::System, body, !subagent.is_empty())
-            .await?;
-        Ok(Some(text))
-    }
-
-    /// Records the turn's usage so far, so a transcript reader sees each model call before the turn ends.
-    pub(crate) async fn record_usage(&self, ctx: &TurnCtx, usage: &Tally) {
-        let body = Body::Usage(turn_usage(usage));
-        if let Err(e) = self.record(ctx, Role::System, body, false).await {
-            eprintln!("record usage of turn {}: {e}", ctx.turn_id);
-        }
-    }
-
     /// Runs one call of the main model; box tools go through the dispatcher, loop tools run here.
     async fn main_tool(
         &self,
@@ -1111,8 +1111,7 @@ pub struct StepOut {
     pub cut: bool,
 }
 
-/// A streamed text or reasoning block; `index` is assigned when its first non-blank delta goes out, and
-/// `sent` bytes of `text` went out.
+/// A streamed block; `index` comes with its first non-blank delta, and `sent` counts the bytes of `text` already published.
 #[derive(Default)]
 struct Block {
     text: String,
@@ -1162,6 +1161,13 @@ impl Checkpoint {
         self.fired = true;
         Some(elapsed.as_secs() / 60)
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum Ending {
+    Answer,
+    Announcement,
+    Empty,
 }
 
 /// Rebuilds the main agent's model messages from its transcript.
@@ -1273,13 +1279,6 @@ async fn worker(
         let turn = rt.run_turn(&agent_id, Arc::clone(&slot), turn_id);
         rt.tasks.track_future(turn).await;
     }
-}
-
-#[derive(Debug, PartialEq)]
-enum Ending {
-    Answer,
-    Announcement,
-    Empty,
 }
 
 /// Sorts a reply without a tool call: a final answer, a bare announcement of more work, or empty (blank, tool markup, a lone closing tag, "no response"); a done word counts only in the last sentence.
