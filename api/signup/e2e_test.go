@@ -281,6 +281,38 @@ func TestOneFreedSeatAdmitsOnePersonWhileTwoApisAdmitAtOnce(t *testing.T) {
 	}
 }
 
+func TestAnAccountAnAdmissionMadeBeforeItFailedTakesNoSeatFromItsEntry(t *testing.T) {
+	e := newEnv(t)
+	admin := e.browser(t)
+	admin.password(t, "admin", adminPassword)
+	admin.setSignup(t, signup.Settings{Enabled: true, Seats: 1, DailyCapMicros: 1_000_000, MaxAgentBoxes: 1, HourlyAccounts: 50})
+	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", nil); loc != "/cb/queue" {
+		t.Fatalf("bob: %q", loc)
+	}
+	var entry string
+	if err := query(t, e.dsn, "SELECT id FROM signup_queue WHERE email = 'bob@example.com'").Scan(&entry); err != nil {
+		t.Fatalf("read bob's entry: %v", err)
+	}
+	made := "u-" + strings.TrimPrefix(entry, "sq_")
+	other := e.openUsers(t)
+	if _, err := other.Create(t.Context(), users.NewUser{ID: made, Name: "bob", IDP: "github"}); err != nil {
+		t.Fatalf("make the account of the failed admission: %v", err)
+	}
+	if err := e.users.Load(t.Context()); err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := exec(t, e.dsn, "UPDATE signup_settings SET seats = 2"); err != nil {
+		t.Fatalf("raise seats: %v", err)
+	}
+	if err := e.signup.Admit(t.Context()); err != nil {
+		t.Fatalf("Admit: %v", err)
+	}
+	var status, user string
+	if err := query(t, e.dsn, "SELECT status, coalesce(user_id, '') FROM signup_queue WHERE id = $1", entry).Scan(&status, &user); err != nil || status != "admitted" || user != made {
+		t.Errorf("bob's entry = %s as %q, %v; want admitted as %s", status, user, err, made)
+	}
+}
+
 func TestInviteCodeOnlySignupMakesAnAccountOnlyWithAValidInviteAndWritesNothingWithout(t *testing.T) {
 	e := newEnv(t)
 	admin := e.browser(t)
@@ -642,14 +674,7 @@ type env struct {
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	e := &env{dsn: clustertest.EmptyDSN(t), gw: &fakeGW{caps: map[string]int64{}}}
-	us, err := users.Open(t.Context(), users.Options{
-		DSN: e.dsn, MasterKeyFile: masterKeyFile(t), GW: e.gw, Tenants: fakeTenants{},
-		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] },
-	})
-	if err != nil {
-		t.Fatalf("open users: %v", err)
-	}
-	t.Cleanup(us.Close)
+	us := e.openUsers(t)
 	e.users = us
 	if _, err := us.Create(t.Context(), users.NewUser{Name: "alice", Password: alicePassword}); err != nil {
 		t.Fatalf("create alice: %v", err)
@@ -699,6 +724,19 @@ func (e *env) bearer(t *testing.T, token, method, path string, body any) (int, s
 	defer func() { _ = resp.Body.Close() }()
 	data, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(data)
+}
+
+func (e *env) openUsers(t *testing.T) *users.Service {
+	t.Helper()
+	us, err := users.Open(t.Context(), users.Options{
+		DSN: e.dsn, MasterKeyFile: masterKeyFile(t), GW: e.gw, Tenants: fakeTenants{},
+		FirstBoxID: func(user string) string { return "cb-" + hex.EncodeToString([]byte(user))[:12] },
+	})
+	if err != nil {
+		t.Fatalf("open users: %v", err)
+	}
+	t.Cleanup(us.Close)
+	return us
 }
 
 func (e *env) openSignup(t *testing.T) *signup.Service {

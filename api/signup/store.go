@@ -86,7 +86,8 @@ func (s *store) seats(ctx context.Context) (Seats, error) {
 // room is how many people admission may take now: the free seats, within what the hourly brake leaves.
 func (s *store) room(ctx context.Context, tx pgx.Tx, st Settings) (int, error) {
 	var used, recent int
-	err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM users WHERE NOT admin AND NOT disabled),
+	err := tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM users WHERE NOT admin AND NOT disabled
+			AND id NOT IN (SELECT 'u-' || substr(id, 4) FROM signup_queue WHERE status = 'waiting')),
 		(SELECT count(*) FROM signup_queue WHERE admitted_at > now() - interval '1 hour')`).Scan(&used, &recent)
 	if err != nil {
 		return 0, fmt.Errorf("count seats: %w", err)
