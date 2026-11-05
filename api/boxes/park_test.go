@@ -117,10 +117,10 @@ func TestAClientDuringAParkKeepsTheMachine(t *testing.T) {
 		defer close(done)
 		e.svc.parkIdle(t.Context())
 	}()
-	e.waitFor(t, func() bool { return e.fake.state(aliceBox) == machines.StateStarting })
+	clustertest.WaitFor(t, "the sweep wakes the box", func() bool { return e.fake.state(aliceBox) == machines.StateStarting })
 	parkOp := e.svc.ops.activeFor(aliceBox)
 	e.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning})
-	e.waitFor(t, func() bool { return e.agent.plans() == 2 })
+	clustertest.WaitFor(t, "a second save", func() bool { return e.agent.plans() == 2 })
 
 	if _, _, err := e.svc.Resolve(e.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
 		t.Errorf("Resolve while parking = %v, want Unavailable", err)
@@ -281,18 +281,7 @@ func (e *parkEnv) meta(key string) string {
 
 func (e *parkEnv) idle(t *testing.T) {
 	t.Helper()
-	e.waitFor(t, func() bool { return e.svc.ops.activeFor(aliceBox) == nil })
-}
-
-func (e *parkEnv) waitFor(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not met within 5s")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, "the operation ends", func() bool { return e.svc.ops.activeFor(aliceBox) == nil })
 }
 
 func (f *fakeMachines) setState(id string, state machines.State) {

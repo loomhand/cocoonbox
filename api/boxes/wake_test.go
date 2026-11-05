@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 	"github.com/loomhand/cocoonbox/api/users"
@@ -211,8 +212,8 @@ func TestAlarmLeavesABoxThatWasUpAlone(t *testing.T) {
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	e.alarm(t, nine.Add(-wakeLead))
 	e.alarm(t, nine.Add(20*time.Minute))
-	if e.fake.state(aliceBox) != machines.StateRunning || len(e.fake.specs) != 0 {
-		t.Errorf("box is %v with %d Ensure calls, want running and untouched", e.fake.state(aliceBox), len(e.fake.specs))
+	if e.fake.state(aliceBox) != machines.StateRunning || e.fake.specCount() != 0 {
+		t.Errorf("box is %v with %d Ensure calls, want running and untouched", e.fake.state(aliceBox), e.fake.specCount())
 	}
 	if w := e.store.get(aliceBox); !w.SleepAt.IsZero() || !w.LastWakeAt.IsZero() || !w.NextAt.Equal(nine.Add(24*time.Hour)) {
 		t.Errorf("alarm = %+v, want only the next time moved", w)
@@ -241,8 +242,8 @@ func TestAlarmWakesOnceForTimesMissedWhileDown(t *testing.T) {
 	nine := e.schedule(t, "0 9 * * *", 15*time.Minute)
 	now := nine.Add(3*24*time.Hour + 2*time.Hour)
 	e.alarm(t, now)
-	if e.fake.state(aliceBox) != machines.StateStarting || len(e.fake.specs) != 1 {
-		t.Fatalf("box is %v after %d Ensure calls, want one late wake", e.fake.state(aliceBox), len(e.fake.specs))
+	if e.fake.state(aliceBox) != machines.StateStarting || e.fake.specCount() != 1 {
+		t.Fatalf("box is %v after %d Ensure calls, want one late wake", e.fake.state(aliceBox), e.fake.specCount())
 	}
 	if w := e.store.get(aliceBox); !w.NextAt.Equal(nine.Add(4*24*time.Hour)) || !w.SleepAt.Equal(now.Add(15*time.Minute)) {
 		t.Errorf("alarm = next %s, sleep %s; want the next future time and a full awake_for from the late wake", w.NextAt, w.SleepAt)
@@ -390,13 +391,7 @@ func (e *wakeEnv) running(t *testing.T) {
 
 func (e *wakeEnv) idle(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for e.svc.ops.activeFor(aliceBox) != nil {
-		if time.Now().After(deadline) {
-			t.Fatal("the operation did not end")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, "the operation ends", func() bool { return e.svc.ops.activeFor(aliceBox) == nil })
 }
 
 // fakeWakeStore refuses an alarm write for a changed schedule, as the users table does.

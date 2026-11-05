@@ -4,7 +4,6 @@ import (
 	"slices"
 	"testing"
 
-	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -24,7 +23,7 @@ func TestMigrateStateCopiesOnceAndNeverMovesTheHeadBack(t *testing.T) {
 		t.Fatalf("first migration copied %d, %v; want 4", n, err)
 	}
 	for _, key := range []string{p.chunk(hexID("c1")), p.chunk(hexID("c2")), p.manifest(snapshotID(1)), p.record(snapshotID(1))} {
-		if string(st.objects[key]) == "" {
+		if len(st.objects[key]) == 0 {
 			t.Errorf("new layout lacks %s", key)
 		}
 	}
@@ -53,7 +52,7 @@ func TestMigrateStateCopiesOnceAndNeverMovesTheHeadBack(t *testing.T) {
 	}
 	assertHead(t, st, p, snapshotID(3))
 	var idx chunkIndex
-	if err := getJSON(t.Context(), st, p.index(), &idx); err != nil || !slices.Equal(idx.Chunks, slices.Sorted(slices.Values([]string{hexID("c1"), hexID("c2"), hexID("c3"), hexID("c4")}))) {
+	if err := getJSON(t.Context(), st, p.index(), &idx); err != nil || !slices.Equal(idx.Chunks, slices.Sorted(slices.Values(hexIDs("c1", "c2", "c3", "c4")))) {
 		t.Errorf("merged index = %v, %v", idx.Chunks, err)
 	}
 }
@@ -79,7 +78,7 @@ func TestMigratedStateRestoresFromTheNewLayout(t *testing.T) {
 	if _, err := MigrateState(env.ctx, env.store, alice); err != nil {
 		t.Fatalf("MigrateState: %v", err)
 	}
-	if _, err := env.svc.state.restore(env.ctx, p, machines.Endpoint{Key: "new"}, "", func(*agentv1.TransferProgress) {}); err != nil {
+	if _, err := env.svc.state.restore(env.ctx, p, machines.Endpoint{Key: "new"}, "", noProgress); err != nil {
 		t.Fatalf("restore from the new layout: %v", err)
 	}
 	if gets := env.agent.lastRestore().gets(); len(gets) != 2 || gets[0].GetUrl() != "fake://get/"+p.chunk(hexID("c1")) {

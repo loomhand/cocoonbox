@@ -144,11 +144,7 @@ func TestRestorePathsPresignsOnlyTheirChunksAndPinsTheSnapshot(t *testing.T) {
 	if !strings.Contains(last.GetDetail(), "~/Restored/"+target+"-2") {
 		t.Errorf("detail %q does not name the agent's folder", last.GetDetail())
 	}
-	var presigned []string
-	for _, g := range call.gets() {
-		presigned = append(presigned, g.GetChunkId())
-	}
-	if want := hexIDs("b", "m1", "m2"); !slices.Equal(presigned, want) {
+	if presigned, want := getIDs(call), hexIDs("b", "m1", "m2"); !slices.Equal(presigned, want) {
 		t.Errorf("presigned %v, want only b, m1 and m2", presigned)
 	}
 	if call.reqs[0].GetManifest().GetChunkId() != first || len(call.reqs[0].GetKey().GetKey()) != keyring.KeySize {

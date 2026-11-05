@@ -355,8 +355,8 @@ func newDeltaEnv(t *testing.T) *stateEnv {
 
 func waitLocked(t *testing.T, in string) {
 	t.Helper()
+	buf := make([]byte, 1<<20)
 	clustertest.WaitFor(t, in+" waits on its lock", func() bool {
-		buf := make([]byte, 1<<20)
 		for g := range strings.SplitSeq(string(buf[:runtime.Stack(buf, true)]), "\n\n") {
 			if strings.Contains(g, "[sync.Mutex.Lock") && strings.Contains(g, in) {
 				return true

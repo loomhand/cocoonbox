@@ -310,25 +310,25 @@ func TestOwnership(t *testing.T) {
 	fake := newFakeMachines()
 	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor})
 	svc := New(fake, testDefaults, newFakeRegistry())
-	bob := auth.WithUser(t.Context(), "bob")
+	bobCtx := auth.WithUser(t.Context(), bob)
 
-	if _, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+	if _, err := svc.Get(bobCtx, &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
 		t.Errorf("Get other's box: %v, want NotFound", err)
 	}
-	if _, err := svc.Hibernate(bob, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
+	if _, err := svc.Hibernate(bobCtx, &controlv1.BoxRef{BoxId: aliceBox}); status.Code(err) != codes.NotFound {
 		t.Errorf("Hibernate other's box: %v, want NotFound", err)
 	}
-	if _, _, err := svc.Resolve(bob, "bob", aliceBox); status.Code(err) != codes.NotFound {
-		t.Errorf("Resolve other's box: %v, want NotFound", err)
+	_, _, foreign := svc.Resolve(bobCtx, bob, aliceBox)
+	if status.Code(foreign) != codes.NotFound {
+		t.Errorf("Resolve other's box: %v, want NotFound", foreign)
 	}
-	_, _, foreign := svc.Resolve(bob, "bob", aliceBox)
-	if _, _, unknown := svc.Resolve(bob, "bob", "cb-000000000000"); status.Convert(unknown).Proto().String() != status.Convert(foreign).Proto().String() {
+	if _, _, unknown := svc.Resolve(bobCtx, bob, "cb-000000000000"); status.Convert(unknown).Proto().String() != status.Convert(foreign).Proto().String() {
 		t.Errorf("Resolve of an unknown box = %v, want the same answer as another user's box (%v)", unknown, foreign)
 	}
-	if list, err := svc.List(bob, &controlv1.ListBoxesRequest{}); err != nil || len(list.GetBoxes()) != 1 || list.GetBoxes()[0].GetId() != BoxID("bob") {
+	if list, err := svc.List(bobCtx, &controlv1.ListBoxesRequest{}); err != nil || len(list.GetBoxes()) != 1 || list.GetBoxes()[0].GetId() != BoxID(bob) {
 		t.Errorf("List for bob = %v, %v, want only bob's box", list, err)
 	}
-	if box, err := svc.Get(bob, &controlv1.GetBoxRequest{BoxId: BoxID("bob")}); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_UNSPECIFIED || box.GetName() != users.FirstBoxName || box.GetCreatedAtMs() != 0 {
+	if box, err := svc.Get(bobCtx, &controlv1.GetBoxRequest{BoxId: BoxID(bob)}); err != nil || box.GetState() != controlv1.BoxState_BOX_STATE_UNSPECIFIED || box.GetName() != users.FirstBoxName || box.GetCreatedAtMs() != 0 {
 		t.Errorf("Get own box without a machine = %v, %v, want it absent", box, err)
 	}
 	if _, err := svc.Get(t.Context(), &controlv1.GetBoxRequest{BoxId: aliceBox}); status.Code(err) != codes.Unauthenticated {
@@ -342,7 +342,7 @@ func TestOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Hibernate alice: %v", err)
 	}
-	if err := svc.WatchOperation(&controlv1.WatchOperationRequest{OperationId: op.GetId()}, &eventStream{ctx: bob}); status.Code(err) != codes.NotFound {
+	if err := svc.WatchOperation(&controlv1.WatchOperationRequest{OperationId: op.GetId()}, &eventStream{ctx: bobCtx}); status.Code(err) != codes.NotFound {
 		t.Errorf("WatchOperation of other's operation: %v, want NotFound", err)
 	}
 }

@@ -28,7 +28,7 @@ func TestPendingMigrationsListsWhatOpenAppliesAndWritesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.WithoutCancel(t.Context())) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	var tables int
 	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'").Scan(&tables); err != nil || tables != 0 {
 		t.Fatalf("tables after PendingMigrations = %d, %v; want none", tables, err)
@@ -303,7 +303,7 @@ func TestOneProcessLeadsAndAnotherTakesOverWhenItsConnectionDies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	if _, err := conn.Exec(t.Context(), `SELECT pg_terminate_backend(pid) FROM pg_locks WHERE locktype = 'advisory' AND granted
 		AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND classid = $1 AND objid = $2`, 0x6362, 0x6c656164); err != nil {
 		t.Fatalf("end the leader's connection: %v", err)

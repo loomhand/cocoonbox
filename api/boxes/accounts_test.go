@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -156,11 +157,7 @@ func (e *disableEnv) as(t *testing.T) context.Context {
 
 func (e *disableEnv) setDisabled(t *testing.T, disabled bool) {
 	t.Helper()
-	body := `{"disabled":false}`
-	if disabled {
-		body = `{"disabled":true}`
-	}
-	if resp := e.consoleCall(t, http.MethodPatch, "api/users/"+e.user, body); resp.Code != http.StatusOK {
+	if resp := e.consoleCall(t, http.MethodPatch, "api/users/"+e.user, fmt.Sprintf(`{"disabled":%t}`, disabled)); resp.Code != http.StatusOK {
 		t.Fatalf("PATCH disabled %t = %d %s", disabled, resp.Code, resp.Body)
 	}
 }

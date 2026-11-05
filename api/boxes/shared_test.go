@@ -160,16 +160,8 @@ func TestASharedParkWhoseMachineRemovalFailsEndsFailed(t *testing.T) {
 }
 
 func TestAnEnsureRacingAParkInAnotherProcessRestoresTheParkSnapshot(t *testing.T) {
-	db := clustertest.Open(t)
 	bCtx, deaf := context.WithCancel(t.Context())
-	a := newStateEnv(t)
-	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
-	b.svc = New(a.fake, testDefaults, a.svc.registry)
-	b.svc.EnableState(a.agent, a.store, a.keys)
-	a.svc.EnableLedger(t.Context(), db)
-	a.svc.EnableShared(t.Context(), db)
-	b.svc.EnableLedger(t.Context(), db)
-	b.svc.EnableShared(bCtx, db)
+	b, a, _ := newSharedPair(t, bCtx)
 	e := &parkEnv{stateEnv: a}
 	e.agent.chunks = []string{hexID("c1")}
 	e.save(t)
@@ -264,17 +256,9 @@ func TestTwoProcessesProvisioningOneMachineProvisionItOnce(t *testing.T) {
 	}
 }
 
-func TestAFileRestoreInOneProcessWaitsOutARebaseElsewhere(t *testing.T) {
-	db := clustertest.Open(t)
+func TestAFileRestoreInOneProcessIsRefusedDuringARebaseElsewhere(t *testing.T) {
 	bCtx, deaf := context.WithCancel(t.Context())
-	a := newStateEnv(t)
-	b := &stateEnv{ctx: auth.WithUser(t.Context(), alice), fake: a.fake, agent: a.agent, store: a.store, keys: a.keys}
-	b.svc = New(a.fake, testDefaults, a.svc.registry)
-	b.svc.EnableState(a.agent, a.store, a.keys)
-	a.svc.EnableLedger(t.Context(), db)
-	a.svc.EnableShared(t.Context(), db)
-	b.svc.EnableLedger(t.Context(), db)
-	b.svc.EnableShared(bCtx, db)
+	b, a, _ := newSharedPair(t, bCtx)
 	a.agent.files = sampleFiles()
 	a.save(t)
 	first := a.headID(t)

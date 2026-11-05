@@ -46,7 +46,7 @@ func TestSaveStateIsIncremental(t *testing.T) {
 	if last.GetPhase() != controlv1.Phase_PHASE_DONE || !strings.Contains(last.GetDetail(), "snapshot "+snapshotID(1)) {
 		t.Fatalf("last event = %v", last)
 	}
-	if !hasProgress(events) {
+	if !slices.ContainsFunc(events, transfer) {
 		t.Errorf("no event carried transfer bytes: %v", events)
 	}
 	plan := env.agent.lastPlan()
@@ -368,7 +368,7 @@ func TestAPageOfRealURLsFitsTheDefaultGRPCLimit(t *testing.T) {
 	}
 	key := &agentv1.StateKey{Key: make([]byte, keyring.KeySize), KeyId: "test:" + alice}
 	rec := &snapshotRecord{ID: snapshotID(1), UploadedBytes: uint64(len(ids)) << 10}
-	if err := l.upload(t.Context(), noAuth, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, rec, key, missing, func(*agentv1.TransferProgress) {}); err != nil {
+	if err := l.upload(t.Context(), noAuth, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, rec, key, missing, noProgress); err != nil {
 		t.Fatalf("upload: %v", err)
 	}
 	for i, up := range agent.allUploads() {
@@ -402,7 +402,7 @@ func TestARestoreThatOutlastsThePresignTTLStillFetchesItsFirstChunks(t *testing.
 	ctx, cancel := context.WithTimeout(t.Context(), stateTimeout)
 	defer cancel()
 
-	if _, err := l.restore(ctx, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, "", func(*agentv1.TransferProgress) {}); err != nil {
+	if _, err := l.restore(ctx, statePath{user: alice, box: aliceBox}, machines.Endpoint{}, "", noProgress); err != nil {
 		t.Fatalf("restore over %s with a %s presign TTL: %v", time.Duration(skew.Load()), time.Minute, err)
 	}
 	if want := pageSize + 2; agent.fetched != want {
@@ -1187,19 +1187,10 @@ func credentialExpiry(t *testing.T, cred string) time.Time {
 
 func (f *fakeMachines) waitSpec(t *testing.T, n int) machines.Spec {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		f.mu.Lock()
-		if len(f.specs) >= n {
-			spec := f.specs[n-1]
-			f.mu.Unlock()
-			return spec
-		}
-		f.mu.Unlock()
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("no Ensure call %d", n)
-	return machines.Spec{}
+	clustertest.WaitFor(t, fmt.Sprintf("Ensure call %d", n), func() bool { return f.specCount() >= n })
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.specs[n-1]
 }
 
 func (f *fakeMachines) deletedIDs() string {
@@ -1229,22 +1220,8 @@ func chunkIDs(n int) []string {
 
 func everyBoxLive(string) bool { return true }
 
-func versionOf(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
-}
-
 func snapshotID(n int) string {
 	return fmt.Sprintf("%064x", n)
-}
-
-func hasProgress(events []*controlv1.OperationEvent) bool {
-	for _, ev := range events {
-		if ev.GetTotalBytes() > 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // fakeStore calls before, when set, with the operation and key ahead of each store call.
@@ -1371,7 +1348,7 @@ func (s *versionedStore) GetVersion(ctx context.Context, key string) ([]byte, st
 	if err != nil {
 		return nil, "", err
 	}
-	return data, versionOf(data), nil
+	return data, hexID(string(data)), nil
 }
 
 func (s *versionedStore) PutIf(_ context.Context, key string, data []byte, version string) error {
@@ -1379,7 +1356,7 @@ func (s *versionedStore) PutIf(_ context.Context, key string, data []byte, versi
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cur, ok := s.objects[key]
-	if (version == "" && ok) || (version != "" && (!ok || versionOf(cur) != version)) {
+	if (version == "" && ok) || (version != "" && (!ok || hexID(string(cur)) != version)) {
 		return store.ErrStale
 	}
 	s.puts[key]++
@@ -1518,7 +1495,7 @@ func (a *fakeAgent) Upload(ctx context.Context, _ string, ep machines.Endpoint, 
 		if put == req.GetManifest() && plan.manifest != nil {
 			body = plan.manifest
 		}
-		if err := a.store.Put(context.Background(), strings.TrimPrefix(put.GetUrl(), "fake://put/"), body); err != nil {
+		if err := a.store.Put(ctx, strings.TrimPrefix(put.GetUrl(), "fake://put/"), body); err != nil {
 			return nil, err
 		}
 		progress(&agentv1.TransferProgress{
@@ -1565,7 +1542,7 @@ func (a *fakeAgent) serveRestore(ctx context.Context, ep machines.Endpoint, reqs
 	}
 	manifest := call.reqs[0].GetManifest()
 	for _, get := range append(call.gets(), manifest) {
-		if _, err := a.store.Get(context.Background(), strings.TrimPrefix(get.GetUrl(), "fake://get/")); err != nil {
+		if _, err := a.store.Get(ctx, strings.TrimPrefix(get.GetUrl(), "fake://get/")); err != nil {
 			return nil, fmt.Errorf("get %s: %w", get.GetUrl(), err)
 		}
 	}

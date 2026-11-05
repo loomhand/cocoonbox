@@ -3,12 +3,14 @@ package boxes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -186,16 +188,8 @@ func TestAnEmptyListingPrunesNoDoorKey(t *testing.T) {
 
 func waitCreds(t *testing.T, fake *fakeMachines, n int) []credCall {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if got := fake.credCalls(); len(got) >= n {
-			return got
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("fewer than %d credential pushes", n)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, fmt.Sprintf("%d credential pushes", n), func() bool { return len(fake.credCalls()) >= n })
+	return fake.credCalls()
 }
 
 type fakeConnect struct {

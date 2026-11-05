@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	"github.com/loomhand/cocoonbox/api/credential"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -41,7 +43,7 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	if last.GetPhase() != controlv1.Phase_PHASE_DONE || last.GetBoxState() != controlv1.BoxState_BOX_STATE_RUNNING {
 		t.Fatalf("last event = %v", last)
 	}
-	if !hasDetail(events, "provisioning") {
+	if !slices.ContainsFunc(events, func(ev *controlv1.OperationEvent) bool { return ev.GetDetail() == "provisioning" }) {
 		t.Errorf("no provisioning event in %v", events)
 	}
 
@@ -49,16 +51,16 @@ func TestEnsureProvisionsBeforeRunning(t *testing.T) {
 	if len(execs) != 1 || execs[0].gwKey != "gw-key-"+alice {
 		t.Fatalf("deliveries = %+v, want one with the gw key", execs)
 	}
-	file := execs[0].identity
-	if file.BoxID != aliceBox || file.Name != users.FirstBoxName || file.KeyID != "k1" || file.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(file.WakeID) {
-		t.Errorf("identity = %+v", file)
+	identity := execs[0].identity
+	if identity.BoxID != aliceBox || identity.Name != users.FirstBoxName || identity.KeyID != "k1" || identity.PublicKey != "pub1" || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(identity.WakeID) {
+		t.Errorf("identity = %+v", identity)
 	}
 	if accounts.calls() != "key "+alice {
 		t.Errorf("account calls = %q", accounts.calls())
 	}
 	ep, wake, err := svc.Resolve(ctx, alice, aliceBox)
-	if err != nil || wake != file.WakeID || ep.Key == "" {
-		t.Errorf("Resolve = %q, %q, %v, want wake %s", ep.Key, wake, err, file.WakeID)
+	if err != nil || wake != identity.WakeID || ep.Key == "" {
+		t.Errorf("Resolve = %q, %q, %v, want wake %s", ep.Key, wake, err, identity.WakeID)
 	}
 }
 
@@ -85,19 +87,11 @@ func TestWakeReprovisionsIdentityOnly(t *testing.T) {
 		t.Errorf("Get = %v, %v, want STARTING", box, err)
 	}
 
-	runCtx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go svc.RunProvisioner(runCtx, 10*time.Millisecond)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, wake, err := svc.Resolve(ctx, alice, aliceBox); err == nil && wake != "w-old" {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("provisioner did not provision the new incarnation")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	go svc.RunProvisioner(t.Context(), 10*time.Millisecond)
+	clustertest.WaitFor(t, "the provisioner provisions the new incarnation", func() bool {
+		_, wake, err := svc.Resolve(ctx, alice, aliceBox)
+		return err == nil && wake != "w-old"
+	})
 	if accounts.calls() != "" {
 		t.Errorf("wake asked for a gw key again: %q", accounts.calls())
 	}
@@ -136,7 +130,7 @@ func TestProvisioningFailureFailsTheOperation(t *testing.T) {
 		t.Fatalf("Ensure: %v", err)
 	}
 	fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning, Incarnation: "pod1/vm1"})
-	events := watchWithin(t, svc, ctx, resp.GetOperation().GetId(), 20*time.Second)
+	events := watch(t, svc, ctx, resp.GetOperation().GetId(), "")
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != "machine failed to start" {
 		t.Errorf("last event = %v", last)
 	}
@@ -240,26 +234,6 @@ func TestTheProvisionerDeletesAMachineAnInterruptedRebaseLeftOnlyOnceNoOperation
 	if got := fake.deletedIDs(); got != stray {
 		t.Errorf("the sweep deleted %q, want the stray %s", got, stray)
 	}
-}
-
-func watchWithin(t *testing.T, svc *Service, ctx context.Context, opID string, d time.Duration) []*controlv1.OperationEvent {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(ctx, d)
-	defer cancel()
-	stream := &eventStream{ctx: ctx}
-	if err := svc.WatchOperation(&controlv1.WatchOperationRequest{OperationId: opID}, stream); err != nil {
-		t.Fatalf("WatchOperation: %v", err)
-	}
-	return stream.events
-}
-
-func hasDetail(events []*controlv1.OperationEvent, detail string) bool {
-	for _, ev := range events {
-		if ev.GetDetail() == detail {
-			return true
-		}
-	}
-	return false
 }
 
 func outgoingCredential(ctx context.Context) string {

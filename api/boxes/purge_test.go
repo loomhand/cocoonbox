@@ -1,8 +1,6 @@
 package boxes
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestDeleteStateRemovesTheUsersObjectsAndNoOthers(t *testing.T) {
 	env := newStateEnv(t)

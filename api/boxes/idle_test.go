@@ -3,10 +3,12 @@ package boxes
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/loomhand/cocoonbox/api/auth"
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -165,13 +167,7 @@ func newestOperation(svc *Service, box string) *operation {
 
 func waitState(t *testing.T, fake *fakeMachines, id string, want machines.State) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for fake.state(id) != want {
-		if time.Now().After(deadline) {
-			t.Fatalf("state = %v, want %v", fake.state(id), want)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	clustertest.WaitFor(t, fmt.Sprintf("machine %s %v", id, want), func() bool { return fake.state(id) == want })
 }
 
 type fakeActivity struct {

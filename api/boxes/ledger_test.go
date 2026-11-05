@@ -68,7 +68,8 @@ func TestBackfillHeadsMakesTheLedgerMatchTheStore(t *testing.T) {
 	ledger := clustertest.Open(t)
 	st := newFakeStore()
 	a, b := statePath{user: alice, box: "cb-00000000000a"}, statePath{user: alice, box: "cb-00000000000b"}
-	for _, p := range []statePath{a, b} {
+	c := statePath{user: alice, box: "cb-00000000000c"}
+	for _, p := range []statePath{a, b, c} {
 		if err := putJSON(t.Context(), st, p.head(), head{Latest: snapshotID(2), SavedAtMs: 200}); err != nil {
 			t.Fatalf("put head: %v", err)
 		}
@@ -78,10 +79,6 @@ func TestBackfillHeadsMakesTheLedgerMatchTheStore(t *testing.T) {
 	}
 	if err := ledger.PutHead(t.Context(), alice, "cb-00000000000z", headBytes(head{Latest: snapshotID(1)})); err != nil {
 		t.Fatalf("PutHead ghost: %v", err)
-	}
-	c := statePath{user: alice, box: "cb-00000000000c"}
-	if err := putJSON(t.Context(), st, c.head(), head{Latest: snapshotID(2), SavedAtMs: 200}); err != nil {
-		t.Fatalf("put head: %v", err)
 	}
 	newer := headBytes(head{Latest: snapshotID(3), SavedAtMs: 300})
 	if err := ledger.PutHead(t.Context(), alice, c.box, newer); err != nil {

@@ -1,6 +1,7 @@
 package boxes
 
 import (
+	"bytes"
 	"maps"
 	"math/rand/v2"
 	"slices"
@@ -130,12 +131,12 @@ func TestGCDryRunWritesNothing(t *testing.T) {
 	}
 	before := maps.Clone(env.store.objects)
 	dry := env.collect(t, GCOptions{DryRun: true, DeleteBatch: 1000}, 40*24*time.Hour)
-	if !maps.EqualFunc(before, env.store.objects, func(a, b []byte) bool { return string(a) == string(b) }) || len(env.store.deleted) != 0 {
+	if !maps.EqualFunc(before, env.store.objects, bytes.Equal) || len(env.store.deleted) != 0 {
 		t.Errorf("dry run changed the store: %d objects before, %d after, %d deleted", len(before), len(env.store.objects), len(env.store.deleted))
 	}
-	real := env.collect(t, GCOptions{DeleteBatch: 1000}, 40*24*time.Hour)
-	if dry != real || real.pruned != 2 || real.chunks != 2 {
-		t.Errorf("dry run reported %+v, the real pass %+v", dry, real)
+	full := env.collect(t, GCOptions{DeleteBatch: 1000}, 40*24*time.Hour)
+	if dry != full || full.pruned != 2 || full.chunks != 2 {
+		t.Errorf("dry run reported %+v, the real pass %+v", dry, full)
 	}
 }
 
@@ -232,8 +233,8 @@ func TestGCPrunesWithTheTimelineOfASaveThatCommittedWhileItWaited(t *testing.T) 
 	<-uploading
 	readTimeline := make(chan struct{})
 	var once sync.Once
-	env.store.before = func(op, key string) {
-		if op == "get" && key == p.timeline() {
+	env.store.before = func(action, key string) {
+		if action == "get" && key == p.timeline() {
 			once.Do(func() { close(readTimeline) })
 		}
 	}
