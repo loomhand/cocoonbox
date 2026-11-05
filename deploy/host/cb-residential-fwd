@@ -9,8 +9,6 @@ usage: cb-residential-fwd <listen-addr> <listen-port>
 env:   RESIDENTIAL_UPSTREAM=host:port  RESIDENTIAL_AUTH=user:pass
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import socket

@@ -26,7 +26,7 @@ TOOLHOST_UP = ("if [ -e /etc/cocoonbox/tools.d/cocoonbox.json ]; then u=shuttle;
                "else systemctl -q is-active cocoonbox-toolhost; fi")
 
 failed = []
-CLAIM_TOKEN = {}
+claim_tokens = {}
 
 
 def check(name, ok, detail=""):
@@ -54,7 +54,7 @@ def call(method, path, body=None, timeout=300, token=None, base=SBX):
 
 def guest(sid, script, timeout=60):
     code, out = call("POST", f"/v1/sandboxes/{sid}/exec",
-                     {"argv": ["sh", "-c", script], "timeout_seconds": timeout}, timeout + 30, CLAIM_TOKEN[sid])
+                     {"argv": ["sh", "-c", script], "timeout_seconds": timeout}, timeout + 30, claim_tokens[sid])
     return out.get("stdout", "").strip() if code == 200 else f"exec {code} {out}"
 
 
@@ -124,7 +124,7 @@ def main():
         if code != 200:
             return
         sid = out["id"]
-        CLAIM_TOKEN[sid] = out["token"]
+        claim_tokens[sid] = out["token"]
         units = guest(sid, "systemctl is-active cocoonbox-xorg cocoonbox-session cocoonbox-agent silkd | tr '\\n' ' '")
         check("guest units active", units.split() == ["active"] * 4, units)
         toolhost = guest(sid, f"{TOOLHOST_UP} && echo up || echo down")
@@ -133,7 +133,7 @@ def main():
         check("guest root disk from the pool storage", size.isdigit() and int(size) >= 38, f"{size} GiB")
         check("gw via proxy with claim secret", http_code(sid, f"http://{GATEWAY}:18090/v1/models", "Bearer unprovisioned") == "200")
         check("internet via proxy", http_code(sid, "https://example.com/") == "200")
-        for port in (10260, 10250, 6443, 22):
+        for port in (5432, 18200, 22):
             got = http_code(sid, f"http://{GATEWAY}:{port}/")
             check(f"gateway :{port} refused", got in ("502", "403", "000"), got)
         leaks = guest(sid, "cat /proc/[0-9]*/environ 2>/dev/null | tr '\\0' '\\n' | grep -c 'Bearer gw-'; "
@@ -159,8 +159,8 @@ def main():
         _, listed = call("GET", f"?owner={SMOKE_ID}", None, 30, GW_ADMIN_TOKEN, GW_ADMIN)
         check("throwaway gw key deleted", code == 200 and listed.get("keys") == [], f"{code}")
     print("PASS" if not failed else f"FAILED: {', '.join(failed)}")
-    sys.exit(1 if failed else 0)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
