@@ -26,7 +26,7 @@ CLI, run as root on the host (secrets only on stdin):
 
 ```
 cocoonbox-api -config /etc/cocoonbox/api.yaml user add NAME [-id ID] [-admin]
-cocoonbox-api -config /etc/cocoonbox/api.yaml user delete NAME   # only a user who never had an API token; also deletes its state objects
+cocoonbox-api -config /etc/cocoonbox/api.yaml user delete NAME   # only a user who owns no box; also deletes its state objects
 printf '%s\n' "$PASSWORD" | cocoonbox-api -config /etc/cocoonbox/api.yaml user passwd NAME -stdin
 printf '%s\n' "$SHA256" | cocoonbox-api -config /etc/cocoonbox/api.yaml user token-sha256 NAME -stdin
 cocoonbox-api -config /etc/cocoonbox/api.yaml user set NAME|ID [-image IMAGE] [-delta=BOOL] [-no-park=BOOL] [-no-gc=BOOL]   # the user's policy; every api takes it at once

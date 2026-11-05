@@ -48,6 +48,7 @@ type connections interface {
 }
 
 type accountDeleter interface {
+	Boxes(owner string) []users.Box
 	Delete(ctx context.Context, id string) error
 }
 
@@ -97,10 +98,6 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 		return err
 	}
 	if verb == "delete" {
-		// A user who never had an API token never owned a box, so there is nothing to release.
-		if u.HasToken {
-			return errors.New("the user has an API token and may own a box: delete it in the console, which releases its boxes")
-		}
 		removed, deleteErr := removeUser(ctx, cfg, accounts, u)
 		if deleteErr != nil {
 			return deleteErr
@@ -194,6 +191,9 @@ func removeUser(ctx context.Context, cfg *config.Config, accounts *users.Service
 }
 
 func deleteUser(ctx context.Context, st store.Store, revoker connections, accounts accountDeleter, u users.User) (int, error) {
+	if len(accounts.Boxes(u.ID)) > 0 {
+		return 0, errors.New("the user owns boxes: delete it in the console, which releases them")
+	}
 	removed, err := boxes.DeleteState(ctx, st, u.ID)
 	if err != nil {
 		return 0, fmt.Errorf("delete state of %s: %w", u.Name, err)
