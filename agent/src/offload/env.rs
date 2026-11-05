@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncWriteExt;
 
-use super::{Layout, login_shell};
+use super::Layout;
 
 const STATE_FILE: &str = "env-state.json";
 const SPEC_FILE: &str = "env.json";
@@ -407,7 +407,11 @@ async fn mise_remote(dir: &Path, tool: &str) -> Vec<String> {
 
 /// A selection probe's stdout; `None` on failure or past `PROBE_TIMEOUT`, since the inbox waits on it.
 async fn probe(dir: &Path, cmd: &str) -> Option<String> {
-    tokio::time::timeout(PROBE_TIMEOUT, login_shell(dir, cmd))
+    let mut bash = tokio::process::Command::new("bash");
+    bash.current_dir(dir)
+        .env("MISE_TRUSTED_CONFIG_PATHS", dir)
+        .env("MISE_YES", "1");
+    tokio::time::timeout(PROBE_TIMEOUT, super::shell(&mut bash, cmd))
         .await
         .ok()?
         .ok()
