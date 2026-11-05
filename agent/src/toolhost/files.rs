@@ -8,7 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 
 use super::rpc;
 use crate::sys;
@@ -16,6 +16,8 @@ use crate::sys;
 const READ_LINES: usize = 2000;
 const LINE_CHARS: usize = 2000;
 const READ_BYTES: usize = 100_000;
+const LINE_KEPT: usize = LINE_CHARS * 4;
+const BINARY_PROBE: usize = 8192;
 const LIST_ENTRIES: usize = 500;
 const BROWSERS: [&str; 3] = ["Chrome", "Chromium", "Firefox"];
 const NAME_EDGES: [char; 13] = [
@@ -99,37 +101,35 @@ pub async fn read(
 ) -> Result<String, String> {
     let a: ReadArgs = rpc::parse(args)?;
     let path = resolve(workspace, &a.path);
-    let data = if a.workspace_only {
-        let mut data = Vec::new();
+    let failed = |e: io::Error| format!("read {}: {e}", path.display());
+    let file = if a.workspace_only {
         tokio::fs::File::from_std(open_beneath(workspace, hidden, &path, false)?)
-            .read_to_end(&mut data)
-            .await
-            .map(|_| data)
     } else {
-        tokio::fs::read(&path).await
-    }
-    .map_err(|e| format!("read {}: {e}", path.display()))?;
-    if data.iter().take(8192).any(|&b| b == 0) {
+        tokio::fs::File::open(&path).await.map_err(failed)?
+    };
+    let mut r = BufReader::with_capacity(BINARY_PROBE, file);
+    if r.fill_buf().await.map_err(failed)?.contains(&0) {
+        let size = r.get_ref().metadata().await.map_err(failed)?.len();
         return Ok(format!(
-            "{} is a binary file of {} bytes",
-            path.display(),
-            data.len()
+            "{} is a binary file of {size} bytes",
+            path.display()
         ));
     }
-    let text = String::from_utf8_lossy(&data);
     let start = a.offset.unwrap_or(1).max(1);
     let limit = a.limit.unwrap_or(READ_LINES).clamp(1, READ_LINES);
-    let mut out = String::new();
-    let mut shown = 0;
-    let mut total = 0;
-    for (i, line) in text.lines().enumerate() {
-        total = i + 1;
-        if total < start || shown >= limit || out.len() >= READ_BYTES {
+    let (mut out, mut line) = (String::new(), Vec::new());
+    let (mut total, mut shown, mut more) = (0, 0, false);
+    while let Some(chars) = next_line(&mut r, &mut line).await.map_err(failed)? {
+        total += 1;
+        if total < start {
             continue;
         }
-        let chars = line.chars().count();
+        if shown >= limit || out.len() >= READ_BYTES {
+            more = true;
+            break;
+        }
         let _ = write!(out, "{total:>6}\t");
-        out.extend(line.chars().take(LINE_CHARS));
+        out.extend(String::from_utf8_lossy(&line).chars().take(LINE_CHARS));
         if chars > LINE_CHARS {
             let _ = write!(out, " [line cut: {LINE_CHARS} of {chars} characters shown]");
         }
@@ -142,11 +142,11 @@ pub async fn read(
             path.display()
         ));
     }
-    let last = start + shown - 1;
-    if last < total {
+    if more {
+        let last = start + shown - 1;
         let _ = writeln!(
             out,
-            "[showing lines {start}-{last} of {total}; pass offset to read more]"
+            "[showing lines {start}-{last}; pass offset to read more]"
         );
     }
     Ok(out)
@@ -382,6 +382,36 @@ fn open_beneath(
     Ok(file)
 }
 
+async fn next_line(
+    r: &mut (impl AsyncBufRead + Unpin),
+    line: &mut Vec<u8>,
+) -> io::Result<Option<usize>> {
+    line.clear();
+    let (mut chars, mut bytes, mut ended, mut cr) = (0, 0, false, false);
+    while !ended {
+        let buf = r.fill_buf().await?;
+        if buf.is_empty() {
+            break;
+        }
+        let end = buf.iter().position(|&b| b == b'\n');
+        let part = &buf[..end.unwrap_or(buf.len())];
+        chars += part.iter().filter(|&&b| b & 0xC0 != 0x80).count();
+        bytes += part.len();
+        cr = part.last().map_or(cr, |&b| b == b'\r');
+        line.extend_from_slice(&part[..part.len().min(LINE_KEPT - line.len())]);
+        ended = end.is_some();
+        let used = end.map_or(buf.len(), |i| i + 1);
+        r.consume(used);
+    }
+    if cr {
+        chars -= 1;
+        if bytes <= LINE_KEPT {
+            line.pop();
+        }
+    }
+    Ok((ended || bytes > 0).then_some(chars))
+}
+
 /// The entries of the directory `path`, as [`sys::list_dir`] gives them.
 async fn list_path(path: &Path) -> io::Result<Vec<sys::Listed>> {
     let mut dir = tokio::fs::read_dir(path).await?;
@@ -498,6 +528,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_stops_at_its_caps_without_reading_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.log");
+        std::fs::write(&path, "line\r\n".repeat(READ_LINES + 1)).unwrap();
+        File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(1 << 36)
+            .unwrap();
+        let out = read(dir.path(), None, json!({"path": "big.log"}))
+            .await
+            .unwrap();
+        assert!(out.starts_with("     1\tline\n     2\tline\n"), "{out:.40}");
+        assert!(
+            out.ends_with(&format!(
+                "[showing lines 1-{READ_LINES}; pass offset to read more]\n"
+            )),
+            "{}",
+            &out[out.len() - 80..]
+        );
+    }
+
+    #[tokio::test]
     async fn write_read_edit_list_round_trip() {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path();
@@ -512,7 +566,7 @@ mod tests {
         .await
         .unwrap();
         assert!(out.starts_with("     2\ttwo\n"), "{out}");
-        assert!(out.contains("showing lines 2-2 of 3"), "{out}");
+        assert!(out.contains("[showing lines 2-2; pass offset"), "{out}");
         let err = edit(
             ws,
             json!({"path": "a/b.txt", "old_string": "two", "new_string": "2"}),
