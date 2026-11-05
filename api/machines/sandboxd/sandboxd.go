@@ -1499,17 +1499,11 @@ func (b *Backend) differences(ctx context.Context) ([]string, error) {
 		table = b.opts.Shared.Machines
 	}
 	b.mu.Lock()
-	entries := make([]entry, 0, len(b.entries))
+	want := make(map[string]cluster.Machine, len(b.entries))
 	for _, e := range b.entries {
-		copied := *e
-		copied.meta, copied.env = maps.Clone(e.meta), maps.Clone(e.env)
-		entries = append(entries, copied)
-	}
-	b.mu.Unlock()
-	want := make(map[string]cluster.Machine, len(entries))
-	for _, e := range entries {
 		want[e.id] = e.record()
 	}
+	b.mu.Unlock()
 	rows, err := table(ctx)
 	if err != nil {
 		return nil, err
