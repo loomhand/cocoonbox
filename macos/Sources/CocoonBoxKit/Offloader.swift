@@ -69,16 +69,14 @@ public struct BoxSession: Sendable, Equatable {
 }
 
 public struct OffloadRequest: Sendable {
-    // directory is in the repo to offload; nil offloads an app local agent's session, which has no repo.
-    public var directory: URL?
-    public var agent: String?
+    // directory is in the repo to offload.
+    public var directory: URL
     public var kind: OffloadKind
     public var handover: String
     public var yes: Bool
 
-    public init(directory: URL?, agent: String? = nil, kind: OffloadKind, handover: String, yes: Bool) {
+    public init(directory: URL, kind: OffloadKind, handover: String, yes: Bool) {
         self.directory = directory
-        self.agent = agent
         self.kind = kind
         self.handover = handover
         self.yes = yes
@@ -99,7 +97,7 @@ public struct BackOutcome: Sendable {
     public var record: OffloadRecord
     public var handover: String
     public var file: URL
-    public var landing: GitRepo.Landing?
+    public var landing: GitRepo.Landing
 }
 
 // Offloader is the Mac packer: preflight, snapshot, transfer and back, over Session.Exec, rsync and git.
@@ -139,35 +137,24 @@ public struct Offloader: Sendable {
             lap = Date()
         }
         var findings = Preflight.image(box.image).map { [$0] } ?? []
-        let repo: GitRepo?
-        let key: String
-        if let directory = request.directory {
-            guard let found = GitRepo.open(directory, environment: environment) else {
-                throw OffloadError.refused([Finding(check: "git", outcome: .block, detail: "\(directory.path) is not in a git repository")])
-            }
-            repo = found
-            key = found.key
-        } else {
-            guard let agent = request.agent else { throw OffloadError.failed("an offload without a repo needs the local agent's id") }
-            repo = nil
-            key = OffloadNames.agentKey(agent)
+        guard let repo = GitRepo.open(request.directory, environment: environment) else {
+            throw OffloadError.refused([Finding(check: "git", outcome: .block, detail: "\(request.directory.path) is not in a git repository")])
         }
+        let key = repo.key
         let stage = try store.directory(key)
         let excludes = stage.appendingPathComponent("excludes")
         defer { try? FileManager.default.removeItem(at: excludes) }
-        if let repo {
-            findings += Preflight.mac(repo: repo, handover: request.handover, optedIn: store.secrets(key), environment: environment)
-            try Data(try repo.ignored().map { "/" + Self.escape($0) + "\n" }.joined().utf8).write(to: excludes)
-            if !store.sizeConfirmed(key), let size = Preflight.size(try dryRun(repo, excludes: excludes, stage: stage)) { findings.append(size) }
-        }
+        findings += Preflight.mac(repo: repo, handover: request.handover, optedIn: store.secrets(key), environment: environment)
+        try Data(try repo.ignored().map { "/" + Self.escape($0) + "\n" }.joined().utf8).write(to: excludes)
+        if !store.sizeConfirmed(key), let size = Preflight.size(try dryRun(repo, excludes: excludes, stage: stage)) { findings.append(size) }
         mark("preflight")
         guard !findings.contains(where: { $0.outcome == .block }) else { throw OffloadError.refused(findings) }
 
         let id = OffloadNames.newID()
-        let name = repo.map { OffloadNames.copyName($0.top) } ?? key
+        let name = OffloadNames.copyName(repo.top)
         let begin: [String: Any]
         do {
-            begin = try await verb(["begin", "--repo", key, "--name", name, "--kind", request.kind.rawValue, "--id", id] + (repo == nil ? ["--no-repo"] : []))
+            begin = try await verb(["begin", "--repo", key, "--name", name, "--kind", request.kind.rawValue, "--id", id])
         } catch OffloadError.box(let code, let message, let reply) where code == "refused" {
             let refusal = Self.findings(reply)
             throw OffloadError.refused(findings + (refusal.isEmpty ? [Finding(check: "box", outcome: .block, detail: message)] : refusal))
@@ -186,39 +173,37 @@ public struct Offloader: Sendable {
         let refs = ["refs/cocoonbox/offload/\(id)", "refs/cocoonbox/index/\(id)"]
         let bundle = stage.appendingPathComponent("offload.bundle")
         defer { try? FileManager.default.removeItem(at: bundle) }
-        var record = OffloadRecord(id: id, repo: key, box: box.id, boxName: box.name, name: name, dir: dir, kind: request.kind, base: nil,
-                                   top: repo?.top.path, startedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+        let record: OffloadRecord
         var sent: Int64 = 0
         var sending = false
         let reply: [String: Any]
         do {
             var members: [(String, ExecFrames.Part)] = [("handover.md", .bytes(Data(request.handover.utf8)))]
-            if let repo {
-                let index = stage.appendingPathComponent("snapshot.index")
-                let snapshot = try repo.snapshot(index: index, message: "cocoonbox offload \(id)")
-                record.base = snapshot
-                try repo.git("update-ref", refs[0], snapshot)
-                try repo.keepIndex(refs[1], scratch: index)
-                let env = EnvProbe.json(repo.top, environment: environment)
-                try env.write(to: stage.appendingPathComponent("env.json"))
-                members.append(("env.json", .bytes(env)))
-                mark("snapshot")
-                sent = try rsync(repo, to: dir, excludes: excludes)
-                mark("rsync")
-                if try repo.bundle(to: bundle, not: Array((begin["refs"] as? [String: String] ?? [:]).values)) {
-                    members.append(("offload.bundle", .file(bundle)))
-                    sent += (try FileManager.default.attributesOfItem(atPath: bundle.path)[.size] as? NSNumber)?.int64Value ?? 0
-                }
-                if repo.linked {
-                    members.append(("HEAD", .bytes(try Data(contentsOf: try repo.gitPath("HEAD")))))
-                    members.append(("index", .bytes(try Data(contentsOf: try repo.gitPath("index")))))
-                }
-                members += try secrets(store.secrets(key), top: repo.top).map { ($0.0, .bytes($0.1)) }
-                mark("bundle")
+            let index = stage.appendingPathComponent("snapshot.index")
+            let snapshot = try repo.snapshot(index: index, message: "cocoonbox offload \(id)")
+            record = OffloadRecord(id: id, repo: key, box: box.id, boxName: box.name, name: name, dir: dir, kind: request.kind, base: snapshot,
+                                   top: repo.top.path, startedAtMs: Int64(Date().timeIntervalSince1970 * 1000))
+            try repo.git("update-ref", refs[0], snapshot)
+            try repo.keepIndex(refs[1], scratch: index)
+            let env = EnvProbe.json(repo.top, environment: environment)
+            try env.write(to: stage.appendingPathComponent("env.json"))
+            members.append(("env.json", .bytes(env)))
+            mark("snapshot")
+            sent = try rsync(repo, to: dir, excludes: excludes)
+            mark("rsync")
+            if try repo.bundle(to: bundle, not: Array((begin["refs"] as? [String: String] ?? [:]).values)) {
+                members.append(("offload.bundle", .file(bundle)))
+                sent += (try FileManager.default.attributesOfItem(atPath: bundle.path)[.size] as? NSNumber)?.int64Value ?? 0
             }
+            if repo.linked {
+                members.append(("HEAD", .bytes(try Data(contentsOf: try repo.gitPath("HEAD")))))
+                members.append(("index", .bytes(try Data(contentsOf: try repo.gitPath("index")))))
+            }
+            members += try secrets(store.secrets(key), top: repo.top).map { ($0.0, .bytes($0.1)) }
+            mark("bundle")
             try store.save(record)
             sending = true
-            reply = try await verb(["send", "--repo", key, "--kind", request.kind.rawValue, "--id", id] + (repo == nil ? ["--no-repo"] : []), input: ExecFrames.tar(members))
+            reply = try await verb(["send", "--repo", key, "--kind", request.kind.rawValue, "--id", id], input: ExecFrames.tar(members))
             mark("send")
         } catch {
             // a send cut off in transit may have started the box CLI, so its record stays for back
@@ -226,7 +211,7 @@ public struct Offloader: Sendable {
                 throw OffloadError.failed("the connection broke while the box took the task (\(BoxConnection.describe(error))); check `cocoonbox offload status`, then offload again or bring it back")
             }
             store.remove(key)
-            refs.forEach { ref in _ = try? repo?.git("update-ref", "-d", ref) }
+            refs.forEach { ref in _ = try? repo.git("update-ref", "-d", ref) }
             throw error
         }
         if findings.contains(where: { $0.check == "size" }) { try? store.confirmSize(key) }
@@ -341,15 +326,12 @@ public struct Offloader: Sendable {
         }
         let file = try store.back(key)
         try Data(back!.body.utf8).write(to: file)
-        var landing: GitRepo.Landing?
-        if let base = record.base, let top = record.top {
-            guard let repo = GitRepo.open(URL(fileURLWithPath: top), environment: environment) else { throw OffloadError.failed("\(top) is no longer a git repository") }
-            let ref = "refs/cocoonbox/back/\(record.id)"
-            let fetch = try repo.run(["fetch", "-q", "box:\(record.dir)", "+refs/heads/*:refs/cocoonbox/box/*", "+\(ref):\(ref)"],
-                                     extra: credentials.merging(["GIT_SSH_COMMAND": rsh, "GIT_SSH_VARIANT": "simple"]) { $1 })
-            guard fetch.status == 0 else { throw OffloadError.failed("git fetch from the box failed (\(fetch.status)):\n\(fetch.error)") }
-            landing = try repo.land(id: record.id, base: base, box: ref, index: try store.directory(key).appendingPathComponent("snapshot.index"))
-        }
+        guard let repo = GitRepo.open(URL(fileURLWithPath: record.top), environment: environment) else { throw OffloadError.failed("\(record.top) is no longer a git repository") }
+        let ref = "refs/cocoonbox/back/\(record.id)"
+        let fetch = try repo.run(["fetch", "-q", "box:\(record.dir)", "+refs/heads/*:refs/cocoonbox/box/*", "+\(ref):\(ref)"],
+                                 extra: credentials.merging(["GIT_SSH_COMMAND": rsh, "GIT_SSH_VARIANT": "simple"]) { $1 })
+        guard fetch.status == 0 else { throw OffloadError.failed("git fetch from the box failed (\(fetch.status)):\n\(fetch.error)") }
+        let landing = try repo.land(id: record.id, base: record.base, box: ref, index: try store.directory(key).appendingPathComponent("snapshot.index"))
         _ = try await verb(["end", "--repo", key])
         store.remove(key)
         return BackOutcome(record: record, handover: back!.body, file: file, landing: landing)

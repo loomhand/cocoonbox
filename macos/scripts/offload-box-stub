@@ -91,9 +91,8 @@ def make_back(body):
     missing = [h for h in HEADINGS if h not in body.splitlines()]
     if missing:
         fail("refused", "the hand-over lacks " + ", ".join(missing), 3)
-    if not session.get("no_repo"):
-        copy = entry["dir"]
-        git(copy, "update-ref", "refs/cocoonbox/back/" + session["offload_id"], snapshot(copy, "cocoonbox back"))
+    copy = entry["dir"]
+    git(copy, "update-ref", "refs/cocoonbox/back/" + session["offload_id"], snapshot(copy, "cocoonbox back"))
     return post("back", body)
 
 
@@ -105,15 +104,11 @@ if verb == "begin":
     if entry.get("copy") in ("unreturned", "busy"):
         fail("refused", "bring the last offload back first", 3)
     if not entry:
-        if "no-repo" in flags:
-            name, path = opt["name"], os.path.join(os.environ["HOME"], "cocoonbox-agents", opt["kind"])
-        else:
-            taken = {e["name"] for e in index.values()}
-            name, n = opt["name"], 2
-            while name in taken:
-                name, n = f"{opt['name']}-{n}", n + 1
-            path = os.path.join(os.getcwd(), name)
-        entry = {"name": name, "dir": path}
+        taken = {e["name"] for e in index.values()}
+        name, n = opt["name"], 2
+        while name in taken:
+            name, n = f"{opt['name']}-{n}", n + 1
+        entry = {"name": name, "dir": os.path.join(os.getcwd(), name)}
     copy = "mirror" if os.path.isdir(entry["dir"]) else "absent"
     os.makedirs(entry["dir"], exist_ok=True)
     refs = {}
@@ -155,33 +150,32 @@ elif verb == "send":
             with open(target, "wb") as f:
                 f.write(tar.extractfile(member).read())
     copy = entry["dir"]
-    if "no-repo" not in flags:
-        dotgit = os.path.join(copy, ".git")
-        if "HEAD" in names and not os.path.isdir(dotgit):
-            git(copy, "init", "-q")
-        os.makedirs(os.path.join(dotgit, "objects/pack"), exist_ok=True)
-        os.makedirs(os.path.join(dotgit, "objects/info"), exist_ok=True)
-        if "offload.bundle" in names:
-            if "HEAD" in names:
-                git(copy, "fetch", "-q", "--update-head-ok", os.path.join(stage, "offload.bundle"), "+refs/*:refs/*")
-            else:
-                # the rsynced refs name commits the bundle brings, so `bundle unbundle` refuses
-                # the walk; index-pack takes the pack after the bundle's header as it is
-                data = open(os.path.join(stage, "offload.bundle"), "rb").read()
-                pack = data[data.index(b"\n\n") + 2:]
-                run = subprocess.run(["git", "-C", copy, "index-pack", "--stdin", "--fix-thin"], input=pack, capture_output=True)
-                if run.returncode != 0:
-                    fail("failed", "git index-pack: " + run.stderr.decode().strip(), 1)
-        for name in ("HEAD", "index"):
-            if name in names:
-                os.replace(os.path.join(stage, name), os.path.join(dotgit, name))
-        git(copy, "-c", "core.fsmonitor=false", "update-index", "-q", "--refresh", check=False)
-        s = "refs/cocoonbox/offload/" + opt["id"]
-        head = git(copy, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False)
-        parent = git(copy, "rev-parse", "-q", "--verify", s + "^", check=False)
-        work = snapshot(copy, "check")
-        if git(copy, "rev-parse", work + "^{tree}") != git(copy, "rev-parse", s + "^{tree}") or head != parent:
-            fail("failed", "the copy does not equal S", 1)
+    dotgit = os.path.join(copy, ".git")
+    if "HEAD" in names and not os.path.isdir(dotgit):
+        git(copy, "init", "-q")
+    os.makedirs(os.path.join(dotgit, "objects/pack"), exist_ok=True)
+    os.makedirs(os.path.join(dotgit, "objects/info"), exist_ok=True)
+    if "offload.bundle" in names:
+        if "HEAD" in names:
+            git(copy, "fetch", "-q", "--update-head-ok", os.path.join(stage, "offload.bundle"), "+refs/*:refs/*")
+        else:
+            # the rsynced refs name commits the bundle brings, so `bundle unbundle` refuses
+            # the walk; index-pack takes the pack after the bundle's header as it is
+            data = open(os.path.join(stage, "offload.bundle"), "rb").read()
+            pack = data[data.index(b"\n\n") + 2:]
+            run = subprocess.run(["git", "-C", copy, "index-pack", "--stdin", "--fix-thin"], input=pack, capture_output=True)
+            if run.returncode != 0:
+                fail("failed", "git index-pack: " + run.stderr.decode().strip(), 1)
+    for name in ("HEAD", "index"):
+        if name in names:
+            os.replace(os.path.join(stage, name), os.path.join(dotgit, name))
+    git(copy, "-c", "core.fsmonitor=false", "update-index", "-q", "--refresh", check=False)
+    s = "refs/cocoonbox/offload/" + opt["id"]
+    head = git(copy, "rev-parse", "-q", "--verify", "HEAD^{commit}", check=False)
+    parent = git(copy, "rev-parse", "-q", "--verify", s + "^", check=False)
+    work = snapshot(copy, "check")
+    if git(copy, "rev-parse", work + "^{tree}") != git(copy, "rev-parse", s + "^{tree}") or head != parent:
+        fail("failed", "the copy does not equal S", 1)
     for name in names:
         if name.startswith("secrets/"):
             target = os.path.join(os.environ["HOME"], "stub-secrets", key, name[len("secrets/"):])
@@ -197,7 +191,7 @@ elif verb == "send":
         os.replace(os.path.join(stage, "env.json"), os.path.join(state, key, "env.json"))
     entry["copy"] = "busy"
     save(index_path, index)
-    save(session_path, {"status": "working", "offload_id": opt["id"], "cli": opt["kind"], "no_repo": "no-repo" in flags})
+    save(session_path, {"status": "working", "offload_id": opt["id"], "cli": opt["kind"]})
     reply({"ok": True, "delivery": "started", "accepted": True, "tmux": f"cb-off-{key}-{opt['kind']}", "timings_ms": {}})
 
 elif verb == "post":

@@ -64,7 +64,7 @@ import Testing
         let template = try #require(skill.components(separatedBy: "```markdown\n").last?.components(separatedBy: "```").first)
         #expect(Handover.problems(template).isEmpty)
         #expect(files["cocoonbox/commands/offload.md"]?.contains("OFFLOAD") == true && files["cocoonbox/commands/back.md"]?.contains("BACK") == true)
-        #expect(!skill.contains("COCOONBOX_AGENT") && !skill.contains("--no-repo"))
+        #expect(!skill.contains("COCOONBOX_AGENT"))
     }
 
     @Test func thePastedOffloadRequestNamesTheHandoverAndTheKind() throws {

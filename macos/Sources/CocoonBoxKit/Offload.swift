@@ -139,9 +139,9 @@ public struct OffloadRecord: Codable, Equatable, Sendable {
     public var name: String
     public var dir: String
     public var kind: OffloadKind
-    // base is S, the snapshot the merge at back starts from; nil without a repo.
-    public var base: String?
-    public var top: String?
+    // base is S, the snapshot the merge at back starts from.
+    public var base: String
+    public var top: String
     public var startedAtMs: Int64
     // seen is the last outbox seq `offload inbox` showed.
     public var seen: UInt64 = 0
@@ -253,11 +253,6 @@ public enum OffloadNames {
     // repoKey is the first 12 hex of sha256 of the top level and the oldest root commit of HEAD.
     public static func repoKey(top: String, root: String) -> String {
         hex(Data("\(top)\n\(root)".utf8)).prefix(12).description
-    }
-
-    // agentKey names an app local agent's offload, which has no repo.
-    public static func agentKey(_ agent: String) -> String {
-        "agent-" + hex(Data(agent.utf8)).prefix(8)
     }
 
     // copyName is the box copy's name before the box adds a -2, -3 suffix.

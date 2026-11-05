@@ -1301,7 +1301,7 @@ func back() async {
         let outcome = try await packer.back(key, interrupt: flags.contains("--interrupt")) { entry in
             FileHandle.standardError.write(Data("box agent \(entry.kind) #\(entry.seq)\(entry.kind == "question" ? ":\n" + entry.body : "")\n".utf8))
         }
-        let landing = outcome.landing?.summary ?? "no repo"
+        let landing = outcome.landing.summary
         if json { return printJSON(["ok": true, "landing": landing, "handover": outcome.handover, "file": outcome.file.path, "offload_id": record.id]) }
         print(landing)
         print("The box agent's hand-over (also in \(outcome.file.path)):\n")

@@ -221,18 +221,6 @@ import Testing
         #expect(try box.sh("git branch --show-current", in: copy) == "feature")
     }
 
-    @Test func anAppLocalAgentOffloadsWithoutARepo() async throws {
-        let box = try await Harness.shared()
-        let agent = UUID().uuidString
-        let outcome = try await box.offloader().offload(OffloadRequest(directory: nil, agent: agent, kind: .claude, handover: Self.handover, yes: false))
-        #expect(outcome.record.repo == OffloadNames.agentKey(agent) && outcome.record.base == nil)
-        #expect(outcome.record.dir == box.boxHome.appendingPathComponent("cocoonbox-agents/claude").path)
-        try box.autoBack(true)
-        defer { try? box.autoBack(false) }
-        let back = try await box.offloader().back(outcome.record.repo, interrupt: false)
-        #expect(back.landing == nil && back.handover.contains("From: box"))
-    }
-
     @Test func anRshThatCannotStartReadsDifferentlyFromABoxSideFailure() async throws {
         let box = try await Harness.shared()
         let missing = try await Self.rsyncFailure(box, cli: "/nonexistent/cocoonbox", repo: "norsh")
@@ -383,7 +371,6 @@ import Testing
     @Test func namesFollowTheContract() {
         #expect(OffloadNames.repoKey(top: "/Users/me/src/app", root: "abc").count == 12)
         #expect(OffloadNames.copyName(URL(fileURLWithPath: "/x/..my repo!")) == "my-repo-")
-        #expect(OffloadNames.agentKey("A").hasPrefix("agent-") && OffloadNames.agentKey("A").count == 14)
         #expect(OffloadNames.newID().count == 12)
     }
 }

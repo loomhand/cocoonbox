@@ -62,7 +62,7 @@ struct OffloadRow: View {
     }
 
     static func repoName(_ record: OffloadRecord) -> String {
-        record.top.map { URL(fileURLWithPath: $0).lastPathComponent } ?? record.name
+        URL(fileURLWithPath: record.top).lastPathComponent
     }
 
     static func place(_ model: AppModel, _ record: OffloadRecord) -> String {
@@ -162,7 +162,7 @@ struct HelpLine: View {
     var body: some View {
         let command = "/cocoonbox:back"
         HStack(spacing: 8) {
-            Text("Bring this back from your terminal: \(command) (or cocoonbox back) in \(record.top ?? OffloadRow.repoName(record))")
+            Text("Bring this back from your terminal: \(command) (or cocoonbox back) in \(record.top)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
