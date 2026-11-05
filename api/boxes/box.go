@@ -92,7 +92,7 @@ func toBox(box string, m machines.Machine) *controlv1.Box {
 		State:         boxStates[m.State],
 		Image:         m.Image,
 		Flavor:        toFlavor(m.Flavor),
-		FailureReason: failureReason(m),
+		FailureReason: toObservation(m, controlv1.Phase_PHASE_UNSPECIFIED).reason,
 		CreatedAtMs:   m.CreatedAt.UnixMilli(),
 	}
 }
@@ -106,16 +106,6 @@ func toObservation(m machines.Machine, phase controlv1.Phase) observation {
 		obs.reason = cmp.Or(failureWords[phase], "machine failed")
 	}
 	return obs
-}
-
-func failureReason(m machines.Machine) string {
-	switch {
-	case atCapacity(m):
-		return machines.ErrCapacity.Error()
-	case m.State == machines.StateFailed:
-		return "machine failed"
-	}
-	return ""
 }
 
 func atCapacity(m machines.Machine) bool {

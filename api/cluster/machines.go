@@ -10,8 +10,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const machineColumns = `id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes, routed,
+const (
+	machineColumns = `id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes, routed,
 	ready, ready_restarts, env, version`
+	machineInsert = `INSERT INTO machines (id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes,
+	routed, ready, ready_restarts, env) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
+	machineSet = `owner = $2, image = $3, created_at = $4, claim = $5, owner_addr = $6, op = $7, op_err = $8, op_until = $9,
+	revision = $10, meta = $11, wakes = $12, routed = $13, ready = $14, ready_restarts = $15, env = $16,
+	version = nextval('machines_version'), updated_at = now()`
+)
 
 // Machine is a machine backend's record of one machine; Claim is the backend's own claim row, nil until it exists.
 type Machine struct {
@@ -94,11 +101,7 @@ func (s *Store) Machine(ctx context.Context, id string) (Machine, error) {
 func (s *Store) PutMachine(ctx context.Context, m Machine) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var version int64
-		if err := tx.QueryRow(ctx, `INSERT INTO machines (id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta, wakes,
-			routed, ready, ready_restarts, env) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-			ON CONFLICT (id) DO UPDATE SET owner = $2, image = $3, created_at = $4, claim = $5, owner_addr = $6, op = $7, op_err = $8,
-			op_until = $9, revision = $10, meta = $11, wakes = $12, routed = $13, ready = $14, ready_restarts = $15, env = $16,
-			version = nextval('machines_version'), updated_at = now() RETURNING version`, machineArgs(m)...).Scan(&version); err != nil {
+		if err := tx.QueryRow(ctx, machineInsert+" ON CONFLICT (id) DO UPDATE SET "+machineSet+" RETURNING version", machineArgs(m)...).Scan(&version); err != nil {
 			return fmt.Errorf("put machine %s: %w", m.ID, err)
 		}
 		return notifyChange(ctx, tx, ChannelMachines, Change{ID: m.ID, Version: version})
@@ -116,11 +119,12 @@ func (s *Store) UpdateMachine(ctx context.Context, id string, edit func(m *Machi
 		if !found {
 			m = Machine{ID: id}
 		}
+		version := m.Version
 		write, err := edit(&m, found)
 		if err != nil || !write {
 			return m, err
 		}
-		m.ID = id
+		m.ID, m.Version = id, version
 		next, err := s.writeMachine(ctx, m, found)
 		if !errors.Is(err, ErrStale) {
 			return next, err
@@ -172,14 +176,10 @@ func (s *Store) writeMachine(ctx context.Context, m Machine, found bool) (Machin
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		if found {
-			err = tx.QueryRow(ctx, `UPDATE machines SET owner = $2, image = $3, created_at = $4, claim = $5, owner_addr = $6, op = $7, op_err = $8,
-				op_until = $9, revision = $10, meta = $11, wakes = $12, routed = $13, ready = $14, ready_restarts = $15, env = $16,
-				version = nextval('machines_version'), updated_at = now() WHERE id = $1 AND version = $17 RETURNING version`,
+			err = tx.QueryRow(ctx, "UPDATE machines SET "+machineSet+" WHERE id = $1 AND version = $17 RETURNING version",
 				append(machineArgs(m), m.Version)...).Scan(&m.Version)
 		} else {
-			err = tx.QueryRow(ctx, `INSERT INTO machines (id, owner, image, created_at, claim, owner_addr, op, op_err, op_until, revision, meta,
-				wakes, routed, ready, ready_restarts, env) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-				ON CONFLICT (id) DO NOTHING RETURNING version`, machineArgs(m)...).Scan(&m.Version)
+			err = tx.QueryRow(ctx, machineInsert+" ON CONFLICT (id) DO NOTHING RETURNING version", machineArgs(m)...).Scan(&m.Version)
 		}
 		switch {
 		case errors.Is(err, pgx.ErrNoRows):

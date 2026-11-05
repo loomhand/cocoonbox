@@ -599,7 +599,6 @@ func (b *Backend) mutate(ctx context.Context, id string, fn func(e *entry) (*ent
 		if rec.Equal(*m) {
 			return false, nil
 		}
-		rec.Version = m.Version
 		*m = rec
 		return true, nil
 	})
