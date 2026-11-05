@@ -245,7 +245,6 @@ func (m *MCP) rewrite(pr *httputil.ProxyRequest, rt route, box string) {
 	pr.Out.Header.Del("Authorization")
 	pr.Out.Header.Del(auth.HeaderGuestToken)
 	pr.Out.Header.Del(credential.Header)
-	pr.Out.Header.Del(HeaderEdgeToken)
 	switch {
 	case rt.wake == "":
 	case rt.grant != nil:

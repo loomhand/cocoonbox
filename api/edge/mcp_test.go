@@ -28,7 +28,6 @@ func TestMCPPostRoundTrip(t *testing.T) {
 	env := newMCPEnv(t)
 	req := env.request(t, http.MethodPost, boxes.BoxID("alice")+"/extra?x=1", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
 	req.Header.Set("Mcp-Session-Id", "s0")
-	req.Header.Set(HeaderEdgeToken, "forged")
 	req.Header.Set(credential.Header, "forged")
 	env.resolver.wake = "w1"
 	resp := env.do(t, req)
@@ -42,7 +41,7 @@ func TestMCPPostRoundTrip(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	want := map[string]string{
-		"path": "/mcp/extra", "query": "x=1", "session": "s0", "edge_token": "", "authorization": "",
+		"path": "/mcp/extra", "query": "x=1", "session": "s0", "authorization": "",
 		"credential": "cred:" + boxes.BoxID("alice") + ":w1",
 		"body":       `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
 	}
@@ -435,7 +434,7 @@ func (f *fakeMCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.MarshalWrite(w, map[string]string{
 		"path": r.URL.Path, "query": r.URL.RawQuery, "session": r.Header.Get("Mcp-Session-Id"),
-		"edge_token": r.Header.Get(HeaderEdgeToken), "authorization": r.Header.Get("Authorization"), "body": string(body),
+		"authorization": r.Header.Get("Authorization"), "body": string(body),
 		"credential": r.Header.Get(credential.Header), "guest": r.Header.Get(auth.HeaderGuestToken),
 	})
 }

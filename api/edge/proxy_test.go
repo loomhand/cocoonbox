@@ -35,13 +35,9 @@ const aliceToken = "alice-secret"
 func TestUnaryRewritesHeaders(t *testing.T) {
 	env := newProxyEnv(t)
 	var header, trailer metadata.MD
-	ctx := metadata.AppendToOutgoingContext(env.aliceCtx(t), HeaderEdgeToken, "forged")
-	resp, err := env.client.Hello(ctx, &agentv1.HelloRequest{ClientVersion: "test"}, grpc.Header(&header), grpc.Trailer(&trailer))
+	resp, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{ClientVersion: "test"}, grpc.Header(&header), grpc.Trailer(&trailer))
 	if err != nil {
 		t.Fatalf("Hello: %v", err)
-	}
-	if resp.GetAgentVersion() != "" {
-		t.Errorf("agent saw edge token %q, want none", resp.GetAgentVersion())
 	}
 	if len(resp.GetModels()) != 0 {
 		t.Errorf("agent saw authorization %v, want none", resp.GetModels())
@@ -557,7 +553,6 @@ func (fakeCreds) ShareCredential(box, wake, principal string) string {
 	return "cred:" + box + ":" + wake + ":" + principal
 }
 
-// fakeAgent echoes what the edge delivered: Hello returns any edge token header as agent_version, authorization values as models and the box header as default_main_model.
 type fakeAgent struct {
 	agentv1.UnimplementedSessionServer
 	calls    atomic.Int64
@@ -574,7 +569,6 @@ func (a *fakeAgent) Hello(ctx context.Context, _ *agentv1.HelloRequest) (*agentv
 		return nil, err
 	}
 	return &agentv1.HelloResponse{
-		AgentVersion:     first(md.Get(HeaderEdgeToken)),
 		Models:           md.Get(auth.HeaderAuthorization),
 		DefaultMainModel: strings.TrimSpace(first(md.Get(HeaderBox)) + " " + first(md.Get(credential.Header))),
 	}, nil

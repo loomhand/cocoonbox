@@ -24,8 +24,6 @@ import (
 const (
 	// HeaderBox names the target box of an agent call.
 	HeaderBox = "x-cocoonbox-box"
-	// HeaderEdgeToken names the retired shared agent secret; the edge strips it from clients.
-	HeaderEdgeToken = "x-cocoonbox-edge-token" //nolint:gosec // a header name, not a credential
 	// MaxMessageSize bounds one proxied frame in either direction.
 	MaxMessageSize = dialer.MaxMessageSize
 
@@ -38,7 +36,7 @@ const (
 	maxScreensPerBox = 8
 )
 
-var droppedHeaders = []string{auth.HeaderAuthorization, HeaderEdgeToken, credential.Header, "content-type", "user-agent", "te"}
+var droppedHeaders = []string{auth.HeaderAuthorization, credential.Header, "content-type", "user-agent", "te"}
 
 // Resolver maps a caller and box id to the box agent's endpoint and the wake id its credential names.
 type Resolver interface {
