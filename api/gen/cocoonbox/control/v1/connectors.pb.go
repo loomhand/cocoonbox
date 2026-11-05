@@ -138,7 +138,7 @@ type CatalogEntry struct {
 	Available bool `protobuf:"varint,4,opt,name=available,proto3" json:"available,omitempty"`
 	// Where the user picks the repositories of the GitHub App; empty otherwise.
 	InstallUrl string `protobuf:"bytes,5,opt,name=install_url,json=installUrl,proto3" json:"install_url,omitempty"`
-	// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection (M5.2).
+	// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection.
 	GrantOnly bool `protobuf:"varint,6,opt,name=grant_only,json=grantOnly,proto3" json:"grant_only,omitempty"`
 	// The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.
 	Checkable bool `protobuf:"varint,7,opt,name=checkable,proto3" json:"checkable,omitempty"`

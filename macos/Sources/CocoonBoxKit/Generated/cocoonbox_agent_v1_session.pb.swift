@@ -66,10 +66,9 @@ public nonisolated enum Cocoonbox_Agent_V1_ExecSignal: SwiftProtobuf.Enum, Swift
 /// Automation is what the box's screen is, from the guide its image holds.
 public nonisolated enum Cocoonbox_Agent_V1_Automation: SwiftProtobuf.Enum, Swift.CaseIterable {
   public typealias RawValue = Int
-  case unspecified // = 0
 
-  /// A desktop driven through cua-driver only.
-  case plain // = 1
+  /// A box without a guide: shell and files only.
+  case unspecified // = 0
 
   /// A desktop that runs GUI plans and scripts on the desk runtime.
   case desk // = 2
@@ -85,7 +84,6 @@ public nonisolated enum Cocoonbox_Agent_V1_Automation: SwiftProtobuf.Enum, Swift
   public init?(rawValue: Int) {
     switch rawValue {
     case 0: self = .unspecified
-    case 1: self = .plain
     case 2: self = .desk
     case 3: self = .android
     default: self = .UNRECOGNIZED(rawValue)
@@ -95,7 +93,6 @@ public nonisolated enum Cocoonbox_Agent_V1_Automation: SwiftProtobuf.Enum, Swift
   public var rawValue: Int {
     switch self {
     case .unspecified: return 0
-    case .plain: return 1
     case .desk: return 2
     case .android: return 3
     case .UNRECOGNIZED(let i): return i
@@ -105,7 +102,6 @@ public nonisolated enum Cocoonbox_Agent_V1_Automation: SwiftProtobuf.Enum, Swift
   // The compiler won't synthesize support with the UNRECOGNIZED case.
   public static let allCases: [Cocoonbox_Agent_V1_Automation] = [
     .unspecified,
-    .plain,
     .desk,
     .android,
   ]
@@ -622,7 +618,7 @@ public nonisolated struct Cocoonbox_Agent_V1_OffloadUpdate: Sendable {
   /// The directory name under /workspace.
   public var name: String = String()
 
-  /// The box CLI: "claude", "codex" or "cursor".
+  /// The box CLI: "claude" or "codex".
   public var cli: String = String()
 
   public var offloadID: String = String()
@@ -784,7 +780,7 @@ nonisolated extension Cocoonbox_Agent_V1_ExecSignal: SwiftProtobuf._ProtoNamePro
 }
 
 nonisolated extension Cocoonbox_Agent_V1_Automation: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AUTOMATION_UNSPECIFIED\0\u{1}AUTOMATION_PLAIN\0\u{1}AUTOMATION_DESK\0\u{1}AUTOMATION_ANDROID\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0AUTOMATION_UNSPECIFIED\0\u{2}\u{2}AUTOMATION_DESK\0\u{1}AUTOMATION_ANDROID\0")
 }
 
 nonisolated extension Cocoonbox_Agent_V1_OffloadEntry: SwiftProtobuf._ProtoNameProviding {

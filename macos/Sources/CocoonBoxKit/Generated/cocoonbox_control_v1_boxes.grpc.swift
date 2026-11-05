@@ -362,7 +362,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Delete saves the box quiesced when it runs, then removes its machine and
-        /// > the box. Its saved state stays in object storage.
+        /// > the box. The GC removes its saved state after state.gc.deleted_retention.
         ///
         /// - Parameters:
         ///   - request: A streaming request of `Cocoonbox_Control_V1_BoxRef` messages.
@@ -691,7 +691,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Delete saves the box quiesced when it runs, then removes its machine and
-        /// > the box. Its saved state stays in object storage.
+        /// > the box. The GC removes its saved state after state.gc.deleted_retention.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
@@ -1018,7 +1018,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Delete saves the box quiesced when it runs, then removes its machine and
-        /// > the box. Its saved state stays in object storage.
+        /// > the box. The GC removes its saved state after state.gc.deleted_retention.
         ///
         /// - Parameters:
         ///   - request: A `Cocoonbox_Control_V1_BoxRef` message.
@@ -2019,7 +2019,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Delete saves the box quiesced when it runs, then removes its machine and
-        /// > the box. Its saved state stays in object storage.
+        /// > the box. The GC removes its saved state after state.gc.deleted_retention.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
@@ -2479,7 +2479,7 @@ extension Cocoonbox_Control_V1_Boxes {
         /// > Source IDL Documentation:
         /// >
         /// > Delete saves the box quiesced when it runs, then removes its machine and
-        /// > the box. Its saved state stays in object storage.
+        /// > the box. The GC removes its saved state after state.gc.deleted_retention.
         ///
         /// - Parameters:
         ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
@@ -3068,7 +3068,7 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Delete saves the box quiesced when it runs, then removes its machine and
-    /// > the box. Its saved state stays in object storage.
+    /// > the box. The GC removes its saved state after state.gc.deleted_retention.
     ///
     /// - Parameters:
     ///   - request: A request containing a single `Cocoonbox_Control_V1_BoxRef` message.
@@ -3593,7 +3593,7 @@ extension Cocoonbox_Control_V1_Boxes.ClientProtocol {
     /// > Source IDL Documentation:
     /// >
     /// > Delete saves the box quiesced when it runs, then removes its machine and
-    /// > the box. Its saved state stays in object storage.
+    /// > the box. The GC removes its saved state after state.gc.deleted_retention.
     ///
     /// - Parameters:
     ///   - message: request message to send.

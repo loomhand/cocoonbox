@@ -241,7 +241,7 @@ public nonisolated struct Cocoonbox_Control_V1_Box: Sendable {
   /// Time of the latest user-state snapshot in object storage; 0 before the first.
   public var lastSavedAtMs: Int64 = 0
 
-  /// Image a new box gets today, and the default Rebase target; differs from image when an upgrade is available.
+  /// The default Rebase target: the user's own image of the box's family, else that family's newest offered image.
   public var latestImage: String = String()
 
   /// Unique among the user's boxes.
@@ -299,7 +299,7 @@ public nonisolated struct Cocoonbox_Control_V1_CreateBoxRequest: Sendable {
 
   public var name: String = String()
 
-  /// Empty selects the current default image.
+  /// Empty selects the user's own image, else the default image; a family selects its newest offered image.
   public var image: String = String()
 
   public var flavor: Cocoonbox_Control_V1_Flavor {
@@ -371,7 +371,7 @@ public nonisolated struct Cocoonbox_Control_V1_RebaseRequest: Sendable {
 
   public var boxID: String = String()
 
-  /// Target image; empty selects the current default image.
+  /// Target image; empty selects the box's latest_image.
   public var image: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

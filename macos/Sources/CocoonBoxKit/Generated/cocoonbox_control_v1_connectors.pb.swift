@@ -128,7 +128,7 @@ public nonisolated struct Cocoonbox_Control_V1_CatalogEntry: Sendable {
   /// Where the user picks the repositories of the GitHub App; empty otherwise.
   public var installURL: String = String()
 
-  /// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection (M5.2).
+  /// The vendor has no MCP server the api uses: the grant serves no tools, and programs in the box will use it through egress injection.
   public var grantOnly: Bool = false
 
   /// The console can check the grant against the vendor's user endpoint, refreshing it first when it is near expiry.

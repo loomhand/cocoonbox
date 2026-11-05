@@ -319,7 +319,7 @@ type Box struct {
 	CreatedAtMs   int64                  `protobuf:"varint,6,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
 	// Time of the latest user-state snapshot in object storage; 0 before the first.
 	LastSavedAtMs int64 `protobuf:"varint,7,opt,name=last_saved_at_ms,json=lastSavedAtMs,proto3" json:"last_saved_at_ms,omitempty"`
-	// Image a new box gets today, and the default Rebase target; differs from image when an upgrade is available.
+	// The default Rebase target: the user's own image of the box's family, else that family's newest offered image.
 	LatestImage string `protobuf:"bytes,8,opt,name=latest_image,json=latestImage,proto3" json:"latest_image,omitempty"`
 	// Unique among the user's boxes.
 	Name          string `protobuf:"bytes,9,opt,name=name,proto3" json:"name,omitempty"`
@@ -528,7 +528,7 @@ func (x *EnsureRequest) GetBoxId() string {
 type CreateBoxRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	// Empty selects the current default image.
+	// Empty selects the user's own image, else the default image; a family selects its newest offered image.
 	Image         string  `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
 	Flavor        *Flavor `protobuf:"bytes,3,opt,name=flavor,proto3" json:"flavor,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -694,7 +694,7 @@ func (x *EnsureResponse) GetOperation() *Operation {
 type RebaseRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	BoxId string                 `protobuf:"bytes,1,opt,name=box_id,json=boxId,proto3" json:"box_id,omitempty"`
-	// Target image; empty selects the current default image.
+	// Target image; empty selects the box's latest_image.
 	Image         string `protobuf:"bytes,2,opt,name=image,proto3" json:"image,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

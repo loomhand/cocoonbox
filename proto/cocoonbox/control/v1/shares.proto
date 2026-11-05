@@ -29,7 +29,7 @@ message Share {
   bool write = 4;
   int64 expires_at_ms = 5;
   int64 created_at_ms = 6;
-  // `cbs_` and 32 hex digits; empty for a share created before the api kept secrets.
+  // `cbs_` and 32 hex digits.
   string secret = 7;
 }
 

@@ -54,7 +54,7 @@ type BoxesClient interface {
 	Create(ctx context.Context, in *CreateBoxRequest, opts ...grpc.CallOption) (*EnsureResponse, error)
 	Rename(ctx context.Context, in *RenameBoxRequest, opts ...grpc.CallOption) (*Box, error)
 	// Delete saves the box quiesced when it runs, then removes its machine and
-	// the box. Its saved state stays in object storage.
+	// the box. The GC removes its saved state after state.gc.deleted_retention.
 	Delete(ctx context.Context, in *BoxRef, opts ...grpc.CallOption) (*Operation, error)
 	Get(ctx context.Context, in *GetBoxRequest, opts ...grpc.CallOption) (*Box, error)
 	List(ctx context.Context, in *ListBoxesRequest, opts ...grpc.CallOption) (*ListBoxesResponse, error)
@@ -314,7 +314,7 @@ type BoxesServer interface {
 	Create(context.Context, *CreateBoxRequest) (*EnsureResponse, error)
 	Rename(context.Context, *RenameBoxRequest) (*Box, error)
 	// Delete saves the box quiesced when it runs, then removes its machine and
-	// the box. Its saved state stays in object storage.
+	// the box. The GC removes its saved state after state.gc.deleted_retention.
 	Delete(context.Context, *BoxRef) (*Operation, error)
 	Get(context.Context, *GetBoxRequest) (*Box, error)
 	List(context.Context, *ListBoxesRequest) (*ListBoxesResponse, error)

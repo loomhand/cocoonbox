@@ -97,9 +97,10 @@ message HelloResponse {
 
 // Automation is what the box's screen is, from the guide its image holds.
 enum Automation {
+  reserved 1;
+  reserved "AUTOMATION_PLAIN";
+  // A box without a guide: shell and files only.
   AUTOMATION_UNSPECIFIED = 0;
-  // A desktop driven through cua-driver only.
-  AUTOMATION_PLAIN = 1;
   // A desktop that runs GUI plans and scripts on the desk runtime.
   AUTOMATION_DESK = 2;
   // An Android phone in the box, driven through adb.
@@ -156,7 +157,7 @@ message OffloadUpdate {
   string repo = 1;
   // The directory name under /workspace.
   string name = 2;
-  // The box CLI: "claude", "codex" or "cursor".
+  // The box CLI: "claude" or "codex".
   string cli = 3;
   string offload_id = 4;
   // Unspecified for a status change.

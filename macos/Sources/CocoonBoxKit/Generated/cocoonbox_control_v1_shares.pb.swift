@@ -38,7 +38,7 @@ public nonisolated struct Cocoonbox_Control_V1_Share: Sendable {
 
   public var createdAtMs: Int64 = 0
 
-  /// `cbs_` and 32 hex digits; empty for a share created before the api kept secrets.
+  /// `cbs_` and 32 hex digits.
   public var secret: String = String()
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()

@@ -74,9 +74,8 @@ func (ExecSignal) EnumDescriptor() ([]byte, []int) {
 type Automation int32
 
 const (
+	// A box without a guide: shell and files only.
 	Automation_AUTOMATION_UNSPECIFIED Automation = 0
-	// A desktop driven through cua-driver only.
-	Automation_AUTOMATION_PLAIN Automation = 1
 	// A desktop that runs GUI plans and scripts on the desk runtime.
 	Automation_AUTOMATION_DESK Automation = 2
 	// An Android phone in the box, driven through adb.
@@ -87,13 +86,11 @@ const (
 var (
 	Automation_name = map[int32]string{
 		0: "AUTOMATION_UNSPECIFIED",
-		1: "AUTOMATION_PLAIN",
 		2: "AUTOMATION_DESK",
 		3: "AUTOMATION_ANDROID",
 	}
 	Automation_value = map[string]int32{
 		"AUTOMATION_UNSPECIFIED": 0,
-		"AUTOMATION_PLAIN":       1,
 		"AUTOMATION_DESK":        2,
 		"AUTOMATION_ANDROID":     3,
 	}
@@ -1273,7 +1270,7 @@ type OffloadUpdate struct {
 	Repo string `protobuf:"bytes,1,opt,name=repo,proto3" json:"repo,omitempty"`
 	// The directory name under /workspace.
 	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	// The box CLI: "claude", "codex" or "cursor".
+	// The box CLI: "claude" or "codex".
 	Cli       string `protobuf:"bytes,3,opt,name=cli,proto3" json:"cli,omitempty"`
 	OffloadId string `protobuf:"bytes,4,opt,name=offload_id,json=offloadId,proto3" json:"offload_id,omitempty"`
 	// Unspecified for a status change.
@@ -1916,13 +1913,12 @@ const file_cocoonbox_agent_v1_session_proto_rawDesc = "" +
 	"ExecSignal\x12\x1b\n" +
 	"\x17EXEC_SIGNAL_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fEXEC_SIGNAL_INT\x10\x01\x12\x14\n" +
-	"\x10EXEC_SIGNAL_TERM\x10\x02*k\n" +
+	"\x10EXEC_SIGNAL_TERM\x10\x02*m\n" +
 	"\n" +
 	"Automation\x12\x1a\n" +
-	"\x16AUTOMATION_UNSPECIFIED\x10\x00\x12\x14\n" +
-	"\x10AUTOMATION_PLAIN\x10\x01\x12\x13\n" +
+	"\x16AUTOMATION_UNSPECIFIED\x10\x00\x12\x13\n" +
 	"\x0fAUTOMATION_DESK\x10\x02\x12\x16\n" +
-	"\x12AUTOMATION_ANDROID\x10\x03*\x98\x01\n" +
+	"\x12AUTOMATION_ANDROID\x10\x03\"\x04\b\x01\x10\x01*\x10AUTOMATION_PLAIN*\x98\x01\n" +
 	"\fOffloadEntry\x12\x1d\n" +
 	"\x19OFFLOAD_ENTRY_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16OFFLOAD_ENTRY_PROGRESS\x10\x01\x12\x1a\n" +

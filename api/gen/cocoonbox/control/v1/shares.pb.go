@@ -30,7 +30,7 @@ type Share struct {
 	Write       bool         `protobuf:"varint,4,opt,name=write,proto3" json:"write,omitempty"`
 	ExpiresAtMs int64        `protobuf:"varint,5,opt,name=expires_at_ms,json=expiresAtMs,proto3" json:"expires_at_ms,omitempty"`
 	CreatedAtMs int64        `protobuf:"varint,6,opt,name=created_at_ms,json=createdAtMs,proto3" json:"created_at_ms,omitempty"`
-	// `cbs_` and 32 hex digits; empty for a share created before the api kept secrets.
+	// `cbs_` and 32 hex digits.
 	Secret        string `protobuf:"bytes,7,opt,name=secret,proto3" json:"secret,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
