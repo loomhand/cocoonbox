@@ -129,9 +129,8 @@ pub struct StateEngine {
 }
 
 impl StateEngine {
-    /// Creates an engine over `roots`, keeping its spool under `work`; `pause` quiesces the loop and MCP
-    /// and `desktop_unit` is the session unit Restore stops around the swap.
-    pub fn new(
+    /// Creates an engine over `roots` that works under `work`, clearing what a killed operation left there; `pause` quiesces the loop and MCP, and Restore stops `desktop_unit` around the swap.
+    pub async fn new(
         toolhost: rpc::Client,
         store: Store,
         roots: Vec<Root>,
@@ -140,6 +139,17 @@ impl StateEngine {
         desktop_unit: Option<String>,
         save_required: bool,
     ) -> Result<Self, String> {
+        if let Ok(mut dir) = tokio::fs::read_dir(&work).await {
+            while let Ok(Some(e)) = dir.next_entry().await {
+                if e.file_name() == KNOWN_FILE {
+                    continue;
+                }
+                let _ = match e.file_type().await {
+                    Ok(t) if t.is_dir() => tokio::fs::remove_dir_all(e.path()).await,
+                    _ => tokio::fs::remove_file(e.path()).await,
+                };
+            }
+        }
         Ok(Self {
             toolhost,
             store,
@@ -1652,6 +1662,7 @@ mod tests {
             None,
             false,
         )
+        .await
         .unwrap();
         let gate = Arc::clone(&turns).write_owned().await;
         let started = tokio::time::Instant::now();
@@ -1735,6 +1746,7 @@ mod tests {
                 None,
                 false,
             )
+            .await
             .unwrap();
             let keys = Arc::new(Keys::derive(&[7u8; 32]).unwrap());
             let plain = b"chunk body".to_vec();
@@ -1782,6 +1794,38 @@ mod tests {
             assert_eq!(fetch.await.unwrap(), plain);
             assert_eq!(gets.available_permits(), 1);
         });
+    }
+
+    #[tokio::test]
+    async fn a_new_engine_clears_what_a_killed_operation_left_and_keeps_the_known_chunks() {
+        let dir = tempfile::tempdir().unwrap();
+        let work = dir.path().join("work");
+        for spool in ["spool-1", "restore-2"] {
+            std::fs::create_dir_all(work.join(spool)).unwrap();
+            std::fs::write(work.join(spool).join("chunk"), b"sealed").unwrap();
+        }
+        std::fs::write(work.join("agent-db-3.db"), b"db").unwrap();
+        std::fs::write(work.join(KNOWN_FILE), b"{}").unwrap();
+        StateEngine::new(
+            rpc::Client::new(dir.path().join("toolhost.sock")),
+            Store::open(&dir.path().join("agent.db")).unwrap(),
+            default_roots(Path::new("/home/user"), Path::new("/workspace")),
+            work.clone(),
+            Pause {
+                turns: Arc::default(),
+                guests: Arc::default(),
+                wait: Duration::from_secs(30),
+            },
+            None,
+            false,
+        )
+        .await
+        .unwrap();
+        let left: Vec<_> = std::fs::read_dir(&work)
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(left, [KNOWN_FILE]);
     }
 
     #[tokio::test]

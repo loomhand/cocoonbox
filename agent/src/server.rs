@@ -477,7 +477,8 @@ pub async fn serve_on(listener: TcpListener, rt: Arc<Runtime>) -> Result<(), Str
         },
         rt.cfg.desktop_unit.clone(),
         rt.cfg.automation == Automation::Android,
-    )?;
+    )
+    .await?;
     let state = StateServer::new(StateSvc {
         rt: Arc::clone(&rt),
         engine: Arc::new(engine),
