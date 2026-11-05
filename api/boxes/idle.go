@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"context"
+	"fmt"
 	"maps"
 	"slices"
 	"sync"
@@ -81,7 +82,11 @@ func (s *Service) hibernateIdle(ctx context.Context) {
 func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.Duration) {
 	box := boxOfMachine(m.ID)
 	logger := log.WithFunc("boxes.Service.sleepIdle").WithField("box", box)
-	if reason := s.keepAwake(ctx, m); reason != "" {
+	switch reason, err := s.keepAwake(ctx, m); {
+	case err != nil:
+		logger.Warnf(ctx, "idle box stays up: %v", err)
+		return
+	case reason != "":
 		logger.Infof(ctx, "idle box stays up: %s", reason)
 		return
 	}
@@ -93,35 +98,35 @@ func (s *Service) sleepIdle(ctx context.Context, m machines.Machine, after time.
 	go s.runIdleSleep(op, m, after)
 }
 
-// keepAwake names why idle box m stays up: its scheduled wake, work in it, or a check that failed; empty lets it sleep.
-func (s *Service) keepAwake(ctx context.Context, m machines.Machine) string {
+// keepAwake names why idle box m stays up, its scheduled wake or work in it, or fails with the check that failed; empty lets it sleep.
+func (s *Service) keepAwake(ctx context.Context, m machines.Machine) (string, error) {
 	box := boxOfMachine(m.ID)
 	if s.wake != nil {
 		list, err := s.wake.store.WakeSchedules(ctx, m.Owner)
 		if err != nil {
-			return "reading its wake schedule failed: " + err.Error()
+			return "", fmt.Errorf("read its wake schedule: %w", err)
 		}
 		if slices.ContainsFunc(list, func(w users.WakeSchedule) bool { return w.Box == box && w.SleepAt.After(s.idle.now()) }) {
-			return "its scheduled wake is on"
+			return "its scheduled wake is on", nil
 		}
 	}
 	if s.activity == nil {
-		return ""
+		return "", nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.idle.probe)
 	defer cancel()
 	ep, err := s.machines.Address(ctx, m.ID)
 	if err != nil {
-		return "its address failed: " + err.Error()
+		return "", fmt.Errorf("address it: %w", err)
 	}
 	busy, err := s.activity.Busy(s.agentContext(ctx, m), box, ep)
 	switch {
 	case err != nil:
-		return "asking its agent failed: " + err.Error()
+		return "", fmt.Errorf("ask its agent: %w", err)
 	case busy:
-		return "an agent turn or an offloaded session works in it"
+		return "an agent turn or an offloaded session works in it", nil
 	}
-	return ""
+	return "", nil
 }
 
 func (s *Service) stillIdle(ctx context.Context, box string, after time.Duration) bool {

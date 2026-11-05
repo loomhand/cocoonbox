@@ -60,7 +60,9 @@ func (s *Service) provisionStale(ctx context.Context) {
 			log.WithFunc("boxes.Service.provisionStale").WithField("machine", m.ID).Error(ctx, err, "sync exit")
 		}
 		if m.State == machines.StateRunning && wakeOf(m) == "" {
-			_ = s.provisionMachine(ctx, m)
+			if err := s.provisionMachine(ctx, m); err != nil {
+				log.WithFunc("boxes.Service.provisionStale").WithField("machine", m.ID).Warnf(ctx, "provision: %v", err)
+			}
 		}
 	}
 	if s.vault != nil {
