@@ -192,7 +192,7 @@ actor MockWorld {
         let offered = ["cbcore": "cbcore:v1", "cbdroid": "cbdroid:v1"]
         let target = offered[image] ?? (offered.values.contains(image) ? image : nil)
         guard image.isEmpty || target != nil else { throw RPCError(code: .invalidArgument, message: "image \"\(image)\" is not offered") }
-        guard !name.isEmpty, name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }), !name.hasPrefix("cb-") else {
+        guard !name.isEmpty, name.count <= 32, name.allSatisfy({ $0.isLowercase || $0.isNumber || $0 == "-" || $0 == "_" }), !name.hasPrefix("cb-") else {
             throw RPCError(code: .invalidArgument, message: "invalid request: a box name is 1 to 32 lowercase letters, digits, - or _")
         }
         guard !boxes.contains(where: { $0.name == name }) else { throw RPCError(code: .alreadyExists, message: "already exists: a box is already named \"\(name)\"") }
@@ -944,8 +944,8 @@ actor MockWorld {
             image = screen?.snapshotPNG()
         case "computer_act":
             let action = args["action"] as? String ?? "click"
-            let x = Int32(args["x"] as? Int ?? 640)
-            let y = Int32(args["y"] as? Int ?? 380)
+            let x = Int32(clamping: args["x"] as? Int ?? 640)
+            let y = Int32(clamping: args["y"] as? Int ?? 380)
             let typed = args["text"] as? String ?? ""
             await play(agent: id, action: action, x: x, y: y, text: typed)
             text = "\(action) ok"
