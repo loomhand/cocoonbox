@@ -530,6 +530,15 @@ func TestAnInternalFailureReachesTheClientWithoutItsText(t *testing.T) {
 	}
 }
 
+func TestAStoreFailureReachesTheAppOnlyAsAnInternalStatus(t *testing.T) {
+	env := newEnv(t)
+	env.svc.Close()
+	_, err := env.svc.List(auth.WithUser(t.Context(), alice), &controlv1.ListConnectorsRequest{})
+	if s, _ := status.FromError(err); s.Code() != codes.Internal || s.Message() != "list connectors failed" {
+		t.Errorf("List = %v", err)
+	}
+}
+
 func TestEventStreamAnswersAreRead(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)

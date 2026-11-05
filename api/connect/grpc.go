@@ -56,7 +56,7 @@ func (s *Service) List(ctx context.Context, req *controlv1.ListConnectorsRequest
 	}
 	grants, err := s.store.grants(ctx, user)
 	if err != nil {
-		return nil, err
+		return nil, grantStatus(ctx, err, "list connectors")
 	}
 	out := &controlv1.ListConnectorsResponse{}
 	for _, g := range grants {
@@ -95,12 +95,12 @@ func (s *Service) SetPolicy(ctx context.Context, req *controlv1.SetPolicyRequest
 		return nil, status.Error(codes.InvalidArgument, "a policy names a tool and one of allow, ask, off or the default")
 	}
 	if err = s.store.setPolicy(ctx, user, req.GetConnectorId(), req.GetTool(), policy); err != nil {
-		return nil, grantStatus(err)
+		return nil, grantStatus(ctx, err, "set the policy")
 	}
 	s.changedFor(ctx, user)
 	g, err := s.store.grant(ctx, user, req.GetConnectorId())
 	if err != nil {
-		return nil, grantStatus(err)
+		return nil, grantStatus(ctx, err, "set the policy")
 	}
 	return s.connector(ctx, g, true), nil
 }
@@ -123,11 +123,11 @@ func (s *Service) Approve(ctx context.Context, req *controlv1.ApproveRequest) (*
 		return nil, status.Error(codes.NotFound, err.Error())
 	}
 	if err != nil {
-		return nil, err
+		return nil, grantStatus(ctx, err, "answer the approval")
 	}
 	if decision == decisionAlways {
 		if err := s.store.setPolicy(ctx, user, a.connector, a.tool, policyAllow); err != nil {
-			return nil, grantStatus(err)
+			return nil, grantStatus(ctx, err, "answer the approval")
 		}
 		s.changedFor(ctx, user)
 	}
@@ -147,7 +147,7 @@ func (s *Service) Activity(ctx context.Context, req *controlv1.ActivityRequest) 
 	}
 	records, err := s.store.activity(ctx, user, req.GetConnectorId(), min(limit, maxActivity))
 	if err != nil {
-		return nil, err
+		return nil, grantStatus(ctx, err, "read the activity")
 	}
 	out := &controlv1.ActivityResponse{}
 	for _, r := range records {
@@ -173,7 +173,7 @@ func (s *Service) SpendRequests(ctx context.Context, _ *controlv1.SpendRequestsR
 		s.spendMu.Unlock()
 		return &controlv1.SpendRequestsResponse{}, nil
 	case err != nil:
-		return nil, err
+		return nil, grantStatus(ctx, err, "read the spend requests")
 	}
 	p := s.spendRequests(ctx, user)
 	if p.polledAt.IsZero() {
@@ -186,12 +186,12 @@ func (s *Service) SpendRequests(ctx context.Context, _ *controlv1.SpendRequestsR
 func (s *Service) Remove(ctx context.Context, user, connector, door string) (bool, error) {
 	g, err := s.store.grant(ctx, user, connector)
 	if err != nil {
-		return false, grantStatus(err)
+		return false, grantStatus(ctx, err, "disconnect")
 	}
 	logger := log.WithFunc("connect.Service.Remove")
 	revoked := s.revokeGrant(ctx, g)
 	if err := s.store.deleteGrant(ctx, g.id); err != nil {
-		return false, err
+		return false, grantStatus(ctx, err, "disconnect")
 	}
 	s.dropConn(g.id)
 	s.changed(ctx, g)
@@ -232,7 +232,7 @@ func (s *Service) Pending(ctx context.Context, user string) ([]PendingApproval, 
 func (s *Service) Check(ctx context.Context, user, connector string) (string, error) {
 	g, err := s.store.grant(ctx, user, connector)
 	if err != nil {
-		return "", grantStatus(err)
+		return "", grantStatus(ctx, err, "check")
 	}
 	e := s.entry(g.kind)
 	if e == nil || e.userInfoURL == "" || g.status != statusActive {
@@ -240,22 +240,22 @@ func (s *Service) Check(ctx context.Context, user, connector string) (string, er
 	}
 	sec, err := s.secrets(ctx, g)
 	if err != nil {
-		return "", err
+		return "", grantStatus(ctx, err, "check")
 	}
 	access, err := s.access(ctx, g, sec.AccessToken, false)
 	if err != nil {
-		return "", checkStatus(err)
+		return "", grantStatus(ctx, err, "check")
 	}
 	label, code := s.accountLabel(ctx, e, access)
 	if code == http.StatusUnauthorized && sec.RefreshToken != "" {
 		if access, err = s.access(ctx, g, access, true); err != nil {
-			return "", checkStatus(err)
+			return "", grantStatus(ctx, err, "check")
 		}
 		label, code = s.accountLabel(ctx, e, access)
 	}
 	switch {
 	case code == http.StatusUnauthorized:
-		return "", checkStatus(s.lose(ctx, g))
+		return "", grantStatus(ctx, s.lose(ctx, g), "check")
 	case code != http.StatusOK:
 		return "", status.Errorf(codes.Unavailable, "%s answered %d", e.name, code)
 	}
@@ -320,18 +320,15 @@ func (s *Service) connector(ctx context.Context, g *grant, withTools bool) *cont
 	return out
 }
 
-func grantStatus(err error) error {
-	if errors.Is(err, errNoGrant) {
+func grantStatus(ctx context.Context, err error, action string) error {
+	switch {
+	case errors.Is(err, errNoGrant):
 		return status.Error(codes.NotFound, err.Error())
-	}
-	return err
-}
-
-func checkStatus(err error) error {
-	if errors.Is(err, errReconnect) {
+	case errors.Is(err, errReconnect):
 		return status.Error(codes.FailedPrecondition, "the vendor no longer accepts the grant; reconnect it")
 	}
-	return err
+	log.WithFunc("connect.grantStatus").Error(ctx, err, action)
+	return status.Error(codes.Internal, action+" failed")
 }
 
 func policyEnum(policy string) controlv1.Policy {
