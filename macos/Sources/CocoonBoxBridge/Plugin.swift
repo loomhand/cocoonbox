@@ -103,8 +103,9 @@ public enum Plugin {
            prints, with the template below. Fill every section; write "none" for an empty one. Be
            concrete: exact commands, versions you saw, file paths, error messages, decisions with
            their reasons. Under "Secrets needed" give names only, never values.
-        3. Run `cocoonbox offload --kind <claude|codex|cursor>`, naming the CLI you are unless the
-           user asked for another one in the box. Add `--box NAME` when the user names a box.
+        3. Run `cocoonbox offload --kind <claude|codex|cursor>` with a 10-minute command timeout,
+           naming the CLI you are unless the user asked for another one in the box. Add
+           `--box NAME` when the user names a box.
            - Exit 3 is a block: stop and tell the user why, one line per finding. If the box CLI is
              missing or signed out, tell the user to open the CocoonBox app and use
              "Install <CLI> in Box…" or "Sign In to <CLI> in the Box…" in the Offloaded section's
@@ -126,8 +127,9 @@ public enum Plugin {
 
         ## BACK (on the Mac)
 
-        Run `cocoonbox back` in the repo. It waits for the box agent's hand-over, then lands the
-        box's work against the snapshot taken at the offload. Report how the code landed:
+        Run `cocoonbox back` in the repo with a 10-minute command timeout. It waits up to that long
+        for the box agent's hand-over, then lands the box's work against the snapshot taken at the
+        offload. Report how the code landed:
         fast-forward, merged (applied uncommitted), unchanged, or a branch with conflicts, where
         your work tree is untouched. If it says nothing of this repo is in a box and names a
         `back.md`, the work has landed already: read that file as the hand-over. Then check the hand-over's claims against `git log` and `git diff`, run its
