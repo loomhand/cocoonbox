@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 
-use super::env::{self, Spec};
+use super::env::Spec;
 use super::handover::{self, MAX_BODY};
 use super::{
     Args, Copy, Fail, Layout, call, git, git_env, home_shell, is_hex, locked, read_index,
@@ -29,7 +29,6 @@ const QUIT_POLL: Duration = Duration::from_millis(200);
 const AGENT_WAIT: Duration = Duration::from_secs(5);
 const STAGE_DIR: &str = "stage";
 const BUNDLE: &str = "offload.bundle";
-const AGENTS_DIR: &str = "cocoonbox-agents";
 const ATTACHED_LINES: usize = 200;
 const SSH_SOCKET: &str = "ssh-agent.sock";
 const SNAPSHOT_IDENTITY: [&str; 4] = [
@@ -46,10 +45,7 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
     let kind = a.kind()?;
     let id = offload_id(a)?;
     let wanted = a.required("name")?;
-    let no_repo = a.flag("no-repo");
-    if !no_repo {
-        valid_name(&wanted)?;
-    }
+    valid_name(&wanted)?;
     let mut status = call(layout, &json!({"op": "status"})).await?;
     let sessions = match status["sessions"].take() {
         Value::Array(s) => s,
@@ -120,7 +116,6 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
         ));
     }
     let workspace = layout.workspace.clone();
-    let agents = layout.home.join(AGENTS_DIR).join(&kind);
     let key = repo.clone();
     let (copy, was) = with_index(layout, move |index| {
         let was = match index.get(&key) {
@@ -131,13 +126,8 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
             _ => "absent",
         };
         if !index.contains_key(&key) {
-            let (name, dir) = if no_repo {
-                (wanted, agents)
-            } else {
-                let name = free_name(index, &key, &wanted, &workspace);
-                let dir = workspace.join(&name);
-                (name, dir)
-            };
+            let name = free_name(index, &key, &wanted, &workspace);
+            let dir = workspace.join(&name);
             index.insert(
                 key.clone(),
                 Copy {
@@ -182,8 +172,6 @@ pub async fn send<R: Read + Send + 'static>(
     let repo = a.repo()?;
     let kind = a.kind()?;
     let id = offload_id(a)?;
-    let prepare = a.flag("prepare");
-    let no_repo = a.flag("no-repo");
     let copy = read_index(layout)
         .await?
         .remove(&repo)
@@ -200,8 +188,6 @@ pub async fn send<R: Read + Send + 'static>(
         kind: &kind,
         id: &id,
         copy: &copy,
-        prepare,
-        no_repo,
     };
     let mut timings = serde_json::Map::new();
     let stage = layout.repo_dir(&repo).join(STAGE_DIR);
@@ -349,8 +335,6 @@ struct Offload<'a> {
     kind: &'a str,
     id: &'a str,
     copy: &'a Copy,
-    prepare: bool,
-    no_repo: bool,
 }
 
 impl Offload<'_> {
@@ -376,67 +360,45 @@ impl Offload<'_> {
                 .map_err(|e| format!("stream task: {e}"))??
         };
         lap("stream", timings);
-        let handover = match (&unpacked.handover, self.prepare) {
-            (Some(h), false) => {
-                handover::check(h).map_err(Fail::refused)?;
-                Some(h.as_str())
-            }
-            (None, false) => return Err(Fail::Usage("the stream lacks handover.md".to_owned())),
-            (_, true) => None,
+        let Some(handover) = &unpacked.handover else {
+            return Err(Fail::Usage("the stream lacks handover.md".to_owned()));
         };
+        handover::check(handover).map_err(Fail::refused)?;
         let spec = match &unpacked.env {
-            Some(raw) if !self.no_repo => {
+            Some(raw) => {
                 let spec: Spec = serde_json::from_slice(raw)
                     .map_err(|e| Fail::Usage(format!("decode env.json: {e}")))?;
                 write_atomic(&self.layout.repo_dir(self.repo).join("env.json"), raw).await?;
                 Some(spec)
             }
-            _ => None,
+            None => None,
         };
-        if !self.no_repo {
-            self.unbundle(stage, &unpacked).await?;
-            lap("unbundle", timings);
-            let _ = git(
-                dir,
-                &[
-                    "-c",
-                    "core.fsmonitor=false",
-                    "update-index",
-                    "-q",
-                    "--refresh",
-                ],
-            )
-            .await;
-            lap("refresh", timings);
-            self.check_snapshot().await?;
-            lap("check", timings);
-        }
+        self.unbundle(stage, &unpacked).await?;
+        lap("unbundle", timings);
+        let _ = git(
+            dir,
+            &[
+                "-c",
+                "core.fsmonitor=false",
+                "update-index",
+                "-q",
+                "--refresh",
+            ],
+        )
+        .await;
+        lap("refresh", timings);
+        self.check_snapshot().await?;
+        lap("check", timings);
         self.place_secrets(&secrets, &unpacked.secrets).await?;
         lap("secrets", timings);
-        if !self.no_repo {
-            write_excludes(self.layout, dir).await?;
-            lap("excludes", timings);
-        }
-        if self.prepare {
-            let report = match &spec {
-                Some(s) => {
-                    let report = env::plan(self.layout, self.repo, dir, s).await;
-                    env::run(self.layout, self.repo, dir, s, report).await;
-                    env::load(self.layout, self.repo).await?
-                }
-                None => None,
-            };
-            lap("env", timings);
-            return Ok(json!({"ok": true, "accepted": false, "env": report}));
-        }
+        write_excludes(self.layout, dir).await?;
+        lap("excludes", timings);
         trust(&self.layout.home, self.kind, dir).await?;
         lap("trust", timings);
         let base = snapshot_ref(self.id);
         let mut prompt = handover::preamble(dir, self.repo, &self.layout.state, &base);
-        prompt.push_str(handover.unwrap_or_default());
-        if !self.no_repo {
-            prompt.push_str(&self.attached(&base, spec.as_ref()).await);
-        }
+        prompt.push_str(handover);
+        prompt.push_str(&self.attached(&base, spec.as_ref()).await);
         let mut req = json!({
             "op": "send",
             "repo": self.repo,

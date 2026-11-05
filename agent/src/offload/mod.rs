@@ -231,9 +231,9 @@ impl Args {
     }
 }
 
-/// A repo key: 12 lowercase hex, or `agent-` and 8 lowercase hex.
+/// A repo key: 12 lowercase hex.
 pub fn valid_key(key: &str) -> Result<(), Fail> {
-    if is_hex(key, 12) || key.strip_prefix("agent-").is_some_and(|k| is_hex(k, 8)) {
+    if is_hex(key, 12) {
         Ok(())
     } else {
         Err(Fail::Usage(format!("invalid repo key {key:?}")))
@@ -549,12 +549,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keys_are_twelve_hex_or_an_agent_key() {
+    fn keys_are_twelve_lowercase_hex() {
         assert!(valid_key("0123456789ab").is_ok());
-        assert!(valid_key("agent-0123abcd").is_ok());
+        assert!(valid_key("agent-0123abcd").is_err());
         assert!(valid_key("0123456789AB").is_err());
         assert!(valid_key("../etc").is_err());
-        assert!(valid_key("agent-0123abc").is_err());
     }
 
     #[test]
