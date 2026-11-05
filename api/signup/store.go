@@ -55,8 +55,8 @@ func openStore(ctx context.Context, dsn string) (*store, error) {
 
 func (s *store) close() { s.pool.Close() }
 
-func (s *store) settings(ctx context.Context, q querier) (Settings, error) {
-	return scanSettings(q.QueryRow(ctx, "SELECT "+settingsColumns+" FROM signup_settings WHERE id = 1"))
+func (s *store) settings(ctx context.Context) (Settings, error) {
+	return scanSettings(s.pool.QueryRow(ctx, "SELECT "+settingsColumns+" FROM signup_settings WHERE id = 1"))
 }
 
 func (s *store) lockSettings(ctx context.Context, tx pgx.Tx) (Settings, error) {

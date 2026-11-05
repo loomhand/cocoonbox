@@ -108,7 +108,7 @@ func (s *Service) RemoveBox(ctx context.Context, owner, id string) error {
 	}
 	s.mu.Lock()
 	s.boxGen++
-	s.boxes[owner] = slices.DeleteFunc(slices.Clone(s.boxes[owner]), func(b Box) bool { return b.ID == id })
+	s.boxes[owner] = slices.DeleteFunc(s.boxes[owner], func(b Box) bool { return b.ID == id })
 	var shares []string
 	for _, rec := range s.shares {
 		if rec.box == id {
@@ -160,8 +160,9 @@ func (s *Service) agentBoxes(owner string) int {
 // putBox stores b in the index in place of its previous version; the caller holds s.mu.
 func (s *Service) putBox(b Box) {
 	s.boxGen++
-	list := slices.DeleteFunc(slices.Clone(s.boxes[b.Owner]), func(x Box) bool { return x.ID == b.ID })
-	s.boxes[b.Owner] = slices.SortedFunc(slices.Values(append(list, b)), compareBoxes)
+	list := append(slices.DeleteFunc(s.boxes[b.Owner], func(x Box) bool { return x.ID == b.ID }), b)
+	slices.SortFunc(list, compareBoxes)
+	s.boxes[b.Owner] = list
 }
 
 func checkBoxName(name string) error {

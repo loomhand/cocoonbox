@@ -169,7 +169,7 @@ func (s *Service) signup(ctx context.Context, f flow, id identity) (Outcome, err
 
 // safeReturn keeps a console path and nothing else, so the callback never sends the browser off the origin.
 func safeReturn(path string) string {
-	if len(path) > maxReturn || !strings.HasPrefix(path, defaultReturn) || strings.ContainsAny(path, "\\\r\n") || strings.HasPrefix(path, "//") {
+	if len(path) > maxReturn || !strings.HasPrefix(path, defaultReturn) || strings.ContainsAny(path, "\\\r\n") {
 		return defaultReturn
 	}
 	return path

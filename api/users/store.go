@@ -579,7 +579,7 @@ func (s *store) execShare(ctx context.Context, sql string, args ...any) error {
 
 func (s *store) exec(ctx context.Context, sql string, args ...any) error {
 	if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
-		return fmt.Errorf("%s: %w", strings.Fields(sql)[0], err)
+		return fmt.Errorf("%s: %w", strings.ToLower(strings.Fields(sql)[0]), err)
 	}
 	return nil
 }

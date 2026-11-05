@@ -476,13 +476,14 @@ func (s *Service) Update(ctx context.Context, id string, set Settings) (User, er
 	r.Policy.Delta = deref(set.Delta, r.Policy.Delta)
 	r.Policy.NoPark = deref(set.NoPark, r.Policy.NoPark)
 	r.Policy.NoGC = deref(set.NoGC, r.Policy.NoGC)
+	own := len(s.Boxes(id)) - s.agentBoxes(id)
 	switch {
 	case r.MaxBoxesCap < 1 || r.MaxBoxesCap > maxBoxesCap:
 		return User{}, fmt.Errorf("%w: max boxes cap must be in 1..%d", ErrInvalid, maxBoxesCap)
 	case r.MaxBoxes < 1 || r.MaxBoxes > r.MaxBoxesCap:
 		return User{}, fmt.Errorf("%w: max boxes must be in 1..%d", ErrInvalid, r.MaxBoxesCap)
-	case r.MaxBoxes < old.MaxBoxes && r.MaxBoxes < len(s.Boxes(id))-s.agentBoxes(id):
-		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, len(s.Boxes(id))-s.agentBoxes(id))
+	case r.MaxBoxes < old.MaxBoxes && r.MaxBoxes < own:
+		return User{}, fmt.Errorf("%w: the user has %d boxes; delete boxes before lowering max boxes", ErrInvalid, own)
 	case r.MaxRunning < 0 || r.MaxRunning > r.MaxBoxes:
 		return User{}, fmt.Errorf("%w: the running limit must be in 1..%d (max boxes), or 0 for the default; lower it before max boxes", ErrInvalid, r.MaxBoxes)
 	case r.MaxAgentBoxes != nil && (*r.MaxAgentBoxes < 1 || *r.MaxAgentBoxes > maxBoxesCap):

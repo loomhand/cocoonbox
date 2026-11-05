@@ -159,7 +159,7 @@ func (s *Service) Configured() bool { return s.github.configured() }
 
 // Settings returns the signup settings.
 func (s *Service) Settings(ctx context.Context) (Settings, error) {
-	return s.store.settings(ctx, s.store.pool)
+	return s.store.settings(ctx)
 }
 
 // SetSettings replaces the signup settings and admits whoever the new ones make room for.
