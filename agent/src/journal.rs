@@ -78,6 +78,18 @@ impl Journal {
         }
     }
 
+    pub async fn create(
+        &self,
+        name: String,
+        model: String,
+        nonce: String,
+    ) -> Result<pb::Agent, String> {
+        let _rows = self.rows.lock().await;
+        let agent = self.store.create_agent(name, model, nonce).await?;
+        self.bus.publish(event::Body::Agent(agent.clone()));
+        Ok(agent)
+    }
+
     pub async fn rename(
         &self,
         agent_id: String,

@@ -184,14 +184,10 @@ impl Runtime {
         } else {
             req.main_model
         };
-        let agent = self
-            .journal
-            .store
-            .create_agent(req.name, model, req.client_nonce)
+        self.journal
+            .create(req.name, model, req.client_nonce)
             .await
-            .map_err(Status::internal)?;
-        self.journal.bus.publish(event::Body::Agent(agent.clone()));
-        Ok(agent)
+            .map_err(Status::internal)
     }
 
     /// Queues a user turn and returns its id; duplicate nonces return the first turn.
