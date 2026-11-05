@@ -75,8 +75,6 @@ message}, duration_ms, exit_code, stderr, snapshot?, screenshot_path}` and a scr
 the run. `logs` is the script's stdout. Set `globalThis.$snapshot` to a string, such as an outline,
 to get it back as `snapshot`. Nothing persists between runs.
 
-From a shell in the box: `node /workspace/flows/x.mts`; `main` is not called for you there.
-
 ```ts
 // /workspace/flows/save-note.mts
 import * as desk from '/opt/desk/lib/desk.mts'
