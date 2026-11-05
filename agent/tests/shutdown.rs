@@ -2,8 +2,9 @@
 #![cfg(unix)]
 
 mod common;
+#[path = "common/serve.rs"]
+mod serve;
 
-use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use cocoonbox_agent::pb::agents_client::AgentsClient;
@@ -12,20 +13,8 @@ use cocoonbox_agent::pb::{self, event, transcript_entry::Body};
 use cocoonbox_agent::store::Store;
 use serde_json::json;
 use tokio::net::TcpListener;
-use tonic::Request;
-use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
 
-const UP: Duration = Duration::from_secs(30);
-
-fn authed<T>(msg: T) -> Request<T> {
-    let mut req = Request::new(msg);
-    req.metadata_mut().insert(
-        "x-cocoonbox-credential",
-        MetadataValue::from_static(common::owner()),
-    );
-    req
-}
+use common::authed;
 
 async fn hanging_gw() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -39,55 +28,11 @@ async fn hanging_gw() -> String {
     addr
 }
 
-async fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
-
 #[tokio::test]
 async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
     let dir = tempfile::tempdir().unwrap();
-    let port = free_port().await;
-    let identity = dir.path().join("identity").join("identity");
-    common::provision(&identity);
-    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("serve")
-        .env("GW_BASE_URL", format!("http://{}/v1", hanging_gw().await))
-        .env("GW_API_KEY", "k")
-        .env("MODEL_MAIN", "deepseek/deepseek-v4.1-flash")
-        .env("MODEL_COMPUTER", "anthropic/claude-sonnet-5")
-        .env("AGENT_LISTEN", format!("127.0.0.1:{port}"))
-        .env("CB_STATE_DIR", dir.path())
-        .env("CB_IDENTITY_PATH", &identity)
-        .env(
-            "CB_IDENTITY_OWNER",
-            std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()).to_string(),
-        )
-        .env("TOOLHOST_SOCKET", dir.path().join("none.sock"))
-        .env("SHUTTLE_SOCKET", dir.path().join("none.sock"))
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    let endpoint = format!("http://127.0.0.1:{port}");
-    let channel = tokio::time::timeout(UP, async {
-        loop {
-            if let Ok(ch) = Channel::from_shared(endpoint.clone())
-                .unwrap()
-                .connect()
-                .await
-            {
-                break ch;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("serve did not come up");
+    let gw = format!("http://{}/v1", hanging_gw().await);
+    let (mut child, channel, endpoint) = serve::spawn_serve(dir.path(), &gw).await;
     let mut agents = AgentsClient::new(channel.clone());
     let mut session = SessionClient::new(channel);
 
@@ -132,7 +77,7 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
         }))
         .await
         .unwrap();
-    tokio::time::timeout(UP, async {
+    tokio::time::timeout(serve::UP, async {
         loop {
             let ev = events.message().await.unwrap().unwrap();
             if let Some(event::Body::Agent(a)) = ev.body
@@ -165,7 +110,7 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
     .await;
     assert!(ended.is_ok(), "events stream stayed open");
 
-    let store = Store::open(&dir.path().join("agent.db")).unwrap();
+    let store = Store::open(&dir.path().join("state").join("agent.db")).unwrap();
     let page = store.transcript(agent_id, 0, 100).await.unwrap();
     let end = page
         .entries

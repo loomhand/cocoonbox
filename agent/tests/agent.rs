@@ -1,6 +1,8 @@
 #![cfg(test)]
 #![cfg(unix)]
 
+#[path = "common/chrome.rs"]
+mod chrome;
 mod common;
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -30,7 +32,8 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 use tonic::{Code, Request};
 
-use common::{owner, sign_credential, write_identity};
+use chrome::{ChromeGuard, cdp_port, test_chrome};
+use common::{authed, owner, sign_credential, write_identity};
 
 const DEMO_ROUTING: &str = "Loops over demo items go to demo_run.";
 const PNG: &str = "iVBORw0KGgoAAAANSUhEUg==";
@@ -294,15 +297,6 @@ fn in_box(routing: &str) -> String {
         "`computer_state`, `computer_act`.",
         "`computer_state`, `computer_act` (yours: `delegate_computer`).",
     )
-}
-
-fn authed<T>(msg: T) -> Request<T> {
-    let mut req = Request::new(msg);
-    req.metadata_mut().insert(
-        "x-cocoonbox-credential",
-        MetadataValue::from_static(owner()),
-    );
-    req
 }
 
 async fn create_agent(agents: &mut AgentsClient<Channel>) -> String {
@@ -718,56 +712,6 @@ fn fake_shuttle(path: &Path, log: PathBuf, calls: Log) {
             });
         }
     });
-}
-
-struct ChromeGuard(PathBuf);
-
-impl Drop for ChromeGuard {
-    fn drop(&mut self) {
-        let _ = std::process::Command::new("pkill")
-            .arg("-f")
-            .arg(self.0.as_os_str())
-            .status();
-    }
-}
-
-fn test_chrome() -> Option<PathBuf> {
-    let chrome = find_chrome();
-    if chrome.is_none() {
-        assert!(
-            cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
-            "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
-        );
-        eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
-    }
-    chrome
-}
-
-fn find_chrome() -> Option<PathBuf> {
-    if let Ok(bin) = std::env::var("CHROME_BIN")
-        && !bin.is_empty()
-    {
-        return Some(bin.into());
-    }
-    if cfg!(target_os = "macos") {
-        return None;
-    }
-    [
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/chromium",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .find(|p| p.exists())
-}
-
-fn cdp_port() -> u16 {
-    let start = 20_000 + (uuid::Uuid::new_v4().as_u128() % 12_000) as u16;
-    (start..32_000)
-        .chain(20_000..start)
-        .find(|p| std::net::TcpListener::bind(("127.0.0.1", *p)).is_ok())
-        .unwrap()
 }
 
 async fn field_pages() -> String {

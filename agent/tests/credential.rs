@@ -1,7 +1,11 @@
 #![cfg(test)]
 #![cfg(unix)]
 
+#[path = "common/chrome.rs"]
+mod chrome;
 mod common;
+#[path = "common/serve.rs"]
+mod serve;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -17,9 +21,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
-use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
-use tonic::{Code, Request};
+use tonic::Code;
+
+use chrome::{ChromeGuard, test_chrome};
+use common::authed;
 
 const LOGIN_PAGE: &str = r#"<!doctype html><title>login</title>
 <form action="/login" method="post">
@@ -54,57 +59,7 @@ const CARD_PAGE: &str = r#"<!doctype html><title>checkout</title>
 <input type="button" value="Pay now">
 </form>"#;
 
-const UP: Duration = Duration::from_secs(30);
-
 type Posts = Arc<Mutex<Vec<(String, String)>>>;
-
-struct ChromeGuard(PathBuf);
-
-impl Drop for ChromeGuard {
-    fn drop(&mut self) {
-        let _ = std::process::Command::new("pkill")
-            .arg("-f")
-            .arg(self.0.as_os_str())
-            .status();
-    }
-}
-
-fn authed<T>(msg: T) -> Request<T> {
-    let mut req = Request::new(msg);
-    req.metadata_mut().insert(
-        "x-cocoonbox-credential",
-        MetadataValue::from_static(common::owner()),
-    );
-    req
-}
-
-fn find_chrome() -> Option<PathBuf> {
-    if let Ok(bin) = std::env::var("CHROME_BIN")
-        && !bin.is_empty()
-    {
-        return Some(bin.into());
-    }
-    if cfg!(target_os = "macos") {
-        return None;
-    }
-    [
-        "/usr/bin/google-chrome",
-        "/usr/bin/google-chrome-stable",
-        "/usr/bin/chromium",
-    ]
-    .into_iter()
-    .map(PathBuf::from)
-    .find(|p| p.exists())
-}
-
-async fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
-}
 
 async fn site(posts: Posts) -> u16 {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -217,14 +172,7 @@ fn files_containing(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
 }
 
 async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client, JoinHandle<String>)> {
-    let Some(chrome) = find_chrome() else {
-        assert!(
-            cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
-            "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
-        );
-        eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
-        return None;
-    };
+    let chrome = test_chrome()?;
     let wrapper = dir.join("chrome");
     std::fs::write(
         &wrapper,
@@ -246,13 +194,13 @@ async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client, Join
         .env("CB_WORKSPACE", dir.join("workspace"))
         .env("CHROME_BIN", &wrapper)
         .env("CHROME_PROFILE", dir.join("profile"))
-        .env("CDP_PORT", free_port().await.to_string())
+        .env("CDP_PORT", chrome::cdp_port().to_string())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
     let log = capture(&mut toolhost);
-    tokio::time::timeout(UP, async {
+    tokio::time::timeout(serve::UP, async {
         while !socket.exists() {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -268,50 +216,12 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     let Some((_chrome, mut toolhost, th, toolhost_log)) = chrome_toolhost(dir.path()).await else {
         return;
     };
-    let socket = dir.path().join("toolhost.sock");
     let state = dir.path().join("state");
     let user = format!("user-{}", uuid::Uuid::new_v4().simple());
     let password = format!("pw-{}", uuid::Uuid::new_v4().simple());
     let code = (100_000 + uuid::Uuid::new_v4().as_u128() % 900_000).to_string();
-    let port = free_port().await;
-    let identity = dir.path().join("identity").join("identity");
-    common::provision(&identity);
-    let mut serve = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("serve")
-        .env("GW_BASE_URL", "http://127.0.0.1:9/v1")
-        .env("GW_API_KEY", "k")
-        .env("MODEL_MAIN", "deepseek/deepseek-v4.1-flash")
-        .env("MODEL_COMPUTER", "anthropic/claude-sonnet-5")
-        .env("AGENT_LISTEN", format!("127.0.0.1:{port}"))
-        .env("CB_STATE_DIR", &state)
-        .env("CB_IDENTITY_PATH", &identity)
-        .env(
-            "CB_IDENTITY_OWNER",
-            std::os::unix::fs::MetadataExt::uid(&dir.path().metadata().unwrap()).to_string(),
-        )
-        .env("TOOLHOST_SOCKET", &socket)
-        .env("SHUTTLE_SOCKET", dir.path().join("desk.sock"))
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
+    let (mut serve, channel, _) = serve::spawn_serve(dir.path(), "http://127.0.0.1:9/v1").await;
     let serve_log = capture(&mut serve);
-    let endpoint = format!("http://127.0.0.1:{port}");
-    let channel = tokio::time::timeout(UP, async {
-        loop {
-            if socket.exists()
-                && let Ok(ch) = Channel::from_shared(endpoint.clone())
-                    .unwrap()
-                    .connect()
-                    .await
-            {
-                break ch;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("serve and the toolhost did not come up");
     let mut session = SessionClient::new(channel);
 
     let posts = Posts::default();

@@ -7,6 +7,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::{Signer, SigningKey};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use tonic::Request;
+use tonic::metadata::MetadataValue;
 
 const OWNER_TTL_SECS: i64 = 24 * 3600;
 const BOX_ID: &str = "cb-box";
@@ -51,6 +53,15 @@ pub fn provision(path: &Path) {
 
 pub fn owner() -> &'static str {
     &OWNER
+}
+
+pub fn authed<T>(msg: T) -> Request<T> {
+    let mut req = Request::new(msg);
+    req.metadata_mut().insert(
+        "x-cocoonbox-credential",
+        MetadataValue::from_static(owner()),
+    );
+    req
 }
 
 fn edge_key() -> SigningKey {
