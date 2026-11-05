@@ -84,6 +84,23 @@ func (s *Service) restoring(box string) bool {
 	return active != nil && active.phase == controlv1.Phase_PHASE_RESTORING
 }
 
+func (s *Service) startable(ctx context.Context, user, box string) (map[string]machines.Machine, error) {
+	current, err := s.currentMachines(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+	cur, ok := current[box]
+	if !ok || cur.Meta[metaRestore] == "" || s.restoring(box) {
+		return current, nil
+	}
+	log.WithFunc("boxes.Service.startable").WithField("box", box).Warnf(ctx, "machine %s holds an unfinished restore; restoring into a new machine", cur.ID)
+	if err = s.deleteMachine(ctx, cur.ID); err != nil {
+		return nil, err
+	}
+	delete(current, box)
+	return current, nil
+}
+
 // savedHead returns the latest saved state of user's box, empty without a state layer.
 func (s *Service) savedHead(ctx context.Context, user, box string) (head, error) {
 	if s.state == nil {

@@ -186,19 +186,12 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		return nil, serviceError(ctx, logger, err, "read tenant")
 	}
 	spec := machines.Spec{ID: box, Owner: user, Tenant: tenant, Flavor: flavor}
-	current, err := s.currentMachines(ctx, user)
+	current, err := s.startable(ctx, user, box)
 	if err != nil {
 		return nil, serviceError(ctx, logger, err, "get box")
 	}
 	var saved head
 	cur, ok := current[box]
-	if ok && cur.Meta[metaRestore] != "" && !s.restoring(box) {
-		logger.Warnf(ctx, "machine %s holds an unfinished restore; restoring into a new machine", cur.ID)
-		if err := s.deleteMachine(ctx, cur.ID); err != nil {
-			return nil, serviceError(ctx, logger, err, "discard the unrestored machine")
-		}
-		ok = false
-	}
 	if !ok || !holdsMemory(cur) || s.parking(box) {
 		if err = s.checkRunning(user, box, current); err != nil {
 			return nil, err
