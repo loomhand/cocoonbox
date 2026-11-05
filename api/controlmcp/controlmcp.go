@@ -85,13 +85,6 @@ type response struct {
 	Error   *mcpwire.Error `json:"error,omitzero"`
 }
 
-func newResponse(id jsontext.Value, result any, rpcErr *mcpwire.Error) response {
-	if rpcErr != nil {
-		return response{JSONRPC: mcpwire.Version, ID: id, Error: rpcErr}
-	}
-	return response{JSONRPC: mcpwire.Version, ID: id, Result: result}
-}
-
 type notification struct {
 	JSONRPC string `json:"jsonrpc"`
 	Method  string `json:"method"`
@@ -385,6 +378,13 @@ func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 		return nil, fmt.Errorf("body exceeds %d bytes", mcpwire.MaxBody)
 	}
 	return buf.Bytes(), err
+}
+
+func newResponse(id jsontext.Value, result any, rpcErr *mcpwire.Error) response {
+	if rpcErr != nil {
+		return response{JSONRPC: mcpwire.Version, ID: id, Error: rpcErr}
+	}
+	return response{JSONRPC: mcpwire.Version, ID: id, Result: result}
 }
 
 func writeFailure(w http.ResponseWriter, httpStatus, code int, message string) {

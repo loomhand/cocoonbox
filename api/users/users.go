@@ -65,6 +65,14 @@ var (
 	hexSHA256 = regexp.MustCompile(`^[0-9a-f]{64}$`)
 )
 
+// Policy is the image a user's boxes start from and upgrade to, whether its saves write delta records, and whether the parking and the gc skip it.
+type Policy struct {
+	Image  string `json:"image,omitempty"`
+	Delta  bool   `json:"delta,omitzero"`
+	NoPark bool   `json:"no_park,omitzero"`
+	NoGC   bool   `json:"no_gc,omitzero"`
+}
+
 // User is a cocoonbox user as the console shows it; it never carries a credential. MaxRunning 0 is the api's default.
 type User struct {
 	ID          string `json:"id"`
@@ -89,14 +97,6 @@ func (u User) from(idp string) (User, error) {
 		return User{}, fmt.Errorf("%w: user %s comes from %s", ErrExists, u.ID, u.IDP)
 	}
 	return u, nil
-}
-
-// Policy is the image a user's boxes start from and upgrade to, whether its saves write delta records, and whether the parking and the gc skip it.
-type Policy struct {
-	Image  string `json:"image,omitempty"`
-	Delta  bool   `json:"delta,omitzero"`
-	NoPark bool   `json:"no_park,omitzero"`
-	NoGC   bool   `json:"no_gc,omitzero"`
 }
 
 // NewUser describes a user to create; an empty ID draws one, an empty Password leaves password sign-in off, and a nil DailyCapMicros keeps the gw default.

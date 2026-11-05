@@ -79,19 +79,6 @@ func Tokens(users Users) Identities {
 	return tokens{users}
 }
 
-type tokens struct {
-	Users
-}
-
-func (t tokens) Resolve(ctx context.Context, token string, _ Entry) (Identity, error) {
-	credential := TokenCredential(token)
-	user, ok := t.ByTokenSHA256(ctx, credential)
-	if !ok {
-		return Identity{}, ErrUnknownToken
-	}
-	return Identity{User: user, Credential: credential}, nil
-}
-
 // Resolver resolves a bearer token as Identities does, for the users of another system.
 type Resolver interface {
 	Resolve(ctx context.Context, token string, entry Entry) (Identity, error)
@@ -100,18 +87,6 @@ type Resolver interface {
 // Outside resolves the tokens cocoonbox does not issue through outside; its own stay with local, which also gives every call's lifetime.
 func Outside(local Identities, outside Resolver) Identities {
 	return split{Identities: local, outside: outside}
-}
-
-type split struct {
-	Identities
-	outside Resolver
-}
-
-func (s split) Resolve(ctx context.Context, token string, entry Entry) (Identity, error) {
-	if ownToken.MatchString(token) {
-		return s.Identities.Resolve(ctx, token, entry)
-	}
-	return s.outside.Resolve(ctx, token, entry)
 }
 
 // Shares resolves the sha256 of a share secret, in lowercase hex, to a live share of an enabled owner.
@@ -270,6 +245,31 @@ func (a *Authenticator) authenticate(ctx context.Context) (context.Context, erro
 		return nil, err
 	}
 	return context.WithValue(WithUser(ctx, id.User), credentialKey{}, id.Credential), nil
+}
+
+type tokens struct {
+	Users
+}
+
+func (t tokens) Resolve(ctx context.Context, token string, _ Entry) (Identity, error) {
+	credential := TokenCredential(token)
+	user, ok := t.ByTokenSHA256(ctx, credential)
+	if !ok {
+		return Identity{}, ErrUnknownToken
+	}
+	return Identity{User: user, Credential: credential}, nil
+}
+
+type split struct {
+	Identities
+	outside Resolver
+}
+
+func (s split) Resolve(ctx context.Context, token string, entry Entry) (Identity, error) {
+	if ownToken.MatchString(token) {
+		return s.Identities.Resolve(ctx, token, entry)
+	}
+	return s.outside.Resolve(ctx, token, entry)
 }
 
 type authedStream struct {
