@@ -1,10 +1,13 @@
 package oauth
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/loomhand/cocoonbox/api/publicnet"
 )
 
 func TestCheckRedirect(t *testing.T) {
@@ -99,5 +102,17 @@ func TestMetadataDocumentClient(t *testing.T) {
 				t.Errorf("client = %+v", c)
 			}
 		})
+	}
+}
+
+func TestMetadataDocumentFetchFailureHidesTheAddress(t *testing.T) {
+	dialer := &net.Dialer{Control: publicnet.RefusePrivate}
+	s := &Service{
+		fetch:     &http.Client{Transport: &http.Transport{DialContext: dialer.DialContext}},
+		documents: &documents{entries: map[string]cachedDocument{}},
+	}
+	_, err := s.client(t.Context(), "https://127.0.0.1:1/client.json")
+	if err == nil || strings.Contains(err.Error(), "127.0.0.1") {
+		t.Fatalf("client error = %v, want a failure that names no address", err)
 	}
 }

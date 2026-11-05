@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/projecteru2/core/log"
 )
 
 const (
@@ -131,7 +133,8 @@ func (s *Service) document(ctx context.Context, id string) (client, error) {
 	req.Header.Set("Accept", "application/json")
 	resp, err := s.fetch.Do(req)
 	if err != nil {
-		return client{}, fmt.Errorf("fetch the client metadata document: %w", err)
+		log.WithFunc("oauth.Service.document").Warnf(ctx, "fetch the client metadata document %s: %v", id, err)
+		return client{}, errors.New("fetching the client metadata document failed")
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
