@@ -528,7 +528,7 @@ mod tests {
             .write(true)
             .open(&path)
             .unwrap()
-            .set_len(1 << 36)
+            .set_len(if cfg!(windows) { 1 << 30 } else { 1 << 36 })
             .unwrap();
         let out = read(dir.path(), None, json!({"path": "big.log"}))
             .await
