@@ -142,7 +142,7 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 	tools, err := s.tools(ctx, g)
 	if err != nil {
 		rec.outcome = outcomeError
-		return s.failureText(g, err), nil
+		return s.failureText(ctx, g, err), nil
 	}
 	i := slices.IndexFunc(tools, func(t tool) bool { return t.Name == toolName })
 	if i < 0 {
@@ -179,19 +179,20 @@ func (s *Service) doorCall(ctx context.Context, c caller, name string, args json
 		return s.reconnectText(g), nil
 	case err != nil && !t.ReadOnly && uncertain(err, ex):
 		rec.outcome = outcomeUnknown
-		return errorText(fmt.Sprintf("%s: the call to %s may or may not have taken effect (%v). It is not retried; check the result with a read tool before you call it again.",
-			outcomeUnknown, s.vendorName(g), err)), nil
+		log.WithFunc("connect.Service.doorCall").Warnf(ctx, "%s of %s may have run %s: %v", g.connector, g.user, t.Name, err)
+		return errorText(fmt.Sprintf("%s: the call to %s may or may not have taken effect (%s). It is not retried; check the result with a read tool before you call it again.",
+			outcomeUnknown, s.vendorName(g), vendorText(err))), nil
 	case err != nil:
 		rec.outcome = outcomeError
 		if rpcErr, ok := errors.AsType[*mcpwire.Error](err); ok {
 			return nil, rpcErr
 		}
-		return s.failureText(g, err), nil
+		return s.failureText(ctx, g, err), nil
 	}
 	var out map[string]jsontext.Value
 	if err := json.Unmarshal(result, &out); err != nil {
 		rec.outcome = outcomeError
-		return s.failureText(g, fmt.Errorf("decode the result: %w", err)), nil
+		return s.failureText(ctx, g, fmt.Errorf("decode the result: %w", err)), nil
 	}
 	delete(out, "_meta")
 	rec.outcome = outcomeOK
@@ -417,11 +418,12 @@ func (s *Service) reconnectText(g *grant) *callResult {
 	return errorText("Reconnect " + s.vendorName(g) + " in CocoonBox: " + s.publicURL + ConsolePath + ".")
 }
 
-func (s *Service) failureText(g *grant, err error) *callResult {
+func (s *Service) failureText(ctx context.Context, g *grant, err error) *callResult {
 	if errors.Is(err, errReconnect) {
 		return s.reconnectText(g)
 	}
-	return errorText(s.vendorName(g) + " failed: " + err.Error())
+	log.WithFunc("connect.Service.failureText").Warnf(ctx, "%s of %s failed: %v", g.connector, g.user, err)
+	return errorText(s.vendorName(g) + " failed: " + vendorText(err))
 }
 
 // expose marks an ask tool destructive in mode B, so the client's own prompt is the gate.
@@ -473,6 +475,14 @@ func uncertain(err error, ex exchange) bool {
 	}
 	_, answered := errors.AsType[*mcpwire.Error](err)
 	return ex.status == 0 || ex.status/100 == 5 || (ex.status/100 == 2 && !answered)
+}
+
+func vendorText(err error) string {
+	switch err.(type) {
+	case *statusError, *oauthError, *mcpwire.Error:
+		return err.Error()
+	}
+	return "internal error"
 }
 
 func shorten(s string, n int) string {

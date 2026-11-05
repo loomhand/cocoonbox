@@ -514,6 +514,22 @@ func TestAnUncertainWriteIsNotRetried(t *testing.T) {
 	}
 }
 
+func TestAnInternalFailureReachesTheClientWithoutItsText(t *testing.T) {
+	env := newEnv(t)
+	env.connect(t)
+	env.svc.dropConn(env.grant(t).id)
+	env.exec(t, "UPDATE connect_grants SET sealed = '\\x00'")
+	list, err := env.svc.List(auth.WithUser(t.Context(), alice), &controlv1.ListConnectorsRequest{WithTools: true})
+	if err != nil || list.GetConnectors()[0].GetToolsError() != "internal error" {
+		t.Errorf("List = %v, %v", list, err)
+	}
+	for _, name := range []string{listItems, createItem} {
+		if out, err := call(t.Context(), env.svc, modeB, name, nil, ""); err != nil || out.Content[0].Text != "mock failed: internal error" {
+			t.Errorf("Call %s = %+v, %v", name, out, err)
+		}
+	}
+}
+
 func TestEventStreamAnswersAreRead(t *testing.T) {
 	env := newEnv(t)
 	env.connect(t)
