@@ -92,7 +92,7 @@ impl Syncer {
         });
     }
 
-    /// Brings the library's newer flows into the box, and every flow it lacks once its flows folder is gone or replaced, within a bounded time; a failure leaves the box's flows as they are, and the index follows every flow a pull wrote, retried by the next pull until it succeeds.
+    /// Brings the library's flows into the box within a bounded time, then rebuilds the index while it is stale.
     pub async fn pull(&self) {
         match tokio::time::timeout(PULL_BUDGET, self.try_pull()).await {
             Ok(Ok(())) => {}
