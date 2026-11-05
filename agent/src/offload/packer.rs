@@ -873,7 +873,8 @@ async fn trust(home: &Path, kind: &str, dir: &Path) -> Result<(), Fail> {
             let mut v: Value = match tokio::fs::read(&path).await {
                 Ok(raw) => serde_json::from_slice(&raw)
                     .map_err(|e| format!("decode {}: {e}", path.display()))?,
-                Err(_) => json!({}),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+                Err(e) => return Err(Fail::Failed(format!("read {}: {e}", path.display()))),
             };
             let Some(top) = v.as_object_mut() else {
                 return Err(Fail::Failed(format!("{} is not an object", path.display())));
@@ -902,7 +903,11 @@ async fn trust(home: &Path, kind: &str, dir: &Path) -> Result<(), Fail> {
         "codex" => {
             let path = home.join(".codex/config.toml");
             let header = format!("[projects.\"{dir}\"]");
-            let text = tokio::fs::read_to_string(&path).await.unwrap_or_default();
+            let text = match tokio::fs::read_to_string(&path).await {
+                Ok(t) => t,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => return Err(Fail::Failed(format!("read {}: {e}", path.display()))),
+            };
             if !text.lines().any(|l| l.trim() == header) {
                 if let Some(parent) = path.parent() {
                     tokio::fs::create_dir_all(parent)
