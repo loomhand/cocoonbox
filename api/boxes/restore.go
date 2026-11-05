@@ -11,8 +11,13 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
+const metaRestore = "restore"
+
 // restoreMissing fills m, created because user's box had no machine, from the box's latest saved state.
 func (s *Service) restoreMissing(ctx context.Context, user, box string, m machines.Machine, saved head) *controlv1.EnsureResponse {
+	if err := s.machines.SetMeta(ctx, m.ID, metaRestore, saved.Latest); err != nil {
+		log.WithFunc("boxes.Service.restoreMissing").WithField("box", box).Error(ctx, err, "mark the restore of "+m.ID)
+	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_RESTORING, m.Revision, stateTimeout)
 	if started {
 		go s.runRestore(op, user, m, saved)
@@ -61,6 +66,11 @@ func (s *Service) runRestore(op *operation, user string, m machines.Machine, sav
 		logger.Error(op.ctx, err, "restore into new machine")
 		s.discard(op, m.ID)
 		op.fail("restore failed")
+		return
+	}
+	if err := s.machines.SetMeta(op.ctx, m.ID, metaRestore, ""); err != nil {
+		logger.Error(op.ctx, err, "clear the restore mark of "+m.ID)
+		op.fail("restored, but recording it failed; the next Ensure restores again")
 		return
 	}
 	logger.Warnf(op.ctx, "restored %s from snapshot %s saved at %s; anything written after that save is not in the box", m.ID, rec.ID, savedAt)

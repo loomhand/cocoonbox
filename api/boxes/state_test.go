@@ -694,6 +694,41 @@ func TestAFailedRestoreDeletesTheMachineSoEnsureRetries(t *testing.T) {
 	}
 }
 
+func TestARestoreCutShortByARestartRestoresAgain(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	env.save(t)
+	env.fake.mu.Lock()
+	delete(env.fake.machines, aliceBox)
+	env.fake.mu.Unlock()
+	block := make(chan struct{})
+	env.agent.restoreGate = block
+	if _, err := env.svc.Ensure(env.ctx, &controlv1.EnsureRequest{}); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	first := env.fake.waitSpec(t, 1).ID
+	env.fake.push(machines.Machine{ID: first, State: machines.StateRunning})
+	clustertest.WaitFor(t, "the restore reaches the agent", func() bool { return env.agent.restoreCount() > 0 })
+
+	restarted := New(env.fake, testDefaults, env.svc.registry)
+	restarted.EnableState(env.agent, env.store, env.keys)
+	if _, _, err := restarted.Resolve(env.ctx, alice, aliceBox); status.Code(err) != codes.Unavailable {
+		t.Errorf("Resolve of the unrestored machine after a restart = %v, want Unavailable", err)
+	}
+	resp, err := restarted.Ensure(env.ctx, &controlv1.EnsureRequest{})
+	if err != nil || resp.GetOperation().GetId() == "" || env.fake.deletedIDs() != first {
+		t.Fatalf("Ensure after a restart = %v, %v, deleted %q; want %s discarded and a new restore", resp, err, env.fake.deletedIDs(), first)
+	}
+	close(block)
+	env.fake.push(machines.Machine{ID: env.fake.waitSpec(t, 2).ID, State: machines.StateRunning})
+	if last := watch(t, restarted, env.ctx, resp.GetOperation().GetId(), ""); last[len(last)-1].GetPhase() != controlv1.Phase_PHASE_DONE {
+		t.Fatalf("restore after the restart ended with %v", last[len(last)-1])
+	}
+	if _, _, err := restarted.Resolve(env.ctx, alice, aliceBox); err != nil {
+		t.Errorf("Resolve after the restore = %v", err)
+	}
+}
+
 func TestEnsureWithoutSavedStateCreatesAnEmptyBox(t *testing.T) {
 	env := newStateEnv(t)
 	env.fake.mu.Lock()

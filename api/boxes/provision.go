@@ -176,7 +176,7 @@ func (s *Service) agentContext(ctx context.Context, m machines.Machine) context.
 // ready reports whether clients may reach m: running, not being restored or parked and, with provisioning on, provisioned for this incarnation.
 func (s *Service) ready(m machines.Machine) bool {
 	active := s.ops.activeFor(boxOfMachine(m.ID))
-	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") &&
+	return m.State == machines.StateRunning && (s.provision == nil || wakeOf(m) != "") && m.Meta[metaRestore] == "" &&
 		(active == nil || (active.phase != controlv1.Phase_PHASE_RESTORING && !active.park))
 }
 
