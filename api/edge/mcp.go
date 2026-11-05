@@ -200,15 +200,18 @@ func (m *MCP) grantRoute(r *http.Request, authorization, boxID string) (rt route
 	}
 	rt.caller = g.User + " grant=" + g.ID
 	rt.ctx, rt.stop = m.authn.Bind(r.Context(), g.User, g.ID)
-	ids, err := m.grants.Boxes(rt.ctx, g.ID)
-	switch {
-	case err != nil:
-		log.WithFunc("edge.MCP.grantRoute").Errorf(r.Context(), err, "list the boxes of grant %s", g.ID)
-		return rt, status.Error(codes.Unavailable, "reading the client's boxes failed")
-	case boxID == "":
+	if boxID == "" {
 		return rt, status.Error(codes.InvalidArgument, "box id is required: "+MCPPrefix+"<box id>")
-	case !slices.Contains(ids, boxID) && !slices.Contains(g.Chosen, boxID):
-		return rt, errNoBox
+	}
+	if !slices.Contains(g.Chosen, boxID) {
+		ids, listErr := m.grants.Boxes(rt.ctx, g.ID)
+		switch {
+		case listErr != nil:
+			log.WithFunc("edge.MCP.grantRoute").Errorf(r.Context(), listErr, "list the boxes of grant %s", g.ID)
+			return rt, status.Error(codes.Unavailable, "reading the client's boxes failed")
+		case !slices.Contains(ids, boxID):
+			return rt, errNoBox
+		}
 	}
 	if rt.ep, rt.wake, err = m.resolver.Resolve(rt.ctx, g.User, boxID); err == nil {
 		rt.left = m.reached(r, boxID)
