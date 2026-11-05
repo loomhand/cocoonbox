@@ -51,7 +51,7 @@ type gcReport struct {
 	purgedBytes   int64
 }
 
-// keySource returns the user's state key, read once per pass.
+// keySource returns the user's state key, read at most once per box.
 type keySource func() (keyring.Key, error)
 
 // RunGC prunes and collects the state of every user that users returns, at once and then every opts.Interval, until ctx ends.

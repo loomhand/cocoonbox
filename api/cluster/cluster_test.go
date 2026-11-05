@@ -500,7 +500,6 @@ func waitLeader(t *testing.T, mu *sync.Mutex, leading map[string]bool, not strin
 	return ""
 }
 
-// freezer forwards connections to the database of a dsn until freeze, after which it keeps them open and passes nothing.
 type freezer struct {
 	dsn    string
 	frozen atomic.Bool

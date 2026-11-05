@@ -1247,7 +1247,7 @@ func hasProgress(events []*controlv1.OperationEvent) bool {
 	return false
 }
 
-// fakeStore calls before, when set, with the operation and key ahead of each Get, Put, List and Delete.
+// fakeStore calls before, when set, with the operation and key ahead of each store call.
 type fakeStore struct {
 	before func(op, key string)
 
@@ -1426,7 +1426,7 @@ type pinnedPlan struct {
 	manifest []byte
 }
 
-// fakeAgent plans snapshots s1, s2, ... over chunks (or byBox[ep.Key]) and moves objects in the fake store as presigned URLs name them.
+// fakeAgent plans snapshots over chunks (or byBox[ep.Key]) and moves objects in the fake store as presigned URLs name them.
 type fakeAgent struct {
 	store       *fakeStore
 	chunks      []string

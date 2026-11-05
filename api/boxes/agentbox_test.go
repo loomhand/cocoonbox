@@ -202,7 +202,6 @@ func newCredentialService(t *testing.T) (*Service, *fakeMachines) {
 	return svc, fake
 }
 
-// addAgentBox gives alice a running box an agent created.
 func addAgentBox(t *testing.T, svc *Service, fake *fakeMachines) string {
 	t.Helper()
 	b, err := svc.registry.AddBox(t.Context(), users.Box{ID: newBoxID(), Owner: alice, Name: "agent", Agent: true})

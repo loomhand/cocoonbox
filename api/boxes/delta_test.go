@@ -392,7 +392,7 @@ func (e *stateEnv) timelineEntries(t *testing.T, p statePath) []timelineEntry {
 	return tl.Snapshots
 }
 
-// manyFiles is n files under /workspace/src with one chunk each; version v rewrites file v-1, so each version differs from the one before in one file.
+// manyFiles is n files under /workspace/src with one chunk each; version v rewrites files 0..v-1.
 func manyFiles(n, v int) []manifestFile {
 	files := []manifestFile{{Root: "workspace", Path: "src", Kind: kindDir, Mode: 0o755}}
 	for i := range n {

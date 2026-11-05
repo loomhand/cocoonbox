@@ -213,7 +213,7 @@ func (c *client) get(ctx context.Context, id string) (row, error) {
 	return r, err
 }
 
-// verb posts one lifecycle verb (wake, hibernate, release, renew) with the root token.
+// verb posts one lifecycle verb with the root token.
 func (c *client) verb(ctx context.Context, id, verb string, body any) error {
 	return c.do(ctx, http.MethodPost, "/v1/sandboxes/"+url.PathEscape(id)+"/"+verb, nil, body, nil)
 }

@@ -22,7 +22,7 @@ func (s *Service) EnableVault(v Vault) {
 	s.vault = v
 }
 
-// ApplyVault puts user's keys on every machine of user at once: host-only entries on all, the guest list on running ones.
+// ApplyVault puts user's keys on the machines of user's own boxes at once: host-only entries on all, the guest list on running ones.
 func (s *Service) ApplyVault(ctx context.Context, user string) error {
 	if s.vault == nil || s.provision == nil {
 		return nil

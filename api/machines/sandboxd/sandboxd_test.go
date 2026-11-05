@@ -1578,7 +1578,6 @@ func (f *fakeSandboxd) exec(w http.ResponseWriter, r *http.Request, sb *fakeSand
 	writeJSON(w, resp)
 }
 
-// root checks the root token; sandbox also resolves {id} and holds f.mu for the handler.
 func (f *fakeSandboxd) root(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+rootToken {
@@ -1589,6 +1588,7 @@ func (f *fakeSandboxd) root(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// sandbox holds f.mu while next runs.
 func (f *fakeSandboxd) sandbox(next func(http.ResponseWriter, *http.Request, *fakeSandbox)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
@@ -1605,7 +1605,6 @@ func (f *fakeSandboxd) sandbox(next func(http.ResponseWriter, *http.Request, *fa
 	}
 }
 
-// tokenOwner returns the tenant a token names, "" for root.
 func (f *fakeSandboxd) tokenOwner(token string) (string, bool) {
 	if token == rootToken {
 		return "", true
@@ -1648,7 +1647,6 @@ func (f *fakeSandboxd) remove(id string) {
 	delete(f.sandboxes, id)
 }
 
-// mutate changes the only sandbox of a test that claimed one.
 func (f *fakeSandboxd) mutate(fn func(*fakeSandbox)) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

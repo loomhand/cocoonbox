@@ -98,7 +98,7 @@ func serveState(t *testing.T, srv agentv1.StateServer) string {
 	return lis.Addr().String()
 }
 
-// fakeState requires credential cred-1 and no edge token; Upload sends two progress messages and, with the manifest, a final one, as the agent does; Restore finishes only after it received some gets.
+// fakeState requires credential cred-1 and no edge token.
 type fakeState struct {
 	agentv1.UnimplementedStateServer
 }

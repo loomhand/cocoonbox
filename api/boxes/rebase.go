@@ -154,7 +154,7 @@ func (s *Service) waitReady(op *operation, m machines.Machine) (machines.Machine
 	return machines.Machine{}, fmt.Errorf("machine %s did not start: %w", m.ID, op.ctx.Err())
 }
 
-// discard deletes a rebase machine that will not serve; the old machine keeps serving.
+// discard deletes machine id, which will not serve.
 func (s *Service) discard(op *operation, id string) {
 	if err := s.deleteMachine(context.WithoutCancel(op.ctx), id); err != nil {
 		log.WithFunc("boxes.Service.discard").WithField("box", op.boxID).Error(op.ctx, err, "delete "+id)

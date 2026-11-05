@@ -253,7 +253,6 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	return s.withOperation(ctx, user, box, m, phase), nil
 }
 
-// Get returns one of the caller's boxes; a box without a machine is BOX_STATE_UNSPECIFIED.
 func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*controlv1.Box, error) {
 	user, err := s.ownerOf(ctx, req.GetBoxId())
 	if err != nil {
@@ -266,7 +265,6 @@ func (s *Service) Get(ctx context.Context, req *controlv1.GetBoxRequest) (*contr
 	return s.toBox(ctx, user, req.GetBoxId(), current[req.GetBoxId()]), nil
 }
 
-// List returns the caller's boxes, oldest first; a box without a machine is BOX_STATE_UNSPECIFIED.
 func (s *Service) List(ctx context.Context, _ *controlv1.ListBoxesRequest) (*controlv1.ListBoxesResponse, error) {
 	user, err := auth.Caller(ctx)
 	if err != nil {

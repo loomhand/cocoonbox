@@ -394,7 +394,7 @@ func openVault(ctx context.Context, cfg *config.Config, svc *boxes.Service, acco
 	return keys, nil
 }
 
-// endShare closes the box's MCP sessions of a share that ended; a box that is not running has none to close.
+// endShare closes the box's MCP sessions of a share that ended; a hibernated box keeps them until its agent's idle reaper closes them.
 func endShare(ctx context.Context, proxy *edge.Proxy, sh users.Share) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endShareTimeout)
 	defer cancel()

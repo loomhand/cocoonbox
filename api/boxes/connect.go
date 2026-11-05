@@ -25,7 +25,7 @@ func (s *Service) EnableConnect(c Connect) {
 	s.connect = c
 }
 
-// ApplyCredentials brings every machine of user in line with the user's credentials; flags change only on running ones.
+// ApplyCredentials brings the machines of user's own boxes in line with the user's credentials; flags change only on running ones.
 func (s *Service) ApplyCredentials(ctx context.Context, user string) error {
 	if s.connect == nil {
 		return nil

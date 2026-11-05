@@ -126,7 +126,7 @@ func TCPEndpoint(addr string) Endpoint {
 	}}
 }
 
-// NotRunningError is returned by Address for a machine that cannot take traffic.
+// NotRunningError reports a machine that cannot take traffic.
 type NotRunningError struct {
 	State State
 }
@@ -138,7 +138,7 @@ type Machines interface {
 	// Ensure creates the machine, or wakes it when hibernated, and returns without waiting.
 	Ensure(ctx context.Context, spec Spec) (Machine, Action, error)
 	Get(ctx context.Context, id string) (Machine, error)
-	// List returns owner's machines that are not being deleted, or every such machine when owner is empty.
+	// List returns owner's machines, or every machine when owner is empty.
 	List(ctx context.Context, owner string) ([]Machine, error)
 	// Hibernate requests hibernation and returns without waiting.
 	Hibernate(ctx context.Context, id string) (Machine, error)

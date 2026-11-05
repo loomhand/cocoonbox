@@ -382,7 +382,6 @@ func (e *wakeEnv) schedule(t *testing.T, cron string, awakeFor time.Duration) ti
 	return nine
 }
 
-// running finishes the wake operation with the box running.
 func (e *wakeEnv) running(t *testing.T) {
 	t.Helper()
 	e.fake.push(machines.Machine{ID: aliceBox, State: machines.StateRunning, Revision: 2})
@@ -400,8 +399,7 @@ func (e *wakeEnv) idle(t *testing.T) {
 	}
 }
 
-// fakeWakeStore refuses an alarm write for a schedule that changed, as the users table does; replaceOnRead stands for a SetWakeSchedule
-// that lands after the next read.
+// fakeWakeStore refuses an alarm write for a changed schedule, as the users table does.
 type fakeWakeStore struct {
 	mu            sync.Mutex
 	schedules     map[string]users.WakeSchedule
