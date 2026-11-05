@@ -148,7 +148,7 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 	if err == nil {
 		rec, err = s.save(op, op.user, running, agentv1.Consistency_CONSISTENCY_QUIESCED)
 	}
-	unlock, lockErr := s.lockStarts(op.ctx, op.user)
+	unlock, lockErr := s.lockStarts(context.WithoutCancel(op.ctx), op.user)
 	if lockErr != nil {
 		s.unpark(op, m.ID, lockErr)
 		return

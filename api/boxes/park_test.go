@@ -1,6 +1,8 @@
 package boxes
 
 import (
+	"context"
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -147,6 +150,32 @@ func TestAClientDuringAParkKeepsTheMachine(t *testing.T) {
 	}
 	if _, _, err := e.svc.Resolve(e.ctx, alice, aliceBox); err != nil {
 		t.Errorf("Resolve after the Ensure = %v", err)
+	}
+}
+
+func TestASupersededParkKeepsTheMachine(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		t.Run(fmt.Sprintf("shared=%v", shared), func(t *testing.T) {
+			e := newParkEnv(t)
+			if shared {
+				db := clustertest.Open(t)
+				e.svc.EnableLedger(t.Context(), db)
+				e.svc.EnableShared(t.Context(), db)
+			}
+			e.fake.setState(aliceBox, machines.StateRunning)
+			m, err := e.fake.Get(e.ctx, aliceBox)
+			if err != nil {
+				t.Fatalf("setup: %v", err)
+			}
+			op, _ := e.svc.ops.begin(context.WithoutCancel(e.ctx), &operation{user: alice, boxID: aliceBox, phase: controlv1.Phase_PHASE_SAVING, park: true, gen: m.Revision}, time.Minute)
+			if _, err := e.svc.Ensure(e.ctx, &controlv1.EnsureRequest{BoxId: aliceBox}); err != nil {
+				t.Fatalf("Ensure while parking: %v", err)
+			}
+			e.svc.runPark(op, m)
+			if state := e.fake.state(aliceBox); state != machines.StateRunning || e.fake.deletedIDs() != "" {
+				t.Errorf("after the superseded park: state %v, deleted %q; want the machine kept running", state, e.fake.deletedIDs())
+			}
+		})
 	}
 }
 
