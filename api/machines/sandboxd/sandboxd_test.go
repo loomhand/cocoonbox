@@ -594,6 +594,24 @@ func TestAClaimRefusedForCapacityFailsAndDeleteForgetsIt(t *testing.T) {
 	}
 }
 
+func TestDeleteRefusesAMachineWhoseClaimIsInFlight(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	fake.hold = make(chan struct{})
+	b := newTestBackend(t, fake)
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge})
+	if err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	if err := b.Delete(t.Context(), boxID); !errors.Is(err, machines.ErrConflict) {
+		t.Errorf("Delete during the claim = %v, want ErrConflict", err)
+	}
+	close(fake.hold)
+	waitState(t, b, boxID, m.Revision, machines.StateRunning)
+	if err := b.Delete(t.Context(), boxID); err != nil || fake.count("release") != 1 {
+		t.Errorf("Delete after the claim = %v with %d releases, want nil and 1", err, fake.count("release"))
+	}
+}
+
 func TestWatchReportsAMetaChange(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
@@ -1333,6 +1351,7 @@ type fakeSandboxd struct {
 	execStatus  int
 	patchStatus int
 	refusals    int
+	hold        chan struct{}
 	agent       string
 	tenants     map[string]tenantRequest
 	adoptable   map[string]*fakeSandbox
@@ -1375,6 +1394,9 @@ func (f *fakeSandboxd) handler() http.Handler {
 		writeJSON(w, map[string]any{"peers": addrs(f.peers)})
 	}))
 	mux.HandleFunc("POST /v1/claim", func(w http.ResponseWriter, r *http.Request) {
+		if f.hold != nil {
+			<-f.hold
+		}
 		var req claimRequest
 		_ = json.UnmarshalRead(r.Body, &req)
 		f.mu.Lock()

@@ -344,10 +344,16 @@ func (b *Backend) Address(_ context.Context, id string) (machines.Endpoint, erro
 }
 
 func (b *Backend) Delete(ctx context.Context, id string) error {
-	now := time.Now()
-	unclaimed, err := b.drop(ctx, id, func(e *entry) bool { return e.row == nil && !e.busy(now) })
-	if err != nil {
+	now, claiming := time.Now(), false
+	unclaimed, err := b.drop(ctx, id, func(e *entry) bool {
+		claiming = e.row == nil && e.busy(now)
+		return e.row == nil && !e.busy(now)
+	})
+	switch {
+	case err != nil:
 		return err
+	case claiming:
+		return fmt.Errorf("machine %s is being claimed: %w", id, machines.ErrConflict)
 	}
 	sandbox, node, err := b.sandboxOf(ctx, id)
 	if unclaimed && errors.Is(err, machines.ErrNotFound) {
