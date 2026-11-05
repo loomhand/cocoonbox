@@ -1250,6 +1250,10 @@ impl Cdp {
                 };
                 let mut v: Value =
                     serde_json::from_str(&text).map_err(|e| format!("cdp decode: {e}"))?;
+                if v["method"] == "Fetch.requestPaused" {
+                    self.release(&v["params"]).await?;
+                    continue;
+                }
                 if v["id"].as_u64() != Some(id) {
                     self.note(&v);
                     self.handle_dialog().await?;
@@ -1508,19 +1512,9 @@ impl Cdp {
                         deadline = end;
                     }
                 }
-                let request = json!({"requestId": paused["requestId"]});
-                match not_a_page(paused) {
-                    Some(kind) => {
-                        if paused["frameId"] == *frame {
-                            refused = Some(kind);
-                        }
-                        let mut fail = request;
-                        fail["errorReason"] = "BlockedByClient".into();
-                        self.send("Fetch.failRequest", fail).await?;
-                    }
-                    None => {
-                        self.send("Fetch.continueRequest", request).await?;
-                    }
+                let kind = self.release(paused).await?;
+                if kind.is_some() && paused["frameId"] == *frame {
+                    refused = kind;
                 }
                 continue;
             }
@@ -1539,6 +1533,18 @@ impl Cdp {
             }
         }
         Ok(ready)
+    }
+
+    async fn release(&mut self, paused: &Value) -> Result<Option<String>, String> {
+        let mut request = json!({"requestId": paused["requestId"]});
+        let kind = not_a_page(paused);
+        if kind.is_some() {
+            request["errorReason"] = "BlockedByClient".into();
+            self.send("Fetch.failRequest", request).await?;
+        } else {
+            self.send("Fetch.continueRequest", request).await?;
+        }
+        Ok(kind)
     }
 
     /// Waits until the page text kept its length over one [`SPA_POLL`] with no XHR or fetch ended meanwhile or in
@@ -2713,6 +2719,12 @@ pub(super) mod tests {
             .filter(|m| m["params"]["expression"] == read.as_str())
             .count();
         assert_eq!(reads, 4, "shell, shell, feed, feed");
+        assert!(
+            log.lock().unwrap().iter().any(
+                |m| m["method"] == "Fetch.continueRequest" && m["params"]["requestId"] == "r3"
+            ),
+            "a document the page loads after its load goes on"
+        );
         let (port, _) = fetch_chrome("Loading…".into(), true).await;
         let b = Browser::new("/nonexistent/chrome".into(), dir.path().into(), port, true);
         let asked = tokio::time::Instant::now();
@@ -3495,6 +3507,12 @@ pub(super) mod tests {
                             }
                             "Runtime.evaluate" if shell && read => {
                                 texts += 1;
+                                if texts == 2 {
+                                    let late = json!({"method": "Fetch.requestPaused", "sessionId": "s1", "params": {
+                                        "requestId": "r3", "frameId": "hidden", "responseStatusCode": 200,
+                                        "responseHeaders": [{"name": "Content-Type", "value": "text/html"}]}});
+                                    ws.send(WsMessage::text(late.to_string())).await.unwrap();
+                                }
                                 let page = if texts < 3 {
                                     "Loading your feed…"
                                 } else {
