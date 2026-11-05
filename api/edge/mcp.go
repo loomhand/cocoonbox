@@ -83,10 +83,6 @@ func (m *MCP) EnableGrants(grants Grants) {
 }
 
 func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasPrefix(r.URL.Path, MCPPrefix) {
-		http.NotFound(w, r)
-		return
-	}
 	start := time.Now()
 	boxID, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, MCPPrefix), "/")
 	rt, err := m.route(r, boxID)

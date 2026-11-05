@@ -285,19 +285,6 @@ func TestMCPExchangeSendsTheOwnersCredential(t *testing.T) {
 	}
 }
 
-func TestMCPIgnoresOtherPaths(t *testing.T) {
-	env := newMCPEnv(t)
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://"+env.addr+"/cocoonbox.agent.v1.Session/Hello", strings.NewReader("{}"))
-	if err != nil {
-		t.Fatalf("request: %v", err)
-	}
-	resp := env.do(t, req)
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Errorf("status %d, want 404", resp.StatusCode)
-	}
-}
-
 type mcpEnv struct {
 	mcp      *MCP
 	served   chan string
