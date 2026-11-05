@@ -1453,6 +1453,9 @@ case "plugin":
     } catch {
         fail("\(error)")
     }
-default:
+case "help", "-h", "--help":
     print(usage)
+default:
+    FileHandle.standardError.write(Data("\(usage)\n".utf8))
+    exit(2)
 }

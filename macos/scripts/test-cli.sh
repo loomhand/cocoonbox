@@ -63,6 +63,8 @@ def run(*args):
 
 status = run("status", "--json")
 check("status over gRPC", json.loads(status.stdout)["state"] == "hibernated", status.stdout + status.stderr)
+r = run("statsu")
+check("an unknown command prints the usage to stderr and exits 2", r.returncode == 2 and r.stderr.startswith("usage: cocoonbox <command>"), r.stdout + r.stderr)
 
 class Bridge:
     def __init__(self, *flags, env=None, binary=None):
