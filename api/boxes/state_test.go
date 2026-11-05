@@ -200,6 +200,16 @@ func TestSchedulerRetriesAFailedSaveAfterAnIntervalNotEveryTick(t *testing.T) {
 	}
 }
 
+func TestSchedulerSkipsAMachineItsRestoreHasNotFilled(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	env.fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Revision: 1, Meta: map[string]string{metaRestore: snapshotID(1)}})
+	env.svc.saveStale(env.ctx, time.Nanosecond)
+	if active := env.svc.ops.activeFor(aliceBox); active != nil {
+		t.Errorf("scheduler saved a machine its restore has not filled: %s", active.id)
+	}
+}
+
 func TestRebase(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
