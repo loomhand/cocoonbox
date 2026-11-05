@@ -202,7 +202,7 @@ func (s *Service) Remove(ctx context.Context, user, connector, door string) (boo
 	}
 	s.dropConn(g.id)
 	s.changed(ctx, g)
-	if err := s.store.audit(ctx, &record{user: user, connector: connector, door: door, caller: door, decision: decisionDisconn, outcome: outcomeOK}); err != nil {
+	if err := s.store.audit(context.WithoutCancel(ctx), &record{user: user, connector: connector, door: door, caller: door, decision: decisionDisconn, outcome: outcomeOK}); err != nil {
 		logger.Error(ctx, err, "write the audit record")
 	}
 	logger.Infof(ctx, "user %s disconnected %s (grant %s), revoked at the vendor: %t", user, connector, g.id, revoked)
