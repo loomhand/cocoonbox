@@ -18,7 +18,7 @@ use tokio::sync::{Mutex, broadcast, watch};
 use tokio_util::sync::CancellationToken;
 
 use super::env::{self, Spec};
-use super::handover::{self, MAX_BODY};
+use super::handover::{self, MAX_BODY, MAX_PROMPT};
 use super::packer::ACCEPT_WAIT;
 use super::{
     Copy, Layout, MAX_WAIT_S, read_index, snapshot_ref, tmux_session, with_index, write_atomic,
@@ -207,7 +207,7 @@ impl Inbox {
 
     async fn connection(self: Arc<Self>, stream: UnixStream) {
         let (rd, mut wr) = stream.into_split();
-        let mut lines = BufReader::new(rd).take(MAX_BODY as u64 * 2).lines();
+        let mut lines = BufReader::new(rd).take(MAX_PROMPT as u64 * 2).lines();
         while let Ok(Some(line)) = lines.next_line().await {
             let req = match serde_json::from_str::<Request>(&line) {
                 Ok(Request::Watch) => {
@@ -228,7 +228,7 @@ impl Inbox {
             if reply(&mut wr, &out).await.is_err() {
                 return;
             }
-            lines.get_mut().set_limit(MAX_BODY as u64 * 2);
+            lines.get_mut().set_limit(MAX_PROMPT as u64 * 2);
         }
     }
 
@@ -260,10 +260,9 @@ impl Inbox {
     }
 
     async fn send(self: &Arc<Self>, req: SendRequest) -> Result<Value, Refusal> {
-        if req.body.len() > MAX_BODY {
-            return Err(Refusal::invalid(format!(
-                "a body is at most {MAX_BODY} bytes"
-            )));
+        let max = if req.start { MAX_PROMPT } else { MAX_BODY };
+        if req.body.len() > max {
+            return Err(Refusal::invalid(format!("a body is at most {max} bytes")));
         }
         super::valid_key(&req.repo).map_err(|_| Refusal::invalid("invalid repo key"))?;
         let mut recs = self.records.lock().await;

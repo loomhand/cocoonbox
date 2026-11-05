@@ -180,6 +180,16 @@ async fn send_to_an_absent_session_starts_it_with_the_message_as_its_first_promp
 }
 
 #[tokio::test]
+async fn a_first_prompt_past_one_argument_is_refused() {
+    let b = TestBox::start(false).await;
+    let over = b.start_session(&"x".repeat(handover::MAX_PROMPT + 1)).await;
+    assert_eq!(over["code"], "invalid", "{over}");
+    assert!(!b.tmux_log().contains("new-session"));
+    let at = b.start_session(&"x".repeat(handover::MAX_PROMPT)).await;
+    assert_eq!(at["delivery"], "started", "{at}");
+}
+
+#[tokio::test]
 async fn a_busy_send_is_queued_until_the_idle_hook() {
     let b = TestBox::start(false).await;
     b.start_session("FIRST").await;

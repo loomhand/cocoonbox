@@ -3,7 +3,9 @@
 use std::path::Path;
 
 /// Largest hand-over or inbox message body.
-pub const MAX_BODY: usize = 256 << 10;
+pub const MAX_BODY: usize = 64 << 10;
+/// Largest first prompt; the CLI takes it as one argument, which Linux caps at 128 KiB.
+pub const MAX_PROMPT: usize = 120 << 10;
 /// The first line of every hand-over starts with this.
 pub const TITLE: &str = "# Hand-over: ";
 /// Headings every hand-over carries once, each as its own line.
@@ -64,8 +66,7 @@ From: box   Agent: <claude|codex|cursor>   Repo: <path>   Branch: <branch> @ <sh
 - <what needs the user, and what to do meanwhile>
 ";
 
-/// What a hand-over lacks: the title line, then each heading that is missing or repeated;
-/// empty when it is valid.
+/// What a hand-over lacks: the title line, then each heading missing or repeated; empty when valid.
 pub fn missing(body: &str) -> Vec<&'static str> {
     let mut out = Vec::new();
     if !body.lines().next().is_some_and(|l| l.starts_with(TITLE)) {
@@ -190,6 +191,20 @@ mod tests {
             v.extend(HEADINGS);
             v
         });
+    }
+
+    #[test]
+    fn the_longest_first_prompt_fits_one_argument() {
+        let preamble = preamble(
+            Path::new(
+                "/workspace/a-repo-name-of-sixty-four-characters-at-most-xxxxxxxxxxxxxxxxxxxxx",
+            ),
+            "0123456789ab",
+            Path::new("/home/user/.local/share/cocoonbox/offload"),
+            "refs/cocoonbox/offload/a1b2c3d4e5f6",
+        );
+        assert!(preamble.len() + MAX_BODY < MAX_PROMPT, "{}", preamble.len());
+        assert!(RESTARTED.len() + 2 + MAX_PROMPT < 128 << 10);
     }
 
     #[test]
