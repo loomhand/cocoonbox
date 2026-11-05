@@ -34,6 +34,7 @@ const DELIVERY_DELAY: Duration = Duration::from_millis(500);
 const RESCAN: Duration = Duration::from_secs(5);
 const RELAY_RETRY: Duration = Duration::from_secs(2);
 const CHANGES: usize = 256;
+const CHANGE_LINE: u64 = 64 << 10;
 const TRANSCRIPT_TAIL: u64 = 256 << 10;
 const SOCKET_GROUP: &str = "cbagent";
 const RECORD_FILE: &str = "session.json";
@@ -1080,11 +1081,12 @@ async fn follow(socket: &Path, journal: &Journal) -> Result<(), String> {
     wr.write_all(b"{\"op\":\"watch\"}\n")
         .await
         .map_err(|e| format!("watch: {e}"))?;
-    let mut lines = BufReader::new(rd).lines();
+    let mut lines = BufReader::new(rd).take(CHANGE_LINE).lines();
     while let Some(line) = lines.next_line().await.map_err(|e| format!("read: {e}"))? {
         match serde_json::from_str::<Change>(&line) {
             Ok(c) => {
                 journal.bus.publish(event::Body::Offload(c.update()));
+                lines.get_mut().set_limit(CHANGE_LINE);
             }
             Err(e) => eprintln!("offload relay: bad change: {e}"),
         }
@@ -1467,6 +1469,22 @@ mod tests {
         write(&[prompt.clone(), tool, done, prompt]);
         assert!(!turn_ended(&path).await);
         assert!(!turn_ended(&dir.path().join("none.jsonl")).await);
+    }
+
+    #[tokio::test]
+    async fn the_relay_drops_a_feed_whose_line_passes_its_cap() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("offload.sock");
+        let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+        let feed = tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let _ = s.write_all(&vec![b'x'; CHANGE_LINE as usize * 2]).await;
+            s
+        });
+        let journal = Journal::new(crate::store::Store::open(&dir.path().join("a.db")).unwrap());
+        let fed = tokio::time::timeout(Duration::from_secs(5), follow(&socket, &journal)).await;
+        assert!(matches!(fed, Ok(Err(_))), "{fed:?}");
+        drop(feed);
     }
 
     #[test]
