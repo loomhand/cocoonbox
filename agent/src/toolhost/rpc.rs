@@ -102,6 +102,20 @@ impl Client {
         Ok((stamp, FileReader { stream }))
     }
 
+    pub async fn walk(&self, args: Value) -> Result<Vec<u8>, String> {
+        let call = Call {
+            agent_id: String::new(),
+            tool: "state_walk".to_owned(),
+            args,
+        };
+        let mut stream = self.open(&call).await?;
+        let mut body = Vec::new();
+        while let Some(data) = read_data(&mut stream).await? {
+            body.extend_from_slice(&data);
+        }
+        Ok(body)
+    }
+
     /// Creates a file as `user` from data sent through the returned writer.
     pub async fn write_file(
         &self,

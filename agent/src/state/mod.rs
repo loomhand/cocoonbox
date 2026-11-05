@@ -881,12 +881,10 @@ impl StateEngine {
         #[cfg(windows)]
         let listed: Option<Listed> = None;
         let walked = self
-            .tool(
-                "state_walk",
-                json!({"roots": self.roots, "excludes": self.excludes, "listed": listed}),
-            )
+            .toolhost
+            .walk(json!({"roots": self.roots, "excludes": self.excludes, "listed": listed}))
             .await?;
-        serde_json::from_str(&walked).map_err(|e| format!("decode walk: {e}"))
+        serde_json::from_slice(&walked).map_err(|e| format!("decode walk: {e}"))
     }
 
     async fn seed_known(&self, manifest: &Manifest, filled: &Filled) -> Result<(), String> {

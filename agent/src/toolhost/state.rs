@@ -150,8 +150,8 @@ struct PlaceArgs {
     name: String,
 }
 
-/// `state_walk`: every file, directory and symlink under the roots, sorted, minus exclusions.
-pub async fn walk(args: Value) -> Result<String, String> {
+/// `state_walk`: every file, directory and symlink under the roots, sorted, minus exclusions, as JSON in data frames.
+pub async fn walk<W: AsyncWrite + Unpin>(args: Value, w: &mut W) -> Result<(), String> {
     let a: WalkArgs = rpc::parse(args)?;
     let entries = tokio::task::spawn_blocking(move || {
         let mut out = Vec::new();
@@ -169,7 +169,7 @@ pub async fn walk(args: Value) -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("walk task: {e}"))?;
-    serde_json::to_string(&entries).map_err(|e| format!("encode walk: {e}"))
+    send_walk(&entries, w).await
 }
 
 /// `state_read`: a stamp frame, the file (with `sqlite_backup`, an online backup of it) as data frames, then a later stamp.
@@ -280,6 +280,14 @@ pub async fn place(args: Value) -> Result<String, String> {
     })
     .await
     .map_err(|e| format!("place task: {e}"))?
+}
+
+async fn send_walk<W: AsyncWrite + Unpin>(entries: &[Entry], w: &mut W) -> Result<(), String> {
+    let body = serde_json::to_vec(entries).map_err(|e| format!("encode walk: {e}"))?;
+    for block in body.chunks(READ_BLOCK) {
+        rpc::write_data(w, block).await?;
+    }
+    rpc::write_data(w, &[]).await
 }
 
 async fn stream_backup<W: AsyncWrite + Unpin>(copy: &Path, w: &mut W) -> Result<(), String> {
@@ -616,6 +624,8 @@ fn mtime_ms(t: Option<SystemTime>) -> i64 {
 mod tests {
     use std::os::unix::fs::symlink;
 
+    use desk_core::wire::MAX_FRAME;
+
     use super::*;
 
     fn excludes() -> Excludes {
@@ -653,7 +663,7 @@ mod tests {
             "roots": [{"name": "home", "path": home}],
             "excludes": excludes(),
         });
-        let entries: Vec<Entry> = serde_json::from_str(&walk(args).await.unwrap()).unwrap();
+        let entries = walked(args).await;
         let paths: Vec<(&str, Kind)> = entries.iter().map(|e| (e.path.as_str(), e.kind)).collect();
         assert_eq!(
             paths,
@@ -684,7 +694,7 @@ mod tests {
                 {"name": "workspace", "path": workspace},
             ],
         });
-        let entries: Vec<Entry> = serde_json::from_str(&walk(args).await.unwrap()).unwrap();
+        let entries = walked(args).await;
         let paths: Vec<(&str, &str)> = entries
             .iter()
             .map(|e| (e.root.as_str(), e.path.as_str()))
@@ -862,5 +872,48 @@ mod tests {
             .collect();
         assert_eq!(names, ["go"]);
         assert!(root.join("go/new").exists());
+    }
+
+    #[tokio::test]
+    async fn a_walk_larger_than_a_frame_reaches_the_agent_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
+        let mut listener = crate::toolhost::bind(&socket, "").unwrap();
+        let entry = |i: usize| Entry {
+            root: "home".into(),
+            path: format!("{}/{i}", "d".repeat(200)),
+            kind: Kind::File,
+            mode: 0o644,
+            mtime_ms: 1,
+            size: 1,
+            target: None,
+            ctime_ns: Some(1),
+        };
+        let count = 250_000;
+        tokio::spawn(async move {
+            let mut s = crate::toolhost::accept(&mut listener).await.unwrap();
+            let _: rpc::Call = rpc::read_frame(&mut s).await.unwrap();
+            let entries: Vec<Entry> = (0..count).map(entry).collect();
+            send_walk(&entries, &mut s).await.unwrap();
+        });
+        let body = rpc::Client::new(socket)
+            .walk(serde_json::json!({}))
+            .await
+            .unwrap();
+        assert!(body.len() > MAX_FRAME, "walk of {} bytes", body.len());
+        let got: Vec<Entry> = serde_json::from_slice(&body).unwrap();
+        assert_eq!(got.len(), count);
+        assert_eq!(got[count - 1], entry(count - 1));
+    }
+
+    async fn walked(args: Value) -> Vec<Entry> {
+        let mut frames = Vec::new();
+        walk(args, &mut frames).await.unwrap();
+        let mut r = frames.as_slice();
+        let mut body = Vec::new();
+        while let Some(data) = rpc::read_data(&mut r).await.unwrap() {
+            body.extend_from_slice(&data);
+        }
+        serde_json::from_slice(&body).unwrap()
     }
 }

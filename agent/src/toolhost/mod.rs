@@ -161,7 +161,6 @@ impl Host {
                 .await
                 .map(Output::text),
             "upload" => self.upload(call.args).await.map(Output::text),
-            "state_walk" => state::walk(call.args).await.map(Output::text),
             "state_apply" => state::apply(call.args).await.map(Output::text),
             "state_swap" => state::swap(call.args).await.map(Output::text),
             "state_place" => state::place(call.args).await.map(Output::text),
@@ -454,6 +453,12 @@ async fn serve_conn(host: Arc<Host>, stream: Conn) {
             }
             return;
         }
+        "state_walk" => {
+            if let Err(e) = timing::scope(call.tool, state::walk(call.args, &mut wr)).await {
+                eprintln!("toolhost: state_walk: {e}");
+            }
+            return;
+        }
         "exec" => {
             exec::run(&host.workspace, &host.home, &call.args, rd, wr).await;
             return;
@@ -687,7 +692,7 @@ mod tests {
         let spec: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         for t in spec["tools"].as_array().unwrap() {
             let tool = t["name"].as_str().unwrap();
-            if ["exec", "state_read", "state_write"].contains(&tool) {
+            if ["exec", "state_read", "state_walk", "state_write"].contains(&tool) {
                 continue;
             }
             if tool.starts_with("browser_") {
