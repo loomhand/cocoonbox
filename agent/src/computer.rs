@@ -26,19 +26,18 @@ pub async fn run(
     usage: &mut Tally,
 ) -> Result<ToolOutput, String> {
     let _screen = rt.screen.lock().await;
-    let driver = new_id("cu");
     let mut guard = EndOnDrop {
         dispatcher: Arc::clone(&rt.dispatcher),
         tasks: rt.tasks.clone(),
         owner: ctx.agent_id.clone(),
-        driver: driver.clone(),
+        driver: new_id("cu"),
         armed: true,
     };
-    let result = drive(rt, ctx, task, &driver, usage).await;
+    let result = drive(rt, ctx, task, &guard.driver, usage).await;
+    let end = rt.dispatcher.end_driver(&ctx.agent_id, &guard.driver).await;
     guard.armed = false;
-    let end = rt.dispatcher.end_driver(&ctx.agent_id, &driver).await;
     if end.is_error {
-        eprintln!("end driver session {driver}: {}", end.text);
+        eprintln!("end driver session {}: {}", guard.driver, end.text);
     }
     result
 }
