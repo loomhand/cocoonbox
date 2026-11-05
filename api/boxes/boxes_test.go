@@ -276,6 +276,7 @@ func TestSupersededOperationFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Hibernate: %v", err)
 	}
+	fake.setState(aliceBox, machines.StateHibernated)
 	wake, err := svc.Ensure(ctx, &controlv1.EnsureRequest{})
 	if err != nil {
 		t.Fatalf("Ensure: %v", err)
@@ -283,6 +284,25 @@ func TestSupersededOperationFails(t *testing.T) {
 	events := watch(t, svc, ctx, hibernate.GetId(), "")
 	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_FAILED || last.GetDetail() != "superseded by operation "+wake.GetOperation().GetId() {
 		t.Errorf("last event = %v", last)
+	}
+}
+
+func TestEnsureOnAHibernatingBoxAsksAgainAndKeepsTheHibernation(t *testing.T) {
+	fake := newFakeMachines()
+	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Flavor: defaultFlavor, Revision: 1})
+	svc := New(fake, testDefaults, newFakeRegistry())
+	ctx := auth.WithUser(t.Context(), alice)
+	hibernate, err := svc.Hibernate(ctx, &controlv1.BoxRef{BoxId: aliceBox})
+	if err != nil {
+		t.Fatalf("Hibernate: %v", err)
+	}
+	if resp, err := svc.Ensure(ctx, &controlv1.EnsureRequest{}); status.Code(err) != codes.Unavailable {
+		t.Fatalf("Ensure on a hibernating box = %v, %v, want Unavailable", resp, err)
+	}
+	fake.push(machines.Machine{ID: aliceBox, State: machines.StateHibernated})
+	events := watch(t, svc, ctx, hibernate.GetId(), "")
+	if last := events[len(events)-1]; last.GetPhase() != controlv1.Phase_PHASE_DONE || last.GetBoxState() != controlv1.BoxState_BOX_STATE_HIBERNATED {
+		t.Errorf("hibernate after the refused Ensure ended with %v, want DONE/HIBERNATED", last)
 	}
 }
 
@@ -525,7 +545,7 @@ func (f *fakeMachines) Ensure(_ context.Context, spec machines.Spec) (machines.M
 		}
 		f.machines[spec.ID] = m
 		return m, machines.ActionCreated, nil
-	case m.State == machines.StateHibernated || m.State == machines.StateHibernating:
+	case m.State == machines.StateHibernated:
 		m.State, m.Revision = machines.StateStarting, m.Revision+1
 		f.machines[spec.ID] = m
 		return m, machines.ActionWoken, nil

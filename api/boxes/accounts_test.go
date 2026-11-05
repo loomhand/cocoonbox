@@ -74,6 +74,7 @@ func TestDisablingAUserHibernatesItsBoxesEndsItsStreamsAndStopsItsKeysUntilEnabl
 	if m, _ := e.fake.Get(t.Context(), e.box); m.State != machines.StateHibernating {
 		t.Errorf("enable woke the box: %v", m.State)
 	}
+	e.fake.setState(e.box, machines.StateHibernated)
 	if resp, err := e.client.Ensure(e.as(t), &controlv1.EnsureRequest{BoxId: e.box}); err != nil || resp.GetOperation().GetId() == "" {
 		t.Fatalf("Ensure after enable = %v, %v", resp, err)
 	}

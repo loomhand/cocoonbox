@@ -199,6 +199,9 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	}
 	switch {
 	case ok:
+		if cur.State == machines.StateHibernating {
+			return nil, status.Error(codes.Unavailable, "box is hibernating; call box_ensure again once it is hibernated")
+		}
 		if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_RESTORING {
 			return &controlv1.EnsureResponse{Box: s.toBox(ctx, user, box, cur), Operation: &controlv1.Operation{Id: active.id, BoxId: box}}, nil
 		}
