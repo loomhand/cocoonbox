@@ -109,7 +109,6 @@ public final class SyntheticRFBServer: @unchecked Sendable {
         }
     }
 
-    // type inserts text as if it was typed on the desktop.
     public func type(_ string: String) {
         lock.withLock {
             text += string

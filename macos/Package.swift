@@ -2,9 +2,7 @@
 
 import PackageDescription
 
-// Command Line Tools ship swift-testing outside the default search path and
-// without the _Testing_Foundation overlay module, and `swift test` does not
-// find it there, so the tests build as an executable run by scripts/test.sh.
+// Command Line Tools keep swift-testing outside the default search path, so the tests build as an executable run by scripts/test.sh.
 let testingFrameworks = Context.environment["CB_TESTING_FRAMEWORKS"] ?? "/Library/Developer/CommandLineTools/Library/Developer/Frameworks"
 
 let package = Package(

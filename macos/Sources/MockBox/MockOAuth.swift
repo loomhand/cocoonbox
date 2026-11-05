@@ -141,4 +141,5 @@ final class MockOAuth: Sendable {
         var components = URLComponents()
         components.percentEncodedQuery = String(decoding: body, as: UTF8.self)
         return Dictionary((components.queryItems ?? []).map { ($0.name, $0.value ?? "") }) { _, last in last }
-    }}
+    }
+}

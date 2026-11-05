@@ -33,7 +33,7 @@ import Testing
             _ = fixture.terminal.view.tryToPerform(#selector(NSText.paste(_:)), with: nil)
             return fixture.stdin.text.contains("\u{1B}[200~code#state-1\u{1B}[201~")
         }
-        #expect(framed && fixture.stdin.text.contains("\u{1B}[200~code#state-1\u{1B}[201~"))
+        #expect(framed)
     }
 
     @Test func sendTypesTheTextAndReturn() {

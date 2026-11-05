@@ -1,15 +1,5 @@
 #!/bin/bash
-# End-to-end test of the cocoonbox CLI and its stdio MCP bridge against MockBox:
-# lifecycle commands over gRPC, the bridge's tool list while the box is
-# hibernated, the wake on the first box-tool call with progress, the control
-# tools and their refusals, --no-wake, the headers helper, several boxes:
-# routing by `box`, the default box, the running limit, --box and box_delete,
-# the app's socket: reported box-tool calls and a default box the app sets, and rsh with rsync
-# and git over it (MockBox runs Exec commands on this Mac in a test workspace), and flows list,
-# export, import and rm, box schedule set, list and clear, keys add, ls, rotate and rm, devices and devices revoke, share create, ls and revoke, logout --everywhere, a release-built
-# bridge naming the keys at initialize, and login through the browser and logout. Nothing touches
-# the login keychain or the real HOME: `login` stores the mock token in a
-# throwaway keychain file (CB_KEYCHAIN_FILE), and HOME is a test directory.
+# End-to-end test of the cocoonbox CLI and its stdio MCP bridge against MockBox, in a throwaway keychain and HOME.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -48,7 +38,7 @@ for _ in $(seq 100); do grep -q "mockbox listening" "$work/mockbox.log" && break
 echo mock-token | "$bin/cocoonbox-cli" login
 
 python3 - "$bin/cocoonbox-cli" "$work/mockbox.log" "$release" <<'PY'
-import json, subprocess, sys, time
+import json, os, pty, re, shutil, signal, socket, subprocess, sys, threading, time, urllib.error, urllib.request
 
 cli, mocklog, release = sys.argv[1], sys.argv[2], sys.argv[3]
 failures = []
@@ -108,7 +98,6 @@ def text(result):
 
 # Connect (mode B): the bridge merges the door's connector tools, routes their
 # calls to it with no box wake, and passes the door's list_changed on.
-import os, urllib.request
 def mock_connect(params):
     req = urllib.request.Request(os.environ["COCOONBOX_ENDPOINT"] + "/cocoonbox.mcp/connect", data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "mock/connect", "params": params}).encode(),
                                  headers={"Authorization": "Bearer mock-token", "Content-Type": "application/json"}, method="POST")
@@ -188,7 +177,6 @@ t.p.wait(timeout=10)
 time.sleep(1)
 log = open(mocklog).read()
 check("SIGTERM ends the box session too", log.count("mcp DELETE /cocoonbox.mcp/cb-mock00000000") >= 2, log[-400:])
-import signal
 c = Bridge()
 c.call("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "int-client", "version": "1"}})
 c.send("notifications/initialized", notify=True)
@@ -340,7 +328,6 @@ check("devices revoke of an unknown device fails", r.returncode == 1 and "device
 r = run("devices", "revoke")
 check("devices revoke without an id prints the usage", r.returncode == 1 and "usage: cocoonbox devices" in r.stderr, r.stderr)
 
-import re
 r = run("share", "ls")
 check("share ls without shares", r.returncode == 0 and r.stdout.strip() == "no live shares", r.stdout + r.stderr)
 r = run("share", "create", "main", "--ttl", "7d", "--json")
@@ -408,7 +395,6 @@ d.close()
 
 # The app's socket: the bridge names its agent, reports each box-tool call and
 # takes the default box the app sends, first in answer to its hello, then on a change.
-import os, socket, threading
 class FakeApp:
     def __init__(self, path, default):
         self.default, self.hellos, self.calls, self.conns = default, [], [], []
@@ -552,7 +538,6 @@ result, _ = k.tool("box_list")
 check("box_list after the cbdroid box is deleted", [b["name"] for b in result["structuredContent"]["boxes"]] == ["main"], result)
 k.close()
 
-import os, urllib.request, urllib.error
 def mcp_status(box):
     req = urllib.request.Request(os.environ["COCOONBOX_ENDPOINT"] + "/cocoonbox.mcp/" + box, data=b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}',
                                  headers={"Authorization": "Bearer mock-token", "Content-Type": "application/json"}, method="POST")
@@ -566,7 +551,6 @@ log = open(mocklog).read()
 check("box tool calls reached each box's own MCP path", "/cocoonbox.mcp/" + test_id + " auth=ok" in log and "rpc=tools/call tool=shell" in log, log[-600:])
 
 # rsh: the remote shell of rsync and git; the command's own exit code, or 255.
-import shutil
 work = os.path.dirname(mocklog)
 workspace = os.path.realpath(os.path.join(work, "workspace"))
 def rsh(*args, data=b"", env=None):
@@ -583,7 +567,6 @@ for host in ("box", "main", "u@main"):
     check("with --box the host word " + host + " is dropped", r.returncode == 0 and r.stdout == b"dropped\n", r)
 r = rsh("-t", "--box", "main", "echo", "plain")
 check("-t without a terminal on stdin runs without one, with a notice", r.returncode == 0 and r.stdout == b"plain\n" and b"not a terminal" in r.stderr, r)
-import pty
 def rsh_on_pty(*args):
     primary, secondary = pty.openpty()
     p = subprocess.Popen([cli, "rsh", *args], stdin=secondary, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=dict(os.environ, TERM="xterm-256color"))
@@ -600,8 +583,7 @@ check("-t on a terminal sends TERM and its local terminfo", code == 0 and exec_l
 seen = len(exec_lines())
 code, out, err = rsh_on_pty("--box", "main", "echo", "plain")
 check("without -t no terminal and no terminfo go along", code == 0 and exec_lines()[seen:] == ["exec tty=false term= terminfo=0"], (exec_lines()[seen:], err))
-import signal as sig
-for name, signals, want in (("the first SIGINT reaches the command", [sig.SIGINT], 9), ("a second signal ends rsh with 255", [sig.SIGINT, sig.SIGTERM], 255)):
+for name, signals, want in (("the first SIGINT reaches the command", [signal.SIGINT], 9), ("a second signal ends rsh with 255", [signal.SIGINT, signal.SIGTERM], 255)):
     p = subprocess.Popen([cli, "rsh", "--box", "main", "trap 'echo got-int; exit 9' INT; trap '' TERM; echo ready; while :; do sleep 0.1; done" if want == 9 else "trap '' INT TERM; echo ready; sleep 30"],
                          stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     ready = p.stdout.readline()
@@ -735,7 +717,6 @@ check("and the CLI keeps it without the app's item", signed_in_alone(service))
 
 # Writes stay inside the HOME the CLI is given: every file command runs under a
 # sandbox that denies writes outside the test directory and the process temp.
-import os, hashlib, pathlib
 work = os.path.dirname(mocklog)
 home = os.path.join(work, "confined-home")
 os.makedirs(os.path.join(home, ".cursor"))

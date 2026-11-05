@@ -421,9 +421,7 @@ final class Harness: @unchecked Sendable {
             }
             try await Task.sleep(for: .milliseconds(100))
         }
-        for _ in 0..<100 where try await connection.firstBox()?.state != .running {
-            try await Task.sleep(for: .milliseconds(100))
-        }
+        try #require(await until(seconds: 10) { (try? await connection.firstBox())?.state == .running })
     }
 
     static func mockBox(_ arguments: [String], log: URL, environment: [String: String]) async throws -> (Endpoint, Pipe) {
