@@ -365,20 +365,20 @@ impl Store {
             .await
     }
 
-    /// Persists an entry and returns it with its seq and timestamp.
+    /// Persists an entry and returns it with its seq and timestamp; a `TurnEnd` finishes its turn in the same transaction.
     pub async fn append(
         &self,
         entry: TranscriptEntry,
         subagent: bool,
     ) -> Result<TranscriptEntry, String> {
-        self.call(move |c| insert_entry(c, entry, subagent)).await
-    }
-
-    /// Marks a turn finished.
-    pub async fn finish_turn(&self, turn_id: String) -> Result<(), String> {
         self.call(move |c| {
-            c.execute("UPDATE turns SET done = 1 WHERE id = ?1", [turn_id])
-                .map(drop)
+            let tx = c.transaction()?;
+            if matches!(entry.body, Some(transcript_entry::Body::TurnEnd(_))) {
+                tx.execute("UPDATE turns SET done = 1 WHERE id = ?1", [&entry.turn_id])?;
+            }
+            let entry = insert_entry(&tx, entry, subagent)?;
+            tx.commit()?;
+            Ok(entry)
         })
         .await
     }
@@ -724,7 +724,14 @@ mod tests {
         let upto_second = store.history(ag.clone(), t2.turn_id.clone()).await.unwrap();
         assert_eq!(texts(upto_second), ["first", "answer1", "second"]);
         assert_eq!(store.unfinished_turns().await.unwrap().len(), 2);
-        store.finish_turn(t2.turn_id).await.unwrap();
+        let end = TranscriptEntry {
+            agent_id: ag.clone(),
+            turn_id: t2.turn_id,
+            role: pb::Role::System.into(),
+            body: Some(transcript_entry::Body::TurnEnd(pb::TurnEnd::default())),
+            ..Default::default()
+        };
+        store.append(end, false).await.unwrap();
         assert_eq!(store.unfinished_turns().await.unwrap().len(), 1);
     }
 }

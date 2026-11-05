@@ -419,9 +419,6 @@ impl Mcp {
             usage: None,
         });
         self.record(s, Role::System, end).await;
-        if let Err(e) = self.rt.journal.store.finish_turn(r.turn_id.clone()).await {
-            eprintln!("mcp: finish turn {}: {e}", r.turn_id);
-        }
         self.rt
             .journal
             .set_status(&r.agent_id, AgentStatus::Idle)

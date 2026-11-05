@@ -170,7 +170,6 @@ impl Runtime {
             self.journal
                 .record(&agent_id, &turn_id, Role::System, Body::TurnEnd(end), false)
                 .await?;
-            self.journal.store.finish_turn(turn_id).await?;
             self.journal
                 .set_status(&agent_id, AgentStatus::Failed)
                 .await;
@@ -245,11 +244,6 @@ impl Runtime {
                     Body::TurnEnd(end),
                     false,
                 )
-                .await
-                .map_err(Status::internal)?;
-            self.journal
-                .store
-                .finish_turn(queued.turn_id)
                 .await
                 .map_err(Status::internal)?;
             return Err(Status::resource_exhausted("turn queue is full"));
@@ -646,9 +640,6 @@ impl Runtime {
             .await
         {
             eprintln!("record turn end {}: {e}", ctx.turn_id);
-        }
-        if let Err(e) = self.journal.store.finish_turn(ctx.turn_id.clone()).await {
-            eprintln!("finish turn {}: {e}", ctx.turn_id);
         }
         let status = if ok {
             AgentStatus::Idle
