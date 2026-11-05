@@ -62,8 +62,7 @@ accounts() {
 agent() {
 	log "agent binary, desk command and serve"
 	install -m 0755 "$SRC/vendor/cocoonbox-agent" /usr/local/bin/cocoonbox-agent
-	printf '#!/bin/sh\n# desk: the desk API from a shell, through the toolhost socket; desk VERB [key=value ...|JSON]\nexec /usr/local/bin/cocoonbox-agent desk "$@"\n' >/usr/local/bin/desk
-	chmod 0755 /usr/local/bin/desk
+	install -m 0755 "$SRC/../desk/rootfs/usr/local/bin/desk" /usr/local/bin/desk
 	install -d -m 0755 /usr/local/lib/cocoonbox
 	install -m 0755 "$SRC/rootfs/usr/local/lib/cocoonbox/serve" "$SRC/rootfs/usr/local/lib/cocoonbox/shuttle-session" \
 		"$SRC/rootfs/usr/local/lib/cocoonbox/restart-shuttle" /usr/local/lib/cocoonbox/
