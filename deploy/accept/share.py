@@ -15,12 +15,12 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
-ENDPOINT = os.environ["CB_ENDPOINT"].rstrip("/")
+import accept
+from accept import ENDPOINT, check, failures, http, note
+
 PROTO = Path(__file__).resolve().parents[2] / "proto"
 READ_ONLY = sorted(["screenshot", "computer_state", "read_file", "list_dir", "browser_snapshot", "browser_read"])
 CUT_LIMIT = 1.0
@@ -38,35 +38,6 @@ x.XQueryPointer(d, x.XDefaultRootWindow(d), *[ctypes.byref(v) for v in (w, c, rx
 print(rx.value, ry.value)
 """
 
-failures = []
-
-
-def check(ok, what):
-    print(("PASS " if ok else "FAIL ") + what, flush=True)
-    if not ok:
-        failures.append(what)
-
-
-def note(text):
-    print("     " + text, flush=True)
-
-
-def http(method, path, body=None, headers=None, cookie=None):
-    data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(ENDPOINT + path, data=data, method=method)
-    for k, v in (headers or {}).items():
-        req.add_header(k, v)
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Accept", "application/json, text/event-stream")
-    if cookie:
-        req.add_header("Cookie", "cb_session=" + cookie)
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            return resp.status, resp.headers, resp.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.headers, e.read()
-
 
 class Console:
     def __init__(self, name):
@@ -77,7 +48,7 @@ class Console:
         self.cookie = headers["Set-Cookie"].split(";", 1)[0].split("=", 1)[1]
 
     def call(self, method, path, body=None):
-        status, _, raw = http(method, "/cb/api/" + path, None if method == "GET" else (body or {}), cookie=self.cookie)
+        status, _, raw = http(method, "/cb/api/" + path, None if method == "GET" else (body or {}), {"Cookie": "cb_session=" + self.cookie})
         return status, (json.loads(raw) if raw.strip() else None)
 
     def token(self):
@@ -87,55 +58,23 @@ class Console:
         return out["token"]
 
 
-class MCP:
-    """One MCP Streamable HTTP session at a path, as a bearer and an optional guest token."""
-
-    def __init__(self, path, bearer, guest=None):
-        self.path, self.bearer, self.guest, self.session, self.next = path, bearer, guest, None, 0
-
-    def headers(self):
-        h = {"Authorization": "Bearer " + self.bearer}
-        if self.guest:
-            h["X-Cocoonbox-Guest-Token"] = self.guest
-        if self.session:
-            h["Mcp-Session-Id"] = self.session
-        return h
-
-    def post(self, method, params=None):
-        self.next += 1
-        msg = {"jsonrpc": "2.0", "id": self.next, "method": method, "params": params or {}}
-        status, headers, raw = http("POST", self.path, msg, self.headers())
-        if method == "initialize" and status == 200:
-            self.session = headers["Mcp-Session-Id"]
-            http("POST", self.path, {"jsonrpc": "2.0", "method": "notifications/initialized"}, self.headers())
-        text = raw.decode(errors="replace")
-        if text.startswith("event:") or text.startswith("data:"):
-            text = [line[5:] for line in text.splitlines() if line.startswith("data:")][-1]
-        return status, (json.loads(text) if text.strip() else None)
+class MCP(accept.MCP):
+    """One MCP session at a path, as a bearer and an optional guest token."""
 
     def open(self, client="share-accept"):
-        return self.post("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": client, "version": "1"}})[0]
+        return super().open(client)
 
     def tools(self):
-        status, reply = self.post("tools/list")
-        return status, sorted(t["name"] for t in (reply or {}).get("result", {}).get("tools", []))
+        status, messages = self.post("tools/list")
+        return status, sorted(t["name"] for t in (messages[-1] if messages else {}).get("result", {}).get("tools", []))
 
     def call(self, name, arguments):
-        status, reply = self.post("tools/call", {"name": name, "arguments": arguments})
-        return status, (reply or {})
+        status, messages = self.post("tools/call", {"name": name, "arguments": arguments})
+        return status, (messages[-1] if messages else {})
 
     def stream(self):
         """Opens the GET server stream; returns a Watch that records when it ends."""
         return Watch(lambda: raw_stream(self.path, self.headers()))
-
-
-def raw_stream(path, headers):
-    u = urlsplit(ENDPOINT)
-    sock = ssl.create_default_context().wrap_socket(socket.create_connection((u.hostname, u.port or 443)), server_hostname=u.hostname)
-    lines = [f"GET {path} HTTP/1.1", f"Host: {u.hostname}", "Accept: text/event-stream", "Connection: close"]
-    lines += [f"{k}: {v}" for k, v in headers.items()]
-    sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
-    return sock
 
 
 class Watch:
@@ -274,6 +213,15 @@ class Viewer:
         threading.Thread(target=run, daemon=True).start()
 
 
+def raw_stream(path, headers):
+    u = urlsplit(ENDPOINT)
+    sock = ssl.create_default_context().wrap_socket(socket.create_connection((u.hostname, u.port or 443)), server_hostname=u.hostname)
+    lines = [f"GET {path} HTTP/1.1", f"Host: {u.hostname}", "Accept: text/event-stream", "Connection: close"]
+    lines += [f"{k}: {v}" for k, v in headers.items()]
+    sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
+    return sock
+
+
 def grpc(token_var, method, body, box):
     args = [
         "grpcurl", "-expand-headers", "-import-path", str(PROTO),
@@ -301,7 +249,7 @@ def pointer(owner):
         return None
 
 
-def cut_check(what, qa1, share, action):
+def cut_check(what, share, action):
     """Opens the share's page and a guest MCP stream, runs action, and checks both end within CUT_LIMIT."""
     secret = share["secret"]
     viewer = Viewer(secret)
@@ -376,7 +324,7 @@ def main():
     note("Manual: claude mcp add ... with the share snippet; `claude mcp list` shows it and /mcp lists only the read-only tools.")
 
     print("== 2. allow write, then take it back")
-    status, _ = qa1.call("PATCH", "shares/" + share["share"]["id"], {"write": True})
+    qa1.call("PATCH", "shares/" + share["share"]["id"], {"write": True})
     status, out = guest.call("shell", {"command": "echo guest-write"})
     check("guest-write" in json.dumps(out.get("result", {})), "with write on, the next guest shell call runs")
     status, tools = guest.tools()
@@ -438,7 +386,7 @@ def main():
     sid = named["share"]["id"]
     qa1.call("DELETE", "shares/" + sid)
     _, opened = qa1.call("POST", "shares", {"box_id": box})
-    cut_check("revoke", qa1, opened, lambda: (qa1.call("DELETE", "shares/" + opened["share"]["id"]), time.time())[1])
+    cut_check("revoke", opened, lambda: (qa1.call("DELETE", "shares/" + opened["share"]["id"]), time.time())[1])
     _, opened = qa1.call("POST", "shares", {"box_id": box})
     fresh = {}
 
@@ -446,7 +394,7 @@ def main():
         _, fresh["share"] = qa1.call("POST", "shares/" + opened["share"]["id"] + "/regenerate")
         return time.time()
 
-    cut_check("regenerate", qa1, opened, regenerate)
+    cut_check("regenerate", opened, regenerate)
     check(MCP(path, fresh["share"]["secret"]).open() == 200, "the regenerated link works")
     qa1.call("DELETE", "shares/" + opened["share"]["id"])
     _, short = qa1.call("POST", "shares", {"box_id": box, "ttl_seconds": 60})
@@ -456,13 +404,13 @@ def main():
         time.sleep(max(0, until - time.time()))
         return until
 
-    cut_check("expiry", qa1, short, expire)
+    cut_check("expiry", short, expire)
 
     for sh in qa1.call("GET", "shares")[1]:
         qa1.call("DELETE", "shares/" + sh["id"])
     print(f"== {'FAILED: ' + str(len(failures)) if failures else 'ALL PASSED'}")
-    sys.exit(1 if failures else 0)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

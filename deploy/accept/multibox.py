@@ -4,6 +4,7 @@
 A scratch user (CB_USER, default mb1) exists with max boxes 2 and exactly one box, main; its console password comes
 from <CB_USER>_PASSWORD. The script issues the user a fresh API token, never prints a secret, and refuses the real
 users in CB_REAL_USERS (comma-separated, default test,cmgs,dev). It needs sudo for the sandboxd root token and the state store's credentials, which it only reads.
+A failed run can leave the box test; delete it in the console before the next run.
 """
 
 import hashlib
@@ -12,69 +13,17 @@ import os
 import subprocess
 import sys
 import time
-import urllib.error
-import urllib.request
 
-ENDPOINT = os.environ["CB_ENDPOINT"].rstrip("/")
+import accept
+from accept import check, failures, http, note
+
 USER = os.environ.get("CB_USER", "mb1")
 REAL = set(os.environ.get("CB_REAL_USERS", "test,cmgs,dev").split(","))
 SANDBOXD = "http://127.0.0.1:17780"
-MAX_CLAIMS = int(os.environ.get("CB_MAX_CLAIMS", "6"))
-
-failures = []
 
 
-def check(ok, what):
-    print(("PASS " if ok else "FAIL ") + what, flush=True)
-    if not ok:
-        failures.append(what)
-
-
-def note(text):
-    print("     " + text, flush=True)
-
-
-def http(method, url, body=None, headers=None):
-    data = None if body is None else json.dumps(body).encode()
-    req = urllib.request.Request(url, data=data, method=method)
-    for k, v in (headers or {}).items():
-        req.add_header(k, v)
-    if data is not None:
-        req.add_header("Content-Type", "application/json")
-        req.add_header("Accept", "application/json, text/event-stream")
-    try:
-        with urllib.request.urlopen(req, timeout=900) as resp:
-            return resp.status, resp.headers, resp.read()
-    except urllib.error.HTTPError as e:
-        return e.code, e.headers, e.read()
-
-
-def box_id(user):
-    return "cb-" + hashlib.sha256(user.encode()).hexdigest()[:12]
-
-
-class MCP:
-    """One MCP Streamable HTTP session as the scratch user."""
-
-    def __init__(self, path, token):
-        self.path, self.token, self.session, self.next = path, token, None, 0
-
-    def post(self, method, params=None):
-        self.next += 1
-        headers = {"Authorization": "Bearer " + self.token}
-        if self.session:
-            headers["Mcp-Session-Id"] = self.session
-        status, out, raw = http("POST", ENDPOINT + self.path, {"jsonrpc": "2.0", "id": self.next, "method": method, "params": params or {}}, headers)
-        if method == "initialize" and status == 200:
-            self.session = out["Mcp-Session-Id"]
-            headers["Mcp-Session-Id"] = self.session
-            http("POST", ENDPOINT + self.path, {"jsonrpc": "2.0", "method": "notifications/initialized"}, headers)
-        text = raw.decode(errors="replace")
-        messages = [json.loads(line[5:]) for line in text.splitlines() if line.startswith("data:")] if text.startswith(("event:", "data:")) else ([json.loads(text)] if text.strip() else [])
-        return status, messages
-
-    def open(self):
-        return self.post("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "multibox-accept", "version": "1"}})[0]
+class MCP(accept.MCP):
+    """One MCP session as the scratch user."""
 
     def tool(self, name, arguments=None, progress=False):
         params = {"name": name, "arguments": arguments or {}}
@@ -86,12 +35,20 @@ class MCP:
         return status, result, notes
 
 
+def box_id(user):
+    return "cb-" + hashlib.sha256(user.encode()).hexdigest()[:12]
+
+
 def text(result):
     return " ".join(c.get("text", "") for c in result.get("content", []))
 
 
 def sudo(*argv):
     return subprocess.run(["sudo", *argv], capture_output=True, text=True, timeout=60)
+
+
+def max_claims():
+    return json.loads(sudo("cat", "/srv/cb/sbx/sandboxd.json").stdout)["max_claims"]
 
 
 def claims():
@@ -111,29 +68,29 @@ def stored(key):
 def main():
     if USER in REAL:
         sys.exit(f"{USER} is a real user; run this with a scratch user only")
-    status, headers, body = http("POST", ENDPOINT + "/cb/api/login", {"name": USER, "password": os.environ[USER.upper() + "_PASSWORD"]})
+    status, headers, body = http("POST", "/cb/api/login", {"name": USER, "password": os.environ[USER.upper() + "_PASSWORD"]})
     if status != 200:
         sys.exit(f"sign-in of {USER} failed: {status}")
     cookie = {"Cookie": headers["Set-Cookie"].split(";", 1)[0]}
-    _, _, raw = http("GET", ENDPOINT + "/cb/api/me", headers=cookie)
+    _, _, raw = http("GET", "/cb/api/me", headers=cookie)
     me = json.loads(raw)
     uid = me["user"]["id"]
     if uid in REAL or me["user"]["name"] in REAL:
         sys.exit(f"{USER} has id {uid}, a real user")
     if me["user"]["max_boxes"] != 2 or [b["name"] for b in me["boxes"]] != ["main"]:
         sys.exit(f"{USER} needs max boxes 2 and only its box main; it has max boxes {me['user']['max_boxes']} and boxes {[b['name'] for b in me['boxes']]}")
-    _, _, raw = http("POST", ENDPOINT + "/cb/api/me/token", {}, cookie)
+    _, _, raw = http("POST", "/cb/api/me/token", {}, cookie)
     token = json.loads(raw)["token"]
 
-    live = claims()
+    live, cap = claims(), max_claims()
     own = [r for r in live if r.get("tenant") == uid or (r.get("metadata") or {}).get("cb_owner") == uid]
-    free = MAX_CLAIMS - len(live)
-    note(f"sandboxd holds {len(live)} of {MAX_CLAIMS} claims, {len(own)} of them {USER}'s")
+    free = cap - len(live)
+    note(f"sandboxd holds {len(live)} of {cap} claims, {len(own)} of them {USER}'s")
     if free < 2 - len(own):
         sys.exit(f"needs {2 - len(own)} free claims, sandboxd has {free}")
 
     control = MCP("/cocoonbox.mcp/control", token)
-    check(control.open() == 200, "the control MCP opens for the scratch user")
+    check(control.open("multibox-accept") == 200, "the control MCP opens for the scratch user")
     main_id = me["boxes"][0]["id"]
     _, result, _ = control.tool("box_ensure", {"box": "main"})
     check(result.get("structuredContent", {}).get("state") == "running", f"main ({main_id}) runs")
@@ -157,7 +114,7 @@ def main():
             control.tool("box_hibernate", {"box": "test"})
             control.tool("box_ensure", {"box": "main"})
         session = MCP("/cocoonbox.mcp/" + box, token)
-        check(session.open() == 200, f"2. an MCP session opens on {name}")
+        check(session.open("multibox-accept") == 200, f"2. an MCP session opens on {name}")
         _, result, _ = session.tool("shell", {"command": "uname -n; cat /run/cocoonbox-identity/identity"})
         hosts[name] = text(result)
         note(f"{name}: uname -n = {hosts[name].split()[0] if hosts[name].split() else ''!r}")
@@ -179,7 +136,6 @@ def main():
     check(result.get("isError") and "no box" in text(result), "5. the control MCP refuses another user's box id")
 
     # 4. delete test, running, so it is saved first.
-    control.tool("box_hibernate", {"box": "main"})
     control.tool("box_ensure", {"box": "test"})
     machines = [r["metadata"]["cb_machine"] for r in claims() if (r.get("metadata") or {}).get("cb_machine", "").startswith(test_id)]
     _, result, notes = control.tool("box_delete", {"box": "test", "confirm": True}, progress=True)
@@ -197,8 +153,8 @@ def main():
     print("manual: one Claude Code session through the bridge (cocoonbox mcp, no restart and no config change): box_list,")
     print("        box_create test, box_ensure test, shell uname -n with box=test and with box=main, then box_delete test.")
     print(f"{len(failures)} failed" if failures else "all passed")
-    sys.exit(1 if failures else 0)
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
