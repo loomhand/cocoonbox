@@ -1,4 +1,4 @@
-//! The Windows side of `sys`: a call with no Windows port yet answers `Unsupported`.
+//! The Windows side of `sys`: the Windows API calls std does not expose.
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString, c_void};
@@ -180,9 +180,7 @@ impl PipeEnd {
     }
 }
 
-/// The client end of a named pipe that cancels its pending writes when dropped, so its server sees the
-/// hang-up at once; the runtime closes a pipe only after its writes finish, which a server that stopped
-/// reading never lets happen.
+/// The client end of a named pipe that cancels its pending writes on drop, so the server sees the hang-up even when it stopped reading.
 pub struct PipeClient(NamedPipeClient);
 
 impl PipeClient {

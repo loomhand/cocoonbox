@@ -132,21 +132,6 @@ pub struct Copy {
 /// Repo key → its box copy.
 pub type Index = BTreeMap<String, Copy>;
 
-/// Runs `cocoonbox-agent offload <args>`; returns the exit status.
-pub async fn main(args: Vec<String>) -> u8 {
-    let result = match Layout::from_env() {
-        Ok(layout) => dispatch(&layout, args).await,
-        Err(e) => Err(Fail::Failed(e)),
-    };
-    let (code, out) = match result {
-        Ok(Some(v)) => (0, v),
-        Ok(None) => return 0,
-        Err(e) => e.output(),
-    };
-    println!("{out}");
-    code
-}
-
 /// Parsed flags: `--name value` pairs, bare `--flag`s, and positional words.
 #[derive(Debug, Default)]
 pub struct Args {
@@ -232,6 +217,21 @@ impl Args {
             )))
         }
     }
+}
+
+/// Runs `cocoonbox-agent offload <args>`; returns the exit status.
+pub async fn main(args: Vec<String>) -> u8 {
+    let result = match Layout::from_env() {
+        Ok(layout) => dispatch(&layout, args).await,
+        Err(e) => Err(Fail::Failed(e)),
+    };
+    let (code, out) = match result {
+        Ok(Some(v)) => (0, v),
+        Ok(None) => return 0,
+        Err(e) => e.output(),
+    };
+    println!("{out}");
+    code
 }
 
 /// A repo key: 12 lowercase hex.

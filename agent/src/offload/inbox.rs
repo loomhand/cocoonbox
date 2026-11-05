@@ -30,7 +30,7 @@ pub const MAX_SESSIONS: usize = 3;
 const BLOCKED_BODY: usize = 2 << 10;
 const PASTE_SETTLE: Duration = Duration::from_millis(500);
 const DELIVERY_DELAY: Duration = Duration::from_millis(500);
-const RESCAN: Duration = Duration::from_secs(5);
+const IDLE_POLL: Duration = Duration::from_secs(5);
 const RELAY_RETRY: Duration = Duration::from_secs(2);
 const CHANGES: usize = 256;
 const CHANGE_LINE: u64 = 64 << 10;
@@ -177,17 +177,17 @@ impl Inbox {
     /// Serves connections on `listener` until `stop`; restarts lost sessions first and again on
     /// each `rescan`, which the agent sends after a restore replaced the state directory.
     pub async fn run(self: Arc<Self>, listener: tokio::net::UnixListener, stop: CancellationToken) {
-        let rescan = Arc::clone(&self);
-        let rescan_stop = stop.clone();
+        let idle = Arc::clone(&self);
+        let idle_stop = stop.clone();
         // detached: ends with `stop`
         tokio::spawn(async move {
-            rescan.restart_lost().await;
+            idle.restart_lost().await;
             loop {
                 tokio::select! {
-                    () = tokio::time::sleep(RESCAN) => {}
-                    () = rescan_stop.cancelled() => return,
+                    () = tokio::time::sleep(IDLE_POLL) => {}
+                    () = idle_stop.cancelled() => return,
                 }
-                rescan.idle_without_hooks().await;
+                idle.idle_without_hooks().await;
             }
         });
         loop {
@@ -968,7 +968,7 @@ struct InboxLine<'a> {
     body: &'a str,
 }
 
-/// An error response: `invalid`, `refused` or `failed`.
+/// An error response line.
 struct Refusal(&'static str, String);
 
 impl Refusal {

@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -256,19 +257,21 @@ pub fn render(report: Option<&Report>) -> String {
             Some(Source::SameMinor) => "the newest patch of the Mac's minor",
             None => "none available",
         };
-        out.push_str(&format!(
-            "{}: wanted {} (Mac), selected {} from {source}: {}\n",
+        let _ = writeln!(
+            out,
+            "{}: wanted {} (Mac), selected {} from {source}: {}",
             t.tool,
             t.wanted,
             t.selected.as_deref().unwrap_or("-"),
             t.outcome
-        ));
+        );
     }
     for f in &r.fetches {
-        out.push_str(&format!(
-            "{}: `{}` {} in {} ms\n",
+        let _ = writeln!(
+            out,
+            "{}: `{}` {} in {} ms",
             f.lockfile, f.command, f.outcome, f.ms
-        ));
+        );
     }
     for h in &r.hints {
         out.push_str(h);

@@ -24,7 +24,7 @@ const MAX_NAME: usize = 64;
 const ACCEPT_POLL: Duration = Duration::from_millis(250);
 const QUIT_WAIT: Duration = Duration::from_secs(10);
 const TERM_WAIT: Duration = Duration::from_secs(2);
-const QUIT_POLL: Duration = Duration::from_millis(200);
+const POLL: Duration = Duration::from_millis(200);
 const AGENT_WAIT: Duration = Duration::from_secs(5);
 const STAGE_DIR: &str = "stage";
 const BUNDLE: &str = "offload.bundle";
@@ -960,7 +960,7 @@ async fn gone(bin: &Path, exact: &str, wait: Duration) -> bool {
         {
             return true;
         }
-        tokio::time::sleep(QUIT_POLL).await;
+        tokio::time::sleep(POLL).await;
     }
     false
 }
@@ -1039,7 +1039,7 @@ async fn start_ssh_agent(
         if Instant::now() >= deadline {
             return Err(Fail::Failed("ssh-agent did not start".to_owned()));
         }
-        tokio::time::sleep(QUIT_POLL).await;
+        tokio::time::sleep(POLL).await;
     }
     for key in keys {
         let out = tokio::process::Command::new("ssh-add")
