@@ -160,7 +160,10 @@ async fn list(
         }
     }
     if out.image_b64.is_none() {
-        out.image_b64 = look(shuttle, owner, &shared["session"], &shared["max_edge"]).await?;
+        match look(shuttle, owner, &shared["session"], &shared["max_edge"]).await {
+            Ok(shot) => out.image_b64 = shot,
+            Err(e) => lines.push(format!("the screenshot failed: {e}")),
+        }
     }
     out.text = lines.join("\n");
     Ok(out)
@@ -578,6 +581,45 @@ mod tests {
                 "{a}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_list_keeps_the_card_secrets_it_typed_when_its_last_screenshot_fails() {
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let path = card_file(dir.path());
+        let socket = crate::testing::endpoint(dir.path(), "desk.sock");
+        let mut listener = super::super::bind(&socket, "").unwrap();
+        tokio::spawn(async move {
+            loop {
+                let mut conn = super::super::accept(&mut listener).await.unwrap();
+                let call: Call = read_frame(&mut conn).await.unwrap();
+                let out = match call.tool.as_str() {
+                    "desk_look" => Output::error("no screen"),
+                    _ => Output::text("done"),
+                };
+                write_frame(&mut conn, &out).await.unwrap();
+            }
+        });
+        let browser = Browser::new(
+            "/nonexistent/chrome".into(),
+            dir.path().into(),
+            web_chrome(&[("page", "https://shop.test/checkout", "field")]).await,
+            true,
+        );
+        let list = json!({"scale": 1.0, "actions": [
+            {"action": "type_from_file", "path": path, "field": "number"},
+            {"action": "type_from_file", "path": "/etc/passwd", "field": "number"}
+        ]});
+        let out = run(&Client::new(socket), &browser, "ag", list)
+            .await
+            .unwrap();
+        assert!(
+            out.is_error && out.text.ends_with("the screenshot failed: no screen"),
+            "{}",
+            out.text
+        );
+        assert_eq!(out.secrets, [("number".to_owned(), PAN.to_owned())]);
     }
 
     #[cfg(windows)]
