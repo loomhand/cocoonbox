@@ -8,7 +8,7 @@
 			import cocoonbox_health
 		}
 	}
-	@cocoonboxmcp path /cocoonbox.mcp/*
+	@cocoonboxmcp path /cocoonbox.mcp /cocoonbox.mcp/*
 	handle @cocoonboxmcp {
 		reverse_proxy h2c://127.0.0.1:18211 h2c://127.0.0.1:18221 {
 			import cocoonbox_pair
