@@ -80,6 +80,11 @@ func (s *Service) provisionStale(ctx context.Context) {
 
 func (s *Service) dropStray(ctx context.Context, m machines.Machine) {
 	box := boxOfMachine(m.ID)
+	unlock, lockErr := s.lockStarts(ctx, m.Owner)
+	if lockErr != nil {
+		return
+	}
+	defer unlock()
 	if s.ops.activeFor(box) != nil {
 		return
 	}
