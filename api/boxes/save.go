@@ -88,8 +88,9 @@ func (s *Service) saveStale(ctx context.Context, interval time.Duration) {
 
 func (s *Service) saveDue(ctx context.Context, m machines.Machine, interval time.Duration) bool {
 	box := boxOfMachine(m.ID)
+	p := statePath{user: m.Owner, box: box}
 	return s.ready(m) && s.ops.activeFor(box) == nil &&
-		time.Since(time.UnixMilli(s.state.lastSaved(ctx, statePath{user: m.Owner, box: box}))) >= interval
+		time.Since(later(time.UnixMilli(s.state.lastSaved(ctx, p)), s.state.lastFailed(p))) >= interval
 }
 
 // runningMachine returns the serving machine of user's box when the state layer can use it now.
@@ -129,6 +130,7 @@ func (s *Service) runSave(op *operation, user string, m machines.Machine, consis
 	rec, err := s.save(op, user, m, consistency)
 	if err != nil {
 		log.WithFunc("boxes.Service.runSave").WithField("box", op.boxID).Error(op.ctx, err, "save state")
+		s.state.noteFailed(statePath{user: user, box: op.boxID})
 		op.fail("save failed")
 		return
 	}
