@@ -832,7 +832,7 @@ impl StateEngine {
             }),
             skipped,
         };
-        let plain = serde_json::to_vec(&manifest).map_err(|e| format!("encode manifest: {e}"))?;
+        let plain = encode_manifest(&manifest)?;
         let snapshot_id = keys.id(&plain)?;
         let sealed = keys.seal(&snapshot_id, &plain)?;
         tokio::fs::write(spool.join(MANIFEST_FILE), sealed)
@@ -1511,6 +1511,17 @@ fn logical_path<'a>(_roots: &'a [Root], _rest: &str) -> Option<(&'a Root, String
 }
 
 /// Chunk ids in manifest order, so Restore pages arrive in the order its files are written.
+fn encode_manifest(manifest: &Manifest) -> Result<Vec<u8>, String> {
+    let plain = serde_json::to_vec(manifest).map_err(|e| format!("encode manifest: {e}"))?;
+    if plain.len() as u64 > MANIFEST_LIMIT {
+        return Err(format!(
+            "manifest of {} bytes exceeds the {MANIFEST_LIMIT} a restore opens",
+            plain.len()
+        ));
+    }
+    Ok(plain)
+}
+
 fn referenced(m: &Manifest) -> Vec<String> {
     let mut seen = HashSet::new();
     m.files
@@ -1628,6 +1639,24 @@ mod tests {
             relative(Path::new(r"C:\Users\user")),
             Path::new(r"Users\user")
         );
+    }
+
+    #[test]
+    fn a_manifest_a_restore_could_not_open_fails_the_plan() {
+        let mut manifest = Manifest {
+            version: manifest::VERSION,
+            parent: String::new(),
+            key_id: "k".into(),
+            taken_at_ms: 0,
+            consistency: "live".into(),
+            files: Vec::new(),
+            agent_db: None,
+            skipped: vec!["a".repeat(MANIFEST_LIMIT as usize)],
+        };
+        let err = encode_manifest(&manifest).unwrap_err();
+        assert!(err.contains("a restore opens"), "{err}");
+        manifest.skipped = vec!["a".into()];
+        assert!(encode_manifest(&manifest).is_ok());
     }
 
     #[tokio::test]
