@@ -32,7 +32,6 @@ pub struct Bus {
 }
 
 impl Bus {
-    /// Creates an empty bus.
     pub fn new() -> Self {
         let base = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -40,8 +39,7 @@ impl Bus {
         Self::with_base(base)
     }
 
-    /// Creates an empty bus whose first offset is `base`.
-    pub fn with_base(base: u64) -> Self {
+    fn with_base(base: u64) -> Self {
         Self {
             ring: Mutex::new(Ring {
                 next: base.max(1),
@@ -54,9 +52,7 @@ impl Bus {
 
     /// Assigns the next offset to `body` and delivers it to every subscriber.
     pub fn publish(&self, body: event::Body) -> u64 {
-        let Ok(mut ring) = self.ring.lock() else {
-            return 0;
-        };
+        let mut ring = crate::lock(&self.ring);
         let offset = ring.next;
         ring.next += 1;
         let event = Arc::new(Event {
@@ -78,9 +74,7 @@ impl Bus {
 
     /// Delivers `body` to live subscribers only; it takes an offset but is never replayed.
     pub fn publish_live(&self, body: event::Body) -> u64 {
-        let Ok(mut ring) = self.ring.lock() else {
-            return 0;
-        };
+        let mut ring = crate::lock(&self.ring);
         let offset = ring.next;
         ring.next += 1;
         let _ = self.live.send(Arc::new(Event {
@@ -92,10 +86,7 @@ impl Bus {
 
     /// Subscribes after `from_offset`; 0 means live events only.
     pub fn subscribe(&self, from_offset: u64) -> Result<Subscription, String> {
-        let ring = self
-            .ring
-            .lock()
-            .map_err(|_| "event ring poisoned".to_owned())?;
+        let ring = crate::lock(&self.ring);
         let live = self.live.subscribe();
         if from_offset == 0 {
             return Ok(Subscription {
