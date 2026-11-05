@@ -27,10 +27,10 @@ impl Drop for Phases {
 }
 
 /// Runs `call` as one call of `tool`; its line is logged when it ends or is cancelled.
-pub async fn scope<F: Future>(tool: &str, call: F) -> F::Output {
+pub async fn scope<F: Future>(tool: String, call: F) -> F::Output {
     let now = Instant::now();
     let phases = Phases {
-        tool: tool.to_owned(),
+        tool,
         started: now,
         last: now,
         fields: String::new(),

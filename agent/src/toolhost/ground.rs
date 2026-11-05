@@ -12,7 +12,7 @@ use tokio::process::Command;
 
 use super::act;
 use super::desk::Desk;
-use super::rpc::{self, Call, Client, DESK_DEADLINE, Output};
+use super::rpc::{self, Client, Output};
 use super::script::Scripts;
 use super::timing;
 
@@ -58,7 +58,6 @@ const ROLE_WORDS: [&str; 22] = [
 #[derive(Deserialize)]
 struct Target {
     description: String,
-    #[serde(default)]
     text: Option<String>,
 }
 
@@ -66,7 +65,6 @@ struct Target {
 struct TargetArgs {
     action: String,
     target: Target,
-    #[serde(default)]
     max_edge: Option<u32>,
     #[serde(default)]
     session: Value,
@@ -113,12 +111,12 @@ pub async fn act(
         let point = rect.map(|[x, y, w, h]| [(x + w / 2.0) / k, (y + h / 2.0) / k]);
         let mut out = json!({
             "tier": "a11y",
-            "how": found["how"],
+            "how": found["how"].take(),
             "element": element,
-            "window": found["window"],
+            "window": found["window"].take(),
             "point": point,
             "scale": k,
-            "pressed": press.then(|| found["via"].clone()),
+            "pressed": press.then(|| found["via"].take()),
             "ms": start.elapsed().as_millis(),
         });
         if let Err(why) = place {
@@ -192,20 +190,20 @@ pub async fn act(
         "scale": k,
         "pressed": press,
         "ocr_ms": t0.elapsed().as_millis(),
-        "a11y": out["a11y"],
+        "a11y": out["a11y"].take(),
         "ms": start.elapsed().as_millis(),
     });
     Ok(finish(shuttle, owner, &mut out, Some(*rect), k, &a.session).await)
 }
 
 /// Whether `pid` runs LibreOffice, whose toolbar extents can sit a menu bar's height above the drawn controls.
-pub(super) fn libreoffice(pid: i64) -> bool {
+fn libreoffice(pid: i64) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/comm"))
         .is_ok_and(|c| c.trim_end() == "soffice.bin")
 }
 
 /// RGB rows of `width` x `height` as a PNG.
-pub(super) fn png_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, String> {
+fn png_rgb(width: u32, height: u32, rgb: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     let mut enc = png::Encoder::new(&mut out, width, height);
     enc.set_color(png::ColorType::Rgb);
@@ -549,12 +547,7 @@ async fn label_of_field(
 
 /// Shuttle's answer to desk call `tool` with `args` as agent `owner`; an error answer is an error.
 async fn ask(shuttle: &Client, owner: &str, tool: &str, args: Value) -> Result<Output, String> {
-    let call = Call {
-        agent_id: owner.to_owned(),
-        tool: tool.to_owned(),
-        args,
-    };
-    let out = shuttle.desk(&call, DESK_DEADLINE).await?;
+    let out = act::call(shuttle, owner, tool, args, 1).await?;
     if out.is_error {
         return Err(out.text);
     }

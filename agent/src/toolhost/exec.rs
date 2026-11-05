@@ -90,7 +90,7 @@ struct Started {
 pub async fn run(cwd: &Path, home: &Path, args: &Value, rd: AgentRead, mut wr: AgentWrite) {
     let tty = &args["tty"];
     let (term, notice) = if tty.is_null() {
-        (String::new(), None)
+        ("", None)
     } else {
         terminal_type(
             home,
@@ -106,7 +106,7 @@ pub async fn run(cwd: &Path, home: &Path, args: &Value, rd: AgentRead, mut wr: A
         stdout,
         stderr,
         tty,
-    } = match spawn(cwd, home, args, &term) {
+    } = match spawn(cwd, home, args, term) {
         Ok(started) => started,
         Err(e) => {
             let _ = rpc::write_frame(&mut wr, &Output::error(e)).await;
@@ -238,18 +238,18 @@ fn exit_of(mut child: Child) -> Exit {
 /// The TERM of a terminal command: `term` when the box has its terminfo or `source` compiles
 /// it into `~/.terminfo` as this user, else the default and a notice for the command's stderr.
 #[cfg(unix)]
-async fn terminal_type(home: &Path, term: &str, source: &str) -> (String, Option<String>) {
+async fn terminal_type<'a>(home: &Path, term: &'a str, source: &str) -> (&'a str, Option<String>) {
     if term.is_empty() {
-        return (DEFAULT_TERM.to_owned(), None);
+        return (DEFAULT_TERM, None);
     }
     if known(home, term).await {
-        return (term.to_owned(), None);
+        return (term, None);
     }
     let why = if source.is_empty() {
         "the client sent no terminfo".to_owned()
     } else {
         match compile(home, source).await {
-            Ok(()) if known(home, term).await => return (term.to_owned(), None),
+            Ok(()) if known(home, term).await => return (term, None),
             Ok(()) => "the terminfo sent does not define it".to_owned(),
             Err(e) => e,
         }
@@ -257,13 +257,17 @@ async fn terminal_type(home: &Path, term: &str, source: &str) -> (String, Option
     let notice = format!(
         "cocoonbox: no terminfo for {term} in the box ({why}); using TERM={DEFAULT_TERM}\r\n"
     );
-    (DEFAULT_TERM.to_owned(), Some(notice))
+    (DEFAULT_TERM, Some(notice))
 }
 
 /// The TERM of a terminal command: the default, as the pseudo console writes its own xterm sequences whatever the client is.
 #[cfg(windows)]
-async fn terminal_type(_home: &Path, _term: &str, _source: &str) -> (String, Option<String>) {
-    (DEFAULT_TERM.to_owned(), None)
+async fn terminal_type<'a>(
+    _home: &Path,
+    _term: &'a str,
+    _source: &str,
+) -> (&'a str, Option<String>) {
+    (DEFAULT_TERM, None)
 }
 
 /// Whether the terminfo database the command reads, `~/.terminfo` first, has `term`.
@@ -459,25 +463,14 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::config::{Automation, ToolhostConfig};
+    use crate::config::Automation;
     use crate::toolhost::rpc::Client;
 
     const DEADLINE: Duration = Duration::from_secs(30);
 
     async fn toolhost(dir: &Path) -> Client {
-        let socket = crate::testing::endpoint(dir, "toolhost.sock");
-        let cfg = ToolhostConfig {
-            socket: socket.clone(),
-            workspace: dir.into(),
-            chrome_bin: "false".into(),
-            chrome_profile: dir.join("chrome"),
-            cdp_port: 1,
-            session_save: dir.join("session-save"),
-            home: dir.into(),
-            automation: Automation::Minimal,
-            plugins: Vec::new(),
-            shuttle_socket: crate::testing::endpoint(dir, "desk.sock"),
-        };
+        let cfg = super::super::tests::config(dir, Automation::Minimal);
+        let socket = cfg.socket.clone();
         tokio::spawn(super::super::run(cfg));
         crate::testing::served(&socket).await;
         Client::new(socket)

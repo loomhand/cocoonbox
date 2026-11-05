@@ -52,9 +52,7 @@ const WRAPPERS: [&str; 5] = ["sudo", "env", "command", "time", "nohup"];
 #[derive(Deserialize)]
 struct ReadArgs {
     path: String,
-    #[serde(default)]
     offset: Option<usize>,
-    #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
     workspace_only: bool,
@@ -77,7 +75,6 @@ struct EditArgs {
 
 #[derive(Deserialize)]
 struct ListArgs {
-    #[serde(default)]
     path: Option<String>,
     #[serde(default)]
     workspace_only: bool,

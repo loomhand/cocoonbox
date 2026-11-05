@@ -303,7 +303,7 @@ async fn look(
 }
 
 /// Sends `tool` with `args` to shuttle as agent `owner`, waiting for each of `steps` actions as for one desk call.
-async fn call(
+pub(super) async fn call(
     shuttle: &Client,
     owner: &str,
     tool: &str,

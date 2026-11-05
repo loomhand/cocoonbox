@@ -34,17 +34,12 @@ pub struct Shot {
 /// The arguments of `script_run` and plugin tools.
 #[derive(Deserialize)]
 struct RunArgs {
-    #[serde(default)]
     code: Option<String>,
-    #[serde(default)]
     script: Option<String>,
-    #[serde(default)]
     params: Option<Map<String, Value>>,
-    #[serde(default)]
     timeout_s: Option<u64>,
     #[serde(default = "default_screenshot")]
     screenshot: bool,
-    #[serde(default)]
     max_edge: Option<u32>,
 }
 
@@ -53,11 +48,8 @@ struct RunArgs {
 struct PlanArgs {
     #[serde(flatten)]
     params: Map<String, Value>,
-    #[serde(default)]
     timeout_s: Option<u64>,
-    #[serde(default)]
     screenshot: Option<bool>,
-    #[serde(default)]
     max_edge: Option<u32>,
 }
 

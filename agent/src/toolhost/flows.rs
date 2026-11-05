@@ -121,11 +121,10 @@ pub async fn remove(workspace: &Path, args: Value) -> Result<String, String> {
     let NameArgs { name } = rpc::parse(args)?;
     let path = path_of(workspace, &name)?;
     match tokio::fs::remove_file(&path).await {
-        Ok(()) => Ok(json!({"removed": name}).to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(json!({"removed": name}).to_string())
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(format!("remove {}: {e}", path.display()))
         }
-        Err(e) => Err(format!("remove {}: {e}", path.display())),
+        _ => Ok(json!({"removed": name}).to_string()),
     }
 }
 

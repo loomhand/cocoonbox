@@ -77,7 +77,7 @@ impl Shell {
         tokio::fs::write(&self.script, command)
             .await
             .map_err(|e| format!("write {}: {e}", self.script.display()))?;
-        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let nonce = uuid::Uuid::new_v4().simple();
         let marker = format!("\n{MARK}{nonce}:");
         let line = format!(
             "[ -r {VAULT} ] && . {VAULT}\n. '{}' </dev/null\nprintf '\\n{MARK}{nonce}:%s\\n' \"$?\"\n",
@@ -99,7 +99,7 @@ impl Shell {
             read_until(&mut shell.stdout, &marker, &mut capture),
         )
         .await;
-        let result = match outcome {
+        match outcome {
             Ok(Ok(Some(code))) => {
                 guard.armed = false;
                 Ok(Output {
@@ -127,9 +127,7 @@ impl Shell {
                 capture.render(),
                 timeout.as_secs_f64()
             ))),
-        };
-        drop(guard);
-        result
+        }
     }
 
     /// Kills bash and every process of its tree; the next call starts a fresh session.

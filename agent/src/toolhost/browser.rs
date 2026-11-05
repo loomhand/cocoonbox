@@ -469,7 +469,7 @@ impl Browser {
             "browser_navigate" => {
                 let a: NavigateArgs = rpc::parse(args)?;
                 let front = self.plans && a.front;
-                let url = web_url(a.url)?;
+                let url = web_url(&a.url)?;
                 if self.plans {
                     cdp.call("Network.enable", json!({})).await?;
                 }
@@ -493,8 +493,7 @@ impl Browser {
             "browser_snapshot" => cdp.snapshot(self.plans).await,
             "browser_show" => {
                 cdp.call("Page.bringToFront", json!({})).await?;
-                let title = cdp.eval("document.title || location.href").await?;
-                Ok(title.as_str().unwrap_or_default().to_owned())
+                Ok(text_of(cdp.eval("document.title || location.href").await?))
             }
             "browser_click" => {
                 let a: RefArgs = rpc::parse(args)?;
@@ -670,7 +669,7 @@ impl Browser {
     /// Reads `url` in a hidden tab, out of every window, and closes the tab.
     async fn fetch(&self, args: Value) -> Result<String, String> {
         let a: NavigateArgs = rpc::parse(args)?;
-        let url = web_url(a.url)?;
+        let url = web_url(&a.url)?;
         self.running().await?;
         let mut cdp = self.browser().await?;
         let created = cdp
@@ -694,8 +693,7 @@ impl Browser {
     pub async fn origin(&self) -> Result<String, String> {
         let _life = self.life.read().await;
         let mut cdp = self.attach().await?;
-        let origin = cdp.eval("location.origin").await?;
-        Ok(origin.as_str().unwrap_or_default().to_owned())
+        Ok(text_of(cdp.eval("location.origin").await?))
     }
 
     /// Succeeds when the keyboard focus is in a text field of an http or https page, or in a frame of one that CDP
@@ -752,7 +750,7 @@ impl Browser {
             expr.push_str(part);
         }
         let _ = write!(expr, "{},{submit})", js_str(kind));
-        let r = cdp.eval(&expr).await?;
+        let mut r = cdp.eval(&expr).await?;
         if let Some(e) = r["error"].as_str() {
             return Err(e.to_owned());
         }
@@ -771,7 +769,7 @@ impl Browser {
             }
             _ => false,
         };
-        Ok(json!({"filled": r["filled"], "submitted": submitted}).to_string())
+        Ok(json!({"filled": r["filled"].take(), "submitted": submitted}).to_string())
     }
 
     /// The tab the user sees in the X active window, else the window the browser tools
@@ -1678,11 +1676,7 @@ impl Cdp {
     }
 
     async fn snapshot(&mut self, plans: bool) -> Result<String, String> {
-        let v = self.eval(&format!("{SNAPSHOT_JS}({plans})")).await?;
-        let snapshot = match v {
-            Value::String(s) => s,
-            _ => String::new(),
-        };
+        let snapshot = text_of(self.eval(&format!("{SNAPSHOT_JS}({plans})")).await?);
         timing::mark("snapshot");
         timing::note("snapshot_bytes", snapshot.len());
         Ok(snapshot)
@@ -1793,7 +1787,7 @@ fn xprop_string(xprop: &str) -> Option<String> {
 }
 
 /// `url` with `https://` added when it names no scheme; an error when that does not parse as a URL.
-fn web_url(url: String) -> Result<String, String> {
+fn web_url(url: &str) -> Result<String, String> {
     let given = url.trim();
     let url = if given.contains("://") || given.starts_with("about:") {
         given.to_owned()
@@ -1810,6 +1804,13 @@ fn navigate_error(url: &str, err: &str) -> String {
         format!("navigate {url}: {UNREACHABLE}")
     } else {
         format!("navigate {url}: {err}")
+    }
+}
+
+fn text_of(v: Value) -> String {
+    match v {
+        Value::String(s) => s,
+        _ => String::new(),
     }
 }
 
@@ -2223,14 +2224,11 @@ pub(super) mod tests {
 
     #[test]
     fn a_url_without_a_scheme_gets_https_and_one_that_does_not_parse_is_refused() {
-        assert_eq!(
-            web_url("example.com/a".into()).unwrap(),
-            "https://example.com/a"
-        );
-        assert_eq!(web_url(" about:blank ".into()).unwrap(), "about:blank");
-        assert_eq!(web_url("http://a.test".into()).unwrap(), "http://a.test");
+        assert_eq!(web_url("example.com/a").unwrap(), "https://example.com/a");
+        assert_eq!(web_url(" about:blank ").unwrap(), "about:blank");
+        assert_eq!(web_url("http://a.test").unwrap(), "http://a.test");
         for bad in ["not a url", "", "https://", "http://exa mple.com/"] {
-            assert!(web_url(bad.into()).is_err(), "{bad}");
+            assert!(web_url(bad).is_err(), "{bad}");
         }
     }
 

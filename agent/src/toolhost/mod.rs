@@ -83,25 +83,22 @@ struct Host {
 
 impl Host {
     /// Creates a host from its configuration.
-    fn new(cfg: &ToolhostConfig) -> Self {
-        let shuttle = Client::new(cfg.shuttle_socket.clone());
+    fn new(cfg: ToolhostConfig) -> Self {
+        let shuttle = Client::new(cfg.shuttle_socket);
+        let plans = cfg.automation.plans();
+        let hidden = cfg.automation.scripts().then(|| flows::dir(&cfg.workspace));
         Self {
-            workspace: cfg.workspace.clone(),
+            workspace: cfg.workspace,
             scratch: scratch_dir(SCRATCH_DIR),
             shells: Mutex::new(HashMap::new()),
-            browser: Browser::new(
-                cfg.chrome_bin.clone(),
-                cfg.chrome_profile.clone(),
-                cfg.cdp_port,
-                cfg.automation.plans(),
-            ),
+            browser: Browser::new(cfg.chrome_bin, cfg.chrome_profile, cfg.cdp_port, plans),
             android: cfg.automation == Automation::Android,
             desk: Desk::new(shuttle.clone()),
             scripts: Scripts::new(scratch_dir(SCRIPT_DIR), shuttle.clone()),
-            session_save: cfg.session_save.clone(),
-            home: cfg.home.clone(),
-            plans: cfg.automation.plans(),
-            hidden: cfg.automation.scripts().then(|| flows::dir(&cfg.workspace)),
+            session_save: cfg.session_save,
+            home: cfg.home,
+            plans,
+            hidden,
             flow_writes: watch::channel(0).0,
             shuttle,
         }
@@ -351,9 +348,9 @@ pub(crate) struct Listener {
 pub async fn run(cfg: ToolhostConfig) -> Result<(), String> {
     let mut listener = bind(&cfg.socket, "")?;
     eprintln!("toolhost listening on {}", cfg.socket.display());
-    let host = Arc::new(Host::new(&cfg));
-    if cfg.automation.plans() {
-        let (workspace, writes) = (cfg.workspace.clone(), host.flow_writes.clone());
+    let host = Arc::new(Host::new(cfg));
+    if host.plans {
+        let (workspace, writes) = (host.workspace.clone(), host.flow_writes.clone());
         // detached: lives as long as the toolhost
         tokio::spawn(async move {
             if let Err(e) = flows::watch(workspace, writes).await {
@@ -471,9 +468,8 @@ async fn serve_conn(host: Arc<Host>, stream: Conn) {
         _ => {}
     }
     let mut probe = [0u8; 1];
-    let tool = call.tool.clone();
     let out = tokio::select! {
-        out = timing::scope(&tool, host.dispatch(call)) => out,
+        out = timing::scope(call.tool.clone(), host.dispatch(call)) => out,
         _ = rd.read(&mut probe) => return,
     };
     if let Err(e) = rpc::write_frame(&mut wr, &out).await {
@@ -646,6 +642,21 @@ mod tests {
         "desk_computer_end",
     ];
 
+    pub(super) fn config(dir: &Path, automation: Automation) -> ToolhostConfig {
+        ToolhostConfig {
+            socket: crate::testing::endpoint(dir, "toolhost.sock"),
+            workspace: dir.into(),
+            chrome_bin: "false".into(),
+            chrome_profile: dir.join("chrome"),
+            cdp_port: 1,
+            session_save: dir.join("session-save"),
+            home: dir.into(),
+            automation,
+            plugins: Vec::new(),
+            shuttle_socket: crate::testing::endpoint(dir, "desk.sock"),
+        }
+    }
+
     #[tokio::test]
     async fn bind_keeps_a_socket_another_process_serves_and_replaces_a_stale_one() {
         let dir = tempfile::tempdir().unwrap();
@@ -669,19 +680,8 @@ mod tests {
                 drop(conn);
             }
         });
-        let cfg = ToolhostConfig {
-            socket: crate::testing::endpoint(dir.path(), "toolhost.sock"),
-            workspace: dir.path().into(),
-            chrome_bin: "false".into(),
-            chrome_profile: dir.path().join("chrome"),
-            cdp_port: 1,
-            session_save: "false".into(),
-            home: dir.path().into(),
-            automation: Automation::Desk,
-            plugins: Vec::new(),
-            shuttle_socket: desk,
-        };
-        let host = Host::new(&cfg);
+        let cfg = config(dir.path(), Automation::Desk);
+        let host = Host::new(cfg);
         host.flow_writes.send_modify(|w| *w += 1);
         let path =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../image/desk/service/cocoonbox.json");
@@ -714,19 +714,8 @@ mod tests {
     #[tokio::test]
     async fn the_shell_tool_keeps_its_state_between_calls() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = ToolhostConfig {
-            socket: crate::testing::endpoint(dir.path(), "toolhost.sock"),
-            workspace: dir.path().into(),
-            chrome_bin: "false".into(),
-            chrome_profile: dir.path().join("chrome"),
-            cdp_port: 1,
-            session_save: dir.path().join("session-save"),
-            home: dir.path().into(),
-            automation: Automation::Minimal,
-            plugins: Vec::new(),
-            shuttle_socket: crate::testing::endpoint(dir.path(), "desk.sock"),
-        };
-        let host = Host::new(&cfg);
+        let cfg = config(dir.path(), Automation::Minimal);
+        let host = Host::new(cfg);
         let agent = format!("shell-test-{}", std::process::id());
         let call = |tool: &str, command: &str| Call {
             agent_id: agent.clone(),
@@ -782,19 +771,8 @@ mod tests {
                 rpc::write_frame(&mut conn, &out).await.unwrap();
             }
         });
-        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
-        let cfg = ToolhostConfig {
-            socket: socket.clone(),
-            workspace: dir.path().into(),
-            chrome_bin: "false".into(),
-            chrome_profile: dir.path().join("chrome"),
-            cdp_port: 1,
-            session_save: dir.path().join("session-save"),
-            home: dir.path().into(),
-            automation: Automation::Android,
-            plugins: Vec::new(),
-            shuttle_socket: desk,
-        };
+        let cfg = config(dir.path(), Automation::Android);
+        let socket = cfg.socket.clone();
         tokio::spawn(run(cfg));
         crate::testing::served(&socket).await;
         let toolhost = Client::new(socket);
@@ -864,19 +842,8 @@ mod tests {
                 rpc::write_frame(&mut conn, &out).await.unwrap();
             }
         });
-        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
-        let cfg = ToolhostConfig {
-            socket: socket.clone(),
-            workspace: dir.path().into(),
-            chrome_bin: "false".into(),
-            chrome_profile: dir.path().join("chrome"),
-            cdp_port: 1,
-            session_save: dir.path().join("session-save"),
-            home: dir.path().into(),
-            automation: Automation::Desk,
-            plugins: Vec::new(),
-            shuttle_socket: desk,
-        };
+        let cfg = config(dir.path(), Automation::Desk);
+        let socket = cfg.socket.clone();
         tokio::spawn(run(cfg));
         crate::testing::served(&socket).await;
         let toolhost = Client::new(socket);
@@ -962,19 +929,8 @@ mod tests {
                 rpc::write_frame(&mut conn, &out).await.unwrap();
             }
         });
-        let socket = crate::testing::endpoint(dir.path(), "toolhost.sock");
-        let cfg = ToolhostConfig {
-            socket: socket.clone(),
-            workspace: dir.path().into(),
-            chrome_bin: "false".into(),
-            chrome_profile: dir.path().join("chrome"),
-            cdp_port: 1,
-            session_save: dir.path().join("session-save"),
-            home: dir.path().into(),
-            automation: Automation::Desk,
-            plugins: Vec::new(),
-            shuttle_socket: desk,
-        };
+        let cfg = config(dir.path(), Automation::Desk);
+        let socket = cfg.socket.clone();
         tokio::spawn(run(cfg));
         crate::testing::served(&socket).await;
         let toolhost = Client::new(socket);

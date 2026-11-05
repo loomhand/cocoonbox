@@ -92,7 +92,6 @@ struct WalkArgs {
     roots: Vec<Root>,
     #[serde(default)]
     excludes: Excludes,
-    #[serde(default)]
     listed: Option<Listed>,
 }
 
@@ -538,11 +537,7 @@ fn listed_paths(file: &Path, root: &Path) -> HashSet<String> {
 fn walk_root(root: &Root, excludes: &Excludes, skip: &HashSet<String>, out: &mut Vec<Entry>) {
     let mut stack = vec![String::new()];
     while let Some(rel) = stack.pop() {
-        let dir = if rel.is_empty() {
-            root.path.clone()
-        } else {
-            root.path.join(&rel)
-        };
+        let dir = root.path.join(&rel);
         let Ok(read) = fs::read_dir(&dir) else {
             continue;
         };
@@ -710,7 +705,6 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
     #[tokio::test]
     async fn an_entry_that_cannot_move_back_survives_the_next_swap_when_nothing_can_be_written() {
         let dir = tempfile::tempdir().unwrap();
@@ -853,8 +847,6 @@ mod tests {
 
     #[tokio::test]
     async fn swap_removes_a_replaced_tree_that_holds_read_only_dirs() {
-        use std::os::unix::fs::PermissionsExt;
-
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("root");
         let staging = root.join(".cb-restore");
@@ -862,7 +854,7 @@ mod tests {
         fs::create_dir_all(&module).unwrap();
         fs::write(module.join("go.mod"), b"module m").unwrap();
         for d in [module.as_path(), module.parent().unwrap()] {
-            fs::set_permissions(d, fs::Permissions::from_mode(0o555)).unwrap();
+            sys::set_mode(d, 0o555).unwrap();
         }
         fs::create_dir_all(staging.join("go")).unwrap();
         fs::write(staging.join("go/new"), b"n").unwrap();
