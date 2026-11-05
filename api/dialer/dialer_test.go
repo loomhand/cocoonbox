@@ -7,16 +7,23 @@ import (
 	"io"
 	"iter"
 	"net"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/loomhand/cocoonbox/api/credential"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
+)
+
+const (
+	bigPlanPage  = 2048
+	bigPlanPages = 500
 )
 
 func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
@@ -26,9 +33,13 @@ func TestDialerForwardsTheCallersCredentialAndDrainsStreams(t *testing.T) {
 	d := New(pool)
 	ctx := metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1")
 
-	plan, err := d.Plan(ctx, "cb-1", ep, &agentv1.PlanRequest{})
-	if err != nil || plan.GetSnapshotId() != "s1" {
+	var plan []*agentv1.PlanResponse
+	if err := d.Plan(ctx, "cb-1", ep, &agentv1.PlanRequest{}, collect(&plan)); err != nil || len(plan) != 2 || plan[0].GetSnapshotId() != "s1" || len(plan[1].GetChunks()) != 1 {
 		t.Fatalf("Plan = %v, %v", plan, err)
+	}
+	stop := errors.New("stop")
+	if err := d.Plan(ctx, "cb-1", ep, &agentv1.PlanRequest{}, func(*agentv1.PlanResponse) error { return stop }); !errors.Is(err, stop) {
+		t.Errorf("Plan with a failing page = %v, want %v", err, stop)
 	}
 	var seen int
 	final, err := d.Upload(ctx, "cb-1", ep, &agentv1.UploadRequest{SnapshotId: "s1", Manifest: &agentv1.PresignedPut{ChunkId: "s1"}}, func(*agentv1.TransferProgress) { seen++ })
@@ -70,7 +81,7 @@ func TestDialerDialsTheEndpointNotItsKey(t *testing.T) {
 	pool := NewPool()
 	t.Cleanup(pool.Close)
 	d := New(pool)
-	if _, err := d.Plan(metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1"), "cb-1", ep, &agentv1.PlanRequest{}); err != nil {
+	if err := d.Plan(metadata.AppendToOutgoingContext(t.Context(), credential.Header, "cred-1"), "cb-1", ep, &agentv1.PlanRequest{}, collect(new([]*agentv1.PlanResponse))); err != nil {
 		t.Errorf("Plan through an endpoint whose key resolves nowhere: %v", err)
 	}
 }
@@ -80,8 +91,49 @@ func TestDialerAddsNoCredentialOfItsOwn(t *testing.T) {
 	pool := NewPool()
 	t.Cleanup(pool.Close)
 	d := New(pool)
-	if _, err := d.Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}); status.Code(err) != codes.Unauthenticated {
+	if err := d.Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, collect(new([]*agentv1.PlanResponse))); status.Code(err) != codes.Unauthenticated {
 		t.Errorf("Plan without a credential: %v, want Unauthenticated", err)
+	}
+}
+
+func TestPlanReadsAnAgentThatAnswersInOneUnaryMessage(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	s := grpc.NewServer()
+	s.RegisterService(&grpc.ServiceDesc{
+		ServiceName: "cocoonbox.agent.v1.State",
+		HandlerType: (*any)(nil),
+		Methods: []grpc.MethodDesc{{MethodName: "Plan", Handler: func(_ any, _ context.Context, dec func(any) error, _ grpc.UnaryServerInterceptor) (any, error) {
+			if err := dec(&agentv1.PlanRequest{}); err != nil {
+				return nil, err
+			}
+			return &agentv1.PlanResponse{SnapshotId: "s1", Chunks: []*agentv1.ChunkRef{{Id: "a"}, {Id: "b"}}}, nil
+		}}},
+	}, struct{}{})
+	go func() { _ = s.Serve(lis) }()
+	t.Cleanup(s.Stop)
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	var plan []*agentv1.PlanResponse
+	if err := New(pool).Plan(t.Context(), "cb-1", machines.TCPEndpoint(lis.Addr().String()), &agentv1.PlanRequest{}, collect(&plan)); err != nil || len(plan) != 1 || len(plan[0].GetChunks()) != 2 {
+		t.Errorf("Plan from a unary agent = %v, %v", plan, err)
+	}
+}
+
+func TestPlanTakesAChunkListLargerThanOneMessage(t *testing.T) {
+	ep := machines.TCPEndpoint(serveState(t, bigPlan{}))
+	pool := NewPool()
+	t.Cleanup(pool.Close)
+	var chunks, bytes int
+	err := New(pool).Plan(t.Context(), "cb-1", ep, &agentv1.PlanRequest{}, func(page *agentv1.PlanResponse) error {
+		chunks += len(page.GetChunks())
+		bytes += proto.Size(page)
+		return nil
+	})
+	if err != nil || chunks != bigPlanPages*bigPlanPage || bytes <= MaxMessageSize {
+		t.Errorf("Plan = %d chunks in %d bytes, %v; want %d chunks past %d bytes", chunks, bytes, err, bigPlanPages*bigPlanPage, MaxMessageSize)
 	}
 }
 
@@ -103,11 +155,14 @@ type fakeState struct {
 	agentv1.UnimplementedStateServer
 }
 
-func (fakeState) Plan(ctx context.Context, _ *agentv1.PlanRequest) (*agentv1.PlanResponse, error) {
-	if err := checkCredential(ctx); err != nil {
-		return nil, err
+func (fakeState) Plan(_ *agentv1.PlanRequest, stream grpc.ServerStreamingServer[agentv1.PlanResponse]) error {
+	if err := checkCredential(stream.Context()); err != nil {
+		return err
 	}
-	return &agentv1.PlanResponse{SnapshotId: "s1"}, nil
+	if err := stream.Send(&agentv1.PlanResponse{SnapshotId: "s1", Chunks: []*agentv1.ChunkRef{{Id: "a"}}}); err != nil {
+		return err
+	}
+	return stream.Send(&agentv1.PlanResponse{Chunks: []*agentv1.ChunkRef{{Id: "b"}}})
 }
 
 func (fakeState) Upload(req *agentv1.UploadRequest, stream grpc.ServerStreamingServer[agentv1.TransferProgress]) error {
@@ -143,6 +198,24 @@ func (fakeState) Restore(stream grpc.BidiStreamingServer[agentv1.RestoreRequest,
 	return stream.Send(&agentv1.TransferProgress{DoneChunks: gets, Finished: gets > 0, ManifestId: manifest})
 }
 
+type bigPlan struct {
+	agentv1.UnimplementedStateServer
+}
+
+func (bigPlan) Plan(_ *agentv1.PlanRequest, stream grpc.ServerStreamingServer[agentv1.PlanResponse]) error {
+	id := strings.Repeat("a", 64)
+	for range bigPlanPages {
+		page := &agentv1.PlanResponse{SnapshotId: id, Chunks: make([]*agentv1.ChunkRef, bigPlanPage)}
+		for i := range page.Chunks {
+			page.Chunks[i] = &agentv1.ChunkRef{Id: id, Size: 4 << 20}
+		}
+		if err := stream.Send(page); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func pages(fail error, reqs ...*agentv1.RestoreRequest) iter.Seq2[*agentv1.RestoreRequest, error] {
 	return func(yield func(*agentv1.RestoreRequest, error) bool) {
 		for _, req := range reqs {
@@ -153,6 +226,13 @@ func pages(fail error, reqs ...*agentv1.RestoreRequest) iter.Seq2[*agentv1.Resto
 		if fail != nil {
 			yield(nil, fail)
 		}
+	}
+}
+
+func collect(into *[]*agentv1.PlanResponse) PlanPageFunc {
+	return func(page *agentv1.PlanResponse) error {
+		*into = append(*into, page)
+		return nil
 	}
 }
 

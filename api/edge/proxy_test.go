@@ -376,8 +376,11 @@ func TestRejectsCallers(t *testing.T) {
 
 func TestRejectsStateMethods(t *testing.T) {
 	env := newProxyEnv(t)
-	_, err := agentv1.NewStateClient(env.conn).Plan(env.aliceCtx(t), &agentv1.PlanRequest{})
-	if status.Code(err) != codes.PermissionDenied {
+	plan, err := agentv1.NewStateClient(env.conn).Plan(env.aliceCtx(t), &agentv1.PlanRequest{})
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if _, err := plan.Recv(); status.Code(err) != codes.PermissionDenied {
 		t.Errorf("State/Plan: %v, want PermissionDenied", err)
 	}
 	stream, err := agentv1.NewStateClient(env.conn).Restore(env.aliceCtx(t))

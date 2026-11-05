@@ -10,10 +10,10 @@ option go_package = "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;ag
 // read or written through a presigned URL from the api, and the per-user key
 // arrives in each request and is kept only in memory for that request.
 service State {
-  // Plan snapshots the user state and returns the chunk ids it references.
-  // The snapshot stays pinned in the agent until Upload finishes or a newer
-  // Plan replaces it.
-  rpc Plan(PlanRequest) returns (PlanResponse);
+  // Plan snapshots the user state and returns the chunk ids it references in
+  // pages; the first message carries every other field. The snapshot stays
+  // pinned in the agent until Upload finishes or a newer Plan replaces it.
+  rpc Plan(PlanRequest) returns (stream PlanResponse);
   // Upload writes the listed chunks and the manifest through presigned URLs.
   rpc Upload(UploadRequest) returns (stream TransferProgress);
   // Restore replaces the user state with the given manifest. The first message
@@ -54,6 +54,7 @@ message ChunkRef {
 
 message PlanResponse {
   string snapshot_id = 1;
+  // At most 2048 per message.
   repeated ChunkRef chunks = 2;
   uint64 files = 3;
   uint64 logical_bytes = 4;

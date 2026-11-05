@@ -35,10 +35,10 @@ const (
 // read or written through a presigned URL from the api, and the per-user key
 // arrives in each request and is kept only in memory for that request.
 type StateClient interface {
-	// Plan snapshots the user state and returns the chunk ids it references.
-	// The snapshot stays pinned in the agent until Upload finishes or a newer
-	// Plan replaces it.
-	Plan(ctx context.Context, in *PlanRequest, opts ...grpc.CallOption) (*PlanResponse, error)
+	// Plan snapshots the user state and returns the chunk ids it references in
+	// pages; the first message carries every other field. The snapshot stays
+	// pinned in the agent until Upload finishes or a newer Plan replaces it.
+	Plan(ctx context.Context, in *PlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PlanResponse], error)
 	// Upload writes the listed chunks and the manifest through presigned URLs.
 	Upload(ctx context.Context, in *UploadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TransferProgress], error)
 	// Restore replaces the user state with the given manifest. The first message
@@ -58,19 +58,28 @@ func NewStateClient(cc grpc.ClientConnInterface) StateClient {
 	return &stateClient{cc}
 }
 
-func (c *stateClient) Plan(ctx context.Context, in *PlanRequest, opts ...grpc.CallOption) (*PlanResponse, error) {
+func (c *stateClient) Plan(ctx context.Context, in *PlanRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[PlanResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(PlanResponse)
-	err := c.cc.Invoke(ctx, State_Plan_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[0], State_Plan_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[PlanRequest, PlanResponse]{ClientStream: stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type State_PlanClient = grpc.ServerStreamingClient[PlanResponse]
 
 func (c *stateClient) Upload(ctx context.Context, in *UploadRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TransferProgress], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[0], State_Upload_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[1], State_Upload_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +98,7 @@ type State_UploadClient = grpc.ServerStreamingClient[TransferProgress]
 
 func (c *stateClient) Restore(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RestoreRequest, TransferProgress], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[1], State_Restore_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[2], State_Restore_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +111,7 @@ type State_RestoreClient = grpc.BidiStreamingClient[RestoreRequest, TransferProg
 
 func (c *stateClient) RestorePaths(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[RestoreRequest, TransferProgress], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[2], State_RestorePaths_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &State_ServiceDesc.Streams[3], State_RestorePaths_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -123,10 +132,10 @@ type State_RestorePathsClient = grpc.BidiStreamingClient[RestoreRequest, Transfe
 // read or written through a presigned URL from the api, and the per-user key
 // arrives in each request and is kept only in memory for that request.
 type StateServer interface {
-	// Plan snapshots the user state and returns the chunk ids it references.
-	// The snapshot stays pinned in the agent until Upload finishes or a newer
-	// Plan replaces it.
-	Plan(context.Context, *PlanRequest) (*PlanResponse, error)
+	// Plan snapshots the user state and returns the chunk ids it references in
+	// pages; the first message carries every other field. The snapshot stays
+	// pinned in the agent until Upload finishes or a newer Plan replaces it.
+	Plan(*PlanRequest, grpc.ServerStreamingServer[PlanResponse]) error
 	// Upload writes the listed chunks and the manifest through presigned URLs.
 	Upload(*UploadRequest, grpc.ServerStreamingServer[TransferProgress]) error
 	// Restore replaces the user state with the given manifest. The first message
@@ -146,8 +155,8 @@ type StateServer interface {
 // pointer dereference when methods are called.
 type UnimplementedStateServer struct{}
 
-func (UnimplementedStateServer) Plan(context.Context, *PlanRequest) (*PlanResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method Plan not implemented")
+func (UnimplementedStateServer) Plan(*PlanRequest, grpc.ServerStreamingServer[PlanResponse]) error {
+	return status.Error(codes.Unimplemented, "method Plan not implemented")
 }
 func (UnimplementedStateServer) Upload(*UploadRequest, grpc.ServerStreamingServer[TransferProgress]) error {
 	return status.Error(codes.Unimplemented, "method Upload not implemented")
@@ -179,23 +188,16 @@ func RegisterStateServer(s grpc.ServiceRegistrar, srv StateServer) {
 	s.RegisterService(&State_ServiceDesc, srv)
 }
 
-func _State_Plan_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(PlanRequest)
-	if err := dec(in); err != nil {
-		return nil, err
+func _State_Plan_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(PlanRequest)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
 	}
-	if interceptor == nil {
-		return srv.(StateServer).Plan(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: State_Plan_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(StateServer).Plan(ctx, req.(*PlanRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return srv.(StateServer).Plan(m, &grpc.GenericServerStream[PlanRequest, PlanResponse]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type State_PlanServer = grpc.ServerStreamingServer[PlanResponse]
 
 func _State_Upload_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(UploadRequest)
@@ -228,13 +230,13 @@ type State_RestorePathsServer = grpc.BidiStreamingServer[RestoreRequest, Transfe
 var State_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "cocoonbox.agent.v1.State",
 	HandlerType: (*StateServer)(nil),
-	Methods: []grpc.MethodDesc{
-		{
-			MethodName: "Plan",
-			Handler:    _State_Plan_Handler,
-		},
-	},
+	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Plan",
+			Handler:       _State_Plan_Handler,
+			ServerStreams: true,
+		},
 		{
 			StreamName:    "Upload",
 			Handler:       _State_Upload_Handler,

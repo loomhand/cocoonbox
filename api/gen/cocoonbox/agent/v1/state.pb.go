@@ -240,12 +240,13 @@ func (x *ChunkRef) GetSize() uint64 {
 }
 
 type PlanResponse struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	SnapshotId   string                 `protobuf:"bytes,1,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
-	Chunks       []*ChunkRef            `protobuf:"bytes,2,rep,name=chunks,proto3" json:"chunks,omitempty"`
-	Files        uint64                 `protobuf:"varint,3,opt,name=files,proto3" json:"files,omitempty"`
-	LogicalBytes uint64                 `protobuf:"varint,4,opt,name=logical_bytes,json=logicalBytes,proto3" json:"logical_bytes,omitempty"`
-	TakenAtMs    int64                  `protobuf:"varint,5,opt,name=taken_at_ms,json=takenAtMs,proto3" json:"taken_at_ms,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SnapshotId string                 `protobuf:"bytes,1,opt,name=snapshot_id,json=snapshotId,proto3" json:"snapshot_id,omitempty"`
+	// At most 2048 per message.
+	Chunks       []*ChunkRef `protobuf:"bytes,2,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	Files        uint64      `protobuf:"varint,3,opt,name=files,proto3" json:"files,omitempty"`
+	LogicalBytes uint64      `protobuf:"varint,4,opt,name=logical_bytes,json=logicalBytes,proto3" json:"logical_bytes,omitempty"`
+	TakenAtMs    int64       `protobuf:"varint,5,opt,name=taken_at_ms,json=takenAtMs,proto3" json:"taken_at_ms,omitempty"`
 	// Files new, changed or removed since the last upload.
 	ChangedFiles  *uint64 `protobuf:"varint,6,opt,name=changed_files,json=changedFiles,proto3,oneof" json:"changed_files,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -787,9 +788,9 @@ const file_cocoonbox_agent_v1_state_proto_rawDesc = "" +
 	"\vConsistency\x12\x1b\n" +
 	"\x17CONSISTENCY_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10CONSISTENCY_LIVE\x10\x01\x12\x18\n" +
-	"\x14CONSISTENCY_QUIESCED\x10\x022\xde\x02\n" +
-	"\x05State\x12I\n" +
-	"\x04Plan\x12\x1f.cocoonbox.agent.v1.PlanRequest\x1a .cocoonbox.agent.v1.PlanResponse\x12S\n" +
+	"\x14CONSISTENCY_QUIESCED\x10\x022\xe0\x02\n" +
+	"\x05State\x12K\n" +
+	"\x04Plan\x12\x1f.cocoonbox.agent.v1.PlanRequest\x1a .cocoonbox.agent.v1.PlanResponse0\x01\x12S\n" +
 	"\x06Upload\x12!.cocoonbox.agent.v1.UploadRequest\x1a$.cocoonbox.agent.v1.TransferProgress0\x01\x12W\n" +
 	"\aRestore\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01\x12\\\n" +
 	"\fRestorePaths\x12\".cocoonbox.agent.v1.RestoreRequest\x1a$.cocoonbox.agent.v1.TransferProgress(\x010\x01BBZ@github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1;agentv1b\x06proto3"
