@@ -11,11 +11,9 @@ import (
 	"github.com/projecteru2/core/log"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	"github.com/loomhand/cocoonbox/api/auth"
-	"github.com/loomhand/cocoonbox/api/credential"
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
@@ -78,23 +76,6 @@ func (p *Proxy) Screen(ctx context.Context, g auth.Grant, viewer io.ReadWriter) 
 			return screenEnd(ctx, err)
 		}
 	}
-}
-
-// EndShare asks the box agent to close every MCP session of share id.
-func (p *Proxy) EndShare(ctx context.Context, owner, box, id string) error {
-	ep, wake, err := p.resolver.Resolve(ctx, owner, box)
-	if err != nil {
-		return err
-	}
-	conn, err := p.conn(ctx, box, ep)
-	if err != nil {
-		return err
-	}
-	if wake != "" {
-		ctx = metadata.AppendToOutgoingContext(ctx, credential.Header, p.creds.Credential(box, wake))
-	}
-	_, err = agentv1.NewAgentsClient(conn).End(ctx, &agentv1.EndRequest{Target: &agentv1.EndRequest_ShareId{ShareId: id}})
-	return err
 }
 
 // relayScreen serves the owner's Session.Screen from the box's RFB server.

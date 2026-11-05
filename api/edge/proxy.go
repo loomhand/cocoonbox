@@ -18,6 +18,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/auth"
 	"github.com/loomhand/cocoonbox/api/credential"
 	"github.com/loomhand/cocoonbox/api/dialer"
+	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
@@ -105,6 +106,23 @@ func (p *Proxy) Handle(_ any, ss grpc.ServerStream) error {
 	return err
 }
 
+// EndShare asks the box agent to close every MCP session of share id.
+func (p *Proxy) EndShare(ctx context.Context, owner, box, id string) error {
+	ep, wake, err := p.resolver.Resolve(ctx, owner, box)
+	if err != nil {
+		return err
+	}
+	conn, err := p.conn(ctx, box, ep)
+	if err != nil {
+		return err
+	}
+	if wake != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, credential.Header, p.creds.Credential(box, wake))
+	}
+	_, err = agentv1.NewAgentsClient(conn).End(ctx, &agentv1.EndRequest{Target: &agentv1.EndRequest_ShareId{ShareId: id}})
+	return err
+}
+
 func (p *Proxy) forward(ctx context.Context, down grpc.ServerStream, method, box string, md metadata.MD, ep machines.Endpoint) error {
 	conn, err := p.conn(ctx, box, ep)
 	if err != nil {
@@ -117,10 +135,36 @@ func (p *Proxy) forward(ctx context.Context, down grpc.ServerStream, method, box
 		log.WithFunc("edge.Proxy.forward").Errorf(ctx, err, "open a stream to box %s", box)
 		return errUnreachable
 	}
-	return p.pump(ctx, down, up, cancel)
+	return pump(ctx, down, up, cancel)
 }
 
-func (p *Proxy) pump(ctx context.Context, down grpc.ServerStream, up grpc.ClientStream, cancel context.CancelFunc) error {
+func (p *Proxy) conn(ctx context.Context, boxID string, ep machines.Endpoint) (*grpc.ClientConn, error) {
+	conn, err := p.pool.Conn(boxID, ep)
+	if err != nil {
+		log.WithFunc("edge.Proxy.conn").Errorf(ctx, err, "dial box %s at %s", boxID, ep.Key)
+		return nil, status.Error(codes.Internal, "dial box")
+	}
+	return conn, nil
+}
+
+func (p *Proxy) outgoing(in metadata.MD, box, wake string) metadata.MD {
+	out := metadata.MD{}
+	for k, v := range in {
+		if strings.HasPrefix(k, ":") || strings.HasPrefix(k, "grpc-") {
+			continue
+		}
+		out[k] = v
+	}
+	for _, k := range droppedHeaders {
+		delete(out, k)
+	}
+	if wake != "" {
+		out.Set(credential.Header, p.creds.Credential(box, wake))
+	}
+	return out
+}
+
+func pump(ctx context.Context, down grpc.ServerStream, up grpc.ClientStream, cancel context.CancelFunc) error {
 	sent := make(chan error, 1)
 	received := make(chan error, 1)
 	go func() { sent <- forwardRequests(down, up) }()
@@ -148,32 +192,6 @@ func (p *Proxy) pump(ctx context.Context, down grpc.ServerStream, up grpc.Client
 			return err
 		}
 	}
-}
-
-func (p *Proxy) conn(ctx context.Context, boxID string, ep machines.Endpoint) (*grpc.ClientConn, error) {
-	conn, err := p.pool.Conn(boxID, ep)
-	if err != nil {
-		log.WithFunc("edge.Proxy.conn").Errorf(ctx, err, "dial box %s at %s", boxID, ep.Key)
-		return nil, status.Error(codes.Internal, "dial box")
-	}
-	return conn, nil
-}
-
-func (p *Proxy) outgoing(in metadata.MD, box, wake string) metadata.MD {
-	out := metadata.MD{}
-	for k, v := range in {
-		if strings.HasPrefix(k, ":") || strings.HasPrefix(k, "grpc-") {
-			continue
-		}
-		out[k] = v
-	}
-	for _, k := range droppedHeaders {
-		delete(out, k)
-	}
-	if wake != "" {
-		out.Set(credential.Header, p.creds.Credential(box, wake))
-	}
-	return out
 }
 
 // forwardRequests copies client frames upstream until the client half-closes (io.EOF) or fails.

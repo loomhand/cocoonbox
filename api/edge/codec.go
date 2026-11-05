@@ -5,6 +5,10 @@ import (
 	"google.golang.org/grpc/mem"
 )
 
+type frame struct {
+	payload []byte
+}
+
 // Codec passes proxied frames through as raw bytes and delegates every other message to the proto codec.
 type Codec struct {
 	proto encoding.CodecV2
@@ -32,7 +36,3 @@ func (c Codec) Unmarshal(data mem.BufferSlice, v any) error {
 
 // Name keeps the proto content-subtype so both peers see a normal gRPC call.
 func (Codec) Name() string { return "proto" }
-
-type frame struct {
-	payload []byte
-}

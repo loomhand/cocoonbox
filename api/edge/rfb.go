@@ -144,58 +144,6 @@ func (f *viewOnly) next() (int, []byte, error) {
 	return size, b[:size], nil
 }
 
-// viewerSetEncodings rewrites a SetEncodings message to the encodings in viewerEncodings, in the viewer's order.
-func viewerSetEncodings(msg []byte) []byte {
-	out := []byte{2, 0, 0, 0}
-	kept := 0
-	for i := 4; i+4 <= len(msg); i += 4 {
-		if slices.Contains(viewerEncodings, int32(binary.BigEndian.Uint32(msg[i:i+4]))) { //nolint:gosec // encodings are signed
-			out = append(out, msg[i:i+4]...)
-			kept++
-		}
-	}
-	binary.BigEndian.PutUint16(out[2:4], uint16(kept))
-	return out
-}
-
-// messageLen sizes the client message at the head of b, or returns 0 until its header has arrived.
-func messageLen(b []byte) (int, error) {
-	kind := b[0]
-	if n, ok := rfbFixedLen[kind]; ok {
-		return n, nil
-	}
-	header := rfbHeaderLen[kind]
-	if header == 0 {
-		return 0, fmt.Errorf("rfb: unsupported client message %d", kind)
-	}
-	if len(b) < header {
-		return 0, nil
-	}
-	switch kind {
-	case 2:
-		return 4 + 4*int(binary.BigEndian.Uint16(b[2:4])), nil
-	case 6:
-		return cutTextLen(b)
-	case 248:
-		if b[8] > maxFencePayload {
-			return 0, errors.New("rfb: fence payload over 64 bytes")
-		}
-		return 9 + int(b[8]), nil
-	case 251:
-		return 8 + 16*int(b[6]), nil
-	}
-	switch qemu := b[1]; {
-	case qemu == 0:
-		return 12, nil
-	case qemu == 1 && binary.BigEndian.Uint16(b[2:4]) == 2:
-		return 10, nil
-	case qemu == 1:
-		return 4, nil
-	default:
-		return 0, fmt.Errorf("rfb: unsupported QEMU message %d", qemu)
-	}
-}
-
 // screenOnly frames the server side of an RFB stream for a viewer without decoding pixels and drops the clipboard; anything else ends the stream.
 type screenOnly struct {
 	session *rfbSession
@@ -386,6 +334,58 @@ func (f *screenOnly) rect(b []byte) (head, body int, keep bool, err error) {
 		return 12, 0, true, nil
 	default:
 		return 0, 0, false, fmt.Errorf("rfb: unsupported encoding %d", encoding)
+	}
+}
+
+// viewerSetEncodings rewrites a SetEncodings message to the encodings in viewerEncodings, in the viewer's order.
+func viewerSetEncodings(msg []byte) []byte {
+	out := []byte{2, 0, 0, 0}
+	kept := 0
+	for i := 4; i+4 <= len(msg); i += 4 {
+		if slices.Contains(viewerEncodings, int32(binary.BigEndian.Uint32(msg[i:i+4]))) { //nolint:gosec // encodings are signed
+			out = append(out, msg[i:i+4]...)
+			kept++
+		}
+	}
+	binary.BigEndian.PutUint16(out[2:4], uint16(kept))
+	return out
+}
+
+// messageLen sizes the client message at the head of b, or returns 0 until its header has arrived.
+func messageLen(b []byte) (int, error) {
+	kind := b[0]
+	if n, ok := rfbFixedLen[kind]; ok {
+		return n, nil
+	}
+	header := rfbHeaderLen[kind]
+	if header == 0 {
+		return 0, fmt.Errorf("rfb: unsupported client message %d", kind)
+	}
+	if len(b) < header {
+		return 0, nil
+	}
+	switch kind {
+	case 2:
+		return 4 + 4*int(binary.BigEndian.Uint16(b[2:4])), nil
+	case 6:
+		return cutTextLen(b)
+	case 248:
+		if b[8] > maxFencePayload {
+			return 0, errors.New("rfb: fence payload over 64 bytes")
+		}
+		return 9 + int(b[8]), nil
+	case 251:
+		return 8 + 16*int(b[6]), nil
+	}
+	switch qemu := b[1]; {
+	case qemu == 0:
+		return 12, nil
+	case qemu == 1 && binary.BigEndian.Uint16(b[2:4]) == 2:
+		return 10, nil
+	case qemu == 1:
+		return 4, nil
+	default:
+		return 0, fmt.Errorf("rfb: unsupported QEMU message %d", qemu)
 	}
 }
 
