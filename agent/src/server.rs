@@ -239,17 +239,18 @@ impl Session for SessionSvc {
         &self,
         req: Request<pb::EventsRequest>,
     ) -> Result<Response<Self::EventsStream>, Status> {
+        let from_offset = req.into_inner().from_offset;
         let sub = self
             .rt
             .journal
             .bus
-            .subscribe(req.into_inner().from_offset)
+            .subscribe(from_offset)
             .map_err(Status::out_of_range)?;
         let (tx, rx) = mpsc::channel(EVENT_BUFFER);
         let stop = self.rt.stop.clone();
         // detached pump: ends when the client goes away, falls behind the live channel, or the agent stops
         tokio::spawn(async move {
-            let mut last = 0;
+            let mut last = from_offset;
             for e in sub.replay {
                 last = e.offset;
                 if tx.send(Ok(Event::clone(&e))).await.is_err() {
@@ -263,13 +264,12 @@ impl Session for SessionSvc {
                     () = stop.cancelled() => return,
                 };
                 match next {
-                    Ok(e) if e.offset > last => {
+                    Ok(e) => {
                         last = e.offset;
                         if tx.send(Ok(Event::clone(&e))).await.is_err() {
                             return;
                         }
                     }
-                    Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(_)) => {
                         let msg =
                             format!("event stream fell behind; reconnect with from_offset {last}");
