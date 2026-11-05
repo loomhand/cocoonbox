@@ -251,7 +251,7 @@ func (d *Door) stream(w http.ResponseWriter, r *http.Request, user string) {
 	}
 }
 
-// refusal is the status of a failed authentication: 503 when the identity provider could not answer, else 401.
+// refusal is the status of a failed authentication: 503 when the identity provider could not answer, 403 when the token may not use the door, else 401.
 func refusal(err error) int {
 	switch status.Code(err) {
 	case codes.Unavailable:

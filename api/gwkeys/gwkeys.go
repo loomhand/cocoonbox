@@ -99,6 +99,7 @@ func (c *Client) Revoke(ctx context.Context, owner string) error {
 	return nil
 }
 
+// SetEnabled expires owner's gw keys, or lifts their expiry when enabled.
 func (c *Client) SetEnabled(ctx context.Context, owner string, enabled bool) error {
 	var expires any = pastExpiry
 	if enabled {
@@ -208,7 +209,6 @@ func (c *Client) delete(ctx context.Context, id string) error {
 	return err
 }
 
-// request calls gw's admin API at path.
 func (c *Client) request(ctx context.Context, method, path string, query url.Values, body, out any) (int, error) {
 	op := method + " " + path
 	var payload io.Reader

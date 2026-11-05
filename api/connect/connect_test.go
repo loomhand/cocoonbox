@@ -1338,7 +1338,6 @@ func newEnv(t *testing.T) *env {
 	return &env{svc: newService(t, dsn, sessions), vendor: v, sessions: sessions, dsn: dsn}
 }
 
-// connect connects the vendor's OAuth MCP server as alice's custom connector "mock".
 func (e *env) connect(t *testing.T) {
 	t.Helper()
 	started := e.start(t, alice, mockName)
@@ -1351,7 +1350,6 @@ func (e *env) connect(t *testing.T) {
 	}
 }
 
-// start begins connecting the vendor's OAuth MCP server as user's custom connector name, from the user's session.
 func (e *env) start(t *testing.T, user, name string) *Started {
 	t.Helper()
 	session := map[string]string{alice: aliceSess, bob: bobSess}[user]
@@ -1655,7 +1653,6 @@ func (a *tasksStandIn) last(t *testing.T) tasksRequest {
 	return reqs[len(reqs)-1]
 }
 
-// newTasksEnv turns alice's connected mock grant into a Google Tasks grant whose client is the mock vendor's and whose API is a stand-in.
 func newTasksEnv(t *testing.T) (*env, *tasksStandIn) {
 	t.Helper()
 	env := newEnv(t)

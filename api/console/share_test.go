@@ -233,7 +233,6 @@ type bridged struct {
 	data      string
 }
 
-// fakeScreens sends an RFB banner and reports the principal and the first bytes the viewer sends; hold keeps the screen until its context ends.
 type fakeScreens struct {
 	got   chan bridged
 	hold  bool

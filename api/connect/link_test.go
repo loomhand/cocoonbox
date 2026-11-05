@@ -178,7 +178,6 @@ func TestSpendRequestsReadsNothingWithoutAnActiveLinkGrant(t *testing.T) {
 	}
 }
 
-// newLink points the catalog's Link entry and the Link API at a mock Link.
 func newLink(t *testing.T, svc *Service) *connecttest.Link {
 	t.Helper()
 	l := connecttest.NewLink()

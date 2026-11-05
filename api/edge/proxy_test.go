@@ -507,7 +507,6 @@ func serve(t *testing.T, srv *grpc.Server) string {
 	return lis.Addr().String()
 }
 
-// fakeResolver applies the Boxes ownership rule and routes every owned box to addr; opaque hides addr behind a key nothing resolves.
 type fakeResolver struct {
 	addr   string
 	screen string
@@ -544,7 +543,6 @@ func (r *fakeResolver) reaches() []string {
 	return slices.Clone(r.reached)
 }
 
-// fakeCreds issues "cred:<box>:<wake>" and "cred:<box>:<wake>:<principal>".
 type fakeCreds struct{}
 
 func (fakeCreds) Credential(box, wake string) string { return "cred:" + box + ":" + wake }
@@ -574,7 +572,6 @@ func (a *fakeAgent) Hello(ctx context.Context, _ *agentv1.HelloRequest) (*agentv
 	}, nil
 }
 
-// Exec runs its start command: fail refuses, echo echoes each stdin frame, any other echoes all stdin at half-close and exits 7.
 func (a *fakeAgent) Exec(stream grpc.BidiStreamingServer[agentv1.ExecClientFrame, agentv1.ExecServerFrame]) error {
 	a.calls.Add(1)
 	start, err := stream.Recv()
@@ -622,7 +619,6 @@ func (a *fakeAgent) echo(stream grpc.BidiStreamingServer[agentv1.ExecClientFrame
 	}
 }
 
-// echoScreen stands in for a box's RFB server: it echoes each connection until the client half-closes.
 type echoScreen struct {
 	addr     string
 	accepted atomic.Int64

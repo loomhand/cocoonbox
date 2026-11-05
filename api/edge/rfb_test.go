@@ -142,8 +142,6 @@ func TestScreenOnlyEndsOnAnythingElse(t *testing.T) {
 	}
 }
 
-// serverStream is a 3.8 handshake and a run of server messages with plain and extended clipboard text interleaved,
-// and what of it a viewer must get.
 func serverStream() (stream, want []byte) {
 	be := binary.BigEndian
 	pixelFormat := []byte{32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0}

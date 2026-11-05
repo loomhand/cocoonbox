@@ -35,8 +35,7 @@ type issued struct {
 	exp   time.Time
 }
 
-// Signer issues v1.<b64url(key_id|box_id|wake_id|exp)>.<b64url(ed25519 over "v1.<fields>")> for the owner,
-// and v2 with a fifth field, the share principal, cached per box, wake and principal.
+// Signer issues owner credentials v1.<b64url(key_id|box_id|wake_id|exp)>.<b64url(ed25519)> and share ones (v2) with a fifth principal field, cached per box, wake and principal.
 type Signer struct {
 	key   ed25519.PrivateKey
 	keyID string

@@ -26,7 +26,6 @@ type Agents interface {
 	MarkSeen(ctx context.Context, user string) error
 }
 
-// choice is one of the user's own boxes, which the user may let an agent use.
 type choice struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`

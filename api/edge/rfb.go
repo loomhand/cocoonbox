@@ -58,9 +58,7 @@ type rfbSession struct {
 	minor atomic.Int32
 }
 
-// viewOnly filters the client side of an RFB stream: it passes the handshake, a 32-bit pixel format, the encodings the
-// bridge can frame, and framebuffer requests; it forces a shared session and drops key, pointer, clipboard, resize, xvp
-// and QEMU messages; anything else ends the stream.
+// viewOnly passes a viewer's handshake, 32-bit pixel format, frameable encodings and framebuffer requests, forces a shared session and drops input; anything else ends the stream.
 type viewOnly struct {
 	session *rfbSession
 	stage   int
@@ -198,9 +196,7 @@ func messageLen(b []byte) (int, error) {
 	}
 }
 
-// screenOnly filters the server side of an RFB stream for a viewer: it frames the handshake, framebuffer updates rect by
-// rect, color maps, bells, fences and the end of continuous updates without decoding pixels, and drops the clipboard
-// (ServerCutText, plain and extended); any other message or encoding ends the stream.
+// screenOnly frames the server side of an RFB stream for a viewer without decoding pixels and drops the clipboard; anything else ends the stream.
 type screenOnly struct {
 	session *rfbSession
 	stage   int
@@ -250,8 +246,7 @@ func (f *screenOnly) feed(in []byte) ([]byte, error) {
 	return out, nil
 }
 
-// next sizes the header at the head of b and the body that follows it, and says whether both go to the viewer; head 0
-// waits for more bytes.
+// next sizes the header and body at the head of b and whether both go to the viewer; head 0 waits for more bytes.
 func (f *screenOnly) next(b []byte) (head, body int, keep bool, err error) {
 	switch f.stage {
 	case stageVersion:

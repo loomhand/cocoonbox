@@ -1,5 +1,4 @@
-// Package connecttest serves a mock vendor for Connect tests: an MCP server behind MCP authorization, with
-// dynamic registration, a client metadata document or a client registered by hand, PKCE, rotating refresh tokens and revocation.
+// Package connecttest serves mock vendors for Connect tests: an MCP server behind MCP authorization, and Link.
 package connecttest
 
 import (
@@ -18,7 +17,7 @@ import (
 )
 
 const (
-	// Key is the header key the vendor accepts in X-Api-Key.
+	// Key is the API key the vendor accepts in X-Api-Key.
 	Key = "mock-api-key"
 
 	accessTTL = 3600

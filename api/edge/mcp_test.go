@@ -311,7 +311,6 @@ type mcpEnv struct {
 	client   *http.Client
 }
 
-// newMCPEnv serves a fake agent /mcp over HTTP/1.1 and h2c behind the MCP proxy.
 func newMCPEnv(t *testing.T) *mcpEnv {
 	t.Helper()
 	sum := sha256.Sum256([]byte(aliceToken))
@@ -322,7 +321,6 @@ func newMCPEnv(t *testing.T) *mcpEnv {
 	})
 }
 
-// newMCPEnvWith serves the MCP proxy over the identities identify builds: life ends with every user, aliceLife with alice's credential.
 func newMCPEnvWith(t *testing.T, users staticUsers, identify func(life, aliceLife context.Context) auth.Identities) *mcpEnv {
 	t.Helper()
 	upstream := &fakeMCP{next: make(chan struct{}), closed: make(chan struct{})}
@@ -388,7 +386,6 @@ func (u livingUsers) Lifetime(_, credential string) (context.Context, func()) {
 	return u.life, func() {}
 }
 
-// externalIdentities is an identity provider whose one token names id, bound to credLife, or that is down.
 type externalIdentities struct {
 	down     bool
 	token    string

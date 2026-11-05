@@ -42,7 +42,7 @@ func (s *Service) PruneDoorKeys(ctx context.Context, live []string, cutoff time.
 }
 
 // Credentials returns what owner's grants put on the egress of owner's boxes, refreshing a token near its expiry.
-// A connector without an active grant maps to removals; one whose token cannot be read now is left out, with guestEnv.
+// A connector without an active grant maps to removals; one whose token cannot be read now is left out, and guestEnv too when it carries guest records.
 func (s *Service) Credentials(ctx context.Context, owner string) (machines.Credentials, error) {
 	grants, err := s.store.grants(ctx, owner)
 	if err != nil {

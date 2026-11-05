@@ -165,7 +165,7 @@ func Open(ctx context.Context, opts Options) (*Service, error) {
 // Close releases the database pool.
 func (s *Service) Close() { s.store.close() }
 
-// RunPurge deletes audit records older than 90 days, now and then daily, until ctx ends.
+// RunPurge deletes audit records older than 90 days and approvals a day past expiry, now and then daily, until ctx ends.
 func (s *Service) RunPurge(ctx context.Context) {
 	logger := log.WithFunc("connect.Service.RunPurge")
 	tick := time.Tick(purgeInterval)

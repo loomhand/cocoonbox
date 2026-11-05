@@ -250,7 +250,6 @@ func newConnectEnv(t *testing.T) (*env, *connecttest.Vendor) {
 	return e, vendor
 }
 
-// begin starts connecting the vendor as custom connector name and consents; it returns the connect cookie, the code and the state.
 func (e *env) begin(t *testing.T, session, name string, vendor *connecttest.Vendor) (*http.Cookie, string, string) {
 	t.Helper()
 	resp := e.do(t, http.MethodPost, "api/connect/custom/begin", session, `{"name":"`+name+`","url":"`+vendor.MCPURL()+`"}`)
@@ -273,7 +272,6 @@ func (e *env) begin(t *testing.T, session, name string, vendor *connecttest.Vend
 	return nil, "", ""
 }
 
-// callback delivers the vendor's redirect with nonce in the connect cookie and returns where it sends the browser.
 func (e *env) callback(t *testing.T, nonce, state, code string) string {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, connect.CallbackPath+"?"+url.Values{"state": {state}, "code": {code}}.Encode(), nil)

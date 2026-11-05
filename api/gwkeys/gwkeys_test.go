@@ -375,7 +375,6 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// akID is gw's access_key_id: sha256: plus the first 16 digest bytes in hex.
 func akID(ak string) string {
 	sum := sha256.Sum256([]byte(ak))
 	return "sha256:" + hex.EncodeToString(sum[:16])

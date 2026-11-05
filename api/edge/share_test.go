@@ -26,13 +26,12 @@ import (
 )
 
 const (
-	bobToken     = "bob-secret"
-	carolToken   = "carol-secret"
-	openSecret   = auth.SecretPrefix + "0123456789abcdef0123456789abcdef"
-	namedSecret  = auth.SecretPrefix + "fedcba9876543210fedcba9876543210"
-	staleSecret  = auth.SecretPrefix + "00000000000000000000000000000000"
-	toolsListRPC = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
-	// shareLikeToken is a user token that happens to carry the share prefix.
+	bobToken       = "bob-secret"
+	carolToken     = "carol-secret"
+	openSecret     = auth.SecretPrefix + "0123456789abcdef0123456789abcdef"
+	namedSecret    = auth.SecretPrefix + "fedcba9876543210fedcba9876543210"
+	staleSecret    = auth.SecretPrefix + "00000000000000000000000000000000"
+	toolsListRPC   = `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
 	shareLikeToken = auth.SecretPrefix + "user-token-of-dave"
 )
 
@@ -280,8 +279,6 @@ func TestAViewerThatStopsReadingStillEndsWithTheShare(t *testing.T) {
 	}
 }
 
-// scriptedScreen plays stream as the box's RFB server, 7 bytes a write, sending the security part only once the
-// viewer's version has arrived, and reports every byte the bridge forwards.
 type scriptedScreen struct {
 	addr string
 	got  chan []byte
@@ -333,7 +330,6 @@ func serveScriptedScreen(t *testing.T, stream []byte) *scriptedScreen {
 	return s
 }
 
-// fakeShares serves shares by the sha256 of their secret; a zero ExpiresAt means an hour from now.
 type fakeShares struct {
 	mu    sync.Mutex
 	bySum map[string]auth.Share
@@ -356,7 +352,6 @@ func (f *fakeShares) put(secret string, sh auth.Share) {
 	f.bySum[hex.EncodeToString(sum[:])] = sh
 }
 
-// served closes when the edge handler of the next exchange returns.
 func served(env *mcpEnv) <-chan struct{} {
 	done := make(chan struct{})
 	go func() { <-env.served; close(done) }()
