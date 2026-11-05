@@ -584,7 +584,7 @@ final class AppModel {
         disconnect()
         boxes = []
         selectedBoxID = nil
-        share = nil
+        clearBox()
         connectors = []
         showSignIn = true
     }
@@ -682,6 +682,7 @@ final class AppModel {
             selectBox(pick.id)
         } else {
             stopAgentSide()
+            clearBox()
             selectedBoxID = nil
         }
     }
@@ -709,16 +710,20 @@ final class AppModel {
     func selectBox(_ id: String) {
         guard id != selectedBoxID else { return }
         stopAgentSide()
+        clearBox()
+        selectedBoxID = id
+        selectedAgentID = selectedLocal.map(Self.selectionID) ?? selectedOffload.map { Self.selectionID(offload: $0.repo) }
+        Perf.mark("box_select", "\(id) \(box?.name ?? "-") \(box?.state ?? .unspecified)")
+        if boxRunning { startAgentSide() }
+    }
+
+    private func clearBox() {
         agents = []
         transcripts = [:]
         live = [:]
         loadedTranscripts = []
         hello = nil
         share = nil
-        selectedBoxID = id
-        selectedAgentID = selectedLocal.map(Self.selectionID) ?? selectedOffload.map { Self.selectionID(offload: $0.repo) }
-        Perf.mark("box_select", "\(id) \(box?.name ?? "-") \(box?.state ?? .unspecified)")
-        if boxRunning { startAgentSide() }
     }
 
     func createBox(name: String, image: String = "") {
