@@ -270,7 +270,7 @@ impl Runtime {
 
     /// Cancels the agent's running turn, waits for it to end, then removes the agent and its history.
     pub async fn delete(&self, agent_id: &str) -> Result<(), Status> {
-        let slot = lock(&self.slots).remove(agent_id);
+        let slot = self.existing_slot(agent_id);
         let _idle = match &slot {
             Some(slot) => {
                 {
@@ -292,12 +292,9 @@ impl Runtime {
         if closed.is_error {
             eprintln!("delete {agent_id}: close its window: {}", closed.text);
         }
-        let existed = self
-            .journal
-            .store
-            .delete_agent(agent_id.to_owned())
-            .await
-            .map_err(Status::internal)?;
+        let deleted = self.journal.store.delete_agent(agent_id.to_owned()).await;
+        lock(&self.slots).remove(agent_id);
+        let existed = deleted.map_err(Status::internal)?;
         if !existed {
             return Err(Status::not_found(format!("agent {agent_id} not found")));
         }
