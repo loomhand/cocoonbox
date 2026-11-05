@@ -39,6 +39,36 @@ const TEST_TERMINFO: &str =
 
 type Log = Arc<Mutex<Vec<(String, Value)>>>;
 
+struct Boot {
+    script: Vec<(&'static str, String)>,
+    anthropic_messages: bool,
+    mcp_idle: Duration,
+    mcp_prune_after: Duration,
+    chrome: Option<PathBuf>,
+    connect_url: Option<String>,
+    automation: Automation,
+    plugin: bool,
+    checkpoint_nudge: Option<Duration>,
+    reasoning_effort: Option<&'static str>,
+}
+
+impl Default for Boot {
+    fn default() -> Self {
+        Self {
+            script: Vec::new(),
+            anthropic_messages: false,
+            mcp_idle: Duration::from_secs(600),
+            mcp_prune_after: Duration::from_secs(24 * 3600),
+            chrome: None,
+            connect_url: None,
+            automation: Automation::Minimal,
+            plugin: false,
+            checkpoint_nudge: None,
+            reasoning_effort: None,
+        }
+    }
+}
+
 struct Harness {
     _chrome: Option<ChromeGuard>,
     _dir: tempfile::TempDir,
@@ -53,151 +83,73 @@ struct Harness {
 }
 
 impl Harness {
-    async fn start(script: Vec<(&'static str, String)>, anthropic_messages: bool) -> Self {
-        let day = Duration::from_secs(24 * 3600);
-        Self::start_with(script, anthropic_messages, Duration::from_secs(600), day).await
-    }
-
-    async fn start_with(
-        script: Vec<(&'static str, String)>,
-        anthropic_messages: bool,
-        mcp_idle: Duration,
-        mcp_prune_after: Duration,
-    ) -> Self {
-        Self::boot(
+    async fn start(script: Vec<(&'static str, String)>) -> Self {
+        Self::boot(Boot {
             script,
-            anthropic_messages,
-            mcp_idle,
-            mcp_prune_after,
-            None,
-            None,
-            Automation::Minimal,
-            false,
-            None,
-            None,
-        )
-        .await
-    }
-
-    async fn desk_with_idle(mcp_idle: Duration) -> Self {
-        let day = Duration::from_secs(24 * 3600);
-        Self::boot(
-            Vec::new(),
-            false,
-            mcp_idle,
-            day,
-            None,
-            None,
-            Automation::Desk,
-            false,
-            None,
-            None,
-        )
+            ..Boot::default()
+        })
         .await
     }
 
     async fn with_chrome(script: Vec<(&'static str, String)>, chrome: &Path) -> Self {
-        let day = Duration::from_secs(24 * 3600);
-        Self::boot(
+        Self::boot(Boot {
             script,
-            false,
-            Duration::from_secs(600),
-            day,
-            Some(chrome),
-            None,
-            Automation::Desk,
-            false,
-            None,
-            None,
-        )
+            chrome: Some(chrome.to_owned()),
+            automation: Automation::Desk,
+            ..Boot::default()
+        })
         .await
     }
 
     async fn with_connect(script: Vec<(&'static str, String)>, connect_url: String) -> Self {
-        let day = Duration::from_secs(24 * 3600);
-        Self::boot(
+        Self::boot(Boot {
             script,
-            false,
-            Duration::from_secs(600),
-            day,
-            None,
-            Some(connect_url),
-            Automation::Minimal,
-            false,
-            None,
-            None,
-        )
+            connect_url: Some(connect_url),
+            ..Boot::default()
+        })
         .await
     }
 
     async fn with_plugin(script: Vec<(&'static str, String)>) -> Self {
-        let day = Duration::from_secs(24 * 3600);
-        Self::boot(
+        Self::boot(Boot {
             script,
-            false,
-            Duration::from_secs(600),
-            day,
-            None,
-            None,
-            Automation::Desk,
-            true,
-            None,
-            None,
-        )
+            automation: Automation::Desk,
+            plugin: true,
+            ..Boot::default()
+        })
         .await
     }
 
     async fn with_android() -> Self {
-        let day = Duration::from_secs(24 * 3600);
-        Self::boot(
-            Vec::new(),
-            false,
-            Duration::from_secs(600),
-            day,
-            None,
-            None,
-            Automation::Android,
-            false,
-            None,
-            None,
-        )
+        Self::boot(Boot {
+            automation: Automation::Android,
+            ..Boot::default()
+        })
         .await
     }
 
     async fn with_desk(script: Vec<(&'static str, String)>) -> Self {
-        Self::with_desk_wire(script, false).await
-    }
-
-    async fn with_desk_wire(script: Vec<(&'static str, String)>, anthropic_messages: bool) -> Self {
-        let day = Duration::from_secs(24 * 3600);
-        Self::boot(
+        Self::boot(Boot {
             script,
-            anthropic_messages,
-            Duration::from_secs(600),
-            day,
-            None,
-            None,
-            Automation::Desk,
-            false,
-            None,
-            None,
-        )
+            automation: Automation::Desk,
+            ..Boot::default()
+        })
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    async fn boot(
-        script: Vec<(&'static str, String)>,
-        anthropic_messages: bool,
-        mcp_idle: Duration,
-        mcp_prune_after: Duration,
-        chrome: Option<&Path>,
-        connect_url: Option<String>,
-        automation: Automation,
-        plugin: bool,
-        checkpoint_nudge: Option<Duration>,
-        reasoning_effort: Option<&'static str>,
-    ) -> Self {
+    async fn boot(boot: Boot) -> Self {
+        let Boot {
+            script,
+            anthropic_messages,
+            mcp_idle,
+            mcp_prune_after,
+            chrome,
+            connect_url,
+            automation,
+            plugin,
+            checkpoint_nudge,
+            reasoning_effort,
+        } = boot;
         let dir = tempfile::tempdir().unwrap();
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(&workspace).unwrap();
@@ -232,7 +184,7 @@ impl Harness {
             dir.path().join("shuttle.log"),
             Arc::clone(&desk_log),
         );
-        let (chrome_bin, cdp_port) = match chrome {
+        let (chrome_bin, cdp_port) = match &chrome {
             Some(bin) => {
                 let wrapper = dir.path().join("chrome-headless");
                 write_script(
@@ -1005,7 +957,7 @@ async fn surface_codes(h: &Harness, credential: Option<&str>) -> Vec<String> {
 
 #[tokio::test]
 async fn credential_guards_every_surface() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let admitted = ["Ok", "Ok", "InvalidArgument", "200"];
     let refused = [
         "Unauthenticated",
@@ -1040,7 +992,7 @@ async fn credential_guards_every_surface() {
 
 #[tokio::test]
 async fn credential_is_required() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let mut agents = h.agents().await;
     let err = agents
         .list(Request::new(pb::ListAgentsRequest {}))
@@ -1075,20 +1027,17 @@ async fn credential_is_required() {
 
 #[tokio::test]
 async fn shell_tool_loop_streams_into_transcript_and_events() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call(
-                    "call_1",
-                    "shell",
-                    &json!({"command": "uname > ok.txt && cat ok.txt"}),
-                ),
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_tool_call(
+                "call_1",
+                "shell",
+                &json!({"command": "uname > ok.txt && cat ok.txt"}),
             ),
-            ("chat/completions", chat_text("Wrote ok.txt.")),
-        ],
-        false,
-    )
+        ),
+        ("chat/completions", chat_text("Wrote ok.txt.")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let mut session = h.session().await;
@@ -1278,7 +1227,13 @@ async fn run_delegate(messages_wire: bool) {
     )];
     script.extend(sub);
     script.push(("chat/completions", chat_text("Done.")));
-    let h = Harness::with_desk_wire(script, messages_wire).await;
+    let h = Harness::boot(Boot {
+        script,
+        anthropic_messages: messages_wire,
+        automation: Automation::Desk,
+        ..Boot::default()
+    })
+    .await;
     let mut agents = h.agents().await;
     let mut session = h.session().await;
     let agent_id = create_agent(&mut agents).await;
@@ -1445,7 +1400,7 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
         let h = if plans {
             Harness::with_desk(script).await
         } else {
-            Harness::start(script, false).await
+            Harness::start(script).await
         };
         let mut agents = h.agents().await;
         let agent_id = create_agent(&mut agents).await;
@@ -1488,9 +1443,8 @@ async fn a_turn_at_its_step_cap_ends_with_a_progress_report() {
 
 #[tokio::test]
 async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
-    let day = Duration::from_secs(24 * 3600);
-    let h = Harness::boot(
-        vec![
+    let h = Harness::boot(Boot {
+        script: vec![
             (
                 "chat/completions",
                 chat_tool_call("c1", "list_dir", &json!({})),
@@ -1501,16 +1455,9 @@ async fn the_checkpoint_nudge_follows_the_first_late_step_once() {
             ),
             ("chat/completions", chat_text("Listed twice.")),
         ],
-        false,
-        Duration::from_secs(600),
-        day,
-        None,
-        None,
-        Automation::Minimal,
-        false,
-        Some(Duration::from_millis(1)),
-        None,
-    )
+        checkpoint_nudge: Some(Duration::from_millis(1)),
+        ..Boot::default()
+    })
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
@@ -1684,8 +1631,8 @@ async fn delegate_once(
     checkpoint_nudge: Option<Duration>,
     reasoning_effort: Option<&'static str>,
 ) -> Harness {
-    Harness::boot(
-        vec![
+    Harness::boot(Boot {
+        script: vec![
             (
                 "chat/completions",
                 chat_tool_call(
@@ -1701,16 +1648,11 @@ async fn delegate_once(
             ("chat/completions", chat_text("Looked.")),
             ("chat/completions", chat_text("Done.")),
         ],
-        false,
-        Duration::from_secs(600),
-        Duration::from_secs(24 * 3600),
-        None,
-        None,
-        Automation::Desk,
-        false,
+        automation: Automation::Desk,
         checkpoint_nudge,
         reasoning_effort,
-    )
+        ..Boot::default()
+    })
     .await
 }
 
@@ -1763,20 +1705,17 @@ async fn a_computer_subagent_at_its_step_cap_returns_a_progress_report() {
 
 #[tokio::test]
 async fn a_reply_without_a_call_or_text_gets_one_continuation() {
-    let h = Harness::start(
-        vec![
-            ("chat/completions", chat_reasoning("plan: list it")),
-            (
-                "chat/completions",
-                chat_tool_call("c1", "list_dir", &json!({})),
-            ),
-            ("chat/completions", chat_reasoning("now answer")),
-            ("chat/completions", chat_text("Listed.")),
-            ("chat/completions", chat_reasoning("one")),
-            ("chat/completions", chat_reasoning("two")),
-        ],
-        false,
-    )
+    let h = Harness::start(vec![
+        ("chat/completions", chat_reasoning("plan: list it")),
+        (
+            "chat/completions",
+            chat_tool_call("c1", "list_dir", &json!({})),
+        ),
+        ("chat/completions", chat_reasoning("now answer")),
+        ("chat/completions", chat_text("Listed.")),
+        ("chat/completions", chat_reasoning("one")),
+        ("chat/completions", chat_reasoning("two")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let listed = create_agent(&mut agents).await;
@@ -1818,19 +1757,16 @@ async fn a_reply_without_a_call_or_text_gets_one_continuation() {
 
 #[tokio::test]
 async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
-    let h = Harness::start(
-        vec![
-            ("chat/completions", chat_cut("plan: the long way")),
-            (
-                "chat/completions",
-                chat_tool_call("c1", "list_dir", &json!({})),
-            ),
-            ("chat/completions", chat_text("Listed.")),
-            ("chat/completions", chat_cut("one")),
-            ("chat/completions", chat_cut("two")),
-        ],
-        false,
-    )
+    let h = Harness::start(vec![
+        ("chat/completions", chat_cut("plan: the long way")),
+        (
+            "chat/completions",
+            chat_tool_call("c1", "list_dir", &json!({})),
+        ),
+        ("chat/completions", chat_text("Listed.")),
+        ("chat/completions", chat_cut("one")),
+        ("chat/completions", chat_cut("two")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let listed = create_agent(&mut agents).await;
@@ -1865,21 +1801,18 @@ async fn a_reply_cut_at_its_limit_is_asked_again_with_room_once() {
 
 #[tokio::test]
 async fn a_cut_reply_runs_none_of_its_calls_and_leaves_its_text_out_of_the_history() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_cut_call("c1", "list_dir", r#"{"path": "/wor"#),
-            ),
-            (
-                "chat/completions",
-                chat_tool_call("c2", "list_dir", &json!({})),
-            ),
-            ("chat/completions", chat_cut_text("The answer is 4")),
-            ("chat/completions", chat_text("The answer is 42.")),
-        ],
-        false,
-    )
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_cut_call("c1", "list_dir", r#"{"path": "/wor"#),
+        ),
+        (
+            "chat/completions",
+            chat_tool_call("c2", "list_dir", &json!({})),
+        ),
+        ("chat/completions", chat_cut_text("The answer is 4")),
+        ("chat/completions", chat_text("The answer is 42.")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
@@ -1944,8 +1877,7 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
             ("chat/completions", chat_text("\n<｜DSML｜ invoke")),
             ("chat/completions", chat_text("\n<｜DSML｜ invoke name=\"shell\">\n")),
         ],
-        false,
-    )
+)
     .await;
     let mut agents = h.agents().await;
     let listed = create_agent(&mut agents).await;
@@ -1984,24 +1916,21 @@ async fn a_reply_of_tool_markup_as_text_gets_the_continuation() {
 
 #[tokio::test]
 async fn an_announcement_without_a_call_gets_the_continuation() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call("c1", "list_dir", &json!({})),
-            ),
-            ("chat/completions", chat_text("Continue with step 2.\n\n\n")),
-            ("chat/completions", chat_text("Listed.")),
-            ("chat/completions", chat_text("No response required.")),
-            ("chat/completions", chat_text("</output>")),
-            ("chat/completions", chat_text("Continue with step 3.")),
-            (
-                "chat/completions",
-                chat_text("I'll continue with the next steps."),
-            ),
-        ],
-        false,
-    )
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_tool_call("c1", "list_dir", &json!({})),
+        ),
+        ("chat/completions", chat_text("Continue with step 2.\n\n\n")),
+        ("chat/completions", chat_text("Listed.")),
+        ("chat/completions", chat_text("No response required.")),
+        ("chat/completions", chat_text("</output>")),
+        ("chat/completions", chat_text("Continue with step 3.")),
+        (
+            "chat/completions",
+            chat_text("I'll continue with the next steps."),
+        ),
+    ])
     .await;
     let mut agents = h.agents().await;
     let listed = create_agent(&mut agents).await;
@@ -2043,23 +1972,20 @@ async fn an_announcement_without_a_call_gets_the_continuation() {
 
 #[tokio::test]
 async fn a_reply_that_saved_and_then_announces_a_check_gets_the_continuation() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call("c1", "list_dir", &json!({})),
-            ),
-            (
-                "chat/completions",
-                chat_text("I saved the file. Let me check the column widths"),
-            ),
-            (
-                "chat/completions",
-                chat_text("The widths are right. All done."),
-            ),
-        ],
-        false,
-    )
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_tool_call("c1", "list_dir", &json!({})),
+        ),
+        (
+            "chat/completions",
+            chat_text("I saved the file. Let me check the column widths"),
+        ),
+        (
+            "chat/completions",
+            chat_text("The widths are right. All done."),
+        ),
+    ])
     .await;
     let mut agents = h.agents().await;
     let agent = create_agent(&mut agents).await;
@@ -2079,24 +2005,21 @@ async fn a_reply_that_saved_and_then_announces_a_check_gets_the_continuation() {
 
 #[tokio::test]
 async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call(
-                    "call_t",
-                    "request_take_over",
-                    &json!({"reason": "sign in to GitHub"}),
-                ),
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_tool_call(
+                "call_t",
+                "request_take_over",
+                &json!({"reason": "sign in to GitHub"}),
             ),
-            ("chat/completions", chat_text("Signed in.")),
-            (
-                "chat/completions",
-                chat_tool_call("call_s", "shell", &json!({"command": "sleep 30"})),
-            ),
-        ],
-        false,
-    )
+        ),
+        ("chat/completions", chat_text("Signed in.")),
+        (
+            "chat/completions",
+            chat_tool_call("call_s", "shell", &json!({"command": "sleep 30"})),
+        ),
+    ])
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
@@ -2201,24 +2124,21 @@ async fn take_over_waits_for_respond_and_cancel_ends_the_turn() {
 
 #[tokio::test]
 async fn a_pending_take_over_leaves_quiesce_free_and_the_turn_resumes_after_it() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call(
-                    "call_t",
-                    "request_take_over",
-                    &json!({"reason": "sign in to GitHub"}),
-                ),
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_tool_call(
+                "call_t",
+                "request_take_over",
+                &json!({"reason": "sign in to GitHub"}),
             ),
-            (
-                "chat/completions",
-                chat_tool_call("call_s", "shell", &json!({"command": "touch after"})),
-            ),
-            ("chat/completions", chat_text("Signed in.")),
-        ],
-        false,
-    )
+        ),
+        (
+            "chat/completions",
+            chat_tool_call("call_s", "shell", &json!({"command": "touch after"})),
+        ),
+        ("chat/completions", chat_text("Signed in.")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
@@ -2606,20 +2526,17 @@ async fn turn_ends(
 
 #[tokio::test]
 async fn delete_cancels_a_running_turn_and_removes_the_agent() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call(
-                    "call_s",
-                    "shell",
-                    &json!({"command": "sleep 30 & echo $! > sleep.pid; wait"}),
-                ),
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_tool_call(
+                "call_s",
+                "shell",
+                &json!({"command": "sleep 30 & echo $! > sleep.pid; wait"}),
             ),
-            ("chat/completions", chat_text("kept")),
-        ],
-        false,
-    )
+        ),
+        ("chat/completions", chat_text("kept")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let mut session = h.session().await;
@@ -2745,20 +2662,17 @@ async fn delete_cancels_a_running_turn_and_removes_the_agent() {
 
 #[tokio::test]
 async fn delete_ends_the_agents_shell_and_its_background_jobs() {
-    let h = Harness::start(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call(
-                    "call_bg",
-                    "shell",
-                    &json!({"command": "echo $$ > shell.pid; sleep 300 & echo $! > job.pid"}),
-                ),
+    let h = Harness::start(vec![
+        (
+            "chat/completions",
+            chat_tool_call(
+                "call_bg",
+                "shell",
+                &json!({"command": "echo $$ > shell.pid; sleep 300 & echo $! > job.pid"}),
             ),
-            ("chat/completions", chat_text("started")),
-        ],
-        false,
-    )
+        ),
+        ("chat/completions", chat_text("started")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let doomed = create_agent(&mut agents).await;
@@ -2789,14 +2703,11 @@ async fn delete_ends_the_agents_shell_and_its_background_jobs() {
 
 #[tokio::test]
 async fn untitled_agents_take_their_first_line_and_a_rename_wins() {
-    let h = Harness::start(
-        vec![
-            ("chat/completions", chat_text("好的")),
-            ("chat/completions", chat_text("ok")),
-            ("chat/completions", chat_text("ok")),
-        ],
-        false,
-    )
+    let h = Harness::start(vec![
+        ("chat/completions", chat_text("好的")),
+        ("chat/completions", chat_text("ok")),
+        ("chat/completions", chat_text("ok")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let mut session = h.session().await;
@@ -2907,7 +2818,7 @@ async fn untitled_agents_take_their_first_line_and_a_rename_wins() {
 
 #[tokio::test]
 async fn screen_is_the_edges() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (_tx, rx) = tokio::sync::mpsc::channel(1);
     let err = h
         .session()
@@ -2982,7 +2893,7 @@ async fn exec(h: &Harness, command: &str, stdin: Vec<u8>) -> (Vec<u8>, Vec<u8>, 
 
 #[tokio::test]
 async fn exec_carries_binary_stdio_until_stdin_ends_and_returns_the_exit_code() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let data = noise(3 << 20, 7);
     let (out, err, code) = exec(&h, "pwd >&2; echo \"$TERM\" >&2; cat; exit 3", data.clone()).await;
     assert!(
@@ -3013,7 +2924,7 @@ async fn exec_carries_binary_stdio_until_stdin_ends_and_returns_the_exit_code() 
 
 #[tokio::test]
 async fn exec_runs_a_login_shell_and_forwards_signals_after_stdin_ends() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (out, _, code) = exec(&h, "shopt -q login_shell && echo login", Vec::new()).await;
     assert_eq!((out, code), (b"login\n".to_vec(), Some(0)));
 
@@ -3058,7 +2969,7 @@ async fn exec_runs_a_login_shell_and_forwards_signals_after_stdin_ends() {
 
 #[tokio::test]
 async fn exec_with_tty_runs_on_a_terminal_of_the_given_size() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (tx, rx) = tokio::sync::mpsc::channel(4);
     tx.send(pb::ExecClientFrame {
         body: Some(exec_client_frame::Body::Start(pb::ExecStart {
@@ -3143,7 +3054,7 @@ async fn exec_tty(h: &Harness, command: &str, term: &str, terminfo: &str) -> (St
 
 #[tokio::test]
 async fn exec_tty_installs_the_terminfo_sent_for_a_term_the_box_lacks() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let show = "echo \"term=$TERM\"; infocmp -x | grep -c Cbx";
     let (out, err) = exec_tty(&h, show, "cb-test-term", TEST_TERMINFO).await;
     assert_eq!(out, "term=cb-test-term\r\n1\r\n");
@@ -3164,7 +3075,7 @@ async fn exec_tty_installs_the_terminfo_sent_for_a_term_the_box_lacks() {
 
 #[tokio::test]
 async fn exec_tty_falls_back_to_xterm_256color_without_a_usable_terminfo() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     for (term, terminfo, why) in [
         ("cb-missing-term", "", "the client sent no terminfo"),
         (
@@ -3191,7 +3102,7 @@ async fn exec_tty_falls_back_to_xterm_256color_without_a_usable_terminfo() {
 
 #[tokio::test]
 async fn exec_refuses_an_oversized_terminfo() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     tx.send(pb::ExecClientFrame {
         body: Some(exec_client_frame::Body::Start(pb::ExecStart {
@@ -3217,7 +3128,7 @@ async fn exec_refuses_an_oversized_terminfo() {
 
 #[tokio::test]
 async fn exec_is_for_the_owner_only() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let edge = Edge::provision(&h);
     for principal in ["share:sh-1:write", "share:sh-1:read:u-1"] {
         let (tx, rx) = tokio::sync::mpsc::channel(1);
@@ -3247,7 +3158,7 @@ async fn exec_is_for_the_owner_only() {
 
 #[tokio::test]
 async fn cancelling_exec_kills_the_command() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     for (name, fill) in [("idle", false), ("stdin-blocked", true)] {
         let pid = h.workspace.join(format!("{name}.pid"));
         let (addr, link) = severable(&h.endpoint).await;
@@ -3291,7 +3202,7 @@ async fn cancelling_exec_kills_the_command() {
 
 #[tokio::test]
 async fn an_exec_with_a_full_stdin_leaves_the_connection_to_other_calls() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let channel = h.channel().await;
     let mut session = SessionClient::new(channel);
     let (tx, rx) = tokio::sync::mpsc::channel(4);
@@ -3349,7 +3260,7 @@ async fn severable(endpoint: &str) -> (String, tokio::task::JoinHandle<()>) {
 
 #[tokio::test]
 async fn exec_needs_start_first() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     tx.send(exec_stdin(b"x")).await.unwrap();
     let err = h
@@ -3363,23 +3274,20 @@ async fn exec_needs_start_first() {
 
 #[tokio::test]
 async fn cancel_during_computer_task_ends_the_driver_session() {
-    let h = Harness::with_desk_wire(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call("call_d", "delegate_computer", &json!({"task": "wait"})),
+    let h = Harness::with_desk(vec![
+        (
+            "chat/completions",
+            chat_tool_call("call_d", "delegate_computer", &json!({"task": "wait"})),
+        ),
+        (
+            "chat/completions",
+            chat_tool_call(
+                "toolu_w",
+                "computer_act",
+                &json!({"action": "wait", "seconds": 10}),
             ),
-            (
-                "chat/completions",
-                chat_tool_call(
-                    "toolu_w",
-                    "computer_act",
-                    &json!({"action": "wait", "seconds": 10}),
-                ),
-            ),
-        ],
-        false,
-    )
+        ),
+    ])
     .await;
     let mut agents = h.agents().await;
     let agent_id = create_agent(&mut agents).await;
@@ -3429,16 +3337,13 @@ async fn cancel_during_computer_task_ends_the_driver_session() {
 
 #[tokio::test]
 async fn vision_main_model_gets_a_screenshot_tool() {
-    let h = Harness::with_desk_wire(
-        vec![
-            (
-                "chat/completions",
-                chat_tool_call("call_s", "screenshot", &json!({})),
-            ),
-            ("chat/completions", chat_text("I see the desktop.")),
-        ],
-        false,
-    )
+    let h = Harness::with_desk(vec![
+        (
+            "chat/completions",
+            chat_tool_call("call_s", "screenshot", &json!({})),
+        ),
+        ("chat/completions", chat_text("I see the desktop.")),
+    ])
     .await;
     let mut agents = h.agents().await;
     let agent_id = agents
@@ -3839,20 +3744,12 @@ async fn mcp_lists_a_plugin_after_the_script_tool_with_its_resource() {
 
 #[tokio::test]
 async fn a_box_without_the_desk_ignores_its_plugins() {
-    let day = Duration::from_secs(24 * 3600);
     for automation in [Automation::Minimal, Automation::Android] {
-        let h = Harness::boot(
-            Vec::new(),
-            false,
-            Duration::from_secs(600),
-            day,
-            None,
-            None,
+        let h = Harness::boot(Boot {
             automation,
-            true,
-            None,
-            None,
-        )
+            plugin: true,
+            ..Boot::default()
+        })
         .await;
         let mut mcp = McpClient::connect(&h).await;
 
@@ -3919,7 +3816,7 @@ async fn an_android_box_keeps_its_mcp_texts_within_the_caps() {
 
 #[tokio::test]
 async fn a_box_without_a_guide_offers_shell_and_files_only() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let listed = mcp.rpc("tools/list", json!({})).await;
     assert_eq!(
@@ -3947,7 +3844,7 @@ async fn a_box_without_a_guide_offers_shell_and_files_only() {
 async fn hello_names_the_box_automation_and_its_screen() {
     for (h, automation, screen) in [
         (
-            Harness::start(Vec::new(), false).await,
+            Harness::start(Vec::new()).await,
             pb::Automation::Unspecified,
             (1280, 800),
         ),
@@ -4747,7 +4644,7 @@ async fn mcp_share_sessions_are_filtered_recorded_and_bound_to_their_share() {
 
 #[tokio::test]
 async fn a_share_principal_holds_at_most_four_open_sessions() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let edge = Edge::provision(&h);
     let reader = edge.share("share:sh-1:read");
     let mut open = Vec::new();
@@ -4839,7 +4736,7 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
         "an Android read share: {out}"
     );
 
-    let desk = Harness::start(Vec::new(), false).await;
+    let desk = Harness::start(Vec::new()).await;
     let edge = Edge::provision(&desk);
     std::fs::create_dir_all(desk.workspace.join("flows")).unwrap();
     std::fs::write(desk.workspace.join("flows/save.json"), "{}").unwrap();
@@ -4855,7 +4752,7 @@ async fn a_read_share_of_a_desk_or_android_box_does_not_read_its_saved_flows() {
 
 #[tokio::test]
 async fn a_read_share_reads_files_only_under_the_workspace() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let edge = Edge::provision(&h);
     std::fs::create_dir_all(h.workspace.join("docs")).unwrap();
     std::fs::write(h.workspace.join("docs/x.txt"), "shared\n").unwrap();
@@ -4929,7 +4826,7 @@ async fn a_read_share_reads_files_only_under_the_workspace() {
 #[tokio::test]
 async fn only_a_box_that_runs_gui_plans_says_that_shell_capped_its_timeout() {
     for (h, note) in [
-        (Harness::start(Vec::new(), false).await, false),
+        (Harness::start(Vec::new()).await, false),
         (Harness::with_desk(Vec::new()).await, true),
     ] {
         let mut mcp = McpClient::connect(&h).await;
@@ -4951,7 +4848,7 @@ async fn only_a_box_that_runs_gui_plans_says_that_shell_capped_its_timeout() {
 
 #[tokio::test]
 async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let mut mcp = McpClient::connect(&h).await;
     let call = tokio::spawn(async move {
         mcp.call("shell", json!({"command": "sleep 2; echo slept"}))
@@ -4971,7 +4868,12 @@ async fn a_quiesced_plan_waits_for_a_running_mcp_call() {
 
 #[tokio::test]
 async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
-    let h = Harness::desk_with_idle(Duration::from_millis(400)).await;
+    let h = Harness::boot(Boot {
+        mcp_idle: Duration::from_millis(400),
+        automation: Automation::Desk,
+        ..Boot::default()
+    })
+    .await;
     let mut mcp = McpClient::connect(&h).await;
     mcp.call("screenshot", json!({})).await;
     let first = driver_calls(&h, "desk_look")[0]["session"].clone();
@@ -5011,7 +4913,7 @@ async fn mcp_ends_the_driver_session_on_stream_close_and_idle() {
 
 #[tokio::test]
 async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let edge = Edge::provision(&h);
     let owner = edge.owner();
     let quiesced = |credential: &str| {
@@ -5072,12 +4974,11 @@ async fn a_quiesce_interrupts_a_guests_long_call_but_not_the_owners() {
 
 #[tokio::test]
 async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
-    let h = Harness::start_with(
-        Vec::new(),
-        false,
-        Duration::from_millis(400),
-        Duration::from_millis(300),
-    )
+    let h = Harness::boot(Boot {
+        mcp_idle: Duration::from_millis(400),
+        mcp_prune_after: Duration::from_millis(300),
+        ..Boot::default()
+    })
     .await;
     let mut agents = h.agents().await;
     let loop_agent = create_agent(&mut agents).await;
@@ -5124,7 +5025,7 @@ async fn closed_mcp_agents_are_pruned_after_the_prune_age() {
 
 #[tokio::test]
 async fn mcp_agents_are_deleted_only_after_their_session_closes() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let edge = Edge::provision(&h);
     let owner = edge.owner();
     let mcp = McpClient::connect_as(&h, Some(edge.share("share:sh-1:read:u-2"))).await;
@@ -5273,20 +5174,7 @@ async fn a_desk_box_acts_on_a_user_tab_only_when_a_call_names_it() {
     };
     let site = field_pages().await;
     let url = |path: &str| format!("http://{site}{path}");
-    let day = Duration::from_secs(24 * 3600);
-    let h = Harness::boot(
-        Vec::new(),
-        false,
-        Duration::from_secs(600),
-        day,
-        Some(&chrome),
-        None,
-        Automation::Desk,
-        false,
-        None,
-        None,
-    )
-    .await;
+    let h = Harness::with_chrome(Vec::new(), &chrome).await;
     let mut mcp = McpClient::connect(&h).await;
     let own = mcp
         .call("browser_navigate", json!({"url": url("/agent")}))
@@ -5651,7 +5539,7 @@ fn noise(n: usize, seed: u64) -> Vec<u8> {
 
 #[tokio::test]
 async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     let big = noise(3 << 20, 7);
     std::fs::create_dir_all(h.home.join(".config/app")).unwrap();
@@ -5792,7 +5680,7 @@ async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
 
 #[tokio::test]
 async fn a_plan_leaves_out_the_offload_excludes_under_the_workspace_only() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let repo = h.workspace.join("gron");
     std::fs::create_dir_all(repo.join("target/debug")).unwrap();
     std::fs::write(repo.join("main.go"), b"package main").unwrap();
@@ -5823,7 +5711,7 @@ async fn a_plan_leaves_out_the_offload_excludes_under_the_workspace_only() {
 
 #[tokio::test]
 async fn an_offload_post_reaches_session_events_without_its_body() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let tmux = h._dir.path().join("fake-tmux");
     write_script(&tmux, "cat >/dev/null; exit 0");
     let layout = offload::Layout {
@@ -5899,7 +5787,7 @@ async fn an_offload_post_reaches_session_events_without_its_body() {
 
 #[tokio::test]
 async fn quiesced_plan_saves_the_desktop_session_and_survives_a_failed_save() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let log = h.session_save.with_extension("log");
     std::fs::write(h.workspace.join("notes.txt"), b"x").unwrap();
 
@@ -5932,7 +5820,7 @@ async fn an_android_box_fails_a_quiesced_plan_when_its_session_save_fails() {
 
 #[tokio::test]
 async fn a_restore_tells_the_offload_inbox_to_rescan() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let inbox = UnixListener::bind(h.home.parent().unwrap().join("offload.sock")).unwrap();
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("a.txt"), b"x").unwrap();
@@ -5958,7 +5846,7 @@ async fn a_restore_tells_the_offload_inbox_to_rescan() {
 
 #[tokio::test]
 async fn restore_rejects_tampered_chunks_before_touching_files() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("a.txt"), noise(10_000, 3)).unwrap();
     let planned = plan(&h, pb::Consistency::Live, "").await;
@@ -6000,7 +5888,7 @@ async fn restore_rejects_tampered_chunks_before_touching_files() {
 
 #[tokio::test]
 async fn restore_rejects_a_manifest_whose_chunks_never_all_got_urls() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("a.txt"), noise(10_000, 3)).unwrap();
     std::fs::write(h.workspace.join("b.txt"), noise(10_000, 4)).unwrap();
@@ -6035,7 +5923,7 @@ async fn restore_rejects_a_manifest_whose_chunks_never_all_got_urls() {
 #[tokio::test]
 async fn restore_runs_as_many_gets_at_once_as_transfers_allow() {
     let transfers = cocoonbox_agent::state::TRANSFERS;
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects, gets) = slow_store(Duration::from_millis(100)).await;
     for i in 0..transfers * 3 {
         std::fs::write(
@@ -6055,7 +5943,7 @@ async fn restore_runs_as_many_gets_at_once_as_transfers_allow() {
 
 #[tokio::test]
 async fn restore_fetches_a_page_before_the_stream_ends() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("a.txt"), noise(10_000, 3)).unwrap();
     let planned = plan(&h, pb::Consistency::Live, "").await;
@@ -6105,7 +5993,7 @@ async fn restore_fetches_a_page_before_the_stream_ends() {
 
 #[tokio::test]
 async fn live_snapshot_skips_a_file_that_keeps_changing() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     let growing = h.workspace.join("growing.bin");
     std::fs::write(&growing, noise(16 << 20, 5)).unwrap();
@@ -6146,7 +6034,7 @@ async fn live_snapshot_skips_a_file_that_keeps_changing() {
 
 #[tokio::test]
 async fn upload_can_span_several_calls_with_the_manifest_last() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("big.bin"), noise(6 << 20, 11)).unwrap();
     let planned = plan(&h, pb::Consistency::Live, "").await;
@@ -6214,7 +6102,7 @@ async fn upload_can_span_several_calls_with_the_manifest_last() {
 
 #[tokio::test]
 async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_mtime() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     let a = h.workspace.join("a.txt");
     std::fs::write(&a, noise(10_000, 1)).unwrap();
@@ -6295,7 +6183,7 @@ async fn plan_reuses_unchanged_files_and_rereads_a_rewrite_that_keeps_size_and_m
 
 #[tokio::test]
 async fn a_plan_right_after_a_restore_reads_no_file_the_restore_wrote() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     let names = ["a.txt", "b.txt", "c.txt", "d.bin"];
     for (i, name) in names.iter().enumerate() {
@@ -6366,7 +6254,7 @@ async fn a_plan_right_after_a_restore_reads_no_file_the_restore_wrote() {
 
 #[tokio::test]
 async fn a_plan_after_a_restore_uploads_exactly_the_files_changed_since() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     for (name, seed) in [("a.txt", 81), ("b.txt", 82), ("c.txt", 83)] {
         std::fs::write(h.workspace.join(name), noise(10_000, seed)).unwrap();
@@ -6423,7 +6311,7 @@ async fn a_plan_after_a_restore_uploads_exactly_the_files_changed_since() {
 
 #[tokio::test]
 async fn restore_fetches_a_chunk_shared_by_several_files_once() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     let big = noise(6 << 20, 21);
     let small = noise(5_000, 22);
@@ -6528,7 +6416,7 @@ async fn mcp_moves_to_a_new_driver_session_when_the_driver_ended_the_old_one() {
 
 #[tokio::test]
 async fn restore_writes_files_under_a_read_only_directory_and_keeps_its_mode() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     let ro = h.home.join("go/pkg/mod/example.com/m@v1.0.0");
     std::fs::create_dir_all(ro.join("sub")).unwrap();
@@ -6570,7 +6458,7 @@ async fn restore_writes_files_under_a_read_only_directory_and_keeps_its_mode() {
 
 #[tokio::test]
 async fn a_failed_plan_removes_its_spool() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     std::fs::write(h.workspace.join("a.txt"), noise(10_000, 41)).unwrap();
     let dir = h.home.parent().unwrap().to_path_buf();
     std::fs::remove_file(dir.join("toolhost.sock")).unwrap();
@@ -6594,7 +6482,7 @@ async fn a_failed_plan_removes_its_spool() {
 
 #[tokio::test]
 async fn plan_counts_changed_files_against_the_last_upload() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     for (name, seed) in [("a.txt", 51), ("b.txt", 52), ("c.txt", 53)] {
         std::fs::write(h.workspace.join(name), noise(10_000, seed)).unwrap();
@@ -6632,7 +6520,7 @@ async fn plan_counts_changed_files_against_the_last_upload() {
 
 #[tokio::test]
 async fn restore_paths_copies_a_subtree_into_restored_and_touches_nothing_else() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     let docs = h.home.join("Documents");
     std::fs::create_dir_all(docs.join("sub")).unwrap();
@@ -6769,7 +6657,7 @@ async fn restore_paths_copies_a_subtree_into_restored_and_touches_nothing_else()
 
 #[tokio::test]
 async fn restore_paths_refuses_bad_scopes_before_writing() {
-    let h = Harness::start(Vec::new(), false).await;
+    let h = Harness::start(Vec::new()).await;
     let (base, objects) = fake_store().await;
     std::fs::write(h.workspace.join("a.txt"), b"a").unwrap();
     let planned = plan(&h, pb::Consistency::Live, "").await;
