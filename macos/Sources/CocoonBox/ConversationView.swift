@@ -285,7 +285,7 @@ struct LiveBlocksView: View {
                 AssistantText(text: block.text, subagent: block.subagent, streaming: true)
             }
         }
-        .onChange(of: blocks.last?.text.count) { _, _ in
+        .onChange(of: blocks.last?.text.utf8.count) { _, _ in
             proxy.scrollTo("live", anchor: .bottom)
         }
     }
