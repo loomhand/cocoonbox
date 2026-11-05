@@ -95,7 +95,8 @@ impl Runtime {
         if !cfg.automation.plans() {
             cfg.plugins.clear();
         }
-        std::fs::create_dir_all(&cfg.state_dir)
+        tokio::fs::create_dir_all(&cfg.state_dir)
+            .await
             .map_err(|e| format!("create {}: {e}", cfg.state_dir.display()))?;
         let journal = Arc::new(Journal::new(Store::open(&cfg.state_dir.join("agent.db"))?));
         let stop = CancellationToken::new();
@@ -534,9 +535,8 @@ impl Runtime {
     }
 
     fn door_answer(&self, approval_id: &str, approve: bool) {
-        let slots: Vec<Arc<Slot>> = lock(&self.slots).values().cloned().collect();
-        let Some(tx) = slots
-            .iter()
+        let Some(tx) = lock(&self.slots)
+            .values()
             .find_map(|s| lock(&s.state).approvals.remove(approval_id))
         else {
             return;
@@ -712,7 +712,7 @@ impl Runtime {
             }
             steps += 1;
             let step = self.step(ctx, &req, "", usage).await?;
-            if step.calls.is_empty() && step.cut {
+            if step.cut {
                 if widened {
                     return Err(format!(
                         "the model's reply was cut at the {MAIN_CUT_TOKENS}-token limit"
@@ -1165,7 +1165,7 @@ impl Checkpoint {
 }
 
 /// Rebuilds the main agent's model messages from its transcript.
-pub fn history_messages(entries: Vec<TranscriptEntry>) -> Vec<Message> {
+fn history_messages(entries: Vec<TranscriptEntry>) -> Vec<Message> {
     let mut out: Vec<Message> = Vec::new();
     let mut open: Vec<String> = Vec::new();
     for e in entries {
@@ -1308,15 +1308,15 @@ fn ending(text: &str) -> Ending {
         .any(|s| NEXT_LEADS.iter().any(|l| s.starts_with(l)) && !s.starts_with("let me know"));
     let lead_in = LEAD_IN_ENDS.iter().any(|e| text.ends_with(e));
     let body = lower.trim_end_matches(['.', '!', '。', '！', ' ']);
-    let last = [". ", "! ", "。", "！"]
+    let sentence = [". ", "! ", "。", "！"]
         .iter()
         .filter_map(|e| body.rfind(e).map(|i| i + e.len()))
         .max()
         .map_or(body, |i| &body[i..]);
-    let done = last
+    let done = sentence
         .split(|c: char| !c.is_alphanumeric())
         .any(|w| DONE_WORDS.contains(&w))
-        || DONE_MARKS.iter().any(|m| last.contains(m));
+        || DONE_MARKS.iter().any(|m| sentence.contains(m));
     if (announces || (!text.contains('\n') && (lead_in || next)))
         && !text.ends_with(['?', '？'])
         && !done
