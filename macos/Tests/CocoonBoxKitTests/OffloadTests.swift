@@ -157,6 +157,8 @@ import Testing
         #expect(Handover.problems(thin) == ["missing \"## Gotchas learned\""])
         #expect(Handover.problems("x\n" + Self.handover).contains("the first line does not start with \"# Hand-over: \""))
         #expect(Handover.problems(Self.handover + "## Commands\n").contains("\"## Commands\" appears 2 times"))
+        let full = Self.handover + String(repeating: "x", count: 98_304 - Self.handover.utf8.count)
+        #expect(Handover.problems(full).isEmpty && Handover.problems(full + "x") == ["larger than 96 KiB"])
         #expect(try box.sh("git for-each-ref refs/cocoonbox", in: repo).isEmpty)
     }
 
