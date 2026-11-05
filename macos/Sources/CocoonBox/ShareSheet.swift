@@ -112,10 +112,6 @@ private struct LiveShareView: View {
         }
         if let setup = model.shareSetup {
             ShareSnippets(setup: setup)
-        } else if model.shareSecret == nil {
-            Text("This share was created before links were kept. Regenerate to get a link; it ends the old link's sessions.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
         }
         HStack {
             Button("Regenerate link…") { confirmRegenerate = true }

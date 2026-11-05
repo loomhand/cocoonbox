@@ -164,9 +164,9 @@ enum Autopilot {
         case "share-write":
             await model.setShareWrite(arg == "on")
         case "share-regenerate":
-            let before = model.shareSecret
+            let before = model.share?.secret
             await model.regenerateShare()
-            Perf.mark("share_secret", "changed=\(model.shareSecret != nil && model.shareSecret != before)")
+            Perf.mark("share_secret", "changed=\(model.share != nil && model.share?.secret != before)")
         case "share-revoke":
             await model.revokeShare()
             await model.loadShare()
@@ -175,7 +175,7 @@ enum Autopilot {
             if let snippet = ShareSetup.Snippet(rawValue: arg) {
                 let copied = model.copyShare(snippet)
                 let text = model.screen.pasteboard.string(forType: .string) ?? ""
-                Perf.mark("share_copied", "\(arg) ok=\(copied) bytes=\(text.utf8.count) guest_header=\(text.contains(ShareSetup.guestHeader)) secret_matches=\(model.shareSecret.map { text.contains($0) } ?? false)")
+                Perf.mark("share_copied", "\(arg) ok=\(copied) bytes=\(text.utf8.count) guest_header=\(text.contains(ShareSetup.guestHeader)) secret_matches=\(model.share.map { text.contains($0.secret) } ?? false)")
             }
         case "end-external":
             if let agent = model.externalAgents().first(where: { $0.status == .running || $0.status == .waitingForUser }) {

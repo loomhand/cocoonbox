@@ -364,15 +364,9 @@ final class AppModel {
         return true
     }
 
-    // shareSecret is nil for a share created before the api kept secrets.
-    var shareSecret: String? {
-        guard let secret = share?.secret, !secret.isEmpty else { return nil }
-        return secret
-    }
-
     var shareSetup: ShareSetup? {
-        guard let box, let share, let shareSecret, let routes, let endpoint = Endpoint(url: endpointURL) else { return nil }
-        return ShareSetup(endpoint: endpoint, routes: routes, boxID: box.id, secret: shareSecret, named: !share.users.isEmpty)
+        guard let box, let share, let routes, let endpoint = Endpoint(url: endpointURL) else { return nil }
+        return ShareSetup(endpoint: endpoint, routes: routes, boxID: box.id, secret: share.secret, named: !share.users.isEmpty)
     }
 
     @discardableResult
@@ -455,7 +449,7 @@ final class AppModel {
 
     // markShare logs the share's state; the secret appears only as its length.
     private func markShare(_ what: String) {
-        Perf.mark("share", "\(what) id=\(share?.id ?? "-") write=\(share?.write ?? false) users=\(share?.users.map(\.name).joined(separator: ",") ?? "-") expires_in_s=\(share.map { ($0.expiresAtMs - Int64(Date().timeIntervalSince1970 * 1000)) / 1000 } ?? 0) secret_len=\(shareSecret?.count ?? 0)")
+        Perf.mark("share", "\(what) id=\(share?.id ?? "-") write=\(share?.write ?? false) users=\(share?.users.map(\.name).joined(separator: ",") ?? "-") expires_in_s=\(share.map { ($0.expiresAtMs - Int64(Date().timeIntervalSince1970 * 1000)) / 1000 } ?? 0) secret_len=\(share?.secret.count ?? 0)")
     }
 
     static let restoreTitle = "Restoring files"

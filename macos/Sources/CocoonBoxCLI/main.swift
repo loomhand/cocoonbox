@@ -679,21 +679,16 @@ func devicesCommand() async {
 
 let shareUsage = "usage: cocoonbox share [create BOX [--ttl 24h] | ls | revoke ID] [--json]"
 
-// shareLink is empty for a share created before the api kept secrets.
-func shareLink(_ share: Cocoonbox_Control_V1_Share, _ endpoint: Endpoint) -> String {
-    share.secret.isEmpty ? "" : ShareSetup.link(endpoint: endpoint, secret: share.secret)
-}
-
 func shareObject(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: Endpoint) -> [String: Any] {
-    ["id": share.id, "box_id": share.boxID, "name": name, "link": shareLink(share, endpoint), "write": share.write,
+    ["id": share.id, "box_id": share.boxID, "name": name, "link": ShareSetup.link(endpoint: endpoint, secret: share.secret), "write": share.write,
      "users": share.users.map(\.name), "created_at_ms": share.createdAtMs, "expires_at_ms": share.expiresAtMs]
 }
 
 func shareLine(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: Endpoint) -> String {
     let who = share.users.isEmpty ? "anyone with the link" : share.users.map(\.name).joined(separator: ",")
     let expires = iso(share.expiresAtMs)
-    let link = shareLink(share, endpoint)
-    return "\(share.id)  \(name)  \(share.write ? "write" : "read")  \(who)  expires \(expires)  \(link.isEmpty ? "-" : link)"
+    let link = ShareSetup.link(endpoint: endpoint, secret: share.secret)
+    return "\(share.id)  \(name)  \(share.write ? "write" : "read")  \(who)  expires \(expires)  \(link)"
 }
 
 func shareCommand() async {
@@ -720,7 +715,7 @@ func shareCommand() async {
             }
             let share = created.share
             if json { return printJSON(shareObject(share, name: target.name, endpoint: connection.endpoint)) }
-            print(shareLink(share, connection.endpoint))
+            print(ShareSetup.link(endpoint: connection.endpoint, secret: share.secret))
             print("read-only share \(share.id) of \(target.name), expires \(iso(share.expiresAtMs))")
         case "ls", "list":
             let shares = try await connection.listShares()
