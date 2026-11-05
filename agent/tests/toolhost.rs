@@ -199,6 +199,7 @@ async fn spawn_toolhost(dir: &Path, shuttle: &Path) -> (tokio::process::Child, s
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
+    assert!(socket.exists(), "the toolhost did not come up");
     (child, socket)
 }
 

@@ -16,6 +16,8 @@ use tonic::Request;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
+const UP: Duration = Duration::from_secs(30);
+
 fn authed<T>(msg: T) -> Request<T> {
     let mut req = Request::new(msg);
     req.metadata_mut().insert(
@@ -72,16 +74,20 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
         .spawn()
         .unwrap();
     let endpoint = format!("http://127.0.0.1:{port}");
-    let channel = loop {
-        if let Ok(ch) = Channel::from_shared(endpoint.clone())
-            .unwrap()
-            .connect()
-            .await
-        {
-            break ch;
+    let channel = tokio::time::timeout(UP, async {
+        loop {
+            if let Ok(ch) = Channel::from_shared(endpoint.clone())
+                .unwrap()
+                .connect()
+                .await
+            {
+                break ch;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+    })
+    .await
+    .expect("serve did not come up");
     let mut agents = AgentsClient::new(channel.clone());
     let mut session = SessionClient::new(channel);
 
@@ -126,14 +132,18 @@ async fn sigterm_with_open_streams_and_a_running_turn_exits_quickly() {
         }))
         .await
         .unwrap();
-    loop {
-        let ev = events.message().await.unwrap().unwrap();
-        if let Some(event::Body::Agent(a)) = ev.body
-            && a.status == i32::from(pb::AgentStatus::Running)
-        {
-            break;
+    tokio::time::timeout(UP, async {
+        loop {
+            let ev = events.message().await.unwrap().unwrap();
+            if let Some(event::Body::Agent(a)) = ev.body
+                && a.status == i32::from(pb::AgentStatus::Running)
+            {
+                break;
+            }
         }
-    }
+    })
+    .await
+    .expect("the turn did not start");
 
     let pid = child.id().unwrap().to_string();
     let started = Instant::now();

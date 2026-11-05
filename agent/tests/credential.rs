@@ -52,6 +52,8 @@ const CARD_PAGE: &str = r#"<!doctype html><title>checkout</title>
 <input type="button" value="Pay now">
 </form>"#;
 
+const UP: Duration = Duration::from_secs(30);
+
 type Posts = Arc<Mutex<Vec<(String, String)>>>;
 
 struct ChromeGuard(PathBuf);
@@ -283,17 +285,21 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         .unwrap();
     let serve_log = capture(&mut serve);
     let endpoint = format!("http://127.0.0.1:{port}");
-    let channel = loop {
-        if socket.exists()
-            && let Ok(ch) = Channel::from_shared(endpoint.clone())
-                .unwrap()
-                .connect()
-                .await
-        {
-            break ch;
+    let channel = tokio::time::timeout(UP, async {
+        loop {
+            if socket.exists()
+                && let Ok(ch) = Channel::from_shared(endpoint.clone())
+                    .unwrap()
+                    .connect()
+                    .await
+            {
+                break ch;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
         }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    };
+    })
+    .await
+    .expect("serve and the toolhost did not come up");
     let mut session = SessionClient::new(channel);
     let th = Client::new(socket.clone());
 
@@ -479,9 +485,13 @@ async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client)> {
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    while !socket.exists() {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
+    tokio::time::timeout(UP, async {
+        while !socket.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the toolhost did not come up");
     Some((guard, toolhost, Client::new(socket)))
 }
 
