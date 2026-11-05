@@ -23,17 +23,17 @@ def store():
             k, sep, v = line.strip().partition("=")
             if sep:
                 keys[k] = v
-    scheme = "https" if state.get("secure", True) else "http"
-    return f"{scheme}://{state['endpoint']}", keys["STORE_ACCESS_KEY"], keys["STORE_SECRET_KEY"]
+    scheme = "https" if state.get("secure") else "http"
+    return f"{scheme}://{state['endpoint']}", state.get("region") or "us-east-1", keys["STORE_ACCESS_KEY"], keys["STORE_SECRET_KEY"]
 
 
 def curl(path, args, capture=False):
-    endpoint, access, secret = store()
+    endpoint, region, access, secret = store()
     r, w = os.pipe()
     os.write(w, f'url = "{endpoint}/{path}"\nuser = "{access}:{secret}"\n'.encode())
     os.close(w)
     try:
-        return subprocess.run(["curl", "-fsS", "--max-time", "600", "--aws-sigv4", "aws:amz:auto:s3", "-K", f"/dev/fd/{r}", *args],
+        return subprocess.run(["curl", "-fsS", "--max-time", "600", "--aws-sigv4", f"aws:amz:{region}:s3", "-K", f"/dev/fd/{r}", *args],
                               check=True, pass_fds=(r,), capture_output=capture).stdout
     finally:
         os.close(r)
@@ -54,6 +54,8 @@ def list_keys(bucket, prefix):
 
 
 def main():
+    if len(sys.argv) < 4:
+        sys.exit(__doc__)
     op, bucket, arg = sys.argv[1:4]
     if op == "list":
         list_keys(bucket, arg)
@@ -67,4 +69,5 @@ def main():
         sys.exit(__doc__)
 
 
-main()
+if __name__ == "__main__":
+    main()
