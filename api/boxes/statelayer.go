@@ -167,13 +167,14 @@ type stateLayer struct {
 	pins    map[statePath]map[string]int
 	browsed map[statePath]browsed
 	bases   map[statePath]*snapshotRecord
+	failed  map[statePath]time.Time
 }
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
 		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, scheduled: semaphore.NewWeighted(scheduledSaves),
 		users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
-		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{},
+		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{}, failed: map[statePath]time.Time{},
 	}
 }
 
@@ -382,6 +383,18 @@ func (l *stateLayer) restorePages(ctx context.Context, p statePath, first *agent
 			}
 		}
 	}
+}
+
+func (l *stateLayer) noteFailed(p statePath) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.failed[p] = time.Now()
+}
+
+func (l *stateLayer) lastFailed(p statePath) time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.failed[p]
 }
 
 // lastSaved returns when p's latest snapshot was saved, 0 when unknown.

@@ -177,6 +177,29 @@ func TestSchedulerRunsAtMostScheduledSavesAndSkipsABoxThatStoppedWhileWaiting(t 
 	}
 }
 
+func TestSchedulerRetriesAFailedSaveAfterAnIntervalNotEveryTick(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	env.fake.addrErr = errors.New("no route")
+	env.svc.saveStale(env.ctx, time.Hour)
+	op := env.svc.ops.activeFor(aliceBox)
+	if op == nil {
+		t.Fatal("scheduler started no save")
+	}
+	if events := watch(t, env.svc, env.ctx, op.id, ""); events[len(events)-1].GetPhase() != controlv1.Phase_PHASE_FAILED {
+		t.Fatalf("save with no address = %v", events)
+	}
+	env.fake.addrErr = nil
+	env.svc.saveStale(env.ctx, time.Hour)
+	if active := env.svc.ops.activeFor(aliceBox); active != nil {
+		t.Errorf("scheduler retried a failed save within the interval: %s", active.id)
+	}
+	env.svc.saveStale(env.ctx, time.Nanosecond)
+	if env.svc.ops.activeFor(aliceBox) == nil {
+		t.Error("scheduler did not retry a failed save once the interval passed")
+	}
+}
+
 func TestRebase(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1"), hexID("c2")}
