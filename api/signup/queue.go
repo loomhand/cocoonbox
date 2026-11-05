@@ -67,9 +67,7 @@ type entry struct {
 	secretSHA256 string
 }
 
-// Admit gives the free seats, within the hourly brake, to the oldest waiting people. The settings row's lock orders
-// admissions across apis, so one freed seat admits one person; it runs past the caller's cancel, and each entry in its own
-// savepoint, so one failure leaves the others admitted.
+// Admit gives the free seats, within the hourly brake, to the oldest waiting people, each in its own savepoint under the settings row's lock.
 func (s *Service) Admit(ctx context.Context) error {
 	ctx = context.WithoutCancel(ctx)
 	return pgx.BeginFunc(ctx, s.store.pool, func(tx pgx.Tx) error {

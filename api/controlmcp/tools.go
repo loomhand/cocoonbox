@@ -453,7 +453,7 @@ func (s *Server) runningBox(ctx context.Context, ref string) (*controlv1.Box, er
 	return box, nil
 }
 
-// box returns the caller's box named or numbered ref, or without ref the first one, a grant's first chosen one before those it created; nil when the caller has none.
+// box returns the caller's box whose id or name is ref, or without ref the first one, a grant's first chosen one before those it created; nil when the caller has none.
 func (s *Server) box(ctx context.Context, ref string) (*controlv1.Box, error) {
 	list, err := s.visible(ctx)
 	if err != nil {
@@ -647,7 +647,7 @@ func grantOf(ctx context.Context) *oauth.Grant {
 	return g
 }
 
-// holdsMemory reports whether a box counts against a running cap: starting, running or hibernating.
+// holdsMemory reports whether a box counts against a running cap.
 func holdsMemory(b *controlv1.Box) bool {
 	switch b.GetState() {
 	case controlv1.BoxState_BOX_STATE_STARTING, controlv1.BoxState_BOX_STATE_RUNNING, controlv1.BoxState_BOX_STATE_HIBERNATING:

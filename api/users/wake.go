@@ -17,7 +17,7 @@ type WakeSchedule struct {
 	SleepAt    time.Time // non-zero while the alarm keeps the box it woke awake; it hibernates the box then
 }
 
-// PutWakeSchedule replaces the schedule of w's box and keeps its alarm state, ErrQuota once the owner has max other schedules.
+// PutWakeSchedule replaces the schedule and next alarm of w's box and keeps its last wake and sleep times, ErrQuota once the owner has max other schedules.
 func (s *Service) PutWakeSchedule(ctx context.Context, w WakeSchedule, maxSchedules int) error {
 	return s.store.putWakeSchedule(ctx, w, maxSchedules)
 }

@@ -241,7 +241,7 @@ func (s *Server) authenticate(r *http.Request) (string, string, *oauth.Grant, er
 	return g.User, g.ID, &g, nil
 }
 
-// refuse answers a failed authentication: 401 with the OAuth challenge, or 503 when the identity provider or the grant store failed.
+// refuse answers a failed authentication: 403 when refused, 503 when the identity provider or the grant store failed, else 401, with the OAuth challenge when grants are on.
 func (s *Server) refuse(w http.ResponseWriter, r *http.Request, err error) {
 	switch status.Code(err) {
 	case codes.Unavailable:

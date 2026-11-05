@@ -43,8 +43,7 @@ var (
 	}
 )
 
-// client is a client as the server trusts it: its id, the name it gives, the verified host of its metadata document
-// (empty for a registered client), the redirect URIs it may use, and whether it is a first-party client of the account scope.
+// client is a client as the server trusts it; host is its metadata document's verified host, empty for a registered client.
 type client struct {
 	id         string
 	name       string

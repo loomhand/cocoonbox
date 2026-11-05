@@ -701,7 +701,6 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
-// bearer sends a call under /cb/ with token as its bearer and no cookies.
 func (e *env) bearer(t *testing.T, token, method, path string, body any) (int, string) {
 	t.Helper()
 	var reader io.Reader
@@ -765,13 +764,11 @@ func (b *browser) password(t *testing.T, name, password string) {
 	}
 }
 
-// githubAs begins a sign-in at path, plays GitHub's consent for who, and returns where the callback sends the browser.
 func (b *browser) githubAs(t *testing.T, who, path string, body any) string {
 	t.Helper()
 	return b.callback(t, who, b.begin(t, path, body))
 }
 
-// begin starts a sign-in at path and returns its state.
 func (b *browser) begin(t *testing.T, path string, body any) string {
 	t.Helper()
 	var started struct {

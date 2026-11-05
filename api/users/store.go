@@ -31,7 +31,7 @@ const (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// store keeps users, their boxes and console sessions in PostgreSQL.
+// store keeps the users tables in PostgreSQL.
 type store struct {
 	pool *pgxpool.Pool
 }

@@ -673,7 +673,6 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder) rpcReply {
 	return reply
 }
 
-// refusal returns the text of an isError result, which carries no structured content.
 func refusal(t *testing.T, reply rpcReply) string {
 	t.Helper()
 	content, _ := reply.Result["content"].([]any)
@@ -683,7 +682,6 @@ func refusal(t *testing.T, reply rpcReply) string {
 	return content[0].(map[string]any)["text"].(string)
 }
 
-// structured returns a successful result's structured content and checks the text block carries the same JSON.
 func structured(t *testing.T, reply rpcReply) map[string]any {
 	t.Helper()
 	got, ok := reply.Result["structuredContent"].(map[string]any)

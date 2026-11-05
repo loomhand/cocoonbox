@@ -43,7 +43,7 @@ var (
 	// ErrNotAllowed is the Identities answer for a valid token its owner does not let through this entry.
 	ErrNotAllowed = errors.New("token not allowed at this entry")
 
-	// ownToken matches every secret cocoonbox issues: cb_, cba_, cbs_, cbit_ and the rest.
+	// ownToken matches every secret cocoonbox issues.
 	ownToken = regexp.MustCompile(`^cb[a-z]*_`)
 )
 

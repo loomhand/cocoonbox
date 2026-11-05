@@ -95,9 +95,7 @@ func (s *store) addCode(ctx context.Context, c code) error {
 	})
 }
 
-// redeem takes the code once, even when check refuses it, and, when check accepts it, issues tokens on a new grant, or on the
-// client's live grant of the user, which takes the new consent's caps, chosen boxes and expiry, so a client that signs in again
-// keeps its boxes. A first-party client's code gets no grant: the caller issues its device token.
+// redeem spends the code even when check refuses it and issues tokens on the client's live grant of the user, renewed, or a new one; a first-party code gets no grant.
 func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens issued, check func(code) error) (code, error) {
 	stored := code{codeSHA256: codeSHA256}
 	var refused error

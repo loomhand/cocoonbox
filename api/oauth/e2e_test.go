@@ -655,7 +655,6 @@ func (e *env) register(t *testing.T, name string) string {
 	return reg.ClientID
 }
 
-// code runs the consent page's calls, choosing boxes, and returns the code, its verifier and the redirect URI on a port of the client's choice.
 func (e *env) code(t *testing.T, clientID string, caps oauth.Caps, boxes ...string) (string, string, string) {
 	t.Helper()
 	verifier := rand.Text() + rand.Text()
@@ -791,7 +790,6 @@ func (e *env) grants(t *testing.T) []oauth.Grant {
 	return agents.Grants
 }
 
-// rootCall calls a box tool on the unified MCP as token in client session session and returns whether it failed and its text.
 func (e *env) rootCall(t *testing.T, token, session string, args map[string]any) (bool, string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": map[string]any{"name": "shell", "arguments": args}})
