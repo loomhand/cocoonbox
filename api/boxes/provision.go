@@ -41,16 +41,7 @@ func (s *Service) EnableProvisioning(signer Signer) {
 
 // RunProvisioner provisions running machines that came up without an operation, until ctx ends.
 func (s *Service) RunProvisioner(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		s.provisionStale(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	every(ctx, interval, func() { s.provisionStale(ctx) })
 }
 
 func (s *Service) provisionStale(ctx context.Context) {

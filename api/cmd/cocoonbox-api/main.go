@@ -315,7 +315,7 @@ func enableProvisioning(ctx context.Context, cfg *config.Config, svc *boxes.Serv
 	}
 	svc.EnableProvisioning(signer)
 	if upstream := cfg.Provision.ResidentialUpstream; upstream != "" {
-		svc.EnableResidential(upstream, func(_ context.Context, id string) (bool, error) { return accounts.Residential(id), nil })
+		svc.EnableResidential(upstream, accounts.Residential)
 		accounts.OnResidential(func(ctx context.Context, id string, _ bool) {
 			if err := svc.ApplyExit(ctx, id); err != nil {
 				log.WithFunc("main.enableProvisioning").Error(ctx, err, "apply residential exit")

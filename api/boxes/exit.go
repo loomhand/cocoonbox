@@ -3,13 +3,12 @@ package boxes
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
 // ResidentialFunc reports whether user's boxes leave through the residential exit.
-type ResidentialFunc func(ctx context.Context, user string) (bool, error)
+type ResidentialFunc func(user string) bool
 
 // EnableResidential sends the machines of users residential reports through the proxy at upstream, and the rest direct.
 func (s *Service) EnableResidential(upstream string, residential ResidentialFunc) {
@@ -34,10 +33,7 @@ func (s *Service) syncExit(ctx context.Context, m machines.Machine) error {
 	if s.exit == nil {
 		return nil
 	}
-	on, err := s.exit.residential(ctx, m.Owner)
-	if err != nil {
-		return fmt.Errorf("read residential switch: %w", err)
-	}
+	on := s.exit.residential(m.Owner)
 	if on == m.Routed {
 		return nil
 	}

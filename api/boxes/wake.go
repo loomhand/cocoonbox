@@ -142,16 +142,7 @@ func (s *Service) Reached(box string) func() {
 
 // RunAlarms acts on the wake schedules every interval until ctx ends.
 func (s *Service) RunAlarms(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		s.alarm(ctx, s.wake.now())
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	every(ctx, interval, func() { s.alarm(ctx, s.wake.now()) })
 }
 
 func (s *Service) alarm(ctx context.Context, now time.Time) {

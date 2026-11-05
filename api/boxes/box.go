@@ -2,6 +2,7 @@ package boxes
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"strconv"
 	"strings"
@@ -137,5 +138,18 @@ func resolveFlavor(req *controlv1.Flavor, def machines.Flavor) machines.Flavor {
 		VCPUs:     cmp.Or(req.GetVcpus(), def.VCPUs),
 		MemoryMiB: cmp.Or(req.GetMemoryMib(), def.MemoryMiB),
 		DiskGiB:   cmp.Or(req.GetDiskGib(), def.DiskGiB),
+	}
+}
+
+func every(ctx context.Context, interval time.Duration, fn func()) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		fn()
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }

@@ -25,16 +25,7 @@ func (s *Service) EnableParking(after time.Duration) {
 
 // RunParking parks the boxes idle past the threshold every interval until ctx ends.
 func (s *Service) RunParking(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		s.parkIdle(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	every(ctx, interval, func() { s.parkIdle(ctx) })
 }
 
 // parkIdle parks the idle boxes one at a time, so the sweep wakes at most one machine at once.
@@ -138,12 +129,7 @@ func (s *Service) runPark(op *operation, m machines.Machine) {
 	logger := log.WithFunc("boxes.Service.runPark").WithField("box", op.boxID)
 	start := time.Now()
 	op.note(controlv1.Phase_PHASE_WAKING, controlv1.BoxState_BOX_STATE_STARTING, "waking "+m.ID+" to save it before parking")
-	running, err := s.waitRunning(op, m)
-	if err == nil && s.provision != nil {
-		if err = s.provisionMachine(op.ctx, running); err == nil {
-			running, err = s.machines.Get(op.ctx, m.ID)
-		}
-	}
+	running, err := s.waitReady(op, m)
 	var rec *snapshotRecord
 	if err == nil {
 		rec, err = s.save(op, op.user, running, agentv1.Consistency_CONSISTENCY_QUIESCED)

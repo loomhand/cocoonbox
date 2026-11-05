@@ -308,7 +308,7 @@ func (l *stateLayer) expandSnapshot(ctx context.Context, p statePath, key keyrin
 // deltaIDs returns the snapshots of p's box stored as a delta record or a manifest delta, sorted.
 func (l *stateLayer) deltaIDs(ctx context.Context, p statePath) ([]string, error) {
 	ids := map[string]bool{}
-	records, err := l.recordIDs(ctx, p)
+	records, err := l.recordIDs(ctx, p, nil)
 	if err != nil {
 		return nil, err
 	}

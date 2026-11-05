@@ -56,16 +56,7 @@ type keySource func() (keyring.Key, error)
 
 // RunGC prunes and collects the state of every user that users returns, at once and then every opts.Interval, until ctx ends.
 func (s *Service) RunGC(ctx context.Context, opts GCOptions, users func() []string) {
-	ticker := time.NewTicker(opts.Interval)
-	defer ticker.Stop()
-	for {
-		s.collectGarbage(ctx, opts, users(), time.Now())
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	every(ctx, opts.Interval, func() { s.collectGarbage(ctx, opts, users(), time.Now()) })
 }
 
 func (s *Service) collectGarbage(ctx context.Context, opts GCOptions, users []string, now time.Time) {
@@ -291,7 +282,7 @@ func (l *stateLayer) sweep(ctx context.Context, user string, opts GCOptions, now
 		if err != nil {
 			return err
 		}
-		young, err := l.youngRecords(ctx, bp, now)
+		young, err := l.recordIDs(ctx, bp, func(obj store.Object) bool { return !settled(obj, now) })
 		if err != nil {
 			return err
 		}
@@ -356,20 +347,6 @@ func (l *stateLayer) mark(ctx context.Context, p statePath, ids []string, marked
 	return nil
 }
 
-func (l *stateLayer) youngRecords(ctx context.Context, p statePath, now time.Time) ([]string, error) {
-	listing, err := l.store.List(ctx, p.records())
-	if err != nil {
-		return nil, err
-	}
-	var ids []string
-	for _, obj := range listing {
-		if id, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, p.records()), ".json"); ok && objectID.MatchString(id) && !settled(obj, now) {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
-}
-
 // boxesOf returns the boxes that hold snapshots of user.
 func (l *stateLayer) boxesOf(ctx context.Context, user string) ([]string, error) {
 	dir := statePath{user: user}.boxes()
@@ -399,12 +376,12 @@ func (l *stateLayer) snapshotIDs(ctx context.Context, p statePath) ([]string, er
 		}
 		return ids, nil
 	}
-	return l.recordIDs(ctx, p)
+	return l.recordIDs(ctx, p, nil)
 }
 
 // readEntries adds the timeline entry of every record of p's box missing from have.
 func (l *stateLayer) readEntries(ctx context.Context, p statePath, have map[string]timelineEntry) (map[string]timelineEntry, error) {
-	ids, err := l.recordIDs(ctx, p)
+	ids, err := l.recordIDs(ctx, p, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -424,14 +401,14 @@ func (l *stateLayer) readEntries(ctx context.Context, p statePath, have map[stri
 	return have, nil
 }
 
-func (l *stateLayer) recordIDs(ctx context.Context, p statePath) ([]string, error) {
+func (l *stateLayer) recordIDs(ctx context.Context, p statePath, keep func(store.Object) bool) ([]string, error) {
 	listing, err := l.store.List(ctx, p.records())
 	if err != nil {
 		return nil, err
 	}
 	var ids []string
 	for _, obj := range listing {
-		if id, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, p.records()), ".json"); ok && objectID.MatchString(id) {
+		if id, ok := strings.CutSuffix(strings.TrimPrefix(obj.Key, p.records()), ".json"); ok && objectID.MatchString(id) && (keep == nil || keep(obj)) {
 			ids = append(ids, id)
 		}
 	}

@@ -82,12 +82,7 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 		return
 	}
 	op.note(controlv1.Phase_PHASE_CREATING, controlv1.BoxState_BOX_STATE_STARTING, fmt.Sprintf("machine %s from %s", created.ID, image))
-	running, err := s.waitRunning(op, created)
-	if err == nil && s.provision != nil {
-		if err = s.provisionMachine(op.ctx, running); err == nil {
-			running, err = s.machines.Get(op.ctx, created.ID)
-		}
-	}
+	running, err := s.waitReady(op, created)
 	if err != nil {
 		logger.Error(op.ctx, err, "start rebase machine")
 		s.discard(op, created.ID)
@@ -134,12 +129,18 @@ func (s *Service) runRebase(op *operation, user string, old machines.Machine, im
 		(booted - saved).Round(time.Second), (restored - booted).Round(time.Second)))
 }
 
-// waitRunning follows m until it runs, fails, or op ends, and returns it running.
-func (s *Service) waitRunning(op *operation, m machines.Machine) (machines.Machine, error) {
+// waitReady follows m until it runs, fails, or op ends, and returns it running and provisioned.
+func (s *Service) waitReady(op *operation, m machines.Machine) (machines.Machine, error) {
 	for cur := range s.machines.Watch(op.ctx, m.ID, m.Revision) {
 		switch cur.State {
 		case machines.StateRunning:
-			return cur, nil
+			if s.provision == nil {
+				return cur, nil
+			}
+			if err := s.provisionMachine(op.ctx, cur); err != nil {
+				return machines.Machine{}, err
+			}
+			return s.machines.Get(op.ctx, m.ID)
 		case machines.StateFailed:
 			if atCapacity(cur) {
 				return machines.Machine{}, fmt.Errorf("machine %s: %w", m.ID, machines.ErrCapacity)

@@ -43,12 +43,7 @@ func (s *Service) runRestore(op *operation, user string, m machines.Machine, sav
 	savedAt := time.UnixMilli(saved.SavedAtMs).UTC().Format(time.RFC3339)
 	op.note(controlv1.Phase_PHASE_CREATING, controlv1.BoxState_BOX_STATE_STARTING,
 		fmt.Sprintf("machine %s for the state saved at %s", m.ID, savedAt))
-	running, err := s.waitRunning(op, m)
-	if err == nil && s.provision != nil {
-		if err = s.provisionMachine(op.ctx, running); err == nil {
-			running, err = s.machines.Get(op.ctx, m.ID)
-		}
-	}
+	running, err := s.waitReady(op, m)
 	if err != nil {
 		logger.Error(op.ctx, err, "start machine for restore")
 		s.discard(op, m.ID)

@@ -35,16 +35,7 @@ func (s *Service) EnableActivity(activity Activity) {
 
 // RunIdle hibernates the idle boxes every interval until ctx ends.
 func (s *Service) RunIdle(ctx context.Context, interval time.Duration) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		s.hibernateIdle(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
+	every(ctx, interval, func() { s.hibernateIdle(ctx) })
 }
 
 func (s *Service) hibernateIdle(ctx context.Context) {

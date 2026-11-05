@@ -1,8 +1,6 @@
 package boxes
 
 import (
-	"context"
-	"errors"
 	"slices"
 	"sync/atomic"
 	"testing"
@@ -21,7 +19,7 @@ func TestProvisioningRoutesOnlyResidentialOwners(t *testing.T) {
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning, Incarnation: "pod2/vm1"})
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
-	svc.EnableResidential(residential, func(_ context.Context, user string) (bool, error) { return user == alice, nil })
+	svc.EnableResidential(residential, func(user string) bool { return user == alice })
 
 	svc.provisionStale(t.Context())
 	if got := fake.egressCalls(); !slices.Equal(got, []string{aliceBox + " " + residential}) {
@@ -39,7 +37,7 @@ func TestProvisionerFollowsTheSwitch(t *testing.T) {
 	on.Store(true)
 	svc := New(fake, testDefaults, newFakeRegistry())
 	svc.EnableProvisioning(fakeSigner{})
-	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return on.Load(), nil })
+	svc.EnableResidential(residential, func(string) bool { return on.Load() })
 
 	svc.provisionStale(t.Context())
 	svc.provisionStale(t.Context())
@@ -61,7 +59,7 @@ func TestApplyExitRoutesEveryMachineOfTheUserOnly(t *testing.T) {
 	fake.put(machines.Machine{ID: aliceBox + "-r1", Owner: alice, State: machines.StateStarting})
 	fake.put(machines.Machine{ID: BoxID(bob), Owner: bob, State: machines.StateRunning})
 	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return true, nil })
+	svc.EnableResidential(residential, func(string) bool { return true })
 
 	if err := svc.ApplyExit(t.Context(), alice); err != nil {
 		t.Fatalf("ApplyExit: %v", err)
@@ -70,22 +68,5 @@ func TestApplyExitRoutesEveryMachineOfTheUserOnly(t *testing.T) {
 	slices.Sort(got)
 	if want := []string{aliceBox + " " + residential, aliceBox + "-r1 " + residential}; !slices.Equal(got, want) {
 		t.Errorf("egress calls = %v, want %v", got, want)
-	}
-}
-
-func TestASwitchReadFailureHoldsProvisioning(t *testing.T) {
-	fake := newFakeMachines()
-	fake.put(machines.Machine{ID: aliceBox, Owner: alice, State: machines.StateRunning, Incarnation: "pod1/vm1"})
-	svc := New(fake, testDefaults, newFakeRegistry())
-	svc.EnableProvisioning(fakeSigner{})
-	svc.provision.backoff = 0
-	svc.EnableResidential(residential, func(context.Context, string) (bool, error) { return false, errors.New("users table unavailable") })
-
-	m, _ := fake.Get(t.Context(), aliceBox)
-	if err := svc.provisionMachine(t.Context(), m); err == nil {
-		t.Error("provisioning went ahead without the switch")
-	}
-	if execs := fake.execCalls(); len(execs) != 0 {
-		t.Errorf("deliveries = %+v, want none", execs)
 	}
 }
