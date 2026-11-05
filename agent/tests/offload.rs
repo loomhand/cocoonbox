@@ -491,11 +491,9 @@ async fn a_lost_session_restarts_from_the_newest_progress_hand_over() {
     let b = TestBox::start(false).await;
     let outbox = b.layout.state.join(REPO).join("outbox.jsonl");
     std::fs::create_dir_all(outbox.parent().unwrap()).unwrap();
-    std::fs::write(
-        &outbox,
-        "{\"seq\":0,\"kind\":\"progress\",\"offload_id\":\"ffffffffffff\",\"cli\":\"claude\",\"time_ms\":1,\"body\":\"PREVIOUS-OFFLOAD\"}\n",
-    )
-    .unwrap();
+    let previous = r#"{"seq":1,"kind":"progress","offload_id":"ffffffffffff","cli":"claude","time_ms":1,"body":"PREVIOUS-OFFLOAD"}
+"#;
+    std::fs::write(&outbox, previous).unwrap();
     b.start_session("FIRST").await;
     b.call(json!({"op": "post", "repo": REPO, "kind": "progress", "body": "OLD-HANDOVER"}))
         .await;
@@ -511,8 +509,9 @@ async fn a_lost_session_restarts_from_the_newest_progress_hand_over() {
     assert_eq!(resp["delivery"], "started", "{resp}");
     let prompt = std::fs::read_to_string(b.layout.state.join(REPO).join("restart.md")).unwrap();
     assert!(prompt.starts_with(handover::RESTARTED), "{prompt}");
-    assert!(prompt.contains("NEW-HANDOVER") && !prompt.contains("OLD-HANDOVER"));
-    std::fs::write(&outbox, "").unwrap();
+    assert!(prompt.contains("NEW-HANDOVER"), "{prompt}");
+    assert!(!prompt.contains("OLD-HANDOVER"), "{prompt}");
+    std::fs::write(&outbox, previous).unwrap();
     std::fs::remove_file(b.fake.join(format!("sessions/cb-off-{REPO}-claude"))).unwrap();
     b.call(json!({"op": "restart", "repo": REPO})).await;
     let prompt = std::fs::read_to_string(b.layout.state.join(REPO).join("restart.md")).unwrap();
