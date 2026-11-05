@@ -78,7 +78,7 @@ func checkSpec(hosts []string, header, template, query string) (spec, error) {
 	}
 	s.template = template
 	if s.template == "" {
-		s.template = "{}"
+		s.template = slot
 		if s.header == defaultHeader {
 			s.template = defaultTemplate
 		}

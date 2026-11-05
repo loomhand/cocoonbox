@@ -89,8 +89,6 @@ type Options struct {
 // ChangeFunc runs after a key of owner is added, rotated or deleted.
 type ChangeFunc func(ctx context.Context, owner string)
 
-type actorKey struct{}
-
 // Service stores the keys and serves Keys.
 type Service struct {
 	controlv1.UnimplementedKeysServer
@@ -156,6 +154,8 @@ func (s *Service) changed(ctx context.Context, owner string) {
 		s.onChange(ctx, owner)
 	}
 }
+
+type actorKey struct{}
 
 // secret is one stored key; sealed holds its value.
 type secret struct {

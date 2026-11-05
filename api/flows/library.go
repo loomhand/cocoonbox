@@ -66,6 +66,15 @@ type stored struct {
 	Object string `json:"object"`
 }
 
+type index struct {
+	Rev   uint64   `json:"rev"`
+	Flows []stored `json:"flows"`
+}
+
+func (idx *index) find(name string) int {
+	return slices.IndexFunc(idx.Flows, func(f stored) bool { return f.Name == name })
+}
+
 // Library keeps every user's flows in the state store, sealed under a key derived from the user's state key.
 type Library struct {
 	store store.Store
@@ -261,15 +270,6 @@ func Check(name string, content []byte) error {
 }
 
 // index is a library as stored: every flow with the object that holds its content.
-type index struct {
-	Rev   uint64   `json:"rev"`
-	Flows []stored `json:"flows"`
-}
-
-func (idx *index) find(name string) int {
-	return slices.IndexFunc(idx.Flows, func(f stored) bool { return f.Name == name })
-}
-
 func indexKey(user string) string           { return user + "/flows/index" }
 func objectKey(user, object string) string  { return user + "/flows/" + object }
 func indexData(user string) string          { return "flows|" + user + "|index" }
