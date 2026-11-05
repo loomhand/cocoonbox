@@ -826,6 +826,7 @@ impl Inbox {
         body: String,
     ) -> Result<u64, String> {
         rec.outbox_seq += 1;
+        self.save(rec).await?;
         let entry = Entry {
             seq: rec.outbox_seq,
             kind,
@@ -1469,6 +1470,30 @@ mod tests {
         write(&[prompt.clone(), tool, done, prompt]);
         assert!(!turn_ended(&path).await);
         assert!(!turn_ended(&dir.path().join("none.jsonl")).await);
+    }
+
+    #[tokio::test]
+    async fn an_outbox_seq_is_saved_before_its_entry_is_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let layout = Layout {
+            state: dir.path().join("offload"),
+            socket: dir.path().join("offload.sock"),
+            secrets: dir.path().join("secrets"),
+            workspace: dir.path().join("workspace"),
+            home: dir.path().to_path_buf(),
+            tmux: "tmux".into(),
+        };
+        let inbox = Inbox::open(layout.clone()).await.unwrap();
+        let mut rec = Record {
+            repo: "0123456789ab".into(),
+            ..Record::default()
+        };
+        let seq = inbox
+            .note_outbox(&mut rec, EntryKind::Progress, "x".into())
+            .await
+            .unwrap();
+        let saved = load_records(&layout.state).await;
+        assert_eq!(saved["0123456789ab"].outbox_seq, seq);
     }
 
     #[tokio::test]
