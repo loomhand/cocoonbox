@@ -886,7 +886,9 @@ impl Runtime {
                     .await
                     .unwrap_or_else(ToolOutput::error)
             }
-            name => match self.connect.as_ref().filter(|c| c.serves(name)) {
+            name => match self.connect.as_ref().filter(|c| {
+                c.serves(name) && !self.main_vision_tools.iter().any(|t| t.name == name)
+            }) {
                 Some(client) => self.connector(ctx, client, name, &args).await?,
                 None => {
                     let out = self

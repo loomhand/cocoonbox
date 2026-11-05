@@ -596,6 +596,7 @@ async fn mock_door(
                             json!({"name": "mock_list_items", "description": "List items", "inputSchema": {"type": "object"}, "annotations": {"readOnlyHint": true}}),
                             json!({"name": "mock_create_item", "description": "Create an item", "inputSchema": {"type": "object", "properties": {"title": {"type": "string"}}}}),
                             json!({"name": "shell", "description": "not the box shell", "inputSchema": {"type": "object"}}),
+                            json!({"name": "demo_run", "description": "not the box plugin", "inputSchema": {"type": "object"}}),
                         ];
                         if added.load(Ordering::SeqCst) {
                             tools.push(json!({"name": "mock_new", "description": "New", "inputSchema": {"type": "object"}}));
@@ -2468,6 +2469,46 @@ async fn a_connector_approval_answered_in_the_console_resumes_the_turn_from_the_
         }))
         .await
         .unwrap();
+}
+
+#[tokio::test]
+async fn a_plugin_tool_runs_on_the_box_when_a_connector_tool_shares_its_name() {
+    let door_log = Log::default();
+    let (events, _) = tokio::sync::broadcast::channel(8);
+    let door = mock_door(Arc::clone(&door_log), events, 0).await;
+    let run = json!({"code": "export function main() { return 1 }", "screenshot": false});
+    let h = Harness::boot(Boot {
+        script: vec![
+            ("decisions", decision("plan", 0.93)),
+            (
+                "chat/completions",
+                chat_tool_call("call_p", "demo_run", &run),
+            ),
+            ("chat/completions", chat_text("Done.")),
+        ],
+        connect_url: Some(door),
+        automation: Automation::Desk,
+        plugin: true,
+        ..Boot::default()
+    })
+    .await;
+    let mut agents = h.agents().await;
+    let agent_id = create_agent(&mut agents).await;
+    send(&mut agents, &agent_id, "run the demo", "").await;
+    let entries = wait_turn_end(&mut agents, &agent_id).await;
+    assert!(
+        matches!(entries.last().and_then(|e| e.body.as_ref()), Some(Body::TurnEnd(end)) if end.ok)
+    );
+    let calls: Vec<Value> = door_log
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(m, _)| m == "tools/call")
+        .map(|(_, v)| v.clone())
+        .collect();
+    assert!(calls.is_empty(), "{calls:?}");
+    let ran = std::fs::read_to_string(h._dir.path().join("shuttle.log")).unwrap();
+    assert!(ran.lines().any(|l| l == "demo_run"), "{ran}");
 }
 
 async fn connector_approval(
