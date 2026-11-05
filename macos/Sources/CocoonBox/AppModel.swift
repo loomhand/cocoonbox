@@ -189,8 +189,7 @@ final class AppModel {
         return MCPTarget(bridge: bridge, box: boxID, endpoint: endpoint.url, token: token, socket: link?.path)
     }
 
-    // listen opens the socket on which the local agents' bridges report their
-    // calls and take their default box; without it they keep their --box.
+    // listen opens the socket where local agents' bridges report calls and fetch their default box.
     private func listen() {
         let path = LocalAgentStore.defaultURL.deletingLastPathComponent().appendingPathComponent("agents.sock").path
         do {
@@ -251,9 +250,7 @@ final class AppModel {
         }
     }
 
-    // restoreLocal reopens, once per launch, every local agent the session file
-    // keeps; one whose default box is gone takes the selected box. One that
-    // fails to reopen stays in the file and in failedLocal, with its reason.
+    // restoreLocal reopens the session file's local agents once per launch; one that fails stays in failedLocal.
     private func restoreLocal() {
         guard !restoredLocal, let box, let base = localTarget(box.id) else { return }
         restoredLocal = true
@@ -661,8 +658,7 @@ final class AppModel {
         NSWorkspace.shared.open(url)
     }
 
-    // apply takes the box list; without a selection, or when the selected box is gone, it selects the box created again
-    // under its name, else the newest running box, else the first. Local agents follow their default box the same way.
+    // apply reselects when the selected box is gone: the box created again under its name, else the newest running, else the first.
     private func apply(boxes list: [Box]) {
         defer { restoreLocal() }
         let wasRunning = boxRunning
@@ -700,7 +696,7 @@ final class AppModel {
         }
     }
 
-    // selectBox moves the screen, the in-box agents and the lifecycle buttons to box id; a selected local agent stays selected.
+    // selectBox moves the screen, the in-box agents and the lifecycle buttons to box id; a selected local agent or offload stays selected.
     func selectBox(_ id: String) {
         guard id != selectedBoxID else { return }
         stopAgentSide()
@@ -932,8 +928,7 @@ final class AppModel {
         }
     }
 
-    // eventsDropped forgets streaming blocks: deltas are not replayed, so a
-    // block whose entry never arrives would otherwise stay half-written.
+    // eventsDropped forgets streaming blocks, since deltas are not replayed.
     private func eventsDropped(_ error: any Error) {
         eventsLive = false
         live = [:]

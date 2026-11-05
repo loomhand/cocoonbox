@@ -1,8 +1,7 @@
 import CocoonBoxKit
 import SwiftUI
 
-// TimeCapsuleSheet lists the box's saves, browses one, and copies the chosen
-// files and folders into ~/Restored in the running box.
+// TimeCapsuleSheet browses the box's saves and copies the chosen paths into ~/Restored.
 struct TimeCapsuleSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss

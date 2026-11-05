@@ -1,4 +1,3 @@
-import AppKit
 import CocoonBoxKit
 import CocoonBoxTerminal
 import SwiftUI

@@ -1,11 +1,8 @@
 import AppKit
-import CocoonBoxKit
 import ImageIO
 import UniformTypeIdentifiers
 
-// Snapshot writes PNG evidence of the app's own windows. It uses the window
-// server capture when available and otherwise renders the view tree itself,
-// painting the live framebuffer into the screen pane.
+// Snapshot writes PNGs of the app's windows, by window-server capture or a self-render with the framebuffer.
 @MainActor
 enum Snapshot {
     private typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?

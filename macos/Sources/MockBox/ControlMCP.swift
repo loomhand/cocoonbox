@@ -234,5 +234,4 @@ final class ControlMCP: Sendable {
     private static func encode(_ object: [String: Any]) -> Data {
         (try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .withoutEscapingSlashes])) ?? Data()
     }
-
 }

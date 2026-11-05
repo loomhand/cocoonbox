@@ -15,9 +15,7 @@ enum BoxCLISheet: Identifiable {
     }
 }
 
-// BoxCLISheetView installs a box CLI with the vendor's installer, or runs its
-// own sign-in on a terminal in the box. The login stays in the box; nothing
-// is copied from this Mac (design.md §27.1).
+// BoxCLISheetView runs the vendor's installer or the CLI's own sign-in in the box; nothing leaves this Mac (design.md §27.1).
 struct BoxCLISheetView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss

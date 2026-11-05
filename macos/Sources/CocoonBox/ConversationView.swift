@@ -31,8 +31,7 @@ enum TranscriptRow: Identifiable {
         }
     }
 
-    // rows turns a transcript into display rows: every entry is its own row,
-    // and tool results sit under their call.
+    // rows turns a transcript into display rows, with tool results under their call.
     static func rows(_ entries: [Entry], answered: Set<String>) -> [TranscriptRow] {
         var results: [String: (Cocoonbox_Agent_V1_ToolResult, UInt64)] = [:]
         var calls: Set<String> = []
@@ -235,7 +234,6 @@ struct RowView: View {
             .foregroundStyle(end.ok ? Color.secondary : Color.red)
         }
     }
-
 }
 
 struct AssistantText: View {
@@ -269,8 +267,7 @@ struct AssistantText: View {
     }
 }
 
-// LiveBlocksView renders blocks that are still streaming; it alone observes
-// the per-token deltas, so the settled transcript does not re-render on them.
+// LiveBlocksView alone observes streaming deltas, so the settled transcript does not re-render on them.
 struct LiveBlocksView: View {
     @Environment(AppModel.self) private var model
     let agentID: String
@@ -341,7 +338,7 @@ struct ToolCard: View {
     private var icon: String {
         switch call.name {
         case "shell": "terminal"
-        case "computer", "computer_act", "computer_state": "cursorarrow.click.2"
+        case "computer_act", "computer_state": "cursorarrow.click.2"
         case "screenshot": "camera.viewfinder"
         case "read_file", "write_file", "edit_file", "list_dir": "doc.text"
         case let name where name.hasPrefix("browser"): "globe"

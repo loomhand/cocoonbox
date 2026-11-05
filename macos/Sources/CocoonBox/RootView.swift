@@ -503,8 +503,7 @@ struct BoxHeader: View {
     }
 }
 
-// StateLayerControls shows when the user's data was last saved to object
-// storage and offers a manual save and the desktop upgrade.
+// StateLayerControls shows the last save and offers Save now, Upgrade and Restore files.
 struct StateLayerControls: View {
     @Environment(AppModel.self) private var model
     let box: Box

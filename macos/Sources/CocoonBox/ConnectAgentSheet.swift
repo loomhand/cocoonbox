@@ -1,9 +1,7 @@
 import CocoonBoxKit
 import SwiftUI
 
-// ConnectAgentSheet shows how to point Claude Code, Codex or Cursor at the
-// box's MCP endpoint. The token never appears: the clients read it from
-// COCOONBOX_TOKEN, which the environment snippet fills from the Keychain.
+// ConnectAgentSheet shows the MCP setup for local clients; they read the token from COCOONBOX_TOKEN.
 struct ConnectAgentSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss

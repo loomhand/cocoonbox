@@ -3,36 +3,7 @@ import CocoonBoxKit
 import CocoonBoxTerminal
 import Foundation
 
-// Autopilot replays a `;`-separated step list from CB_AUTOPILOT so acceptance
-// runs can drive the app without UI scripting permissions. Steps:
-// ensure, hibernate, wait-running, wait-live, agent[:name], new-agent, send:<text>,
-// wait-idle, takeover:on|off, type:<text> and keys:<text> (\n allowed; keys goes
-// through NSWindow.sendEvent), ctrl:<char>, click:<x>,<y>, wait:<ms>,
-// respond-takeover, snapshot:<path.png>, stats:<label>, popout, reopen-screen,
-// select:<agent name>, select-local:<kind>, sidebar:<label> (logs the selected box and agent, the External
-// rows and every local agent with its default box, row subtitle, activity label and pane hint), local-box:<box name> (the selected local agent's default),
-// connect-agent[:off], copy-mcp:<snippet>, local:<kind>,
-// wait-local:<count>[:seconds] (that many local agents open, as after a reopen),
-// terminal-keys:<enter|up|down|escape,...>, terminal-paste:<text>,
-// wait-external[:seconds] (a guest's share session is listed), wait-pointer[:seconds],
-// confirm:<save|upgrade|delete|off>, save-now, upgrade, wait-operation[:seconds],
-// wait-phase:<phase>[:seconds], lock:<label> (logs whether agents may start or prompt, and take_over),
-// rename:<name> (on the selected agent or local agent) and delete (on the
-// selected agent), end-local, password-signin[:off],
-// fill-credential:<username> (the password comes from CB_FILL_SECRET, so no step logs it),
-// clip-paste[:<bytes>] (puts CB_CLIP_TEXT, or that many bytes, on the CB_PASTEBOARD pasteboard,
-// then sends the Command+V menu action), clip-copy and clip-cut (Command+C or X, then wait for the pasteboard),
-// share-sheet[:off], share-create[:write,<user name>,...] (24 h), share-write:on|off, share-regenerate,
-// share-revoke, share-copy:<link|claudeCode|codexConfig|cursor> (logs bytes, never the text),
-// end-external (ends the first listed share session), box:<name> (selects that box),
-// box-create:<name>, box-delete:<name>, boxes:<label> (logs every box and the selection),
-// capsule[:off] (the Restore files sheet, which lists the snapshots and browses the newest),
-// capsule-snapshot:<n> (the n-th newest, from 0), capsule-browse:<dir>,
-// capsule-restore:<path>[,<path>...] (from the browsed snapshot),
-// offloads:<label> (rereads the offloads and logs each Offloaded row: repo, box, CLI, status, since),
-// select-offload[:<repo name>] (the first row without a name), plugin-setup (Install Claude Code Plugin; logs its exit code and output),
-// box-signin:<kind>|off (the Sign in sheet for the selected box), signin-paste (puts CB_CLIP_TEXT on the CB_PASTEBOARD
-// pasteboard, then sends Command+V to the sheet as a keyboard would; logs the first responder), quit.
+// Autopilot replays the `;`-separated steps of CB_AUTOPILOT so acceptance runs drive the app without UI scripting.
 @MainActor
 enum Autopilot {
     static func runIfRequested(model: AppModel) {
@@ -287,8 +258,7 @@ enum Autopilot {
         }
     }
 
-    // command performs the main menu's Command+<key> item from the screen window's
-    // first responder, as the key equivalent does when the window is key.
+    // command performs the main menu's Command+key item from the screen window's first responder.
     private static func command(_ key: String, model: AppModel) {
         let item = NSApp.mainMenu?.items.lazy.compactMap { $0.submenu?.items.first { $0.keyEquivalent == key && $0.keyEquivalentModifierMask == .command } }.first
         guard let action = item?.action, let responder = model.screen.container.window?.firstResponder else { return }
@@ -351,8 +321,7 @@ enum Autopilot {
         }
     }
 
-    // stats logs cumulative counters; the difference between two marks gives
-    // update rate, bytes and CPU use over that window.
+    // stats logs cumulative counters; diff two marks for a window's rate, bytes and CPU.
     private static func stats(_ model: AppModel, label: String) {
         var usage = rusage()
         getrusage(RUSAGE_SELF, &usage)

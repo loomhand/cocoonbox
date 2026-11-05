@@ -3,8 +3,7 @@ import CocoonBoxKit
 import Observation
 import QuartzCore
 
-// ScreenController adapts CocoonBoxKit's LiveScreen to SwiftUI state and
-// hosts it with the ComputerAction marker overlay.
+// ScreenController adapts LiveScreen to SwiftUI state with the marker overlay.
 @MainActor @Observable
 final class ScreenController {
     enum Status: Equatable {
@@ -14,9 +13,7 @@ final class ScreenController {
         case failed(String)
     }
 
-    // eagerHandshakeKey turns on the eager RFB handshake (one write before the
-    // server's banner); only for a box whose RFB server speaks 3.8 without a
-    // password. CB_RFB_EAGER=1 overrides it.
+    // eagerHandshakeKey enables the eager RFB handshake for a passwordless RFB 3.8 server; CB_RFB_EAGER overrides it.
     static let eagerHandshakeKey = "rfbEagerHandshake"
     static let clipboardLimit = 1 << 20
     static let copyWindow: TimeInterval = 2
@@ -130,8 +127,7 @@ final class ScreenController {
         screen?.paste(text)
     }
 
-    // copy sends the box's copy or cut shortcut and accepts the box's next
-    // clipboard for copyWindow; any other clipboard from the box is ignored.
+    // copy sends the box's copy or cut and accepts only the next box clipboard within copyWindow.
     func copy(cut: Bool) {
         guard takeOver else { return }
         copiedAt = Date()
@@ -156,9 +152,7 @@ final class ScreenController {
     }
 }
 
-// LiveScreenContainer stacks the Metal view and a non-interactive overlay
-// that draws ComputerAction markers. As the Metal view's next responder it
-// takes the Edit menu's Paste, Copy and Cut while that view has focus.
+// LiveScreenContainer stacks the Metal view and the marker overlay and takes Edit > Paste, Copy, Cut.
 final class LiveScreenContainer: NSView, NSMenuItemValidation {
     weak var controller: ScreenController?
     private var screen: LiveScreen?

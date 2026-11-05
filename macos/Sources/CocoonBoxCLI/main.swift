@@ -120,6 +120,28 @@ let failureStatus: Int32 = command == "rsh" ? 255 : 1
 let rshReport = command == "rsh" ? ProcessInfo.processInfo.environment["COCOONBOX_RSH_REPORT"].map { URL(fileURLWithPath: $0) } : nil
 let rshStderr = Mutex(Data())
 
+// home honours HOME, as the agent CLIs this one configures do.
+let home = ProcessInfo.processInfo.environment["HOME"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
+let support = ProcessInfo.processInfo.environment["COCOONBOX_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
+    ?? home.appendingPathComponent("Library/Application Support/CocoonBox")
+let settingsFile = support.appendingPathComponent("cli.json")
+// Ad hoc builds of the CLI and the app are different code, so each keeps its own Keychain item.
+let service = Keychain.service + ".cli"
+let offloadStore = OffloadStore(support: support)
+let ownPath = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath().path
+let executable: String = {
+    let linked = home.appendingPathComponent(".local/bin/cocoonbox").path
+    let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: linked)).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
+    return target == ownPath ? linked : ownPath
+}()
+let scheduleUsage = "usage: cocoonbox box schedule [set BOX --cron \"M H DOM MON DOW\" --tz ZONE [--awake-for 15m] | list | clear BOX] [--json]"
+let flowsUsage = "usage: cocoonbox flows [list [--json] | export [NAME...] [-o FILE] | import FILE|- [--json] | rm NAME...]"
+let keysUsage = "usage: cocoonbox keys [add NAME --host HOST... [--header H] [--template T | --query P] | ls | rotate NAME | rm NAME] [--json]"
+let devicesUsage = "usage: cocoonbox devices [list] [--json] | devices revoke ID"
+let shareUsage = "usage: cocoonbox share [create BOX [--ttl 24h] | ls | revoke ID] [--json]"
+let rshUsage = "usage: cocoonbox rsh [--box NAME|ID] [-t] [-l USER] [HOST] COMMAND..."
+let maxTerminfo = 256 << 10
+
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("cocoonbox: \(message)\n".utf8))
     writeRshReport("failed: \(message)")
@@ -135,14 +157,6 @@ func value(of flag: String) -> String? {
     guard let index = arguments.firstIndex(of: flag), index + 1 < arguments.count else { return nil }
     return arguments[index + 1]
 }
-
-// home honours HOME, as the agent CLIs this one configures do.
-let home = ProcessInfo.processInfo.environment["HOME"].map { URL(fileURLWithPath: $0) } ?? FileManager.default.homeDirectoryForCurrentUser
-let support = ProcessInfo.processInfo.environment["COCOONBOX_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
-    ?? home.appendingPathComponent("Library/Application Support/CocoonBox")
-let settingsFile = support.appendingPathComponent("cli.json")
-// Ad hoc builds of the CLI and the app are different code, so each keeps its own Keychain item.
-let service = Keychain.service + ".cli"
 
 func settings() -> [String: String] {
     guard let data = try? Data(contentsOf: settingsFile), let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return [:] }
@@ -160,8 +174,7 @@ func savedEndpoint() -> String? {
     settings()["endpoint"]
 }
 
-// sourceKey names where the CLI's token for endpoint came from: browser (a device token of the CLI's own), paste or app.
-// Only a browser token is the CLI's to revoke; one copied from the app is the app's device.
+// sourceKey records where the token came from (browser, paste or app); only a browser token is the CLI's to revoke.
 func sourceKey(_ endpoint: Endpoint) -> String {
     "token_source:" + endpoint.url
 }
@@ -312,8 +325,6 @@ func boxCommand() async {
     }
 }
 
-let scheduleUsage = "usage: cocoonbox box schedule [set BOX --cron \"M H DOM MON DOW\" --tz ZONE [--awake-for 15m] | list | clear BOX] [--json]"
-
 // seconds reads a duration such as 90s, 15m, 1h or 7d.
 func seconds(_ text: String) -> UInt32? {
     guard let unit = text.last, let factor = ["s": 1, "m": 60, "h": 3600, "d": 86400][String(unit)], let count = UInt32(text.dropLast()) else { return nil }
@@ -401,8 +412,6 @@ func usageCommand() async {
     }
 }
 
-let flowsUsage = "usage: cocoonbox flows [list [--json] | export [NAME...] [-o FILE] | import FILE|- [--json] | rm NAME...]"
-
 func flowObject(_ flow: Cocoonbox_Control_V1_Flow, content: Bool) -> [String: Any] {
     var object: [String: Any] = [
         "name": flow.name, "sha256": flow.sha256, "rev": flow.rev, "size": flow.size, "saved_at_ms": flow.savedAtMs,
@@ -482,8 +491,6 @@ func flowsCommand() async {
         fail(BoxConnection.describe(error))
     }
 }
-
-let keysUsage = "usage: cocoonbox keys [add NAME --host HOST... [--header H] [--template T | --query P] | ls | rotate NAME | rm NAME] [--json]"
 
 // keyOptions splits the words after `keys` into positional words and the values of its flags; --host repeats and takes commas.
 func keyOptions() -> (words: [String], values: [String: [String]]) {
@@ -641,8 +648,6 @@ func keysCommand() async {
     }
 }
 
-let devicesUsage = "usage: cocoonbox devices [list] [--json] | devices revoke ID"
-
 func deviceObject(_ device: Cocoonbox_Control_V1_Device) -> [String: Any] {
     [
         "id": device.id, "client": device.client, "label": device.label, "created_at_ms": device.createdAtMs,
@@ -676,8 +681,6 @@ func devicesCommand() async {
         fail(BoxConnection.describe(error))
     }
 }
-
-let shareUsage = "usage: cocoonbox share [create BOX [--ttl 24h] | ls | revoke ID] [--json]"
 
 func shareObject(_ share: Cocoonbox_Control_V1_Share, name: String, endpoint: Endpoint) -> [String: Any] {
     ["id": share.id, "box_id": share.boxID, "name": name, "link": ShareSetup.link(endpoint: endpoint, secret: share.secret), "write": share.write,
@@ -746,7 +749,7 @@ func readSecret(_ prompt: String) -> String? {
     return readpassphrase(prompt, &buffer, buffer.count, 0).map { String(cString: $0) }
 }
 
-// pastesToken keeps today's paste for --token -, an SSH session and a stdin that is no terminal, unless --browser.
+// pastesToken is true for --token -, an SSH session or a non-terminal stdin, unless --browser or --invite.
 func pastesToken() -> Bool {
     if flags.contains("--invite") {
         guard !flags.contains("--token"), !flags.contains("--from-app") else { fail("--invite signs up through the browser; it takes neither --token nor --from-app") }
@@ -866,7 +869,7 @@ func serve() async {
         endpoint: endpoint, token: token(endpoint), wake: !flags.contains("--no-wake"), box: value(of: "--box"), link: link,
         cache: caches.appendingPathComponent("tools-\(endpoint.host).json"), output: { output.write($0) }
     )
-    // a client that stops the bridge with SIGINT, SIGTERM or SIGHUP still gets its sessions closed; Claude Code sends SIGINT, then SIGKILL 0.5 s later
+    // a client's SIGINT, SIGTERM or SIGHUP still closes the sessions (Claude Code sends SIGKILL 0.5 s after SIGINT).
     let stopping = Mutex(false)
     let stops = [SIGINT, SIGTERM, SIGHUP].map { number in
         signal(number, SIG_IGN)
@@ -891,12 +894,7 @@ func headers() {
     print(String(decoding: data, as: UTF8.self))
 }
 
-let rshUsage = "usage: cocoonbox rsh [--box NAME|ID] [-t] [-l USER] [HOST] COMMAND..."
-let maxTerminfo = 256 << 10
-
-// ExecInput is the frames an rsh call sends after start: stdin chunks read from fd 0 on their
-// own thread, one read per frame the call asks for, so a chunk or two at most wait in memory,
-// then eof; and any signal or terminal size sent in between.
+// ExecInput streams stdin, one read per requested frame, then eof, plus signals and resizes.
 struct ExecInput: AsyncSequence, Sendable {
     typealias Element = Cocoonbox_Agent_V1_ExecClientFrame
     typealias Failure = Never
@@ -971,16 +969,14 @@ final class Terminal: Sendable {
     }
 }
 
-// terminfo is the local terminfo source of term as `infocmp -x` prints it, which a box without
-// the entry compiles; empty when infocmp has none or it is larger than a box takes.
+// terminfo is `infocmp -x term`, empty when missing or over maxTerminfo.
 func terminfo(_ term: String) -> String {
     guard !term.isEmpty, let run = try? Command.run(["infocmp", "-x", term], environment: ProcessInfo.processInfo.environment),
           run.status == 0, run.out.count <= maxTerminfo else { return "" }
     return String(decoding: run.out, as: UTF8.self)
 }
 
-// retry says whether a failed read or write of fd should run again, after waiting for fd when
-// it is non-blocking: rsync hands its remote shell non-blocking descriptors.
+// retry says whether to redo a failed read or write; rsync passes non-blocking fds, so EAGAIN polls.
 func retry(_ fd: Int32, _ event: Int32) -> Bool {
     switch errno {
     case EINTR:
@@ -1034,7 +1030,7 @@ func rsh() async {
             let host = word.split(separator: "@").last.map(String.init) ?? word
             return boxes.first { $0.id == host || $0.name == host }
         }
-        var box: Cocoonbox_Control_V1_Box
+        let box: Cocoonbox_Control_V1_Box
         if let ref = options["--box"] {
             box = CocoonBoxCLI.box(ref, in: boxes)
             if let host = words.first, host.split(separator: "@").last == "box" || named(host) != nil { words.removeFirst() }
@@ -1103,8 +1099,6 @@ func rsh() async {
     exit(code)
 }
 
-let offloadStore = OffloadStore(support: support)
-
 // working names the box CLI sessions at work in a running box, for the warning before a hibernate or an upgrade.
 func working(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) async -> String? {
     guard box.state == .running else { return nil }
@@ -1133,8 +1127,7 @@ func wake(_ connection: BoxConnection, _ box: Cocoonbox_Control_V1_Box) async th
     if response.hasOperation, !response.operation.id.isEmpty { await follow(connection, response.operation.id) }
 }
 
-// offloadKey is the repo key of --dir or the working directory. For an offload in flight it falls back
-// to the record of the same top level, whose key changes when an empty repo gets its first commit.
+// offloadKey is the repo key of --dir or cwd; in flight it falls back to the record of the same top level.
 func offloadKey(inFlight: Bool = false) -> String {
     let dir = URL(fileURLWithPath: value(of: "--dir") ?? FileManager.default.currentDirectoryPath)
     guard let repo = GitRepo.open(dir, environment: ProcessInfo.processInfo.environment) else { fail("\(dir.path) is not in a git repository") }
@@ -1160,6 +1153,7 @@ func positional(_ arguments: ArraySlice<String>) -> [String] {
     }
     return words
 }
+
 func findingObjects(_ findings: [Finding]) -> [[String: String]] {
     findings.map { ["check": $0.check, "outcome": $0.outcome.rawValue, "detail": $0.detail] }
 }
@@ -1332,14 +1326,6 @@ func secrets() {
     print(entries.isEmpty ? "no secrets opted in" : entries.joined(separator: "\n"))
 }
 
-let ownPath = (Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])).resolvingSymlinksInPath().path
-
-let executable: String = {
-    let linked = home.appendingPathComponent(".local/bin/cocoonbox").path
-    let target = (try? FileManager.default.destinationOfSymbolicLink(atPath: linked)).map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().path }
-    return target == ownPath ? linked : ownPath
-}()
-
 func run(_ argv: [String]) -> Bool {
     FileHandle.standardError.write(Data(("$ " + argv.joined(separator: " ") + "\n").utf8))
     let process = Process()
@@ -1360,7 +1346,6 @@ func setup() {
     if client == "cursor" {
         if flags.contains("--print") { return print("Merge into ~/.cursor/mcp.json:\n\(Plugin.mcpConfig(command: executable))") }
         let file = home.appendingPathComponent(".cursor/mcp.json")
-        // an existing file is merged into; one this cannot parse is left alone
         var config: [String: Any] = [:]
         if let data = try? Data(contentsOf: file), !data.isEmpty {
             guard let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any], parsed["mcpServers"] == nil || parsed["mcpServers"] is [String: Any] else {

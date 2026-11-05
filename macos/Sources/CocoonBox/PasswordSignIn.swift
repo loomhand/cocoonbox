@@ -18,8 +18,7 @@ struct PasswordSignInButton: View {
     }
 }
 
-// PasswordSignInSheet holds the values only while it is open; the agent fills them
-// into the active tab when its origin is still the one shown here.
+// PasswordSignInSheet holds the values only while open; the agent fills them only on the origin shown.
 struct PasswordSignInSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
@@ -118,7 +117,7 @@ struct PasswordSignInSheet: View {
     }
 }
 
-// CredentialField is an AppKit field with a content type, so AutoFill offers the Mac's Passwords on it (design.md 20.4).
+// CredentialField is an AppKit field with a content type, so AutoFill offers the Mac's Passwords on it (design.md §20.4).
 struct CredentialField: NSViewRepresentable {
     @Binding var text: String
     let kind: NSTextContentType
