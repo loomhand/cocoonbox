@@ -57,19 +57,6 @@ func TestLoadParking(t *testing.T) {
 	}
 }
 
-func TestLoadRefusesTheListsTheUsersTableHolds(t *testing.T) {
-	for _, body := range []string{
-		"rebase_images: [cbcore:v1]\nimage_owners: {\"cbcore:v1\": [u-a]}\n",
-		"state:\n  park_owners: [u-a]\n",
-		"state:\n  delta_users: [u-a]\n",
-		"state:\n  gc:\n    users: [u-a]\n",
-	} {
-		if _, err := Load(writeConfig(t, required+body)); err == nil {
-			t.Errorf("Load of %q took a list the users table holds now", body)
-		}
-	}
-}
-
 func TestLoadTheBoxDoor(t *testing.T) {
 	cfg, err := Load(writeConfig(t, required+"connect:\n  public_url: https://cb.example/\n  box_listen: 10.203.0.1:18091\n"))
 	if err != nil || cfg.Connect.BoxListen != "10.203.0.1:18091" || cfg.Connect.PublicURL != "https://cb.example" {
@@ -84,6 +71,10 @@ func TestLoadRejects(t *testing.T) {
 		{name: "unknown key", body: "listn: x\n", want: "unknown field"},
 		{name: "retired users", body: required + "users: []\n", want: "unknown field"},
 		{name: "retired scheduled users", body: required + "state:\n  scheduled_users: []\n", want: "unknown field"},
+		{name: "retired image owners", body: required + "image_owners: {\"cbcore:v1\": [u-a]}\n", want: "unknown field"},
+		{name: "retired park owners", body: required + "state:\n  park_owners: [u-a]\n", want: "unknown field"},
+		{name: "retired delta users", body: required + "state:\n  delta_users: [u-a]\n", want: "unknown field"},
+		{name: "retired gc users", body: required + "state:\n  gc:\n    users: [u-a]\n", want: "unknown field"},
 		{name: "no accounts", body: signingKey, want: "accounts.dsn_file and accounts.master_key_file are required"},
 		{name: "bad port", body: "agent_port: 70000\n", want: "agent_port"},
 		{name: "sandboxd without url", body: "sandboxd:\n  token_file: t\n", want: "sandboxd.url"},

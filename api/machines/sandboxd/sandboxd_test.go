@@ -186,9 +186,7 @@ func TestTenantsPutKeepsTheTokenAndDeleteIsIdempotent(t *testing.T) {
 
 func TestTheBackendManagesTenantsWithItsOwnClientAndClass(t *testing.T) {
 	fake := newFakeSandboxd(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk"})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, TenantEgressClass: "desk"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -374,7 +372,7 @@ func TestDeliverInstallsTheGWKeyHostOnlyAndWritesTheIdentity(t *testing.T) {
 	}
 }
 
-func TestDeliverFailures(t *testing.T) {
+func TestDeliverReportsAFailedExecAnUnreachableGuestAHibernatedBoxAndAnUnknownMachine(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	b := newTestBackend(t, fake)
 	claimRunning(t, b)
@@ -709,9 +707,7 @@ func TestRenewExtendsEveryLeaseButArchivedOnes(t *testing.T) {
 func TestTheLedgerMirrorsEveryMachineAndVerifyRepairsIt(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	ledger := clustertest.Open(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Ledger: ledger})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443, Ledger: ledger})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -1361,6 +1357,24 @@ type fakeSandboxd struct {
 	info        map[string]any
 }
 
+func newFakeSandboxd(t *testing.T) *fakeSandboxd {
+	t.Helper()
+	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}, adoptable: map[string]*fakeSandbox{}}
+	mux := f.handler()
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		down := f.down
+		f.mu.Unlock()
+		if down {
+			writeError(w, http.StatusServiceUnavailable, "node down")
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
 func (f *fakeSandboxd) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/info", f.root(func(w http.ResponseWriter, _ *http.Request) {
@@ -1716,32 +1730,12 @@ func (f *fakeSandboxd) renewed() []string {
 	return slices.Clone(f.renews)
 }
 
-func newFakeSandboxd(t *testing.T) *fakeSandboxd {
-	t.Helper()
-	f := &fakeSandboxd{sandboxes: map[string]*fakeSandbox{}, calls: map[string]int{}, tenants: map[string]tenantRequest{}, adoptable: map[string]*fakeSandbox{}}
-	mux := f.handler()
-	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		down := f.down
-		f.mu.Unlock()
-		if down {
-			writeError(w, http.StatusServiceUnavailable, "node down")
-			return
-		}
-		mux.ServeHTTP(w, r)
-	}))
-	t.Cleanup(f.srv.Close)
-	return f
-}
-
 func newTestBackend(t *testing.T, fake *fakeSandboxd) *Backend {
 	t.Helper()
 	if onSharedTable {
 		return newSharedBackend(t, fake, clustertest.Open(t))
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	b, err := New(ctx, Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443})
+	b, err := New(t.Context(), Options{URL: fake.srv.URL, Token: rootToken, Image: template, Flavors: []machines.Flavor{xlarge}, DiskGiB: 40, AgentPort: 7443})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

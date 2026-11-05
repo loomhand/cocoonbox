@@ -79,7 +79,7 @@ func TestOnlyAnIdentityURLSendsOutsideTokensToItsWebhook(t *testing.T) {
 	t.Cleanup(func() { transport.TLSClientConfig = trusted })
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "identity-token"), []byte("caller-token\n"), 0o600); err != nil {
-		t.Fatal(err)
+		t.Fatalf("write identity token: %v", err)
 	}
 	accounts := &oneUser{}
 	off, err := openIdentities(t.Context(), &config.Config{}, accounts)

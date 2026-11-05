@@ -30,7 +30,7 @@ func TestPoolKeepsOneConnectionPerEndpointAndClosesTheOnesABoxLeftIdle(t *testin
 	}
 	moved, _ := pool.Conn("cb-1", machines.TCPEndpoint("127.0.0.1:2"))
 	if moved == first || first.GetState() == connectivity.Shutdown || len(pool.conns["cb-1"]) != 2 {
-		t.Errorf("a connection used within the idle timeout closed: state %s, %d held", first.GetState(), len(pool.conns["cb-1"]))
+		t.Errorf("moving endpoints kept the first connection: moved == first %t, first %s, %d held", moved == first, first.GetState(), len(pool.conns["cb-1"]))
 	}
 	clock = clock.Add(idleTimeout + time.Second)
 	if _, err := pool.Conn("cb-1", machines.TCPEndpoint("127.0.0.1:3")); err != nil {
@@ -69,7 +69,11 @@ func TestRebaseRestoreSurvivesAnEdgeCallToTheOldMachine(t *testing.T) {
 		_, err := d.Restore(ctx, "cb-1", newEp, reqs, nil)
 		done <- err
 	}()
-	<-midway
+	select {
+	case <-midway:
+	case err := <-done:
+		t.Fatalf("Restore ended before its second page: %v", err)
+	}
 	clock = clock.Add(idleTimeout + time.Second)
 	if _, err := pool.Conn("cb-1", oldEp); err != nil {
 		t.Fatalf("edge Conn: %v", err)

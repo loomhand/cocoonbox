@@ -47,7 +47,7 @@ func TestPutMachineRoundTripsEveryField(t *testing.T) {
 	st := clustertest.Open(t)
 	want := cluster.Machine{
 		ID: "cb-1", Owner: "u-1", Image: "desk:v1", CreatedAt: time.Now(), Claim: []byte(`{"id":"sbx-1", "hibernated":false}`),
-		OwnerAddr: "10.0.0.1:17780", Op: "wake", OpErr: "", OpUntil: time.Now().Add(time.Minute), Revision: 7,
+		OwnerAddr: "10.0.0.1:17780", Op: "wake", OpErr: "wake failed", OpUntil: time.Now().Add(time.Minute), Revision: 7,
 		Meta: map[string]string{"slept": "1"}, Wakes: 3, Routed: true, Ready: true, ReadyRestarts: 2,
 	}
 	if err := st.PutMachine(t.Context(), want); err != nil {
@@ -76,7 +76,7 @@ func TestPutMachineRoundTripsEveryField(t *testing.T) {
 	}
 }
 
-func TestEqualComparesEveryFieldAsTheRowStoresIt(t *testing.T) {
+func TestEqualIgnoresTheVersionAndHowTheRowStoresTimesAndEmptyValues(t *testing.T) {
 	at := time.Now()
 	m := cluster.Machine{ID: "cb-1", CreatedAt: at, Meta: map[string]string{}, Claim: []byte{}, Version: 3}
 	stored := cluster.Machine{ID: "cb-1", CreatedAt: at.Truncate(time.Microsecond).In(time.FixedZone("x", 3600)), Version: 9}
@@ -244,10 +244,8 @@ func TestOperationsKeepTheirEventsUntilPurged(t *testing.T) {
 
 func TestListenDeliversTheChangeOfEveryWrite(t *testing.T) {
 	st := clustertest.Open(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	ready, got := make(chan struct{}), make(chan cluster.Change, 4)
-	go st.Listen(ctx, cluster.ChannelMachines, func() { close(ready) }, func(payload string) {
+	go st.Listen(t.Context(), cluster.ChannelMachines, func() { close(ready) }, func(payload string) {
 		c, err := cluster.ParseChange(payload)
 		if err != nil {
 			t.Errorf("ParseChange(%q): %v", payload, err)
@@ -469,9 +467,7 @@ func TestMirrorAppliesTheNewestWritePerKeyInOrder(t *testing.T) {
 	m.Put("a", write("a1"))
 	m.Put("b", write("b1"))
 	m.Put("a", write("a2"))
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	go m.Run(ctx)
+	go m.Run(t.Context())
 	if err := m.Flush(t.Context()); err != nil {
 		t.Fatalf("Flush: %v", err)
 	}

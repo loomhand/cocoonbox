@@ -53,10 +53,7 @@ func TestPresignUsesPublicEndpointAndPrefix(t *testing.T) {
 }
 
 func TestAPresignedGetLastsUntilTheDeadlineUpToAnHourAndAPutKeepsTheTTL(t *testing.T) {
-	s, err := New(Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newStore(t, "127.0.0.1:9000", "")
 	expires := func(raw string) int {
 		u, err := url.Parse(raw)
 		if err != nil {
@@ -102,10 +99,7 @@ func TestAPresignedGetLastsUntilTheDeadlineUpToAnHourAndAPutKeepsTheTTL(t *testi
 }
 
 func TestRefusesKeysOutsideTheirPath(t *testing.T) {
-	s, err := New(Options{Endpoint: "127.0.0.1:9000", Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newStore(t, "127.0.0.1:9000", "state")
 	for _, key := range []string{"", ".", "..", "../cb-other/head.json", "cb-a/../cb-b/head.json", "cb-a/chunks/../../cb-b/x", "/cb-a/head.json", "cb-a//head.json", "cb-a/head.json/.."} {
 		if _, err := s.PresignPut(t.Context(), key); err == nil {
 			t.Errorf("PresignPut(%q) accepted", key)
@@ -130,10 +124,7 @@ func TestListAndCopyStayUnderThePrefix(t *testing.T) {
 			`<Contents><Key>state/cb-a/chunks/c1</Key><Size>5</Size></Contents><Contents><Key>state/cb-a/head.json</Key><Size>1</Size></Contents></ListBucketResult>`))
 	}))
 	t.Cleanup(srv.Close)
-	s, err := New(Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newStore(t, strings.TrimPrefix(srv.URL, "http://"), "state")
 	objects, err := s.List(t.Context(), "cb-a/")
 	if want := []store.Object{{Key: "cb-a/chunks/c1", Size: 5}, {Key: "cb-a/head.json", Size: 1}}; err != nil || listPrefix != "state/cb-a/" || !slices.Equal(objects, want) {
 		t.Errorf("List = %v, %v (prefix %q)", objects, err, listPrefix)
@@ -162,11 +153,8 @@ func TestDeleteSendsKeysUnderThePrefixAndReportsFailures(t *testing.T) {
 			`<Error><Key>state/alice/chunks/c2</Key><Code>AccessDenied</Code><Message>denied</Message></Error></DeleteResult>`))
 	}))
 	t.Cleanup(srv.Close)
-	s, err := New(Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	err = s.Delete(t.Context(), []string{"alice/chunks/c1", "alice/chunks/c2"})
+	s := newStore(t, strings.TrimPrefix(srv.URL, "http://"), "state")
+	err := s.Delete(t.Context(), []string{"alice/chunks/c1", "alice/chunks/c2"})
 	if err == nil || !strings.Contains(err.Error(), "delete alice/chunks/c2") || strings.Contains(err.Error(), "c1") {
 		t.Errorf("Delete = %v, want only the c2 failure", err)
 	}
@@ -294,15 +282,12 @@ func TestDeleteSendsBatchesInBoundedParallel(t *testing.T) {
 		_, _ = w.Write([]byte(result + "</DeleteResult>"))
 	}))
 	t.Cleanup(srv.Close)
-	s, err := New(Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newStore(t, strings.TrimPrefix(srv.URL, "http://"), "state")
 	all := make([]string, n, n+1)
 	for i := range n {
 		all[i] = fmt.Sprintf("alice/chunks/%05d", i)
 	}
-	err = s.Delete(t.Context(), append(all, "alice/chunks/denied"))
+	err := s.Delete(t.Context(), append(all, "alice/chunks/denied"))
 	if err == nil || !strings.Contains(err.Error(), "delete alice/chunks/denied") || strings.Count(err.Error(), "delete ") != 1 {
 		t.Errorf("Delete = %v, want only the denied failure", err)
 	}
@@ -321,10 +306,7 @@ func TestGetMapsMissingObject(t *testing.T) {
 		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?><Error><Code>NoSuchKey</Code><Message>missing</Message></Error>`))
 	}))
 	t.Cleanup(srv.Close)
-	s, err := New(Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newStore(t, strings.TrimPrefix(srv.URL, "http://"), "")
 	if _, err := s.Get(t.Context(), "cb-2bd806c97f0e/head.json"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("Get: %v, want ErrNotFound", err)
 	}
@@ -332,7 +314,8 @@ func TestGetMapsMissingObject(t *testing.T) {
 
 func TestPutIfSendsTheVersionAndMapsAPreconditionFailure(t *testing.T) {
 	var mu sync.Mutex
-	etag, body := "", []byte(nil)
+	var etag string
+	var body []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
@@ -365,10 +348,7 @@ func TestPutIfSendsTheVersionAndMapsAPreconditionFailure(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
-	s, err := New(Options{Endpoint: strings.TrimPrefix(srv.URL, "http://"), Region: "us-east-1", Bucket: "cocoonbox", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newStore(t, strings.TrimPrefix(srv.URL, "http://"), "")
 	if _, v, err := s.GetVersion(t.Context(), "u/index.json"); !errors.Is(err, store.ErrNotFound) || v != "" {
 		t.Fatalf("GetVersion of a missing object = %q, %v", v, err)
 	}
@@ -442,14 +422,11 @@ func TestListAndDeleteOnMinIO(t *testing.T) {
 
 func newGCSStore(t *testing.T, addr string) *S3 {
 	t.Helper()
-	s, err := New(Options{Endpoint: addr, Region: "us-east-1", Bucket: "cocoonbox", Prefix: "state", AccessKey: "ak", SecretKey: "sk"})
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	s := newStore(t, addr, "state")
 	dial := func(ctx context.Context, network, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, network, addr)
 	}
-	s.client, err = minio.New("storage.googleapis.com", &minio.Options{
+	client, err := minio.New("storage.googleapis.com", &minio.Options{
 		Creds:        credentials.NewStaticV4("ak", "sk", ""),
 		Region:       "us-east-1",
 		BucketLookup: minio.BucketLookupPath,
@@ -457,6 +434,16 @@ func newGCSStore(t *testing.T, addr string) *S3 {
 	})
 	if err != nil {
 		t.Fatalf("gcs client: %v", err)
+	}
+	s.client = client
+	return s
+}
+
+func newStore(t *testing.T, endpoint, prefix string) *S3 {
+	t.Helper()
+	s, err := New(Options{Endpoint: endpoint, Region: "us-east-1", Bucket: "cocoonbox", Prefix: prefix, AccessKey: "ak", SecretKey: "sk"})
+	if err != nil {
+		t.Fatalf("New: %v", err)
 	}
 	return s
 }
