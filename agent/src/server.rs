@@ -415,11 +415,7 @@ pub async fn serve(cfg: ServeConfig) -> Result<(), String> {
         .await
         .map_err(|e| format!("bind {}: {e}", cfg.listen))?;
     eprintln!("serve listening on {}", cfg.listen);
-    let model = Arc::new(llm::Client::new(
-        &cfg.gw_base_url,
-        &cfg.gw_api_key,
-        cfg.anthropic_messages,
-    )?);
+    let model = llm::Client::new(&cfg.gw_base_url, &cfg.gw_api_key, cfg.anthropic_messages)?;
     let toolhost = rpc::Client::new(cfg.toolhost_socket.clone());
     let tools: Arc<dyn Tools> = Arc::new(Split::new(
         rpc::Client::new(cfg.shuttle_socket.clone()),

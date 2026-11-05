@@ -16,7 +16,7 @@ use crate::config::{Automation, ServeConfig};
 use crate::connect::{self, Outcome};
 use crate::dispatch::{Caller, Dispatcher, ToolOutput, Tools};
 use crate::journal::Journal;
-use crate::llm::{self, Delta, Message, Model, Part, Request, Tally, ToolCall, ToolSpec, Usage};
+use crate::llm::{self, Delta, Message, Part, Request, Tally, ToolCall, ToolSpec, Usage};
 use crate::pb::{self, AgentStatus, Role, TranscriptEntry, event, transcript_entry::Body};
 use crate::route::Router;
 use crate::secrets::SECRETS;
@@ -63,7 +63,7 @@ pub struct Runtime {
     pub cfg: ServeConfig,
     pub journal: Arc<Journal>,
     pub dispatcher: Arc<Dispatcher>,
-    pub(crate) model: Arc<dyn Model>,
+    pub(crate) model: llm::Client,
     pub(crate) computer_tools: Vec<ToolSpec>,
     pub(crate) computer_prompt: String,
     machine: tokio::sync::OnceCell<String>,
@@ -89,7 +89,7 @@ impl Runtime {
     /// Opens the store, closes turns left open by a previous process, and builds the runtime over `model` and `tools`.
     pub async fn open(
         mut cfg: ServeConfig,
-        model: Arc<dyn Model>,
+        model: llm::Client,
         tools: Arc<dyn Tools>,
     ) -> Result<Arc<Self>, String> {
         if !cfg.automation.plans() {
@@ -381,7 +381,7 @@ impl Runtime {
         subagent: &str,
         usage: &mut Tally,
     ) -> Result<StepOut, String> {
-        let mut stream = self.model.stream(req).await?;
+        let mut stream = self.model.start(req).await?;
         let mut text = String::new();
         let mut pending = Block::default();
         let mut reasoning = Block::default();

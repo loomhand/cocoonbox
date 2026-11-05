@@ -188,21 +188,7 @@ pub enum Delta {
     Done,
 }
 
-/// What the loop sees of a model: one streaming request at a time.
-#[tonic::async_trait]
-pub trait Model: Send + Sync {
-    /// Starts a streaming request.
-    async fn stream(&self, req: &Request<'_>) -> Result<Box<dyn Deltas>, String>;
-}
-
-/// A stream of normalized deltas for one request.
-#[tonic::async_trait]
-pub trait Deltas: Send {
-    /// Returns the next delta; `None` after `Delta::Done`, an error when the body ends before it.
-    async fn next(&mut self) -> Result<Option<Delta>, String>;
-}
-
-/// HTTP client bound to one gw endpoint; the production [`Model`].
+/// HTTP client bound to one gw endpoint.
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
@@ -296,13 +282,6 @@ impl Client {
     }
 }
 
-#[tonic::async_trait]
-impl Model for Client {
-    async fn stream(&self, req: &Request<'_>) -> Result<Box<dyn Deltas>, String> {
-        Ok(Box::new(self.start(req).await?))
-    }
-}
-
 /// Pull-based stream of deltas for one request.
 pub struct Stream {
     body: BoxStream<'static, reqwest::Result<Bytes>>,
@@ -351,13 +330,6 @@ impl Stream {
             Parser::Chat(p) => p.feed(event, &mut self.pending),
             Parser::Messages(p) => p.feed(event, &mut self.pending),
         }
-    }
-}
-
-#[tonic::async_trait]
-impl Deltas for Stream {
-    async fn next(&mut self) -> Result<Option<Delta>, String> {
-        Stream::next(self).await
     }
 }
 

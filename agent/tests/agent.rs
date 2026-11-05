@@ -237,14 +237,12 @@ impl Harness {
             checkpoint_nudge,
             reasoning_effort,
         };
-        let model = Arc::new(
-            cocoonbox_agent::llm::Client::new(
-                &cfg.gw_base_url,
-                &cfg.gw_api_key,
-                anthropic_messages,
-            )
-            .unwrap(),
-        );
+        let model = cocoonbox_agent::llm::Client::new(
+            &cfg.gw_base_url,
+            &cfg.gw_api_key,
+            anthropic_messages,
+        )
+        .unwrap();
         let tools = Arc::new(cocoonbox_agent::toolhost::rpc::Client::new(
             cfg.toolhost_socket.clone(),
         ));
