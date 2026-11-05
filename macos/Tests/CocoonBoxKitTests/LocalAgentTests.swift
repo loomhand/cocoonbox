@@ -1,5 +1,6 @@
-import CocoonBoxTerminal
+@testable import CocoonBoxTerminal
 import Foundation
+import Synchronization
 import Testing
 
 @Suite struct LocalAgentTests {
@@ -77,5 +78,16 @@ import Testing
         let settings = try #require(launch.files[".claude/settings.json"])
         let root = try #require(try JSONSerialization.jsonObject(with: Data(settings.utf8)) as? [String: Any])
         #expect(root["enabledPlugins"] as? [String: Bool] == ["cocoonbox@cocoonbox": false])
+    }
+
+    @Test func aPasteTheProgramReadsLateKeepsItsOutputFlowing() async throws {
+        let process = try PTYProcess(arguments: ["/bin/sh", "-c", "stty raw -echo; head -c 1000000 /dev/zero; cat >/dev/null"],
+                                     environment: [:], directory: "/", columns: 80, rows: 24)
+        let received = Atomic(0)
+        process.start(output: { received.add($0.count, ordering: .relaxed) }, exited: { _ in })
+        #expect(await until { received.load(ordering: .relaxed) > 0 })
+        process.write(Data(repeating: 0x78, count: 1 << 20))
+        #expect(await until(seconds: 10) { received.load(ordering: .relaxed) >= 1_000_000 })
+        process.hangUp(grace: .milliseconds(500))
     }
 }

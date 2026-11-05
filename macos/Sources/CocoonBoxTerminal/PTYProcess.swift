@@ -6,6 +6,7 @@ final class PTYProcess: @unchecked Sendable {
     let pid: pid_t
     private let master: Int32
     private let queue = DispatchQueue(label: "cocoonbox.pty")
+    private let writer = DispatchQueue(label: "cocoonbox.pty.write")
     private var reader: DispatchSourceRead?
     private var exitWatch: DispatchSourceProcess?
     private var reaped = false
@@ -41,11 +42,11 @@ final class PTYProcess: @unchecked Sendable {
             let count = read(master, &buffer, buffer.count)
             if count > 0 {
                 output(Data(buffer[..<count]))
-            } else if count == 0 || errno != EAGAIN {
+            } else {
                 reader.cancel()
             }
         }
-        reader.setCancelHandler { close(master) }
+        reader.setCancelHandler { [writer] in writer.async { close(master) } }
         let exitWatch = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: queue)
         let pid = pid
         exitWatch.setEventHandler {
@@ -63,7 +64,7 @@ final class PTYProcess: @unchecked Sendable {
 
     func write(_ data: Data) {
         let master = master
-        queue.async {
+        writer.async {
             data.withUnsafeBytes { raw in
                 var offset = 0
                 while offset < raw.count {
