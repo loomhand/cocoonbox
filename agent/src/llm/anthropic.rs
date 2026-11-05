@@ -124,7 +124,7 @@ pub fn body(req: &Request<'_>) -> Value {
                     json!({"type": "text", "text": if text.is_empty() { "(no output)" } else { text }}),
                 ];
                 if let Some(img) = image {
-                    content.push(part(&Part::Image(img.clone()), req.vision));
+                    content.push(image_part(img, req.vision));
                 }
                 let mut block =
                     json!({"type": "tool_result", "tool_use_id": call_id, "is_error": is_error});
@@ -179,16 +179,20 @@ fn push_user_blocks(messages: &mut Vec<Value>, blocks: Vec<Value>) {
 fn part(p: &Part, vision: bool) -> Value {
     match p {
         Part::Text(t) => json!({"type": "text", "text": t}),
-        Part::Image(img) if vision => {
-            let mut block = json!({
-                "type": "image",
-                "source": {"type": "base64", "media_type": image_mime(img)},
-            });
-            block["source"]["data"] = b64(img).into();
-            block
-        }
-        Part::Image(_) => json!({"type": "text", "text": IMAGE_OMITTED}),
+        Part::Image(img) => image_part(img, vision),
     }
+}
+
+fn image_part(img: &[u8], vision: bool) -> Value {
+    if !vision {
+        return json!({"type": "text", "text": IMAGE_OMITTED});
+    }
+    let mut block = json!({
+        "type": "image",
+        "source": {"type": "base64", "media_type": image_mime(img)},
+    });
+    block["source"]["data"] = b64(img).into();
+    block
 }
 
 fn index_of(v: &Value) -> usize {

@@ -7,7 +7,7 @@ use std::io::{self, Read};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -86,7 +86,7 @@ impl Gate {
     /// Checks the `x-cocoonbox-credential` value of one call and returns its principal.
     pub fn check(&self, credential: Option<&str>) -> Result<Principal, Denied> {
         let now = crate::now_ms() / 1000;
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut inner = crate::lock(&self.inner);
         if inner.identity.is_none() {
             self.reload(&mut inner);
             if inner.identity.is_none() {

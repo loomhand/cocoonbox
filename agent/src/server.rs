@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{broadcast, mpsc};
@@ -311,18 +312,11 @@ impl Session for SessionSvc {
             None => return Err(Status::invalid_argument("fill needs a password or a code")),
         }
         let text = self.toolhost("credential_fill", args).await?;
-        let out: Value =
+        let out: Filled =
             serde_json::from_str(&text).map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(pb::FillCredentialResponse {
-            filled: out["filled"]
-                .as_array()
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_owned))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            submitted: out["submitted"].as_bool().unwrap_or(false),
+            filled: out.filled,
+            submitted: out.submitted,
         }))
     }
 
@@ -334,6 +328,14 @@ impl Session for SessionSvc {
             .await
             .map(Response::new)
     }
+}
+
+#[derive(Deserialize)]
+struct Filled {
+    #[serde(default)]
+    filled: Vec<String>,
+    #[serde(default)]
+    submitted: bool,
 }
 
 type ProgressStream = ReceiverStream<Result<pb::TransferProgress, Status>>;

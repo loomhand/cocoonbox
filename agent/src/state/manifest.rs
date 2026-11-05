@@ -8,7 +8,7 @@ use crate::toolhost::state::Entry;
 pub const VERSION: u32 = 1;
 
 /// One snapshot; ownership is not stored because every file belongs to `user`.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Manifest {
     pub version: u32,
     pub parent: String,
@@ -24,7 +24,7 @@ pub struct Manifest {
 }
 
 /// A walked entry and, for regular files, its chunks in order.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct FileRecord {
     #[serde(flatten)]
     pub entry: Entry,
@@ -33,7 +33,7 @@ pub struct FileRecord {
 }
 
 /// A byte stream stored as chunks.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct Blob {
     pub size: u64,
     pub chunks: Vec<String>,

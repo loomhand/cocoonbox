@@ -502,7 +502,7 @@ fn decode_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<TranscriptEntry> {
         .as_blob()
         .map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, Type::Blob, Box::new(e)))?;
     let mut entry = TranscriptEntry::decode(body)
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        .map_err(|e| rusqlite::Error::FromSqlConversionFailure(1, Type::Blob, Box::new(e)))?;
     entry.seq = u64::try_from(r.get::<_, i64>(0)?).unwrap_or_default();
     Ok(entry)
 }

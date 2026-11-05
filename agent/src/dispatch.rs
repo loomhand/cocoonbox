@@ -318,7 +318,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let journal = Arc::new(Journal::new(Store::open(&dir.path().join("a.db")).unwrap()));
         let tools = Arc::new(MockTools::default());
-        let dispatcher = Dispatcher::new(tools.clone(), Arc::clone(&journal));
+        let dispatcher =
+            Dispatcher::new(Arc::clone(&tools) as Arc<dyn Tools>, Arc::clone(&journal));
         (dir, tools, journal, dispatcher)
     }
 

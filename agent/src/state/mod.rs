@@ -8,7 +8,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use fastcdc::v2020::FastCDC;
 use futures_util::stream::{self, FuturesUnordered};
 use futures_util::{Stream, StreamExt};
@@ -600,15 +600,21 @@ impl StateEngine {
         match part {
             Part::Once { id, url } => self.fetch_chunk(keys, &id, &url, gets, filled).await,
             Part::Shared { id, url, cell } => {
+                let mut first = None;
                 cell.get_or_try_init(|| async {
                     let plain = self.fetch_chunk(keys, &id, &url, gets, filled).await?;
                     let path = cache.join(&id);
-                    tokio::fs::write(&path, plain)
+                    tokio::fs::write(&path, &plain)
                         .await
-                        .map_err(|e| format!("write {}: {e}", path.display()))
+                        .map_err(|e| format!("write {}: {e}", path.display()))?;
+                    first = Some(plain);
+                    Ok::<_, String>(())
                 })
                 .await?;
-                read_cached(cache, &id).await
+                match first {
+                    Some(plain) => Ok(plain),
+                    None => read_cached(cache, &id).await,
+                }
             }
         }
     }
@@ -694,7 +700,7 @@ impl StateEngine {
         };
         let chunker = Chunker {
             keys: Arc::clone(keys),
-            spool: spool.clone(),
+            spool: &spool,
             known: &last.chunks,
             sizes: std::sync::Mutex::new(HashMap::new()),
         };
@@ -770,7 +776,7 @@ impl StateEngine {
                         chunks: Vec::new(),
                     }),
                     Step::Reuse(r) => {
-                        chunker.record(&r.chunks)?;
+                        chunker.record(&r.chunks);
                         let chunks = r.chunks.iter().map(|(id, _)| id.clone()).collect();
                         reuse.insert(key, r);
                         files.push(FileRecord { entry, chunks });
@@ -784,7 +790,7 @@ impl StateEngine {
                             size: entry.size,
                             mtime_ms: entry.mtime_ms,
                             ctime_ns: settled.unwrap_or_default(),
-                            chunks: chunker.sized(&chunks)?,
+                            chunks: chunker.sized(&chunks),
                             compare_only: backup || settled.is_none(),
                         };
                         reread.push((key.clone(), files.len()));
@@ -829,7 +835,7 @@ impl StateEngine {
             .await
             .map_err(|e| format!("write manifest: {e}"))?;
         let ids = referenced(&manifest);
-        let sizes = chunker.sized(&ids)?;
+        let sizes = chunker.sized(&ids);
         let chunks = sizes
             .into_iter()
             .map(|(id, size)| pb::ChunkRef { id, size })
@@ -1022,14 +1028,16 @@ impl StateEngine {
         let size = sealed.len() as u64;
         let keys = Arc::clone(keys);
         let owned = id.to_owned();
-        let plain =
-            tokio::task::spawn_blocking(move || keys.open(&owned, &sealed, u64::from(CHUNK_MAX)))
-                .await
-                .map_err(|e| format!("open task: {e}"))??;
+        let (owned, plain) = tokio::task::spawn_blocking(move || {
+            keys.open(&owned, &sealed, u64::from(CHUNK_MAX))
+                .map(|p| (owned, p))
+        })
+        .await
+        .map_err(|e| format!("open task: {e}"))??;
         drop(slot);
         let mut f = filled.lock().await;
         f.meter.add(size).await;
-        f.sizes.insert(id.to_owned(), plain.len() as u64);
+        f.sizes.insert(owned, plain.len() as u64);
         Ok(plain)
     }
 
@@ -1167,7 +1175,7 @@ enum Step {
 /// Splits byte streams into content-defined chunks and spools the ones the store lacks.
 struct Chunker<'a> {
     keys: Arc<Keys>,
-    spool: PathBuf,
+    spool: &'a Path,
     known: &'a HashSet<String>,
     sizes: std::sync::Mutex<HashMap<String, u64>>,
 }
@@ -1209,7 +1217,7 @@ impl Chunker<'_> {
 
     async fn feed(&self, mut source: Source<'_>) -> Result<Vec<String>, String> {
         let window = 2 * CHUNK_MAX as usize;
-        let mut buf: Vec<u8> = Vec::new();
+        let mut buf = BytesMut::new();
         let mut ids = Vec::new();
         let mut eof = false;
         loop {
@@ -1219,7 +1227,7 @@ impl Chunker<'_> {
                     None => eof = true,
                 }
             }
-            let mut consumed = 0;
+            let end = buf.len();
             let cuts: Vec<(usize, usize)> = FastCDC::new(
                 &buf,
                 CHUNK_MIN as usize,
@@ -1229,13 +1237,11 @@ impl Chunker<'_> {
             .map(|c| (c.offset, c.length))
             .collect();
             for (offset, length) in cuts {
-                if !eof && offset + length == buf.len() {
+                if !eof && offset + length == end {
                     break;
                 }
-                ids.push(self.emit(buf[offset..offset + length].to_vec()).await?);
-                consumed = offset + length;
+                ids.push(self.emit(buf.split_to(length).freeze()).await?);
             }
-            buf.drain(..consumed);
             if eof {
                 return Ok(ids);
             }
@@ -1243,46 +1249,35 @@ impl Chunker<'_> {
     }
 
     /// Records the sizes of chunks a reused file brings.
-    fn record(&self, chunks: &[(String, u64)]) -> Result<(), String> {
-        self.lock()?.extend(chunks.iter().cloned());
-        Ok(())
+    fn record(&self, chunks: &[(String, u64)]) {
+        crate::lock(&self.sizes).extend(chunks.iter().cloned());
     }
 
-    fn sized<'s>(
-        &self,
-        ids: impl IntoIterator<Item = &'s String>,
-    ) -> Result<Vec<(String, u64)>, String> {
-        let sizes = self.lock()?;
-        Ok(ids
-            .into_iter()
+    fn sized<'s>(&self, ids: impl IntoIterator<Item = &'s String>) -> Vec<(String, u64)> {
+        let sizes = crate::lock(&self.sizes);
+        ids.into_iter()
             .map(|id| (id.clone(), sizes.get(id).copied().unwrap_or(0)))
-            .collect())
+            .collect()
     }
 
-    fn lock(&self) -> Result<std::sync::MutexGuard<'_, HashMap<String, u64>>, String> {
-        self.sizes
-            .lock()
-            .map_err(|_| "chunk sizes lock poisoned".to_owned())
-    }
-
-    async fn emit(&self, chunk: Vec<u8>) -> Result<String, String> {
+    async fn emit(&self, chunk: Bytes) -> Result<String, String> {
         let keys = Arc::clone(&self.keys);
         let len = chunk.len() as u64;
         let (id, chunk) =
             tokio::task::spawn_blocking(move || keys.id(&chunk).map(|id| (id, chunk)))
                 .await
                 .map_err(|e| format!("id task: {e}"))??;
-        if self.lock()?.insert(id.clone(), len).is_some() {
+        if crate::lock(&self.sizes).insert(id.clone(), len).is_some() {
             return Ok(id);
         }
         if self.known.contains(&id) {
             return Ok(id);
         }
         let keys = Arc::clone(&self.keys);
-        let seal_id = id.clone();
-        let sealed = tokio::task::spawn_blocking(move || keys.seal(&seal_id, &chunk))
-            .await
-            .map_err(|e| format!("seal task: {e}"))??;
+        let (id, sealed) =
+            tokio::task::spawn_blocking(move || keys.seal(&id, &chunk).map(|s| (id, s)))
+                .await
+                .map_err(|e| format!("seal task: {e}"))??;
         let path = self.spool.join(&id);
         tokio::fs::write(&path, sealed)
             .await
@@ -1834,7 +1829,7 @@ mod tests {
         let known = HashSet::new();
         let chunker = Chunker {
             keys: Arc::new(Keys::derive(&[7u8; 32]).unwrap()),
-            spool: dir.path().to_owned(),
+            spool: dir.path(),
             known: &known,
             sizes: std::sync::Mutex::new(HashMap::new()),
         };
