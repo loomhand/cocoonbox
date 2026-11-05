@@ -423,8 +423,8 @@ func TestReachesAgentStartedAfterRefusedDial(t *testing.T) {
 		t.Fatalf("close: %v", err)
 	}
 	env := newProxyEnvAt(t, addr)
-	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable {
-		t.Fatalf("Hello before the agent listens: %v, want Unavailable", err)
+	if _, err := env.client.Hello(env.aliceCtx(t), &agentv1.HelloRequest{}); status.Code(err) != codes.Unavailable || strings.Contains(err.Error(), addr) {
+		t.Fatalf("Hello before the agent listens: %v, want Unavailable without the agent's address", err)
 	}
 	time.Sleep(3 * time.Second)
 
