@@ -27,7 +27,7 @@ const VISION_PREFIXES: [&str; 4] = [
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(180);
-const ERROR_BODY_BYTES: usize = 2048;
+const ERROR_BODY_CHARS: usize = 2048;
 const RETRY_WAITS: [Duration; 5] = [
     Duration::from_secs(2),
     Duration::from_secs(4),
@@ -59,7 +59,7 @@ pub enum Part {
 }
 
 /// A tool call requested by the model.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
@@ -80,24 +80,6 @@ pub enum Message {
         image: Option<Bytes>,
         is_error: bool,
     },
-}
-
-/// Which wire protocol a model speaks through gw.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Wire {
-    Chat,
-    Messages,
-}
-
-impl Wire {
-    /// Chat completions for every model; Messages for `anthropic/` models only when enabled.
-    pub fn for_model(model: &str, anthropic_messages: bool) -> Self {
-        if anthropic_messages && model.starts_with("anthropic/") {
-            Self::Messages
-        } else {
-            Self::Chat
-        }
-    }
 }
 
 /// A single model request.
@@ -189,7 +171,6 @@ pub enum Delta {
 }
 
 /// HTTP client bound to one gw endpoint.
-#[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
     base_url: String,
@@ -235,10 +216,19 @@ impl Client {
     }
 
     async fn open(&self, req: &Request<'_>) -> Result<Stream, Failure> {
-        let wire = Wire::for_model(req.model, self.anthropic_messages);
-        let (path, body) = match wire {
-            Wire::Chat => ("chat/completions", openai::body(req)),
-            Wire::Messages => ("messages", anthropic::body(req)),
+        let (path, body, parser) = if self.anthropic_messages && req.model.starts_with("anthropic/")
+        {
+            (
+                "messages",
+                anthropic::body(req),
+                Parser::Messages(anthropic::Parser::default()),
+            )
+        } else {
+            (
+                "chat/completions",
+                openai::body(req),
+                Parser::Chat(openai::Parser::default()),
+            )
         };
         let url = format!("{}/{path}", self.base_url);
         let body = serde_json::to_vec(&body).map_err(|e| Failure {
@@ -258,12 +248,12 @@ impl Client {
             .await
             .map_err(|e| Failure {
                 transient: !e.is_builder(),
-                message: format!("post {url}: {e}"),
+                message: format!("post {path}: {e}"),
             })?;
         let status = resp.status();
         if !status.is_success() {
             let text = resp.text().await.unwrap_or_default();
-            let text: String = text.chars().take(ERROR_BODY_BYTES).collect();
+            let text: String = text.chars().take(ERROR_BODY_CHARS).collect();
             return Err(Failure {
                 transient: TRANSIENT_STATUSES.contains(&status.as_u16()),
                 message: refused(&format!("gw {path}"), status, &text),
@@ -272,10 +262,7 @@ impl Client {
         Ok(Stream {
             body: resp.bytes_stream().boxed(),
             decoder: sse::Decoder::default(),
-            parser: match wire {
-                Wire::Chat => Parser::Chat(openai::Parser::default()),
-                Wire::Messages => Parser::Messages(anthropic::Parser::default()),
-            },
+            parser,
             pending: VecDeque::new(),
             finished: false,
         })
