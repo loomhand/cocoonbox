@@ -76,7 +76,7 @@ func (s *Service) Rotate(ctx context.Context, req *controlv1.RotateKeyRequest) (
 		}
 		sec.sealed, sec.hint, sec.valueLen = sealed, valueHint(value), len(value)
 		return nil
-	})
+	}, fits)
 	if err != nil {
 		return nil, keyStatus(ctx, err, "rotate key")
 	}

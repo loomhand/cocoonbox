@@ -120,6 +120,26 @@ func TestQueryKeyAndTheCountLimit(t *testing.T) {
 	}
 }
 
+func TestRotateKeepsTheKeysWithinWhatABoxHolds(t *testing.T) {
+	svc := newService(t)
+	ctx := auth.WithUser(t.Context(), alice)
+	for i := range maxKeys {
+		if _, err := svc.Add(ctx, &controlv1.AddKeyRequest{Name: fmt.Sprintf("K%d", i), Hosts: []string{"a.example.com"}, Template: "Basic u:{}", Value: synthetic}); err != nil {
+			t.Fatalf("Add %d: %v", i, err)
+		}
+	}
+	long := strings.Repeat("v", maxValue)
+	for i := range maxKeys {
+		if _, err := svc.Rotate(ctx, &controlv1.RotateKeyRequest{Name: fmt.Sprintf("K%d", i), Value: long}); err != nil {
+			if status.Code(err) != codes.ResourceExhausted {
+				t.Fatalf("Rotate %d = %v, want ResourceExhausted", i, err)
+			}
+			return
+		}
+	}
+	t.Error("every key rotated to the longest value, past what a box holds")
+}
+
 func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
 	svc := newService(t)
 	for _, owner := range []string{alice, bob} {

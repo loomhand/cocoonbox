@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -61,17 +62,10 @@ func (s *store) versions(ctx context.Context) (map[string][]string, error) {
 	return out, err
 }
 
-// insert adds sec once check passes on the owner's other keys; the owner's row lock orders concurrent adds.
+// insert adds sec once check passes on the owner's other keys; the owner's row lock orders concurrent adds and rotates.
 func (s *store) insert(ctx context.Context, sec *secret, check func([]*secret) error) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, "SELECT id FROM users WHERE id = $1 FOR UPDATE", sec.owner).Scan(new(string)); err != nil {
-			return fmt.Errorf("lock user: %w", err)
-		}
-		rows, err := tx.Query(ctx, "SELECT "+rowColumns+" FROM vault_secrets WHERE owner = $1", sec.owner)
-		if err != nil {
-			return fmt.Errorf("list keys: %w", err)
-		}
-		others, err := pgx.CollectRows(rows, scanSecret)
+		others, err := owned(ctx, tx, sec.owner)
 		if err != nil {
 			return err
 		}
@@ -89,20 +83,23 @@ func (s *store) insert(ctx context.Context, sec *secret, check func([]*secret) e
 	return err
 }
 
-// rotate replaces the value of owner's key name with what fn seals for the row and bumps its version.
-func (s *store) rotate(ctx context.Context, owner, name string, fn func(*secret) error) (*secret, error) {
+// rotate replaces the value of owner's key name with what fn seals for the row, once check passes on the owner's keys, and bumps its version.
+func (s *store) rotate(ctx context.Context, owner, name string, fn func(*secret) error, check func([]*secret) error) (*secret, error) {
 	var sec *secret
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, "SELECT "+rowColumns+" FROM vault_secrets WHERE owner = $1 AND name = $2 FOR UPDATE", owner, name)
+		list, err := owned(ctx, tx, owner)
 		if err != nil {
-			return fmt.Errorf("lock key: %w", err)
-		}
-		if sec, err = pgx.CollectExactlyOneRow(rows, scanSecret); errors.Is(err, pgx.ErrNoRows) {
-			return errNoKey
-		} else if err != nil {
 			return err
 		}
+		i := slices.IndexFunc(list, func(k *secret) bool { return k.name == name })
+		if i < 0 {
+			return errNoKey
+		}
+		sec = list[i]
 		if err := fn(sec); err != nil {
+			return err
+		}
+		if err := check(list); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `UPDATE vault_secrets SET value_sealed = $2, value_hint = $3, value_len = $4,
@@ -133,6 +130,17 @@ func (s *store) audit(ctx context.Context, owner, id, name, op, actor string) er
 		return fmt.Errorf("purge audit: %w", err)
 	}
 	return nil
+}
+
+func owned(ctx context.Context, tx pgx.Tx, owner string) ([]*secret, error) {
+	if err := tx.QueryRow(ctx, "SELECT id FROM users WHERE id = $1 FOR UPDATE", owner).Scan(new(string)); err != nil {
+		return nil, fmt.Errorf("lock user: %w", err)
+	}
+	rows, err := tx.Query(ctx, "SELECT "+rowColumns+" FROM vault_secrets WHERE owner = $1", owner)
+	if err != nil {
+		return nil, fmt.Errorf("list keys: %w", err)
+	}
+	return pgx.CollectRows(rows, scanSecret)
 }
 
 func scanSecret(row pgx.CollectableRow) (*secret, error) {
