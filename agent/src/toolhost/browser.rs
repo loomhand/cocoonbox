@@ -2029,11 +2029,7 @@ pub(super) mod tests {
     #[tokio::test]
     async fn a_chrome_that_exits_before_its_cdp_fails_the_start_at_once() {
         let dir = tempfile::tempdir().unwrap();
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let port = free_port();
         let b = Browser::new("false".into(), dir.path().into(), port, false);
         let asked = tokio::time::Instant::now();
         let err = b.run("a", "browser_start", json!({})).await.unwrap_err();
@@ -2739,11 +2735,7 @@ pub(super) mod tests {
         let Some((bin, chrome)) = headless_chrome(dir.path()) else {
             return;
         };
-        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let cdp = free_port();
         let b = Browser::new(bin, dir.path().join("profile"), cdp, false);
         assert_eq!(
             b.run("t", "browser_start", json!({})).await.unwrap(),
@@ -2781,11 +2773,7 @@ pub(super) mod tests {
         let url = format!("http://127.0.0.1:{}/", page_server(MAILBOX).await);
         let mut sizes = Vec::new();
         for plans in [true, false] {
-            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port();
+            let cdp = free_port();
             let b = Browser::new(
                 bin.clone(),
                 dir.path().join(format!("m{plans}")),
@@ -2848,11 +2836,7 @@ pub(super) mod tests {
             .await
         );
         for plans in [true, false] {
-            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port();
+            let cdp = free_port();
             let b = Browser::new(
                 bin.clone(),
                 dir.path().join(format!("p{plans}")),
@@ -2917,11 +2901,7 @@ pub(super) mod tests {
             )
             .await
         );
-        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let cdp = free_port();
         let b = Browser::new(bin, dir.path().join("p"), cdp, true);
         b.run("a", "browser_navigate", json!({"url": url}))
             .await
@@ -2960,11 +2940,7 @@ pub(super) mod tests {
             )
             .await
         );
-        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let cdp = free_port();
         let b = Browser::new(bin, dir.path().join("p"), cdp, true);
         b.run("a", "browser_navigate", json!({"url": url}))
             .await
@@ -3021,11 +2997,7 @@ pub(super) mod tests {
             .await
         );
         for plans in [true, false] {
-            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port();
+            let cdp = free_port();
             let b = Browser::new(
                 bin.clone(),
                 dir.path().join(format!("f{plans}")),
@@ -3094,11 +3066,7 @@ pub(super) mod tests {
             )
             .await
         );
-        let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
+        let cdp = free_port();
         let b = Browser::new(bin, dir.path().join("p"), cdp, true);
         b.run("a", "browser_navigate", json!({"url": url}))
             .await
@@ -3169,11 +3137,7 @@ pub(super) mod tests {
                 "http://127.0.0.1:{}/",
                 page_server(format!("<!doctype html><title>draft</title>{page}").leak()).await
             );
-            let cdp = std::net::TcpListener::bind("127.0.0.1:0")
-                .unwrap()
-                .local_addr()
-                .unwrap()
-                .port();
+            let cdp = free_port();
             let b = Browser::new(bin.clone(), dir.path().join(kind), cdp, true);
             b.run("a", "browser_navigate", json!({"url": url}))
                 .await
@@ -3259,6 +3223,14 @@ pub(super) mod tests {
         for page in ["article", &long, "Just a moment..."] {
             assert!(!loading(page), "{page:?}");
         }
+    }
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
     }
 
     async fn fake_chrome() -> u16 {
