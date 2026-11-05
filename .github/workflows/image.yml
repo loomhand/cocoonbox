@@ -54,6 +54,7 @@ jobs:
         uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.release }}
+          persist-credentials: false
 
       - name: Publish
         env:
@@ -80,19 +81,22 @@ jobs:
           shuttle_sha=$(SHUTTLE_ARCH=x64 && . image/desk/shuttle.sh && echo "$SHUTTLE_SHA256")
           echo "$GH_TOKEN" | oras login ghcr.io --registry-config "$cfg" --username "${{ github.actor }}" --password-stdin
           if oras resolve --registry-config "$cfg" "$image:$VERSION" >/dev/null 2>&1; then
-            echo "$image:$VERSION exists; a published version is never overwritten" >&2
-            exit 1
+            if ! oras manifest fetch --registry-config "$cfg" "$image:$VERSION" | grep -qF "\"io.github.loomhand.cocoonbox.agent-sha256\":\"$agent_sha\""; then
+              echo "$image:$VERSION exists with another agent; a published version is never overwritten" >&2
+              exit 1
+            fi
+          else
+            # oras refuses absolute paths, so it pushes the tarball's basename from its directory
+            cd "$(dirname "$tarball")"
+            oras push --registry-config "$cfg" "$image:$VERSION" \
+              --annotation "org.opencontainers.image.revision=$revision" \
+              --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+              --annotation "io.github.loomhand.cocoonbox.agent-sha256=$agent_sha" \
+              --annotation "io.github.loomhand.cocoonbox.agent-rev=$agent_rev" \
+              --annotation "io.github.loomhand.cocoonbox.shuttle-version=$shuttle_version" \
+              --annotation "io.github.loomhand.cocoonbox.shuttle-sha256=$shuttle_sha" \
+              "$(basename "$tarball"):application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"
           fi
-          # oras refuses absolute paths, so it pushes the tarball's basename from its directory
-          cd "$(dirname "$tarball")"
-          oras push --registry-config "$cfg" "$image:$VERSION" \
-            --annotation "org.opencontainers.image.revision=$revision" \
-            --annotation "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
-            --annotation "io.github.loomhand.cocoonbox.agent-sha256=$agent_sha" \
-            --annotation "io.github.loomhand.cocoonbox.agent-rev=$agent_rev" \
-            --annotation "io.github.loomhand.cocoonbox.shuttle-version=$shuttle_version" \
-            --annotation "io.github.loomhand.cocoonbox.shuttle-sha256=$shuttle_sha" \
-            "$(basename "$tarball"):application/vnd.loomhand.cocoonbox.rootfs.tar+gzip"
           oras tag --registry-config "$cfg" "$image:$VERSION" latest
           digest=$(oras resolve --registry-config "$cfg" "$image:$VERSION")
           test "$(oras resolve --registry-config "$cfg" "$image:latest")" = "$digest"
