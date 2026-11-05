@@ -105,13 +105,12 @@ func (s *Store) leadOnce(ctx context.Context, lead Work) (bool, error) {
 		defer close(done)
 		lead(leading)
 	}()
-	ticker := time.NewTicker(leaderCheck)
-	defer ticker.Stop()
+	tick := time.Tick(leaderCheck)
 	for err == nil {
 		select {
 		case <-ctx.Done():
 			err = ctx.Err()
-		case <-ticker.C:
+		case <-tick:
 			err = check()
 		}
 	}

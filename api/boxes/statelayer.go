@@ -269,11 +269,11 @@ func (l *stateLayer) upload(ctx context.Context, auth agentAuth, p statePath, ep
 			req.Manifest = &agentv1.PresignedPut{ChunkId: rec.ID, Url: manifest.URL, Headers: manifest.Headers}
 		}
 		offset, size := sent, batchBytes(batch)
-		final, err := l.agents.Upload(auth(ctx), p.box, ep, req, plaintextProgress(size, func(p *agentv1.TransferProgress) {
-			p.DoneBytes += offset
-			p.TotalBytes = rec.UploadedBytes
-			p.Finished = p.Finished && last
-			progress(p)
+		final, err := l.agents.Upload(auth(ctx), p.box, ep, req, plaintextProgress(size, func(tp *agentv1.TransferProgress) {
+			tp.DoneBytes += offset
+			tp.TotalBytes = rec.UploadedBytes
+			tp.Finished = tp.Finished && last
+			progress(tp)
 		}))
 		if err != nil {
 			return fmt.Errorf("upload: %w", err)

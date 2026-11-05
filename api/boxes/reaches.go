@@ -102,13 +102,12 @@ func (r *reaches) read(ctx context.Context) error {
 
 // run flushes every reachFlush until ctx ends.
 func (r *reaches) run(ctx context.Context, open func() []string) {
-	ticker := time.NewTicker(reachFlush)
-	defer ticker.Stop()
+	tick := time.Tick(reachFlush)
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tick:
 		}
 		r.flush(ctx, open())
 	}

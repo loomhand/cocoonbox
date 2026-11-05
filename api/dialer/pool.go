@@ -82,10 +82,10 @@ func (p *Pool) Conn(box string, ep machines.Endpoint) (*grpc.ClientConn, error) 
 func (p *Pool) Close() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	for box, conns := range p.conns {
+	for _, conns := range p.conns {
 		for _, c := range conns {
 			_ = c.conn.Close()
 		}
-		delete(p.conns, box)
 	}
+	clear(p.conns)
 }
