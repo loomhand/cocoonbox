@@ -11,7 +11,7 @@ use crate::tools;
 const MAX_DESCRIPTION: usize = 2048;
 
 /// A file the plugin serves over MCP.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Resource {
     pub uri: String,
     pub path: PathBuf,
@@ -20,7 +20,7 @@ pub struct Resource {
 }
 
 /// One plugin tool.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize)]
 pub struct Plugin {
     pub name: String,
     pub description: String,
@@ -62,17 +62,8 @@ impl Plugin {
 /// spec, which shuttle runs, is no script tool, and a file that breaks a rule or repeats a name is
 /// skipped with one log line.
 pub fn load(dir: &Path) -> Vec<Plugin> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "json"))
-        .collect();
-    files.sort();
     let mut plugins: Vec<Plugin> = Vec::new();
-    for file in files {
+    for file in sorted_files(dir, "json") {
         let raw = std::fs::read(&file).map_err(|e| e.to_string());
         if raw.as_ref().is_ok_and(|raw| {
             serde_json::from_slice::<serde_json::Value>(raw)
@@ -96,6 +87,19 @@ pub fn load(dir: &Path) -> Vec<Plugin> {
         }
     }
     plugins
+}
+
+pub(crate) fn sorted_files(dir: &Path, ext: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|x| x == ext))
+        .collect();
+    files.sort();
+    files
 }
 
 #[cfg(test)]

@@ -30,7 +30,6 @@ const IDENTITY_PATH: &str = "/run/cocoonbox-identity/identity";
 #[cfg(windows)]
 const IDENTITY_PATH: &str = r"C:\ProgramData\cocoonbox\identity\identity";
 const ROOT_UID: &str = "0";
-const REDACTED: &str = "<redacted>";
 #[cfg(target_os = "linux")]
 const DESKTOP_UNIT: Option<&str> = Some("cocoonbox-session.service");
 #[cfg(not(target_os = "linux"))]
@@ -90,7 +89,6 @@ impl Automation {
 }
 
 /// Settings of `serve`, read from `/etc/cocoonbox/agent.env` via systemd.
-#[derive(Clone)]
 pub struct ServeConfig {
     pub gw_base_url: String,
     pub gw_api_key: String,
@@ -128,42 +126,12 @@ pub struct ServeConfig {
     pub reasoning_effort: Option<&'static str>,
 }
 
-impl std::fmt::Debug for ServeConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServeConfig")
-            .field("gw_base_url", &self.gw_base_url)
-            .field("gw_api_key", &REDACTED)
-            .field("model_main", &self.model_main)
-            .field("model_computer", &self.model_computer)
-            .field("identity_path", &self.identity_path)
-            .field("identity_owner", &self.identity_owner)
-            .field("listen", &self.listen)
-            .field("state_dir", &self.state_dir)
-            .field("toolhost_socket", &self.toolhost_socket)
-            .field("offload_socket", &self.offload_socket)
-            .field("anthropic_messages", &self.anthropic_messages)
-            .field("mcp_idle", &self.mcp_idle)
-            .field("mcp_prune_after", &self.mcp_prune_after)
-            .field("quiesce_wait", &self.quiesce_wait)
-            .field("state_roots", &self.state_roots)
-            .field("desktop_unit", &self.desktop_unit)
-            .field("connect_url", &self.connect_url)
-            .field("automation", &self.automation)
-            .field("plugins", &self.plugins)
-            .field("routing_extra", &self.routing_extra)
-            .field("shuttle_socket", &self.shuttle_socket)
-            .field("workspace", &self.workspace)
-            .field("checkpoint_nudge", &self.checkpoint_nudge)
-            .field("reasoning_effort", &self.reasoning_effort)
-            .finish()
-    }
-}
-
 impl ServeConfig {
     /// Reads the contract keys; optional overrides exist for tests and debugging.
     pub fn from_env() -> Result<Self, String> {
         let listen = required("AGENT_LISTEN")?;
         let shuttle_socket = required("SHUTTLE_SOCKET")?;
+        let workspace = optional("CB_WORKSPACE", DEFAULT_WORKSPACE);
         Ok(Self {
             gw_base_url: required("GW_BASE_URL")?.trim_end_matches('/').to_owned(),
             gw_api_key: required("GW_API_KEY")?,
@@ -185,7 +153,7 @@ impl ServeConfig {
             quiesce_wait: QUIESCE_WAIT,
             state_roots: crate::state::default_roots(
                 Path::new(&optional("CB_HOME", DEFAULT_HOME)),
-                Path::new(&optional("CB_WORKSPACE", DEFAULT_WORKSPACE)),
+                Path::new(&workspace),
             ),
             desktop_unit: DESKTOP_UNIT.map(str::to_owned),
             connect_url: env::var("CONNECT_URL").ok().filter(|v| !v.is_empty()),
@@ -193,7 +161,7 @@ impl ServeConfig {
             plugins: plugins::load(Path::new(&optional("TOOLS_DIR", TOOLS_DIR))),
             routing_extra: routing_extra(Path::new(&optional("ROUTING_DIR", ROUTING_DIR))),
             shuttle_socket: shuttle_socket.into(),
-            workspace: optional("CB_WORKSPACE", DEFAULT_WORKSPACE).into(),
+            workspace: workspace.into(),
             checkpoint_nudge: minutes(
                 "CB_CHECKPOINT_NUDGE_MIN",
                 &optional("CB_CHECKPOINT_NUDGE_MIN", "0"),
@@ -204,7 +172,6 @@ impl ServeConfig {
 }
 
 /// Settings of `toolhost-service`.
-#[derive(Clone, Debug)]
 pub struct ToolhostConfig {
     pub socket: PathBuf,
     pub workspace: PathBuf,
@@ -249,17 +216,8 @@ impl ToolhostConfig {
 
 /// The `*.md` files in `dir` in file-name order, each trimmed at its end; none without any.
 pub fn routing_extra(dir: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut files: Vec<PathBuf> = entries
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "md"))
-        .collect();
-    files.sort();
     let mut parts = Vec::new();
-    for file in files {
+    for file in plugins::sorted_files(dir, "md") {
         match std::fs::read_to_string(&file) {
             Ok(part) => parts.push(part.trim_end().to_owned()),
             Err(e) => eprintln!("routing: skip {}: {e}", file.display()),
@@ -321,42 +279,6 @@ mod tests {
         assert_eq!(effort("K", "max"), Ok(Some("max")));
         assert!(effort("K", "Medium").is_err());
         assert!(effort("K", "4096").is_err());
-    }
-
-    #[test]
-    fn debug_redacts_secrets() {
-        let cfg = ServeConfig {
-            gw_base_url: "http://gw/v1".into(),
-            gw_api_key: "sk-secret-key".into(),
-            model_main: "m".into(),
-            model_computer: "c".into(),
-            identity_path: "/i".into(),
-            identity_owner: 0,
-            listen: "127.0.0.1:1".parse().unwrap(),
-            state_dir: "/s".into(),
-            toolhost_socket: "/t".into(),
-            offload_socket: "/o".into(),
-            anthropic_messages: false,
-            mcp_idle: MCP_IDLE,
-            mcp_prune_after: MCP_PRUNE_AFTER,
-            quiesce_wait: QUIESCE_WAIT,
-            state_roots: Vec::new(),
-            desktop_unit: None,
-            connect_url: None,
-            automation: Automation::Minimal,
-            plugins: Vec::new(),
-            routing_extra: Vec::new(),
-            shuttle_socket: "/d".into(),
-            workspace: "/w".into(),
-            checkpoint_nudge: None,
-            reasoning_effort: None,
-        };
-        let shown = format!("{cfg:?}");
-        assert!(!shown.contains("sk-secret-key"), "{shown}");
-        assert!(
-            shown.contains("<redacted>") && shown.contains("http://gw/v1"),
-            "{shown}"
-        );
     }
 
     #[test]

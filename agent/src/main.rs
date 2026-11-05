@@ -8,56 +8,36 @@ use cocoonbox_agent::{server, toolhost};
 
 const RUNTIME_SHUTDOWN: Duration = Duration::from_millis(200);
 const USAGE: &str = "usage: cocoonbox-agent <serve|toolhost-service|offload|desk|version>";
-const NO_SERVICE: &str = "toolhost-service runs under shuttle, which sets SHUTTLE_SERVICE_SOCKET";
 
 fn main() -> ExitCode {
     let cmd = std::env::args().nth(1).unwrap_or_default();
     let result = match cmd.as_str() {
         #[cfg(unix)]
-        "serve" => serve(),
+        "serve" => serve().map(|()| ExitCode::SUCCESS),
         #[cfg(windows)]
-        "serve" => cocoonbox_agent::service::run(serve),
-        "toolhost-service" if std::env::var_os("SHUTTLE_SERVICE_SOCKET").is_none() => {
-            Err(NO_SERVICE.to_owned())
-        }
-        "toolhost-service" => run(async { toolhost::run(ToolhostConfig::from_env()?).await }),
+        "serve" => cocoonbox_agent::service::run(serve).map(|()| ExitCode::SUCCESS),
+        "toolhost-service" => run(async { toolhost::run(ToolhostConfig::from_env()?).await })
+            .map(|()| ExitCode::SUCCESS),
         #[cfg(unix)]
-        "offload" => {
-            let args = std::env::args().skip(2).collect();
-            return match run(async { Ok(offload::main(args).await) }) {
-                Ok(code) => ExitCode::from(code),
-                Err(e) => {
-                    eprintln!("cocoonbox-agent offload: {e}");
-                    ExitCode::FAILURE
-                }
-            };
-        }
-        "desk" => {
-            let args = std::env::args().skip(2).collect();
-            return match run(async { Ok(toolhost::desk::cli(args).await) }) {
-                Ok(code) => ExitCode::from(code),
-                Err(e) => {
-                    eprintln!("cocoonbox-agent desk: {e}");
-                    ExitCode::FAILURE
-                }
-            };
-        }
+        "offload" => run(async { Ok(ExitCode::from(offload::main(rest()).await)) }),
+        "desk" => run(async { Ok(ExitCode::from(toolhost::desk::cli(rest()).await)) }),
         "version" | "--version" => {
             println!("cocoonbox-agent {}", env!("CB_AGENT_VERSION"));
-            Ok(())
+            Ok(ExitCode::SUCCESS)
         }
         _ => {
             eprintln!("{USAGE}");
             return ExitCode::from(2);
         }
     };
-    match result {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("cocoonbox-agent {cmd}: {e}");
-            ExitCode::FAILURE
-        }
-    }
+    result.unwrap_or_else(|e| {
+        eprintln!("cocoonbox-agent {cmd}: {e}");
+        ExitCode::FAILURE
+    })
+}
+
+fn rest() -> Vec<String> {
+    std::env::args().skip(2).collect()
 }
 
 fn serve() -> Result<(), String> {
