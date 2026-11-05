@@ -143,7 +143,7 @@ func (s *store) redeem(ctx context.Context, codeSHA256, grantID string, tokens i
 	return stored, cmp.Or(err, refused)
 }
 
-// refresh spends the refresh token and issues tokens in its place; a spent one revokes its grant, as a replay shows a leak, and returns its id.
+// refresh spends the refresh token and issues tokens in its place; the one spent last, sent again, revokes its grant and returns its id.
 func (s *store) refresh(ctx context.Context, refreshSHA256, clientID string, tokens issued) (string, error) {
 	var replayed string
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
