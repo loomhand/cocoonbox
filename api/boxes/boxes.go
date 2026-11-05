@@ -113,6 +113,7 @@ type Registry interface {
 	// MaxRunning is the owner's own running limit, 0 for MaxRunning of the defaults.
 	MaxRunning(owner string) int
 	Policy(owner string) users.Policy
+	OnBoxes(fn func(owner string))
 }
 
 // MachineSync reads an owner's machines from the shared table into a backend's cache.
@@ -148,7 +149,9 @@ type Service struct {
 
 // New serves the boxes registry keeps on backend with defaults.
 func New(backend machines.Machines, defaults Defaults, registry Registry) *Service {
-	return &Service{machines: backend, defaults: defaults, registry: registry, ops: newOperations()}
+	s := &Service{machines: backend, defaults: defaults, registry: registry, ops: newOperations()}
+	registry.OnBoxes(s.ops.watchers.wake)
+	return s
 }
 
 func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*controlv1.EnsureResponse, error) {

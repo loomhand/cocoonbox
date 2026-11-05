@@ -243,12 +243,19 @@ func TestABoxChangeOfOneApiReachesAnother(t *testing.T) {
 		t.Fatalf("AddBox: %v", err)
 	}
 	clustertest.WaitFor(t, "the other api knows the added box", func() bool { return b.HasBox(u.ID, "cb-x") })
+	var changed atomic.Int32
+	b.OnBoxes(func(owner string) {
+		if owner == u.ID {
+			changed.Add(1)
+		}
+	})
 	if _, err := a.RenameBox(t.Context(), u.ID, "cb-x", "renamed"); err != nil {
 		t.Fatalf("RenameBox: %v", err)
 	}
 	clustertest.WaitFor(t, "the other api knows the new name", func() bool {
 		return slices.ContainsFunc(b.Boxes(u.ID), func(x Box) bool { return x.ID == "cb-x" && x.Name == "renamed" })
 	})
+	clustertest.WaitFor(t, "the other api tells its box watchers of the rename", func() bool { return changed.Load() > 0 })
 	if err := a.RemoveBox(t.Context(), u.ID, "cb-x"); err != nil {
 		t.Fatalf("RemoveBox: %v", err)
 	}

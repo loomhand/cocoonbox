@@ -200,6 +200,7 @@ type Service struct {
 	// shareGen counts this api's share changes, so a sync read before one does not undo it.
 	shareGen      int
 	onResidential []func(context.Context, string, bool)
+	onBoxes       []func(owner string)
 	onShareEnd    []func(context.Context, Share)
 
 	lifeMu     sync.Mutex
@@ -281,8 +282,8 @@ func (s *Service) Load(ctx context.Context) error {
 		byID[r.ID] = r
 		addTokens(byToken, r)
 	}
+	var changed []string
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	for id, r := range byID {
 		if r.Disabled && !s.byID[id].Disabled {
 			s.cutOwner(id, false)
@@ -290,6 +291,16 @@ func (s *Service) Load(ctx context.Context) error {
 	}
 	s.byID, s.byToken = byID, byToken
 	if s.boxGen == gen {
+		for owner := range byOwner {
+			if !slices.Equal(s.boxes[owner], byOwner[owner]) {
+				changed = append(changed, owner)
+			}
+		}
+		for owner := range s.boxes {
+			if _, ok := byOwner[owner]; !ok {
+				changed = append(changed, owner)
+			}
+		}
 		s.boxes = byOwner
 	}
 	for id := range s.lives {
@@ -300,6 +311,13 @@ func (s *Service) Load(ctx context.Context) error {
 	for credential := range s.creds {
 		if _, ok := byToken[credential]; !ok && hexSHA256.MatchString(credential) {
 			s.endCredential(credential)
+		}
+	}
+	hooks := slices.Clone(s.onBoxes)
+	s.mu.Unlock()
+	for _, owner := range changed {
+		for _, fn := range hooks {
+			fn(owner)
 		}
 	}
 	return nil
@@ -841,6 +859,12 @@ func (s *Service) OnResidential(fn func(ctx context.Context, id string, on bool)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.onResidential = append(s.onResidential, fn)
+}
+
+func (s *Service) OnBoxes(fn func(owner string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onBoxes = append(s.onBoxes, fn)
 }
 
 // createOnce creates outside user id under its lock unless another api created it meanwhile.

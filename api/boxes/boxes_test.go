@@ -413,6 +413,7 @@ type fakeRegistry struct {
 	max      int
 	running  map[string]int
 	policies map[string]users.Policy
+	changed  func(owner string)
 }
 
 func newFakeRegistry() *fakeRegistry {
@@ -460,6 +461,10 @@ func (r *fakeRegistry) RenameBox(_ context.Context, owner, id, name string) (use
 		}
 	}
 	return users.Box{}, users.ErrNotFound
+}
+
+func (r *fakeRegistry) OnBoxes(fn func(owner string)) {
+	r.changed = fn
 }
 
 func (r *fakeRegistry) Policy(owner string) users.Policy {

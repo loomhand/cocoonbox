@@ -87,6 +87,20 @@ func TestWatchSendsEveryChangeOfTheCallersBoxesAndNothingWhileIdle(t *testing.T)
 	})
 }
 
+func TestWatchSendsABoxChangeAnotherAPIMade(t *testing.T) {
+	registry := newFakeRegistry()
+	svc := New(newFakeMachines(), testDefaults, registry)
+	mine := startWatch(t, svc, alice)
+	mine.next(t, func(*controlv1.ListBoxesResponse) bool { return true })
+	if _, err := registry.RenameBox(t.Context(), alice, aliceBox, "work"); err != nil {
+		t.Fatalf("RenameBox: %v", err)
+	}
+	registry.changed(alice)
+	mine.next(t, func(r *controlv1.ListBoxesResponse) bool {
+		return len(r.GetBoxes()) == 1 && r.GetBoxes()[0].GetName() == "work"
+	})
+}
+
 type boxStream struct {
 	grpc.ServerStream
 	ctx context.Context
