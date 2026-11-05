@@ -189,7 +189,10 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 		action = machines.ActionNone
 		switch {
 		case e == nil || (e.row == nil && !e.busy(now)):
-			e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: now, meta: map[string]string{}}
+			e = &entry{id: spec.ID, owner: spec.Owner, image: template, created: now, meta: maps.Clone(spec.Meta)}
+			if e.meta == nil {
+				e.meta = map[string]string{}
+			}
 			e.begin(opClaim, now, b.lease())
 			action = machines.ActionCreated
 			return e, true
@@ -209,7 +212,7 @@ func (b *Backend) Ensure(ctx context.Context, spec machines.Spec) (machines.Mach
 	}
 	switch action {
 	case machines.ActionCreated:
-		b.run(spec.ID, opClaim, m.Revision, func(ctx context.Context) error { return b.claim(ctx, spec.ID, spec.Owner, spec.Tenant, template, size) })
+		b.run(spec.ID, opClaim, m.Revision, func(ctx context.Context) error { return b.claim(ctx, spec, template, size) })
 	case machines.ActionWoken:
 		b.run(spec.ID, opWake, m.Revision, func(ctx context.Context) error { return b.wake(ctx, spec.ID, addr, sandbox) })
 	}
@@ -722,19 +725,23 @@ func (b *Backend) lease() time.Duration {
 	return b.leaseFor
 }
 
-func (b *Backend) claim(ctx context.Context, id, owner, tenant, template, size string) error {
-	sandbox, node, err := b.claimFollow(ctx, tenant, claimRequest{
+func (b *Backend) claim(ctx context.Context, spec machines.Spec, template, size string) error {
+	metadata := map[string]string{metaMachine: spec.ID, metaOwner: spec.Owner}
+	for k, v := range spec.Meta {
+		metadata[metaClaimPrefix+k] = v
+	}
+	sandbox, node, err := b.claimFollow(ctx, spec.Tenant, claimRequest{
 		Template:   template,
 		Net:        netNone,
 		Size:       size,
 		TTLSeconds: leaseSeconds,
 		OnExpire:   onExpire,
-		Metadata:   map[string]string{metaMachine: id, metaOwner: owner},
+		Metadata:   metadata,
 	})
 	if err != nil {
 		return err
 	}
-	return b.reread(ctx, id, node, sandbox)
+	return b.reread(ctx, spec.ID, node, sandbox)
 }
 
 // claimFollow claims on the entry node and follows its redirect as the sandboxd SDK does, and returns the claim and its node.

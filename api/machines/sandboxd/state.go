@@ -13,8 +13,9 @@ import (
 )
 
 const (
-	metaMachine = "cb_machine"
-	metaOwner   = "cb_owner"
+	metaMachine     = "cb_machine"
+	metaOwner       = "cb_owner"
+	metaClaimPrefix = "cb_meta_"
 
 	envMetaPrefix = "CB_META_"
 	envWakes      = "CB_WAKES"
@@ -145,6 +146,13 @@ func (e *entry) machine(disk uint32) machines.Machine {
 	}
 	if m.Meta == nil {
 		m.Meta = map[string]string{}
+	}
+	if e.row != nil {
+		for k, v := range e.row.Metadata {
+			if key, ok := strings.CutPrefix(k, metaClaimPrefix); ok && m.Meta[key] == "" {
+				m.Meta[key] = v
+			}
+		}
 	}
 	if e.row == nil {
 		m.CreatedAt, m.Detail = e.created, "claim="+e.op

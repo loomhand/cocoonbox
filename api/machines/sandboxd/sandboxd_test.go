@@ -125,6 +125,26 @@ func TestIndexRebuildsMachinesFromClaimsAndEnv(t *testing.T) {
 	}
 }
 
+func TestAClaimCarriesItsMetaFromCreationThroughARestart(t *testing.T) {
+	fake := newFakeSandboxd(t)
+	b := newTestBackend(t, fake)
+	m, _, err := b.Ensure(t.Context(), machines.Spec{ID: boxID, Owner: owner, Flavor: xlarge, Meta: map[string]string{"restore": "s1"}})
+	if err != nil || m.Meta["restore"] != "s1" {
+		t.Fatalf("Ensure = %+v, %v; want the meta before the claim lands", m, err)
+	}
+	waitState(t, b, boxID, m.Revision, machines.StateRunning)
+	if claim := fake.lastClaim(); claim.Metadata["cb_meta_restore"] != "s1" {
+		t.Errorf("claim metadata = %v", claim.Metadata)
+	}
+	if err := b.SetMeta(t.Context(), boxID, "restored", "s1"); err != nil {
+		t.Fatalf("SetMeta: %v", err)
+	}
+	got, err := newTestBackend(t, fake).Get(t.Context(), boxID)
+	if err != nil || got.Meta["restore"] != "s1" || got.Meta["restored"] != "s1" {
+		t.Errorf("meta after a restart = %v, %v", got.Meta, err)
+	}
+}
+
 func TestATenantClaimBelongsToItsTenant(t *testing.T) {
 	fake := newFakeSandboxd(t)
 	tenants, err := NewTenants(fake.srv.URL, rootToken, "desk")

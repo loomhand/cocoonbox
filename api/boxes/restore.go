@@ -11,13 +11,13 @@ import (
 	"github.com/loomhand/cocoonbox/api/machines"
 )
 
-const metaRestore = "restore"
+const (
+	metaRestore  = "restore"
+	metaRestored = "restored"
+)
 
 // restoreMissing fills m, created because user's box had no machine, from the box's latest saved state.
 func (s *Service) restoreMissing(ctx context.Context, user, box string, m machines.Machine, saved head) *controlv1.EnsureResponse {
-	if err := s.machines.SetMeta(ctx, m.ID, metaRestore, saved.Latest); err != nil {
-		log.WithFunc("boxes.Service.restoreMissing").WithField("box", box).Error(ctx, err, "mark the restore of "+m.ID)
-	}
 	op, started := s.ops.start(context.WithoutCancel(ctx), user, box, controlv1.Phase_PHASE_RESTORING, m.Revision, stateTimeout)
 	if started {
 		go s.runRestore(op, user, m, saved)
@@ -63,8 +63,8 @@ func (s *Service) runRestore(op *operation, user string, m machines.Machine, sav
 		op.fail("restore failed")
 		return
 	}
-	if err := s.machines.SetMeta(op.ctx, m.ID, metaRestore, ""); err != nil {
-		logger.Error(op.ctx, err, "clear the restore mark of "+m.ID)
+	if err := s.machines.SetMeta(op.ctx, m.ID, metaRestored, saved.Latest); err != nil {
+		logger.Error(op.ctx, err, "record the restore of "+m.ID)
 		op.fail("restored, but recording it failed; the next Ensure restores again")
 		return
 	}
@@ -88,7 +88,7 @@ func (s *Service) startable(ctx context.Context, user, box string) (map[string]m
 	switch {
 	case ok && cur.State == machines.StateHibernating:
 		return nil, errHibernating
-	case !ok || cur.Meta[metaRestore] == "" || s.restoring(box):
+	case !ok || !unrestored(cur) || s.restoring(box):
 		return current, nil
 	}
 	log.WithFunc("boxes.Service.startable").WithField("box", box).Warnf(ctx, "machine %s holds an unfinished restore; restoring into a new machine", cur.ID)
@@ -105,4 +105,8 @@ func (s *Service) savedHead(ctx context.Context, user, box string) (head, error)
 		return head{}, nil
 	}
 	return s.state.head(ctx, statePath{user: user, box: box})
+}
+
+func unrestored(m machines.Machine) bool {
+	return m.Meta[metaRestore] != "" && m.Meta[metaRestored] != m.Meta[metaRestore]
 }

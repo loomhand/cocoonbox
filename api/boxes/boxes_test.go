@@ -546,7 +546,7 @@ func (f *fakeMachines) Ensure(_ context.Context, spec machines.Spec) (machines.M
 		f.clock++
 		m = machines.Machine{
 			ID: spec.ID, Owner: spec.Owner, State: machines.StateStarting, Flavor: spec.Flavor,
-			Image: cmp.Or(spec.Image, "desktop:v1"), CreatedAt: time.Unix(f.clock, 0), Revision: 1,
+			Image: cmp.Or(spec.Image, "desktop:v1"), CreatedAt: time.Unix(f.clock, 0), Revision: 1, Meta: maps.Clone(spec.Meta),
 		}
 		f.machines[spec.ID] = m
 		return m, machines.ActionCreated, nil

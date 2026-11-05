@@ -55,6 +55,7 @@ type Spec struct {
 	Flavor Flavor
 	// Image overrides the backend's default image.
 	Image string
+	Meta  map[string]string
 }
 
 // Machine is a backend's view of one machine.

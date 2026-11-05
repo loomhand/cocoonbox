@@ -222,9 +222,9 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 		case saved.Latest == "":
 			spec.Image = s.ownImage(user)
 		case saved.Parked:
-			spec.ID, spec.Image = newMachineID(box), s.defaults.kept(s.ownImage(user), saved.Image)
+			spec.ID, spec.Image, spec.Meta = newMachineID(box), s.defaults.kept(s.ownImage(user), saved.Image), map[string]string{metaRestore: saved.Latest}
 		default:
-			spec.ID, spec.Image = newMachineID(box), s.defaults.upgrade(s.ownImage(user), saved.Image)
+			spec.ID, spec.Image, spec.Meta = newMachineID(box), s.defaults.upgrade(s.ownImage(user), saved.Image), map[string]string{metaRestore: saved.Latest}
 		}
 	}
 	m, action, err := s.machines.Ensure(ctx, spec)
