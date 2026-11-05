@@ -7,7 +7,7 @@ use desk_core::text::cli_args;
 use super::rpc::{Call, Client};
 
 const DEFAULT_SOCKET: &str = "/run/cocoonbox/desk.sock";
-const CLI_USAGE: &str = "usage: desk VERB [key=value ...|JSON]; verbs: windows, snapshot, find, read, press, act, at, key, type, click, focus, close, launch, shot, screen";
+const CLI_USAGE: &str = "usage: desk VERB [key=value ...|JSON]; verbs: windows, unanswered, wait, snapshot, find, read, press, act, at, key, type, click, scroll, drag, still, focus, close, launch, shot, screen, web";
 
 /// The desk shuttle serves.
 pub struct Desk {

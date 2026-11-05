@@ -1787,7 +1787,7 @@ fn xprop_string(xprop: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// `url` with `https://` added when it names no scheme; an error when that does not parse as a URL with a host.
+/// `url` with `https://` added when it names no scheme; an error when that does not parse as a URL.
 fn web_url(url: String) -> Result<String, String> {
     let given = url.trim();
     let url = if given.contains("://") || given.starts_with("about:") {
