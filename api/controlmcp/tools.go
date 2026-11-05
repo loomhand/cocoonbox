@@ -495,7 +495,11 @@ func (s *Server) startEnsure(ctx context.Context, ref string) (*controlv1.Ensure
 		return nil, errNoGrantBox
 	}
 	if g != nil && !holdsMemory(box) && !slices.Contains(g.Chosen, box.GetId()) {
-		if err = s.checkRunning(ctx, g); err != nil {
+		list, err := s.created(ctx, g)
+		if err != nil {
+			return nil, err
+		}
+		if err = checkRunning(g, list); err != nil {
 			return nil, err
 		}
 	}
@@ -516,23 +520,11 @@ func (s *Server) startCreate(ctx context.Context, req *controlv1.CreateBoxReques
 	if len(list) >= g.MaxBoxes {
 		return nil, toolError(fmt.Sprintf("This client may keep %s at most; delete one of its boxes first.", countBoxes(g.MaxBoxes)))
 	}
-	if err = s.checkRunning(ctx, g); err != nil {
+	if err = checkRunning(g, list); err != nil {
 		return nil, err
 	}
 	record := func(ctx context.Context, box string) error { return s.grants.AddBox(ctx, g.ID, box) }
 	return s.boxes.Create(boxes.WithAgent(ctx, record), req)
-}
-
-// checkRunning refuses to start another box of grant g while the boxes it created hold its running cap.
-func (s *Server) checkRunning(ctx context.Context, g *oauth.Grant) error {
-	list, err := s.created(ctx, g)
-	if err != nil {
-		return err
-	}
-	if running := len(slices.DeleteFunc(list, func(b *controlv1.Box) bool { return !holdsMemory(b) })); running >= g.MaxRunning {
-		return toolError(fmt.Sprintf("This client may run %s at once; hibernate one of its boxes first.", countBoxes(g.MaxRunning)))
-	}
-	return nil
 }
 
 // visible returns the caller's boxes, oldest first: for a grant, those it created and those the user chose for it.
@@ -645,6 +637,14 @@ func toUsagePeriod(p *controlv1.UsagePeriod) usagePeriod {
 func grantOf(ctx context.Context) *oauth.Grant {
 	g, _ := ctx.Value(grantKey{}).(*oauth.Grant)
 	return g
+}
+
+// checkRunning refuses to start another box of grant g while list, the boxes it created, holds its running cap.
+func checkRunning(g *oauth.Grant, list []*controlv1.Box) error {
+	if running := len(slices.DeleteFunc(list, func(b *controlv1.Box) bool { return !holdsMemory(b) })); running >= g.MaxRunning {
+		return toolError(fmt.Sprintf("This client may run %s at once; hibernate one of its boxes first.", countBoxes(g.MaxRunning)))
+	}
+	return nil
 }
 
 // holdsMemory reports whether a box counts against a running cap.
