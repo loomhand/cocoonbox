@@ -47,7 +47,7 @@ const SOCKET_MODE: u32 = 0o660;
 const ERROR_ACCESS_DENIED: i32 = 5;
 
 const SCRATCH_DIR: &str = "cocoonbox-shell";
-const SCRIPT_DIR: &str = "/tmp/cocoonbox-scripts";
+const SCRIPT_DIR: &str = "cocoonbox-scripts";
 const OS_RELEASE: &str = "/etc/os-release";
 const SYSTEM_VERSION: &str = "/System/Library/CoreServices/SystemVersion.plist";
 const DESKTOP_VAR: &str = "XDG_CURRENT_DESKTOP";
@@ -87,7 +87,7 @@ impl Host {
         let shuttle = Client::new(cfg.shuttle_socket.clone());
         Self {
             workspace: cfg.workspace.clone(),
-            scratch: scratch_dir(),
+            scratch: scratch_dir(SCRATCH_DIR),
             shells: Mutex::new(HashMap::new()),
             browser: Browser::new(
                 cfg.chrome_bin.clone(),
@@ -97,7 +97,7 @@ impl Host {
             ),
             android: cfg.automation == Automation::Android,
             desk: Desk::new(shuttle.clone()),
-            scripts: Scripts::new(PathBuf::from(SCRIPT_DIR), shuttle.clone()),
+            scripts: Scripts::new(scratch_dir(SCRIPT_DIR), shuttle.clone()),
             session_save: cfg.session_save.clone(),
             home: cfg.home.clone(),
             plans: cfg.automation.plans(),
@@ -569,15 +569,14 @@ fn session_desktop() -> Option<String> {
         })
 }
 
-/// The directory of the shell's scratch files: under `/tmp`, or on Windows under the temp directory, a path with a drive
-/// that Git Bash reads as it is.
-fn scratch_dir() -> PathBuf {
+/// Directory `name` under `/tmp`, or on Windows under the temp directory, a path with a drive that Git Bash reads as it is.
+fn scratch_dir(name: &str) -> PathBuf {
     let root = if cfg!(windows) {
         std::env::temp_dir()
     } else {
         PathBuf::from("/tmp")
     };
-    root.join(SCRATCH_DIR)
+    root.join(name)
 }
 
 fn safe_name(s: &str) -> String {
