@@ -38,7 +38,7 @@ const RETRY_WAITS: [Duration; 5] = [
 const RETRY_WINDOW: Duration = Duration::from_secs(120);
 const TRANSIENT_STATUSES: [u16; 4] = [502, 503, 504, 529];
 const TRANSIENT_ERRORS: [&str; 2] = ["model_error", "overloaded_error"];
-const NO_OUTPUT: &str = "model stream ended before any output";
+const UNTERMINATED: &str = "read model stream: the body ended before its end marker";
 const READ_FAILED: &str = "read model stream: ";
 const MODEL_ERROR: &str = "model error: ";
 const CREDITS_USED_UP: &str = "model credits are used up";
@@ -198,7 +198,7 @@ pub trait Model: Send + Sync {
 /// A stream of normalized deltas for one request.
 #[tonic::async_trait]
 pub trait Deltas: Send {
-    /// Returns the next delta; `None` after `Delta::Done` or end of body.
+    /// Returns the next delta; `None` after `Delta::Done`, an error when the body ends before it.
     async fn next(&mut self) -> Result<Option<Delta>, String>;
 }
 
@@ -236,10 +236,6 @@ impl Client {
     async fn attempt(&self, req: &Request<'_>) -> Result<Stream, Failure> {
         let mut stream = self.open(req).await?;
         match stream.next().await {
-            Ok(Some(Delta::Done) | None) if stream.unterminated => Err(Failure {
-                message: NO_OUTPUT.to_owned(),
-                transient: true,
-            }),
             Ok(Some(first)) => {
                 stream.pending.push_front(first);
                 Ok(stream)
@@ -296,7 +292,6 @@ impl Client {
             },
             pending: VecDeque::new(),
             finished: false,
-            unterminated: false,
         })
     }
 }
@@ -315,11 +310,10 @@ pub struct Stream {
     parser: Parser,
     pending: VecDeque<Delta>,
     finished: bool,
-    unterminated: bool,
 }
 
 impl Stream {
-    /// Returns the next delta; `None` after `Delta::Done` or end of body.
+    /// Returns the next delta; `None` after `Delta::Done`, an error when the body ends before it.
     pub async fn next(&mut self) -> Result<Option<Delta>, String> {
         loop {
             if let Some(d) = self.pending.pop_front() {
@@ -344,8 +338,9 @@ impl Stream {
                     if let Some(event) = self.decoder.finish() {
                         self.feed(&event)?;
                     }
-                    self.unterminated = !self.pending.contains(&Delta::Done);
-                    self.pending.push_back(Delta::Done);
+                    if !self.pending.contains(&Delta::Done) {
+                        return Err(UNTERMINATED.to_owned());
+                    }
                 }
             }
         }
@@ -587,7 +582,7 @@ mod tests {
         }
         let want = [
             ("gw chat/completions returned 502 Bad Gateway: ", true),
-            (NO_OUTPUT, true),
+            (UNTERMINATED, true),
             (
                 r#"model error: {"code":"model_error_exception","message":"upstream request failed","param":null,"type":"model_error"}"#,
                 true,
@@ -672,6 +667,18 @@ mod tests {
         let mut stream = client.start(&probe_request()).await.unwrap();
         assert_eq!(stream.next().await.unwrap(), Some(Delta::Text("Hi".into())));
         assert!(stream.next().await.unwrap_err().starts_with(MODEL_ERROR));
+    }
+
+    #[tokio::test]
+    async fn a_body_that_ends_without_its_end_marker_after_output_fails_the_stream() {
+        let gw = mock_gw(vec![sse(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}\n\n",
+        )])
+        .await;
+        let client = Client::new(&format!("http://{gw}/v1"), "k", false).unwrap();
+        let mut stream = client.start(&probe_request()).await.unwrap();
+        assert_eq!(stream.next().await.unwrap(), Some(Delta::Text("Hi".into())));
+        assert_eq!(stream.next().await.unwrap_err(), UNTERMINATED);
     }
 
     #[test]
