@@ -26,8 +26,12 @@ import (
 
 const startHint = "call box_ensure to bring it up"
 
-// ErrNoBox answers every box id the caller does not own alike: another user's, a deleted one, an unknown one.
-var ErrNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+var (
+	// ErrNoBox answers every box id the caller does not own alike: another user's, a deleted one, an unknown one.
+	ErrNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+
+	errHibernating = errors.New("box is hibernating; call box_ensure again once it is hibernated")
+)
 
 // Defaults size new boxes, name their images, and bound how many boxes of one user run at once.
 type Defaults struct {
@@ -202,9 +206,6 @@ func (s *Service) Ensure(ctx context.Context, req *controlv1.EnsureRequest) (*co
 	}
 	switch {
 	case ok:
-		if cur.State == machines.StateHibernating {
-			return nil, status.Error(codes.Unavailable, "box is hibernating; call box_ensure again once it is hibernated")
-		}
 		if active := s.ops.activeFor(box); active != nil && active.phase == controlv1.Phase_PHASE_RESTORING {
 			return &controlv1.EnsureResponse{Box: s.toBox(ctx, user, box, cur), Operation: &controlv1.Operation{Id: active.id, BoxId: box}}, nil
 		}
@@ -616,6 +617,8 @@ func serviceError(ctx context.Context, logger *log.Fields, err error, action str
 	switch {
 	case errors.Is(err, machines.ErrNotFound):
 		return ErrNoBox
+	case errors.Is(err, errHibernating):
+		return status.Error(codes.Unavailable, err.Error())
 	case errors.Is(err, machines.ErrConflict):
 		logger.Error(ctx, err, action)
 		return status.Errorf(codes.Aborted, "%s: concurrent change, retry", action)

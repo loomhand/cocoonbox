@@ -85,7 +85,10 @@ func (s *Service) startable(ctx context.Context, user, box string) (map[string]m
 		return nil, err
 	}
 	cur, ok := current[box]
-	if !ok || cur.Meta[metaRestore] == "" || s.restoring(box) {
+	switch {
+	case ok && cur.State == machines.StateHibernating:
+		return nil, errHibernating
+	case !ok || cur.Meta[metaRestore] == "" || s.restoring(box):
 		return current, nil
 	}
 	log.WithFunc("boxes.Service.startable").WithField("box", box).Warnf(ctx, "machine %s holds an unfinished restore; restoring into a new machine", cur.ID)
