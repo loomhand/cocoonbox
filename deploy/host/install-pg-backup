@@ -10,6 +10,7 @@ PUB=${1:?usage: install-pg-backup <age recipient file>}
 grep -q '^age1' "$PUB" || { echo "$PUB holds no age recipient" >&2; exit 1; }
 apt-get install -y -q age >/dev/null
 install -m 0644 "$PUB" /etc/cocoonbox/backup.age.pub
+install -d -o postgres -g postgres -m 0700 /var/backups/cb-pg
 install -m 0755 "$SRC/cb-s3" "$SRC/cb-pg-dump" "$SRC/cb-pg-drill" /usr/local/sbin/
 install -m 0644 "$SRC/cb-pg-dump.service" "$SRC/cb-pg-dump.timer" /etc/systemd/system/
 systemctl daemon-reload

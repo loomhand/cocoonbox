@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs PostgreSQL 16 on the unix socket only, with the gw and cocoonbox-api roles and databases, the cocoonbox peer map
-# (cocoonbox-api and root as cocoonbox-api) and the nightly dump; idempotent. CB_PG_DIR, when set, holds the data: it is
-# bind-mounted on /var/lib/postgresql before the cluster is made.
+# (cocoonbox-api and root as cocoonbox-api); idempotent. CB_PG_DIR, when set, holds the data: it is bind-mounted on
+# /var/lib/postgresql before the cluster is made.
 # usage: sudo [CB_PG_DIR=/srv/cb/pg] deploy/host/install-pg
 set -euo pipefail
 export LC_ALL=C DEBIAN_FRONTEND=noninteractive
@@ -41,10 +41,5 @@ grep -q '^local[[:space:]]\+cocoonbox[[:space:]]\+cocoonbox-api' "$P/pg_hba.conf
 	sed -i '0,/^local/s//local   cocoonbox       cocoonbox-api                           peer map=cocoonbox\n&/' "$P/pg_hba.conf"
 systemctl reload postgresql@16-main
 
-install -d -o postgres -g postgres -m 0700 /var/backups/cb-pg
-install -m 0755 "$SRC/cb-pg-dump" /usr/local/sbin/cb-pg-dump
-install -m 0644 "$SRC/cb-pg-dump.service" "$SRC/cb-pg-dump.timer" /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now cb-pg-dump.timer >/dev/null
 q -c "SELECT datname FROM pg_database WHERE datname IN ('gw', 'cocoonbox') ORDER BY 1" | tr '\n' ' '
 echo "on $(q -c 'SHOW data_directory')"
