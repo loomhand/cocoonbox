@@ -33,6 +33,7 @@ for l in "${layers[@]}"; do
 done
 
 B=$OUT.build
+trap 'rm -rf "$B" "$OUT.tmp"' EXIT
 rm -rf "$B"
 install -d "$B" "$(dirname "$OUT")"
 lower=""
@@ -103,5 +104,4 @@ mount -t overlay overlay -o ro,metacopy=on,redirect_dir=follow,lowerdir="$B/add:
 tar -C "$B/m/root" --numeric-owner --xattrs --xattrs-include="*" -cf - . | gzip -1 > "$out.tmp"
 mv "$out.tmp" "$out"
 ' _ "$B" "$lower" "$OUT"
-rm -rf "$B"
 log "$(sha256sum "$OUT")"
