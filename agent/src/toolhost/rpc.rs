@@ -88,7 +88,7 @@ impl Client {
         }
     }
 
-    /// Streams a file as `user`; the stamp comes first, [`FileReader::finish`] returns the one taken after.
+    /// Streams a file as `user`; the stamp comes first and carries the error of a file it cannot read, [`FileReader::finish`] returns the one taken after.
     pub async fn read_file(
         &self,
         path: &Path,
@@ -101,9 +101,6 @@ impl Client {
         };
         let mut stream = self.open(&call).await?;
         let stamp: Stamp = read_frame(&mut stream).await?;
-        if let Some(e) = stamp.error {
-            return Err(e);
-        }
         Ok((stamp, FileReader { stream }))
     }
 

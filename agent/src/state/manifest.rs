@@ -18,7 +18,7 @@ pub struct Manifest {
     pub files: Vec<FileRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_db: Option<Blob>,
-    /// Files left out because they kept changing while being read.
+    /// Files left out because they could not be read whole.
     #[serde(default)]
     pub skipped: Vec<String>,
 }

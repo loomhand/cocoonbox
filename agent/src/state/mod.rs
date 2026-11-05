@@ -1163,20 +1163,18 @@ struct Chunker<'a> {
 }
 
 impl Chunker<'_> {
-    /// Chunks a file read by the toolhost; `None` when it changed during two reads.
+    /// Chunks a file read by the toolhost; `None` when it is unreadable or changed during two reads.
     async fn remote(
         &self,
         toolhost: &rpc::Client,
         path: &Path,
     ) -> Result<Option<(Vec<String>, bool)>, String> {
         for _ in 0..2 {
-            let (before, mut reader) = match toolhost.read_file(path, true).await {
-                Ok(r) => r,
-                Err(e) => {
-                    eprintln!("state: skip {}: {e}", path.display());
-                    return Ok(None);
-                }
-            };
+            let (before, mut reader) = toolhost.read_file(path, true).await?;
+            if let Some(e) = before.error {
+                eprintln!("state: skip {}: {e}", path.display());
+                return Ok(None);
+            }
             let chunks = self.feed(Source::Remote(&mut reader)).await?;
             let after = reader.finish().await?;
             if before.backup || (before.size == after.size && before.mtime_ms == after.mtime_ms) {
@@ -1784,6 +1782,23 @@ mod tests {
             assert_eq!(fetch.await.unwrap(), plain);
             assert_eq!(gets.available_permits(), 1);
         });
+    }
+
+    #[tokio::test]
+    async fn a_toolhost_out_of_reach_fails_the_read_instead_of_skipping_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let known = HashSet::new();
+        let chunker = Chunker {
+            keys: Arc::new(Keys::derive(&[7u8; 32]).unwrap()),
+            spool: dir.path().to_owned(),
+            known: &known,
+            sizes: std::sync::Mutex::new(HashMap::new()),
+        };
+        let toolhost = rpc::Client::new(dir.path().join("toolhost.sock"));
+        let read = chunker
+            .remote(&toolhost, Path::new("/home/user/a.txt"))
+            .await;
+        assert!(read.is_err(), "{read:?}");
     }
 
     #[test]
