@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	agentsPage = "/cb/agents"
-	setupPage  = "/cb/setup"
+	agentsPage = Prefix + "agents"
+	setupPage  = Prefix + "setup"
 )
 
 // Agents checks and answers an agent's authorization request, and lists, revokes and acknowledges a user's grants and sets the boxes each may use.
@@ -116,15 +116,11 @@ func (s *Server) chooseAgentBoxes(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	err := s.agents.Choose(r.Context(), caller(r).ID, r.PathValue("id"), body.Boxes)
-	switch {
-	case errors.Is(err, oauth.ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
-	case err != nil:
+	if err := s.agents.Choose(r.Context(), caller(r).ID, r.PathValue("id"), body.Boxes); err != nil {
 		s.fail(w, r, err)
-	default:
-		w.WriteHeader(http.StatusNoContent)
+		return
 	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) markAgentsSeen(w http.ResponseWriter, r *http.Request) {
@@ -136,33 +132,26 @@ func (s *Server) markAgentsSeen(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) revokeAgent(w http.ResponseWriter, r *http.Request) {
-	err := s.agents.Revoke(r.Context(), caller(r).ID, r.PathValue("id"))
-	switch {
-	case errors.Is(err, oauth.ErrNotFound):
-		writeError(w, http.StatusNotFound, err.Error())
-	case err != nil:
+	if err := s.agents.Revoke(r.Context(), caller(r).ID, r.PathValue("id")); err != nil {
 		s.fail(w, r, err)
-	default:
-		w.WriteHeader(http.StatusNoContent)
+		return
 	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // failAuthorization answers a refused request with its message and, when the client may hear it, where to send the browser.
 func (s *Server) failAuthorization(w http.ResponseWriter, r *http.Request, err error) {
 	refusal, refused := errors.AsType[*oauth.AuthorizeError](err)
-	switch {
-	case refused:
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.MarshalWrite(w, struct {
-			Error    string `json:"error"`
-			Redirect string `json:"redirect"`
-		}{refusal.Description, refusal.Redirect})
-	case errors.Is(err, oauth.ErrInvalid):
-		writeError(w, http.StatusBadRequest, err.Error())
-	default:
+	if !refused {
 		s.fail(w, r, err)
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.MarshalWrite(w, struct {
+		Error    string `json:"error"`
+		Redirect string `json:"redirect"`
+	}{refusal.Description, refusal.Redirect})
 }
 
 // choices lists user's own boxes, the ones an agent may be let use, oldest first.

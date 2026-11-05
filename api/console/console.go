@@ -26,6 +26,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/connect"
 	controlv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/control/v1"
 	"github.com/loomhand/cocoonbox/api/gwkeys"
+	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/signup"
 	"github.com/loomhand/cocoonbox/api/users"
 )
@@ -699,11 +700,11 @@ func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, users.ErrExists):
 		writeError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, users.ErrNotFound):
+	case errors.Is(err, users.ErrNotFound), errors.Is(err, oauth.ErrNotFound):
 		writeError(w, http.StatusNotFound, err.Error())
 	case errors.Is(err, users.ErrBadPassword):
 		writeError(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, signup.ErrInvalid):
+	case errors.Is(err, signup.ErrInvalid), errors.Is(err, oauth.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, signup.ErrNotFound), errors.Is(err, signup.ErrOff):
 		writeError(w, http.StatusNotFound, err.Error())
