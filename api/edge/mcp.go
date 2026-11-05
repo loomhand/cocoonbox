@@ -32,8 +32,11 @@ const (
 	jsonRPCServer    = -32000
 )
 
-// errNoBox answers a box its grant does not reach as the resolver answers another user's box.
-var errNoBox = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+var (
+	// errNoBox answers a box its grant does not reach as the resolver answers another user's box.
+	errNoBox       = status.Error(codes.NotFound, "no such box for this user (it may have been deleted)")
+	errUnreachable = status.Error(codes.Unavailable, "box agent unreachable")
+)
 
 // Grants checks the OAuth access tokens of agents and lists the boxes each grant created.
 type Grants interface {
@@ -111,7 +114,7 @@ func (m *MCP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Rewrite:       func(pr *httputil.ProxyRequest) { m.rewrite(pr, rt, boxID) },
 		Transport:     m.transportFor(boxID, rt.ep),
 		FlushInterval: -1,
-		ErrorHandler:  m.upstreamError,
+		ErrorHandler:  func(w http.ResponseWriter, r *http.Request, e error) { err = upstreamError(w, r, e) },
 	}
 	proxy.ServeHTTP(w, r)
 }
@@ -254,14 +257,6 @@ func (m *MCP) rewrite(pr *httputil.ProxyRequest, rt route, box string) {
 	}
 }
 
-func (m *MCP) upstreamError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(r.Context().Err(), context.Canceled) {
-		return
-	}
-	log.WithFunc("edge.MCP.upstreamError").Warnf(r.Context(), "proxy %s to box agent: %v", r.URL.Path, err)
-	writeJSONRPCError(w, status.Error(codes.Unavailable, "box agent unreachable"))
-}
-
 // cutOnEnd cancels a share's exchange when the share ends, and a server stream (GET) also when write switches, so the client reconnects with the new mode.
 func cutOnEnd(ctx context.Context, cancel context.CancelFunc, g *auth.Grant, stream bool) {
 	var moded <-chan struct{}
@@ -280,6 +275,14 @@ func cutOnEnd(ctx context.Context, cancel context.CancelFunc, g *auth.Grant, str
 func sharing(authorization string) bool {
 	_, ok := auth.ShareSecret(authorization)
 	return ok
+}
+
+func upstreamError(w http.ResponseWriter, r *http.Request, err error) error {
+	if r.Context().Err() == nil {
+		log.WithFunc("edge.upstreamError").Warnf(r.Context(), "proxy %s to box agent: %v", r.URL.Path, err)
+	}
+	writeJSONRPCError(w, errUnreachable)
+	return errUnreachable
 }
 
 func newH2CTransport(dial func(ctx context.Context, network, addr string) (net.Conn, error)) *http.Transport {

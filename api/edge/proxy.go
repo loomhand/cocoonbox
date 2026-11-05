@@ -115,7 +115,7 @@ func (p *Proxy) forward(ctx context.Context, down grpc.ServerStream, method, box
 	up, err := conn.NewStream(upCtx, &grpc.StreamDesc{ServerStreams: true, ClientStreams: true}, method, grpc.ForceCodecV2(p.codec))
 	if err != nil {
 		log.WithFunc("edge.Proxy.forward").Errorf(ctx, err, "open a stream to box %s", box)
-		return status.Error(codes.Unavailable, "box agent unreachable")
+		return errUnreachable
 	}
 	return p.pump(ctx, down, up, cancel)
 }
