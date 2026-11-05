@@ -46,7 +46,6 @@ const REGION_HINT: &str = "Only this part of the screen, at full resolution: x, 
 const SHELL_HINT: &str = " Keep each command's wait well under the time left; save the required output early and improve it after.";
 const LIST_HINT: &str = " For a few steps you can already place, such as opening a menu and picking its item, pass actions in place of action: a list of such actions, run in order with one screenshot at the end; it stops at the first failure. Each action already waits for a still screen, so do not add wait.";
 
-/// The tools of a box without desktop automation: shell and files.
 const FILE_TOOLS: [&str; 5] = ["shell", "read_file", "write_file", "edit_file", "list_dir"];
 
 /// Remote tools that only read but stay out of a read-only share.
@@ -75,7 +74,7 @@ const TITLES: [(&str, &str); 19] = [
     ("browser_tabs", "List browser tabs"),
 ];
 
-/// Tools of the main agent: a vision model adds a screenshot, a desk box `gui_plan`, its scripts and `browser_fetch`, Android its own.
+/// Tools of the main agent for a box of `automation`; a vision model adds a screenshot.
 pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     let mut tools = base_tools(vision, automation);
     if let Some(script) = script_tool(automation) {
@@ -94,7 +93,7 @@ pub fn main_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     tools
 }
 
-/// Tools served over MCP to external agents, the names a contract; a desk box adds its plan, script, fetch and desk tools, Android its own.
+/// Tools served over MCP to external agents; the names are a contract.
 pub fn remote_tools(automation: Automation) -> Vec<ToolSpec> {
     let mut tools: Vec<ToolSpec> = base_tools(true, automation)
         .into_iter()
@@ -183,8 +182,7 @@ pub fn computer_tools(automation: Automation) -> Vec<ToolSpec> {
     }
 }
 
-/// The tools a box of `automation` starts from: shell and files, on a desktop also the browser, the computer
-/// subagent and take-over, on Android its plan and script tools; a vision model adds a screenshot.
+/// The tools every box of `automation` starts from; a vision model adds a screenshot.
 fn base_tools(vision: bool, automation: Automation) -> Vec<ToolSpec> {
     let mut tools = vec![
         ToolSpec {

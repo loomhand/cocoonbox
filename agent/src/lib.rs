@@ -17,6 +17,11 @@ pub mod llm;
 pub mod mcp;
 #[cfg(unix)]
 pub mod offload;
+/// Generated types of `cocoonbox.agent.v1`.
+#[allow(clippy::all, clippy::pedantic)]
+pub mod pb {
+    tonic::include_proto!("cocoonbox.agent.v1");
+}
 pub mod plugins;
 pub mod prompts;
 pub mod route;
@@ -49,12 +54,6 @@ impl Preempt {
     pub fn fire(&self) {
         std::mem::take(&mut *lock(&self.0)).cancel();
     }
-}
-
-/// Generated types of `cocoonbox.agent.v1`.
-#[allow(clippy::all, clippy::pedantic)]
-pub mod pb {
-    tonic::include_proto!("cocoonbox.agent.v1");
 }
 
 /// Current wall-clock time in unix milliseconds.

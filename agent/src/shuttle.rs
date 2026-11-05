@@ -1,5 +1,4 @@
-//! serve on a box whose shuttle endpoint it can open: desk calls and runs go straight to shuttle, every other
-//! tool to the toolhost.
+//! serve's tools: desk calls and runs go straight to shuttle, every other tool to the toolhost.
 
 use std::path::PathBuf;
 
@@ -110,7 +109,7 @@ mod tests {
     use super::*;
     use crate::toolhost::rpc::{read_frame, write_frame};
 
-    fn fake(path: &std::path::Path, answer: fn(&Call) -> Output) -> mpsc::UnboundedReceiver<Call> {
+    fn fake(path: &Path, answer: fn(&Call) -> Output) -> mpsc::UnboundedReceiver<Call> {
         let mut listener = crate::toolhost::bind(path, "").unwrap();
         let (seen, calls) = mpsc::unbounded_channel();
         tokio::spawn(async move {

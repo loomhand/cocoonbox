@@ -14,7 +14,7 @@ use windows_service::service_control_handler::{
 use windows_service::{define_windows_service, service_dispatcher};
 
 const NAME: &str = "cocoonbox-agent";
-/// A file the service appends its stderr to, as the service control manager keeps none.
+/// Names the file the service appends its stderr to; the service control manager keeps none.
 const LOG_VAR: &str = "CB_LOG";
 /// ERROR_FAILED_SERVICE_CONTROLLER_CONNECT: the process runs from a console, not under the service control manager.
 const NOT_A_SERVICE: i32 = 1063;

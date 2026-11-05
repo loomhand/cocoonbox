@@ -19,9 +19,7 @@ const MAX_TERMINFO: usize = 256 << 10;
 /// Stream of frames sent back to the client.
 pub type ServerStream = ReceiverStream<Result<ExecServerFrame, Status>>;
 
-/// Waits for the `start` frame, starts the command through the toolhost and pumps both ways
-/// until it exits. The client going away or the agent stopping closes the toolhost connection,
-/// which kills the command.
+/// Starts the `start` frame's command through the toolhost and pumps both ways until it exits; a closed client or stop kills it.
 pub async fn relay(
     tools: &rpc::Client,
     mut inbound: Streaming<ExecClientFrame>,

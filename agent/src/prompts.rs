@@ -118,9 +118,7 @@ const CHECKPOINT: &str = "Elapsed {minutes} min. If the deliverable is not saved
 
 const CAP_REPORT: &str = "Stop here: you have used all {cap} steps, and tools are off. In a few short lines, report what is done, what remains, and where you are stuck.";
 
-/// Renders the main agent's prompt: planner that prefers structured tools and delegates GUI work; a box that
-/// runs GUI plans adds the [`ROUTING`] and the image's `routing_extra`. `machine` replaces the Ubuntu desktop of a
-/// box that is not Linux.
+/// Renders the main agent's prompt; a desk box adds [`ROUTING`] and `routing_extra`, and `machine` replaces the Ubuntu desktop.
 pub fn main(
     model: &str,
     computer_model: &str,
@@ -160,8 +158,7 @@ pub fn main(
     prompt
 }
 
-/// Renders the computer subagent's prompt: observe, act, verify on the phone or on the desktop, whose x,y shuttle maps.
-/// `machine` replaces the Ubuntu desktop of a box that is not Linux.
+/// Renders the computer subagent's prompt; `machine` replaces the Ubuntu desktop.
 pub fn computer(model: &str, automation: Automation, machine: Option<&str>) -> String {
     if automation == Automation::Android {
         return ANDROID_COMPUTER.replace("{model}", model);

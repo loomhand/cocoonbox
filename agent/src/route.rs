@@ -7,9 +7,6 @@ use serde_json::Value;
 
 use crate::llm::Usage;
 
-/// Lowest confidence at which a route is followed rather than left to the caller.
-pub const CONFIDENT: f64 = 0.8;
-
 /// The tiers with what each one means for the tools to use.
 pub const TIERS: &[(&str, &str)] = &[
     ("command", "use shell and the file tools"),
@@ -31,7 +28,9 @@ pub const TIERS: &[(&str, &str)] = &[
     ),
 ];
 
-pub(crate) const BUILD: &str = "typesafe/jev-1.14-20261014";
+/// Lowest confidence at which a route is followed rather than left to the caller.
+const CONFIDENT: f64 = 0.8;
+const BUILD: &str = "typesafe/jev-1.14-20261014";
 
 const DESK_ROUTE: &str = include_str!("../../image/desk/route.json");
 const TASK: &str = "\"__TASK__\"";
@@ -174,7 +173,7 @@ pub fn meaning(tier: &str) -> Option<&'static str> {
 }
 
 /// Whether `model` names a dated build of the router's jev version.
-pub(crate) fn is_build(model: &str) -> bool {
+fn is_build(model: &str) -> bool {
     model
         .strip_prefix(BUILDS)
         .is_some_and(|d| d.len() == 8 && d.bytes().all(|b| b.is_ascii_digit()))

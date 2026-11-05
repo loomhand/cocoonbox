@@ -1,5 +1,4 @@
-//! Tool plugins an image installs as JSON files in one directory: script tools that run with
-//! `script_run`'s contract and their own program.
+//! Script-tool plugins an image installs as JSON files in one directory, each run by its own program.
 
 use std::path::{Path, PathBuf};
 
@@ -58,9 +57,7 @@ impl Plugin {
     }
 }
 
-/// Reads the `*.json` plugins in `dir` in file-name order; a missing directory has none, a service
-/// spec, which shuttle runs, is no script tool, and a file that breaks a rule or repeats a name is
-/// skipped with one log line.
+/// Reads the valid `*.json` script-tool plugins in `dir` in file-name order, skipping service specs and logging each rejected file.
 pub fn load(dir: &Path) -> Vec<Plugin> {
     let mut plugins: Vec<Plugin> = Vec::new();
     for file in sorted_files(dir, "json") {

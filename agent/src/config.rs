@@ -77,7 +77,7 @@ impl Automation {
         }
     }
 
-    /// Whether the box runs GUI plans on its desktop, with still-screen settling, scaled screenshots, action lists, browser_fetch.
+    /// Whether the box runs GUI plans on its desktop.
     pub fn plans(self) -> bool {
         self == Self::Desk
     }
