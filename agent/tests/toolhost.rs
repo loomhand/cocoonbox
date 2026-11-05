@@ -1,7 +1,7 @@
 #![cfg(test)]
 #![cfg(unix)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use cocoonbox_agent::toolhost::rpc::{Call, Client, Output, read_frame, write_frame};
@@ -182,7 +182,7 @@ async fn with_shuttle_the_toolhost_relays_desk_model_and_run_calls_and_shapes_th
     assert!(closed, "a dropped call closes its shuttle connection");
 }
 
-async fn spawn_toolhost(dir: &Path, shuttle: &Path) -> (tokio::process::Child, std::path::PathBuf) {
+async fn spawn_toolhost(dir: &Path, shuttle: &Path) -> (tokio::process::Child, PathBuf) {
     let socket = dir.join("toolhost.sock");
     let child = tokio::process::Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
         .arg("toolhost-service")

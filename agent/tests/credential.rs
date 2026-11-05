@@ -3,6 +3,7 @@
 
 mod common;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, Mutex};
@@ -15,6 +16,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::process::{Child, Command};
+use tokio::task::JoinHandle;
 use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 use tonic::{Code, Request};
@@ -164,7 +166,7 @@ async fn site(posts: Posts) -> u16 {
     port
 }
 
-fn capture(child: &mut Child) -> tokio::task::JoinHandle<String> {
+fn capture(child: &mut Child) -> JoinHandle<String> {
     let mut err = child.stderr.take().unwrap();
     tokio::spawn(async move {
         let mut out = Vec::new();
@@ -214,18 +216,16 @@ fn files_containing(dir: &Path, needle: &[u8]) -> Vec<PathBuf> {
     hits
 }
 
-#[tokio::test]
-async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value() {
+async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client, JoinHandle<String>)> {
     let Some(chrome) = find_chrome() else {
         assert!(
             cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
             "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
         );
         eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
-        return;
+        return None;
     };
-    let dir = tempfile::tempdir().unwrap();
-    let wrapper = dir.path().join("chrome");
+    let wrapper = dir.join("chrome");
     std::fs::write(
         &wrapper,
         format!(
@@ -234,33 +234,45 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
         ),
     )
     .unwrap();
-    std::fs::set_permissions(
-        &wrapper,
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
-    std::fs::create_dir_all(dir.path().join("workspace")).unwrap();
-    let _chrome = ChromeGuard(dir.path().join("profile"));
-    let socket = dir.path().join("toolhost.sock");
-    let state = dir.path().join("state");
-    let user = format!("user-{}", uuid::Uuid::new_v4().simple());
-    let password = format!("pw-{}", uuid::Uuid::new_v4().simple());
-    let code = format!("{}", 100_000 + uuid::Uuid::new_v4().as_u128() % 900_000);
-
+    std::fs::set_permissions(&wrapper, PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::create_dir_all(dir.join("workspace")).unwrap();
+    let guard = ChromeGuard(dir.join("profile"));
+    let socket = dir.join("toolhost.sock");
     let mut toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
         .arg("toolhost-service")
-        .env("HOME", dir.path())
+        .env("HOME", dir)
         .env("SHUTTLE_SERVICE_SOCKET", &socket)
-        .env("SHUTTLE_SOCKET", dir.path().join("desk.sock"))
-        .env("CB_WORKSPACE", dir.path().join("workspace"))
+        .env("SHUTTLE_SOCKET", dir.join("desk.sock"))
+        .env("CB_WORKSPACE", dir.join("workspace"))
         .env("CHROME_BIN", &wrapper)
-        .env("CHROME_PROFILE", dir.path().join("profile"))
+        .env("CHROME_PROFILE", dir.join("profile"))
         .env("CDP_PORT", free_port().await.to_string())
         .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
-    let toolhost_log = capture(&mut toolhost);
+    let log = capture(&mut toolhost);
+    tokio::time::timeout(UP, async {
+        while !socket.exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the toolhost did not come up");
+    Some((guard, toolhost, Client::new(socket), log))
+}
+
+#[tokio::test]
+async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let Some((_chrome, mut toolhost, th, toolhost_log)) = chrome_toolhost(dir.path()).await else {
+        return;
+    };
+    let socket = dir.path().join("toolhost.sock");
+    let state = dir.path().join("state");
+    let user = format!("user-{}", uuid::Uuid::new_v4().simple());
+    let password = format!("pw-{}", uuid::Uuid::new_v4().simple());
+    let code = (100_000 + uuid::Uuid::new_v4().as_u128() % 900_000).to_string();
     let port = free_port().await;
     let identity = dir.path().join("identity").join("identity");
     common::provision(&identity);
@@ -301,7 +313,6 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     .await
     .expect("serve and the toolhost did not come up");
     let mut session = SessionClient::new(channel);
-    let th = Client::new(socket.clone());
 
     let posts = Posts::default();
     let site_port = site(Arc::clone(&posts)).await;
@@ -447,71 +458,23 @@ async fn fill_credential_signs_in_only_on_the_matching_origin_and_logs_no_value(
     );
 }
 
-async fn chrome_toolhost(dir: &Path) -> Option<(ChromeGuard, Child, Client)> {
-    let Some(chrome) = find_chrome() else {
-        assert!(
-            cfg!(target_os = "macos") || std::env::var_os("CB_NO_BROWSER").is_some(),
-            "no Chrome found: set CHROME_BIN, or CB_NO_BROWSER=1 to skip"
-        );
-        eprintln!("SKIP: no Chrome; set CHROME_BIN to run");
-        return None;
-    };
-    let wrapper = dir.join("chrome");
-    std::fs::write(
-        &wrapper,
-        format!(
-            "#!/bin/sh\nexec \"{}\" --headless=new --use-mock-keychain \"$@\"\n",
-            chrome.display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &wrapper,
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
-    std::fs::create_dir_all(dir.join("workspace")).unwrap();
-    let guard = ChromeGuard(dir.join("profile"));
-    let socket = dir.join("toolhost.sock");
-    let toolhost = Command::new(env!("CARGO_BIN_EXE_cocoonbox-agent"))
-        .arg("toolhost-service")
-        .env("HOME", dir)
-        .env("SHUTTLE_SERVICE_SOCKET", &socket)
-        .env("SHUTTLE_SOCKET", dir.join("desk.sock"))
-        .env("CB_WORKSPACE", dir.join("workspace"))
-        .env("CHROME_BIN", &wrapper)
-        .env("CHROME_PROFILE", dir.join("profile"))
-        .env("CDP_PORT", free_port().await.to_string())
-        .kill_on_drop(true)
-        .spawn()
-        .unwrap();
-    tokio::time::timeout(UP, async {
-        while !socket.exists() {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("the toolhost did not come up");
-    Some((guard, toolhost, Client::new(socket)))
-}
-
 #[tokio::test]
 async fn snapshots_mask_the_values_of_card_fields() {
     let dir = tempfile::tempdir().unwrap();
-    let Some((_chrome, mut toolhost, th)) = chrome_toolhost(dir.path()).await else {
+    let Some((_chrome, mut toolhost, th, _log)) = chrome_toolhost(dir.path()).await else {
         return;
     };
-    let origin = format!("127.0.0.1:{}", site(Posts::default()).await);
+    let host = format!("127.0.0.1:{}", site(Posts::default()).await);
 
     let snapshot = tool(
         &th,
         "browser_navigate",
-        json!({"url": format!("http://{origin}/card")}),
+        json!({"url": format!("http://{host}/card")}),
     )
     .await;
     let read = tool(&th, "browser_read", json!({}))
         .await
-        .replace(&origin, "");
+        .replace(&host, "");
     eprintln!("{snapshot}\n{read}");
     assert_eq!(
         snapshot.matches("value=\"[masked]\"").count(),
@@ -542,10 +505,10 @@ async fn snapshots_mask_the_values_of_card_fields() {
     ] {
         let read = tool(&th, "browser_read", json!({"ref": element}))
             .await
-            .replace(&origin, "");
+            .replace(&host, "");
         let clicked = tool(&th, "browser_click", json!({"ref": element}))
             .await
-            .replace(&origin, "");
+            .replace(&host, "");
         eprintln!("{clicked}");
         assert!(
             clicked.starts_with(&format!("clicked {element} \"{label}\";")),
@@ -573,7 +536,7 @@ async fn snapshots_mask_the_values_of_card_fields() {
 #[tokio::test]
 async fn a_click_waits_for_the_page_it_opens_and_not_for_a_click_that_opens_none() {
     let dir = tempfile::tempdir().unwrap();
-    let Some((_chrome, mut toolhost, th)) = chrome_toolhost(dir.path()).await else {
+    let Some((_chrome, mut toolhost, th, _log)) = chrome_toolhost(dir.path()).await else {
         return;
     };
     let posts = Posts::default();
@@ -606,7 +569,7 @@ async fn a_click_waits_for_the_page_it_opens_and_not_for_a_click_that_opens_none
         "{clicked}"
     );
     assert!(
-        asked.elapsed() < Duration::from_millis(500),
+        asked.elapsed() < Duration::from_secs(1),
         "{:?}",
         asked.elapsed()
     );

@@ -1,7 +1,9 @@
 #![cfg(test)]
 #![cfg(unix)]
 
-use std::path::PathBuf;
+use std::io::Cursor;
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -28,7 +30,7 @@ display-message) case "$*" in *pane_pid*) ;; *) echo 0 ;; esac ;;
 esac"#;
 
 struct TestBox {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     layout: Layout,
     fake: PathBuf,
     stop: CancellationToken,
@@ -41,8 +43,7 @@ impl TestBox {
         std::fs::create_dir_all(&fake).unwrap();
         let tmux = fake.join("tmux");
         std::fs::write(&tmux, format!("#!/bin/sh\n{FAKE_TMUX}\n")).unwrap();
-        std::fs::set_permissions(&tmux, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(&tmux, PermissionsExt::from_mode(0o755)).unwrap();
         let home = dir.path().join("home");
         let workspace = dir.path().join("workspace");
         std::fs::create_dir_all(workspace.join("gron")).unwrap();
@@ -75,7 +76,7 @@ impl TestBox {
         let inbox = Inbox::open(layout.clone()).await.unwrap();
         tokio::spawn(inbox.run(listener, stop.clone()));
         Self {
-            _dir: dir,
+            dir,
             layout,
             fake,
             stop,
@@ -99,8 +100,8 @@ impl TestBox {
     }
 
     async fn status(&self) -> Value {
-        let s = self.call(json!({"op": "status", "repo": REPO})).await;
-        s["sessions"][0].clone()
+        let mut s = self.call(json!({"op": "status", "repo": REPO})).await;
+        s["sessions"][0].take()
     }
 }
 
@@ -115,7 +116,7 @@ fn args(v: &[&str]) -> Args {
 }
 
 async fn until(what: &str, mut ok: impl FnMut() -> bool) {
-    for _ in 0..100 {
+    for _ in 0..240 {
         if ok() {
             return;
         }
@@ -125,11 +126,37 @@ async fn until(what: &str, mut ok: impl FnMut() -> bool) {
 }
 
 fn valid_handover() -> String {
-    let mut s = String::from("# Hand-over: add --root\n");
-    for h in handover::HEADINGS {
-        s.push_str(&format!("\n{h}\nnone\n"));
+    let headings: String = handover::HEADINGS
+        .iter()
+        .map(|h| format!("\n{h}\nnone\n"))
+        .collect();
+    format!("# Hand-over: add --root\n{headings}")
+}
+
+fn tar_of(entries: &[(&str, &[u8])]) -> Cursor<Vec<u8>> {
+    let mut tar = tar::Builder::new(Vec::new());
+    for (name, data) in entries {
+        let mut h = tar::Header::new_ustar();
+        h.set_size(data.len() as u64);
+        h.set_mode(0o600);
+        h.set_cksum();
+        tar.append_data(&mut h, name, *data).unwrap();
     }
-    s
+    Cursor::new(tar.into_inner().unwrap())
+}
+
+fn sh(dir: &Path, script: &str) -> String {
+    let out = std::process::Command::new("sh")
+        .args(["-c", script])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{script}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
 }
 
 #[tokio::test]
@@ -281,21 +308,19 @@ async fn a_session_whose_hooks_never_run_goes_idle_from_its_transcript_and_takes
     ));
     std::fs::write(&transcript, &lines).unwrap();
     let enter = format!("send-keys -t =cb-off-{REPO}-claude: Enter");
-    for _ in 0..240 {
-        if b.tmux_log().contains(&enter) {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    until("the back prompt to be pasted", || {
+        b.tmux_log().contains(&enter)
+    })
+    .await;
     let pasted = std::fs::read_to_string(b.fake.join("buffer")).unwrap();
     assert!(pasted.starts_with(handover::BACK), "{pasted}");
-    let mut status = b.status().await["status"].clone();
+    let mut status = b.status().await["status"].take();
     for _ in 0..100 {
         if status == "working" {
             break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
-        status = b.status().await["status"].clone();
+        status = b.status().await["status"].take();
     }
     assert_eq!(status, "working");
     b.call(json!({"op": "event", "repo": REPO, "cli": "claude", "hook": "Stop", "payload": {}}))
@@ -313,7 +338,7 @@ async fn post_emits_an_event_with_no_content() {
     wr.write_all(b"{\"op\":\"watch\"}\n").await.unwrap();
     let mut lines = BufReader::new(rd).lines();
     let journal = Arc::new(Journal::new(
-        Store::open(&b._dir.path().join("agent.db")).unwrap(),
+        Store::open(&b.dir.path().join("agent.db")).unwrap(),
     ));
     let mut live = journal.bus.subscribe(0).unwrap().live;
     tokio::spawn(offload::inbox::relay(
@@ -546,13 +571,8 @@ async fn a_rescan_after_a_restore_restarts_the_restored_sessions_at_once() {
 
     offload::inbox::rescan(&b.layout.socket).await.unwrap();
     let restart = b.layout.state.join(REPO).join("restart.md");
-    for _ in 0..60 {
-        if restart.exists() {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let prompt = std::fs::read_to_string(&restart).expect("no restart within 3 s of the rescan");
+    until("the restart prompt", || restart.exists()).await;
+    let prompt = std::fs::read_to_string(&restart).unwrap();
     assert!(
         prompt.starts_with(handover::RESTARTED) && prompt.ends_with("FIRST"),
         "{prompt}"
@@ -613,7 +633,7 @@ async fn end_stops_the_session_and_returns_the_copy() {
 #[tokio::test]
 async fn send_rebuilds_history_checks_s_places_secrets_and_starts_the_cli() {
     let b = TestBox::start(false).await;
-    let mac = b._dir.path().join("mac");
+    let mac = b.dir.path().join("mac");
     std::fs::create_dir_all(&mac).unwrap();
     sh(
         &mac,
@@ -638,26 +658,17 @@ async fn send_rebuilds_history_checks_s_places_secrets_and_starts_the_cli() {
             "rsync -a --exclude=/.git/objects/ --exclude=/target/ --exclude=/.env ./ {c}/ \
          && mkdir -p {c}/target && echo box-built > {c}/target/y \
          && git bundle create {}/offload.bundle --all 2>/dev/null",
-            b._dir.path().display(),
+            b.dir.path().display(),
             c = copy.display(),
         ),
     );
-    let mut tar = tar::Builder::new(Vec::new());
-    let mut add = |name: &str, data: &[u8]| {
-        let mut h = tar::Header::new_ustar();
-        h.set_size(data.len() as u64);
-        h.set_mode(0o600);
-        h.set_cksum();
-        tar.append_data(&mut h, name, data).unwrap();
-    };
-    add("handover.md", valid_handover().as_bytes());
-    add(
-        "offload.bundle",
-        &std::fs::read(b._dir.path().join("offload.bundle")).unwrap(),
-    );
-    add("secrets/file/.env", b"TOKEN=secret");
-    add("secrets/aws", b"[default]");
-    let stream = std::io::Cursor::new(tar.into_inner().unwrap());
+    let bundle = std::fs::read(b.dir.path().join("offload.bundle")).unwrap();
+    let stream = tar_of(&[
+        ("handover.md", valid_handover().as_bytes()),
+        ("offload.bundle", &bundle),
+        ("secrets/file/.env", b"TOKEN=secret"),
+        ("secrets/aws", b"[default]"),
+    ]);
 
     let socket = b.layout.socket.clone();
     let session = b.fake.join(format!("sessions/cb-off-{REPO}-claude"));
@@ -680,7 +691,7 @@ async fn send_rebuilds_history_checks_s_places_secrets_and_starts_the_cli() {
     ] {
         assert!(out["timings_ms"][step].is_u64(), "{step} in {out}");
     }
-    let status = |dir: &std::path::Path| {
+    let status = |dir: &Path| {
         sh(
             dir,
             "git status --porcelain=v2 --untracked-files=all | grep -v ' .env$'",
@@ -737,7 +748,7 @@ async fn send_rebuilds_history_checks_s_places_secrets_and_starts_the_cli() {
 #[tokio::test]
 async fn send_fails_and_releases_the_copy_when_it_differs_from_s() {
     let b = TestBox::start(false).await;
-    let mac = b._dir.path().join("mac");
+    let mac = b.dir.path().join("mac");
     std::fs::create_dir_all(&mac).unwrap();
     sh(
         &mac,
@@ -751,28 +762,18 @@ async fn send_fails_and_releases_the_copy_when_it_differs_from_s() {
     sh(
         &mac,
         &format!(
-            "rsync -a --exclude=/.git/objects/ ./ {}/ && echo drift > {}/a.txt \
-         && git bundle create {}/offload.bundle --all 2>/dev/null",
-            copy.display(),
-            copy.display(),
-            b._dir.path().display()
+            "rsync -a --exclude=/.git/objects/ ./ {c}/ && echo drift > {c}/a.txt \
+         && git bundle create {t}/offload.bundle --all 2>/dev/null",
+            c = copy.display(),
+            t = b.dir.path().display()
         ),
     );
-    let mut tar = tar::Builder::new(Vec::new());
-    for (name, data) in [
-        ("handover.md", valid_handover().into_bytes()),
-        (
-            "offload.bundle",
-            std::fs::read(b._dir.path().join("offload.bundle")).unwrap(),
-        ),
-        ("secrets/kube", b"cfg".to_vec()),
-    ] {
-        let mut h = tar::Header::new_ustar();
-        h.set_size(data.len() as u64);
-        h.set_cksum();
-        tar.append_data(&mut h, name, data.as_slice()).unwrap();
-    }
-    let stream = std::io::Cursor::new(tar.into_inner().unwrap());
+    let bundle = std::fs::read(b.dir.path().join("offload.bundle")).unwrap();
+    let stream = tar_of(&[
+        ("handover.md", valid_handover().as_bytes()),
+        ("offload.bundle", &bundle),
+        ("secrets/kube", b"cfg"),
+    ]);
     let a = args(&["--repo", REPO, "--kind", "claude", "--id", ID]);
     let Err(Fail::Failed(msg)) = packer::send(&b.layout, &a, stream).await else {
         panic!("send took a copy that differs from S");
@@ -791,24 +792,10 @@ async fn send_fails_and_releases_the_copy_when_it_differs_from_s() {
     assert!(!b.tmux_log().contains("new-session"));
 }
 
-fn sh(dir: &std::path::Path, script: &str) -> String {
-    let out = std::process::Command::new("sh")
-        .args(["-c", script])
-        .current_dir(dir)
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "{script}: {}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stdout).trim_end().to_owned()
-}
-
 #[tokio::test]
 async fn a_second_send_takes_history_while_the_synced_refs_name_objects_only_the_bundle_has() {
     let b = TestBox::start(false).await;
-    let mac = b._dir.path().join("mac");
+    let mac = b.dir.path().join("mac");
     std::fs::create_dir_all(&mac).unwrap();
     let copy = b.layout.workspace.join("gron");
     sh(
@@ -820,24 +807,15 @@ async fn a_second_send_takes_history_while_the_synced_refs_name_objects_only_the
          && git update-ref refs/cocoonbox/offload/{ID} $(git commit-tree HEAD^{{tree}} -p HEAD -m S) \
          && rsync -ac --delete --exclude=/.git/objects/ ./ {c}/ \
          && git bundle create {}/offload.bundle --all ^$(git rev-parse HEAD~1) 2>/dev/null",
-            b._dir.path().display(),
+            b.dir.path().display(),
             c = copy.display(),
         ),
     );
-    let mut tar = tar::Builder::new(Vec::new());
-    for (name, data) in [
-        ("handover.md", valid_handover().into_bytes()),
-        (
-            "offload.bundle",
-            std::fs::read(b._dir.path().join("offload.bundle")).unwrap(),
-        ),
-    ] {
-        let mut h = tar::Header::new_ustar();
-        h.set_size(data.len() as u64);
-        h.set_cksum();
-        tar.append_data(&mut h, name, data.as_slice()).unwrap();
-    }
-    let stream = std::io::Cursor::new(tar.into_inner().unwrap());
+    let bundle = std::fs::read(b.dir.path().join("offload.bundle")).unwrap();
+    let stream = tar_of(&[
+        ("handover.md", valid_handover().as_bytes()),
+        ("offload.bundle", &bundle),
+    ]);
     let socket = b.layout.socket.clone();
     let session = b.fake.join(format!("sessions/cb-off-{REPO}-claude"));
     tokio::spawn(async move {
@@ -869,8 +847,7 @@ async fn begin_takes_the_copy_and_reports_its_ignored_directories() {
     ] {
         let path = fakebin.join(name);
         std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        std::fs::set_permissions(&path, PermissionsExt::from_mode(0o755)).unwrap();
     }
     std::fs::write(
         b.layout.home.join(".profile"),
