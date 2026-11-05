@@ -167,7 +167,7 @@ func TestEnsureTakesOnlyAnOutsideSource(t *testing.T) {
 
 func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 	dsn := clustertest.EmptyDSN(t)
-	gw := &gatedGW{fakeGW: fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}, open: make(chan struct{})}
+	gw := &gatedGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}, open: make(chan struct{})}
 	svc := openTestService(t, dsn, gw, &fakeTenants{tenants: map[string]tenant{}})
 	var wg sync.WaitGroup
 	for i := range 16 {
