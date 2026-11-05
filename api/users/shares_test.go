@@ -15,8 +15,8 @@ import (
 
 func TestShareLifecycle(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	owner, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	guest, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	owner := mustCreate(t, svc, NewUser{Name: "qa1"})
+	guest := mustCreate(t, svc, NewUser{Name: "qa2"})
 	var ended []string
 	svc.OnShareEnd(func(_ context.Context, sh Share) { ended = append(ended, sh.ID) })
 
@@ -121,7 +121,7 @@ func TestShareLifecycle(t *testing.T) {
 
 func TestShareExpiresAndDiesWithItsOwner(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
-	owner, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	owner := mustCreate(t, svc, NewUser{Name: "qa1"})
 	expired := make(chan string, 1)
 	svc.OnShareEnd(func(_ context.Context, sh Share) { expired <- sh.ID })
 
@@ -171,15 +171,17 @@ func TestShareExpiresAndDiesWithItsOwner(t *testing.T) {
 	if err := query(t, dsn, "SELECT count(*) FROM shares WHERE id = $1", again.ID).Scan(&rows); err != nil || rows != 0 {
 		t.Errorf("%d share rows outlive their owner, %v", rows, err)
 	}
-	if svc.mu.RLock(); len(svc.shares) != 0 {
-		t.Errorf("the index keeps %d shares of a deleted owner", len(svc.shares))
-	}
+	svc.mu.RLock()
+	kept := len(svc.shares)
 	svc.mu.RUnlock()
+	if kept != 0 {
+		t.Errorf("the index keeps %d shares of a deleted owner", kept)
+	}
 }
 
 func TestASealedShareSecretOpensOnlyOnItsOwnRow(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	owner, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	owner := mustCreate(t, svc, NewUser{Name: "qa1"})
 	a, _ := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-1"})
 	b, _ := svc.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: "cb-2"})
 	if err := exec(t, dsn, "UPDATE shares SET secret_sealed = (SELECT secret_sealed FROM shares WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
@@ -215,10 +217,7 @@ func TestAnotherApiSeesEveryShareChangeWithoutARestart(t *testing.T) {
 	b := openTestService(t, dsn, gw, tenants)
 	go a.Listen(t.Context())
 	go b.Listen(t.Context())
-	owner, err := a.Create(t.Context(), NewUser{Name: "owner1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	owner := mustCreate(t, a, NewUser{Name: "owner1"})
 	box := a.Boxes(owner.ID)[0].ID
 	ended := make(chan string, 1)
 	b.OnShareEnd(func(_ context.Context, sh Share) { ended <- sh.ID })
@@ -274,10 +273,7 @@ func TestDisablingAnOwnerCutsItsSharesInEveryApi(t *testing.T) {
 	a, gw, tenants, dsn := newTestService(t)
 	b := openTestService(t, dsn, gw, tenants)
 	go b.Listen(t.Context())
-	owner, err := a.Create(t.Context(), NewUser{Name: "owner1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	owner := mustCreate(t, a, NewUser{Name: "owner1"})
 	sh, err := a.CreateShare(t.Context(), NewShare{Owner: owner.ID, Box: a.Boxes(owner.ID)[0].ID})
 	if err != nil {
 		t.Fatalf("CreateShare: %v", err)

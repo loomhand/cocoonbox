@@ -119,7 +119,7 @@ func TestBuildVersion(t *testing.T) {
 	}
 }
 
-func TestTransportRejects(t *testing.T) {
+func TestTransportStatuses(t *testing.T) {
 	srv, fake := newTestServer(t)
 	cases := []struct {
 		name, method, token, body string
@@ -448,7 +448,6 @@ func TestUsageReportsTheCallersMeter(t *testing.T) {
 }
 
 type rpcReply struct {
-	ID     any            `json:"id"`
 	Result map[string]any `json:"result"`
 	Error  *mcpwire.Error `json:"error"`
 }
@@ -577,11 +576,11 @@ func (f *fakeBoxes) Usage(ctx context.Context, _ *controlv1.UsageRequest) (*cont
 func (f *fakeBoxes) operate(ctx context.Context, method, box string) (*controlv1.Operation, error) {
 	user := auth.User(ctx)
 	f.record(method, user, box)
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	if box != boxes.BoxID(user) && !slices.ContainsFunc(f.extra[user], func(b *controlv1.Box) bool { return b.GetId() == box }) {
 		return nil, boxes.ErrNoBox
 	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	kind := "op"
 	switch method {
 	case "Hibernate":

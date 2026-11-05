@@ -3,19 +3,21 @@ package users
 import (
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestWakeSchedulesKeepTheQuotaAndTheAlarmAcrossARestart(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	other, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	other := mustCreate(t, svc, NewUser{Name: "qa2"})
 	_, _ = svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(4), MaxBoxes: new(4)})
 	ids := []string{firstBoxID(u.ID), "cb-b1", "cb-b2", "cb-b3"}
 	for i, id := range ids[1:] {
-		if _, err := svc.AddBox(t.Context(), Box{ID: id, Owner: u.ID, Name: "box" + string(rune('1'+i))}); err != nil {
+		if _, err := svc.AddBox(t.Context(), Box{ID: id, Owner: u.ID, Name: "box" + strconv.Itoa(i+1)}); err != nil {
 			t.Fatalf("AddBox: %v", err)
 		}
 	}
@@ -25,16 +27,13 @@ func TestWakeSchedulesKeepTheQuotaAndTheAlarmAcrossARestart(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var quota int
+	var quota atomic.Int32
 	for _, id := range ids {
 		wg.Go(func() {
 			err := svc.PutWakeSchedule(t.Context(), schedule(id), 3)
-			mu.Lock()
-			defer mu.Unlock()
 			switch {
 			case errors.Is(err, ErrQuota):
-				quota++
+				quota.Add(1)
 			case err != nil:
 				t.Errorf("PutWakeSchedule: %v", err)
 			}
@@ -42,8 +41,8 @@ func TestWakeSchedulesKeepTheQuotaAndTheAlarmAcrossARestart(t *testing.T) {
 	}
 	wg.Wait()
 	list, err := svc.WakeSchedules(t.Context(), u.ID)
-	if err != nil || len(list) != 3 || quota != 1 {
-		t.Fatalf("after 4 parallel puts: %d schedules, %d refused, %v; want 3 and 1", len(list), quota, err)
+	if err != nil || len(list) != 3 || quota.Load() != 1 {
+		t.Fatalf("after 4 parallel puts: %d schedules, %d refused, %v; want 3 and 1", len(list), quota.Load(), err)
 	}
 	if err := svc.PutWakeSchedule(t.Context(), WakeSchedule{Box: list[0].Box, Owner: u.ID, Cron: "0 18 * * *", TZ: "UTC", AwakeFor: time.Minute, NextAt: next}, 3); err != nil {
 		t.Errorf("replacing a schedule at the quota = %v, want it to replace", err)
@@ -57,7 +56,8 @@ func TestWakeSchedulesKeepTheQuotaAndTheAlarmAcrossARestart(t *testing.T) {
 	if err := svc.SetWakeAlarm(t.Context(), stale); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetWakeAlarm of a replaced schedule = %v, want ErrNotFound", err)
 	}
-	if now, _ := svc.WakeSchedules(t.Context(), u.ID); !now[slices.IndexFunc(now, func(s WakeSchedule) bool { return s.Box == stale.Box })].NextAt.Equal(next) {
+	now, _ := svc.WakeSchedules(t.Context(), u.ID)
+	if i := slices.IndexFunc(now, func(s WakeSchedule) bool { return s.Box == stale.Box }); i < 0 || !now[i].NextAt.Equal(next) {
 		t.Error("an alarm read before the schedule was replaced overwrote the new schedule")
 	}
 

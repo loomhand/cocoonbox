@@ -98,9 +98,7 @@ func TestRootWakePastTheBoundAsksForARetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		srv, fake, agents, _ := newUnifiedServer(t)
 		fake.setState("alice", controlv1.BoxState_BOX_STATE_HIBERNATED)
-		agents.mu.Lock()
-		agents.deaf = true
-		agents.mu.Unlock()
+		agents.set(func(a *fakeAgents) { a.deaf = true })
 		if got := refusal(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, "s1", callShell))); got != string(errStillStarting) {
 			t.Fatalf("call past the bound = %q", got)
 		}
@@ -163,9 +161,7 @@ func TestRootCallLostInFlightIsNotSentAgain(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
 	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
-	agents.mu.Lock()
-	agents.lost = true
-	agents.mu.Unlock()
+	agents.set(func(a *fakeAgents) { a.lost = true })
 	if got := refusal(t, decode(t, serveRoot(srv, http.MethodPost, aliceToken, session, callShell))); got != "box agent unreachable" {
 		t.Fatalf("call lost in flight = %q", got)
 	}
@@ -191,10 +187,10 @@ func TestRootParallelCallsOnAnExpiredSessionOpenOneNew(t *testing.T) {
 	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
 	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
 	agents.forget()
-	agents.mu.Lock()
-	agents.hold = &sync.WaitGroup{}
-	agents.hold.Add(2)
-	agents.mu.Unlock()
+	agents.set(func(a *fakeAgents) {
+		a.hold = &sync.WaitGroup{}
+		a.hold.Add(2)
+	})
 	var wg sync.WaitGroup
 	texts := make([]string, 2)
 	for i := range texts {
@@ -220,13 +216,9 @@ func TestRootParallelCallsOnAnExpiredSessionOpenOneNew(t *testing.T) {
 func TestRootCallAfterTheDefaultBoxWentReachesTheNextOne(t *testing.T) {
 	srv, fake, agents, lists := newUnifiedServer(t)
 	lists.put("img:1", users.ToolList{Image: "img:1", Tools: jsontext.Value(boxTools)})
-	agents.mu.Lock()
-	agents.lost = true
-	agents.mu.Unlock()
+	agents.set(func(a *fakeAgents) { a.lost = true })
 	session := serveRoot(srv, http.MethodPost, aliceToken, "", initialize).Header().Get(mcpwire.SessionHeader)
-	agents.mu.Lock()
-	agents.lost = false
-	agents.mu.Unlock()
+	agents.set(func(a *fakeAgents) { a.lost = false })
 	fake.mu.Lock()
 	fake.gone["alice"] = true
 	fake.extra["alice"] = []*controlv1.Box{{Id: "cb-next", Name: "next", State: controlv1.BoxState_BOX_STATE_RUNNING, Image: "img:1"}}
@@ -481,6 +473,12 @@ func (a *fakeAgents) Exchange(req *http.Request, user, box string, use func(*htt
 		a.called = append(a.called, session)
 		return use(answer(http.StatusOK, "", `{"jsonrpc":"2.0","id":`+string(msg.ID)+`,"result":{"content":[{"type":"text","text":"`+shellAnswer+box+`"}]}}`))
 	}
+}
+
+func (a *fakeAgents) set(fn func(*fakeAgents)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	fn(a)
 }
 
 func (a *fakeAgents) forget() {

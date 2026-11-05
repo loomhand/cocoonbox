@@ -10,6 +10,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -31,6 +32,7 @@ import (
 	"github.com/loomhand/cocoonbox/api/oauth"
 	"github.com/loomhand/cocoonbox/api/signup"
 	"github.com/loomhand/cocoonbox/api/users"
+	"github.com/loomhand/cocoonbox/api/utils"
 )
 
 const (
@@ -158,11 +160,15 @@ func TestInviteOnlySignupAdmitsAtOnceThenQueuesAndAFreedSeatAdmitsTheFront(t *te
 	if loc := gina.githubAs(t, "gina", "/cb/api/auth/github/begin", map[string]string{"invite": made.Code}); loc != "/cb/queue" {
 		t.Fatalf("the invite's last use ends at %q", loc)
 	}
-	for name, want := range map[string]int{"carol": 2, "gina": 1, "dave": 3} {
+	for _, tt := range []struct {
+		name string
+		b    *browser
+		want int
+	}{{"carol", carol, 2}, {"gina", gina, 1}, {"dave", dave, 3}} {
 		var place signup.Place
-		map[string]*browser{"carol": carol, "gina": gina, "dave": dave}[name].json(t, http.MethodGet, "queue/me", nil, &place)
-		if place.Status != "waiting" || place.Position != want || place.Waiting != 3 {
-			t.Errorf("%s's place = %+v, want %d of 3 (an invite goes to the front)", name, place, want)
+		tt.b.json(t, http.MethodGet, "queue/me", nil, &place)
+		if place.Status != "waiting" || place.Position != tt.want || place.Waiting != 3 {
+			t.Errorf("%s's place = %+v, want %d of 3 (an invite goes to the front)", tt.name, place, tt.want)
 		}
 	}
 	if loc := e.browser(t).githubAs(t, "eve", "/cb/api/auth/github/begin", nil); !strings.Contains(loc, "login_error=email_unverified") {
@@ -332,10 +338,7 @@ func TestInviteCodeOnlySignupMakesAnAccountOnlyWithAValidInviteAndWritesNothingW
 	if queued, accounts := written(); queued != 0 || accounts != 0 {
 		t.Fatalf("after refusals: %d queue entries, %d accounts, want none", queued, accounts)
 	}
-	var one struct {
-		Code   string        `json:"code"`
-		Invite signup.Invite `json:"invite"`
-	}
+	var one madeInvite
 	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 1, "days": 1}, &one)
 	if loc := e.browser(t).githubAs(t, "bob", "/cb/api/auth/github/begin", map[string]string{"invite": one.Code}); loc != "/cb/" {
 		t.Fatalf("a valid invite ends at %q, want signed in", loc)
@@ -343,10 +346,7 @@ func TestInviteCodeOnlySignupMakesAnAccountOnlyWithAValidInviteAndWritesNothingW
 	if loc := e.browser(t).githubAs(t, "carol", "/cb/api/auth/github/begin", map[string]string{"invite": one.Code}); loc != "/cb/?login_error=invite_required" {
 		t.Errorf("a used-up invite ends at %q", loc)
 	}
-	var expired struct {
-		Code   string        `json:"code"`
-		Invite signup.Invite `json:"invite"`
-	}
+	var expired madeInvite
 	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 5, "days": 1}, &expired)
 	if err := exec(t, e.dsn, "UPDATE signup_invites SET expires_at = now() - interval '1 second' WHERE id = $1", expired.Invite.ID); err != nil {
 		t.Fatalf("expire: %v", err)
@@ -429,10 +429,7 @@ func TestAnInviteOnTheConsentPageSignsUpAndSignsTheCLIInInOnePass(t *testing.T) 
 	if err := query(t, e.dsn, "SELECT count(*) FROM users WHERE idp = 'github'").Scan(&accounts); err != nil || accounts != 0 {
 		t.Fatalf("accounts after the refusal = %d, %v", accounts, err)
 	}
-	withInvite := url.Values{}
-	for k, v := range authorize {
-		withInvite[k] = v
-	}
+	withInvite := authorize.Clone()
 	withInvite.Set("invite", made.Code)
 	page := "/cb/oauth/authorize?" + withInvite.Encode()
 	bob := e.browser(t)
@@ -463,9 +460,8 @@ func TestAnInviteOnTheConsentPageSignsUpAndSignsTheCLIInInOnePass(t *testing.T) 
 	if resp.StatusCode != http.StatusOK || json.UnmarshalRead(resp.Body, &tok) != nil {
 		t.Fatalf("token: %d", resp.StatusCode)
 	}
-	device := sha256.Sum256([]byte(tok.AccessToken))
 	b, err := e.users.ByName("bob")
-	if user, ok := e.users.ByTokenSHA256(t.Context(), hex.EncodeToString(device[:])); err != nil || !ok || user != b.ID || b.IDP != "github" {
+	if user, ok := e.users.ByTokenSHA256(t.Context(), utils.HashHex(tok.AccessToken)); err != nil || !ok || user != b.ID || b.IDP != "github" {
 		t.Errorf("the device token resolves to %q, %t; bob = %+v, %v", user, ok, b, err)
 	}
 }
@@ -483,17 +479,13 @@ func TestAnInviteTokenMakesOnlyOneUseInvitesAndListsOnlyItsOwn(t *testing.T) {
 	if !strings.HasPrefix(minted.Token, auth.InviteTokenPrefix) || minted.InviteToken.Label != "dora" {
 		t.Fatalf("minted = %+v", minted)
 	}
-	mintedSum := sha256.Sum256([]byte(minted.Token))
-	var hashed, clear int
+	var hashed, plain int
 	if err := query(t, e.dsn, "SELECT count(*) FILTER (WHERE sha256 = $1), count(*) FILTER (WHERE sha256 = $2 OR label = $2) FROM invite_tokens",
-		hex.EncodeToString(mintedSum[:]), minted.Token).Scan(&hashed, &clear); err != nil || hashed != 1 || clear != 0 {
-		t.Errorf("stored as its sha256: %d, in the clear: %d, %v", hashed, clear, err)
+		utils.HashHex(minted.Token), minted.Token).Scan(&hashed, &plain); err != nil || hashed != 1 || plain != 0 {
+		t.Errorf("stored as its sha256: %d, in the clear: %d, %v", hashed, plain, err)
 	}
 	admin.json(t, http.MethodPost, "invites", map[string]int{"uses": 3, "days": 30}, &struct{}{})
-	var made struct {
-		Code   string        `json:"code"`
-		Invite signup.Invite `json:"invite"`
-	}
+	var made madeInvite
 	status, body := e.bearer(t, minted.Token, http.MethodPost, "/cb/api/invites", map[string]any{})
 	if status != http.StatusOK || json.Unmarshal([]byte(body), &made) != nil {
 		t.Fatalf("a token's invite: %d %s", status, body)
@@ -536,16 +528,16 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 		InviteToken signup.InviteToken `json:"invite_token"`
 	}
 	admin.json(t, http.MethodPost, "invite-tokens", map[string]string{"label": "dora"}, &minted)
-	minted0 := func() string {
+	counts := func() string {
 		t.Helper()
-		var users, tokens, invites, sessions, devices int
+		var accounts, inviteTokens, invites, sessions, devices int
 		if err := query(t, e.dsn, `SELECT (SELECT count(*) FROM users), (SELECT count(*) FROM invite_tokens), (SELECT count(*) FROM signup_invites),
-			(SELECT count(*) FROM sessions), (SELECT count(*) FROM user_tokens)`).Scan(&users, &tokens, &invites, &sessions, &devices); err != nil {
+			(SELECT count(*) FROM sessions), (SELECT count(*) FROM user_tokens)`).Scan(&accounts, &inviteTokens, &invites, &sessions, &devices); err != nil {
 			t.Fatalf("count: %v", err)
 		}
-		return fmt.Sprint(users, tokens, invites, sessions, devices)
+		return fmt.Sprint(accounts, inviteTokens, invites, sessions, devices)
 	}
-	before := minted0()
+	before := counts()
 	for _, route := range []struct{ method, path string }{
 		{http.MethodGet, "/cb/"},
 		{http.MethodGet, "/cb/oauth/authorize"},
@@ -615,14 +607,13 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 			t.Errorf("%s %s with an invite token: %d, want 403", route.method, route.path, status)
 		}
 	}
-	if after := minted0(); after != before {
+	if after := counts(); after != before {
 		t.Errorf("users, invite tokens, invites, sessions, device tokens = %s after the refused calls, %s before; an invite token minted something", after, before)
 	}
 	if status, body := e.bearer(t, "cb_"+strings.Repeat("0", 64), http.MethodPost, "/cocoonbox.mcp/control", map[string]any{}); status != http.StatusOK || body != "reached" {
 		t.Errorf("a request without an invite token passes the gate: %d %q", status, body)
 	}
-	tokenSum := sha256.Sum256([]byte(minted.Token))
-	if _, ok := e.users.ByTokenSHA256(t.Context(), hex.EncodeToString(tokenSum[:])); ok {
+	if _, ok := e.users.ByTokenSHA256(t.Context(), utils.HashHex(minted.Token)); ok {
 		t.Error("an invite token passes the user token check")
 	}
 	if status, _ := e.bearer(t, auth.InviteTokenPrefix+strings.Repeat("0", 64), http.MethodPost, "/cb/api/invites", map[string]any{}); status != http.StatusUnauthorized {
@@ -650,6 +641,11 @@ func TestAnInviteTokenIsRefusedEverywhereElseAndStopsWithItsAdmin(t *testing.T) 
 	if status, _ := e.bearer(t, minted.Token, http.MethodPost, "/cb/api/invites", map[string]any{}); status != http.StatusUnauthorized {
 		t.Errorf("a revoked invite token: %d, want 401", status)
 	}
+}
+
+type madeInvite struct {
+	Code   string        `json:"code"`
+	Invite signup.Invite `json:"invite"`
 }
 
 type person struct {
@@ -923,11 +919,7 @@ func (g *fakeGW) DailyCap(_ context.Context, owner string) (*int64, error) {
 func (g *fakeGW) DailyCaps(context.Context) (map[string]int64, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	out := map[string]int64{}
-	for k, v := range g.caps {
-		out[k] = v
-	}
-	return out, nil
+	return maps.Clone(g.caps), nil
 }
 
 func (g *fakeGW) SetDailyCap(_ context.Context, owner string, micros *int64) error {
@@ -973,11 +965,11 @@ func query(t *testing.T, dsn, sql string, args ...any) pgx.Row {
 
 func exec(t *testing.T, dsn, sql string, args ...any) error {
 	t.Helper()
-	conn, err := pgx.Connect(context.Background(), dsn)
+	conn, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
-	_, err = conn.Exec(context.Background(), sql, args...)
+	defer func() { _ = conn.Close(t.Context()) }()
+	_, err = conn.Exec(t.Context(), sql, args...)
 	return err
 }

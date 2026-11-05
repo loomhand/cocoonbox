@@ -27,15 +27,15 @@ import (
 	"github.com/loomhand/cocoonbox/api/utils"
 )
 
-const password = "correct horse battery"
+const (
+	password  = "correct horse battery"
+	outsideID = "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"
+)
 
 func TestAnUpdateFromAStaleCacheKeepsTheColumnsItDoesNotSet(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if err := exec(t, dsn, "UPDATE users SET no_gc = true, image = 'cbcore:v1' WHERE id = '"+u.ID+"'"); err != nil {
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	if err := exec(t, dsn, "UPDATE users SET no_gc = true, image = 'cbcore:v1' WHERE id = $1", u.ID); err != nil {
 		t.Fatalf("set the policy behind the cache: %v", err)
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(1)}); err != nil {
@@ -48,10 +48,7 @@ func TestAnUpdateFromAStaleCacheKeepsTheColumnsItDoesNotSet(t *testing.T) {
 
 func TestAUsersPolicyIsKeptAndReloaded(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	if p := svc.Policy(u.ID); p != (Policy{}) {
 		t.Fatalf("a new user's policy = %+v, want the zero one", p)
 	}
@@ -68,17 +65,15 @@ func TestAUsersPolicyIsKeptAndReloaded(t *testing.T) {
 	if _, err := svc.Update(t.Context(), u.ID, Settings{NoPark: new(false)}); err != nil {
 		t.Fatalf("Update of one field: %v", err)
 	}
-	if want.NoPark = false; svc.Policy(u.ID) != want {
+	want.NoPark = false
+	if svc.Policy(u.ID) != want {
 		t.Errorf("policy after an update of one field = %+v, want %+v", svc.Policy(u.ID), want)
 	}
 }
 
 func TestCreateIssuesBothKeysAndSealsThem(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})
 	if !strings.HasPrefix(u.ID, "u-") || u.MaxBoxes != 1 || u.MaxBoxesCap != 1 || u.HasToken || u.Admin {
 		t.Errorf("user = %+v", u)
 	}
@@ -128,7 +123,7 @@ func TestCreateLeavesNothingBehindOnFailure(t *testing.T) {
 
 func TestEnsureCreatesAnOutsideUserUnderItsOwnIDOnce(t *testing.T) {
 	svc, gw, tenants, _ := newTestService(t)
-	const id = "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"
+	const id = outsideID
 	u, err := svc.Ensure(t.Context(), "firebase", id)
 	if err != nil || u.ID != id || u.Name != id || u.IDP != "firebase" || u.Admin {
 		t.Fatalf("Ensure = %+v, %v", u, err)
@@ -147,14 +142,11 @@ func TestEnsureCreatesAnOutsideUserUnderItsOwnIDOnce(t *testing.T) {
 
 func TestEnsureNeverHandsOutAUserAnotherSourceHolds(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
-	local, err := svc.Create(t.Context(), NewUser{ID: "alice", Name: "alice", Admin: true})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	if _, err := svc.Ensure(t.Context(), "other", "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"); err != nil {
+	local := mustCreate(t, svc, NewUser{ID: "alice", Name: "alice", Admin: true})
+	if _, err := svc.Ensure(t.Context(), "other", outsideID); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
-	for _, id := range []string{local.ID, "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"} {
+	for _, id := range []string{local.ID, outsideID} {
 		if u, err := svc.Ensure(t.Context(), "firebase", id); !errors.Is(err, ErrExists) || u.ID != "" {
 			t.Errorf("Ensure of %s, held by another source = %+v, %v, want ErrExists", id, u, err)
 		}
@@ -167,7 +159,7 @@ func TestEnsureNeverHandsOutAUserAnotherSourceHolds(t *testing.T) {
 func TestEnsureTakesOnlyAnOutsideSource(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
 	for _, idp := range []string{"", "password", "github"} {
-		if u, err := svc.Ensure(t.Context(), idp, "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"); !errors.Is(err, ErrInvalid) || u.ID != "" {
+		if u, err := svc.Ensure(t.Context(), idp, outsideID); !errors.Is(err, ErrInvalid) || u.ID != "" {
 			t.Errorf("Ensure from source %q = %+v, %v, want ErrInvalid", idp, u, err)
 		}
 	}
@@ -178,11 +170,11 @@ func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 	gw := &gatedGW{fakeGW: fakeGW{keys: map[string]string{}, caps: map[string]int64{}, disabled: map[string]bool{}}, open: make(chan struct{})}
 	svc := openTestService(t, dsn, gw, &fakeTenants{tenants: map[string]tenant{}})
 	var wg sync.WaitGroup
-	errs := make(chan error, 16)
 	for i := range 16 {
 		wg.Go(func() {
-			_, err := svc.Ensure(t.Context(), "firebase", fmt.Sprintf("uid%02d", i))
-			errs <- err
+			if _, err := svc.Ensure(t.Context(), "firebase", fmt.Sprintf("uid%02d", i)); err != nil {
+				t.Errorf("Ensure: %v", err)
+			}
 		})
 	}
 	clustertest.WaitFor(t, "the first creates start", func() bool { return gw.active.Load() >= ensureLimit })
@@ -192,33 +184,21 @@ func TestEnsuresOfManyNewIDsCreateAFewAtATime(t *testing.T) {
 	}
 	close(gw.open)
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Errorf("Ensure: %v", err)
-		}
-	}
 }
 
 func TestEnsuresRacingInTwoProcessesLeaveOneWorkingUser(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	other := openTestService(t, dsn, gw, tenants)
-	const id = "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq"
+	const id = outsideID
 	var wg sync.WaitGroup
-	errs := make(chan error, 16)
 	for i := range 16 {
 		wg.Go(func() {
-			_, err := []*Service{svc, other}[i%2].Ensure(t.Context(), "firebase", id)
-			errs <- err
+			if _, err := []*Service{svc, other}[i%2].Ensure(t.Context(), "firebase", id); err != nil {
+				t.Errorf("Ensure: %v", err)
+			}
 		})
 	}
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Errorf("Ensure: %v", err)
-		}
-	}
 	if err := svc.Load(t.Context()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
@@ -246,28 +226,19 @@ func TestEnsuresOnASaturatedPoolDoNotWaitOnEachOther(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	var wg sync.WaitGroup
-	errs := make(chan error, 8)
 	for range 8 {
 		wg.Go(func() {
-			_, err := svc.Ensure(ctx, "firebase", "Fb7xQ2kLm9PzR4tVw1YcN8sJd3Hq")
-			errs <- err
+			if _, err := svc.Ensure(ctx, "firebase", outsideID); err != nil {
+				t.Errorf("Ensure: %v", err)
+			}
 		})
 	}
 	wg.Wait()
-	close(errs)
-	for err := range errs {
-		if err != nil {
-			t.Errorf("Ensure: %v", err)
-		}
-	}
 }
 
 func TestTokensPasswordsAndDisabling(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})
 	first, err := svc.RegenerateToken(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("RegenerateToken: %v", err)
@@ -306,7 +277,7 @@ func TestTokensPasswordsAndDisabling(t *testing.T) {
 	if _, err := svc.Login(t.Context(), "qa1", password); !errors.Is(err, ErrBadPassword) {
 		t.Errorf("Login of a disabled user = %v", err)
 	}
-	other, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	other := mustCreate(t, svc, NewUser{Name: "qa2"})
 	if err := svc.SetTokenSHA256(t.Context(), other.ID, sum(second)); !errors.Is(err, ErrExists) {
 		t.Errorf("SetTokenSHA256 with another user's hash = %v, want ErrExists", err)
 	}
@@ -315,10 +286,7 @@ func TestTokensPasswordsAndDisabling(t *testing.T) {
 func TestLoginFindsAUserAnotherProcessAdded(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	cli := openTestService(t, dsn, gw, tenants)
-	u, err := cli.Create(t.Context(), NewUser{Name: "qa1", Admin: true})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, cli, NewUser{Name: "qa1", Admin: true})
 	if err := cli.SetPassword(t.Context(), u.ID, password); err != nil {
 		t.Fatalf("SetPassword: %v", err)
 	}
@@ -334,10 +302,7 @@ func TestLoginFindsAUserAnotherProcessAdded(t *testing.T) {
 func TestATokenAnotherProcessSetWorksAtOnce(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	cli := openTestService(t, dsn, gw, tenants)
-	u, err := cli.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, cli, NewUser{Name: "qa1"})
 	token := TokenPrefix + utils.RandomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(token)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
@@ -352,7 +317,7 @@ func TestATokenAnotherProcessSetWorksAtOnce(t *testing.T) {
 
 func TestRevokeTokenDropsTheTokenEverywhereAndEndsItsCalls(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	token, _ := svc.RegenerateToken(t.Context(), u.ID)
 	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	elsewhere := openTestService(t, dsn, gw, tenants)
@@ -382,8 +347,8 @@ func TestRevokeTokenDropsTheTokenEverywhereAndEndsItsCalls(t *testing.T) {
 
 func TestSignOutEndsEverySignInOfTheUserOnly(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	other, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	other := mustCreate(t, svc, NewUser{Name: "qa2"})
 	session, _ := svc.NewSession(t.Context(), u.ID)
 	otherSession, _ := svc.NewSession(t.Context(), other.ID)
 	token, _ := svc.RegenerateToken(t.Context(), u.ID)
@@ -428,11 +393,11 @@ func TestSignOutEndsEverySignInOfTheUserOnly(t *testing.T) {
 func TestRegeneratingTheTokenDropsTheOldOneFromAListeningService(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())
-	console := openTestService(t, dsn, gw, tenants)
-	u, _ := console.Create(t.Context(), NewUser{Name: "qa1"})
-	old, _ := console.RegenerateToken(t.Context(), u.ID)
+	other := openTestService(t, dsn, gw, tenants)
+	u := mustCreate(t, other, NewUser{Name: "qa1"})
+	old, _ := other.RegenerateToken(t.Context(), u.ID)
 	clustertest.WaitFor(t, "the listening api knows the first token", func() bool { id, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return ok && id == u.ID })
-	if _, err := console.RegenerateToken(t.Context(), u.ID); err != nil {
+	if _, err := other.RegenerateToken(t.Context(), u.ID); err != nil {
 		t.Fatalf("RegenerateToken: %v", err)
 	}
 	clustertest.WaitFor(t, "the listening api drops the token a regenerate replaced", func() bool { _, ok := svc.ByTokenSHA256(t.Context(), sum(old)); return !ok })
@@ -442,10 +407,7 @@ func TestNotifyReloadsAListeningServiceAndAReconnectReloadsWhatItMissed(t *testi
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())
 	cli := openTestService(t, dsn, gw, tenants)
-	u, err := cli.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, cli, NewUser{Name: "qa1"})
 	old := TokenPrefix + utils.RandomHex(secretBytes)
 	if err := cli.SetTokenSHA256(t.Context(), u.ID, sum(old)); err != nil {
 		t.Fatalf("SetTokenSHA256: %v", err)
@@ -498,7 +460,7 @@ func TestUnknownTokensCheckTheTableAtMostOncePerInterval(t *testing.T) {
 
 func TestUpdateKeepsBoxesUnderTheCapAndMovesTheTenant(t *testing.T) {
 	svc, _, tenants, _ := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	var flips []bool
 	svc.OnResidential(func(_ context.Context, id string, on bool) {
 		if id == u.ID {
@@ -527,7 +489,7 @@ func TestUpdateKeepsBoxesUnderTheCapAndMovesTheTenant(t *testing.T) {
 
 func TestDeleteRemovesTenantKeyRowAndSessions(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1", Password: password})
+	u := mustCreate(t, svc, NewUser{Name: "qa1", Password: password})
 	token, _ := svc.RegenerateToken(t.Context(), u.ID)
 	if _, err := svc.NewSession(t.Context(), u.ID); err != nil {
 		t.Fatalf("NewSession: %v", err)
@@ -555,8 +517,8 @@ func TestDeleteRemovesTenantKeyRowAndSessions(t *testing.T) {
 
 func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	a, _ := svc.Create(t.Context(), NewUser{Name: "alice"})
-	b, _ := svc.Create(t.Context(), NewUser{Name: "bob"})
+	a := mustCreate(t, svc, NewUser{Name: "alice"})
+	b := mustCreate(t, svc, NewUser{Name: "bob"})
 	if err := exec(t, dsn, "UPDATE users SET gw_key_sealed = (SELECT gw_key_sealed FROM users WHERE id = $1) WHERE id = $2", a.ID, b.ID); err != nil {
 		t.Fatalf("copy sealed key: %v", err)
 	}
@@ -571,7 +533,7 @@ func TestASealedValueOpensOnlyOnItsOwnRow(t *testing.T) {
 
 func TestStateKeyIsSealedAndSetOnlyOnce(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	created, err := svc.StateKey(t.Context(), u.ID)
 	if err != nil || len(created.Secret) != keyring.KeySize || created.ID == "" {
 		t.Fatalf("StateKey of a new user = %d bytes, id %q, %v", len(created.Secret), created.ID, err)
@@ -605,7 +567,7 @@ func TestStateKeyIsSealedAndSetOnlyOnce(t *testing.T) {
 		t.Errorf("StateKey after reopen = %q, %v; want the box key", got.ID, err)
 	}
 
-	other, _ := reopened.Create(t.Context(), NewUser{Name: "qa2"})
+	other := mustCreate(t, reopened, NewUser{Name: "qa2"})
 	if err := exec(t, dsn, "UPDATE users SET state_key_sealed = (SELECT state_key_sealed FROM users WHERE id = $1) WHERE id = $2", u.ID, other.ID); err != nil {
 		t.Fatalf("copy sealed state key: %v", err)
 	}
@@ -616,11 +578,8 @@ func TestStateKeyIsSealedAndSetOnlyOnce(t *testing.T) {
 
 func TestAdminsHaveNoGWCapAndDeleteDropsTheCap(t *testing.T) {
 	svc, gw, _, _ := newTestService(t)
-	admin, err := svc.Create(t.Context(), NewUser{Name: "root", Admin: true})
-	if err != nil {
-		t.Fatalf("Create admin: %v", err)
-	}
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	admin := mustCreate(t, svc, NewUser{Name: "root", Admin: true})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	if caps, _ := svc.DailyCaps(t.Context()); !maps.Equal(caps, map[string]int64{admin.ID: gwkeys.Unlimited}) {
 		t.Errorf("gw caps after create = %v, want only the admin unlimited", caps)
 	}
@@ -648,7 +607,7 @@ func TestAdminsHaveNoGWCapAndDeleteDropsTheCap(t *testing.T) {
 
 func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	other := openTestService(t, dsn, gw, tenants)
 	life, elsewhere := lifetime(svc, u.ID, ""), lifetime(other, u.ID, "")
 	if life.Err() != nil || elsewhere.Err() != nil {
@@ -681,9 +640,9 @@ func TestDisablingTurnsOffTheGWKeyAndEndsTheUsersLifetime(t *testing.T) {
 
 func TestReconcileLiftsTheCapOfAdminsOnTheDefaultOnly(t *testing.T) {
 	svc, gw, _, _ := newTestService(t)
-	onDefault, _ := svc.Create(t.Context(), NewUser{Name: "root", Admin: true})
-	capped, _ := svc.Create(t.Context(), NewUser{Name: "ops", Admin: true})
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	onDefault := mustCreate(t, svc, NewUser{Name: "root", Admin: true})
+	capped := mustCreate(t, svc, NewUser{Name: "ops", Admin: true})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	_ = svc.SetDailyCap(t.Context(), onDefault.ID, nil)
 	_ = svc.SetDailyCap(t.Context(), capped.ID, new(int64(7)))
 	if err := svc.Reconcile(t.Context()); err != nil {
@@ -697,8 +656,8 @@ func TestReconcileLiftsTheCapOfAdminsOnTheDefaultOnly(t *testing.T) {
 
 func TestPromotingAndDemotingMovesTheGWCapAndTheLastAdminStays(t *testing.T) {
 	svc, gw, _, dsn := newTestService(t)
-	root, _ := svc.Create(t.Context(), NewUser{Name: "root", Admin: true})
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	root := mustCreate(t, svc, NewUser{Name: "root", Admin: true})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	if got, err := svc.Update(t.Context(), u.ID, Settings{Admin: new(true)}); err != nil || !got.Admin || gw.caps[u.ID] != gwkeys.Unlimited {
 		t.Fatalf("promote = %+v, %v; gw cap %v", got, err, gw.caps[u.ID])
 	}
@@ -891,13 +850,22 @@ func query(t *testing.T, dsn, sql string, args ...any) pgx.Row {
 
 func exec(t *testing.T, dsn, sql string, args ...any) error {
 	t.Helper()
-	conn, err := pgx.Connect(context.Background(), dsn)
+	conn, err := pgx.Connect(t.Context(), dsn)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
-	_, err = conn.Exec(context.Background(), sql, args...)
+	defer func() { _ = conn.Close(t.Context()) }()
+	_, err = conn.Exec(t.Context(), sql, args...)
 	return err
+}
+
+func mustCreate(t *testing.T, svc *Service, nu NewUser) User {
+	t.Helper()
+	u, err := svc.Create(t.Context(), nu)
+	if err != nil {
+		t.Fatalf("create %s: %v", nu.Name, err)
+	}
+	return u
 }
 
 func lifetime(svc *Service, id, credential string) context.Context {

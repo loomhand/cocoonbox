@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/loomhand/cocoonbox/api/cluster/clustertest"
@@ -14,10 +16,7 @@ import (
 
 func TestEveryUserStartsWithOneBox(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	if got := svc.Boxes(u.ID); len(got) != 1 || got[0].ID != firstBoxID(u.ID) || got[0].Name != FirstBoxName || got[0].Owner != u.ID {
 		t.Fatalf("Boxes = %+v", got)
 	}
@@ -34,7 +33,7 @@ func TestTheMigrationGivesEveryUserItsOldBox(t *testing.T) {
 		t.Fatalf("firstBoxID(alice) = %s, want the box id boxes.BoxID gives", firstBoxID("alice"))
 	}
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1", ID: "test"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1", ID: "test"})
 	if err := exec(t, dsn, "DROP TABLE boxes CASCADE; DELETE FROM schema_migrations WHERE version IN (4, 8)"); err != nil {
 		t.Fatalf("undo migrations 4 and 8: %v", err)
 	}
@@ -46,7 +45,7 @@ func TestTheMigrationGivesEveryUserItsOldBox(t *testing.T) {
 
 func TestAddBoxKeepsTheQuotaAndUniqueNames(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	if _, err := svc.AddBox(t.Context(), Box{ID: "cb-a", Owner: u.ID, Name: "test"}); !errors.Is(err, ErrQuota) {
 		t.Fatalf("AddBox past max boxes = %v, want ErrQuota", err)
 	}
@@ -62,24 +61,21 @@ func TestAddBoxKeepsTheQuotaAndUniqueNames(t *testing.T) {
 		t.Errorf("AddBox with a taken name = %v, want ErrExists", err)
 	}
 	var wg sync.WaitGroup
-	var mu sync.Mutex
-	var quota int
+	var quota atomic.Int32
 	for i := range 6 {
 		wg.Go(func() {
-			_, err := svc.AddBox(t.Context(), Box{ID: "cb-c" + string(rune('0'+i)), Owner: u.ID, Name: "box" + string(rune('0'+i))})
-			mu.Lock()
-			defer mu.Unlock()
+			_, err := svc.AddBox(t.Context(), Box{ID: "cb-c" + strconv.Itoa(i), Owner: u.ID, Name: "box" + strconv.Itoa(i)})
 			switch {
 			case errors.Is(err, ErrQuota):
-				quota++
+				quota.Add(1)
 			case err != nil:
 				t.Errorf("AddBox: %v", err)
 			}
 		})
 	}
 	wg.Wait()
-	if n := len(svc.Boxes(u.ID)); n != 4 || quota != 3 {
-		t.Errorf("after 6 parallel adds: %d boxes, %d refused, want 4 and 3", n, quota)
+	if n := len(svc.Boxes(u.ID)); n != 4 || quota.Load() != 3 {
+		t.Errorf("after 6 parallel adds: %d boxes, %d refused, want 4 and 3", n, quota.Load())
 	}
 	if _, err := svc.Update(t.Context(), u.ID, Settings{MaxBoxes: new(2)}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("lowering max boxes under the box count = %v, want ErrInvalid", err)
@@ -92,7 +88,7 @@ func TestAddBoxKeepsTheQuotaAndUniqueNames(t *testing.T) {
 
 func TestAgentBoxesStayOutsideMaxBoxesAndRaiseTheTenantCap(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	for _, id := range []string{"cb-a1", "cb-a2"} {
 		if _, err := svc.AddBox(t.Context(), Box{ID: id, Owner: u.ID, Name: id[3:], Agent: true}); err != nil {
 			t.Fatalf("AddBox of an agent with max boxes 1 used = %v", err)
@@ -120,8 +116,8 @@ func TestAgentBoxesStayOutsideMaxBoxesAndRaiseTheTenantCap(t *testing.T) {
 
 func TestRenameAndRemoveBox(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	other, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	other := mustCreate(t, svc, NewUser{Name: "qa2"})
 	_, _ = svc.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(2), MaxBoxes: new(2)})
 	test, err := svc.AddBox(t.Context(), Box{ID: "cb-test", Owner: u.ID, Name: "test"})
 	if err != nil {
@@ -172,7 +168,7 @@ func TestRenameAndRemoveBox(t *testing.T) {
 
 func TestTheRunningLimitIsTheUsersOwnOrTheDefault(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	if u.MaxRunning != 0 || svc.MaxRunning(u.ID) != 0 {
 		t.Fatalf("a new user's running limit = %d, want 0 (the default)", svc.MaxRunning(u.ID))
 	}
@@ -239,10 +235,7 @@ func TestABoxChangeOfOneApiReachesAnother(t *testing.T) {
 	a, gw, tenants, dsn := newTestService(t)
 	b := openTestService(t, dsn, gw, tenants)
 	go b.Listen(t.Context())
-	u, err := a.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, a, NewUser{Name: "qa1"})
 	if _, err := a.Update(t.Context(), u.ID, Settings{MaxBoxesCap: new(2), MaxBoxes: new(2)}); err != nil {
 		t.Fatalf("raise max boxes: %v", err)
 	}

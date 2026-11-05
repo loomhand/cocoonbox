@@ -15,14 +15,8 @@ import (
 
 func TestDeviceTokensServeBesideTheAPITokenUntilRevoked(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	other, err := svc.Create(t.Context(), NewUser{Name: "qa2"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	other := mustCreate(t, svc, NewUser{Name: "qa2"})
 	personal, err := svc.RegenerateToken(t.Context(), u.ID)
 	if err != nil {
 		t.Fatalf("RegenerateToken: %v", err)
@@ -81,10 +75,7 @@ func TestDeviceTokensServeBesideTheAPITokenUntilRevoked(t *testing.T) {
 
 func TestDisablingOrDeletingAUserStopsItsDeviceTokens(t *testing.T) {
 	svc, _, _, dsn := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	token, err := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	if err != nil {
 		t.Fatalf("IssueDevice: %v", err)
@@ -120,10 +111,7 @@ func TestADeviceTokenAnotherProcessIssuedWorksAtOnceAndItsRevokeReachesListeners
 	svc, gw, tenants, dsn := newTestService(t)
 	go svc.Listen(t.Context())
 	other := openTestService(t, dsn, gw, tenants)
-	u, err := other.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, other, NewUser{Name: "qa1"})
 	token, err := other.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	if err != nil {
 		t.Fatalf("IssueDevice: %v", err)
@@ -137,8 +125,8 @@ func TestADeviceTokenAnotherProcessIssuedWorksAtOnceAndItsRevokeReachesListeners
 
 func TestACredentialsLifetimeEndsWithItsRevokeAndWithItsUser(t *testing.T) {
 	svc, gw, tenants, dsn := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	stranger, _ := svc.Create(t.Context(), NewUser{Name: "qa2"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
+	stranger := mustCreate(t, svc, NewUser{Name: "qa2"})
 	old, _ := svc.RegenerateToken(t.Context(), u.ID)
 	cli, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	app, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-app", "laptop")
@@ -174,7 +162,7 @@ func TestACredentialsLifetimeEndsWithItsRevokeAndWithItsUser(t *testing.T) {
 
 func TestARevokedGrantStaysEndedForALaterBindAndOnlyOpenCallsStayIndexed(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
-	u, _ := svc.Create(t.Context(), NewUser{Name: "qa1"})
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	device, _ := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	svc.EndCredential(t.Context(), "oag_revoked")
 	if life, _ := svc.Lifetime(u.ID, "oag_revoked"); life.Err() == nil {
@@ -206,10 +194,7 @@ func TestARevokedGrantStaysEndedForALaterBindAndOnlyOpenCallsStayIndexed(t *test
 
 func TestADeviceRecordsItsUseOncePerMinute(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	token, err := svc.IssueDevice(t.Context(), u.ID, "cocoonbox-cli", "laptop")
 	if err != nil {
 		t.Fatalf("IssueDevice: %v", err)
@@ -241,10 +226,7 @@ func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect
 		return live, nil
 	})
 	go b.Listen(t.Context())
-	u, err := a.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, a, NewUser{Name: "qa1"})
 	clustertest.WaitFor(t, "the other api knows the user", func() bool { _, err := b.Get(u.ID); return err == nil })
 	call := lifetime(b, u.ID, "oag_missed")
 	if err := exec(t, dsn, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND query LIKE 'LISTEN%'"); err != nil {
@@ -261,10 +243,7 @@ func TestAGrantEndedWhileAnotherApisListenerWasDownEndsItsCallsAfterTheReconnect
 
 func TestAGrantCheckLeavesTheCredentialsOfOtherSourcesAlone(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	var asked []string
 	svc.KeepGrants(ownsGrant, func(_ context.Context, ids []string) (map[string]bool, error) {
 		asked = append(asked, ids...)
@@ -285,10 +264,7 @@ func TestAGrantCheckLeavesTheCredentialsOfOtherSourcesAlone(t *testing.T) {
 
 func TestCheckingGrantsWhileCallsStartAndEndIsSafe(t *testing.T) {
 	svc, _, _, _ := newTestService(t)
-	u, err := svc.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, svc, NewUser{Name: "qa1"})
 	svc.KeepGrants(ownsGrant, func(_ context.Context, ids []string) (map[string]bool, error) {
 		live := map[string]bool{}
 		for _, id := range ids {
@@ -319,10 +295,7 @@ func TestAnEndedCredentialEndsItsCallsInEveryApi(t *testing.T) {
 	a, gw, tenants, dsn := newTestService(t)
 	b := openTestService(t, dsn, gw, tenants)
 	go b.Listen(t.Context())
-	u, err := a.Create(t.Context(), NewUser{Name: "qa1"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	u := mustCreate(t, a, NewUser{Name: "qa1"})
 	clustertest.WaitFor(t, "the other api knows the user", func() bool { _, err := b.Get(u.ID); return err == nil })
 	call := lifetime(b, u.ID, "oag_shared")
 	a.EndCredential(t.Context(), "oag_shared")
