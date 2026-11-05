@@ -3,8 +3,6 @@ package console
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"maps"
@@ -62,17 +60,17 @@ func TestLoginSetsAStrictCookieAndLimitsFailures(t *testing.T) {
 
 func TestParallelSignInsCannotPassTheLimitTogether(t *testing.T) {
 	env := newEnv(t)
-	codes := make(chan int, 30)
+	results := make(chan int, 30)
 	var wg sync.WaitGroup
-	for range cap(codes) {
+	for range cap(results) {
 		wg.Go(func() {
-			codes <- env.do(t, http.MethodPost, "api/login", "", `{"name":"root","password":"wrong password!"}`).Code
+			results <- env.do(t, http.MethodPost, "api/login", "", `{"name":"root","password":"wrong password!"}`).Code
 		})
 	}
 	wg.Wait()
-	close(codes)
+	close(results)
 	checked := 0
-	for code := range codes {
+	for code := range results {
 		if code == http.StatusUnauthorized {
 			checked++
 		}
@@ -114,14 +112,13 @@ func TestAdminCreatesAUserWhoGeneratesTheAppToken(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &token); err != nil || token.Token == "" {
 		t.Fatalf("token = %d %s", resp.Code, resp.Body)
 	}
-	sum := sha256.Sum256([]byte(token.Token))
-	if id, ok := env.users.ByTokenSHA256(t.Context(), hex.EncodeToString(sum[:])); !ok || id != created.ID {
+	if id, ok := env.users.ByTokenSHA256(t.Context(), auth.TokenCredential(token.Token)); !ok || id != created.ID {
 		t.Errorf("the generated token resolves to %q, %t", id, ok)
 	}
 	if code := env.do(t, http.MethodDelete, "api/me/token", qa1, "{}").Code; code != http.StatusNoContent {
 		t.Errorf("revoke token = %d, want 204", code)
 	}
-	if _, ok := env.users.ByTokenSHA256(t.Context(), hex.EncodeToString(sum[:])); ok {
+	if _, ok := env.users.ByTokenSHA256(t.Context(), auth.TokenCredential(token.Token)); ok {
 		t.Error("the revoked token still resolves")
 	}
 	if u, _ := env.users.Get(created.ID); u.HasToken {
@@ -274,8 +271,9 @@ func TestAdminSetsADailyCapThatTheUserSees(t *testing.T) {
 	if err := json.Unmarshal(resp.Body.Bytes(), &list); err != nil || len(list) != 2 {
 		t.Fatalf("users = %d %s", resp.Code, resp.Body)
 	}
+	wantCaps := map[string]int64{"root": -1, "qa1": 2_500_000}
 	for _, row := range list {
-		want := map[string]int64{"root": -1, "qa1": 2_500_000}[row.Name]
+		want := wantCaps[row.Name]
 		if row.DailyCap == nil || *row.DailyCap != want {
 			t.Errorf("listed cap of %s = %v, want %d", row.Name, row.DailyCap, want)
 		}
@@ -292,8 +290,7 @@ func TestDeleteReleasesTheBoxesBeforeTheUser(t *testing.T) {
 	}
 	qa1 := env.login(t, "qa1")
 	env.boxes.onRelease = func() {
-		sum := sha256.Sum256([]byte(token))
-		if _, ok := env.users.ByTokenSHA256(t.Context(), hex.EncodeToString(sum[:])); ok {
+		if _, ok := env.users.ByTokenSHA256(t.Context(), auth.TokenCredential(token)); ok {
 			t.Error("the user's token still worked while its boxes were released")
 		}
 	}

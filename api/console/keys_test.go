@@ -51,7 +51,7 @@ func TestTheKeysPageAddsListsRotatesAndDeletesWithoutShowingAValue(t *testing.T)
 		t.Errorf("list signed out = %d", code)
 	}
 	page := httptest.NewRecorder()
-	env.srv.ServeHTTP(page, httptest.NewRequest(http.MethodGet, "/cb/keys", nil))
+	env.srv.ServeHTTP(page, httptest.NewRequest(http.MethodGet, Prefix+"keys", nil))
 	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "keys.js") {
 		t.Errorf("page = %d", page.Code)
 	}

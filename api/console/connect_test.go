@@ -1,7 +1,6 @@
 package console
 
 import (
-	"context"
 	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
@@ -141,7 +140,7 @@ func TestTheConnectPageSetsPoliciesAndDisconnects(t *testing.T) {
 	if resp := env.do(t, http.MethodPut, "api/connect/mock/policy", root, `{"tool":"create_item","policy":"never"}`); resp.Code != http.StatusBadRequest {
 		t.Errorf("bad policy = %d", resp.Code)
 	}
-	if resp := env.do(t, http.MethodDelete, "api/connect/mock", root, ""); resp.Code != http.StatusOK || resp.Body.String() != "{\"revoked\":true}" {
+	if resp := env.do(t, http.MethodDelete, "api/connect/mock", root, ""); resp.Code != http.StatusOK || resp.Body.String() != `{"revoked":true}` {
 		t.Errorf("disconnect = %d %s", resp.Code, resp.Body)
 	}
 	if resp := env.do(t, http.MethodGet, "api/connect/activity", root, ""); !strings.Contains(resp.Body.String(), `"decision":"disconnect"`) {
@@ -292,7 +291,7 @@ func countRows(t *testing.T, dsn, table, column, id string) int {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
+	defer func() { _ = conn.Close(t.Context()) }()
 	var n int
 	if err := conn.QueryRow(t.Context(), "SELECT count(*) FROM "+table+" WHERE "+column+" = $1", id).Scan(&n); err != nil {
 		t.Fatalf("count %s: %v", table, err)

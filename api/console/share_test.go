@@ -127,8 +127,13 @@ func TestSharePageAdmitsTheSecretAndNamedViewers(t *testing.T) {
 			if _, err := ws.Write([]byte("viewer bytes")); err != nil {
 				t.Fatalf("write: %v", err)
 			}
-			if got := <-env.screens.got; got.principal != "share:"+named.ID+":read:"+env.qa2.ID || got.data != "viewer bytes" {
-				t.Errorf("bridge got %+v", got)
+			select {
+			case got := <-env.screens.got:
+				if got.principal != "share:"+named.ID+":read:"+env.qa2.ID || got.data != "viewer bytes" {
+					t.Errorf("bridge got %+v", got)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the bridge never forwarded the viewer's bytes")
 			}
 		})
 	}
