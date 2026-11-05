@@ -68,7 +68,7 @@ const NUDGE: &str = "\n\n2 GUI steps in a row: write the rest as one gui_plan ca
 const BUSY_WINDOW: Duration = Duration::from_secs(10);
 const MAX_FLOWS: usize = 30;
 const MAX_SHARE_SESSIONS: usize = 4;
-const SHARE_SESSIONS_FULL: &str = "a share holds at most 4 open MCP sessions: close one first";
+const SHARE_SESSIONS_FULL: &str = "a share user holds at most 4 open MCP sessions: close one first";
 const DESK_RESOURCES: [Resource; 1] = [Resource {
     uri: Cow::Borrowed("cocoonbox://desk/AGENTS.md"),
     path: Cow::Borrowed("/opt/desk/AGENTS.md"),
@@ -171,6 +171,45 @@ impl Mcp {
         });
     }
 
+    /// Whether an open session drives agent `agent_id`.
+    pub fn serves(&self, agent_id: &str) -> bool {
+        lock(&self.sessions)
+            .values()
+            .any(|s| s.agent_id() == Some(agent_id))
+    }
+
+    /// Closes the session that drives agent `agent_id`.
+    pub async fn end_agent(&self, agent_id: &str) -> Result<(), Status> {
+        let session = lock(&self.sessions)
+            .extract_if(|_, s| s.agent_id() == Some(agent_id))
+            .next()
+            .map(|(_, s)| s);
+        let session = session.ok_or_else(|| {
+            Status::not_found(format!("no open MCP session drives agent {agent_id}"))
+        })?;
+        self.close(&session, "ended by the owner").await;
+        Ok(())
+    }
+
+    /// Closes every session opened through share `share_id`.
+    pub async fn end_share(&self, share_id: &str) {
+        let ended: Vec<Arc<Session>> = lock(&self.sessions)
+            .extract_if(|_, s| s.guest.as_ref().is_some_and(|g| g.share == share_id))
+            .map(|(_, s)| s)
+            .collect();
+        for s in ended {
+            self.close(&s, "the share ended").await;
+        }
+    }
+
+    /// Closes every session; used when the agent shuts down.
+    pub async fn close_all(&self) {
+        let sessions: Vec<Arc<Session>> = lock(&self.sessions).drain().map(|(_, s)| s).collect();
+        for s in sessions {
+            self.close(&s, "agent shutting down").await;
+        }
+    }
+
     /// Deletes closed `mcp:*` agents untouched for longer than the prune age.
     async fn prune(&self) {
         let age = i64::try_from(self.rt.cfg.mcp_prune_after.as_millis()).unwrap_or(i64::MAX);
@@ -201,49 +240,6 @@ impl Mcp {
             }
             Ok(_) => {}
             Err(e) => eprintln!("mcp: prune: {e}"),
-        }
-    }
-
-    /// Whether an open session drives agent `agent_id`.
-    pub fn serves(&self, agent_id: &str) -> bool {
-        lock(&self.sessions)
-            .values()
-            .any(|s| s.agent_id() == Some(agent_id))
-    }
-
-    /// Closes the session that drives agent `agent_id`.
-    pub async fn end_agent(&self, agent_id: &str) -> Result<(), Status> {
-        let session = {
-            let mut sessions = lock(&self.sessions);
-            let id = sessions
-                .iter()
-                .find(|(_, s)| s.agent_id() == Some(agent_id))
-                .map(|(id, _)| id.clone());
-            id.and_then(|id| sessions.remove(&id))
-        };
-        let session = session.ok_or_else(|| {
-            Status::not_found(format!("no open MCP session drives agent {agent_id}"))
-        })?;
-        self.close(&session, "ended by the owner").await;
-        Ok(())
-    }
-
-    /// Closes every session opened through share `share_id`.
-    pub async fn end_share(&self, share_id: &str) {
-        let ended: Vec<Arc<Session>> = lock(&self.sessions)
-            .extract_if(|_, s| s.guest.as_ref().is_some_and(|g| g.share == share_id))
-            .map(|(_, s)| s)
-            .collect();
-        for s in ended {
-            self.close(&s, "the share ended").await;
-        }
-    }
-
-    /// Closes every session; used when the agent shuts down.
-    pub async fn close_all(&self) {
-        let sessions: Vec<Arc<Session>> = lock(&self.sessions).drain().map(|(_, s)| s).collect();
-        for s in sessions {
-            self.close(&s, "agent shutting down").await;
         }
     }
 
@@ -314,7 +310,7 @@ impl Mcp {
             Some(g) => {
                 let mut name = format!("{AGENT_PREFIX}{client}@{}", g.share);
                 if let Some(user) = &g.user {
-                    name = format!("{name}:{user}");
+                    let _ = write!(name, ":{user}");
                 }
                 let agent = self
                     .rt
@@ -490,7 +486,10 @@ impl Mcp {
         reply["id"] = id;
         match result {
             Ok(result) => reply["result"] = result,
-            Err((code, message)) => reply["error"] = json!({"code": code, "message": message}),
+            Err((code, message)) => {
+                reply["error"] = json!({"code": code});
+                reply["error"]["message"] = message.into();
+            }
         }
         Some(reply)
     }
@@ -815,10 +814,9 @@ async fn post_mcp(State(mcp): State<Arc<Mcp>>, headers: HeaderMap, body: Bytes) 
         return rpc_failure(StatusCode::BAD_REQUEST, -32700, "parse error");
     };
     if msg["method"] == "initialize" {
-        let id = msg.get("id").cloned().unwrap_or(Value::Null);
         return match mcp.open(&msg["params"], &principal).await {
             Ok((session, result)) => {
-                let mut reply = json!({"jsonrpc": "2.0", "id": id});
+                let mut reply = json!({"jsonrpc": "2.0", "id": msg["id"]});
                 reply["result"] = result;
                 let mut resp = json_response(StatusCode::OK, &reply);
                 if let Ok(v) = session.id.parse() {
@@ -917,10 +915,10 @@ where
         Err(_) => {}
     }
     let started = Instant::now();
-    let stream = futures_util::stream::unfold(Some((call, 0u64)), move |state| {
-        let (token, session) = (token.clone(), session.clone());
-        async move {
-            let (mut call, ticks) = state?;
+    let stream = futures_util::stream::unfold(
+        Some((call, 0u64, token, session)),
+        move |state| async move {
+            let (mut call, ticks, token, session) = state?;
             let (chunk, next) = tokio::select! {
                 reply = &mut call => (event(&reply?), None),
                 () = tokio::time::sleep(every) => {
@@ -939,12 +937,12 @@ where
                         })),
                         None => Bytes::from_static(b": keepalive\n\n"),
                     };
-                    (chunk, Some((call, ticks + 1)))
+                    (chunk, Some((call, ticks + 1, token, session)))
                 }
             };
             Some((Ok::<Bytes, Infallible>(chunk), next))
-        }
-    });
+        },
+    );
     event_stream(Body::from_stream(stream))
 }
 
@@ -1035,7 +1033,9 @@ fn list_resources(resources: &[Resource]) -> Value {
             json!({"uri": r.uri, "name": name, "mimeType": r.mime, "description": r.description})
         })
         .collect();
-    json!({"resources": resources})
+    let mut out = json!({});
+    out["resources"] = Value::Array(resources);
+    out
 }
 
 /// Reads a resource; the guide gains a "Saved flows" section from `flows`, the flow index, up to [`MAX_FLOWS`] lines.
@@ -1066,7 +1066,9 @@ async fn read_resource(
     }
     let mut content = json!({"uri": r.uri, "mimeType": r.mime});
     content["text"] = text.into();
-    Ok(json!({"contents": [content]}))
+    let mut out = json!({});
+    out["contents"] = Value::Array(vec![content]);
+    Ok(out)
 }
 
 /// Whether a call drives the visible desktop: GUI input, a plan, a script, desk, or a browser call on the user's tabs or to the front.
