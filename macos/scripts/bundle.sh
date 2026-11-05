@@ -1,5 +1,5 @@
 #!/bin/bash
-# Builds dist/CocoonBox.app (release, arm64) and signs it ad hoc.
+# Builds dist/CocoonBox.app (release) and signs it ad hoc.
 #   CB_ENDPOINT=https://<api host> scripts/bundle.sh [--clean]
 set -euo pipefail
 
