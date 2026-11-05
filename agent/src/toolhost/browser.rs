@@ -527,7 +527,12 @@ impl Browser {
                 }
                 let mut out = format!("filled {}", filled.join(", "));
                 if let Some(element) = &a.click {
-                    out = format!("{out}; {}", cdp.click_ref(element).await?.0);
+                    cdp.call("Network.enable", json!({})).await?;
+                    let (clicked, changed) = cdp.click_ref(element).await?;
+                    let _ = write!(out, "; {clicked}");
+                    if changed {
+                        return Ok(format!("{out}\n{}", cdp.opened_snapshot(true).await?));
+                    }
                 }
                 Ok(format!("{out}\n{}", cdp.snapshot(true).await?))
             }
