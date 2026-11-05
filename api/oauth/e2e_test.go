@@ -11,7 +11,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -166,7 +165,7 @@ func TestTokenEndpointRefusesABadRedemption(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			code, verifier, redirect := e.code(t, clientID, oauth.Caps{MaxBoxes: 1, MaxRunning: 1, Days: 1})
 			v := url.Values{"grant_type": {"authorization_code"}, "code": {code}, "client_id": {clientID}, "redirect_uri": {redirect}, "code_verifier": {verifier}}
-			bad := maps.Clone(v)
+			bad := v.Clone()
 			tt.mutate(bad)
 			if status, body := e.tokenError(t, bad); status != http.StatusBadRequest || !strings.Contains(body, "invalid_grant") {
 				t.Errorf("%d %s, want invalid_grant", status, body)
@@ -972,10 +971,6 @@ func (f *fakeBoxes) Delete(ctx context.Context, ref *controlv1.BoxRef) (*control
 	return &controlv1.Operation{Id: "op-delete", BoxId: ref.GetBoxId()}, nil
 }
 
-func (f *fakeBoxes) Rename(context.Context, *controlv1.RenameBoxRequest) (*controlv1.Box, error) {
-	return nil, fmt.Errorf("rename is not faked")
-}
-
 func (f *fakeBoxes) WatchOperation(_ *controlv1.WatchOperationRequest, stream controlv1.Boxes_WatchOperationServer) error {
 	return stream.Send(&controlv1.OperationEvent{Phase: controlv1.Phase_PHASE_DONE, Detail: "done"})
 }
@@ -1073,16 +1068,17 @@ func newFakeAgent(t *testing.T, seen *agentLog) *httptest.Server {
 	t.Helper()
 	agent := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
+		initialize := strings.Contains(string(body), `"initialize"`)
 		switch {
 		case r.Method == http.MethodDelete:
 			seen.add("DELETE " + r.Header.Get("Mcp-Session-Id"))
-		case strings.Contains(string(body), `"initialize"`):
+		case initialize:
 			seen.add("initialize")
 		}
 		w.Header().Set("X-Seen-Credential", r.Header.Get("X-Cocoonbox-Credential"))
 		w.Header().Set("X-Seen-Authorization", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
-		if strings.Contains(string(body), `"initialize"`) {
+		if initialize {
 			w.Header().Set("Mcp-Session-Id", "agent-session")
 		}
 		text, _ := json.Marshal(r.Header.Get("X-Cocoonbox-Credential") + " " + string(body))
