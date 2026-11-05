@@ -46,6 +46,7 @@ trap fail ERR
 step "boot $BASE as $VM"
 "$COCOON" vm run --name "$VM" --cpu 4 --memory 8G --storage 40G --nics 0 --no-direct-io "$BASE"
 for _ in $(seq 100); do guest "$VM" -- true 2>/dev/null && break; sleep 0.3; done
+guest "$VM" -- true
 guest "$VM" -- test -f /etc/cocoonbox/android-base || { echo "$BASE is no android base" >&2; exit 1; }
 step "agent $(sha256sum "$AGENT" | cut -c1-16)"
 guest -i "$VM" -- sh -c 'cat > /tmp/cocoonbox-agent' < "$AGENT"
