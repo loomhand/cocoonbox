@@ -484,6 +484,7 @@ struct ComposerView: View {
     }
 
     private func submit() {
+        guard model.agentsReady else { return }
         model.send(draft)
         draft = ""
     }
