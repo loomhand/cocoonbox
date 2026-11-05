@@ -122,7 +122,7 @@ def main():
                                                "env": {"GW_KEY": {"value": f"Bearer {key}", "guest": False}}})
         check("claim", code == 200 and "id" in out, f"{code} in {(time.monotonic() - t0) * 1000:.0f} ms")
         if code != 200:
-            return
+            return 1
         sid = out["id"]
         claim_tokens[sid] = out["token"]
         units = guest(sid, "systemctl is-active cocoonbox-xorg cocoonbox-session cocoonbox-agent silkd | tr '\\n' ' '")
