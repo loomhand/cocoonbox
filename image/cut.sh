@@ -2,7 +2,7 @@
 # Cuts desktop template <family>:<vN> on the cbsbx cocoon root: boot <base template>, provision, seal, stop, export, import.
 # usage: sudo image/cut.sh [-n] [-p] [-a <agent binary>] [-f <family>] [-r <runtime dir>]... <base template> <vN>
 #   -n prints the steps and changes nothing; -p reruns provision.sh; each -r adds a runtime: the directory goes into the guest and its provision.sh runs, in order;
-#   the family is cbcore unless -f names another (cbdesk is refused); cbcore without -r adds image/desk and checks the guest with image/clean-gate.sh after the agent step;
+#   the family is cbcore unless -f names another (cbdesk is refused); cbcore adds image/desk without -r and always runs image/clean-gate.sh after the agent step;
 #   with -a, the guest must hold the toolhost's shuttle service spec /etc/cocoonbox/tools.d/cocoonbox.json after the agent step;
 #   every step goes to ~/ops-audit.md
 set -Eeuo pipefail

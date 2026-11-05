@@ -1,9 +1,6 @@
 #!/bin/bash
-# The shuttle archive cbcore runs as its desk daemon, and whose desk runtime (desk.mts, gui_plan.mts, png.mts) cbcore and the
-# Android base install in /opt/desk/lib. Sourced by image/desk/provision.sh and image/android/provision.sh; run as
-# `shuttle.sh fetch DIR` it downloads the pinned archive into DIR (image/desk/vendor for a cut; cb-image-cut copies the
-# runner's vendor tarballs there). The archive follows the machine's architecture; SHUTTLE_ARCH (x64 or arm64) names
-# another one, as a fetch for a different machine needs.
+# Pins the shuttle archive (desk daemon and runtime) and installs it; sourced by the desk and Android provisioning, or run as
+# `shuttle.sh fetch DIR` to download it into DIR (image/desk/vendor for a cut). SHUTTLE_ARCH (x64 or arm64) overrides the machine's architecture.
 SHUTTLE_VERSION=v0.1.40
 case ${SHUTTLE_ARCH:-$(uname -m)} in
 aarch64 | arm64) SHUTTLE_ARCH=arm64 SHUTTLE_SHA256=6e3419e085ec617bb59b19d93de810841fbb3a88e7155a1d4d9a3f441a069bf0 ;;
@@ -12,8 +9,7 @@ esac
 SHUTTLE_TARBALL="shuttle-${SHUTTLE_VERSION}-linux-${SHUTTLE_ARCH}.tar.gz"
 SHUTTLE_URL="https://github.com/loomhand/shuttle/releases/download/${SHUTTLE_VERSION}/${SHUTTLE_TARBALL}"
 
-# install_shuttle TARBALL: the daemon with its bundled Node, cua-driver and runtime in /opt/loomhand/shuttle/VERSION, on PATH;
-# the install under the pre-0.1.13 name goes
+# install_shuttle TARBALL: the daemon with its bundled Node, cua-driver and runtime in /opt/loomhand/shuttle/VERSION, on PATH
 install_shuttle() {
 	local tarball=$1 dir=/opt/loomhand/shuttle/$SHUTTLE_VERSION
 	echo "$SHUTTLE_SHA256  $tarball" | sha256sum -c --quiet -
