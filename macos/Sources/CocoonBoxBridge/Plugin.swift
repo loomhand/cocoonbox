@@ -106,8 +106,9 @@ public enum Plugin {
         3. Run `cocoonbox offload --kind <claude|codex|cursor>`, naming the CLI you are unless the
            user asked for another one in the box. Add `--box NAME` when the user names a box.
            - Exit 3 is a block: stop and tell the user why, one line per finding. If the box CLI is
-             missing or signed out, tell the user to open the CocoonBox app and use "Install in box"
-             or "Sign in in the box" in the Offloaded section's box menu.
+             missing or signed out, tell the user to open the CocoonBox app and use
+             "Install <CLI> in Box…" or "Sign In to <CLI> in the Box…" in the Offloaded section's
+             box menu.
            - Exit 4 is warnings: tell the user each one, and run again with `--yes` only when they
              agree, or said beforehand to go ahead.
            - For a secret it warns about, ask the user; only they opt one in

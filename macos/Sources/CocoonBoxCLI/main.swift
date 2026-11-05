@@ -100,7 +100,7 @@ running.
 
 offload and back exit 0 when done, 1 on a failure (nothing changed on this Mac), 3 when the preflight
 blocks, and 4 when it warns and --yes was not given: ask the user, then run again with --yes.
-hibernate and upgrade ask for --yes while a box agent works on an offloaded task.
+upgrade always asks for --yes; hibernate asks for it while a box agent works on an offloaded task.
 
 environment: COCOONBOX_ENDPOINT overrides the endpoint; COCOONBOX_CONFIG_DIR the settings directory;
 BROWSER, a command, opens login's consent page in place of open(1);
@@ -1279,7 +1279,7 @@ func offloadFailed(_ error: OffloadError, json: Bool) -> Never {
     } else {
         printFindings(error.findings)
         if error.findings.contains(where: { $0.outcome == .block && $0.check.contains("cli") }) {
-            print("Open the CocoonBox app: \"Install in box\" and \"Sign in in the box\" are in the Offloaded section's box menu. Or: cocoonbox rsh --box BOX -t '<the CLI's login>'")
+            print("Open the CocoonBox app: \"Install <CLI> in Box…\" and \"Sign In to <CLI> in the Box…\" are in the Offloaded section's box menu. Or: cocoonbox rsh --box BOX -t '<the CLI's login>'")
         }
         FileHandle.standardError.write(Data("cocoonbox: \(error)\(code == 1 ? "; nothing changed on this Mac" : "")\n".utf8))
     }
