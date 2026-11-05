@@ -406,7 +406,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1305,7 +1305,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1483,7 +1483,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1626,9 +1626,10 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shuttle-desk-core"
-version = "0.1.28"
-source = "git+https://github.com/loomhand/shuttle?tag=v0.1.28#2fd4005fdb5567ed19cf434cfb9e3bf89f02c867"
+version = "0.1.40"
+source = "git+https://github.com/loomhand/shuttle?tag=v0.1.40#980579306f747458a12287406816d73bc909d0ca"
 dependencies = [
+ "png",
  "serde",
  "serde_json",
  "tokio",
@@ -1765,7 +1766,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
