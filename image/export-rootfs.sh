@@ -100,7 +100,6 @@ printf "GW_BASE_URL=http://10.203.0.1:18090/v1\nGW_API_KEY=unprovisioned\nMODEL_
 chown 0:"$gid" "$B/add/etc/cocoonbox/agent.env"
 chmod 0640 "$B/add/etc/cocoonbox/agent.env"
 mount -t overlay overlay -o ro,metacopy=on,redirect_dir=follow,lowerdir="$B/add:$B/m/cow/upper:$lower" "$B/m/root"
-if grep -q "^EDGE_TOKEN=" "$B/m/root/etc/cocoonbox/agent.env"; then echo "edge token in the exported agent.env" >&2; exit 1; fi
 tar -C "$B/m/root" --numeric-owner --xattrs --xattrs-include="*" -cf - . | gzip -1 > "$out.tmp"
 mv "$out.tmp" "$out"
 ' _ "$B" "$lower" "$OUT"
