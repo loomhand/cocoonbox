@@ -7,6 +7,7 @@ import (
 	"net/url"
 
 	"github.com/projecteru2/core/log"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -58,10 +59,16 @@ func (s *Service) List(ctx context.Context, req *controlv1.ListConnectorsRequest
 	if err != nil {
 		return nil, grantStatus(ctx, err, "list connectors")
 	}
-	out := &controlv1.ListConnectorsResponse{}
-	for _, g := range grants {
-		out.Connectors = append(out.Connectors, s.connector(ctx, g, req.GetWithTools()))
+	out := &controlv1.ListConnectorsResponse{Connectors: make([]*controlv1.Connector, len(grants))}
+	var eg errgroup.Group
+	eg.SetLimit(listFanout)
+	for i, g := range grants {
+		eg.Go(func() error {
+			out.Connectors[i] = s.connector(ctx, g, req.GetWithTools())
+			return nil
+		})
 	}
+	_ = eg.Wait()
 	return out, nil
 }
 
