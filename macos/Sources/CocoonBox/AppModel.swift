@@ -1030,13 +1030,11 @@ final class AppModel {
     }
 
     private func appendLive(agentID: String, turnID: String, block: UInt32, reasoning: Bool, subagent: String, text: String) {
-        var blocks = live[agentID] ?? []
-        if let index = blocks.firstIndex(where: { $0.turnID == turnID && $0.block == block && $0.reasoning == reasoning }) {
-            blocks[index].text += text
+        if let index = live[agentID]?.firstIndex(where: { $0.turnID == turnID && $0.block == block && $0.reasoning == reasoning }) {
+            live[agentID]?[index].text += text
         } else {
-            blocks.append(LiveBlock(turnID: turnID, block: block, reasoning: reasoning, subagent: subagent, text: text))
+            live[agentID, default: []].append(LiveBlock(turnID: turnID, block: block, reasoning: reasoning, subagent: subagent, text: text))
         }
-        live[agentID] = blocks
     }
 
     // settleLive drops the streamed copy once its complete block arrives.
@@ -1060,19 +1058,12 @@ final class AppModel {
 
     private func upsert(_ entry: Entry) {
         settleLive(entry)
-        var list = transcripts[entry.agentID] ?? []
-        if let last = list.last, last.seq < entry.seq {
-            list.append(entry)
-        } else if let index = list.firstIndex(where: { $0.seq >= entry.seq }) {
-            if list[index].seq == entry.seq {
-                list[index] = entry
-            } else {
-                list.insert(entry, at: index)
-            }
+        let at = transcripts[entry.agentID]?.lastIndex { $0.seq <= entry.seq }
+        if let at, transcripts[entry.agentID]?[at].seq == entry.seq {
+            transcripts[entry.agentID]?[at] = entry
         } else {
-            list.append(entry)
+            transcripts[entry.agentID, default: []].insert(entry, at: at.map { $0 + 1 } ?? 0)
         }
-        transcripts[entry.agentID] = list
     }
 
     func createAgent(name: String = "") {
