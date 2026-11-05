@@ -122,6 +122,61 @@ func TestSchedulerSavesStaleRunningBoxes(t *testing.T) {
 	}
 }
 
+func TestSchedulerRunsAtMostScheduledSavesAndSkipsABoxThatStoppedWhileWaiting(t *testing.T) {
+	env := newStateEnv(t)
+	env.agent.chunks = []string{hexID("c1")}
+	for i := range 2*scheduledSaves - 1 {
+		env.fake.put(machines.Machine{ID: fmt.Sprintf("cb-%012d", i), Owner: alice, State: machines.StateRunning, Revision: 1})
+	}
+	var mu sync.Mutex
+	var inflight, peak int
+	uploaded := map[string]bool{}
+	gate := make(chan struct{})
+	env.agent.onUpload = func(ep machines.Endpoint) {
+		mu.Lock()
+		inflight++
+		peak = max(peak, inflight)
+		uploaded[ep.Key] = true
+		mu.Unlock()
+		<-gate
+		mu.Lock()
+		inflight--
+		mu.Unlock()
+	}
+	done := make(chan struct{})
+	go func() {
+		env.svc.saveStale(env.ctx, time.Hour)
+		close(done)
+	}()
+	clustertest.WaitFor(t, "every slot holds a save", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return inflight >= scheduledSaves
+	})
+	ms, _ := env.fake.List(env.ctx, "")
+	mu.Lock()
+	for _, m := range ms {
+		if !uploaded[m.ID+":7443"] {
+			m.State = machines.StateHibernated
+			env.fake.put(m)
+		}
+	}
+	mu.Unlock()
+	for range scheduledSaves {
+		gate <- struct{}{}
+	}
+	<-done
+	mu.Lock()
+	got := peak
+	mu.Unlock()
+	if got != scheduledSaves {
+		t.Errorf("peak scheduled saves = %d, want %d", got, scheduledSaves)
+	}
+	if n := env.agent.plans(); n != scheduledSaves {
+		t.Errorf("agent planned %d times, want %d: a box hibernated while waiting for a slot was saved", n, scheduledSaves)
+	}
+}
+
 func TestRebase(t *testing.T) {
 	env := newStateEnv(t)
 	env.agent.chunks = []string{hexID("c1"), hexID("c2")}

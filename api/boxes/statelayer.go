@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/projecteru2/core/log"
+	"golang.org/x/sync/semaphore"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -34,6 +35,7 @@ const (
 	commitAttempts   = 3
 	commitRetryDelay = time.Second
 	staleAttempts    = 8
+	scheduledSaves   = 4
 	// pinTTL outlasts the longest operation that holds a pin, should its process die before it unpins.
 	pinTTL = stateTimeout + 10*time.Minute
 )
@@ -154,7 +156,8 @@ type stateLayer struct {
 	// deltaFor reports whether a user's saves write delta records against the day's newest full snapshot.
 	deltaFor func(user string) bool
 
-	locks utils.Locks
+	locks     utils.Locks
+	scheduled *semaphore.Weighted
 
 	mu    sync.Mutex
 	users map[string]*sync.RWMutex
@@ -168,7 +171,7 @@ type stateLayer struct {
 
 func newStateLayer(agents StateAgents, st store.Store, keys keyring.Keyring) *stateLayer {
 	return &stateLayer{
-		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay,
+		agents: agents, store: st, keys: keys, retryDelay: commitRetryDelay, scheduled: semaphore.NewWeighted(scheduledSaves),
 		users: map[string]*sync.RWMutex{}, heads: map[statePath]head{}, pins: map[statePath]map[string]int{},
 		browsed: map[statePath]browsed{}, bases: map[statePath]*snapshotRecord{},
 	}
