@@ -78,14 +78,18 @@ const EXCLUDED_NAMES: [&str; 17] = [
     "OptGuideOnDeviceModel",
 ];
 #[cfg(not(windows))]
-const EXCLUDED_NAME_PREFIXES: [&str; 4] =
-    ["Singleton", STAGING_PREFIX, ".cb-trash-", ".org.chromium."];
+const EXCLUDED_NAME_PREFIXES: [&str; 4] = [
+    "Singleton",
+    STAGING_PREFIX,
+    crate::toolhost::state::TRASH_PREFIX,
+    ".org.chromium.",
+];
 // the registry hive and its logs, which a live session holds open
 #[cfg(windows)]
 const EXCLUDED_NAME_PREFIXES: [&str; 6] = [
     "Singleton",
     STAGING_PREFIX,
-    ".cb-trash-",
+    crate::toolhost::state::TRASH_PREFIX,
     ".org.chromium.",
     "NTUSER.DAT",
     "ntuser.",

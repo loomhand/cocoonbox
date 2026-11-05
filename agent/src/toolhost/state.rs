@@ -13,9 +13,9 @@ use super::rpc::{self, Output, Stamp};
 use crate::sys;
 
 pub const SQLITE_MAGIC: &[u8; 16] = b"SQLite format 3\0";
+pub(crate) const TRASH_PREFIX: &str = ".cb-trash-";
 
 const READ_BLOCK: usize = 1 << 20;
-const TRASH_PREFIX: &str = ".cb-trash-";
 const KEEP_MARKER: &str = ".cb-keep";
 const PLACE_TRIES: u32 = 100;
 
