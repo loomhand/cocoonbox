@@ -187,27 +187,31 @@ impl Store {
         .await
     }
 
-    /// Records a user turn, deduplicated by `(agent, nonce)`.
+    /// Records a user turn, deduplicated by `(agent, nonce)`; `None` when the agent does not exist.
     pub async fn queue_turn(
         &self,
         agent_id: String,
         text: String,
         nonce: String,
-    ) -> Result<Queued, String> {
+    ) -> Result<Option<Queued>, String> {
         self.call(move |c| {
             let tx = c.transaction()?;
             let scope = format!("send:{agent_id}");
             if let Some(turn_id) = nonce_value(&tx, &scope, &nonce)? {
-                return Ok(Queued {
+                return Ok(Some(Queued {
                     turn_id,
                     entry: None,
-                });
+                }));
             }
             let turn_id = new_id("turn");
-            tx.execute(
-                "INSERT INTO turns (id, agent_id) VALUES (?1, ?2)",
+            let queued = tx.execute(
+                "INSERT INTO turns (id, agent_id)
+                 SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM agents WHERE id = ?2)",
                 params![turn_id, agent_id],
             )?;
+            if queued == 0 {
+                return Ok(None);
+            }
             let entry = TranscriptEntry {
                 agent_id,
                 turn_id: turn_id.clone(),
@@ -221,10 +225,10 @@ impl Store {
             let entry = insert_entry(&tx, entry, false)?;
             put_nonce(&tx, &scope, &nonce, &turn_id)?;
             tx.commit()?;
-            Ok(Queued {
+            Ok(Some(Queued {
                 turn_id,
                 entry: Some(entry),
-            })
+            }))
         })
         .await
     }
@@ -565,6 +569,14 @@ mod tests {
         (dir, store)
     }
 
+    async fn agent(store: &Store) -> String {
+        store
+            .create_agent(String::new(), "m".into(), String::new())
+            .await
+            .unwrap()
+            .id
+    }
+
     #[tokio::test]
     async fn create_dedupes_by_nonce() {
         let (_dir, store) = open();
@@ -588,36 +600,64 @@ mod tests {
     #[tokio::test]
     async fn send_dedupes_by_nonce_per_agent() {
         let (_dir, store) = open();
+        let ag1 = agent(&store).await;
+        let ag2 = agent(&store).await;
         let first = store
-            .queue_turn("ag1".into(), "hi".into(), "n".into())
+            .queue_turn(ag1.clone(), "hi".into(), "n".into())
             .await
+            .unwrap()
             .unwrap();
         let again = store
-            .queue_turn("ag1".into(), "hi".into(), "n".into())
+            .queue_turn(ag1.clone(), "hi".into(), "n".into())
             .await
+            .unwrap()
             .unwrap();
         let other = store
-            .queue_turn("ag2".into(), "hi".into(), "n".into())
+            .queue_turn(ag2, "hi".into(), "n".into())
             .await
+            .unwrap()
             .unwrap();
         assert_eq!(first.turn_id, again.turn_id);
         assert!(first.entry.is_some());
         assert!(again.entry.is_none());
         assert_ne!(first.turn_id, other.turn_id);
-        let page = store.transcript("ag1".into(), 0, 10).await.unwrap();
+        let page = store.transcript(ag1, 0, 10).await.unwrap();
         assert_eq!(page.entries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_turn_for_a_deleted_agent_is_not_queued() {
+        let (_dir, store) = open();
+        let id = agent(&store).await;
+        assert!(store.delete_agent(id.clone()).await.unwrap());
+        let queued = store
+            .queue_turn(id.clone(), "hi".into(), String::new())
+            .await
+            .unwrap();
+        assert!(queued.is_none());
+        assert!(store.unfinished_turns().await.unwrap().is_empty());
+        assert!(
+            store
+                .transcript(id, 0, 10)
+                .await
+                .unwrap()
+                .entries
+                .is_empty()
+        );
     }
 
     #[tokio::test]
     async fn transcript_seq_is_monotonic_and_paged() {
         let (_dir, store) = open();
+        let ag = agent(&store).await;
         let q = store
-            .queue_turn("ag".into(), "u".into(), String::new())
+            .queue_turn(ag.clone(), "u".into(), String::new())
             .await
+            .unwrap()
             .unwrap();
         for i in 0..5 {
             let entry = TranscriptEntry {
-                agent_id: "ag".into(),
+                agent_id: ag.clone(),
                 turn_id: q.turn_id.clone(),
                 role: pb::Role::Assistant.into(),
                 body: Some(transcript_entry::Body::Text(pb::TextBlock {
@@ -628,13 +668,13 @@ mod tests {
             };
             store.append(entry, false).await.unwrap();
         }
-        let page = store.transcript("ag".into(), 0, 4).await.unwrap();
+        let page = store.transcript(ag.clone(), 0, 4).await.unwrap();
         assert_eq!(page.entries.len(), 4);
         assert!(page.has_more);
         let seqs: Vec<u64> = page.entries.iter().map(|e| e.seq).collect();
         assert!(seqs.windows(2).all(|w| w[0] < w[1]), "seqs {seqs:?}");
         let rest = store
-            .transcript("ag".into(), *seqs.last().unwrap(), 10)
+            .transcript(ag, *seqs.last().unwrap(), 10)
             .await
             .unwrap();
         assert_eq!(rest.entries.len(), 2);
@@ -644,16 +684,19 @@ mod tests {
     #[tokio::test]
     async fn history_orders_by_turn_then_seq_and_skips_subagent() {
         let (_dir, store) = open();
+        let ag = agent(&store).await;
         let t1 = store
-            .queue_turn("ag".into(), "first".into(), String::new())
+            .queue_turn(ag.clone(), "first".into(), String::new())
             .await
+            .unwrap()
             .unwrap();
         let t2 = store
-            .queue_turn("ag".into(), "second".into(), String::new())
+            .queue_turn(ag.clone(), "second".into(), String::new())
             .await
+            .unwrap()
             .unwrap();
         let reply = |turn: &str, text: &str| TranscriptEntry {
-            agent_id: "ag".into(),
+            agent_id: ag.clone(),
             turn_id: turn.into(),
             role: pb::Role::Assistant.into(),
             body: Some(transcript_entry::Body::Text(pb::TextBlock {
@@ -676,15 +719,9 @@ mod tests {
                 })
                 .collect()
         };
-        let upto_first = store
-            .history("ag".into(), t1.turn_id.clone())
-            .await
-            .unwrap();
+        let upto_first = store.history(ag.clone(), t1.turn_id.clone()).await.unwrap();
         assert_eq!(texts(upto_first), ["first", "answer1"]);
-        let upto_second = store
-            .history("ag".into(), t2.turn_id.clone())
-            .await
-            .unwrap();
+        let upto_second = store.history(ag.clone(), t2.turn_id.clone()).await.unwrap();
         assert_eq!(texts(upto_second), ["first", "answer1", "second"]);
         assert_eq!(store.unfinished_turns().await.unwrap().len(), 2);
         store.finish_turn(t2.turn_id).await.unwrap();

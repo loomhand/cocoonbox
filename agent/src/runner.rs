@@ -196,19 +196,6 @@ impl Runtime {
 
     /// Queues a user turn and returns its id; duplicate nonces return the first turn.
     pub async fn send(self: &Arc<Self>, req: pb::SendRequest) -> Result<String, Status> {
-        if self
-            .journal
-            .store
-            .agent(req.agent_id.clone())
-            .await
-            .map_err(Status::internal)?
-            .is_none()
-        {
-            return Err(Status::not_found(format!(
-                "agent {} not found",
-                req.agent_id
-            )));
-        }
         let title = title(&req.text);
         let mut text = req.text;
         for a in req.attachments {
@@ -233,7 +220,8 @@ impl Runtime {
             .store
             .queue_turn(req.agent_id.clone(), text, req.client_nonce)
             .await
-            .map_err(Status::internal)?;
+            .map_err(Status::internal)?
+            .ok_or_else(|| Status::not_found(format!("agent {} not found", req.agent_id)))?;
         let Some(entry) = queued.entry else {
             return Ok(queued.turn_id);
         };
@@ -569,7 +557,8 @@ impl Runtime {
     async fn run_turn(&self, agent_id: &str, slot: Arc<Slot>, turn_id: String) {
         let model = match self.journal.store.agent(agent_id.to_owned()).await {
             Ok(Some(a)) => a.main_model,
-            _ => self.cfg.model_main.clone(),
+            Ok(None) => return,
+            Err(_) => self.cfg.model_main.clone(),
         };
         let gate = Arc::clone(&self.turns).read_owned().await;
         let cancel = CancellationToken::new();
