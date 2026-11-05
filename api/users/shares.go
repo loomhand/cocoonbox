@@ -79,7 +79,6 @@ func (s *Service) CreateShare(ctx context.Context, ns NewShare) (Share, error) {
 	if err := s.store.insertShare(ctx, rec, s.seal.seal(secret, shareData(id, ns.Box))); err != nil {
 		return Share{}, err
 	}
-	s.published(ctx, "created share "+id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.putShare(rec)
@@ -108,7 +107,6 @@ func (s *Service) SetShareWrite(ctx context.Context, owner, id string, write boo
 	if err := s.store.setShareWrite(ctx, id, write); err != nil {
 		return Share{}, err
 	}
-	s.published(ctx, "set the mode of share "+id)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.shares[id]
@@ -129,7 +127,6 @@ func (s *Service) RegenerateShare(ctx context.Context, owner, id string) (Share,
 	if err := s.store.setShareSecret(ctx, id, utils.HashHex(secret), s.seal.seal(secret, shareData(id, box))); err != nil {
 		return Share{}, err
 	}
-	s.published(ctx, "regenerated share "+id)
 	s.mu.Lock()
 	rec, ok := s.shares[id]
 	if !ok {
@@ -151,7 +148,6 @@ func (s *Service) RevokeShare(ctx context.Context, owner, id string) error {
 	if err := s.store.revokeShare(ctx, id); err != nil {
 		return err
 	}
-	s.published(ctx, "revoked share "+id)
 	s.endShare(ctx, id)
 	return nil
 }

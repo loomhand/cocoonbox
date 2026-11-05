@@ -171,7 +171,7 @@ func (s *store) renameBox(ctx context.Context, owner, id, name string) error {
 	return nil
 }
 
-// removeBox deletes owner's box id and revokes its live share in one transaction.
+// removeBox deletes owner's box id, revokes its live share and tells every api in one transaction.
 func (s *store) removeBox(ctx context.Context, owner, id string) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, "DELETE FROM boxes WHERE id = $1 AND owner = $2", id, owner)
@@ -184,7 +184,7 @@ func (s *store) removeBox(ctx context.Context, owner, id string) error {
 		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now(), secret_sealed = NULL WHERE box = $1 AND revoked_at IS NULL", id); err != nil {
 			return fmt.Errorf("revoke the box's share: %w", err)
 		}
-		return nil
+		return notifyIn(ctx, tx)
 	})
 }
 
@@ -405,17 +405,19 @@ func (s *store) removeSessions(ctx context.Context, user string) error {
 	return s.exec(ctx, "DELETE FROM sessions WHERE user_id = $1", user)
 }
 
-// insertShare stores rec as box's live share with its sealed secret; an expired share left unrevoked gives way to it.
+// insertShare stores rec as box's live share with its sealed secret and tells every api; an expired share left unrevoked gives way to it.
 func (s *store) insertShare(ctx context.Context, rec *shareRecord, sealed []byte) error {
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, "UPDATE shares SET revoked_at = now(), secret_sealed = NULL WHERE box = $1 AND revoked_at IS NULL AND expires_at <= now()",
 			rec.box); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO shares (id, box, owner, secret_sha256, secret_sealed, user_ids, write, expires_at, created_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO shares (id, box, owner, secret_sha256, secret_sealed, user_ids, write, expires_at, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			rec.id, rec.box, rec.owner, rec.secretSHA256, sealed, rec.userIDs, rec.write, rec.expiresAt, rec.createdAt)
-		return err
+			rec.id, rec.box, rec.owner, rec.secretSHA256, sealed, rec.userIDs, rec.write, rec.expiresAt, rec.createdAt); err != nil {
+			return err
+		}
+		return notifyIn(ctx, tx)
 	})
 	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok && pgErr.Code == uniqueViolation {
 		return fmt.Errorf("%w: the box is already shared", ErrExists)
@@ -561,21 +563,30 @@ func (s *store) putToolList(ctx context.Context, family string, l ToolList) erro
 		l.Image, family, string(l.Tools), l.Instructions)
 }
 
-// execShare runs an update of one live share; a share that is gone is ErrNotFound.
+// execShare runs an update of one live share and tells every api in one transaction; a share that is gone is ErrNotFound.
 func (s *store) execShare(ctx context.Context, sql string, args ...any) error {
-	tag, err := s.pool.Exec(ctx, sql, args...)
-	if err != nil {
-		return fmt.Errorf("update share: %w", err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, sql, args...)
+		if err != nil {
+			return fmt.Errorf("update share: %w", err)
+		}
+		if tag.RowsAffected() == 0 {
+			return ErrNotFound
+		}
+		return notifyIn(ctx, tx)
+	})
 }
 
 func (s *store) exec(ctx context.Context, sql string, args ...any) error {
 	if _, err := s.pool.Exec(ctx, sql, args...); err != nil {
 		return fmt.Errorf("%s: %w", strings.Fields(sql)[0], err)
+	}
+	return nil
+}
+
+func notifyIn(ctx context.Context, tx pgx.Tx) error {
+	if _, err := tx.Exec(ctx, "SELECT pg_notify($1, '')", notifyChannel); err != nil {
+		return fmt.Errorf("notify %s: %w", notifyChannel, err)
 	}
 	return nil
 }

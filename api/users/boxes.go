@@ -106,7 +106,6 @@ func (s *Service) RemoveBox(ctx context.Context, owner, id string) error {
 	if err := s.store.removeBox(ctx, owner, id); err != nil {
 		return err
 	}
-	s.published(ctx, "removed box "+id)
 	s.mu.Lock()
 	s.boxGen++
 	s.boxes[owner] = slices.DeleteFunc(slices.Clone(s.boxes[owner]), func(b Box) bool { return b.ID == id })
