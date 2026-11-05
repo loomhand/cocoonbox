@@ -121,7 +121,8 @@ func migrations(fsys fs.FS) ([]string, error) {
 }
 
 func versionOf(name string) (int, error) {
-	version, err := strconv.Atoi(strings.SplitN(strings.TrimPrefix(name, "migrations/"), "_", 2)[0])
+	number, _, _ := strings.Cut(strings.TrimPrefix(name, "migrations/"), "_")
+	version, err := strconv.Atoi(number)
 	if err != nil {
 		return 0, fmt.Errorf("migration %s: name must start with its number", name)
 	}

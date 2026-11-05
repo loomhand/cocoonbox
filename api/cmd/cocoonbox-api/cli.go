@@ -70,11 +70,11 @@ func runCLI(ctx context.Context, cfg *config.Config, args []string, stdin io.Rea
 	if verb == "set" {
 		return setPolicy(ctx, cfg, name, args[3:], stdout)
 	}
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-	id := fs.String("id", "", "user id; migrated users keep their old name so their box id stays")
-	admin := fs.Bool("admin", false, "make the user an admin")
-	fromStdin := fs.Bool("stdin", false, "read the secret from the first line of stdin")
-	if err := fs.Parse(args[3:]); err != nil {
+	flags := flag.NewFlagSet(verb, flag.ContinueOnError)
+	id := flags.String("id", "", "user id; migrated users keep their old name so their box id stays")
+	admin := flags.Bool("admin", false, "make the user an admin")
+	fromStdin := flags.Bool("stdin", false, "read the secret from the first line of stdin")
+	if err := flags.Parse(args[3:]); err != nil {
 		return err
 	}
 	accounts, err := openUsers(ctx, cfg)

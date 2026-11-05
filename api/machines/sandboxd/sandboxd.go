@@ -39,6 +39,7 @@ const (
 	renewInterval   = 5 * time.Minute
 	watchInterval   = 500 * time.Millisecond
 	opTimeout       = 10 * time.Minute
+	loopTimeout     = 30 * time.Second
 	probeTimeout    = 2 * time.Second
 	probeFanout     = 8
 	sharedTimeout   = 10 * time.Second
@@ -1539,7 +1540,7 @@ func (b *Backend) loop(ctx context.Context, interval time.Duration, fn func(cont
 			return
 		case <-ticker.C:
 		}
-		callCtx, cancel := context.WithTimeout(ctx, requestTimeout)
+		callCtx, cancel := context.WithTimeout(ctx, loopTimeout)
 		if err := fn(callCtx); err != nil {
 			log.WithFunc("sandboxd.Backend.loop").Warnf(callCtx, "every %s: %v", interval, err)
 		}

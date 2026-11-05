@@ -20,9 +20,8 @@ import (
 )
 
 const (
-	requestTimeout = 30 * time.Second
-	dialTimeout    = 5 * time.Second
-	maxErrorBody   = 4 << 10
+	dialTimeout  = 5 * time.Second
+	maxErrorBody = 4 << 10
 
 	diskLowReason = "disk below reserve"
 )
