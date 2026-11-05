@@ -399,6 +399,7 @@ async fn shell(bash: &mut tokio::process::Command, cmd: &str) -> Result<String, 
     let out = bash
         .args(["-lc", cmd])
         .stdin(std::process::Stdio::null())
+        .kill_on_drop(true)
         .output()
         .await
         .map_err(|e| format!("spawn bash: {e}"))?;
@@ -543,6 +544,8 @@ fn snapshot_ref(id: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
 
     #[test]
@@ -568,6 +571,23 @@ mod tests {
             Args::parse(["--repo".to_owned()]),
             Err(Fail::Usage(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn a_shell_cut_off_by_its_timeout_ends_its_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid = dir.path().join("pid");
+        let cmd = format!("echo $$ > {}; exec sleep 30", pid.display());
+        let run = tokio::time::timeout(Duration::from_secs(1), home_shell(dir.path(), &cmd));
+        assert!(run.await.is_err());
+        let pid = std::fs::read_to_string(&pid).unwrap();
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let ps = std::process::Command::new("ps")
+            .args(["-o", "stat=", "-p", pid.trim()])
+            .output()
+            .unwrap();
+        let stat = String::from_utf8_lossy(&ps.stdout);
+        assert!(stat.trim().is_empty() || stat.starts_with('Z'), "{stat}");
     }
 
     #[test]
