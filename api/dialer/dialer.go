@@ -9,6 +9,8 @@ import (
 	"iter"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	agentv1 "github.com/loomhand/cocoonbox/api/gen/cocoonbox/agent/v1"
 	"github.com/loomhand/cocoonbox/api/machines"
@@ -32,7 +34,7 @@ func New(pool *Pool) *Dialer {
 	return &Dialer{pool: pool}
 }
 
-// Plan calls State.Plan on the agent at ep and hands each message to page; an error from page ends the call with it.
+// Plan calls State.PlanPages on the agent at ep, or State.Plan on an agent without it, and hands each message to page; an error from page ends the call with it.
 func (d *Dialer) Plan(ctx context.Context, box string, ep machines.Endpoint, req *agentv1.PlanRequest, page PlanPageFunc) error {
 	client, err := d.state(box, ep)
 	if err != nil {
@@ -40,16 +42,22 @@ func (d *Dialer) Plan(ctx context.Context, box string, ep machines.Endpoint, req
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stream, err := client.Plan(ctx, req)
+	stream, err := client.PlanPages(ctx, req)
 	if err != nil {
 		return err
 	}
-	for {
+	for first := true; ; first = false {
 		msg, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
+		switch {
+		case errors.Is(err, io.EOF):
 			return nil
-		}
-		if err != nil {
+		case first && status.Code(err) == codes.Unimplemented:
+			plan, planErr := client.Plan(ctx, req)
+			if planErr != nil {
+				return planErr
+			}
+			return page(plan)
+		case err != nil:
 			return err
 		}
 		if err := page(msg); err != nil {

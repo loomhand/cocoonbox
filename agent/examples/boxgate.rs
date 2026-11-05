@@ -270,7 +270,7 @@ async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
                 pb::Consistency::Live
             };
             let mut state = StateClient::new(channel(&serve).await?);
-            let mut pages = state
+            let r = state
                 .plan(edge.signed(pb::PlanRequest {
                     key: Some(edge.state_key()),
                     consistency: consistency as i32,
@@ -279,14 +279,6 @@ async fn run(cmd: &str, args: &mut Args) -> Result<u8, String> {
                 .await
                 .map_err(|e| format!("plan: {e}"))?
                 .into_inner();
-            let mut r = pages
-                .message()
-                .await
-                .map_err(|e| format!("plan: {e}"))?
-                .ok_or("plan: no message")?;
-            while let Some(page) = pages.message().await.map_err(|e| format!("plan: {e}"))? {
-                r.chunks.extend(page.chunks);
-            }
             let saved = json!({
                 "snapshot_id": r.snapshot_id,
                 "chunks": r.chunks.iter().map(|c| json!({"id": c.id, "size": c.size})).collect::<Vec<_>>(),

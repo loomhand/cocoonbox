@@ -5256,7 +5256,7 @@ async fn state_client(h: &Harness) -> cocoonbox_agent::pb::state_client::StateCl
 }
 
 async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::PlanResponse {
-    let mut pages = state_client(h)
+    state_client(h)
         .await
         .plan(authed(pb::PlanRequest {
             key: Some(state_key()),
@@ -5265,12 +5265,7 @@ async fn plan(h: &Harness, consistency: pb::Consistency, parent: &str) -> pb::Pl
         }))
         .await
         .unwrap()
-        .into_inner();
-    let mut plan = pages.message().await.unwrap().unwrap();
-    while let Some(page) = pages.message().await.unwrap() {
-        plan.chunks.extend(page.chunks);
-    }
-    plan
+        .into_inner()
 }
 
 async fn upload_missing(
@@ -5548,6 +5543,41 @@ async fn state_round_trip_is_incremental_and_restores_files_and_agent_db() {
         !ids.contains(&intruder),
         "agent.db was not restored: {ids:?}"
     );
+}
+
+#[tokio::test]
+async fn plan_pages_answers_what_plan_answers_in_pages_of_2048() {
+    let h = Harness::start(Vec::new()).await;
+    let dir = h.workspace.join("many");
+    std::fs::create_dir_all(&dir).unwrap();
+    for i in 0..2500 {
+        std::fs::write(dir.join(i.to_string()), i.to_string()).unwrap();
+    }
+    let whole = plan(&h, pb::Consistency::Live, "").await;
+    let mut stream = state_client(&h)
+        .await
+        .plan_pages(authed(pb::PlanRequest {
+            key: Some(state_key()),
+            consistency: pb::Consistency::Live.into(),
+            parent: String::new(),
+        }))
+        .await
+        .unwrap()
+        .into_inner();
+    let mut pages = Vec::new();
+    while let Some(page) = stream.message().await.unwrap() {
+        pages.push(page);
+    }
+    let sizes: Vec<usize> = pages.iter().map(|p| p.chunks.len()).collect();
+    assert_eq!(sizes, [2048, whole.chunks.len() - 2048]);
+    assert_eq!(pages[0].files, whole.files);
+    let ids = |chunks: &[pb::ChunkRef]| {
+        let mut ids: Vec<String> = chunks.iter().map(|c| c.id.clone()).collect();
+        ids.sort();
+        ids
+    };
+    let paged: Vec<pb::ChunkRef> = pages.into_iter().flat_map(|p| p.chunks).collect();
+    assert_eq!(ids(&paged), ids(&whole.chunks));
 }
 
 #[tokio::test]
