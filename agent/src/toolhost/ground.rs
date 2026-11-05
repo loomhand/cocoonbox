@@ -68,6 +68,8 @@ struct TargetArgs {
     target: Target,
     #[serde(default)]
     max_edge: Option<u32>,
+    #[serde(default)]
+    session: Value,
 }
 
 /// One OCR word: its text folded to lowercase letters and digits, its line key and its box in screen pixels.
@@ -125,7 +127,7 @@ pub async fn act(
         if found["served"].is_array() {
             out["served"] = found["served"].take();
         }
-        return Ok(finish(shuttle, owner, &mut out, rect).await);
+        return Ok(finish(shuttle, owner, &mut out, rect, k, &a.session).await);
     }
     let mut out = match place.err().filter(|_| found["found"] == true) {
         Some(why) => json!({"a11y": {"element": element, "no_point": why, "ms": a11y_ms}}),
@@ -139,14 +141,14 @@ pub async fn act(
         None => texts_from(&a.target.description),
     };
     if texts.is_empty() {
-        return not_found(shuttle, owner, out, a.max_edge, start).await;
+        return not_found(shuttle, owner, out, &a, start).await;
     }
     let t0 = Instant::now();
     let words = match ocr(shuttle, owner).await {
         Ok(words) => words,
         Err(e) => {
             out["ocr"] = json!({"error": e, "ms": t0.elapsed().as_millis()});
-            return not_found(shuttle, owner, out, a.max_edge, start).await;
+            return not_found(shuttle, owner, out, &a, start).await;
         }
     };
     timing::mark("ocr");
@@ -166,12 +168,12 @@ pub async fn act(
         out["ocr"]["titles"] = titles.len().into();
     }
     let [rect] = hits.as_slice() else {
-        return not_found(shuttle, owner, out, a.max_edge, start).await;
+        return not_found(shuttle, owner, out, &a, start).await;
     };
     let (cx, cy) = (rect[0] + rect[2] / 2.0, rect[1] + rect[3] / 2.0);
     if let Some(why) = label_of_field(desk, &a.target.description, text, cx, cy).await {
         out["ocr"]["refused"] = why.into();
-        return not_found(shuttle, owner, out, a.max_edge, start).await;
+        return not_found(shuttle, owner, out, &a, start).await;
     }
     if press {
         ask(
@@ -194,7 +196,7 @@ pub async fn act(
         "a11y": out["a11y"],
         "ms": start.elapsed().as_millis(),
     });
-    Ok(finish(shuttle, owner, &mut out, Some(*rect)).await)
+    Ok(finish(shuttle, owner, &mut out, Some(*rect), k, &a.session).await)
 }
 
 /// Whether `pid` runs LibreOffice, whose toolbar extents can sit a menu bar's height above the drawn controls.
@@ -232,12 +234,18 @@ fn placed(found: &Value, office: impl Fn(i64) -> bool) -> Result<[f64; 4], &'sta
 }
 
 /// The result line and a full-resolution crop of [`CROP`] around `rect`, else no image.
-async fn finish(shuttle: &Client, owner: &str, out: &mut Value, rect: Option<[f64; 4]>) -> Output {
+async fn finish(
+    shuttle: &Client,
+    owner: &str,
+    out: &mut Value,
+    rect: Option<[f64; 4]>,
+    k: f64,
+    session: &Value,
+) -> Output {
     let image_b64 = match rect {
-        Some([x, y, w, h]) => {
-            let (cx, cy) = (x + w / 2.0, y + h / 2.0);
-            let region = json!({"x": cx - CROP[0] / 2.0, "y": cy - CROP[1] / 2.0, "w": CROP[0], "h": CROP[1]});
-            ask(shuttle, owner, "desk_look", json!({"region": region}))
+        Some(rect) => {
+            let args = json!({"region": crop_region(rect, k), "session": session});
+            ask(shuttle, owner, "desk_look", args)
                 .await
                 .ok()
                 .and_then(|o| o.image_b64)
@@ -255,24 +263,29 @@ async fn finish(shuttle: &Client, owner: &str, out: &mut Value, rect: Option<[f6
     }
 }
 
+fn crop_region(rect: [f64; 4], k: f64) -> Value {
+    let [x, y, w, h] = rect;
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    json!({"x": (cx - CROP[0] / 2.0) / k, "y": (cy - CROP[1] / 2.0) / k, "w": CROP[0] / k, "h": CROP[1] / k})
+}
+
 /// No tier found the target: the reasons, and the whole screen so the caller grounds it.
 async fn not_found(
     shuttle: &Client,
     owner: &str,
     mut out: Value,
-    max_edge: Option<u32>,
+    a: &TargetArgs,
     start: Instant,
 ) -> Result<Output, String> {
     out["tier"] = "none".into();
     out["ms"] = json!(start.elapsed().as_millis());
+    let look = json!({"max_edge": a.max_edge, "session": a.session});
     Ok(Output {
         text: format!(
             "{out}\nnot found by its accessibility name or a unique match of its text; give x,y from the screenshot"
         ),
         is_error: true,
-        image_b64: ask(shuttle, owner, "desk_look", json!({"max_edge": max_edge}))
-            .await?
-            .image_b64,
+        image_b64: ask(shuttle, owner, "desk_look", look).await?.image_b64,
         ..Output::default()
     })
 }
@@ -611,6 +624,14 @@ fn upscale(w: usize, h: usize, rgb: &[u8], f: usize) -> (u32, u32, Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_crop_region_is_in_screenshot_pixels() {
+        assert_eq!(
+            crop_region([990.0, 495.0, 20.0, 10.0], 1.25),
+            json!({"x": 672.0, "y": 320.0, "w": 256.0, "h": 160.0})
+        );
+    }
 
     fn word(text: &str, line: &str, x: f64) -> Word {
         Word {
