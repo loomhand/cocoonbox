@@ -32,7 +32,7 @@ SRC=$ROOT/src-$V
 
 free=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
 [ "$free" -ge "$ROOT_FREE_G" ] || die "only ${free}G free on /"
-read -r used limit < <(xfs_quota -x -c "report -p -b -N" /srv/cb | awk '$1 == "cbsbx" {print int($2/1048576), int($4/1048576)}')
+read -r used limit < <(xfs_quota -x -c "report -p -b -N" /srv/cb | awk '$1 == "cbsbx" {print int($2/1048576), int($4/1048576)}') || die "no cbsbx quota on /srv/cb"
 [ $((limit - used)) -ge "$HEADROOM_G" ] || die "cbsbx headroom $((limit - used))G is under ${HEADROOM_G}G"
 templates=$("$COCOON" image list | awk 'NR > 1 {print $2}')
 grep -qxF "$BASE" <<<"$templates" || die "no base template $BASE"
