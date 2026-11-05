@@ -207,6 +207,7 @@ Decided 2026-09-30. The box is disposable across images and nodes; the user's da
   - The stamps live with `known-chunks.json` on the box disk. A plan without a parent, or under another key, ignores them; a new machine has none, so its first plan reads every file. A file whose ctime is within 1 s of the walk is never recorded, and SQLite files read through the online backup are never reused (WAL commits leave the main file's stamp unchanged).
   - Plan reads up to 4 files at a time. `-wal` and `-journal` sidecars go in a second pass, after their database.
   - Plan lists chunks in manifest order, so Restore pages arrive in the order files are written.
+  - A plan whose manifest exceeds 256 MiB, the most a restore opens, fails with that reason instead of saving a snapshot no restore can read.
   - Restore writes each file into staging as soon as all its chunk URLs are in: 64 files in flight, each with 2 chunks fetched ahead, at most 32 GETs. Only a chunk used more than once goes through a local cache. Staging is built before the quiesce, which now covers only the swap.
   - Chunk-body budget per restore: 64 × 3 plain chunks of up to 4 MiB, plus 32 chunks in flight at 3 bodies each (sealed, packed, plain), 1152 MiB nominal; a transfer slot is held until the chunk is decrypted. The manifest (up to 256 MiB parsed) and transport buffers come on top. Peak agent RSS on a 90k-file restore: 204 MiB with 32 files and 8 GETs in flight.
   - Chrome restarts in the background after a state operation; a browser tool waits on the browser lock until CDP answers.
