@@ -75,7 +75,10 @@ func TestKeysLifecycle(t *testing.T) {
 	if err != nil || r.GetPlaceholder() != k.GetPlaceholder() || r.GetHint() != "dcba" {
 		t.Fatalf("Rotate = %v, %v", r, err)
 	}
-	creds, d2, _ := svc.Credentials(t.Context(), alice)
+	creds, d2, err := svc.Credentials(t.Context(), alice)
+	if err != nil {
+		t.Fatalf("Credentials after Rotate: %v", err)
+	}
 	if creds.Secrets[name].Value != "Bearer "+rotated || d2 == d1 {
 		t.Errorf("after Rotate: %+v, digest %q (was %q)", creds.Secrets[name], d2, d1)
 	}
@@ -86,9 +89,9 @@ func TestKeysLifecycle(t *testing.T) {
 	if _, err := svc.Delete(WithActor(ctx, ActorConsole), &controlv1.KeyRef{Name: "ATTIO_API_KEY"}); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	creds, d3, _ := svc.Credentials(t.Context(), alice)
-	if len(creds.Secrets) != 0 || creds.Flags[guestEnv] != "" || creds.Prune != envPrefix || d3 != "" {
-		t.Errorf("after Delete: %+v, digest %q", creds, d3)
+	creds, d3, err := svc.Credentials(t.Context(), alice)
+	if err != nil || len(creds.Secrets) != 0 || creds.Flags[guestEnv] != "" || creds.Prune != envPrefix || d3 != "" {
+		t.Errorf("after Delete: %+v, digest %q, %v", creds, d3, err)
 	}
 	if !slices.Equal(changes, []string{alice, alice, alice}) {
 		t.Errorf("changes = %v, want three of alice", changes)
@@ -106,7 +109,10 @@ func TestQueryKeyAndTheCountLimit(t *testing.T) {
 	if _, err := svc.Add(ctx, &controlv1.AddKeyRequest{Name: "SERP", Hosts: []string{"serpapi.com"}, Query: "api_key", Value: "0123456789abcdef"}); err != nil {
 		t.Fatalf("Add query key: %v", err)
 	}
-	creds, _, _ := svc.Credentials(t.Context(), alice)
+	creds, _, err := svc.Credentials(t.Context(), alice)
+	if err != nil {
+		t.Fatalf("Credentials: %v", err)
+	}
 	if sec := creds.Secrets[onlyName(t, creds.Secrets)]; sec.Query != "api_key" || sec.Value != "0123456789abcdef" || !strings.HasPrefix(sec.Placeholder, "cbv_") {
 		t.Errorf("query entry = %+v", sec)
 	}
@@ -115,8 +121,8 @@ func TestQueryKeyAndTheCountLimit(t *testing.T) {
 			t.Fatalf("Add %d: %v", i, err)
 		}
 	}
-	if _, err := svc.Add(ctx, &controlv1.AddKeyRequest{Name: "K33", Hosts: []string{"a.example.com"}, Value: synthetic}); status.Code(err) != codes.ResourceExhausted {
-		t.Errorf("33rd Add = %v, want ResourceExhausted", err)
+	if _, err := svc.Add(ctx, &controlv1.AddKeyRequest{Name: fmt.Sprintf("K%d", maxKeys), Hosts: []string{"a.example.com"}, Value: synthetic}); status.Code(err) != codes.ResourceExhausted {
+		t.Errorf("Add past %d keys = %v, want ResourceExhausted", maxKeys, err)
 	}
 }
 
@@ -208,8 +214,8 @@ func newService(t *testing.T) *Service {
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = conn.Close(context.Background()) }()
-	if _, err := conn.Exec(t.Context(), "CREATE TABLE users (id text PRIMARY KEY); INSERT INTO users VALUES ('u-alice'), ('u-bob')"); err != nil {
+	defer func() { _ = conn.Close(t.Context()) }()
+	if _, err := conn.Exec(t.Context(), "CREATE TABLE users (id text PRIMARY KEY); INSERT INTO users VALUES ('"+alice+"'), ('"+bob+"')"); err != nil {
 		t.Fatalf("users table: %v", err)
 	}
 	svc, err := Open(t.Context(), Options{DSN: dsn, Keys: testKeys{}})

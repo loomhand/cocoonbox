@@ -56,7 +56,7 @@ func TestLibrariesStayApart(t *testing.T) {
 	_, lib := newLibrary()
 	ctx := t.Context()
 	if _, err := lib.Put(ctx, "alice", "a.mts", []byte("export function main() {}"), Origin{}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("Put: %v", err)
 	}
 	if _, _, err := lib.Get(ctx, "bob", "a.mts"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("bob's Get = %v", err)
@@ -107,7 +107,7 @@ func TestDeleteDropsTheFlowAndItsObject(t *testing.T) {
 	ctx := t.Context()
 	for _, name := range []string{"a.json", "b.mts"} {
 		if _, err := lib.Put(ctx, "alice", name, []byte(name), Origin{}); err != nil {
-			t.Fatal(err)
+			t.Fatalf("Put %s: %v", name, err)
 		}
 	}
 	deleted, err := lib.Delete(ctx, "alice", []string{"a.json", "missing.json"})
@@ -128,7 +128,7 @@ func TestDeleteDropsTheFlowAndItsObject(t *testing.T) {
 
 func TestDoorServesTheMachineOwnersLibrary(t *testing.T) {
 	_, lib := newLibrary()
-	door := httptest.NewServer(NewDoor(lib, doorKeys, func(_ context.Context, owner, machine string) Origin {
+	door := httptest.NewServer(NewDoor(lib, doorKeys, func(_ context.Context, _, machine string) Origin {
 		return Origin{BoxID: strings.TrimSuffix(machine, "-r1"), Image: "cbcore:v17"}
 	}))
 	defer door.Close()
@@ -144,7 +144,7 @@ func TestDoorServesTheMachineOwnersLibrary(t *testing.T) {
 		Rev   uint64  `json:"rev"`
 		Flows []Entry `json:"flows"`
 	}
-	if err := json.Unmarshal([]byte(body), &listed); code != http.StatusOK || err != nil || listed.Rev != 1 || listed.Flows[0].Image != "cbcore:v17" {
+	if err := json.Unmarshal([]byte(body), &listed); code != http.StatusOK || err != nil || listed.Rev != 1 || len(listed.Flows) != 1 || listed.Flows[0].Image != "cbcore:v17" {
 		t.Errorf("GET list = %d %s %v", code, body, err)
 	}
 	if code, body := call(t, door.URL, "alice-key", http.MethodGet, "/flows/save.json", ""); code != http.StatusOK || body != `{"steps":[]}` {
@@ -179,7 +179,7 @@ func TestServerExportsAndImportsTheCallersFlowsOnly(t *testing.T) {
 		t.Errorf("List without a user: %v", err)
 	}
 	if _, err := lib.Put(alice, "alice", "save.json", []byte(`{"v":1}`), Origin{BoxID: "cb-a", Image: "cbcore:v17"}); err != nil {
-		t.Fatal(err)
+		t.Fatalf("Put: %v", err)
 	}
 	exported, err := srv.Export(alice, &controlv1.ExportFlowsRequest{})
 	if err != nil || len(exported.GetFlows()) != 1 || string(exported.GetFlows()[0].GetContent()) != `{"v":1}` {
@@ -234,14 +234,14 @@ func call(t *testing.T, base, key, method, path, body string) (int, string) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(t.Context(), method, base+path, strings.NewReader(body))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("request: %v", err)
 	}
 	if key != "" {
 		req.Header.Set("Authorization", "Bearer "+key)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("%s %s: %v", method, path, err)
 	}
 	defer resp.Body.Close()
 	var out bytes.Buffer

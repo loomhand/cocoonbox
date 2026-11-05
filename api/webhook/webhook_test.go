@@ -4,11 +4,11 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -150,7 +150,7 @@ func TestAFullCacheDropsWhatExpiredBeforeKeepingMore(t *testing.T) {
 	hook := newHook(t, newEndpoint(t), &fakeAccounts{})
 	past, future := time.Now().Add(-time.Second), time.Now().Add(time.Minute)
 	for i := range sweepAt - 1 {
-		hook.answers[fmt.Sprint(i)] = answer{until: past}
+		hook.answers[strconv.Itoa(i)] = answer{until: past}
 	}
 	hook.answers["fresh"] = answer{until: future}
 	hook.keep("new", answer{until: future})

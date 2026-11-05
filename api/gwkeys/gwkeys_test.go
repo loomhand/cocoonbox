@@ -190,7 +190,7 @@ func TestSetEnabledExpiresAndRestoresOnlyThatOwnersKeys(t *testing.T) {
 		}
 	}
 	if _, set := gw.key(akID("gw-other"))["expires_at_epoch_secs"]; set {
-		t.Errorf("another owner's key got an expiry")
+		t.Error("another owner's key got an expiry")
 	}
 	if err := c.SetEnabled(t.Context(), owner, true); err != nil {
 		t.Fatalf("SetEnabled true: %v", err)
@@ -242,6 +242,8 @@ func newFakeGW(t *testing.T) (*fakeGW, *Client) {
 }
 
 func (g *fakeGW) put(ak, owner string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
 	id := akID(ak)
 	g.keys[id] = map[string]any{"ak_id": id, "tenant": "cocoonbox-boxes", "owner": owner}
 	g.order = append(g.order, id)
@@ -280,7 +282,8 @@ func (g *fakeGW) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	id, hasID := strings.CutPrefix(r.URL.Path, "/admin/keys/")
 	budgetUser, hasBudget := strings.CutPrefix(r.URL.Path, "/admin/tenants/cocoonbox-boxes/users/")
-	budgetUser, hasBudget = strings.CutSuffix(budgetUser, "/budget")
+	budgetUser, isBudget := strings.CutSuffix(budgetUser, "/budget")
+	hasBudget = hasBudget && isBudget
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/admin/tenants/cocoonbox-boxes/users":
 		users := slices.Sorted(maps.Keys(g.budgets))

@@ -92,8 +92,11 @@ func TestLoadReadsPKCS8(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	s, err := Load(path)
-	if err != nil || s.KeyID() != New(priv).KeyID() {
-		t.Errorf("Load = %v", err)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if s.KeyID() != New(priv).KeyID() {
+		t.Errorf("Load = key %s, want %s", s.KeyID(), New(priv).KeyID())
 	}
 	if _, err := Load(filepath.Join(t.TempDir(), "missing")); err == nil {
 		t.Error("Load of a missing file succeeded")
