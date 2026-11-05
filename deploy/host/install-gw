@@ -1,8 +1,8 @@
 #!/bin/bash
-# Installs gw on the cb bridge (10.203.0.1:18090) with its PostgreSQL store, seeded from deploy/host/gateway.yaml; idempotent.
+# Installs gw on the cb bridge (10.203.0.1:18090) with its PostgreSQL store, seeded from deploy/host/gateway.yaml, and the
+# bridge itself (cb-host-net) with the residential forwarder, which stays off without /etc/cocoonbox/residential.env; idempotent.
 # /etc/gw/env (root 0600) must hold OPENROUTER_API_KEY_1, GW_ADMIN_TOKEN and CB_BOXES_ADMIN_TOKEN; the admin tokens are also
-# written to /etc/gw/admin-token (install-gw-config) and /etc/cocoonbox/gw-admin-token (the api's tenant admin token).
-# Needs cb-host-net, install-pg and install-redis first.
+# written to /etc/gw/admin-token (install-gw-config) and /etc/cocoonbox/gw-admin-token (the api's tenant admin token). Needs install-pg and install-redis first.
 # usage: sudo deploy/host/install-gw <gw binary>
 set -euo pipefail
 export LC_ALL=C
@@ -19,6 +19,8 @@ done
 id gw >/dev/null 2>&1 || useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin gw
 getent group redis >/dev/null && usermod -a -G redis gw
 install -m 0755 "$BIN" /usr/local/bin/gw
+install -m 0755 "$SRC/cb-host-net" "$SRC/cb-residential-fwd" /usr/local/sbin/
+install -m 0644 "$SRC/cb-host-net.service" "$SRC/cb-residential-fwd.service" /etc/systemd/system/
 install -d -m 0755 /etc/gw
 install -d -m 0700 /etc/cocoonbox
 (umask 077
@@ -30,7 +32,7 @@ install -m 0644 "$SRC/gw.service" /etc/systemd/system/gw.service
 install -d -m 0755 /etc/systemd/system/gw.service.d
 printf '[Service]\nOOMScoreAdjust=-900\n' > /etc/systemd/system/gw.service.d/oom.conf
 systemctl daemon-reload
-systemctl enable --now gw.service >/dev/null
+systemctl enable --now cb-host-net.service cb-residential-fwd.service gw.service >/dev/null
 admin() { printf 'header = "Authorization: Bearer %s"\n' "$(cat /etc/gw/admin-token)" | curl -fsS --noproxy '*' -K - http://10.203.0.1:18090/admin/config; }
 for _ in $(seq 1 20); do admin >/dev/null 2>&1 && break; sleep 0.5; done
 admin | python3 -c 'import json, sys; print("gw config version", json.load(sys.stdin)["version"])'
