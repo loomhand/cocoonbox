@@ -132,13 +132,13 @@ func (s *Service) Approve(ctx context.Context, req *controlv1.ApproveRequest) (*
 	if err != nil {
 		return nil, grantStatus(ctx, err, "answer the approval")
 	}
+	s.answerFor(ctx, user, approvalAnswered(a.id, decision))
 	if decision == decisionAlways {
 		if err := s.store.setPolicy(ctx, user, a.connector, a.tool, policyAllow); err != nil {
 			return nil, grantStatus(ctx, err, "answer the approval")
 		}
 		s.changedFor(ctx, user)
 	}
-	s.answerFor(ctx, user, approvalAnswered(a.id, decision))
 	log.WithFunc("connect.Service.Approve").Infof(ctx, "user %s answered approval %s (%s %s): %s", user, a.id, a.connector, a.tool, decision)
 	return &controlv1.ApproveResponse{}, nil
 }
