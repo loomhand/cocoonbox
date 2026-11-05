@@ -10,6 +10,8 @@ pub mod packer;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -24,6 +26,7 @@ const INDEX_FILE: &str = "index.json";
 const INDEX_LOCK: &str = "index.lock";
 const EXCLUDES_FILE: &str = "excludes";
 const MAX_WAIT_S: u64 = 600;
+const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const KINDS: [&str; 3] = ["claude", "codex", "cursor"];
 const USAGE: &str = "usage: cocoonbox-agent offload \
 <begin|send|read|status|end|wipe-secrets|restart|post|env|event|serve> [flags]";
@@ -392,6 +395,39 @@ pub async fn git_env(dir: &Path, args: &[&str], envs: &[(&str, &Path)]) -> Resul
             args.join(" "),
             String::from_utf8_lossy(&out.stderr).trim()
         )))
+    }
+}
+
+async fn tmux(bin: &Path, args: &[&str], stdin: Option<&[u8]>) -> Result<String, String> {
+    let mut child = tokio::process::Command::new(bin)
+        .args(args)
+        .stdin(if stdin.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|e| format!("spawn tmux: {e}"))?;
+    if let (Some(data), Some(mut w)) = (stdin, child.stdin.take()) {
+        w.write_all(data)
+            .await
+            .map_err(|e| format!("write to tmux: {e}"))?;
+    }
+    let out = child
+        .wait_with_output()
+        .await
+        .map_err(|e| format!("wait for tmux: {e}"))?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    } else {
+        Err(format!(
+            "tmux {}: {}",
+            args.first().copied().unwrap_or_default(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
     }
 }
 

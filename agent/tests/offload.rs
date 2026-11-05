@@ -88,7 +88,7 @@ impl TestBox {
 
     async fn start_session(&self, body: &str) -> Value {
         self.call(json!({
-            "op": "send", "repo": REPO, "name": "gron", "cli": "claude",
+            "op": "send", "repo": REPO, "cli": "claude",
             "offload_id": ID, "body": body, "start": true,
         }))
         .await

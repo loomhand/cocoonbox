@@ -10,11 +10,10 @@ use tokio::io::AsyncWriteExt;
 use super::Layout;
 
 const STATE_FILE: &str = "env-state.json";
-const SPEC_FILE: &str = "env.json";
+pub(super) const SPEC_FILE: &str = "env.json";
 const LOG_FILE: &str = "env.log";
 /// How long `offload env` waits for the step.
 pub const WAIT_LIMIT: Duration = Duration::from_secs(900);
-const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const MISE_FILES: [&str; 3] = [".mise.toml", "mise.toml", ".tool-versions"];
 const HINT_FILES: [&str; 3] = [".devcontainer/devcontainer.json", "flake.nix", "shell.nix"];
 const FETCHES: [(&str, &str); 6] = [
@@ -27,10 +26,8 @@ const FETCHES: [(&str, &str); 6] = [
 ];
 
 /// `env.json`, written by the Mac packer.
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 pub struct Spec {
-    #[serde(default)]
-    pub v: u32,
     #[serde(default)]
     pub tools: BTreeMap<String, String>,
     #[serde(default)]
@@ -411,7 +408,7 @@ async fn probe(dir: &Path, cmd: &str) -> Option<String> {
     bash.current_dir(dir)
         .env("MISE_TRUSTED_CONFIG_PATHS", dir)
         .env("MISE_YES", "1");
-    tokio::time::timeout(PROBE_TIMEOUT, super::shell(&mut bash, cmd))
+    tokio::time::timeout(super::PROBE_TIMEOUT, super::shell(&mut bash, cmd))
         .await
         .ok()?
         .ok()

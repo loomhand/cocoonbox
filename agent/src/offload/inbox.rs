@@ -5,7 +5,6 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -124,7 +123,7 @@ pub struct Entry {
 }
 
 /// A change of a session, as a `watch` line; it never carries a body.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Change {
     pub repo: String,
     pub name: String,
@@ -356,11 +355,7 @@ impl Inbox {
             copy.unreturned = true;
             Ok(copy.clone())
         })
-        .await
-        .map_err(|e| match e {
-            super::Fail::Refused(m, _) => Refusal::refused(m),
-            other => Refusal::from(other),
-        })?;
+        .await?;
         let mut rec = recs.remove(&req.repo).unwrap_or_default();
         rec.repo = req.repo;
         rec.name = copy.name;
@@ -869,36 +864,7 @@ impl Inbox {
     }
 
     async fn tmux(&self, args: &[&str], stdin: Option<&[u8]>) -> Result<String, String> {
-        let mut child = tokio::process::Command::new(&self.layout.tmux)
-            .args(args)
-            .stdin(if stdin.is_some() {
-                Stdio::piped()
-            } else {
-                Stdio::null()
-            })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
-            .map_err(|e| format!("spawn tmux: {e}"))?;
-        if let (Some(data), Some(mut w)) = (stdin, child.stdin.take()) {
-            w.write_all(data)
-                .await
-                .map_err(|e| format!("write to tmux: {e}"))?;
-        }
-        let out = child
-            .wait_with_output()
-            .await
-            .map_err(|e| format!("wait for tmux: {e}"))?;
-        if out.status.success() {
-            Ok(String::from_utf8_lossy(&out.stdout).into_owned())
-        } else {
-            Err(format!(
-                "tmux {}: {}",
-                args.first().copied().unwrap_or_default(),
-                String::from_utf8_lossy(&out.stderr).trim()
-            ))
-        }
+        super::tmux(&self.layout.tmux, args, stdin).await
     }
 }
 
@@ -1018,13 +984,10 @@ impl From<String> for Refusal {
 
 impl From<super::Fail> for Refusal {
     fn from(e: super::Fail) -> Self {
-        Self(
-            "failed",
-            e.output().1["error"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned(),
-        )
+        match e {
+            super::Fail::Refused(m, _) => Self::refused(m),
+            super::Fail::Usage(m) | super::Fail::Failed(m) | super::Fail::Inbox(m) => Self::from(m),
+        }
     }
 }
 

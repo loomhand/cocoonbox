@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 
-use super::env::Spec;
+use super::env::{self, Spec};
 use super::handover::{self, MAX_BODY};
 use super::{
     Args, Copy, Fail, Layout, call, git, git_env, home_shell, is_hex, locked, read_index,
@@ -21,7 +21,6 @@ use super::{
 pub const ACCEPT_WAIT: Duration = Duration::from_secs(30);
 
 const MAX_NAME: usize = 64;
-const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 const ACCEPT_POLL: Duration = Duration::from_millis(250);
 const QUIT_WAIT: Duration = Duration::from_secs(10);
 const TERM_WAIT: Duration = Duration::from_secs(2);
@@ -155,11 +154,12 @@ pub async fn begin(layout: &Layout, a: &Args) -> Result<Value, Fail> {
     } else {
         Vec::new()
     };
-    let mut out = json!({"ok": true, "dir": copy.dir, "name": copy.name, "copy": was});
+    let mut out = json!({
+        "ok": true, "dir": copy.dir, "name": copy.name, "copy": was, "findings": [],
+    });
     out["refs"] = refs;
     out["ignored"] = ignored.into();
     out["cli"] = cli;
-    out["findings"] = json!([]);
     Ok(out)
 }
 
@@ -368,7 +368,7 @@ impl Offload<'_> {
             Some(raw) => {
                 let spec: Spec = serde_json::from_slice(raw)
                     .map_err(|e| Fail::Usage(format!("decode env.json: {e}")))?;
-                write_atomic(&self.layout.repo_dir(self.repo).join("env.json"), raw).await?;
+                write_atomic(&self.layout.repo_dir(self.repo).join(env::SPEC_FILE), raw).await?;
                 Some(spec)
             }
             None => None,
@@ -402,12 +402,11 @@ impl Offload<'_> {
         let mut req = json!({
             "op": "send",
             "repo": self.repo,
-            "name": self.copy.name,
             "cli": self.kind,
             "offload_id": self.id,
+            "start": true,
         });
         req["body"] = prompt.into();
-        req["start"] = true.into();
         let started_ms = crate::now_ms();
         let resp = call(self.layout, &req).await?;
         lap("start", timings);
@@ -794,7 +793,7 @@ async fn probe_cli(home: &Path, kind: &str) -> Value {
         _ => ("cursor-agent --version", "cursor-agent status"),
     };
     let run = |cmd: &'static str| async move {
-        tokio::time::timeout(PROBE_TIMEOUT, home_shell(home, cmd))
+        tokio::time::timeout(super::PROBE_TIMEOUT, home_shell(home, cmd))
             .await
             .unwrap_or_else(|_| Err(format!("{cmd}: timed out")))
     };
@@ -934,23 +933,25 @@ async fn quit(layout: &Layout, session: &str, cli: &str) {
     let target = format!("={session}:");
     let exact = format!("={session}");
     let word = if cli == "codex" { "/quit" } else { "/exit" };
-    run_tmux(bin, &["send-keys", "-t", &target, "Escape"]).await;
-    run_tmux(bin, &["send-keys", "-t", &target, "-l", word]).await;
-    run_tmux(bin, &["send-keys", "-t", &target, "Enter"]).await;
+    let _ = super::tmux(bin, &["send-keys", "-t", &target, "Escape"], None).await;
+    let _ = super::tmux(bin, &["send-keys", "-t", &target, "-l", word], None).await;
+    let _ = super::tmux(bin, &["send-keys", "-t", &target, "Enter"], None).await;
     if gone(bin, &exact, QUIT_WAIT).await {
         return;
     }
-    let pid = run_tmux(
+    let pid = super::tmux(
         bin,
         &["display-message", "-p", "-t", &target, "#{pane_pid}"],
+        None,
     )
     .await
-    .and_then(|p| p.parse::<u32>().ok());
+    .ok()
+    .and_then(|p| p.trim().parse::<u32>().ok());
     if let Some(pid) = pid {
         let _ = crate::sys::signal_process(pid, libc::SIGTERM);
     }
     if !gone(bin, &exact, TERM_WAIT).await {
-        run_tmux(bin, &["kill-session", "-t", &exact]).await;
+        let _ = super::tmux(bin, &["kill-session", "-t", &exact], None).await;
     }
 }
 
@@ -958,24 +959,15 @@ async fn quit(layout: &Layout, session: &str, cli: &str) {
 async fn gone(bin: &Path, exact: &str, wait: Duration) -> bool {
     let deadline = Instant::now() + wait;
     while Instant::now() < deadline {
-        if run_tmux(bin, &["has-session", "-t", exact]).await.is_none() {
+        if super::tmux(bin, &["has-session", "-t", exact], None)
+            .await
+            .is_err()
+        {
             return true;
         }
         tokio::time::sleep(QUIT_POLL).await;
     }
     false
-}
-
-/// Runs tmux; its trimmed stdout when it succeeds.
-async fn run_tmux(bin: &Path, args: &[&str]) -> Option<String> {
-    tokio::process::Command::new(bin)
-        .args(args)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .await
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
 }
 
 /// Replaces the copy's lines in `excludes` with its git-ignored directories.
