@@ -235,13 +235,11 @@ func (a *Authenticator) Bind(ctx context.Context, user, credential string) (cont
 }
 
 func (a *Authenticator) Identify(ctx context.Context) string {
-	md, _ := metadata.FromIncomingContext(ctx)
-	values := md.Get(HeaderAuthorization)
-	if len(values) != 1 {
+	ctx, err := a.authenticate(ctx)
+	if err != nil {
 		return ""
 	}
-	id, _ := a.Authenticate(ctx, EntryGRPC, values[0])
-	return id.User
+	return User(ctx)
 }
 
 func (a *Authenticator) resolve(ctx context.Context, entry Entry, token, refusal string) (Identity, error) {
