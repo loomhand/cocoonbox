@@ -227,7 +227,7 @@ func (l *stateLayer) browse(ctx context.Context, p statePath, id string) (map[st
 // restorePaths copies paths of snapshot e, which the caller pins, into the agent at ep; it presigns only the chunks of those paths that the snapshot's record lists.
 func (l *stateLayer) restorePaths(ctx context.Context, p statePath, ep machines.Endpoint, e timelineEntry, paths []boxPath, progress dialer.ProgressFunc) (restoredPaths, error) {
 	var done restoredPaths
-	// The caller's pin keeps e from a prune that starts later; the box lock orders this check after a prune already running.
+	// The caller's pin keeps e from a prune that starts later; the box lock orders this check after a prune this process runs.
 	key, err := l.keys.StateKey(ctx, p.user)
 	if err != nil {
 		return done, fmt.Errorf("state key: %w", err)
