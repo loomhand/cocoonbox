@@ -926,8 +926,9 @@ final class AppModel {
                 Perf.mark("hello", "agent=\(hello?.agentVersion ?? "") screen=\(hello?.screenWidth ?? 0)x\(hello?.screenHeight ?? 0)")
                 return
             } catch {
+                if Task.isCancelled { return }
                 report("hello", error)
-                try? await pause(Backoff().delay(attempt: attempt))
+                do { try await pause(Backoff().delay(attempt: attempt)) } catch { return }
             }
         }
     }
